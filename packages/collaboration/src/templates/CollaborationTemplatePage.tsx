@@ -42,6 +42,7 @@ function ScopedCollaborationTemplatePage({
   onUse,
   embedded = false,
   onDetailChange,
+  footerTarget,
 }: {
   store: CollaborationTemplateStore
   locale: CollaborationLocale
@@ -49,6 +50,7 @@ function ScopedCollaborationTemplatePage({
   onUse?(record: TemplateRecord): void
   embedded?: boolean
   onDetailChange?(detail: { title: string; onBack(): void } | null): void
+  footerTarget?: HTMLElement | null
 }) {
   const m = templateMessages[locale]
   const local = useTemplateRecords(store)
@@ -428,20 +430,23 @@ function ScopedCollaborationTemplatePage({
       {selected && (
         <TemplatePanel
           embedded={embedded}
+          footerTarget={footerTarget}
           title={selected.document.spec.displayName}
           closeLabel={m.close}
           onClose={() => setSelected(null)}
           busy={busy}
           footer={
             <>
-              <button
-                type="button"
-                data-testid="template-detail-cancel"
-                disabled={busy}
-                onClick={() => setSelected(null)}
-              >
-                {m.cancel}
-              </button>
+              {!embedded && (
+                <button
+                  type="button"
+                  data-testid="template-detail-cancel"
+                  disabled={busy}
+                  onClick={() => setSelected(null)}
+                >
+                  {m.cancel}
+                </button>
+              )}
               {mode === 'marketplace' ? (
                 <button
                   type="button"
@@ -522,20 +527,23 @@ function ScopedCollaborationTemplatePage({
       {deleting && (
         <TemplatePanel
           embedded={embedded}
+          footerTarget={footerTarget}
           title={m.delete}
           closeLabel={m.close}
           onClose={() => setDeleting(null)}
           busy={busy}
           footer={
             <>
-              <button
-                type="button"
-                data-testid="template-delete-cancel"
-                disabled={busy}
-                onClick={() => setDeleting(null)}
-              >
-                {m.cancel}
-              </button>
+              {!embedded && (
+                <button
+                  type="button"
+                  data-testid="template-delete-cancel"
+                  disabled={busy}
+                  onClick={() => setDeleting(null)}
+                >
+                  {m.cancel}
+                </button>
+              )}
               <button
                 type="button"
                 className="collaboration-danger-button"
@@ -578,6 +586,7 @@ function ScopedCollaborationTemplatePage({
       {importOpen && (
         <TemplateImportDialog
           embedded={embedded}
+          footerTarget={footerTarget}
           onBusyChange={setImportBusy}
           store={store}
           locale={locale}

@@ -111,6 +111,9 @@ export const projectCreateLabels: Record<
     memberAttachment: "成员",
     standingInGroup: "已在小队，等待分工",
     generateResponsibilities: "生成分工",
+    loadingGenerationModels: "正在加载模型…",
+    noGenerationModels: "暂无可用模型。可返回项目，稍后再配置协作分工。",
+    reloadGenerationModels: "重新加载模型",
     preparingGenerationModel: "正在准备模型",
     generatingResponsibilities: "AI 正在分析项目并生成分工",
     generationElapsed: "已等待 {{seconds}} 秒",
@@ -246,6 +249,10 @@ export const projectCreateLabels: Record<
     memberAttachment: "Member",
     standingInGroup: "Already in the group, waiting for responsibilities",
     generateResponsibilities: "Generate responsibilities",
+    loadingGenerationModels: "Loading models…",
+    noGenerationModels:
+      "No models are available. Return to your project and configure responsibilities later.",
+    reloadGenerationModels: "Reload models",
     preparingGenerationModel: "Preparing the model",
     generatingResponsibilities:
       "AI is analyzing the project and generating responsibilities",

@@ -251,6 +251,9 @@ export interface ProjectCreateLabels {
   memberAttachment: string;
   standingInGroup: string;
   generateResponsibilities: string;
+  loadingGenerationModels: string;
+  noGenerationModels: string;
+  reloadGenerationModels: string;
   preparingGenerationModel: string;
   generatingResponsibilities: string;
   generationElapsed: string;

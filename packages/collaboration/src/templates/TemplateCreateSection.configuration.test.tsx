@@ -104,6 +104,16 @@ it('shows template details inline and returns to the catalog without another dia
   await click('template-details-product-lifecycle')
   expect(document.querySelectorAll('dialog')).toHaveLength(0)
   expect(target.querySelector('[data-testid="template-inline-detail"]')).not.toBeNull()
+  const catalog = target.querySelector('[data-testid="project-create-template-catalog"]')!
+  const footer = catalog.querySelector(':scope > footer')!
+  expect(footer.contains(button('template-use'))).toBe(true)
+  expect(
+    catalog
+      .querySelector('.collaboration-project-create-configuration-body')!
+      .contains(button('template-use'))
+  ).toBe(false)
+  expect(document.querySelector('[data-testid="template-detail-cancel"]')).toBeNull()
+
   expect(
     target.querySelector('[data-testid="template-inline-detail"]')!.contains(document.activeElement)
   ).toBe(true)
@@ -146,4 +156,19 @@ it('keeps an incomplete configuration editable after returning to the project', 
     target.querySelector<HTMLElement>('[data-testid="project-create-template-configuration"]')!
       .hidden
   ).toBe(true)
+})
+
+it('keeps import actions in the same fixed footer and uses its single return control', async () => {
+  await act(async () => root.render(<Harness />))
+  await click('project-create-choose-template')
+  await click('template-import-open')
+  const catalog = target.querySelector('[data-testid="project-create-template-catalog"]')!
+  const footer = catalog.querySelector(':scope > footer')!
+  const content = catalog.querySelector('.collaboration-project-create-configuration-body')!
+  expect(footer.contains(button('template-import-save'))).toBe(true)
+  expect(content.contains(button('template-import-save'))).toBe(false)
+  expect(document.querySelector('[data-testid="template-import-cancel"]')).toBeNull()
+  await click('collaboration-project-create-configuration-back')
+  expect(target.querySelector('[data-testid="template-import-file"]')).toBeNull()
+  expect(document.activeElement).toBe(button('template-import-open'))
 })

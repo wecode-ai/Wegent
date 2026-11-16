@@ -2,14 +2,19 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type { ComponentProps } from 'react'
+import { createPortal } from 'react-dom'
 import { useDialogKeyboard } from '../controls/useDialogKeyboard'
 import { TemplateDialog } from './TemplateDialog'
 
 /** Reuse the active project dialog for embedded template steps. */
 export function TemplatePanel({
   embedded = false,
+  footerTarget,
   ...props
-}: ComponentProps<typeof TemplateDialog> & { embedded?: boolean }) {
+}: ComponentProps<typeof TemplateDialog> & {
+  embedded?: boolean
+  footerTarget?: HTMLElement | null
+}) {
   const ref = useDialogKeyboard<HTMLElement>(
     () => {
       if (!props.busy) props.onClose()
@@ -28,7 +33,11 @@ export function TemplatePanel({
     >
       {props.description && <p className="collaboration-template-muted">{props.description}</p>}
       {props.children}
-      <footer className="collaboration-template-actions">{props.footer}</footer>
+      {footerTarget ? (
+        createPortal(props.footer, footerTarget)
+      ) : (
+        <footer className="collaboration-template-actions">{props.footer}</footer>
+      )}
     </section>
   )
 }

@@ -7,6 +7,7 @@ import {
   useMemo,
   useRef,
   useState,
+  type ReactNode,
 } from "react";
 import { createPortal } from "react-dom";
 import type { CollaborationTranslate } from "../i18n";
@@ -64,21 +65,24 @@ const SIMPLE_MENU_FALLBACK_HEIGHT = 160;
 const ADVANCED_MENU_FALLBACK_HEIGHT = 316;
 type DesktopMenuView = "simple" | "advanced";
 
-export interface ModelSelectorHostProps {
+export type ModelSelectorHostProps = {
   translate: CollaborationTranslate;
   isMobile: boolean;
   shortcut?: string | null;
-  onOpenModelSettings: () => void;
   onOpenCloudConnections?: () => void;
   onFlyoutOpenChange?: (open: boolean) => void;
   getViewportRightBoundary?: (anchor: HTMLElement | null) => number;
-}
+} & (
+  | { onOpenModelSettings: () => void; emptyState?: ReactNode }
+  | { onOpenModelSettings?: undefined; emptyState: ReactNode }
+);
 
 export function ModelSelector({
   translate: t,
   isMobile,
   shortcut: modelSelectorShortcut,
   onOpenModelSettings,
+  emptyState,
   onOpenCloudConnections,
   onFlyoutOpenChange,
   getViewportRightBoundary,
@@ -194,7 +198,7 @@ export function ModelSelector({
   );
   const openModelSettings = useCallback(() => {
     closeMenu();
-    onOpenModelSettings();
+    onOpenModelSettings?.();
   }, [closeMenu, onOpenModelSettings]);
   const openCloudConnectionSettings = useCallback(() => {
     closeMenu();
@@ -790,14 +794,18 @@ export function ModelSelector({
           handleSelectModel={selectExplicitModel}
           closeMenu={closeMenu}
           emptyState={
-            <ModelSelectorEmptyState
-              translate={t}
-              mobile
-              onOpenModelSettings={openModelSettings}
-              onOpenCloudConnections={
-                onOpenCloudConnections ? openCloudConnectionSettings : undefined
-              }
-            />
+            emptyState ?? (
+              <ModelSelectorEmptyState
+                translate={t}
+                mobile
+                onOpenModelSettings={openModelSettings}
+                onOpenCloudConnections={
+                  onOpenCloudConnections
+                    ? openCloudConnectionSettings
+                    : undefined
+                }
+              />
+            )
           }
         />
       )}
@@ -834,17 +842,18 @@ export function ModelSelector({
                 styles.mainMenu,
               )}
             >
-              {desktopModels.length === 0 && (
-                <ModelSelectorEmptyState
-                  translate={t}
-                  onOpenModelSettings={openModelSettings}
-                  onOpenCloudConnections={
-                    onOpenCloudConnections
-                      ? openCloudConnectionSettings
-                      : undefined
-                  }
-                />
-              )}
+              {desktopModels.length === 0 &&
+                (emptyState ?? (
+                  <ModelSelectorEmptyState
+                    translate={t}
+                    onOpenModelSettings={openModelSettings}
+                    onOpenCloudConnections={
+                      onOpenCloudConnections
+                        ? openCloudConnectionSettings
+                        : undefined
+                    }
+                  />
+                ))}
               {desktopModels.length > 0 ? (
                 <div
                   className={styles.viewContainer}

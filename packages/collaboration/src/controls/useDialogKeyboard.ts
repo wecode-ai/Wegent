@@ -18,7 +18,8 @@ export function useDialogKeyboard<T extends HTMLElement>(
   onClose: () => void,
   open = true,
   initialFocus?: string,
-  trapFocus = true
+  trapFocus = true,
+  restoreFocus?: string
 ) {
   const ref = useRef<T>(null)
   useEscapeKey(onClose, open, ref)
@@ -27,6 +28,7 @@ export function useDialogKeyboard<T extends HTMLElement>(
     const dialog = ref.current
     if (!open || !dialog) return
     const previousFocus = document.activeElement
+    const focusContainer = dialog.closest('[role="dialog"]')
     if (!dialog.contains(previousFocus)) {
       const preferred = Array.from(
         dialog.querySelectorAll<HTMLElement>(
@@ -64,14 +66,24 @@ export function useDialogKeyboard<T extends HTMLElement>(
     if (trapFocus) dialog.addEventListener('keydown', handleTab)
     return () => {
       dialog.removeEventListener('keydown', handleTab)
-      if (
+      const returnTarget =
         previousFocus instanceof HTMLElement &&
+        previousFocus !== document.body &&
         previousFocus.isConnected &&
-        (dialog.contains(document.activeElement) || document.activeElement === document.body)
+        !previousFocus.closest('[hidden], [inert]')
+          ? previousFocus
+          : restoreFocus
+            ? focusContainer?.querySelector<HTMLElement>(restoreFocus)
+            : null
+      if (
+        returnTarget &&
+        (dialog.contains(document.activeElement) ||
+          document.activeElement === document.body ||
+          (restoreFocus && focusContainer?.contains(document.activeElement)))
       )
-        previousFocus.focus()
+        returnTarget.focus()
     }
-  }, [open, initialFocus, trapFocus])
+  }, [open, initialFocus, trapFocus, restoreFocus])
 
   return ref
 }

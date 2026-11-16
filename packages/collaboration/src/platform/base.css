@@ -362,13 +362,13 @@
 .collaboration-project-create-dialog input:focus,
 .collaboration-project-create-dialog textarea:focus,
 .collaboration-project-create-dialog select:focus {
-  border-color: rgb(var(--color-text-primary));
+  border-color: rgb(var(--color-focus, var(--color-primary)));
   outline: none;
-  box-shadow: 0 0 0 1px rgb(var(--color-text-primary) / 0.12);
+  box-shadow: 0 0 0 1px rgb(var(--color-focus, var(--color-primary)) / 0.25);
 }
 
 .collaboration-project-create-dialog button:focus-visible {
-  outline: 2px solid rgb(var(--color-text-primary) / 0.45);
+  outline: 2px solid rgb(var(--color-focus, var(--color-primary)));
   outline-offset: 2px;
 }
 
@@ -462,8 +462,8 @@
 
 .collaboration-project-create-collaborator-token > button {
   display: grid;
-  width: 20px;
-  height: 20px;
+  width: 24px;
+  height: 24px;
   place-items: center;
   border: 0;
   border-radius: 6px;
@@ -1740,6 +1740,18 @@
 }
 
 @media (max-width: 767px) {
+  .collaboration-project-create-collaborator-token {
+    height: auto;
+    min-height: 44px;
+  }
+
+  .collaboration-project-create-collaborator-token > button,
+  .collaboration-project-create-collaborator-trigger,
+  .collaboration-project-create-advanced-trigger {
+    min-width: 44px;
+    min-height: 44px;
+  }
+
   .collaboration-project-collaborator-search,
   .collaboration-project-collaborator-picker button {
     min-height: 44px;
@@ -1762,7 +1774,18 @@
     grid-template-columns: minmax(0, 1fr);
   }
 
-  .collaboration-project-create-footer button {
+  .collaboration-project-create-footer button,
+  .collaboration-project-create-footer button:not(.collaboration-primary-button) {
     min-height: 44px;
+    min-width: 44px;
+  }
+}
+
+@media (max-width: 767px), (hover: none), (pointer: coarse) {
+  .collaboration-project-create-hover-editable > button,
+  .collaboration-project-create-set-leader {
+    min-width: 44px;
+    min-height: 44px;
+    opacity: 1;
   }
 }

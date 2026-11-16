@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { act } from 'react'
+import { act, useState } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import { ProjectCollaboratorPicker } from './ProjectCollaboratorPicker'
@@ -69,6 +69,62 @@ async function input(value: string) {
     field.dispatchEvent(new Event('input', { bubbles: true }))
   })
 }
+
+it('does not restore a closing picker into the hidden project form after opening configuration', async () => {
+  function Harness() {
+    const [open, setOpen] = useState(true)
+    const [configuring, setConfiguring] = useState(false)
+    return (
+      <>
+        <form hidden={configuring}>
+          <ProjectCollaboratorPicker
+            labels={labels}
+            open={open}
+            onOpenChange={setOpen}
+            people={[]}
+            excludedIds={[]}
+            agents={[]}
+            groups={[]}
+            onSelectPerson={vi.fn()}
+            onSelectAgent={vi.fn()}
+            onSelectGroup={vi.fn()}
+            groupAction={
+              <button
+                type="button"
+                data-testid="configure-group"
+                onClick={() => {
+                  setOpen(false)
+                  setConfiguring(true)
+                }}
+              >
+                Configure group
+              </button>
+            }
+          />
+        </form>
+        {configuring && <input autoFocus data-testid="configuration-input" />}
+      </>
+    )
+  }
+  await act(async () => root.render(<Harness />))
+  await click('collaboration-project-create-collaborator-tab-groups')
+  const trigger = get('collaboration-project-create-add-collaborator')
+  const restoreTriggerFocus = vi.spyOn(trigger, 'focus')
+  vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+  try {
+    await click('configure-group')
+    const configuration = get('configuration-input')
+    expect(trigger.closest('form')?.hidden).toBe(true)
+    expect(document.activeElement).toBe(configuration)
+    expect(vi.getTimerCount()).toBeGreaterThan(0)
+    await act(async () => vi.runAllTimersAsync())
+    expect(restoreTriggerFocus).not.toHaveBeenCalled()
+    expect(document.activeElement).toBe(configuration)
+  } finally {
+    vi.useRealTimers()
+    restoreTriggerFocus.mockRestore()
+  }
+})
 
 it('uses one search query across people, Agents and groups with keyboard navigation', async () => {
   const selectPerson = vi.fn(),

@@ -49,11 +49,14 @@ import type {
   ProjectCreateCollaborationGroupDraft,
   ProjectCreateCollaborationGroupGenerationEvent,
   ProjectCreateDialogProps,
-  ProjectCreateGenerationModel,
   ProjectCreateGenerationProgressPhase,
   ProjectCreateModalProps,
 } from "./types";
 import { useProjectCreateController } from "./useProjectCreateController";
+import {
+  generationModelKey,
+  useProjectGenerationModels,
+} from "./useProjectGenerationModels";
 import { ProjectCollaboratorPicker } from "./ProjectCollaboratorPicker";
 import type { CollaborationWorkspaceMember } from "../types";
 
@@ -149,13 +152,6 @@ function CollaboratorToken({
       ) : null}
     </span>
   );
-}
-
-function generationModelKey(model: {
-  modelName: string;
-  modelType?: string | null;
-}) {
-  return `${model.modelType ?? ""}:${model.modelName}`;
 }
 
 function HoverEditableText({
@@ -358,59 +354,21 @@ export function ProjectCreateDialog(props: ProjectCreateDialogProps) {
   const [groupGenerationError, setGroupGenerationError] = useState<
     string | null
   >(null);
-  const generationModelLoaderRef = useRef(
+  const {
+    models: generationModels,
+    key: selectedGenerationModelKey,
+    options: selectedGenerationModelOptions,
+    loading: generationModelsLoading,
+    error: generationModelsError,
+    reload: reloadGenerationModels,
+    setKey: setSelectedGenerationModelKey,
+    setOptions: setSelectedGenerationModelOptions,
+  } = useProjectGenerationModels(
+    groupModelPickerOpen,
     resourceSetup?.loadCollaborationGroupGenerationModels,
+    host?.formatError,
+    labels.createFailed,
   );
-  const [generationModels, setGenerationModels] = useState<
-    ProjectCreateGenerationModel[]
-  >([]);
-  const [generationModelsLoading, setGenerationModelsLoading] = useState(
-    Boolean(generationModelLoaderRef.current),
-  );
-  const [selectedGenerationModelKey, setSelectedGenerationModelKey] =
-    useState("");
-  const [selectedGenerationModelOptions, setSelectedGenerationModelOptions] =
-    useState<Record<string, string>>({});
-  useEffect(() => {
-    const loadModels = generationModelLoaderRef.current;
-    if (!loadModels) return;
-    let active = true;
-    void loadModels()
-      .then((catalog) => {
-        if (!active) return;
-        setGenerationModels(catalog.models);
-        const defaultKey = catalog.defaultSelection
-          ? generationModelKey(catalog.defaultSelection)
-          : "";
-        setSelectedGenerationModelKey(
-          catalog.models.some(
-            (candidate) => generationModelKey(candidate) === defaultKey,
-          )
-            ? defaultKey
-            : catalog.models[0]
-              ? generationModelKey(catalog.models[0])
-              : "",
-        );
-        const defaultModel =
-          catalog.models.find(
-            (candidate) => generationModelKey(candidate) === defaultKey,
-          ) ?? catalog.models[0];
-        setSelectedGenerationModelOptions(defaultModel?.options ?? {});
-      })
-      .catch((cause) => {
-        if (!active) return;
-        setGroupGenerationError(
-          host?.formatError?.(cause) ??
-            (cause instanceof Error ? cause.message : labels.createFailed),
-        );
-      })
-      .finally(() => {
-        if (active) setGenerationModelsLoading(false);
-      });
-    return () => {
-      active = false;
-    };
-  }, [host, labels.createFailed]);
   useEffect(() => {
     if (!groupGenerating) return;
     const startedAt = Date.now();
@@ -975,8 +933,28 @@ export function ProjectCreateDialog(props: ProjectCreateDialogProps) {
       onBack={closeGroupConfiguration}
       backLabel={labels.backToProject}
       testId="collaboration-project-create-model-picker"
+      restoreFocus='[data-testid="collaboration-project-create-edit-group"], [data-testid="collaboration-project-create-add-collaborator"]'
     >
       <div className="collaboration-project-create-group-editor is-generator">
+        {generationModelsLoading ? (
+          <p role="status" className="text-sm text-text-secondary">
+            {labels.loadingGenerationModels}
+          </p>
+        ) : null}
+        {generationModelsError ? (
+          <p className="collaboration-project-create-inline-error" role="alert">
+            {generationModelsError}
+            <button
+              type="button"
+              data-testid="collaboration-project-create-retry-models"
+              className="collaboration-secondary-button min-h-11"
+              onClick={() => void reloadGenerationModels()}
+              disabled={generationModelsLoading}
+            >
+              {labels.reloadGenerationModels}
+            </button>
+          </p>
+        ) : null}
         {groupGenerationError ? (
           <p className="collaboration-project-create-inline-error" role="alert">
             {groupGenerationError}
@@ -1062,7 +1040,33 @@ export function ProjectCreateDialog(props: ProjectCreateDialogProps) {
                 <ModelSelector
                   translate={translate}
                   isMobile={false}
-                  onOpenModelSettings={() => {}}
+                  emptyState={
+                    <div
+                      className="space-y-3 p-3"
+                      data-testid="collaboration-project-create-model-empty"
+                    >
+                      <p
+                        role={generationModelsError ? "alert" : "status"}
+                        className="text-sm text-text-secondary"
+                      >
+                        {generationModelsError ??
+                          (generationModelsLoading
+                            ? labels.loadingGenerationModels
+                            : labels.noGenerationModels)}
+                      </p>
+                      {resourceSetup?.loadCollaborationGroupGenerationModels && (
+                        <button
+                          type="button"
+                          data-testid="collaboration-project-create-reload-models"
+                          className="collaboration-secondary-button min-h-11"
+                          disabled={generationModelsLoading}
+                          onClick={() => void reloadGenerationModels()}
+                        >
+                          {labels.reloadGenerationModels}
+                        </button>
+                      )}
+                    </div>
+                  }
                   models={unifiedGenerationModels}
                   selectedModel={selectedUnifiedGenerationModel}
                   selectedModelOptions={selectedGenerationModelOptions}

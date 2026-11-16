@@ -782,3 +782,35 @@ describe("model controls without a desktop host", () => {
     },
   );
 });
+
+it.each([false, true])(
+  "uses the provided recovery action for an empty catalog (mobile=%s)",
+  (isMobile) => {
+    const reload = vi.fn();
+    act(() =>
+      root.render(
+        <ModelSelector
+          translate={translate}
+          isMobile={isMobile}
+          models={[]}
+          selectedModel={null}
+          selectedModelOptions={{}}
+          disabled={false}
+          onSelectModel={vi.fn()}
+          onSelectModelOption={vi.fn()}
+          emptyState={
+            <button data-testid="reload-fixture-models" onClick={reload}>
+              Reload models
+            </button>
+          }
+        />,
+      ),
+    );
+    act(() => element("model-selector-button").click());
+    expect(
+      document.querySelector('[data-testid="model-selector-add-custom-model"]'),
+    ).toBeNull();
+    act(() => element("reload-fixture-models").click());
+    expect(reload).toHaveBeenCalledOnce();
+  },
+);

@@ -46,6 +46,7 @@ export function TemplateCreateSection({
   const [selectionVersion, setSelectionVersion] = useState(0)
   const [view, setView] = useState<'catalog' | 'bindings' | null>(null)
   const [detail, setDetail] = useState<{ title: string; onBack(): void } | null>(null)
+  const [catalogFooterTarget, setCatalogFooterTarget] = useState<HTMLElement | null>(null)
   const [complete, setComplete] = useState(true)
   const section = useRef<HTMLElement>(null)
   const restoreFocus = useRef(false)
@@ -120,6 +121,7 @@ export function TemplateCreateSection({
       store={store}
       locale={locale}
       embedded={Boolean(configurationHost)}
+      footerTarget={catalogFooterTarget}
       onDetailChange={next => {
         setDetail(next)
         if (view === 'catalog') {
@@ -231,6 +233,13 @@ export function TemplateCreateSection({
                   onBack={detail?.onBack ?? leave}
                   backLabel={detail ? m.returnToTemplates : m.returnToProject}
                   testId="project-create-template-catalog"
+                  footer={
+                    <div
+                      ref={setCatalogFooterTarget}
+                      className="collaboration-template-actions collaboration-template-step-actions"
+                      data-testid="project-create-template-catalog-actions"
+                    />
+                  }
                 >
                   {catalog}
                 </ProjectCreateConfigurationView>

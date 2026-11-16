@@ -10,6 +10,7 @@ export function ProjectCreateConfigurationView({
   testId,
   active = true,
   footer,
+  restoreFocus,
 }: {
   onBack(): void
   backLabel: string
@@ -17,12 +18,14 @@ export function ProjectCreateConfigurationView({
   testId?: string
   active?: boolean
   footer?: ReactNode
+  restoreFocus?: string
 }) {
   const ref = useDialogKeyboard<HTMLElement>(
     onBack,
     active,
     '[contenteditable="true"], input:not([disabled]), select:not([disabled]), button:not([disabled])',
-    false
+    false,
+    restoreFocus
   )
   return (
     <section

@@ -17,12 +17,14 @@ export function TemplateImportDialog({
   onSaved,
   embedded = false,
   onBusyChange,
+  footerTarget,
 }: {
   store: CollaborationTemplateStore
   locale: CollaborationLocale
   onClose(): void
   embedded?: boolean
   onBusyChange?(busy: boolean): void
+  footerTarget?: HTMLElement | null
   onSaved(document: CollaborationTemplate): void
 }) {
   const m = templateMessages[locale]
@@ -33,6 +35,7 @@ export function TemplateImportDialog({
   return (
     <TemplatePanel
       embedded={embedded}
+      footerTarget={footerTarget}
       title={m.importTitle}
       description={m.importHint}
       closeLabel={m.close}
@@ -40,14 +43,16 @@ export function TemplateImportDialog({
       busy={busy}
       footer={
         <>
-          <button
-            type="button"
-            disabled={busy}
-            data-testid="template-import-cancel"
-            onClick={onClose}
-          >
-            {m.cancel}
-          </button>
+          {!embedded && (
+            <button
+              type="button"
+              disabled={busy}
+              data-testid="template-import-cancel"
+              onClick={onClose}
+            >
+              {m.cancel}
+            </button>
+          )}
           <button
             type="button"
             className="collaboration-primary-button"
