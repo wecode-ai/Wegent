@@ -795,7 +795,7 @@ test.describe('Agent share scope', () => {
           apiVersion: 'agent.wecode.io/v1',
           kind: 'Model',
           metadata: { name, namespace: 'default' },
-          spec: { modelConfig: { model_id: `${name}-provider` } },
+          spec: { modelConfig: { env: { model: 'openai', model_id: `${name}-provider` } } },
         })
         expect(created.status, JSON.stringify(created.data)).toBe(201)
         privateModels.push({ api, path: `${path}/${name}` })
@@ -807,7 +807,9 @@ test.describe('Agent share scope', () => {
             apiVersion: 'agent.wecode.io/v1',
             kind: 'Model',
             metadata: { name, namespace: 'default' },
-            spec: { modelConfig: { model_id: `${name}-public-provider` } },
+            spec: {
+              modelConfig: { env: { model: 'openai', model_id: `${name}-public-provider` } },
+            },
           },
         })
         expect([200, 201], JSON.stringify(created.data)).toContain(created.status)
@@ -877,7 +879,9 @@ test.describe('Agent share scope', () => {
           kind: 'Model',
           metadata: { name: publicModelName, namespace: 'default' },
           spec: {
-            modelConfig: { model_id: `${publicModelName}-public-provider` },
+            modelConfig: {
+              env: { model: 'openai', model_id: `${publicModelName}-public-provider` },
+            },
             allowedUsersEnabled: true,
             allowedUsers: [REGULAR_USER.username],
           },
@@ -895,7 +899,11 @@ test.describe('Agent share scope', () => {
           apiVersion: 'agent.wecode.io/v1',
           kind: 'Model',
           metadata: { name: publicModelName, namespace: 'default' },
-          spec: { modelConfig: { model_id: `${publicModelName}-public-provider` } },
+          spec: {
+            modelConfig: {
+              env: { model: 'openai', model_id: `${publicModelName}-public-provider` },
+            },
+          },
         },
       })
       expect(unrestricted.status, JSON.stringify(unrestricted.data)).toBe(200)
