@@ -96,6 +96,25 @@ describe('workspace Issue tag editing', () => {
     expect(screen.getByTestId('cloud-todo-detail-tag-tag-验证')).toBeVisible()
   })
 
+  it('waits for IME composition before saving a tag on an outside click', async () => {
+    const { updateLoopItem } = await openEditor({ readFirst: true })
+    const input = screen.getByTestId('cloud-todo-detail-tag-input')
+    fireEvent.compositionStart(input)
+    fireEvent.change(input, { target: { value: 'yan' } })
+    fireEvent.pointerDown(screen.getByTestId('cloud-todo-detail-title'))
+    expect(updateLoopItem).not.toHaveBeenCalled()
+    expect(screen.queryByTestId('cloud-todo-detail-tag-tag-yan')).not.toBeInTheDocument()
+    fireEvent.change(input, { target: { value: '验证' } })
+    fireEvent.compositionEnd(input)
+    fireEvent.blur(input)
+    await waitFor(() =>
+      expect(updateLoopItem).toHaveBeenCalledWith(
+        item.id,
+        expect.objectContaining({ tags: ['验证'] })
+      )
+    )
+  })
+
   it('saves a pending tag once when an outside click also blurs the input', async () => {
     const { updateLoopItem } = await openEditor({ readFirst: true })
     await userEvent.type(screen.getByTestId('cloud-todo-detail-tag-input'), '点击保存')

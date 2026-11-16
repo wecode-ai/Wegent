@@ -38,6 +38,7 @@ export function TagEditor({
   const [highlight, setHighlight] = useState(0);
   const inputRef = useRef<HTMLInputElement>(null);
   const containerRef = useRef<HTMLSpanElement>(null);
+  const composingRef = useRef(false);
 
   const normalizedDraft = draft.trim().toLowerCase();
   const tooLong = isTagNameTooLong(draft.replace(/,/g, ""));
@@ -76,6 +77,8 @@ export function TagEditor({
   }
 
   useOutsideClick(containerRef, !disabled && Boolean(draft.trim()), () => {
+    // Native composition must publish its final text before blur commits it.
+    if (composingRef.current) return;
     commit(draft);
     setOpen(false);
   });
@@ -159,6 +162,12 @@ export function TagEditor({
             }
           }}
           onFocus={() => setOpen(true)}
+          onCompositionStart={() => {
+            composingRef.current = true;
+          }}
+          onCompositionEnd={() => {
+            composingRef.current = false;
+          }}
           onKeyDown={handleKeyDown}
           onBlur={() => {
             setOpen(false);
