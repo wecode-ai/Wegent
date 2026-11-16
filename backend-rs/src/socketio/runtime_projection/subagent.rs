@@ -82,7 +82,7 @@ pub(super) async fn project(
         row.metadata = Json(Value::Object(merged));
         record_runtime_sequence(&mut row, sequence);
         tx.execute(
-            "UPDATE project_chat_messages SET content=?, status=?, message_type='text', metadata=?, updated_at=UTC_TIMESTAMP(6) WHERE id=?",
+            "UPDATE project_chat_messages SET content=?, status=?, message_type='text', metadata=?, updated_at=CURRENT_TIMESTAMP(6) WHERE id=?",
             (row.content.as_str(), row.status.as_str(), row.metadata, id),
         ).await?;
         id

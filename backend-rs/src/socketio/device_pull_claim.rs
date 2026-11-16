@@ -17,7 +17,9 @@ use brz_mysql::{FromMysqlRow, MysqlError, MysqlResult, MysqlTransaction};
 use chrono::NaiveDateTime;
 use serde_json::{Value, json};
 
-use crate::background_jobs::project::{authority, device_access::personal_owner, routing, store};
+use crate::background_jobs::project::{
+    authority, device_access::personal_owner, routing, runner_recovery, store,
+};
 use crate::background_jobs::robot::{authority as robot_authority, model};
 use crate::device_identity::{
     DeviceKindRow, owned_device_identity_ids, resolve_owned_device_alias,
@@ -240,13 +242,20 @@ pub(super) async fn reserve(
             && !execution.permits_personal_device(personal_owner(command.owner_user_id, &runner.json), runner.id) {
             return Ok(false);
         }
+        if !runner_recovery::session_matches_on(&mut query, &execution, runner.id).await.map_err(claim_error)? {
+            return Ok(false);
+        }
         let runner_id = runner.id.to_string();
         let binding = match routing::issue_binding_on(&mut query, &issue).await {
             Ok(binding) => binding,
             Err(error) if robot_authority::infrastructure(&error) => return Err(claim_error(error)),
             Err(_) => return Ok(false),
         };
-        if binding.is_some_and(|bound| bound != runner_id) {
+        if let Some(bound) = binding.as_ref()
+            && bound != &runner_id
+            && !runner_recovery::original_session(&execution)
+            && !runner_recovery::permits_on(&mut query, &execution, bound).await.map_err(claim_error)?
+        {
             return Ok(false);
         }
         if execution.routed() {
@@ -285,7 +294,9 @@ pub(super) async fn reserve(
         if updated.rows_affected != 1 {
             return Ok(false);
         }
-        if issue.metadata.0["runner_binding"].is_null() {
+        if !runner_recovery::original_session(&execution)
+            && binding.as_ref() != Some(&runner_id)
+        {
             tx.execute(
                 "UPDATE loop_items SET metadata=JSON_SET(
                    IF(JSON_TYPE(metadata)='OBJECT',metadata,JSON_OBJECT()),
@@ -571,6 +582,9 @@ async fn eligible_runner(
     if !robot_authority::authorized(app, execution).await? {
         return Ok(false);
     }
+    if !runner_recovery::session_matches_on(&mut &app.mysql, execution, runner.id).await? {
+        return Ok(false);
+    }
     let selection = execution.selection();
     let bound = match load_issue_binding(app, &execution.loop_item_id).await {
         Ok(bound) => bound,
@@ -579,6 +593,13 @@ async fn eligible_runner(
     };
     if let Some(bound) = bound
         && bound != runner.id.to_string()
+        && !runner_recovery::original_session(execution)
+        && !runner_recovery::permits_on(&mut &app.mysql, execution, &bound).await?
+    {
+        return Ok(false);
+    }
+    if let Some(resolved) = selection["resolved_environment_id"].as_str()
+        && resolved != runner.id.to_string()
     {
         return Ok(false);
     }
@@ -624,6 +645,14 @@ async fn matches_issue_device_affinity(
     execution_target_id: &str,
     execution: &model::Execution,
 ) -> anyhow::Result<bool> {
+    if runner_recovery::original_session(execution) {
+        let runner =
+            resolve_owned_device_alias(&app.mysql, owner_user_id, execution_target_id).await?;
+        let Some(runner) = runner else {
+            return Ok(false);
+        };
+        return runner_recovery::session_matches_on(&mut &app.mysql, execution, runner.id).await;
+    }
     let bound = match load_issue_binding(app, &execution.loop_item_id).await {
         Ok(bound) => bound,
         Err(error) if robot_authority::infrastructure(&error) => return Err(error),

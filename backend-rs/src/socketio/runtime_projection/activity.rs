@@ -30,7 +30,12 @@ use super::{
 
 #[path = "activity_accepted.rs"]
 mod accepted;
+#[path = "activity_restore.rs"]
+mod restoration;
 pub(in crate::socketio) use accepted::open_accepted_activity;
+use restoration::restore_discovered_activity;
+#[cfg(test)]
+pub(in crate::socketio) use restoration::verify_restored_activity_timestamp;
 
 /// The Source's full `project_chat_messages` projection (22 columns, Source
 /// order) that `db.query(ProjectChatMessage)` renders for
@@ -502,103 +507,6 @@ pub(super) fn record_runtime_sequence(activity: &mut Message, sequence: Option<i
     true
 }
 
-/// The Source branch's restore half after a completion row was discovered.
-async fn restore_discovered_activity<T: MysqlTransaction>(
-    transaction: &mut T,
-    device_ids: &[String],
-    task_id: &str,
-    identity: &RuntimeIdentity<'_>,
-    accepted_terminal: bool,
-    mut activity: Message,
-    mut execution: Option<ExecutionRow>,
-) -> MysqlResult<Option<Projected>> {
-    if has_execution_id(&activity) && execution.is_none() {
-        return Ok(None);
-    }
-    if let Some(current) = execution.as_ref()
-        && !accepted_terminal
-        && !can_restore_reconciled_completion(transaction, current, identity, &activity).await?
-    {
-        return Ok(None);
-    }
-    if execution.is_none() || accepted_terminal {
-        if let Some(current) = execution.as_ref() {
-            execution = reload_execution(transaction, current.id).await?;
-        }
-        let current = completed_activity_for_turn(
-            transaction,
-            device_ids,
-            task_id,
-            runtime_turn_id(identity.payload),
-            client_message_id(identity.payload),
-            true,
-            true,
-        )
-        .await?;
-        let Some(current) = current else {
-            return Ok(None);
-        };
-        if current.id != activity.id {
-            return Ok(None);
-        }
-        activity = current;
-    }
-    let sequence = event_seq(identity.payload);
-    if runtime_event_is_stale(&activity, sequence, accepted_terminal) {
-        return Ok(None);
-    }
-    let content = final_text(identity.payload);
-    let mut changed = false;
-    if let Some(text) = content.as_deref() {
-        activity.content = text.to_owned();
-        changed = true;
-        if let Some(turn_id) = runtime_turn_id(identity.payload) {
-            let mut metadata = activity.metadata.0.as_object().cloned().unwrap_or_default();
-            metadata.insert("runtime_turn_id".into(), json!(turn_id));
-            activity.metadata = brz_mysql::Json(Value::Object(metadata));
-        }
-    } else if execution.is_some() && !accepted_terminal {
-        return Ok(None);
-    }
-    if let (Some(row), Some(sequence)) = (execution.as_mut(), sequence)
-        && sequence > row.last_event_seq.unwrap_or(0)
-    {
-        row.last_event_seq = Some(sequence);
-        transaction
-            .execute(
-                "UPDATE loop_item_executions SET last_event_seq=? \
-                 WHERE loop_item_executions.id=?",
-                (sequence, row.id),
-            )
-            .await?;
-    }
-    changed |= record_runtime_sequence(&mut activity, sequence);
-    if changed || accepted_terminal {
-        activity.updated_at = Utc::now().naive_utc();
-        if accepted_terminal {
-            activity.metadata.0["activity_at"] = json!(activity.updated_at.and_utc().to_rfc3339());
-        }
-        transaction
-            .execute(
-                "UPDATE project_chat_messages SET content=?, metadata=?, updated_at=? \
-                 WHERE project_chat_messages.id=?",
-                (
-                    activity.content.as_str(),
-                    brz_mysql::Json(activity.metadata.0.clone()),
-                    activity.updated_at,
-                    activity.id,
-                ),
-            )
-            .await?;
-    }
-    Ok(Some(Projected {
-        message: projected_view(&activity),
-        delta: false,
-        terminal_activity: (accepted_terminal || content.is_some())
-            .then(|| (Box::new(activity), accepted_terminal)),
-    }))
-}
-
 /// The `response.completed` branch: discover the bound activity (or its
 /// unique `trigger_message_id` fallback), then the reconciled-activity
 /// fallback (`project_chat/service.py:1299`), before the streaming read.
@@ -945,6 +853,7 @@ pub(in crate::socketio) async fn finish_runtime_activity(
         format!("SELECT {ACTIVITY_COLUMNS} FROM project_chat_messages WHERE project_id=? AND task_id=? AND trigger_message_id=? AND sender_type='agent' AND JSON_UNQUOTE(JSON_EXTRACT(metadata,'$.kind'))='task_ai_subagent' AND status IN ('pending','streaming') AND {UNSET_DELETED_AT} FOR UPDATE"),
         (parent.project_id.as_str(), parent.task_id.as_str(), parent.message_id.as_str()),
     ).await?;
+    let updated_at = parent.updated_at;
     let mut messages = vec![parent];
     for child in children {
         let mut child = child.into_message();
@@ -953,6 +862,7 @@ pub(in crate::socketio) async fn finish_runtime_activity(
         child.message_type = "text".into();
         child.metadata.0["subagent_status"] = json!(status);
         child.metadata.0["run_status"] = json!(status);
+        child.updated_at = updated_at;
         update_terminal_row(tx, &child).await?;
         messages.push(child);
     }
@@ -961,8 +871,8 @@ pub(in crate::socketio) async fn finish_runtime_activity(
 
 async fn update_terminal_row(tx: &mut impl MysqlTransaction, message: &Message) -> MysqlResult<()> {
     tx.execute(
-        "UPDATE project_chat_messages SET content=?, status=?, message_type=?, metadata=?, updated_at=UTC_TIMESTAMP(6) WHERE id=?",
-        (message.content.as_str(), message.status.as_str(), message.message_type.as_str(), brz_mysql::Json(message.metadata.0.clone()), message.id),
+        "UPDATE project_chat_messages SET content=?, status=?, message_type=?, metadata=?, updated_at=? WHERE id=?",
+        (message.content.as_str(), message.status.as_str(), message.message_type.as_str(), brz_mysql::Json(message.metadata.0.clone()), message.updated_at, message.id),
     ).await?;
     Ok(())
 }

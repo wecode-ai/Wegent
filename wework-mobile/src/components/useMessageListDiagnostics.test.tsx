@@ -82,6 +82,26 @@ describe('opt-in message list diagnostics', () => {
           status: 'streaming',
           content: 'private-message-content',
           createdAt: 1,
+          blocks: [
+            {
+              id: 'private-thinking-id',
+              subtaskId: 'private-subtask-id',
+              type: 'thinking',
+              status: 'done',
+              content: 'private-thinking-content',
+              createdAt: 1,
+            },
+            ...(['generating_arguments', 'pending', 'streaming', 'error'] as const).map(status => ({
+              id: `private-tool-${status}`,
+              subtaskId: 'private-subtask-id',
+              type: 'tool' as const,
+              status,
+              toolName: 'private-tool-name',
+              toolInput: { command: 'private-command' },
+              toolOutput: 'private-output',
+              createdAt: 1,
+            })),
+          ],
         },
       ],
       running: true,
@@ -133,6 +153,8 @@ describe('opt-in message list diagnostics', () => {
       tailRole: 'assistant',
       tailStatus: 'streaming',
       tailLength: options.messages[0]!.content.length,
+      tailBlockCount: 5,
+      tailRunningBlockCount: 3,
       composerInset: 96,
       freeze: false,
       nativeInsetBottom: 96,
@@ -166,25 +188,43 @@ describe('opt-in message list diagnostics', () => {
     })
   })
 
-  it('throttles each high-frequency event independently before reading list state', async () => {
+  it('throttles scroll events before reading list state', async () => {
     await render()
     output.mockClear()
     getState.mockClear()
-    const reportAll = () => {
-      diagnostics.onScroll!(scrollEvent)
-      diagnostics.onItemSizeChanged!(itemSize)
-      diagnostics.onLayout!(layoutEvent)
-      diagnostics.onContentSizeChange!(390, 1200)
-    }
-    reportAll()
+    diagnostics.onScroll!(scrollEvent)
     time += 199
-    reportAll()
-    expect(output).toHaveBeenCalledTimes(4)
-    expect(getState).toHaveBeenCalledTimes(4)
+    diagnostics.onScroll!(scrollEvent)
+    expect(output).toHaveBeenCalledTimes(1)
+    expect(getState).toHaveBeenCalledTimes(1)
     time += 1
-    reportAll()
-    expect(output).toHaveBeenCalledTimes(8)
-    expect(getState).toHaveBeenCalledTimes(8)
+    diagnostics.onScroll!(scrollEvent)
+    expect(output).toHaveBeenCalledTimes(2)
+    expect(getState).toHaveBeenCalledTimes(2)
+  })
+
+  it('preserves a geometry change and reversal within the same frame', async () => {
+    await render()
+    output.mockClear()
+    getState.mockClear()
+    diagnostics.onItemSizeChanged!(itemSize)
+    diagnostics.onContentSizeChange!(390, 1227)
+    diagnostics.onLayout!({
+      nativeEvent: { layout: { width: 390, height: 673 } },
+    } as LayoutChangeEvent)
+    diagnostics.onItemSizeChanged!({ index: 1, previous: 147, size: 120 })
+    diagnostics.onContentSizeChange!(390, 1200)
+    diagnostics.onLayout!(layoutEvent)
+
+    expect(logs()).toMatchObject([
+      { event: 'itemSize', timestamp: 1000, previousItemHeight: 120, itemHeight: 147 },
+      { event: 'contentSize', timestamp: 1000, contentHeight: 1227 },
+      { event: 'layout', timestamp: 1000, layoutHeight: 673 },
+      { event: 'itemSize', timestamp: 1000, previousItemHeight: 147, itemHeight: 120 },
+      { event: 'contentSize', timestamp: 1000, contentHeight: 1200 },
+      { event: 'layout', timestamp: 1000, layoutHeight: 700 },
+    ])
+    expect(getState).toHaveBeenCalledTimes(6)
   })
 
   it('always records ready, sends, user gestures and running transitions', async () => {
@@ -235,6 +275,8 @@ describe('opt-in message list diagnostics', () => {
       tailRole: null,
       tailStatus: null,
       tailLength: 0,
+      tailBlockCount: 0,
+      tailRunningBlockCount: 0,
       composerInset: 140,
       freeze: true,
     })

@@ -11,7 +11,14 @@ import {
   type ReactElement,
   type RefObject,
 } from 'react'
-import { type GestureResponderEvent, Pressable, StyleSheet, View } from 'react-native'
+import {
+  type GestureResponderEvent,
+  Keyboard,
+  Platform,
+  Pressable,
+  StyleSheet,
+  View,
+} from 'react-native'
 import { ActivityIndicator, Text, useTheme } from 'react-native-paper'
 import type { SharedValue } from 'react-native-reanimated'
 
@@ -20,11 +27,13 @@ import { buildThinkingPreview } from '@/domain/messagePresentation'
 import { pendingMobileUserInput } from '@/domain/requestUserInput'
 import type { Attachment, ChatFileChangesSummary, ChatMessage } from '@/types/runtime'
 import { AssistantMarkdown } from './AssistantMarkdown'
+import { ErrorNotice } from './errors/ErrorNotice'
 import { MessageContextMenu, type MessageMenuAnchor } from './MessageContextMenu'
 import { ProcessingTimeline } from './ProcessingTimeline'
 import type { RequestUserInputHandlers } from './RequestUserInputCard'
 import { useMessageListDiagnostics } from './useMessageListDiagnostics'
 import { useMobileFilePreview } from './files/FilePreviewContext'
+import { ConversationFollowingContext, useConversationFollowing } from './useConversationReading'
 
 interface MessageListProps extends RequestUserInputHandlers {
   dataKey: string
@@ -78,6 +87,7 @@ export function MessageList({
     paginationRef.current = { dataKey, loading: false, userScrolled: false }
   }
   const { freeze, scrollMessageToEnd } = useKeyboardScrollToEnd({ listRef })
+  const reading = useConversationFollowing(listRef, dataKey)
   const diagnostics = useMessageListDiagnostics({
     listRef,
     contentInsetEndAdjustment,
@@ -147,7 +157,7 @@ export function MessageList({
   }, [menuSelection])
 
   return (
-    <>
+    <ConversationFollowingContext.Provider value={reading.following}>
       <KeyboardAwareLegendList<ChatMessage | ConfigurationListItem>
         alignItemsAtEnd={Boolean(configuration)}
         contentInsetEndAdjustment={contentInsetEndAdjustment}
@@ -171,7 +181,7 @@ export function MessageList({
         freeze={freeze}
         initialScrollAtEnd
         ItemSeparatorComponent={MessageSeparator}
-        keyboardDismissMode="interactive"
+        keyboardDismissMode={Platform.OS === 'ios' ? 'interactive' : 'on-drag'}
         keyboardShouldPersistTaps="handled"
         keyboardLiftBehavior="whenAtEnd"
         keyboardOffset={keyboardOffset}
@@ -203,7 +213,10 @@ export function MessageList({
           )
         }
         onStartReached={loadEarlier}
-        onReady={diagnostics.onReady}
+        onReady={() => {
+          reading.onReady()
+          diagnostics.onReady?.()
+        }}
         onScroll={diagnostics.onScroll}
         onItemSizeChanged={diagnostics.onItemSizeChanged}
         onLayout={diagnostics.onLayout}
@@ -222,6 +235,7 @@ export function MessageList({
             )
           ) : (
             <Message
+              key={`${dataKey}:${item.id}`}
               message={item}
               onLongPress={openMessageMenu}
               pendingInputKeys={pendingInputKeys}
@@ -240,7 +254,7 @@ export function MessageList({
         onCopy={copySelectedMessage}
         onDismiss={() => setMenuSelection(null)}
       />
-    </>
+    </ConversationFollowingContext.Provider>
   )
 }
 
@@ -269,6 +283,7 @@ const Message = memo(
             accessibilityHint="长按可复制消息"
             delayLongPress={350}
             onLongPress={event => onLongPress(message, event)}
+            onPress={Keyboard.dismiss}
             style={({ pressed }) => [
               styles.userBubble,
               { backgroundColor: theme.colors.surfaceVariant },
@@ -291,9 +306,8 @@ const Message = memo(
     return (
       <Pressable
         accessible={false}
-        accessibilityHint={message.content.trim() ? '长按可复制消息' : undefined}
-        delayLongPress={350}
-        onLongPress={message.content.trim() ? event => onLongPress(message, event) : undefined}
+        accessibilityHint={message.content.trim() ? '长按正文可选择文字或复制' : undefined}
+        onPress={Keyboard.dismiss}
         style={({ pressed }) => [styles.assistant, pressed && styles.messagePressed]}
         testID={`message-${message.id}`}
       >
@@ -320,9 +334,7 @@ const Message = memo(
           <ThinkingIndicator preview="" />
         ) : null}
         {message.error ? (
-          <Text style={[styles.error, { color: theme.colors.error }]} variant="bodyMedium">
-            {message.error}
-          </Text>
+          <ErrorNotice error={message.error} testID={`message-error-${message.id}`} />
         ) : null}
       </Pressable>
     )
@@ -516,5 +528,4 @@ const styles = StyleSheet.create({
   fileStats: { flexDirection: 'row', gap: 8 },
   additions: { color: '#34a853' },
   deletions: { color: '#ea4335' },
-  error: { marginTop: 8 },
 })

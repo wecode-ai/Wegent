@@ -10,7 +10,7 @@
 //! `app/api/ws/wework_runtime_namespace.py`.
 
 use brz_mysql::{Json, MysqlTransaction as _};
-use chrono::{FixedOffset, TimeZone as _, Utc};
+use chrono::Utc;
 use serde_json::{Map, Value, json};
 
 use super::project_chat_events::ack_error;
@@ -607,17 +607,23 @@ pub(crate) fn optional_text(value: &str) -> Value {
 /// `database_datetime_as_utc(...).isoformat()`: naive columns are stored in the
 /// deployment's UTC+8 timezone.
 pub(crate) fn utc_isoformat(value: chrono::NaiveDateTime) -> String {
-    let offset = FixedOffset::east_opt(8 * 3600).expect("valid offset");
-    let aware = offset
-        .from_local_datetime(&value)
-        .single()
-        .unwrap_or_else(|| offset.from_utc_datetime(&value));
-    let utc = aware.with_timezone(&Utc);
+    let utc = utc_timestamp(value).and_utc();
     if utc.timestamp_subsec_nanos() == 0 {
         utc.format("%Y-%m-%dT%H:%M:%S+00:00").to_string()
     } else {
         utc.format("%Y-%m-%dT%H:%M:%S%.6f+00:00").to_string()
     }
+}
+
+const DATABASE_OFFSET: chrono::Duration = chrono::Duration::hours(8);
+
+/// Encode a UTC instant using the same database-session convention as reads.
+pub(crate) fn database_timestamp(value: chrono::NaiveDateTime) -> chrono::NaiveDateTime {
+    value + DATABASE_OFFSET
+}
+
+pub(crate) fn utc_timestamp(value: chrono::NaiveDateTime) -> chrono::NaiveDateTime {
+    value - DATABASE_OFFSET
 }
 
 /// `datetime.now(UTC).isoformat()`.

@@ -1,3 +1,8 @@
+vi.mock('@/services/errorAlerts', () => ({
+  showErrorAlert: vi.fn(),
+  copyErrorDetails: vi.fn().mockResolvedValue(undefined),
+}))
+import { copyErrorDetails } from '@/services/errorAlerts'
 import React from 'react'
 import { act, create, type ReactTestRenderer } from 'react-test-renderer'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -351,7 +356,10 @@ describe('FileDirectoryBrowser', () => {
     })
     expect(rows()).toEqual(previous)
     await act(() => element('files-error-details-toggle').props.onPress())
-    expect(JSON.stringify(renderer.toJSON())).toContain('Directory refresh unavailable')
+    expect(copyErrorDetails).toHaveBeenLastCalledWith(
+      expect.stringContaining('Directory refresh unavailable')
+    )
+    expect(JSON.stringify(renderer.toJSON())).not.toContain('Directory refresh unavailable')
     expect(element('files-retry')).toBeDefined()
     await act(() => element('files-retry').props.onPress())
     await act(async () => {
@@ -382,7 +390,10 @@ describe('FileDirectoryBrowser', () => {
     })
     expect(rows()).toEqual(previous)
     await act(() => element('files-error-details-toggle').props.onPress())
-    expect(JSON.stringify(renderer.toJSON())).toContain('Search refresh unavailable')
+    expect(copyErrorDetails).toHaveBeenLastCalledWith(
+      expect.stringContaining('Search refresh unavailable')
+    )
+    expect(JSON.stringify(renderer.toJSON())).not.toContain('Search refresh unavailable')
     await changeSearch('different')
     expect(rows()).toEqual([])
     await act(async () => {
@@ -390,7 +401,10 @@ describe('FileDirectoryBrowser', () => {
     })
     expect(rows()).toEqual([])
     await act(() => element('files-error-details-toggle').props.onPress())
-    expect(JSON.stringify(renderer.toJSON())).toContain('New search unavailable')
+    expect(copyErrorDetails).toHaveBeenLastCalledWith(
+      expect.stringContaining('New search unavailable')
+    )
+    expect(JSON.stringify(renderer.toJSON())).not.toContain('New search unavailable')
   })
 
   it.each([

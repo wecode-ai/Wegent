@@ -90,13 +90,15 @@ iPhone 和 Android 的主页、搜索、设备筛选与会话入口见 [Wework �
 
 ## 侧栏的功能入口
 
+任务首次加载或加载失败时，在桌面侧栏的 **任务** 标题下方查看状态；失败后可点击 **重试**。优先级视图中的提示位于列表上方，详见[左侧栏任务管理](./tasks.md#sidebar-task-management)。
+
 ### 直接定位具体功能点
 
 | 功能关键词                                                                          | 具体操作说明                                                        |
 | ----------------------------------------------------------------------------------- | ------------------------------------------------------------------- |
 | 发送快捷键、运行中追问、固定标签页、并发、隐私、外观、上下文、快照、电脑操控、Hooks | [设置页逐项操作](./settings.md#settings-controls)                   |
 | 浏览器完全控制、链接打开目标、历史、下载、缓存与 Cookie、设备模拟                   | [浏览器控件](./browser.md#browser-controls)及同页工具栏说明         |
-| 服务商、自定义接口、视觉代理、连接测试、模型能力和 Catalog                          | [模型页逐项操作](./user-guide/model-settings.md#model-controls)     |
+| 服务连接、模型搜索、单模型测试、手机版单独配置、模型能力和 Catalog                  | [模型页逐项操作](./user-guide/model-settings.md#model-controls)     |
 | 附件、绘图、计划模式、Goal、排队、任务视图、个人定时任务                            | [输入区与任务控制](./tasks.md#task-controls)                        |
 | 对话内操作、选择结果、补充表单或跳转功能                                            | [向 Codex 描述需要完成的操作](./tasks.md#conversation-interactions) |
 | 项目菜单、成员、转派、归档所有聊天、归档恢复、看板和执行环境                        | [项目操作](./projects.md#project-controls)                          |
@@ -176,3 +178,5 @@ iPhone 和 Android 的主页、搜索、设备筛选与会话入口见 [Wework �
 启动时出现恢复中心或本机服务提示时，操作入口与限制见[启动故障与恢复](./getting-started.md#startup-recovery)。
 
 个人分组的 **… → 分组设置** 管理当前账户实际拥有的个人分组；项目标题及项目行右侧不再提供加号。见[项目入口](./projects.md#workspace-resource-controls)。
+
+Issue 动态中的图片、Markdown 和文件链接可打开附件预览，失败后可重试并下载原文件。见[附件与文档预览](./projects.md#issue-resource-preview)。

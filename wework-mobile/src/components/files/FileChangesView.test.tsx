@@ -1,3 +1,8 @@
+vi.mock('@/services/errorAlerts', () => ({
+  showErrorAlert: vi.fn(),
+  copyErrorDetails: vi.fn().mockResolvedValue(undefined),
+}))
+import { copyErrorDetails } from '@/services/errorAlerts'
 import React from 'react'
 import { act, create, type ReactTestRenderer } from 'react-test-renderer'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -217,7 +222,8 @@ describe('FileChangesView', () => {
     expect(element('files-changes-empty')).toBeUndefined()
     expect(element('files-changes-retry')).toBeDefined()
     await act(() => element('files-changes-error-details-toggle')!.props.onPress())
-    expect(JSON.stringify(renderer.toJSON())).toContain('HTTP 403')
+    expect(copyErrorDetails).toHaveBeenLastCalledWith(expect.stringContaining('HTTP 403'))
+    expect(JSON.stringify(renderer.toJSON())).not.toContain('HTTP 403')
   })
 
   it('aborts and hides previous workspace results when the owning device changes', async () => {

@@ -1,4 +1,22 @@
 import type { LocalModelToolProfile } from './localModelSettings'
+import type { ProviderModel } from '../../../electron/src/host/model-configuration-contract'
+
+/** Resolve the same catalog metadata for desktop and phone provider models. */
+export function providerModelCatalogEntry(
+  model: ProviderModel
+): LocalModelCatalogEntry | undefined {
+  return (
+    model.catalog_entry ??
+    ((model.provider_profile_id ?? 'custom') === 'custom'
+      ? createDefaultLocalModelCatalogEntry({
+          id: model.id,
+          displayName: model.display_name || model.model_id,
+          toolProfile: model.tool_profile ?? 'function',
+          contextWindow: model.context_window,
+        })
+      : undefined)
+  )
+}
 
 export type LocalModelCatalogEntry = Record<string, unknown>
 

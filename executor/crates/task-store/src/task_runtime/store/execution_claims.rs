@@ -105,6 +105,18 @@ impl LocalTaskStore {
                 .and_then(Value::as_str)
                 .is_some_and(|bound| bound != runtime_device_id);
         let mut payload = local_execution_runtime_payload(&pending);
+        let previous = issue
+            .metadata
+            .pointer("/runner_binding/environment_id")
+            .and_then(Value::as_str);
+        let recovery_from = super::runner_recovery::expected_binding(&payload);
+        let recovery = conflict
+            && previous.is_some()
+            && recovery_from == previous
+            && !payload["automation_run_id"]
+                .as_str()
+                .is_some_and(|id| !id.is_empty())
+            && super::runner_recovery::available_on(&connection, &issue.id, candidate_id)?;
         let project = get_item_from(&connection, &pending.cloud_project_id, "project")?;
         if project.is_none() {
             drop(statement);
@@ -116,7 +128,8 @@ impl LocalTaskStore {
         let resume_conflict = payload["resumeEnvironmentId"]
             .as_str()
             .is_some_and(|bound| bound != runtime_device_id);
-        let validation = if conflict || resume_conflict {
+        let continuation = payload["resumeEnvironmentId"].as_str() == Some(runtime_device_id);
+        let validation = if (conflict && !recovery && !continuation) || resume_conflict {
             Err(TaskRuntimeError::Invalid(
                 "ISSUE_RUNNER_CONFLICT: Issue is bound to another runner".into(),
             ))
@@ -169,8 +182,8 @@ impl LocalTaskStore {
             "UPDATE loop_items
              SET metadata=json_set(COALESCE(metadata, '{}'), '$.runner_binding',
                  json_object('environment_id', ?1))
-             WHERE id=?2 AND json_extract(metadata, '$.runner_binding') IS NULL",
-            params![runtime_device_id, issue.id],
+             WHERE id=?2 AND (json_extract(metadata, '$.runner_binding') IS NULL OR ?3)",
+            params![runtime_device_id, issue.id, recovery && !continuation],
         )?;
         connection.commit()?;
         drop(guard);

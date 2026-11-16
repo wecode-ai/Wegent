@@ -700,6 +700,10 @@ button.collaboration-project-offline:hover {
   height: 100%;
 }
 
+.collaboration-platform-main:has(> .collaboration-platform-page) {
+  overflow-y: auto;
+}
+
 .collaboration-platform-page {
   width: min(1120px, 100%);
   min-height: 100%;

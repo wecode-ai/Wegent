@@ -7,6 +7,7 @@ export type { GeneratedImageArtifact } from '../../../packages/chat-core/src/gen
 import type {
   ChatFileChangeItem,
   ChatFileChangesBlock,
+  ChatMessage,
   ChatNarrativeBlock,
   ChatProcessingBlock,
   ChatToolBlock,
@@ -90,7 +91,7 @@ export function buildMessageDisplayRows(
     const kind = getGroupKind(completedTools)
     rows.push({
       type: 'tool-group',
-      id: `tool-group-${completedTools[0]?.id}-${completedTools.at(-1)?.id}`,
+      id: `tool-group-${completedTools[0]?.id}`,
       blocks: completedTools,
       kind,
       label: summarizeToolActivity(completedTools),
@@ -165,12 +166,13 @@ export function buildMessageDisplaySegments(
     else segments.push({ kind, blocks: [block] })
   }
 
-  return segments.flatMap((segment, index) => {
+  return segments.flatMap(segment => {
     const rows = buildMessageDisplayRows(segment.blocks, finalContent, {
       groupCompletedTools: segment.kind === 'tool',
     })
     return rows.length
-      ? [{ id: `${segment.kind}-${index}-${rows[0]?.id}`, kind: segment.kind, rows }]
+      ? // Match PC segment ownership: completion changes rows, not the source segment.
+        [{ id: `${segment.kind}:${segment.blocks[0]!.id}`, kind: segment.kind, rows }]
       : []
   })
 }
@@ -262,9 +264,11 @@ export function processingDurationLabel(
 export function shouldCollapseCompletedProcessing(
   blocks: ChatProcessingBlock[] | undefined,
   finalContent: string,
-  rows: MessageDisplayRow[]
+  rows: MessageDisplayRow[],
+  status: ChatMessage['status']
 ): boolean {
   return (
+    (status === 'completed' || status === 'failed') &&
     Boolean(finalContent.trim()) &&
     rows.length > 0 &&
     !blocks?.some(block => block.type === 'plan' && block.content.trim()) &&

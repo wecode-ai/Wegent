@@ -19,6 +19,7 @@ describe('conversation mutations', () => {
   const setCurrentTitle = vi.fn()
   const clearCurrentConversation = vi.fn()
   const setError = vi.fn()
+  const setConnectionError = vi.fn()
   const work: RuntimeWorkListResponse = {
     projects: [],
     chats: [
@@ -50,6 +51,7 @@ describe('conversation mutations', () => {
       setCurrentTitle,
       clearCurrentConversation,
       setError,
+      setConnectionError,
     })
     return null
   }
@@ -107,6 +109,19 @@ describe('conversation mutations', () => {
     reloadWork.mockRejectedValue(new Error('refresh failed'))
     await expect(actions.archiveConversation(address)).resolves.toBeUndefined()
     expect(archive).toHaveBeenCalledOnce()
-    expect(setError).toHaveBeenCalledWith('refresh failed')
+    expect(setError).not.toHaveBeenCalled()
+    expect(setConnectionError).toHaveBeenCalledWith('refresh failed')
   })
+
+  it.each(['rename', 'pin'] as const)(
+    'keeps an accepted %s successful when only its list read fails',
+    async kind => {
+      reloadWork.mockRejectedValue(new Error('read unavailable'))
+      if (kind === 'rename')
+        await expect(actions.renameConversation(address, 'New')).resolves.toBeUndefined()
+      else await expect(actions.setConversationPinned(address, true)).resolves.toBeUndefined()
+      expect(setError).not.toHaveBeenCalled()
+      expect(setConnectionError).toHaveBeenCalledWith('read unavailable')
+    }
+  )
 })

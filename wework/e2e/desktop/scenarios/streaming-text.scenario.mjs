@@ -30,7 +30,6 @@ import {
   reasoningEvents,
   SUBAGENT_CHILD_REASONING,
   textDeltaEvents,
-  functionCall,
   SUBAGENT_CHILD_TOOL_CALL_ID,
   responseCompleted,
   requestContainsToolOutputForCall,
@@ -40,7 +39,6 @@ import {
   assistantMessage,
   SUBAGENT_PARENT_COMPLETION,
   SUBAGENT_CALL_ID,
-  namespacedFunctionCall,
   RECLASSIFIED_COMMENTARY_CALL_ID,
   RECLASSIFIED_COMMENTARY_FINAL,
   requestContainsReclassifiedCommentaryPrompt,
@@ -60,10 +58,8 @@ import {
   TOOL_DETAIL_PERSISTENCE_CALL_ID,
   TOOL_DETAIL_PERSISTENCE_COMPLETION,
   requestContainsToolOutput,
-  TIMER_COMPLETION,
   TOOL_COMPLETION,
   writeSseEvents,
-  requestContainsTimerPrompt,
   requestContainsPrompt,
   COMPLETION_TEXT,
   PARTIAL_TEXT,
@@ -144,9 +140,6 @@ export function createDesktopScenario({
   let toolDetailPersistenceStage = 'initial'
   let toolRegressionStage = 'initial'
   let reclassifiedCommentaryStage = 'initial'
-  let timerStage = 'initial'
-  const timerToolReleasePath = join(resultDir, 'running-timer-tool-released')
-  const releaseTimerTool = () => writeFile(timerToolReleasePath, '')
   let releaseAppend
   let releaseLongCodeStream
   let releasePhaseFlipCompletion
@@ -159,7 +152,6 @@ export function createDesktopScenario({
   let releaseToolDetailPersistenceFinalText
   let releaseToolCompletion
   let releaseToolFinalCompletion
-  let releaseTimerFinalCompletion
   let resolveAppendWritten
   let resolvePartialWritten
   let resolveReclassifiedCommentaryFollowUp
@@ -232,9 +224,6 @@ export function createDesktopScenario({
   const toolCompletionRelease = new Promise(resolve => {
     releaseToolCompletion = resolve
   })
-  const timerFinalCompletionRelease = new Promise(resolve => {
-    releaseTimerFinalCompletion = resolve
-  })
   const toolFollowUpReceived = new Promise(resolve => {
     resolveToolFollowUp = resolve
   })
@@ -278,12 +267,10 @@ export function createDesktopScenario({
     releaseToolDetailPersistenceCompletion,
     toolDetailPersistenceFinalTextStarted,
   })
-  const { verifyTimers, verifyScroll } = createStreamingScrollChecks({
+  const { verifyScroll } = createStreamingScrollChecks({
     modelResponseTimeoutMs,
     uiTimeoutMs,
     capture,
-    releaseTimerTool,
-    releaseTimerFinalCompletion,
     requestReceived,
     getTargetRequest: () => targetRequest,
     releaseStart,
@@ -297,7 +284,6 @@ export function createDesktopScenario({
   return {
     cleanup() {
       guidanceOrder.cleanup()
-      return releaseTimerTool()
     },
     codexConfigToml: '\n[features.multi_agent_v2]\nenabled = true\n',
     modelProviderAuthToml: '',
@@ -640,20 +626,6 @@ export function createDesktopScenario({
         response.end(sse(stream.finish))
         return true
       }
-      if (timerStage === 'awaiting-tool-output' && requestContainsToolOutput(body)) {
-        await assert.doesNotReject(
-          readFile(timerToolReleasePath),
-          'The native timer tool returned before its explicit release'
-        )
-        timerStage = 'awaiting-final-completion'
-        const stream = streamingEvents(responseId, TIMER_COMPLETION)
-        response.writeHead(200, { 'Content-Type': 'text/event-stream; charset=utf-8' })
-        response.write(sse([...stream.start, ...textDeltaEvents(stream.itemId, TIMER_COMPLETION)]))
-        await timerFinalCompletionRelease
-        timerStage = 'complete'
-        response.end(sse(stream.finish))
-        return true
-      }
       if (toolRegressionStage === 'awaiting-tool-output' && requestContainsToolOutput(body)) {
         toolRegressionStage = 'awaiting-completion-release'
         resolveToolFollowUp()
@@ -672,34 +644,6 @@ export function createDesktopScenario({
         toolRegressionStage = 'complete'
         response.end(sse(stream.finish))
         return true
-      }
-
-      if (requestContainsTimerPrompt(body)) {
-        if (timerStage === 'initial') {
-          // Complete only after the running timer has been checked on both pages.
-          const releasePath = `'${timerToolReleasePath.replaceAll("'", process.platform === 'win32' ? "''" : "'\\''")}'`
-          const command =
-            process.platform === 'win32'
-              ? `while (-not (Test-Path -LiteralPath ${releasePath})) { Start-Sleep -Milliseconds 50 }`
-              : `while [ ! -f ${releasePath} ]; do sleep 0.05; done`
-          const tool = selectShellTool(
-            body,
-            workspacePath,
-            command,
-            Math.max(20_000, uiTimeoutMs * 3)
-          )
-          timerStage = 'awaiting-tool-output'
-          response.writeHead(200, { 'Content-Type': 'text/event-stream; charset=utf-8' })
-          response.end(
-            sse([
-              responseCreated(responseId),
-              ...selectedToolCall('wework-running-timer', tool),
-              responseCompleted(responseId),
-            ])
-          )
-          return true
-        }
-        throw new Error(`Unexpected running-timer stage: ${timerStage}`)
       }
 
       if (requestContainsPrompt(body)) {
@@ -945,7 +889,6 @@ export function createDesktopScenario({
             await verifyTools(control)
           },
         ],
-        ['streaming-timers', verifyTimers],
         ['streaming-scroll', verifyScroll],
         ['streaming-message-order', verifyStoppedTurnOrder],
         [

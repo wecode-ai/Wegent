@@ -1,4 +1,7 @@
-import type { ModelProvider, ProviderModel } from './providerModelConfiguration'
+import type {
+  ModelProvider,
+  ProviderModel,
+} from '../../../electron/src/host/model-configuration-contract'
 import { LOCAL_MODEL_PROVIDER_PROFILES, findLocalModelProviderProfile } from './localModelProviders'
 import { createDefaultLocalModelCatalogEntry } from './localModelCatalog'
 
@@ -19,15 +22,24 @@ export function detectProviderPreset(provider: ModelProvider): string {
 }
 
 /** Apply the existing runtime profile defaults when selecting a new model. */
-export function createPresetProviderModel(presetId: string, modelId: string): ProviderModel {
+export function createPresetProviderModel(
+  presetId: string,
+  modelId: string,
+  options: { createId?: () => string; apiFormat?: ModelProvider['api_format'] } = {}
+): ProviderModel {
   const profile = findLocalModelProviderProfile(presetId)
+  const apiFormat = options.apiFormat ?? profile.apiFormat
+  const toolProfile =
+    profile.toolProfile === 'custom' && apiFormat !== 'openai-responses'
+      ? 'function'
+      : profile.toolProfile
   const contextWindow = profile.modelDefaults?.[modelId]?.contextWindow ?? profile.contextWindow
   const modalities = profile.modelDefaults?.[modelId]?.inputModalities
   const model: ProviderModel = {
-    id: crypto.randomUUID(),
+    id: (options.createId ?? (() => crypto.randomUUID()))(),
     model_id: modelId,
     provider_profile_id: profile.id,
-    tool_profile: profile.toolProfile,
+    tool_profile: toolProfile,
     context_window: contextWindow,
     web_search_mode: profile.webSearchMode,
     image_generation_enabled: profile.imageGenerationEnabled,
@@ -37,7 +49,7 @@ export function createPresetProviderModel(presetId: string, modelId: string): Pr
       ...createDefaultLocalModelCatalogEntry({
         id: model.id,
         displayName: modelId,
-        toolProfile: profile.toolProfile,
+        toolProfile,
         contextWindow,
       }),
       input_modalities: [...modalities],

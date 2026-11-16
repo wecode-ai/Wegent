@@ -94,8 +94,8 @@ pub(crate) fn contexts_by_subtask() -> String {
 }
 
 /// `subtask_store.list_assistant_by_task`.
-pub(crate) fn assistant_subtasks(tables: Tables) -> String {
-    assistant_subtasks_by_task_statement(tables.subtasks)
+pub(crate) fn assistant_subtasks(subtask_table: &str) -> String {
+    assistant_subtasks_by_task_statement(subtask_table)
 }
 
 /// `subtask_store.update_fields` flush for the RUNNING status transition
@@ -110,12 +110,12 @@ pub(crate) fn update_subtask_running(tables: Tables) -> String {
 /// (`db.py:136`): a terminal error that carries no collected result writes no
 /// `result` column and leaves the stored value untouched.
 pub(crate) fn update_subtask_terminal(
-    tables: Tables,
+    subtask_table: &str,
     with_result: bool,
     with_error: bool,
     with_executor: bool,
 ) -> String {
-    update_subtask_terminal_statement(tables.subtasks, with_result, with_error, with_executor)
+    update_subtask_terminal_statement(subtask_table, with_result, with_error, with_executor)
 }
 
 /// `_get_team_from_task_ref` / `CollaborationStrategyFactory`: the Task CRD's

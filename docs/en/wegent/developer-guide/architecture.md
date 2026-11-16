@@ -505,6 +505,24 @@ wegent_db/
 - Soft delete support
 - CRD resources uniquely identified by (namespace, name, user_id) tuple
 
+Shared project Issues (`loop_items`) and activity comments (`project_chat_messages`)
+store naive `created_at` and `updated_at` values in the database session timezone;
+the Rust pool currently uses `+08:00`. SQL writes use `CURRENT_TIMESTAMP`.
+Application-generated UTC values use the existing database timestamp encoder
+before storage, and reads serialize aware UTC values. Writing `UTC_TIMESTAMP`
+or an unconverted UTC value directly into these columns subtracts eight hours
+again on read, potentially placing an update before creation and disrupting the
+activity order.
+
+Activity metadata (`activity_at`), status and assignment history, and execution
+runtime fields retain their respective UTC conventions. They must not be shifted
+alongside these database columns. Issue activities sort by their actual instant
+in ascending order and display in the device timezone. Real MySQL regression
+checks cover persistence; the desktop collaboration-group E2E checks member
+timestamps and order while running, after completion, and after reload. Repair
+historical corrupt timestamps only from original execution evidence, never from
+an inferred offset applied in bulk.
+
 ---
 
 ### 7. 🔴 Cache (Redis)
