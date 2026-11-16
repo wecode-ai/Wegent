@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { DialogForm } from "../controls/DialogForm";
+import { useDialogKeyboard } from "../controls/useDialogKeyboard";
 import { TemplateCreateSection } from "../templates/TemplateCreateSection";
 import { TemplateEnvironmentSelection } from "../templates/TemplateEnvironmentSelection";
 
@@ -56,18 +57,36 @@ import { useProjectCreateController } from "./useProjectCreateController";
 import { ProjectCollaboratorPicker } from "./ProjectCollaboratorPicker";
 import type { CollaborationWorkspaceMember } from "../types";
 
-function DefaultModal({ title, children, onClose }: ProjectCreateModalProps) {
+function DefaultModal({
+  title,
+  children,
+  onClose,
+  closeLabel,
+}: ProjectCreateModalProps & { closeLabel: string }) {
+  // Capture the opener before React commits the name input's autoFocus.
+  const [returnFocus] = useState(() => document.activeElement);
+  const ref = useDialogKeyboard<HTMLElement>(onClose, true, undefined, {
+    returnFocus,
+  });
   return (
     <div className="collaboration-dialog-backdrop">
       <section
+        ref={ref}
         className="collaboration-dialog collaboration-project-create-dialog"
         role="dialog"
         aria-modal="true"
+        aria-label={title}
+        tabIndex={-1}
         data-testid="collaboration-project-create-dialog"
       >
         <header className="collaboration-project-create-header">
           <h2>{title}</h2>
-          <button type="button" onClick={onClose} aria-label="Close">
+          <button
+            type="button"
+            onClick={onClose}
+            aria-label={closeLabel}
+            data-testid="collaboration-project-create-close"
+          >
             <X aria-hidden="true" />
           </button>
         </header>
@@ -890,7 +909,10 @@ export function ProjectCreateDialog(props: ProjectCreateDialogProps) {
       ? labels.preparingGenerationModel
       : labels.generatingResponsibilities;
   const renderModal =
-    host?.renderModal ?? ((modalProps) => <DefaultModal {...modalProps} />);
+    host?.renderModal ??
+    ((modalProps) => (
+      <DefaultModal {...modalProps} closeLabel={labels.cancel} />
+    ));
   const cloudLocationDescription = workspaceContext
     ? `${workspaceContext.name} · ${workspaceContext.owner}`
     : labels.cloudLocationDescription;
@@ -1935,6 +1957,7 @@ export function ProjectCreateDialog(props: ProjectCreateDialogProps) {
             <div className="collaboration-project-create-footer-actions">
               <button
                 type="button"
+                data-testid="collaboration-project-create-cancel"
                 disabled={state.saving}
                 onClick={() => {
                   if (!state.saving) onClose();

@@ -124,6 +124,51 @@ async function verifyRecordDraftNavigation(control, home) {
   await control.command('fill', record, { value: previous })
 }
 
+async function verifyProjectDialogKeyboard(control, home, timeoutMs) {
+  const participating = await control.command(
+    'getAttribute',
+    `${home} [data-testid="personal-home-scope-participating"]`,
+    { value: 'aria-pressed' }
+  )
+  const trigger = '[data-testid="collaboration-workspace-project-create"]'
+  const dialog = '[data-testid="collaboration-project-create-dialog"]'
+  await control.command(
+    'click',
+    '[data-testid="collaboration-workspace-home-wework-local-workspace"]'
+  )
+  await control.command('click', trigger)
+  await control.command('click', '[data-testid="collaboration-workspace-project-create-blank"]')
+  await control.command('waitFor', dialog, { visible: true })
+  assert.ok(
+    (await control.command('getAttribute', dialog, { value: 'aria-label' }))?.trim(),
+    'The project modal must expose its visible title as an accessible name'
+  )
+  for (let index = 0; index < 12; index += 1) {
+    await control.command('nativePress', ':focus', { key: 'Tab' })
+    const focused = await control.command('getActiveElementTestId', 'body')
+    assert.ok(focused, 'Every project-dialog tab stop must remain identifiable')
+    await control.command('waitFor', `${dialog} [data-testid="${focused}"]`)
+  }
+  await control.command('nativePress', ':focus', { key: 'Escape' })
+  await until(
+    async () => JSON.parse(await control.command('getElementMetrics', dialog)),
+    metrics => metrics.length === 0,
+    'Escape must dismiss the project dialog',
+    timeoutMs
+  )
+  await until(
+    () => control.command('getActiveElementTestId', 'body'),
+    testId => testId === 'collaboration-workspace-project-create',
+    'Escape must close the project dialog and restore its creation-menu opener',
+    timeoutMs
+  )
+  await control.command('click', '[data-testid="collaboration-primary-home"]')
+  await control.command('waitFor', home, { visible: true })
+  if (participating === 'true') {
+    await control.command('click', `${home} [data-testid="personal-home-scope-participating"]`)
+  }
+}
+
 /** Reuse the checkpoint's real services; no additional model turn. */
 export async function verifyCollaborationHomeUsability(
   control,
@@ -153,6 +198,7 @@ export async function verifyCollaborationHomeUsability(
     )
     await verifyRecordDraftNavigation(control, home)
     await verifyTaskLabels(control, home)
+    await verifyProjectDialogKeyboard(control, home, timeoutMs)
     await resizeHome(control, home, 1100, 800, timeoutMs)
     const [frame] = JSON.parse(
       await control.command(
