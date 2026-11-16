@@ -9,7 +9,6 @@ const measurements = JSON.parse(
 
 const preparationGroups = {
   'local-harness': ['claude-runtime', 'local-harness', 'workbench-mode', 'native-window-startup'],
-  'object-storage': ['collaboration-issue-mcp-comments', 'collaboration-delivery-editing'],
   'dingtalk-protocol-fixture': ['stand-in-identities', 'stand-in-connections', 'stand-in-cli'],
 }
 
@@ -104,7 +103,7 @@ export function balanceWindowsMatrix(matrix, seconds = measurements.seconds) {
   const shards = matrix.include.map(entry => ({
     ...entry,
     segments: [],
-    seconds: 0,
+    seconds: measurements.preparationSeconds['object-storage'],
   }))
   // Never add new measured work to a shard whose remaining cost is unknown.
   const ordinary = shards.filter(entry => !fixed.has(entry.id) && !unmeasured.has(entry.id))

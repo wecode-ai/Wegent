@@ -79,7 +79,10 @@ test('retains measured work when evacuation would increase the known peak', () =
     ],
   }
   assert.deepEqual(
-    balanceWindowsMatrix(matrix, { 'application-menu': 40, 'background-terminals': 83 }),
+    balanceWindowsMatrix(matrix, {
+      'application-menu': 40,
+      'background-terminals': 83,
+    }),
     matrix
   )
 })
@@ -266,18 +269,24 @@ test('balancing never multiplies expensive conditional preparation from the orig
   )
   const preparationWeights = {
     'Install local harness CLIs': evidence.preparationSeconds['local-harness'],
-    'Build real object storage': evidence.preparationSeconds['object-storage'],
     'Prepare DingTalk protocol fixture for the standard account':
       evidence.preparationSeconds['dingtalk-protocol-fixture'],
   }
-  const preparationLoads = matrix => matrix.include.map(shard => measuredLoad(shard))
+  const objectStorage = steps.find(step => step.name === 'Build real object storage')
+  assert.equal(objectStorage?.if, "steps.issue-mcp-minio.outputs.cache-hit != 'true'")
+  const restoreObjectStorage = steps.find(
+    step => step.name === 'Restore real object storage for desktop E2E'
+  )
+  assert.ok(restoreObjectStorage)
+  assert.equal(restoreObjectStorage.if, undefined)
+  const preparationLoads = matrix =>
+    matrix.include.map(shard => measuredLoad(shard) + evidence.preparationSeconds['object-storage'])
   const originalLoads = preparationLoads(original)
   const balancedLoads = preparationLoads(balanced)
   const completeOriginalLoads = preparationLoads(completeMatrix)
   const completeBalancedLoads = preparationLoads(completeBalanced)
   for (const name of [
     'Install local harness CLIs',
-    'Build real object storage',
     'Install Electron for native startup and schema verification',
     'Prepare DingTalk protocol fixture for the standard account',
   ]) {
