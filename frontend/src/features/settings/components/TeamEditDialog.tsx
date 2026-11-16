@@ -238,6 +238,7 @@ export default function TeamEditDialog(props: TeamEditDialogProps) {
   >([])
   const [agentBindingsLoading, setAgentBindingsLoading] = useState(false)
   const [agentBindingsError, setAgentBindingsError] = useState(false)
+  const agentBindingsFetchFailedTitle = t('common:teams.bindings_fetch_failed')
 
   const publishTarget: CapabilityPublishTarget = isEditing
     ? editingPublishTarget
@@ -554,7 +555,6 @@ export default function TeamEditDialog(props: TeamEditDialogProps) {
   }, [selectedSimpleShell])
 
   const modelLoadingFailedTitle = t('common:bot.errors.fetch_models_failed')
-  const agentBindingsFetchFailedTitle = t('common:teams.bindings_fetch_failed')
   const handleModelLoadError = useCallback(() => {
     toast({ variant: 'destructive', title: modelLoadingFailedTitle })
   }, [modelLoadingFailedTitle, toast])

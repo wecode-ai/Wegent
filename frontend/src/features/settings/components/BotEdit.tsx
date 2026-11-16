@@ -141,7 +141,7 @@ interface BotEditProps {
   allowGenerationPrimaryModel?: boolean
 }
 
-const EMPTY_TARGET_GROUP_NAMES: readonly string[] = []
+const EMPTY_TARGET_GROUP_NAMES: string[] = []
 
 const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
   {
