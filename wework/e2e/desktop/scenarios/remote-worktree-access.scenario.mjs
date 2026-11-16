@@ -137,7 +137,12 @@ export function createDesktopScenario(options) {
         'runtime.worktrees.prepare',
         'runtime.worktrees.delete',
       ]) {
-        const result = await rpc(method, { sourcePath })
+        const result = await rpc(method, {
+          sourcePath,
+          ...(method === 'device.execute_command'
+            ? { command_key: 'git_status_porcelain', cwd: sourcePath }
+            : {}),
+        })
         assert.equal(result.ok, false)
         assert.equal(result.error.code, 'remote_control_disabled')
       }

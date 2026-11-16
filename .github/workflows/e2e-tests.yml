@@ -927,42 +927,6 @@ jobs:
           E2E_PYTHON_LOG: ${{ github.workspace }}/backend/backend.log
         run: uv run --no-sync python tests/e2e/socketio_ack_readiness.py
 
-      - name: Start parallel Backend index worker
-        working-directory: ./backend
-        env:
-          DATABASE_URL: mysql+pymysql://root:test123@mysql:3306/wegent_test
-          REDIS_URL: redis://redis:6379/0
-          SECRET_KEY: test-secret-key-for-ci-testing
-          ENVIRONMENT: development
-          DB_AUTO_MIGRATE: "false"
-          INIT_DATA_ENABLED: "false"
-          EMBEDDED_CELERY_ENABLED: "false"
-          RAG_RUNTIME_MODE: remote
-          KNOWLEDGE_RUNTIME_URL: http://localhost:8200
-          KNOWLEDGE_CONVERSION_ENABLED: "true"
-          KNOWLEDGE_CONVERSION_FILE_TYPES: "pdf"
-          CHUNK_STORAGE_ENABLED: "true"
-          ATTACHMENT_S3_ENDPOINT: minio:9000
-          ATTACHMENT_S3_ACCESS_KEY: wegent-e2e
-          ATTACHMENT_S3_SECRET_KEY: wegent-e2e-secret
-          ATTACHMENT_S3_USE_SSL: "false"
-          PYTHONPATH: ${{ matrix.shardIndex == 4 && format('{0}/backend/tests/e2e/event_probe:..:.', github.workspace) || '..:.' }}
-          WEGENT_E2E_EVENT_PROBE_DIR: ${{ matrix.shardIndex == 4 && format('{0}/.ci-artifacts/knowledge-event-probe', github.workspace) || '' }}
-        run: |
-          uv run --no-sync celery -A app.core.celery_app worker \
-            --pool=threads --concurrency=4 --queues=wegent_online --beat \
-            --hostname=e2e-index@%h --loglevel=INFO > index-worker.log 2>&1 &
-          echo $! > index-worker.pid
-          for i in {1..60}; do
-            if grep -q ' ready.' index-worker.log; then
-              exit 0
-            fi
-            kill -0 "$(cat index-worker.pid)" || { cat index-worker.log; exit 1; }
-            sleep 1
-          done
-          cat index-worker.log
-          exit 1
-
       - name: Start Knowledge Runtime
         env:
           PYTHONPATH: ${{ matrix.shardIndex == 4 && format('{0}/backend/tests/e2e/event_probe:{0}', github.workspace) || '' }}
@@ -1162,6 +1126,44 @@ jobs:
           mkdir -p "$E2E_REPORT_DIR"
           uv run --no-sync python tests/e2e/terminal_handoff_gateway.py \
             2>&1 | tee "$E2E_REPORT_DIR/terminal-handoff.log"
+
+      # Terminal handoff fault tests revoke default Redis commands. Start
+      # consumers after those tests restore ACLs so their broker stays healthy.
+      - name: Start parallel Backend index worker
+        working-directory: ./backend
+        env:
+          DATABASE_URL: mysql+pymysql://root:test123@mysql:3306/wegent_test
+          REDIS_URL: redis://redis:6379/0
+          SECRET_KEY: test-secret-key-for-ci-testing
+          ENVIRONMENT: development
+          DB_AUTO_MIGRATE: "false"
+          INIT_DATA_ENABLED: "false"
+          EMBEDDED_CELERY_ENABLED: "false"
+          RAG_RUNTIME_MODE: remote
+          KNOWLEDGE_RUNTIME_URL: http://localhost:8200
+          KNOWLEDGE_CONVERSION_ENABLED: "true"
+          KNOWLEDGE_CONVERSION_FILE_TYPES: "pdf"
+          CHUNK_STORAGE_ENABLED: "true"
+          ATTACHMENT_S3_ENDPOINT: minio:9000
+          ATTACHMENT_S3_ACCESS_KEY: wegent-e2e
+          ATTACHMENT_S3_SECRET_KEY: wegent-e2e-secret
+          ATTACHMENT_S3_USE_SSL: "false"
+          PYTHONPATH: ${{ matrix.shardIndex == 4 && format('{0}/backend/tests/e2e/event_probe:..:.', github.workspace) || '..:.' }}
+          WEGENT_E2E_EVENT_PROBE_DIR: ${{ matrix.shardIndex == 4 && format('{0}/.ci-artifacts/knowledge-event-probe', github.workspace) || '' }}
+        run: |
+          uv run --no-sync celery -A app.core.celery_app worker \
+            --pool=threads --concurrency=4 --queues=wegent_online --beat \
+            --hostname=e2e-index@%h --loglevel=INFO > index-worker.log 2>&1 &
+          echo $! > index-worker.pid
+          for i in {1..60}; do
+            if grep -q ' ready.' index-worker.log; then
+              exit 0
+            fi
+            kill -0 "$(cat index-worker.pid)" || { cat index-worker.log; exit 1; }
+            sleep 1
+          done
+          cat index-worker.log
+          exit 1
 
       - name: Upload subscription callback gateway E2E report
         if: always() && matrix.shardIndex == 1
