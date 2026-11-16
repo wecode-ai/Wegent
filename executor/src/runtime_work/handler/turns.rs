@@ -458,6 +458,11 @@ impl RuntimeWorkRpcHandler {
         admission: TurnAdmission,
     ) -> Result<bool, AppIpcError> {
         turn.bind_task_kind(&self.store);
+        // Binding restores immutable origin; recompute the host's per-run manual fact
+        // before the admission snapshot drops transient confirmation metadata.
+        if turn.request.extra.get("standInManualConfirmation") == Some(&Value::Bool(true)) {
+            self.refresh_stand_in_confirmation(&turn.local_task_id, &mut turn.request)?;
+        }
         self.apply_project_workspace_roots(&mut turn.request);
         let local_task_id = turn.local_task_id.clone();
         let _operation = self.turn_queue_operation.lock().await;
@@ -2329,6 +2334,7 @@ impl RuntimeWorkRpcHandler {
             "completedAt": timestamp,
         });
         self.store.update_task(local_task_id, |link| {
+            record_runtime_start_failure(link, &AppIpcError::new("runtime_start_failed", error));
             if link.thread_id.is_some() {
                 return;
             }

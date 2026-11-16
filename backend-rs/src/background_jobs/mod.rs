@@ -1,6 +1,8 @@
 //! Rust background jobs, assembled after deployment-specific state injection.
 
 mod cleanup;
+mod configuration;
+pub(crate) use configuration::client_from_env;
 pub(crate) use wegent_job_runtime::client;
 pub use wegent_job_runtime::config;
 mod device;

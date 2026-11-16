@@ -1,8 +1,9 @@
+import { ErrorNotice } from './errors/ErrorNotice'
 import Ionicons from '@expo/vector-icons/Ionicons'
 import type { GlassColorScheme } from 'expo-glass-effect'
 import { LinearGradient } from 'expo-linear-gradient'
 import { useEffect, useState } from 'react'
-import { Image, Pressable, StyleSheet, View } from 'react-native'
+import { Image, Platform, Pressable, StyleSheet, View } from 'react-native'
 import { KeyboardAwareScrollView } from 'react-native-keyboard-controller'
 import { ActivityIndicator, Text, TextInput, useTheme } from 'react-native-paper'
 import { useSafeAreaInsets } from 'react-native-safe-area-context'
@@ -98,7 +99,7 @@ export function AuthorizationScreen(props: AuthorizationScreenProps) {
           },
         ]}
         keyboardShouldPersistTaps="handled"
-        keyboardDismissMode="interactive"
+        keyboardDismissMode={Platform.OS === 'ios' ? 'interactive' : 'on-drag'}
         showsVerticalScrollIndicator={false}
         testID="authorization-form-scroll"
       >
@@ -214,23 +215,7 @@ export function AuthorizationScreen(props: AuthorizationScreenProps) {
             )}
 
             {props.error ? (
-              <View
-                style={[
-                  styles.errorBox,
-                  {
-                    backgroundColor: theme.dark ? 'rgba(255,69,58,0.14)' : 'rgba(215,45,38,0.08)',
-                  },
-                ]}
-                testID="authorization-error"
-              >
-                <Ionicons color={theme.colors.error} name="alert-circle-outline" size={18} />
-                <Text
-                  style={[styles.errorText, { color: theme.colors.error }]}
-                  variant="bodyMedium"
-                >
-                  {props.error}
-                </Text>
-              </View>
+              <ErrorNotice error={props.error} title="未能完成登录" testID="authorization-error" />
             ) : null}
 
             <LiquidGlassButton
@@ -354,15 +339,6 @@ const styles = StyleSheet.create({
   serverCopy: { flex: 1, gap: 1 },
   configuration: { gap: 7 },
   backendInput: { width: '100%', backgroundColor: 'transparent' },
-  errorBox: {
-    flexDirection: 'row',
-    alignItems: 'flex-start',
-    gap: 9,
-    borderRadius: 14,
-    paddingHorizontal: 12,
-    paddingVertical: 10,
-  },
-  errorText: { flex: 1 },
   primaryButton: { width: '100%', height: 52, borderRadius: 26 },
   primaryButtonContent: {
     width: '100%',

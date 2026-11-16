@@ -10,6 +10,7 @@ import type {
   CollaborationGroupMember,
   CollaborationExecutionEnvironment,
   CollaborationWorkspaceMember,
+  CollaborationUser,
   CollaborationOwnedAgent,
   CollaborationProject,
 } from "../types";
@@ -115,9 +116,9 @@ export interface ProjectCreateResourceSetup {
   members: CollaborationWorkspaceMember[];
   agents: CollaborationOwnedAgent[];
   defaultAgentResourceIds?: string[];
+  searchUsers?(query: string): Promise<CollaborationUser[]>;
   groups: CollaborationGroup[];
   executionEnvironments?: CollaborationExecutionEnvironment[];
-  requiresTemplateEnvironmentSelection?: boolean;
   executionEnvironmentLoading?: boolean;
   executionEnvironmentError?: string;
   retryExecutionEnvironments?(): void;
@@ -207,6 +208,10 @@ export interface ProjectCreateLabels {
   collaborators: string;
   currentUser: string;
   addCollaborator: string;
+  searchCollaborators: string;
+  searchingPeople: string;
+  availablePeople: string;
+  peopleSearchFailed: string;
   importGroupDescription: string;
   availableAgents: string;
   availableGroups: string;
@@ -266,7 +271,6 @@ export interface ProjectCreateLabels {
 }
 
 export interface ProjectCreateDialogProps {
-  importActions?: ReactNode;
   initialTemplate?: import("../templates/types").CollaborationTemplate | null;
   targets: ProjectCreateTarget[];
   defaultLocation: ProjectCreateLocation;

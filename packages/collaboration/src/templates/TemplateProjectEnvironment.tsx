@@ -31,7 +31,10 @@ export function TemplateProjectEnvironment({
     let active = true
     setLoading(true)
     setError(false)
-    void host.listTemplateAgentEnvironments!(project.id)
+    void host.listTemplateAgentEnvironments!(
+      project.id,
+      project.project_store === 'local' ? 'local' : 'cloud'
+    )
       .then(items => {
         if (!active) return
         const available = items.filter(item => item.can_use !== false && item.status === 'online')

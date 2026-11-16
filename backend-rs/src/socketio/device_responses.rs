@@ -37,6 +37,10 @@ use crate::socketio::runtime_projection::{self, RuntimeIdentity};
 use crate::socketio::session::SessionSnapshot;
 use crate::state::AppState;
 
+#[cfg(test)]
+#[path = "im_callback_redis_tests.rs"]
+mod im_callback_redis_tests;
+
 /// `/chat` result-event room for a wework task (`get_wework_task_room`).
 const WEWORK_TASK_ROOM_PREFIX: &str = "wework:task:";
 /// `MAX_RUNTIME_SUBTASK_ID`.
@@ -718,6 +722,26 @@ pub(super) async fn forward_local_task_callbacks(
     source: Option<&Value>,
     event: &crate::internal_callback::event::ExecutionEvent,
 ) {
+    let card = crate::internal_callback::dingtalk_card::DingTalkCardTransport::from_process(state);
+    forward_local_task_callbacks_with_transport(
+        state,
+        device_id,
+        local_task_id,
+        source,
+        event,
+        &card,
+    )
+    .await;
+}
+
+async fn forward_local_task_callbacks_with_transport(
+    state: &AppState,
+    device_id: &str,
+    local_task_id: &str,
+    source: Option<&Value>,
+    event: &crate::internal_callback::event::ExecutionEvent,
+    card: &impl crate::internal_callback::dingtalk_card::CardStream,
+) {
     if source
         .and_then(|source| source.get("source"))
         .and_then(Value::as_str)
@@ -729,7 +753,11 @@ pub(super) async fn forward_local_task_callbacks(
         return;
     };
     let source = source.cloned().unwrap_or(Value::Null);
-    let task_key = channel::runtime_local_task_callback_key(device_id, local_task_id);
+    let task_key = channel::runtime_local_task_callback_key(
+        device_id,
+        local_task_id,
+        source.get("callback_id").and_then(Value::as_str),
+    );
     let channel_name = source
         .get("channel_type")
         .and_then(Value::as_str)
@@ -740,11 +768,10 @@ pub(super) async fn forward_local_task_callbacks(
         tracing::info!(task_key, "skipping stale IM runtime event");
         return;
     }
-    let card = crate::internal_callback::dingtalk_card::DingTalkCardTransport::from_process(state);
     let delivery = channel::RuntimeChannelDelivery {
         state,
         redis,
-        card: &card,
+        card,
         source_message_id: source
             .get("message_id")
             .filter(|value| crate::json_compat::python_truthy(value))

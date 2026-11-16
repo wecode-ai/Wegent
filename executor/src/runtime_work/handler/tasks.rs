@@ -7,6 +7,9 @@ use super::context_compaction::context_compaction_outcome;
 use super::context_compaction::wait_for_context_compaction;
 use super::*;
 
+#[path = "startup_recovery.rs"]
+mod startup_recovery;
+
 impl RuntimeWorkRpcHandler {
     pub(super) async fn create_collaboration_dispatch(
         &self,
@@ -506,8 +509,16 @@ impl RuntimeWorkRpcHandler {
         let local_task_id = id_field(&payload, "taskId")
             .or_else(|| id_field(&payload, "task_id"))
             .unwrap_or_else(|| format!("{runtime}-local-{}", now_ms()));
-        let mut payload_workspace_path = workspace_path(&payload);
+        let failed_start = self
+            .local_task_link(&local_task_id)
+            .filter(|link| link.status == "failed" && runtime_session_id_from_link(link).is_none());
+        let mut payload_workspace_path = workspace_path(&payload).or_else(|| {
+            failed_start
+                .as_ref()
+                .map(|link| link.workspace_path.clone())
+        });
         let title = string_field(&payload, "title")
+            .or_else(|| failed_start.as_ref().map(|link| link.title.clone()))
             .or_else(|| string_field(&payload, "message"))
             .unwrap_or_else(|| local_task_id.clone());
         let mut request = execution_request(&payload)
@@ -832,6 +843,7 @@ impl RuntimeWorkRpcHandler {
         if let Some(presentation) = user_message_presentation(&payload) {
             append_runtime_handle_user_message_presentation(&mut link.runtime_handle, presentation);
         }
+        self.preserve_failed_start_context(&mut link);
         if is_codex_runtime(&runtime) {
             if let Some(supervisor) = payload
                 .get("initialSupervisor")
@@ -960,7 +972,7 @@ impl RuntimeWorkRpcHandler {
 
     pub(super) fn retain_failed_runtime_task(&self, local_task_id: &str, error: &AppIpcError) {
         self.store.update_task(local_task_id, |link| {
-            apply_runtime_task_start_failure(link, error);
+            apply_local_task_failure(link, error);
         });
         self.record_stand_in_completion_outbox(local_task_id, "failed");
     }
@@ -1407,6 +1419,12 @@ impl RuntimeWorkRpcHandler {
                     .and_then(runtime_session_id_from_link)
             });
         if thread_id.is_none() && !retrying_preparation && !awaiting_identity_start {
+            if let Some(result) = self
+                .recover_failed_session_start(existing_link.as_ref(), payload.clone(), activity)
+                .await?
+            {
+                return Ok(result);
+            }
             return Ok(json!({
                 "success": false,
                 "error": "runtime task session is not ready",
@@ -2830,27 +2848,6 @@ fn project_plugin_ids(request: &ExecutionRequest) -> Vec<String> {
         .collect()
 }
 
-fn apply_runtime_task_start_failure(link: &mut RuntimeTaskLink, error: &AppIpcError) {
-    link.running = false;
-    link.status = "failed".to_owned();
-    link.thread_status = "failed".to_owned();
-    link.turn_status = Some("failed".to_owned());
-    link.updated_at = now_ms();
-    link.completed_at = Some(link.updated_at);
-    normalize_settled_task_state(link);
-    if !link.runtime_handle.is_object() {
-        link.runtime_handle = json!({});
-    }
-    if let Some(runtime_handle) = link.runtime_handle.as_object_mut() {
-        runtime_handle.remove("queuePosition");
-        runtime_handle.insert("lastError".to_owned(), Value::String(error.message.clone()));
-        runtime_handle.insert(
-            "lastErrorCode".to_owned(),
-            Value::String(error.code.clone()),
-        );
-    }
-}
-
 fn normalize_friendly_title(value: &str) -> Option<String> {
     let title = value
         .lines()
@@ -3088,7 +3085,7 @@ mod tests {
     use crate::{local::app_ipc::AppIpcError, runtime_work::response::RuntimeTaskLink};
 
     use super::{
-        apply_runtime_task_start_failure, context_compaction_outcome, normalize_friendly_title,
+        apply_local_task_failure, context_compaction_outcome, normalize_friendly_title,
         prune_reverted_turn_handle,
     };
 
@@ -3324,7 +3321,7 @@ mod tests {
             "Source repository identity changed after planning",
         );
 
-        apply_runtime_task_start_failure(&mut link, &error);
+        apply_local_task_failure(&mut link, &error);
 
         assert!(!link.running);
         assert_eq!(link.status, "failed");

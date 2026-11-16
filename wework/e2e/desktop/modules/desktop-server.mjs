@@ -488,6 +488,7 @@ const HELD_RESPONSE_SCENARIOS = new Set([
   'worktree_restart_hold',
   'worktree_status_hold',
   'attachment_submit_cleanup',
+  'cloud_device_restart_busy',
 ])
 
 class DesktopE2EServer {
@@ -2805,7 +2806,11 @@ class DesktopE2EServer {
         )
         this.resolveToolBlockNodeOutputObserved()
         await this.toolBlockNodeRelease
-        const search = selectToolSearch(body, 'github issue details')
+        const search = selectToolSearch(
+          body,
+          'github issue details',
+          'mcp__github__issues__get_issue_details'
+        )
         this.writeSse(response, [
           responseCreated(responseId),
           ...toolSearchResponseEvents(GENERIC_MCP_TOOL_SEARCH_ID, search),

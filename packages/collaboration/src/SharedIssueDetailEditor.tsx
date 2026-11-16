@@ -5,6 +5,12 @@ import { IssueDeliveryEditor } from "./issue-detail/IssueDeliveryEditor";
 import { collaborationIssueCardPriorityClasses as priorityBadgeClasses } from "./issue-card/priorityBadgeClasses";
 import { useIssueFieldSaves } from "./issue-detail/useIssueFieldSaves";
 import { persistIssueDetailFields } from "./issue-detail/persistIssueDetailFields";
+import {
+  createIssueCommentActions,
+  defaultIssueCommentBoard,
+  type CommentIssueActions,
+  type IssueCommentBoardContext,
+} from "./issue-detail/issueCommentActions";
 import * as Popover from "@radix-ui/react-popover";
 import { runnerEnvironmentError } from "./execution-environment/runnerEnvironmentError";
 import { collectProjectTags } from "./project-board/projectTags";
@@ -13,6 +19,7 @@ import { IssueHierarchySummary } from "./issue-detail/IssueHierarchySummary";
 import {
   useCallback,
   useEffect,
+  useId,
   useLayoutEffect,
   useMemo,
   useRef,
@@ -91,7 +98,7 @@ import type {
 } from "./types";
 import { markdownAttachmentRows } from "./issue-detail/attachmentMarkdown";
 import { stripLocalFileUrlsFromClipboardText } from "./issue-detail/clipboardText";
-import { TagEditor, type TagEditorHandle } from "./issue-detail/TagEditor";
+import { TagEditor } from "./issue-detail/TagEditor";
 import { IssuePropertiesPopover } from "./issue-detail/IssuePropertiesPopover";
 import { IssuePropertyRow as RailProp } from "./issue-detail/IssuePropertyRow";
 import { IssueAssignmentHistoryDisclosure } from "./issue-detail/IssueAssignmentHistoryDisclosure";
@@ -135,6 +142,7 @@ export interface SharedEditorTeam {
 }
 
 export interface SharedIssueDetailExtensionContext {
+  commentActions?: CommentIssueActions;
   commentAssignment?: import("./issue-detail/useCommentAssignment").CommentAssignment;
   item: SharedEditorIssue;
   project: SharedEditorProject;
@@ -167,6 +175,7 @@ export interface SharedIssueDetailExtensions {
   renderDescriptionEditor?(context: {
     value: string;
     editable: boolean;
+    placeholder: string;
     onChange(value: string): void;
     onPasteFiles(files: File[]): Promise<string | null>;
     readAttachment(attachmentId: string): Promise<Blob>;
@@ -630,6 +639,7 @@ export interface TodoEditorEditProps {
 }
 
 export type TodoEditorProps = {
+  commentBoard?: IssueCommentBoardContext;
   port: TodoEditorPort;
   extensions?: SharedIssueDetailExtensions;
   translate?: (
@@ -1052,8 +1062,9 @@ export function TodoEditor(props: TodoEditorProps) {
   }, [item?.id, canPinPersonalTaskAction]);
   const titleRef = useRef<HTMLTextAreaElement>(null);
   const descriptionCollapseRef = useRef<HTMLDivElement>(null);
-  const propertyTagsRef = useRef<TagEditorHandle>(null);
   const propertiesTriggerRef = useRef<HTMLButtonElement>(null);
+  const [propertiesExpanded, setPropertiesExpanded] = useState(false);
+  const propertiesId = useId();
   const pendingContentFocusRef = useRef<"title" | "description" | null>(null);
 
   const beginContentEditing = useCallback(
@@ -1640,6 +1651,21 @@ export function TodoEditor(props: TodoEditorProps) {
     (project !== undefined &&
       (item === null || item.can_view_detail !== false) &&
       canAssignCollaborationIssue(project));
+  const commentActions =
+    item && project && editProps && (editable || canAssign)
+      ? createIssueCommentActions({
+          issue: item,
+          board:
+            props.commentBoard ??
+            defaultIssueCommentBoard(project, allItems, statusOptions, t),
+          statuses: statusOptions,
+          editable,
+          canAssign,
+          issues: editorPort.issues,
+          onUpdated: editProps.onUpdated,
+          translate: t,
+        })
+      : undefined;
   const canManageIssueSecurity =
     project !== undefined && canManageCollaborationIssueSecurity(project);
   const assigneeChanged =
@@ -2231,6 +2257,7 @@ export function TodoEditor(props: TodoEditorProps) {
     editProps?.project &&
     editProps.project.task_provider !== "dingtalk_aitable"
       ? extensions?.renderActivity?.({
+          commentActions,
           item,
           project: editProps.project,
           editable,
@@ -2525,7 +2552,7 @@ export function TodoEditor(props: TodoEditorProps) {
   );
   const tagControls = (
     <TagEditor
-      ref={propertyTagsRef}
+      key={item ? `issue:${item.id}` : "create"}
       testIdPrefix={
         isCreate ? "cloud-todo-create-tag" : "cloud-todo-detail-tag"
       }
@@ -2590,8 +2617,7 @@ export function TodoEditor(props: TodoEditorProps) {
       )}
     </>
   );
-  // Two-column layout keeps secondary metadata in the expandable rail.
-  // Assignee, priority, and due date stay editable in the primary header.
+  // Participants and tags remain visible; secondary metadata can be expanded inline.
   const resourceParticipants = Boolean(item?.resource_participants?.length) && (
     <div
       className="my-2 flex flex-wrap gap-2"
@@ -2715,6 +2741,26 @@ export function TodoEditor(props: TodoEditorProps) {
         data-testid="cloud-todo-current-assignment"
       >
         <div className="task-detail-workspace-properties-grid">
+          {commentActions ? (
+            <RailProp
+              label={t("todo.comment_board_position")}
+              clickable={false}
+              wrapValue
+            >
+              <span
+                data-testid="issue-current-board-position"
+                className="flex min-w-0 flex-col gap-1"
+              >
+                <span className="text-xs text-text-muted">
+                  {commentActions.boardName}
+                </span>
+                <span>
+                  {commentActions.currentColumns.join(" · ") ||
+                    t("todo.comment_board_unmatched")}
+                </span>
+              </span>
+            </RailProp>
+          ) : null}
           <RailProp
             label={t("todo.issue_priority", "优先级")}
             control={prioritySelect}
@@ -2726,16 +2772,6 @@ export function TodoEditor(props: TodoEditorProps) {
               <ChevronDown className="h-3 w-3" />
             </span>
           </RailProp>
-          <RailProp
-            label={t("todo.project_tags", "标签")}
-            clickable={false}
-            wrapValue
-          >
-            <span className="task-detail-workspace-tags w-full">
-              {tagControls}
-            </span>
-          </RailProp>
-          {railProps}
           {showAssignee ? (
             item.assignment_history?.length ? (
               <IssueAssignmentHistoryDisclosure
@@ -2888,28 +2924,25 @@ export function TodoEditor(props: TodoEditorProps) {
           )}
           <span className="flex-1" />
           {props.headerActions}
-          {workspacePanel && item ? (
+          {workspacePanel && item && editable && props.onDelete ? (
             <IssuePropertiesPopover
               triggerRef={propertiesTriggerRef}
-              label={t("todo.more_properties", "更多信息")}
-              onClose={() => propertyTagsRef.current?.commitDraft()}
+              label={t("common.actions", "操作")}
+              testIdPrefix="cloud-todo-issue-actions"
             >
-              {workspaceProperties}
-              {editable && props.onDelete ? (
-                <Popover.Close asChild>
-                  <button
-                    className="task-detail-more-menu-danger"
-                    data-testid="cloud-todo-detail-delete"
-                    onClick={() => {
-                      propertiesTriggerRef.current?.focus();
-                      props.onDelete?.();
-                    }}
-                    type="button"
-                  >
-                    {props.deleteLabel ?? t("todo.delete_issue", "删除任务")}
-                  </button>
-                </Popover.Close>
-              ) : null}
+              <Popover.Close asChild>
+                <button
+                  className="task-detail-more-menu-danger"
+                  data-testid="cloud-todo-detail-delete"
+                  onClick={() => {
+                    propertiesTriggerRef.current?.focus();
+                    props.onDelete?.();
+                  }}
+                  type="button"
+                >
+                  {props.deleteLabel ?? t("todo.delete_issue", "删除任务")}
+                </button>
+              </Popover.Close>
             </IssuePropertiesPopover>
           ) : null}
           {twoColumn && !isCreate && !workspacePanel ? (
@@ -3161,6 +3194,55 @@ export function TodoEditor(props: TodoEditorProps) {
                         </dd>
                       </div>
                     </dl>
+                    <div
+                      className="task-detail-primary-metadata"
+                      data-testid="issue-primary-metadata"
+                    >
+                      <RailProp
+                        label={t("todo.project_tags", "标签")}
+                        clickable={false}
+                        wrapValue
+                      >
+                        <span className="task-detail-workspace-tags w-full">
+                          {tagControls}
+                        </span>
+                      </RailProp>
+                      {railProps}
+                    </div>
+                    <div className="task-detail-expanded-properties">
+                      <button
+                        type="button"
+                        className="task-detail-workspace-properties-toggle"
+                        data-testid="cloud-todo-more-properties"
+                        aria-expanded={propertiesExpanded}
+                        aria-controls={propertiesId}
+                        onClick={() =>
+                          setPropertiesExpanded((current) => !current)
+                        }
+                      >
+                        {t(
+                          propertiesExpanded
+                            ? "todo.collapse_properties"
+                            : "todo.expand_properties",
+                        )}
+                        <ChevronDown
+                          className={cn(
+                            "h-3.5 w-3.5",
+                            propertiesExpanded && "rotate-180",
+                          )}
+                          aria-hidden="true"
+                        />
+                      </button>
+                      <div
+                        id={propertiesId}
+                        role="region"
+                        aria-label={t("todo.more_properties", "更多信息")}
+                        data-testid="cloud-todo-more-properties-popover"
+                        hidden={!propertiesExpanded}
+                      >
+                        {workspaceProperties}
+                      </div>
+                    </div>
                     <div className="task-detail-property-secondary">
                       {item &&
                       project?.project_store === "backend" &&
@@ -3328,8 +3410,7 @@ export function TodoEditor(props: TodoEditorProps) {
                 </div>
               ) : null}
 
-              {!isAITableEdit &&
-              (!readFirst || editable || Boolean(description.trim())) ? (
+              {!isAITableEdit ? (
                 <div
                   onClick={(event) => {
                     if (
@@ -3366,6 +3447,11 @@ export function TodoEditor(props: TodoEditorProps) {
                     {extensions?.renderDescriptionEditor?.({
                       value: description,
                       editable: editable && (!readFirst || editingContent),
+                      placeholder: t(
+                        editable
+                          ? "todo.issue_description_placeholder"
+                          : "todo.no_issue_description",
+                      ),
                       onChange: setDescription,
                       onPasteFiles: pasteAttachments,
                       readAttachment: (attachmentId) =>
@@ -3377,6 +3463,11 @@ export function TodoEditor(props: TodoEditorProps) {
                         data-testid="cloud-todo-detail-description"
                         aria-label={t("todo.issue_description", "任务描述")}
                         value={description}
+                        placeholder={t(
+                          editable
+                            ? "todo.issue_description_placeholder"
+                            : "todo.no_issue_description",
+                        )}
                         onChange={(event) => setDescription(event.target.value)}
                         readOnly={!editable || (readFirst && !editingContent)}
                         onPaste={(event) => {

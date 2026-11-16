@@ -17,6 +17,7 @@ import { useTaskSession } from '@/features/tasks/session/TaskSession'
 import { useSocket } from '@/contexts/SocketContext'
 import { useDevices } from '@/contexts/DeviceContext'
 import { DeviceInfo, deviceApis } from '@/apis/devices'
+import { ApiError } from '@/apis/client'
 import { useTranslation } from '@/hooks/useTranslation'
 import { isVersionAtLeast } from '@/lib/utils'
 
@@ -32,6 +33,7 @@ export interface DeviceHandlers {
   handleDeleteDevice: (device: DeviceInfo) => Promise<void>
   handleCancelTask: (taskId: number) => Promise<void>
   handleUpgradeDevice: (device: DeviceInfo) => Promise<void>
+  handleRestartDevice: (device: DeviceInfo) => Promise<void>
   handleEditAlias: (device: DeviceInfo, newAlias: string) => Promise<void>
 }
 
@@ -168,6 +170,22 @@ export function useDeviceHandlers(): DeviceHandlers {
     [t]
   )
 
+  const handleRestartDevice = useCallback(
+    async (device: DeviceInfo) => {
+      try {
+        await deviceApis.restartCloudDevice(device.device_id)
+      } catch (error) {
+        if (error instanceof ApiError && error.status === 501) {
+          throw new Error(t('restart.unavailable'))
+        }
+        throw error
+      }
+      toast.success(t('restart.requested'))
+      void refreshDevices()
+    },
+    [refreshDevices, t]
+  )
+
   /**
    * Handle editing a device's alias (display name).
    * Shows success/error toast notification.
@@ -195,6 +213,7 @@ export function useDeviceHandlers(): DeviceHandlers {
     handleDeleteDevice,
     handleCancelTask,
     handleUpgradeDevice,
+    handleRestartDevice,
     handleEditAlias,
   }
 }

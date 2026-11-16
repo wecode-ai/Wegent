@@ -10,12 +10,14 @@ const FALLBACK_FLUSH_MS = 100;
 export function useBufferedStreamingText(
   content: string,
   isStreaming: boolean,
+  flushIntervalMs = 0,
 ): string {
   const [bufferedContent, setBufferedContent] = useState(content);
   const targetContentRef = useRef(content);
   const bufferedContentRef = useRef(content);
   const frameRef = useRef<SafeAnimationFrameHandle | null>(null);
-  const fallbackTimerRef = useRef<number | null>(null);
+  const fallbackTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const batchTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
     targetContentRef.current = content;
@@ -35,36 +37,53 @@ export function useBufferedStreamingText(
     const syncLatestContent = () => {
       cancelFrame();
       cancelFallbackTimer();
+      if (batchTimerRef.current !== null) clearTimeout(batchTimerRef.current);
+      batchTimerRef.current = null;
       const target = targetContentRef.current;
       bufferedContentRef.current = target;
       setBufferedContent(target);
     };
 
-    if (!isStreaming || !content.startsWith(bufferedContentRef.current)) {
+    if (
+      !isStreaming ||
+      !content.startsWith(bufferedContentRef.current) ||
+      (flushIntervalMs > 0 && !bufferedContentRef.current)
+    ) {
       syncLatestContent();
       return;
     }
 
-    if (frameRef.current === null && bufferedContentRef.current !== content) {
-      frameRef.current = requestSafeAnimationFrame(() => {
-        frameRef.current = null;
-        syncLatestContent();
-      });
-      fallbackTimerRef.current = window.setTimeout(
-        syncLatestContent,
-        FALLBACK_FLUSH_MS,
-      );
+    if (
+      frameRef.current === null &&
+      batchTimerRef.current === null &&
+      bufferedContentRef.current !== content
+    ) {
+      const scheduleFrame = () => {
+        batchTimerRef.current = null;
+        frameRef.current = requestSafeAnimationFrame(syncLatestContent);
+        fallbackTimerRef.current = setTimeout(
+          syncLatestContent,
+          FALLBACK_FLUSH_MS,
+        );
+      };
+      // Keep one deadline while deltas arrive; restarting it could starve the tail.
+      if (flushIntervalMs > 0)
+        batchTimerRef.current = setTimeout(scheduleFrame, flushIntervalMs);
+      else scheduleFrame();
     }
-  }, [content, isStreaming]);
+  }, [content, isStreaming, flushIntervalMs]);
 
   useEffect(
     () => () => {
       if (frameRef.current !== null) cancelSafeAnimationFrame(frameRef.current);
       if (fallbackTimerRef.current !== null)
         clearTimeout(fallbackTimerRef.current);
+      if (batchTimerRef.current !== null) clearTimeout(batchTimerRef.current);
     },
     [],
   );
 
-  return isStreaming ? bufferedContent : content;
+  return isStreaming && content.startsWith(bufferedContent)
+    ? bufferedContent
+    : content;
 }

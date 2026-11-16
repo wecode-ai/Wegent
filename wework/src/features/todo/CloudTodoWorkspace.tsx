@@ -5464,6 +5464,16 @@ export function CloudTodoWorkspace({
               (selectedItemProject?.location === 'cloud' ? cloudWorkspaceApi : selectedItemApi) ? (
                 <TodoEditor
                   key={selectedItem.id}
+                  commentBoard={
+                    selectedItemProject &&
+                    sameProjectSpace(projectSpaceRef(selectedItemProject), selectedProjectRef)
+                      ? {
+                          columns: boardColumns,
+                          groupBy: nativeGroupBy,
+                          name: savedViews.view?.name ?? selectedItemProject.name,
+                        }
+                      : undefined
+                  }
                   getRuntimeTranscript={services.runtimeWorkApi?.getRuntimeTranscript}
                   mode="edit"
                   presentation="workspace-panel"

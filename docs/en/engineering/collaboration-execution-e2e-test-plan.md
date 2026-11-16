@@ -169,6 +169,22 @@ authentication tokens or model secrets.
 
 ## Complete Scenario Matrix
 
+### Manager takeover and clarification after member delivery
+
+User story: as the Issue creator, I can see the coordinator take over after member delivery, open its business question from the original Issue, and answer it to continue the same manager run.
+
+Reuse the CI-covered `collaboration-remote-group-coordinate` checkpoint, isolated Electron, real backend, MySQL, Redis, remote Executor and native Codex. Only the model service is replaced; no additional full environment or CI job is introduced.
+
+1. Create the group and Issue through the UI and dispatch two concurrent assignments. Completing only one keeps the Issue in progress without an early takeover.
+2. After both deliver, assert manager ownership and an independent activity with the exact Issue session binding, before any new assignment or status decision.
+3. Have the resumed manager block in native `request_user_input`. Open its activity, see the real question and select an answer. Assert that the model receives the exact answer for its original call.
+4. Let that manager explicitly submit the Issue for confirmation. Retain the existing member-count, single-dispatch, independent-session and follow-up reply assertions.
+5. Focused protocol tests also cover unfinished rounds, forged identities, manual bindings without sharing authority, replay after the next assignment and publication recovery after restart. Additional cases cover the 255-character session limit across long rounds, cross-language Unicode identity encoding, and reconciliation of an ordinary execution after a full page of dispatch envelopes.
+
+The web Executor two-round scenario also requires final manager ownership. Its old collector-ownership assertions were changed only after complete CI logs and trace evidence confirmed both deliveries, both manager handoffs and the final review state. Concurrency, independent sessions, evidence synthesis and state assertions are retained.
+
+Reuse checkpoint project archival and isolated-process cleanup. Retain complete runner diagnostics for failures; screenshots and logs remain test artifacts and are not committed.
+
 ### Remote collaboration group manager planning details
 
 The `collaboration-remote-group-planning-details` checkpoint uses isolated Electron, a real backend, MySQL, Redis, and a remote Executor. Only the upstream model is replaced.
@@ -692,26 +708,35 @@ fails for missing credentials.
 
 ### `cloud-device-lifecycle`
 
-This checkpoint reuses the real cloud Executor started by CI and verifies:
+This checkpoint assigns the two existing CI Executor processes to one sandbox. The public
+Backend registers a test-only sandbox provider that operates those processes through the
+runner. The checkpoint verifies:
 
-1. The initial Backend state is `online`, with an Executor version and Runtime identity.
-2. Wework shows the upgrade action, current version, target version, and temporary-offline warning.
-3. In a managed cloud environment, restart targets the Sandbox identity and disables device
-   actions while restart is pending.
-4. The test really stops the Executor process, waits for Backend `offline`, and starts the same
-   Executor again.
-5. The Backend returns to `online`, Runtime identity stays stable, and Wework reports recovery
-   and re-enables actions.
-6. The public-Backend branch without managed recovery must show an explicit restart failure and
-   must not mislabel the still-online device as offline.
+1. Both Executors start online with distinct Runtime identities. The device menu and
+   Update available badge open a restart confirmation; the badge shows both versions.
+2. The target is idle while its sandbox sibling runs a real desktop task with a held model
+   response. The owner's unforced upgrade request is rejected because of that sibling,
+   and a forced request from a different signed-in user is denied.
+3. Confirming from the badge sends one forced restart for the sandbox identity. Wework
+   disables device actions during the request and while offline.
+4. The provider stops both Executor processes. After Backend and Wework observe the
+   offline state, the same Executor homes restart and reconnect with unchanged Runtime
+   identities. Wework reports recovery and restores the actions while a newer version
+   remains available.
+
+The public Backend starts without a restart provider. The device menu request first
+verifies the real HTTP 501 response, the error and enabled retry, terminal, and menu
+controls, and the device remaining online. The runner then registers the provider in the
+same Backend process and exercises the successful restart.
 
 Evidence screenshots:
 
 - `cloud-device-01-online.png`
-- `cloud-device-upgrade-confirmation.png`
+- `cloud-device-restart-unavailable.png` (unconfigured public deployment only)
+- `cloud-device-restart-confirmation.png`
 - `cloud-device-restart-pending.png`
+- `cloud-device-restart-offline.png`
 - `cloud-device-restart-recovered.png`
-- `cloud-device-restart-unavailable.png` (public-Backend rejection branch only)
 
 ## CI Checkpoint Mapping
 

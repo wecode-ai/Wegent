@@ -58,6 +58,7 @@ impl RuntimeWorkRpcHandler {
                         | "modelProviderRouting"
                         | "quotaWait"
                         | "connectionEventSubscriptions"
+                        | "startupFailure"
                 )
             });
             // The serializer originally adds this authoritative identity after

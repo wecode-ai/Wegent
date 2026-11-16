@@ -462,7 +462,7 @@ impl RuntimeWorkRpcHandler {
                 boxed_rpc(move || async move { self.switch_codex_account(payload).await })
             }
             "runtime.codex.auth.login.start" => {
-                boxed_rpc(move || async move { self.start_codex_login().await })
+                boxed_rpc(move || async move { self.start_codex_login(payload).await })
             }
             "runtime.codex.auth.login.cancel" => {
                 boxed_rpc(move || async move { self.cancel_codex_login(payload).await })

@@ -315,7 +315,7 @@ async fn delete_milestone(
     let changed = state.mysql.with_transaction(async |tx| {
         let result = tx.execute("UPDATE loop_items SET deleted_at=UTC_TIMESTAMP(),version=version+1 WHERE id=? AND cloud_project_id=? AND resource_type='milestone' AND (deleted_at IS NULL OR deleted_at IN ('1970-01-01 00:00:00','1970-01-01 00:00:01')) AND version=?", (milestone_id, project_id, input.version)).await?;
         if result.rows_affected != 1 { return Ok(false); }
-        tx.execute("UPDATE loop_items SET metadata=JSON_REMOVE(metadata,'$.milestone_id'),version=version+1,updated_at=UTC_TIMESTAMP() WHERE cloud_project_id=? AND resource_type='task' AND JSON_UNQUOTE(JSON_EXTRACT(metadata,'$.milestone_id'))=?", (project_id, milestone_id)).await?;
+        tx.execute("UPDATE loop_items SET metadata=JSON_REMOVE(metadata,'$.milestone_id'),version=version+1,updated_at=CURRENT_TIMESTAMP() WHERE cloud_project_id=? AND resource_type='task' AND JSON_UNQUOTE(JSON_EXTRACT(metadata,'$.milestone_id'))=?", (project_id, milestone_id)).await?;
         Ok(true)
     }).await.map_err(internal)?;
     if !changed {

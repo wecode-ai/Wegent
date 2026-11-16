@@ -377,6 +377,12 @@ class SubscriptionMarketService:
         source_owner = db.query(User).filter(User.id == source.user_id).first()
         source_owner_username = source_owner.user_name if source_owner else "Unknown"
 
+        from app.services.subscription.service import subscription_service
+
+        subscription_service._validate_trigger_config(
+            request.trigger_type, request.trigger_config
+        )
+
         # Build trigger config
         trigger = build_trigger_config(request.trigger_type, request.trigger_config)
 

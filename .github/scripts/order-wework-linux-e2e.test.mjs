@@ -188,7 +188,7 @@ test('reuses the existing history runner after its isolated checkpoint', async (
     'core-task-flow',
     'workspace-attachments',
     'conversation-state',
-    'native-window-chrome',
+    'native-window-startup',
     'harness-app-development',
     'harness-app-lifecycle',
     'harness-app-models',
@@ -434,20 +434,20 @@ test('unmeasured and equal-duration checkpoints retain stable priority without d
     'running-sidebar-state',
     'running-conversation-history',
     'task-board-association',
-    'local-file-preview',
+    'send-key-preference',
   ]
   assert.deepEqual(orderLinuxCheckpoints(selected, 'core', {}), selected)
   assert.deepEqual(
     orderLinuxCheckpoints(selected, 'core', {
       'running-sidebar-state': 20,
       'running-conversation-history': 480,
-      'local-file-preview': 20,
+      'send-key-preference': 20,
     }),
     [
       'task-board-association',
       'running-conversation-history',
       'running-sidebar-state',
-      'local-file-preview',
+      'send-key-preference',
     ],
   )
   assert.deepEqual(orderLinuxCheckpoints([], 'core'), [])
@@ -460,7 +460,7 @@ test('unmeasured and equal-duration checkpoints retain stable priority without d
     /Unknown desktop E2E checkpoint/,
   )
   assert.throws(
-    () => orderLinuxCheckpoints(selected, 'core', { 'local-file-preview': 0 }),
+    () => orderLinuxCheckpoints(selected, 'core', { 'send-key-preference': 0 }),
     /Invalid Linux E2E duration/,
   )
 })

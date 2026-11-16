@@ -195,6 +195,11 @@ classify_path() {
         changed[backend_rs]=true
         changed[wework_e2e]=true
       fi
+      if [[ "$path" == shared/assets/calendars/* ]]; then
+        changed[backend_rs]=true
+        changed[executor]=true
+        changed[wework_e2e]=true
+      fi
       changed[backend]=true
       changed[executor_manager]=true
       changed[shared]=true
@@ -222,6 +227,10 @@ classify_path() {
       ;;
     packages/process-explorer/*)
       changed[wework]=true
+      changed[wework_e2e]=true
+      ;;
+    # Phone-local payloads reuse the existing real native lifecycle checkpoint.
+    wework-mobile/src/services/localRuntimeApi*)
       changed[wework_e2e]=true
       ;;
     # Mobile subagent views reuse the existing runtime lifecycle/history checkpoint.

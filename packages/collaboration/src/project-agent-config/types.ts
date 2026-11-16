@@ -12,17 +12,13 @@ export interface ProjectAgentOwnerOption {
 }
 
 export interface ProjectAgentConfigurationHost {
-  requiresTemplateEnvironmentSelection?: boolean;
-  resolveTemplateAgentRouting?(
-    runtime: "codex" | "claude_code",
-    location: "local" | "cloud",
-    projectId?: string,
-    environmentId?: string,
-    model?: import("../agent-form/runnerRouting").RunnerModelIdentity,
-  ): Promise<import("../templates/types").TemplateAgentRouting>;
   listTemplateAgentModels?(
     runtime: "codex" | "claude_code",
-    projectId?: string,
+    context?: {
+      projectId?: string;
+      environmentId?: string;
+      location?: "local" | "cloud";
+    },
   ): Promise<{
     models: import("../agent-form/runnerRouting").RunnerModel[];
   }>;
@@ -32,6 +28,7 @@ export interface ProjectAgentConfigurationHost {
   ): Promise<import("../agent-form/runnerRouting").RunnerModel[]>;
   listTemplateAgentEnvironments?(
     projectId: string,
+    location?: "local" | "cloud",
   ): Promise<import("../types").CollaborationExecutionEnvironment[]>;
   templateAgentEnvironmentSettingsHref?(
     project: import("../types").CollaborationProject,

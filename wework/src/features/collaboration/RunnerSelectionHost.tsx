@@ -78,6 +78,11 @@ function SelectionDialog({ pending, close }: { pending: Pending; close(): void }
         <h2 id="runner-selection-title" className="text-sm font-semibold">
           {t('workbench.runner_selection_title')}
         </h2>
+        {pending.request.recovery_from_environment_id && (
+          <p className="text-sm text-muted-foreground" data-testid="runner-selection-recovery">
+            {t('workbench.runner_selection_recovery')}
+          </p>
+        )}
         <AgentEnvironmentFields
           selectionOnly
           routing={routing}

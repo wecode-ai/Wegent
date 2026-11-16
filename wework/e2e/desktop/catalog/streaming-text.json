@@ -4,7 +4,6 @@
   "members": [
     "streaming-content",
     "streaming-tools",
-    "streaming-timers",
     "streaming-scroll",
     "streaming-message-order",
     "streaming-conversation-switching",

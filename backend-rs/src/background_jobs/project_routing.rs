@@ -110,6 +110,8 @@ pub(crate) async fn resolve(
     user_id: i64,
     selection: &Value,
     automatic: bool,
+    session_environment_id: Option<&str>,
+    group_recovery: bool,
 ) -> Result<Value> {
     authority::require(state, project_id, user_id).await?;
     if !config["model_policy"].is_object() {
@@ -119,7 +121,10 @@ pub(crate) async fn resolve(
     }
     let mut policy = config["execution_policy"].clone();
     let mut source = policy["mode"].as_str().unwrap_or("").to_owned();
-    let binding = issue_binding(state, issue).await?;
+    let binding = match session_environment_id {
+        Some(environment) => Some(environment.to_owned()),
+        None => issue_binding(state, issue).await?,
+    };
     if source == "user_select" {
         if selection["execution_policy"].is_object()
             && selection["execution_policy"]["mode"] != "user_select"
@@ -190,12 +195,30 @@ pub(crate) async fn resolve(
         }
         .record(&mut &state.mysql)
         .await;
+        if source == "issue_binding" {
+            bail!(
+                "ISSUE_RUNNER_CONFLICT: The bound environment is no longer available or authorized"
+            )
+        }
         bail!(
             "RUNNER_ENVIRONMENT_UNAVAILABLE: No execution environment is authorized for this selection"
         )
     }
+    let mut recovery_from = None;
     if let Some(binding) = binding {
-        candidates.retain(|device| device.id.to_string() == binding);
+        let compatible = candidates
+            .iter()
+            .any(|device| device.id.to_string() == binding);
+        let recovery = (!compatible || group_recovery)
+            && session_environment_id.is_none()
+            && !automatic
+            && selection["recovery_from_environment_id"] == binding
+            && super::runner_recovery::available_on(&mut &state.mysql, &issue.id, 0).await?;
+        if recovery {
+            recovery_from = Some(binding);
+        } else {
+            candidates.retain(|device| device.id.to_string() == binding);
+        }
         if candidates.is_empty() {
             bail!(
                 "ISSUE_RUNNER_CONFLICT: The Issue's runner does not satisfy this policy or is no longer authorized"
@@ -252,9 +275,11 @@ pub(crate) async fn resolve(
             "RUNNER_MODEL_UNAVAILABLE: No authorized environment supports the selected model; choose an environment or repair its model configuration"
         )
     }
-    Ok(
-        json!({"version":1,"execution_policy":policy,"model":model,"source":source,"model_source":if model_policy["mode"]=="fixed"{"agent_fixed"}else if selected.is_object(){"execution_selection"}else{"environment_default"}}),
-    )
+    let mut snapshot = json!({"version":1,"execution_policy":policy,"model":model,"source":source,"model_source":if model_policy["mode"]=="fixed"{"agent_fixed"}else if selected.is_object(){"execution_selection"}else{"environment_default"}});
+    if let Some(binding) = recovery_from {
+        snapshot["recovery_from_environment_id"] = json!(binding);
+    }
+    Ok(snapshot)
 }
 
 pub(crate) async fn candidates_for_snapshot(

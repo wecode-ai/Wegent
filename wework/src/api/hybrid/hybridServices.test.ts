@@ -520,6 +520,30 @@ function deferred<T>() {
 }
 
 describe('stand-in save routing', () => {
+  it('attests the local Runtime without requiring Backend device discovery', async () => {
+    mocks.localListDevices.mockResolvedValue([
+      { id: 0, device_id: 'local-device', device_type: 'local', status: 'online' },
+    ])
+    mocks.cloudListDevices.mockRejectedValue(new Error('Backend unavailable'))
+    const identity = { deviceId: 'local-device', backendDeviceId: 'app-record-42' }
+    mocks.localServices.standInApi.deviceIdentity.mockResolvedValue(identity)
+
+    expect(await createServices().standInApi!.deviceIdentity('local-device')).toEqual(identity)
+    expect(mocks.cloudListDevices).not.toHaveBeenCalled()
+  })
+
+  it('requires attestation when only the local catalog labels a device as cloud', async () => {
+    mocks.localListDevices.mockResolvedValue([
+      { id: 0, device_id: 'local-device', device_type: 'cloud', status: 'online' },
+    ])
+    mocks.cloudListDevices.mockResolvedValue([])
+    const identity = { deviceId: 'local-device', backendDeviceId: 'app-record-42' }
+    mocks.localServices.standInApi.deviceIdentity.mockResolvedValue(identity)
+
+    expect(await createServices().standInApi!.deviceIdentity('local-device')).toEqual(identity)
+    expect(mocks.localServices.standInApi.deviceIdentity).toHaveBeenCalledWith('local-device')
+  })
+
   it.each(['local-device', 'remote-device'])(
     'routes saves by the selected Executor %s rather than the stored device field',
     async deviceId => {
@@ -565,8 +589,14 @@ describe('stand-in save routing', () => {
       const other = selected === local ? cloud : local
       const identity = { deviceId: 'desktop-alias', backendDeviceId: deviceId }
       selected.deviceIdentity.mockResolvedValue(identity)
-      expect(await services.standInApi!.deviceIdentity(deviceId)).toEqual(identity)
-      expect(selected.deviceIdentity).toHaveBeenCalledExactlyOnceWith(deviceId)
+      expect(await services.standInApi!.deviceIdentity(deviceId)).toEqual(
+        deviceId === 'local-device' ? identity : { deviceId, backendDeviceId: deviceId }
+      )
+      if (deviceId === 'local-device') {
+        expect(selected.deviceIdentity).toHaveBeenCalledExactlyOnceWith(deviceId)
+      } else {
+        expect(selected.deviceIdentity).not.toHaveBeenCalled()
+      }
       expect(other.deviceIdentity).not.toHaveBeenCalled()
       expect(selected.personalSave).toHaveBeenCalledExactlyOnceWith(7, settings, deviceId)
       expect(other.personalSave).not.toHaveBeenCalled()

@@ -156,6 +156,7 @@ mod thread_action;
 mod thread_resume;
 
 use debug_stdout::CodexStdout;
+pub(crate) use diagnostics::redact_diagnostic_text;
 use diagnostics::{json_scalar_field, json_string_field};
 #[cfg(test)]
 use home::prepare_wework_codex_home;
@@ -165,7 +166,7 @@ use home::WEGENT_CODEX_HOME_ENV;
 #[cfg(test)]
 use home::WEWORK_CODEX_SUBSCRIPTION_ENABLED_ENV;
 pub(crate) use home::{
-    executor_home, prepare_provider_migration, replace_config,
+    executor_home, prepare_provider_migration, provider_state_is_current, replace_config,
     select_wework_codex_user_instructions, wework_codex_home,
 };
 use home::{read_wework_codex_user_instructions, CODEX_HOME_ENV};
@@ -867,14 +868,9 @@ impl CodexAppServerClient {
         String,
     > {
         ensure_codex_mcp_endpoints().await?;
-        let mut state = self.state.lock().await;
-        if state
-            .process
-            .as_mut()
-            .is_some_and(|process| process.has_exited())
-        {
-            stop_codex_app_server_process(&mut state, None).await;
-        }
+        let mut state = self
+            .state_for_auth_mode(launch_config.and_then(|config| config.auth_mode))
+            .await?;
         let empty_launch_environment = BTreeMap::new();
         let launch_environment = launch_config
             .map(|config| &config.env)
@@ -885,12 +881,6 @@ impl CodexAppServerClient {
             Some(process) => process.pending.lock().await.len(),
             None => 0,
         };
-        auth_mode::apply_auth_mode(
-            &mut state,
-            launch_config.and_then(|config| config.auth_mode),
-            pending_request_count,
-        )
-        .await?;
         let active_threads = state.active_threads_snapshot();
         // Control and live-reload requests belong to the existing process.
         // Apply launch-environment changes only when a request may start a process.
@@ -946,6 +936,7 @@ impl CodexAppServerClient {
         handle.pending.lock().await.insert(
             request_id,
             PendingCodexResponse {
+                method: method.to_owned(),
                 sender: tx,
                 native_request: handle
                     .notifications
@@ -1384,22 +1375,13 @@ impl CodexAppServerClient {
         &self,
         launch_config: &CodexLaunchConfig,
     ) -> Result<CodexAppServerHandle, String> {
-        let mut state = self.state.lock().await;
-        if state
-            .process
-            .as_mut()
-            .is_some_and(|process| process.has_exited())
-        {
-            stop_codex_app_server_process(&mut state, None).await;
-        }
+        let mut state = self.state_for_auth_mode(launch_config.auth_mode).await?;
         let process_environment =
             self.process_environment(&state.runtime_proxy_env, &launch_config.env);
         let pending_request_count = match state.process.as_ref() {
             Some(process) => process.pending.lock().await.len(),
             None => 0,
         };
-        auth_mode::apply_auth_mode(&mut state, launch_config.auth_mode, pending_request_count)
-            .await?;
         let active_threads = state.active_threads_snapshot();
         if state.process.is_some()
             && codex_process_environment_requires_restart(
@@ -1558,14 +1540,6 @@ pub(crate) async fn terminate_shared_codex_app_servers() -> usize {
     terminated
 }
 
-#[allow(dead_code)]
-fn codex_app_server_request_is_retryable(method: &str) -> bool {
-    matches!(
-        method,
-        "thread/list" | "thread/read" | "config/read" | "model/list"
-    )
-}
-
 fn is_codex_cloud_config_error(error: &str) -> bool {
     error.contains("cloud config bundle")
 }
@@ -1626,6 +1600,7 @@ async fn stop_codex_app_server_process(
     checkpoint("exit_notified");
     terminate_codex_app_server_child(&mut process.child).await;
     checkpoint("child_terminated");
+    state.thread_activity_changed.notify_waiters();
     true
 }
 
@@ -1653,6 +1628,7 @@ impl Default for CodexAppServerSharedState {
 }
 
 struct PendingCodexResponse {
+    method: String,
     sender: oneshot::Sender<Result<Value, String>>,
     native_request: Option<CodexNativeRequest>,
 }
@@ -1859,6 +1835,7 @@ impl CodexAppServerHandle {
 
     async fn remove_pending(&self, request_id: u64) {
         self.pending.lock().await.remove(&request_id);
+        self.notifications.thread_activity_changed.notify_waiters();
     }
 }
 
@@ -2086,6 +2063,7 @@ async fn read_persistent_codex_app_server_stdout(
                         });
                     }
                     let _ = request.sender.send(result);
+                    notifications.thread_activity_changed.notify_waiters();
                     continue;
                 }
             }
@@ -2097,6 +2075,7 @@ async fn read_persistent_codex_app_server_stdout(
             .send(external_work::project_review_notification(message))
             .await;
     }
+    notifications.thread_activity_changed.notify_waiters();
 }
 
 fn log_codex_mcp_startup_status(message: &Value, process_generation: u64) {

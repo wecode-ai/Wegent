@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict'
 import { verifyCommentAssignment } from '../modules/comment-assignment.mjs'
+import { verifyIssueCommentWorkflow } from '../modules/issue-comment-workflow.mjs'
 import { verifyAssignmentActivityReceipts } from '../modules/assignment-activity-receipts.mjs'
 import { verifyIssueWebLink, verifyLocalIssueHasNoWebLink } from '../modules/issue-web-link.mjs'
 
@@ -313,6 +314,7 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
         member,
         memberRequest: (path, expectedStatus) => request(path, {}, memberToken, expectedStatus),
       })
+      await verifyIssueCommentWorkflow(control, { request, project, member, uiTimeoutMs })
       await verifyLocalProject(control)
     },
 

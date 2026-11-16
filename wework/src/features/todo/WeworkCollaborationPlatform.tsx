@@ -1,3 +1,4 @@
+import { DefaultRunnerSetting } from '@/components/settings/DefaultRunnerSetting'
 import { IndependentIssuesProvider } from './IndependentIssuesProvider'
 import { createPersonalIssuesApi } from '@/api/personalIssues'
 import { PersonalIssuesView } from './PersonalIssuesView'
@@ -1230,6 +1231,7 @@ export function WeworkSharedProject({
 
   const renderIssueEditor = (
     {
+      commentBoard,
       api: issueApi,
       issue,
       allIssues,
@@ -1245,6 +1247,7 @@ export function WeworkSharedProject({
     closeDrawers: () => void
   ) => (
     <TodoEditor
+      commentBoard={commentBoard}
       key={issue.id}
       getRuntimeTranscript={services.runtimeWorkApi?.getRuntimeTranscript}
       mode="edit"
@@ -2193,6 +2196,7 @@ function WeworkCollaborationPlatformContent(props: WeworkCollaborationPlatformPr
               authenticated: cloudConnection.isConnected,
               requestLogin: () => setCloudLoginOpen(true),
             },
+            renderExecutionEnvironmentPreferences: () => <DefaultRunnerSetting />,
             renderIssueComposer: composerProps => (
               <WeworkIssueHomeComposer
                 {...composerProps}

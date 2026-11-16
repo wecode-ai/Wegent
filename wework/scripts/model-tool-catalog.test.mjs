@@ -13,6 +13,7 @@ import {
   selectMcpTool,
   selectMcpToolRequest,
   requestToolSearchResults,
+  selectToolSearch,
   toolOutputText,
 } from '../e2e/desktop/modules/response-protocol.mjs'
 
@@ -183,6 +184,31 @@ test('native discovery rejects empty and unbounded results', async () => {
   await expect(run(selected.codeMode.input, Array(9).fill(metadata), {})).rejects.toThrow(
     'between one and eight'
   )
+})
+
+test('generic MCP rendering discovers its exact tool despite shared routing descriptions', async () => {
+  const target = {
+    name: 'github__issues__get_issue_details',
+    description: 'Get GitHub issue details. exec tool declaration: get_issue_details',
+  }
+  const catalog = [
+    target,
+    ...Array.from({ length: 35 }, (_, index) => ({
+      name: `wework_control__operation_${index}`,
+      description: 'Wework control routing: GitHub bindings, Issue scope and display details.',
+    })),
+  ]
+  const broadSearch = selectToolSearch(variants[0], 'github issue details')
+  await expect(run(broadSearch.codeMode.input, catalog, {})).rejects.toThrow(
+    'between one and eight'
+  )
+
+  const qualifiedSearch = selectToolSearch(
+    variants[0],
+    'github issue details',
+    'mcp__github__issues__get_issue_details'
+  )
+  expect(await run(qualifiedSearch.codeMode.input, catalog, {})).toEqual([{ tools: [target] }])
 })
 
 test.each(['mcp__wework_space__get_current_context', 'wework_space__get_current_context'])(

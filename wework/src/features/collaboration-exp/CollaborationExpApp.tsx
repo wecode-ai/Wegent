@@ -2,11 +2,12 @@ import { useCallback, useMemo, useState } from 'react'
 import { Circle, Ellipsis, FolderKanban, Lock, Paperclip } from 'lucide-react'
 import {
   BrowserAttachmentPreview,
+  IssueMarkdownProvider,
   createCollaborationTranslator,
   ProjectCreateDialog,
   projectCreateLabels,
 } from '@wegent/collaboration'
-import type { CollaborationView } from '@wegent/collaboration'
+import type { CollaborationView, CollaborationAttachment } from '@wegent/collaboration'
 import { MarkdownServicesProvider } from '@wegent/collaboration/markdown'
 import { Button } from '@/components/ui/button'
 import { useWorkbench } from '@/features/workbench/useWorkbench'
@@ -214,8 +215,11 @@ function ExperienceContent({ active, search }: { active: boolean; search: string
     identity: string
     value: TimelineAttachmentSelection
   } | null>(null)
-  const navigate = (updates: Record<string, string | null | undefined>) =>
-    navigateTo(buildCollaborationExpRoute(params, updates))
+  const navigate = useCallback(
+    (updates: Record<string, string | null | undefined>) =>
+      navigateTo(buildCollaborationExpRoute(params, updates)),
+    [params]
+  )
   const selectIssue = (project: ExperienceProjectScope, id: string) => {
     setAttachment(null)
     navigate({
@@ -636,75 +640,98 @@ function ExperienceContent({ active, search }: { active: boolean; search: string
     },
     [source, projectId, issueId]
   )
+  const openResourceAttachment = useCallback(
+    (file: CollaborationAttachment) => {
+      setAttachment({
+        identity,
+        value: { id: file.id, name: file.display_name, sourceNodeId: null },
+      })
+      navigate({ discussion: null, inspector: null })
+    },
+    [identity, navigate]
+  )
   return (
-    <main
-      className="collaboration-exp-app h-full min-h-0 min-w-0 overflow-hidden bg-background text-text-primary"
-      data-testid="collaboration-exp-app"
+    <IssueMarkdownProvider
+      attachments={source?.api.attachments}
+      issueId={issueId ?? undefined}
+      projectId={projectId ?? undefined}
+      onOpenAttachment={openResourceAttachment}
     >
-      <ExperiencePanes
-        panes={panes}
-        navigation={navigation}
-        navigationTitle={t('title')}
-        mobileNavigation={
-          <ExperienceNavigation
-            mobile
-            activeView={view}
-            footer={account}
-            onViewChange={changeView}
+      <main
+        className="collaboration-exp-app h-full min-h-0 min-w-0 overflow-hidden bg-background text-text-primary"
+        data-testid="collaboration-exp-app"
+      >
+        <ExperiencePanes
+          panes={panes}
+          navigation={navigation}
+          navigationTitle={t('title')}
+          mobileNavigation={
+            <ExperienceNavigation
+              mobile
+              activeView={view}
+              footer={account}
+              onViewChange={changeView}
+            />
+          }
+        />
+        {active && view === 'tasks' && detail.data && params.get('inspector') === 'summary' ? (
+          <ExperienceIssueSummary
+            key={identity}
+            data={detail.data}
+            onClose={() => navigate({ inspector: null })}
+            onConfigure={() => navigate({ inspector: 'details' })}
+            onProject={openProject}
           />
-        }
-      />
-      {active && view === 'tasks' && detail.data && params.get('inspector') === 'summary' ? (
-        <ExperienceIssueSummary
-          key={identity}
-          data={detail.data}
-          onClose={() => navigate({ inspector: null })}
-          onConfigure={() => navigate({ inspector: 'details' })}
-          onProject={openProject}
-        />
-      ) : null}
-      {createIssueOpen ? (
-        <CreateExperienceIssue
-          active={active}
-          sources={sources}
-          projects={assistantProjects}
-          onClose={() => setCreateIssueOpen(false)}
-          onCreated={(project, issue) => {
-            setCreateIssueOpen(false)
-            refresh()
-            selectIssue(project, issue.id)
-          }}
-        />
-      ) : null}
-      {createProjectOpen ? (
-        <ProjectCreateDialog
-          targets={projectCreateTargets}
-          defaultLocation={services.projectSpaceApis?.defaultLocation ?? 'cloud'}
-          allowDingTalkAITable
-          labels={projectCreateLabels[locale]}
-          host={{ parseDingTalkAITableLink }}
-          onClose={() => setCreateProjectOpen(false)}
-          onCreated={(project, location) => {
-            setCreateProjectOpen(false)
-            refresh()
-            openProject(
-              projectScopeOf({
-                ...project,
-                project_store: location === 'local' ? 'local' : 'backend',
+        ) : null}
+        {createIssueOpen ? (
+          <CreateExperienceIssue
+            active={active}
+            sources={sources}
+            projects={assistantProjects}
+            onClose={() => setCreateIssueOpen(false)}
+            onCreated={(project, issue) => {
+              setCreateIssueOpen(false)
+              refresh()
+              selectIssue(project, issue.id)
+            }}
+          />
+        ) : null}
+        {createProjectOpen ? (
+          <ProjectCreateDialog
+            targets={projectCreateTargets}
+            defaultLocation={services.projectSpaceApis?.defaultLocation ?? 'cloud'}
+            allowDingTalkAITable
+            labels={projectCreateLabels[locale]}
+            host={{ parseDingTalkAITableLink }}
+            onClose={() => setCreateProjectOpen(false)}
+            onCreated={(project, location) => {
+              setCreateProjectOpen(false)
+              refresh()
+              openProject(
+                projectScopeOf({
+                  ...project,
+                  project_store: location === 'local' ? 'local' : 'backend',
+                })
+              )
+            }}
+          />
+        ) : null}
+        {currentAttachment ? (
+          <BrowserAttachmentPreview
+            attachmentId={currentAttachment.id}
+            filename={currentAttachment.name}
+            translate={translate}
+            read={readAttachment}
+            onClose={() => setAttachment(null)}
+            onOpenAttachment={(id, name) =>
+              setAttachment({
+                identity,
+                value: { id, name, sourceNodeId: currentAttachment.sourceNodeId },
               })
-            )
-          }}
-        />
-      ) : null}
-      {currentAttachment ? (
-        <BrowserAttachmentPreview
-          attachmentId={currentAttachment.id}
-          filename={currentAttachment.name}
-          translate={translate}
-          read={readAttachment}
-          onClose={() => setAttachment(null)}
-        />
-      ) : null}
-    </main>
+            }
+          />
+        ) : null}
+      </main>
+    </IssueMarkdownProvider>
   )
 }

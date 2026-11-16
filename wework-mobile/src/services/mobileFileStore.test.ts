@@ -441,6 +441,27 @@ describe('copyWorkspaceFileChunks', () => {
 })
 
 describe('MobileFileStore', () => {
+  it('evicts cloud cache on account changes without evicting phone files or active phone leases', async () => {
+    const { api, store } = setup()
+    const phone = workspace('/repo/local.md', {
+      target: { deviceId: 'mobile-local:phone:stable', path: '/repo' },
+    })
+    const remote = workspace()
+    const localLease = await store.acquire(phone, options())
+    const cloudFile = await load(store, remote, options())
+    store.retain(
+      request => request.kind === 'workspace' && request.target.deviceId.startsWith('mobile-local:')
+    )
+    expect(native.files.has(cloudFile.uri)).toBe(false)
+    expect(native.files.has(localLease.document.uri)).toBe(true)
+    const localAgain = await load(store, phone, options())
+    expect(localAgain.uri).toBe(localLease.document.uri)
+    expect(api.readWorkspaceTextFile).toHaveBeenCalledTimes(2)
+    await load(store, remote, options())
+    expect(api.readWorkspaceTextFile).toHaveBeenCalledTimes(3)
+    localLease.release()
+    store.dispose()
+  })
   it('shares the full native file after a truncated preview without rereading the whole file into JS', async () => {
     const { api, store } = setup()
     api.readWorkspaceTextFile.mockResolvedValue({

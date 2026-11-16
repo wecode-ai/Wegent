@@ -10,6 +10,8 @@ import {
   type CollaborationAssignment,
   createCollaborationTranslator,
   createSharedIssueDetailPort,
+  IssueMarkdownProvider,
+  type CollaborationAttachment,
   formatIssueAttachmentSize,
   type SharedEditorIssue,
   type SharedEditorProject,
@@ -77,6 +79,7 @@ type TodoEditorApiProps =
     }
 
 export type TodoEditorProps = TodoEditorApiProps & {
+  commentBoard?: import('@wegent/collaboration').IssueCommentBoardContext
   aitableApi?: AITableApi
   projectChatAgentApi?: ReturnType<typeof createProjectChatAgentApi>
   teamApi?: WorkbenchServices['teamApi']
@@ -185,6 +188,14 @@ export function TodoEditor(props: TodoEditorProps) {
   )
   const attachmentProjectId = props.project ? String(props.project.id) : undefined
   const attachmentIssueId = props.mode === 'edit' ? props.item.id : undefined
+  const openResourceAttachment = useCallback((attachment: CollaborationAttachment) => {
+    setPreviewAttachment({
+      id: attachment.id,
+      filename: attachment.display_name,
+      contentType: attachment.content_type,
+      sizeBytes: attachment.size_bytes,
+    })
+  }, [])
   const attachmentContext = useMemo(
     () =>
       attachmentProjectId && attachmentIssueId
@@ -214,6 +225,12 @@ export function TodoEditor(props: TodoEditorProps) {
       },
     }
   }, [workspaceApi, taskOwnerUserId, props.getRuntimeTranscript, attachmentContext])
+  const loadPreviewAttachment = useCallback(() => {
+    if (!previewAttachment) throw new Error('No Issue attachment is selected')
+    return attachmentContext
+      ? workspaceApi.attachments.read(previewAttachment.id, attachmentContext)
+      : workspaceApi.attachments.read(previewAttachment.id)
+  }, [workspaceApi.attachments, attachmentContext, previewAttachment])
   const loadTeams = useCallback(
     () => props.teamApi?.listTeams() ?? Promise.resolve([]),
     [props.teamApi]
@@ -228,6 +245,7 @@ export function TodoEditor(props: TodoEditorProps) {
     renderDescriptionEditor: context => (
       <TaskDescriptionEditor
         value={context.value}
+        placeholder={context.placeholder}
         onChange={context.onChange}
         onPasteFiles={context.onPasteFiles}
         readAttachment={context.readAttachment}
@@ -240,6 +258,7 @@ export function TodoEditor(props: TodoEditorProps) {
         <TaskActivityView
           assignmentReceipts={assignmentReceipts}
           commentAssignment={context.commentAssignment}
+          commentActions={context.commentActions}
           key={context.item.id}
           client={props.projectChatClient}
           project={context.project as CloudProject}
@@ -349,6 +368,7 @@ export function TodoEditor(props: TodoEditorProps) {
     onClose: props.onClose,
     onEscape: props.onEscape,
     presentation: props.presentation,
+    commentBoard: props.commentBoard,
     workspacePanelFill: props.workspacePanelFill,
     readFirst: props.readFirst,
     showPanelControls: props.showPanelControls,
@@ -429,7 +449,12 @@ export function TodoEditor(props: TodoEditorProps) {
     )
 
   return (
-    <>
+    <IssueMarkdownProvider
+      attachments={workspaceApi.attachments}
+      issueId={attachmentIssueId}
+      projectId={attachmentProjectId}
+      onOpenAttachment={openResourceAttachment}
+    >
       {editor}
       {previewAttachment ? (
         <CloudFilePreviewDialog
@@ -440,13 +465,13 @@ export function TodoEditor(props: TodoEditorProps) {
               ? formatIssueAttachmentSize(previewAttachment.sizeBytes)
               : null
           }
-          loadFile={() => port.attachments.read(previewAttachment.id)}
+          loadFile={loadPreviewAttachment}
           onDownload={() =>
             port.attachments.download(previewAttachment.id, previewAttachment.filename)
           }
           onClose={() => setPreviewAttachment(null)}
         />
       ) : null}
-    </>
+    </IssueMarkdownProvider>
   )
 }

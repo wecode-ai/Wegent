@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { issueNeedsUser } from '@wegent/collaboration'
 import type { CloudMyWorkItem } from '@/api/deliveries'
 import { useNotificationTaskSource } from './NotificationTaskSourceContext'
 import { isRuntimeTaskExecutionRunning } from '@/features/workbench/runtimeTaskLifecycle/projection'
+import { projectIssueNeedsInput } from './pendingProjectWork'
 
 export interface PendingProjectIssue {
   item: CloudMyWorkItem
@@ -173,7 +173,7 @@ export function usePendingProjectIssues(active: boolean) {
                 (origin.projectStore === 'local' ? 'local' : 'backend') === row.store
               )
             })
-            return issueNeedsUser(
+            return projectIssueNeedsInput(
               running ? { ...row.item, execution_state: 'running' } : row.item,
               row.userId
             )

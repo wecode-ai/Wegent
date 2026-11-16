@@ -115,7 +115,10 @@ impl RuntimeWorkRpcHandler {
         self.start_authorized_turn(turn, permit);
     }
 
-    async fn validate_automatic_turn(&self, turn: &SpawnTurnRequest) -> Result<(), AppIpcError> {
+    pub(super) async fn validate_automatic_turn(
+        &self,
+        turn: &SpawnTurnRequest,
+    ) -> Result<(), AppIpcError> {
         let user = turn
             .request
             .extra
@@ -146,7 +149,12 @@ impl RuntimeWorkRpcHandler {
                 "Automatic input configuration changed before execution",
             ));
         }
-        if settings["primary"]["enabled"] == false {
+        let link = self.local_task_link(&turn.local_task_id);
+        let source_authorized = match link.as_ref() {
+            Some(link) => self.authorized_manual_source_turn(link, &turn.request)?,
+            None => false,
+        };
+        if !source_authorized && settings["primary"]["enabled"] == false {
             return Err(AppIpcError::new(
                 "permission_denied",
                 "The primary stand-in was paused before execution",
@@ -169,9 +177,8 @@ impl RuntimeWorkRpcHandler {
             }
             return Ok(());
         }
-        let link = self
-            .local_task_link(&turn.local_task_id)
-            .ok_or_else(|| AppIpcError::new("not_found", "Automatic work no longer exists"))?;
+        let link =
+            link.ok_or_else(|| AppIpcError::new("not_found", "Automatic work no longer exists"))?;
         if link.runtime_handle["executionRequest"]["user_id"] != user
             && link.runtime_handle["origin"]["userId"] != user
         {
@@ -179,6 +186,9 @@ impl RuntimeWorkRpcHandler {
                 "permission_denied",
                 "Automatic work belongs to another user",
             ));
+        }
+        if source_authorized {
+            return Ok(());
         }
         self.validate_primary_task_followup(user, &link).await
     }

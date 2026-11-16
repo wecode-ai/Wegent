@@ -108,6 +108,7 @@ impl UnifiedModel {
             );
         }
         UnifiedModelResponse {
+            id: self.resource_id,
             name: self.name,
             model_type: self.model_type,
             display_name: self.display_name,
@@ -145,6 +146,7 @@ impl UnifiedModel {
 #[derive(serde::Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct UnifiedModelResponse {
+    id: Option<i64>,
     name: String,
     #[serde(rename = "type")]
     model_type: &'static str,

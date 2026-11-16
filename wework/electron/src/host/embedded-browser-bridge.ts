@@ -130,6 +130,8 @@ export class EmbeddedBrowserBridge {
     response: import('node:http').ServerResponse,
     token: string
   ): Promise<void> {
+    // A browser mutation cannot be replayed after an idle-socket close race.
+    response.setHeader('connection', 'close')
     response.setHeader('access-control-allow-origin', '*')
     response.setHeader('access-control-allow-headers', 'content-type, authorization')
     response.setHeader('content-type', 'application/json')
@@ -642,7 +644,9 @@ function isRetryableWaitError(error: unknown, label: string): boolean {
   const message = errorMessage(error)
   return (
     message === `Embedded browser is unavailable: ${label}` ||
-    message === 'Inspected target navigated or closed'
+    // A document navigation replaces the inspected target while the wait
+    // condition is evaluated; the next poll evaluates against the new document.
+    message.includes('Inspected target navigated or closed')
   )
 }
 

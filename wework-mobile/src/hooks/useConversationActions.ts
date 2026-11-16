@@ -12,6 +12,7 @@ interface Options {
   setCurrentTitle: (title: string) => void
   clearCurrentConversation: () => void
   setError: (error: string) => void
+  setConnectionError: (error: string) => void
 }
 
 export function useConversationActions({
@@ -22,7 +23,18 @@ export function useConversationActions({
   setCurrentTitle,
   clearCurrentConversation,
   setError,
+  setConnectionError,
 }: Options) {
+  const refreshAfterAction = useCallback(
+    async (deviceId: string) => {
+      try {
+        await reloadWork(deviceId)
+      } catch (cause) {
+        setConnectionError(cause instanceof Error ? cause.message : String(cause))
+      }
+    },
+    [reloadWork, setConnectionError]
+  )
   const setConversationPinned = useCallback(
     async (address: RuntimeTaskAddress, pinned: boolean) => {
       const target = conversationPinTarget(work, address)
@@ -33,9 +45,9 @@ export function useConversationActions({
         pinned,
       })
       if (!result.accepted) throw new Error(result.error || '无法更新会话置顶状态')
-      await reloadWork(target.deviceId)
+      await refreshAfterAction(target.deviceId)
     },
-    [api, reloadWork, work]
+    [api, refreshAfterAction, work]
   )
 
   const renameConversation = useCallback(
@@ -47,9 +59,9 @@ export function useConversationActions({
         currentAddress.current.taskId === address.taskId
       )
         setCurrentTitle(title)
-      await reloadWork(address.deviceId)
+      await refreshAfterAction(address.deviceId)
     },
-    [api, currentAddress, reloadWork, setCurrentTitle]
+    [api, currentAddress, refreshAfterAction, setCurrentTitle]
   )
 
   const archiveConversation = useCallback(
@@ -62,17 +74,9 @@ export function useConversationActions({
         clearCurrentConversation()
       if (cleanupError) setError(cleanupError)
       // The accepted archive is complete even if refreshing the list fails.
-      try {
-        await reloadWork(address.deviceId)
-      } catch (cause) {
-        setError(
-          [cleanupError, cause instanceof Error ? cause.message : String(cause)]
-            .filter(Boolean)
-            .join('\n')
-        )
-      }
+      await refreshAfterAction(address.deviceId)
     },
-    [api, work, currentAddress, clearCurrentConversation, reloadWork, setError]
+    [api, work, currentAddress, clearCurrentConversation, refreshAfterAction, setError]
   )
 
   return { setConversationPinned, renameConversation, archiveConversation }

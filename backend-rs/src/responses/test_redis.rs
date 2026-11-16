@@ -31,6 +31,8 @@ struct CancelGate {
 #[derive(Clone, Default)]
 pub(super) struct RecordingRedis {
     calls: Arc<Mutex<Vec<String>>>,
+    leases: Arc<Mutex<std::collections::HashMap<String, String>>>,
+    pub(super) fail_receipt: Arc<AtomicBool>,
     cancelled: Arc<AtomicBool>,
     cancel_gate: Arc<Mutex<Option<CancelGate>>>,
 }
@@ -98,6 +100,53 @@ impl brz_redis::Redis for RecordingRedis {
         A: EncodeRedisArgs + Send,
         R: FromRedisValue + Send,
     {
+        use crate::internal_callback::completion::lease_receipt::{
+            ACCEPT_SCRIPT, OBSERVE_SCRIPT, RELEASE_SCRIPT, RENEW_SCRIPT,
+        };
+        let script_bytes = script.as_encoded_bytes();
+        if [ACCEPT_SCRIPT, OBSERVE_SCRIPT, RENEW_SCRIPT, RELEASE_SCRIPT]
+            .iter()
+            .any(|known| script_bytes == Some(known.as_bytes()))
+        {
+            let mut command = brz_redis::cmd("EVAL");
+            keys.encode_args(&mut command)?;
+            arguments.encode_args(&mut command)?;
+            let key = String::from_utf8_lossy(command.arg_at(1).unwrap()).into_owned();
+            let operation = if script_bytes == Some(ACCEPT_SCRIPT.as_bytes()) {
+                "ACCEPT"
+            } else if script_bytes == Some(OBSERVE_SCRIPT.as_bytes()) {
+                "OBSERVE"
+            } else if script_bytes == Some(RENEW_SCRIPT.as_bytes()) {
+                "RENEW"
+            } else {
+                "RELEASE"
+            };
+            self.record(format!("LEASE-{operation} {key}"));
+            if self.fail_receipt.load(Ordering::SeqCst) {
+                return Err(brz_redis::RedisError::new(
+                    brz_redis::ErrorKind::ClientError,
+                    "receipt unavailable",
+                ));
+            }
+            let mut leases = self.leases.lock().unwrap();
+            let current = leases.get(&key).cloned();
+            let arg = |index| String::from_utf8_lossy(command.arg_at(index).unwrap()).into_owned();
+            let result = if script_bytes == Some(OBSERVE_SCRIPT.as_bytes()) {
+                current.is_some_and(|value| value.starts_with("accepted:"))
+            } else {
+                let owner = current
+                    .as_ref()
+                    .is_some_and(|value| value == &arg(2) || value == &arg(3));
+                if owner && script_bytes == Some(ACCEPT_SCRIPT.as_bytes()) {
+                    leases.insert(key.clone(), arg(3));
+                }
+                if owner && script_bytes == Some(RELEASE_SCRIPT.as_bytes()) {
+                    leases.remove(&key);
+                }
+                owner
+            };
+            return R::from_redis_value(&brz_redis::Value::Int(i64::from(result)));
+        }
         if script.as_encoded_bytes() == Some(TOUCH_ACTIVITY_SCRIPT.as_bytes()) {
             assert_eq!(keys.num_args(), 1);
             assert_eq!(arguments.num_args(), 3);
@@ -173,12 +222,20 @@ impl brz_redis::Redis for RecordingRedis {
         Ok(())
     }
 
-    async fn set_with<K, V>(&self, key: K, _: V, _: SetOptions) -> RedisResult<bool>
+    async fn set_with<K, V>(&self, key: K, value: V, _: SetOptions) -> RedisResult<bool>
     where
         K: EncodeRedisArg + Send,
         V: EncodeRedisArg + Send,
     {
-        self.record(format!("SET {}", Self::key(&key)));
+        let key = Self::key(&key);
+        self.record(format!("SET {key}"));
+        if key.starts_with("wegent:lock:pipeline-execution:") {
+            let mut leases = self.leases.lock().unwrap();
+            if leases.contains_key(&key) {
+                return Ok(false);
+            }
+            leases.insert(key, Self::key(&value));
+        }
         Ok(true)
     }
 
