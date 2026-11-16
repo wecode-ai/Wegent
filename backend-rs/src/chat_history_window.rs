@@ -52,8 +52,8 @@ async fn read_window(
         candidates.extend(rows.into_iter().map(|row| (row, *task_id, *owner)));
     }
     candidates.sort_by_key(|(row, _, _)| row.key());
-    let start = candidates.len().saturating_sub(limit as usize);
     let mut selected = std::collections::BTreeMap::new();
+    let start = candidates.len().saturating_sub(limit as usize);
     for (row, task, owner) in candidates.into_iter().skip(start) {
         selected
             .entry((task, owner))
