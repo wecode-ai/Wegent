@@ -16,6 +16,7 @@ mod harness_protocol;
 mod history;
 mod image_budget;
 mod long_context;
+mod openai_reasoning;
 mod passthrough_stream;
 mod progressive_tools;
 mod request_policy;
@@ -52,6 +53,7 @@ pub const API_KEY: &str = "wework-local-router";
 pub const ROUTE: &str = "/v1/codex-router/responses";
 pub const TOKEN_ROUTE: &str = "/v1/codex-router/{token}/responses";
 pub const HARNESS_MESSAGES_ROUTE: &str = "/v1/harness-router/{token}/v1/messages";
+pub const OFFICIAL_CHATGPT_CODEX_BASE_URL: &str = "https://chatgpt.com/backend-api/codex";
 const MAX_REQUEST_BODY_BYTES: usize = 64 * 1024 * 1024;
 const NORMALIZED_API_ID_PREFIX_LENGTH: usize = 48;
 const DEFAULT_MAX_OUTPUT_TOKENS: u64 = 96_000;
@@ -208,6 +210,11 @@ impl LocalModelProxyUpstream {
         })
     }
 
+    pub fn is_official_chatgpt_codex(&self) -> bool {
+        self.api_format == "openai-responses"
+            && is_official_chatgpt_codex_endpoint(&self.resolved_request_url())
+    }
+
     fn responses_tool_capabilities(&self) -> ResponsesToolCapabilities {
         if self.codex_request_mode == CodexRequestMode::Standard {
             return ResponsesToolCapabilities {
@@ -250,6 +257,19 @@ impl LocalModelProxyUpstream {
             function_tools_only: false,
         }
     }
+}
+
+pub fn is_official_chatgpt_codex_endpoint(value: &str) -> bool {
+    let Ok(url) = url::Url::parse(value.trim()) else {
+        return false;
+    };
+    let trusted_host = matches!(
+        url.host_str(),
+        Some("chatgpt.com" | "localhost" | "127.0.0.1" | "::1")
+    );
+    let path = url.path().trim_end_matches('/');
+    trusted_host
+        && (path.ends_with("/backend-api/codex") || path.ends_with("/backend-api/codex/responses"))
 }
 
 fn canonical_upstream_api_format(api_format: &str) -> String {

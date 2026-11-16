@@ -135,6 +135,18 @@ pub(super) fn api_overrides(base_url: String, command: &str, args: Vec<String>) 
     serialize(selected)
 }
 
+/// Routes official ChatGPT inference through the local compatibility proxy.
+/// The provider keeps Codex's native OAuth account manager; only the base URL
+/// changes. WebSocket and standalone endpoint support stay disabled because the
+/// compatibility layer owns the Responses request path.
+pub(super) fn official_proxy_overrides(base_url: String) -> Vec<String> {
+    let mut selected = defaults("openai");
+    selected.insert("base_url".into(), json!(base_url));
+    selected.insert("supports_websockets".into(), json!(false));
+    selected.insert("supports_standalone_web_search".into(), json!(false));
+    serialize(selected)
+}
+
 fn serialize(selected: Map<String, Value>) -> Vec<String> {
     let router = codex_model_catalog::PROVIDER_ID;
     // One provider-table override replaces the process CLI provider atomically.
@@ -153,6 +165,17 @@ fn read_config(home: &Path) -> Result<Value, String> {
     let content = crate::local::codex_home::read_optional_config(&path)?;
     toml_edit::de::from_str(&content)
         .map_err(|error| format!("Read native Codex provider configuration: {error}"))
+}
+
+pub(super) fn official_codex_base_url(home: &Path) -> Result<String, String> {
+    let config = read_config(home)?;
+    let configured = config["openai_base_url"]
+        .as_str()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .filter(|value| local_model_proxy::is_official_chatgpt_codex_endpoint(value))
+        .map(|value| value.trim_end_matches('/').to_owned());
+    Ok(configured.unwrap_or_else(|| local_model_proxy::OFFICIAL_CHATGPT_CODEX_BASE_URL.to_owned()))
 }
 
 fn defaults(provider: &str) -> Map<String, Value> {
@@ -215,6 +238,19 @@ mod tests {
         assert_eq!(config["capabilities"]["cyber_access_programs"], true);
         assert!(config.get("auth").is_none());
         assert!(config.get("base_url").is_none());
+    }
+
+    #[test]
+    fn official_proxy_keeps_native_auth_but_disables_websocket_and_hosted_search() {
+        let config = profile_for_test(&official_proxy_overrides(
+            "http://127.0.0.1:1234/v1/codex-router/task-token".to_owned(),
+        ));
+        assert_eq!(config["name"], "OpenAI");
+        assert_eq!(config["requires_openai_auth"], true);
+        assert_eq!(config["supports_websockets"], false);
+        assert_eq!(config["supports_standalone_web_search"], false);
+        assert!(config.get("auth").is_none());
+        assert!(config.get("experimental_bearer_token").is_none());
     }
 
     #[test]

@@ -286,6 +286,7 @@ pub(super) async fn handle_for_token(
         conversion,
         expanded_browser_tools,
         stripped_encrypted_content,
+        normalized_reasoning_items,
     } = request_policy::prepare(
         &upstream,
         &request_body,
@@ -328,6 +329,10 @@ pub(super) async fn handle_for_token(
         (
             "normalized_inter_agent_content",
             normalized_inter_agent_content.to_string(),
+        ),
+        (
+            "normalized_reasoning_items",
+            normalized_reasoning_items.to_string(),
         ),
     ];
     request_log_fields.extend(request_tool_diagnostic_fields(&request_body));

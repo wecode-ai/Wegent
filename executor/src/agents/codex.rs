@@ -4709,6 +4709,7 @@ fn configure_codex_router(
     vision_sidecar: Option<VisionSidecarUpstream>,
 ) {
     upstream.routing_model_id = routing_model_id;
+    let official_chatgpt = upstream.is_official_chatgpt_codex();
     log_executor_event(
         "codex local model router configuring",
         &[
@@ -4730,19 +4731,38 @@ fn configure_codex_router(
     if model_switched {
         local_model_proxy::mark_model_switch(&local_token);
     }
-    configure_codex_router_registration(launch_config, local_token);
+    configure_codex_router_registration(launch_config, local_token, official_chatgpt);
 }
 
-fn configure_codex_router_registration(launch_config: &mut CodexLaunchConfig, local_token: String) {
+fn configure_codex_router_registration(
+    launch_config: &mut CodexLaunchConfig,
+    local_token: String,
+    official_chatgpt: bool,
+) {
     let provider = codex_model_catalog::PROVIDER_ID;
     launch_config.local_proxy_registration = Some(Arc::new(LocalProxyRegistration(local_token)));
     launch_config.model_provider = Some(provider.to_owned());
-    launch_config
-        .config_overrides
-        .push("forced_login_method=api".to_owned());
-    launch_config
-        .config_overrides
-        .extend(codex_router_provider_overrides());
+    if official_chatgpt {
+        let token = launch_config
+            .local_proxy_registration
+            .as_deref()
+            .expect("local proxy registration")
+            .0
+            .clone();
+        launch_config
+            .config_overrides
+            .extend(native_provider::official_proxy_overrides(format!(
+                "{}/{token}",
+                codex_router_base_url()
+            )));
+    } else {
+        launch_config
+            .config_overrides
+            .push("forced_login_method=api".to_owned());
+        launch_config
+            .config_overrides
+            .extend(codex_router_provider_overrides());
+    }
 }
 
 fn request_model_switched(request: &ExecutionRequest) -> bool {

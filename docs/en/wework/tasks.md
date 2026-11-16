@@ -197,7 +197,7 @@ Wework remembers the model, selection mode, and reasoning effort separately for 
 
 After a conversation starts, you can still switch between official GPT/Codex models and third-party models. Wework asks for confirmation when the selected model changes, and the new model applies to the next message.
 
-If the existing context contains encrypted reasoning or compaction state produced by the previous provider, the executor removes those non-portable fields from the switch request so the target model does not return `invalid_encrypted_content`. Portable messages, tool results, and other context remain available.
+In Codex tasks using official OAuth, official GPT and third-party models share the same compatibility layer. On a switch, the executor clears encrypted reasoning or compaction state owned by the previous provider. If third-party history stores readable reasoning in `reasoning.content`, the request sent to official GPT promotes it to `summary_text` and clears the restricted `content` array. These changes apply only to the outgoing copy; the original thread history stays intact. Portable messages, tool results, and other context remain available, so switching models does not require a new conversation or a reference to the old one.
 
 ## Control a running task
 

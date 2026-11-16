@@ -58,6 +58,105 @@ fn codex_request() -> Value {
 }
 
 #[tokio::test]
+async fn official_chatgpt_normalizes_foreign_reasoning_before_forwarding() {
+    let upstream = super::super::upstream_from_model_config(&json!({
+        "base_url": super::super::OFFICIAL_CHATGPT_CODEX_BASE_URL,
+        "codex_request_mode": "passthrough",
+        "tool_profile": "custom",
+        "native_tool_search": true,
+        "native_namespace_tools": true
+    }))
+    .unwrap()
+    .unwrap();
+    let original = json!({
+        "model": "gpt-6.1-sol",
+        "input": [
+            {
+                "type": "reasoning",
+                "id": "rs_foreign",
+                "summary": [],
+                "content": [{"type": "reasoning_text", "text": "foreign thought"}],
+                "encrypted_content": "foreign-seal"
+            },
+            {
+                "type": "message",
+                "role": "user",
+                "content": [{"type": "input_text", "text": "continue"}]
+            }
+        ]
+    });
+
+    let prepared = prepare(
+        &upstream,
+        &serde_json::to_vec(&original).unwrap(),
+        None,
+        &Default::default(),
+        false,
+        false,
+    )
+    .await
+    .unwrap();
+    let request: Value = serde_json::from_slice(&prepared.body).unwrap();
+
+    assert_eq!(prepared.normalized_reasoning_items, 1);
+    assert_eq!(request["input"][0]["content"], json!([]));
+    assert_eq!(request["input"][0]["summary"][0]["text"], "foreign thought");
+    assert!(request["input"][0].get("id").is_none());
+    assert!(request["input"][0].get("encrypted_content").is_none());
+    assert_eq!(request["input"][1]["content"][0]["text"], "continue");
+}
+
+#[tokio::test]
+async fn official_chatgpt_passthrough_still_removes_old_provider_state_on_switch() {
+    let upstream = super::super::upstream_from_model_config(&json!({
+        "base_url": super::super::OFFICIAL_CHATGPT_CODEX_BASE_URL,
+        "codex_request_mode": "passthrough"
+    }))
+    .unwrap()
+    .unwrap();
+    let original = json!({
+        "model": "gpt-6.1-sol",
+        "previous_response_id": "resp_old_provider",
+        "input": [
+            {
+                "type": "reasoning",
+                "id": "rs_foreign",
+                "summary": [],
+                "content": [{"type": "reasoning_text", "text": "foreign thought"}],
+                "encrypted_content": "foreign-seal"
+            },
+            {
+                "type": "context_compaction",
+                "encrypted_content": "old-compaction"
+            },
+            {
+                "type": "message",
+                "role": "user",
+                "content": [{"type": "input_text", "text": "continue"}]
+            }
+        ]
+    });
+
+    let prepared = prepare(
+        &upstream,
+        &serde_json::to_vec(&original).unwrap(),
+        None,
+        &Default::default(),
+        true,
+        false,
+    )
+    .await
+    .unwrap();
+    let request: Value = serde_json::from_slice(&prepared.body).unwrap();
+
+    assert!(request.get("previous_response_id").is_none());
+    assert_eq!(request["input"].as_array().unwrap().len(), 2);
+    assert_eq!(request["input"][0]["content"], json!([]));
+    assert_eq!(request["input"][0]["summary"][0]["text"], "foreign thought");
+    assert_eq!(request["input"][1]["role"], "user");
+}
+
+#[tokio::test]
 async fn unconfigured_responses_capabilities_default_to_portable_function_tools() {
     let config = super::super::upstream_from_model_config(&json!({
         "base_url": "https://custom.example/v1", "model_id": "any-model"

@@ -48,6 +48,7 @@ pub(super) struct PreparedRequest {
     pub conversion: Option<Conversion>,
     pub expanded_browser_tools: HashSet<String>,
     pub stripped_encrypted_content: usize,
+    pub normalized_reasoning_items: usize,
 }
 
 /// Standard providers can execute client functions but cannot supply hosted tools.
@@ -108,12 +109,26 @@ pub(super) async fn prepare(
         Some(model_id) => rewrite_request_model(body, model_id)?,
         None => body.to_vec(),
     };
+    let (body, normalized_reasoning_items) = if upstream.is_official_chatgpt_codex() {
+        super::openai_reasoning::normalize_official_reasoning_history(body)?
+    } else {
+        (body, 0)
+    };
     if upstream.codex_request_mode == CodexRequestMode::Passthrough {
+        // The internal official-GPT route uses passthrough to preserve its
+        // native request shape, but still needs the switch cleanup. User
+        // configured passthrough providers retain their documented behavior.
+        let body = if upstream.is_official_chatgpt_codex() {
+            prepare_model_switch_request(upstream, body, model_switched)?
+        } else {
+            body
+        };
         return Ok(PreparedRequest {
             body,
             conversion: None,
             expanded_browser_tools: HashSet::new(),
             stripped_encrypted_content: 0,
+            normalized_reasoning_items,
         });
     }
     let body = prepare_model_switch_request(upstream, body, model_switched)?;
@@ -136,5 +151,6 @@ pub(super) async fn prepare(
         conversion,
         expanded_browser_tools,
         stripped_encrypted_content,
+        normalized_reasoning_items,
     })
 }
