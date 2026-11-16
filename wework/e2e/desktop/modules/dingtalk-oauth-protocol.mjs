@@ -1,9 +1,9 @@
 import assert from 'node:assert/strict'
 import { execFile } from 'node:child_process'
-import { mkdir, rm, writeFile } from 'node:fs/promises'
+import { access, mkdir, readFile, rm, writeFile } from 'node:fs/promises'
 import { delimiter, join } from 'node:path'
-import { fileURLToPath } from 'node:url'
 import { promisify } from 'node:util'
+import { packagedResourcesRoot } from './workbench-schema-compatibility.mjs'
 
 const run = promisify(execFile)
 const prefix = '/dingtalk-oauth'
@@ -21,7 +21,7 @@ export function createDingtalkOAuthProtocol({ resultDir, sourceRoot }) {
     get authorization() {
       return authorization
     },
-    async prepareApp({ appEnvironment, control }) {
+    async prepareApp({ appBinary, appEnvironment, control }) {
       serverUrl = control.url
       await mkdir(browserDirectory, { recursive: true })
       const script = `#!${process.execPath}
@@ -36,13 +36,16 @@ if (!response.ok) process.exit(1);
         // Browser mediation is the external OAuth boundary, never a CLI replacement.
         await writeFile(join(browserDirectory, name), script, { mode: 0o755 })
       }
-      const weworkRoot = fileURLToPath(new URL('../../../', import.meta.url))
-      await run(process.execPath, [join(weworkRoot, 'scripts/prepare-dws-binary.mjs')])
-      const target =
-        process.platform === 'darwin'
-          ? `${process.arch === 'arm64' ? 'aarch64' : 'x86_64'}-apple-darwin`
-          : 'x86_64-unknown-linux-gnu'
-      appEnvironment.DWS_BINARY_PATH = join(weworkRoot, 'resources/binaries', `dws-${target}`)
+      const resources = packagedResourcesRoot(appBinary)
+      const components = JSON.parse(
+        await readFile(join(resources, 'components.json'), 'utf8')
+      ).components
+      assert.ok(
+        components.dws?.path,
+        'The shared desktop build did not declare its official DWS CLI'
+      )
+      appEnvironment.DWS_BINARY_PATH = join(resources, components.dws.path)
+      await access(appEnvironment.DWS_BINARY_PATH)
       appEnvironment.DWS_CLIENT_ID = ''
       appEnvironment.DWS_CLIENT_SECRET = ''
       appEnvironment.DWS_CHANNEL = ''
