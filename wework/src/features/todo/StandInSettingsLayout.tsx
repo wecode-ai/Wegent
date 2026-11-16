@@ -118,7 +118,7 @@ export function StandInSettingsActions({
         data-testid={`${prefix}-cancel`}
         disabled={disabled}
         onClick={onCancel}
-        className="min-h-9 rounded-lg px-3 text-sm hover:bg-muted"
+        className="min-h-11 rounded-lg px-3 text-sm hover:bg-muted md:min-h-9"
       >
         {t('standIn.cancel')}
       </button>
@@ -127,7 +127,7 @@ export function StandInSettingsActions({
         data-testid={`${prefix}-save`}
         disabled={saveDisabled}
         onClick={onSave}
-        className="min-h-9 rounded-lg bg-text-primary px-4 text-sm text-background disabled:opacity-50"
+        className="min-h-11 rounded-lg bg-text-primary px-4 text-sm text-background disabled:opacity-50 md:min-h-9"
       >
         {saveLabel ?? t('standIn.save')}
       </button>

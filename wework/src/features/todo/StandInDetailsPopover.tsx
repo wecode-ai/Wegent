@@ -228,7 +228,7 @@ export function StandInDetailsPopover({
                 aria-label={t('standIn.onboarding.guide')}
                 title={t('standIn.onboarding.guide')}
                 onClick={onGuide}
-                className="flex h-8 w-8 shrink-0 items-center justify-center self-start rounded-md text-text-muted hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                className="flex h-11 w-11 shrink-0 items-center justify-center self-start rounded-md text-text-muted hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring md:h-8 md:w-8"
               >
                 <HelpCircle aria-hidden="true" className="h-4 w-4" />
               </button>
@@ -241,19 +241,27 @@ export function StandInDetailsPopover({
               type="button"
               data-testid="stand-in-details-work-sources"
               onClick={onSettings}
-              className="min-h-11 w-full rounded-md text-left text-sm hover:bg-muted focus-visible:outline-none keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-focus/70 md:min-h-9"
+              className="min-h-11 w-full rounded-lg border border-border bg-muted/30 p-2 text-left text-sm hover:bg-muted focus-visible:outline-none keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-focus/70"
             >
               <span className="mb-1 flex items-center justify-between gap-2 font-medium">
                 {t('standIn.workspace.work_sources')}
+                <span className="ml-auto shrink-0 rounded-md border border-border bg-background px-2 py-1 font-normal">
+                  {t('standIn.personal.manage')}
+                </span>
                 <ChevronRight aria-hidden="true" className="h-4 w-4 shrink-0" />
               </span>
-              <span className="block break-words text-text-secondary">
+              <span className="line-clamp-2 break-words text-text-secondary">
                 {workSources.length
                   ? t('standIn.workspace.work_sources_configured', {
-                      names: workSources.join(' · '),
+                      names: workSources.slice(0, 2).join(' · '),
                     })
                   : t('standIn.workspace.work_sources_empty')}
               </span>
+              {workSources.length > 2 && (
+                <span className="block text-text-secondary">
+                  {t('standIn.workspace.work_sources_more', { count: workSources.length - 2 })}
+                </span>
+              )}
             </button>
           </section>
           {imConnections && (
@@ -320,7 +328,7 @@ export function StandInDetailsPopover({
                   aria-label={t('standIn.workspace.details_all_activity')}
                   title={t('standIn.workspace.details_all_activity')}
                   onClick={onAllActivity}
-                  className="flex h-8 w-8 items-center justify-center rounded-md text-text-muted hover:bg-muted"
+                  className="flex h-11 w-11 items-center justify-center rounded-md text-text-muted hover:bg-muted md:h-8 md:w-8"
                 >
                   <ChevronRight aria-hidden="true" className="h-4 w-4" />
                 </button>

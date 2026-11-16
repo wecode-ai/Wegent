@@ -134,7 +134,8 @@ export function StandInPrimaryProfile({
     }
   }, [services.runtimeWorkApi, settings.executionDeviceId, reload])
   const [scheduleDirty, setScheduleDirty] = useState(false)
-  const dirty = !dequal(original, draft) || scheduleDirty
+  const [connectionDraftDirty, setConnectionDraftDirty] = useState(false)
+  const dirty = !dequal(original, draft) || scheduleDirty || connectionDraftDirty
 
   const role = {
     ...newStandInRole(settings.executionDeviceId, '@primary'),
@@ -258,6 +259,7 @@ export function StandInPrimaryProfile({
             }}
             scheduling={{ userId: settings.userId, roleId: '@primary' }}
             onScheduleDirtyChange={setScheduleDirty}
+            onDraftDirtyChange={setConnectionDraftDirty}
             projects={projects}
             api={api}
             deviceId={settings.executionDeviceId}
@@ -359,7 +361,7 @@ export function StandInPrimaryProfile({
           prefix="stand-in-primary"
           leading={footerLeading}
           disabled={saving}
-          saveDisabled={saving || !dirty || scheduleDirty}
+          saveDisabled={saving || !dirty || scheduleDirty || connectionDraftDirty}
           onCancel={close}
           onSave={() => void onSave({ ...settings, primary: draft })}
         >

@@ -139,6 +139,7 @@ function StandInSettingsEditor({
     draft?.roles[0]
   const executionDeviceId = role?.executionDeviceId ?? draft?.executionDeviceId
   const [scheduleDirty, setScheduleDirty] = useState(false)
+  const [connectionDraftDirty, setConnectionDraftDirty] = useState(false)
   const [calendarOpen, setCalendarOpen] = useState(initialCalendar)
   const [connectionDetailOpen, setConnectionDetailOpen] = useState(initialCalendar)
   const [connectionTitle, setConnectionTitle] = useState<string | null>(null)
@@ -151,7 +152,8 @@ function StandInSettingsEditor({
     },
     [onCalendarViewChange]
   )
-  const dirty = Boolean(draft && saved && !dequal(draft, saved)) || scheduleDirty
+  const dirty =
+    Boolean(draft && saved && !dequal(draft, saved)) || scheduleDirty || connectionDraftDirty
   useEffect(() => {
     onSavingChange?.(saving)
   }, [saving, onSavingChange])
@@ -220,7 +222,7 @@ function StandInSettingsEditor({
     requestLeave,
   }))
   const save = async (disconnectProject = false) => {
-    if (!draft || !role || moving) return
+    if (!draft || !role || moving || connectionDraftDirty) return
     if (view === 'create' && !role.name.trim()) {
       setRoleNameError(true)
       return
@@ -604,6 +606,7 @@ function StandInSettingsEditor({
                   savedConfiguration={saved?.roles.find(item => item.id === role.id)}
                   scheduling={{ userId, roleId: role.id }}
                   onScheduleDirtyChange={setScheduleDirty}
+                  onDraftDirtyChange={setConnectionDraftDirty}
                   projects={projects}
                   focusedProjectId={initialProject?.id}
                   disabled={saving}
@@ -709,7 +712,11 @@ function StandInSettingsEditor({
                 leading={footerLeading}
                 disabled={saving}
                 saveDisabled={
-                  saving || moving || scheduleDirty || (view === 'project' && !projectRoleId)
+                  saving ||
+                  moving ||
+                  scheduleDirty ||
+                  connectionDraftDirty ||
+                  (view === 'project' && !projectRoleId)
                 }
                 onCancel={close}
                 onSave={() => void save(view === 'project' && projectEnabled)}

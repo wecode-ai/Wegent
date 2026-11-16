@@ -26,6 +26,7 @@ export function StandInProcessingSettings({
   const [expanded, setExpanded] = useState(false)
   const contentId = useId()
   if (!rows.length) return null
+  const first = rows[0]
   return (
     <section
       className="mt-4 border-t border-border pt-4"
@@ -42,20 +43,21 @@ export function StandInProcessingSettings({
         <span className="min-w-0 flex-1">
           <span className="block font-medium">{t('standIn.workspace.processing_settings')}</span>
           <span className="mt-1 block break-words text-text-secondary">
-            {rows
-              .map(row =>
-                t('standIn.workspace.processing_summary', {
-                  name: row.name,
-                  mode: t(
-                    !row.policy.automatic
-                      ? 'standIn.workspace.processing_manual'
-                      : (row.policy.immediate ?? true)
-                        ? 'standIn.workspace.processing_immediate'
-                        : 'standIn.workspace.processing_collect'
-                  ),
-                })
-              )
-              .join(' · ')}
+            {t('standIn.workspace.processing_summary', {
+              name: first.name,
+              mode: t(
+                !first.policy.automatic
+                  ? 'standIn.workspace.processing_manual'
+                  : (first.policy.immediate ?? true)
+                    ? 'standIn.workspace.processing_immediate'
+                    : 'standIn.workspace.processing_collect'
+              ),
+            })}
+            {rows.length > 1 && (
+              <span className="block">
+                {t('standIn.workspace.processing_more', { count: rows.length - 1 })}
+              </span>
+            )}
           </span>
         </span>
         <span className="shrink-0 rounded-md border border-border bg-background px-2 py-1">

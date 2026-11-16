@@ -34,6 +34,7 @@ export function StandInConnectionSettings({
   focusedProjectId,
   scheduling,
   onScheduleDirtyChange,
+  onDraftDirtyChange,
   initialCalendar = false,
   onCalendarViewChange,
   onDetailViewChange,
@@ -53,6 +54,7 @@ export function StandInConnectionSettings({
   focusedProjectId?: string
   scheduling?: { userId: number; roleId: string }
   onScheduleDirtyChange?(dirty: boolean): void
+  onDraftDirtyChange?(dirty: boolean): void
   initialCalendar?: boolean
   onCalendarViewChange?(open: boolean): void
   onDetailViewChange?(open: boolean): void
@@ -74,17 +76,19 @@ export function StandInConnectionSettings({
   const [view, setView] = useState<string | null>(initialCalendar ? 'time' : null)
   const calendarRef = useRef<AutomationNavigationHandle>(null)
   const emailRef = useRef<AutomationNavigationHandle>(null)
+  const projectRef = useRef<AutomationNavigationHandle>(null)
+  const requestLeave = (action: () => void) => {
+    const editor = calendarRef.current ?? emailRef.current ?? projectRef.current
+    if (editor) editor.requestLeave(action)
+    else action()
+  }
   useImperativeHandle(ref, () => ({
     back() {
       const back = () => setView(null)
-      if (calendarRef.current) calendarRef.current.requestLeave(back)
-      else if (emailRef.current) emailRef.current.requestLeave(back)
-      else back()
+      requestLeave(back)
     },
     requestLeave(action) {
-      if (calendarRef.current) calendarRef.current.requestLeave(action)
-      else if (emailRef.current) emailRef.current.requestLeave(action)
-      else action()
+      requestLeave(action)
     },
   }))
   useEffect(() => {
@@ -230,6 +234,8 @@ export function StandInConnectionSettings({
             </div>
           ) : view === 'projects' ? (
             <StandInConnections
+              ref={projectRef}
+              onDraftDirtyChange={onDraftDirtyChange}
               role={role}
               projects={projects}
               allowLocalProjects={deviceId === localDeviceId}

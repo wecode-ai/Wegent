@@ -77,6 +77,60 @@ function fixture() {
   }
 }
 
+it('protects an unfinished invalid project tag and permits saving after explicit recovery', async () => {
+  const props = fixture()
+  const user = userEvent.setup()
+  render(<StandInPrimaryProfile {...props} />)
+  await user.click(screen.getByTestId('stand-in-primary-connections-open'))
+  await user.click(await screen.findByTestId('stand-in-add-projects-connection'))
+  await user.click(screen.getByTestId('stand-in-source-collaboration'))
+  await user.click(screen.getByTestId('stand-in-source-tags-toggle'))
+  const input = screen.getByTestId('stand-in-connection-tags-input')
+  const invalid = 'x'.repeat(33)
+  await user.type(input, invalid)
+  expect(await screen.findByRole('alert')).toHaveTextContent('标签名称不能超过 32 个字符')
+  expect(screen.getByTestId('stand-in-primary-save')).toBeVisible()
+  expect(screen.getByTestId('stand-in-primary-save')).toBeDisabled()
+  await user.click(screen.getByTestId('stand-in-primary-profile-close'))
+  await user.click(await screen.findByTestId('stand-in-project-tags-keep-editing'))
+  expect(input).toHaveValue(invalid)
+  expect(props.onClose).not.toHaveBeenCalled()
+  expect(props.onSave).not.toHaveBeenCalled()
+  await user.clear(input)
+  await waitFor(() => expect(screen.getByTestId('stand-in-primary-save')).toBeEnabled())
+  await user.click(screen.getByTestId('stand-in-primary-save'))
+  expect(props.onSave).toHaveBeenCalledWith(
+    expect.objectContaining({
+      primary: expect.objectContaining({ collaboration: expect.objectContaining({ tags: [] }) }),
+    })
+  )
+})
+
+it('requires confirmation before disabling intake with an unfinished tag', async () => {
+  const props = fixture()
+  const user = userEvent.setup()
+  render(<StandInPrimaryProfile {...props} />)
+  await user.click(screen.getByTestId('stand-in-primary-connections-open'))
+  await user.click(await screen.findByTestId('stand-in-add-projects-connection'))
+  await user.click(screen.getByTestId('stand-in-source-collaboration'))
+  await user.click(screen.getByTestId('stand-in-source-tags-toggle'))
+  const input = screen.getByTestId('stand-in-connection-tags-input')
+  await user.type(input, 'x'.repeat(33))
+  await user.click(screen.getByTestId('stand-in-source-collaboration'))
+  expect(screen.getByTestId('stand-in-source-collaboration')).toHaveAttribute(
+    'aria-checked',
+    'true'
+  )
+  await user.click(await screen.findByTestId('stand-in-project-tags-discard'))
+  expect(screen.getByTestId('stand-in-source-collaboration')).toHaveAttribute(
+    'aria-checked',
+    'false'
+  )
+  expect(screen.getByTestId('stand-in-connection-tags-input')).toHaveValue('')
+  expect(screen.queryByText('标签名称不能超过 32 个字符')).not.toBeInTheDocument()
+  expect(screen.queryByTestId('stand-in-project-tags-draft-help')).not.toBeInTheDocument()
+})
+
 it('explains an environment load failure and recovers without losing profile edits', async () => {
   const props = fixture()
   const listRuntimeWork = vi.mocked(props.services.runtimeWorkApi!.listRuntimeWork)

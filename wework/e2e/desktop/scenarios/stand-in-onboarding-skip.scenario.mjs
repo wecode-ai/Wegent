@@ -65,6 +65,24 @@ export function createDesktopScenario({ uiTimeoutMs, captureScreenshot }) {
         'Inspecting processing settings must not change the saved policy'
       )
       await captureScreenshot(control, 'stand-in-processing-disclosure.png')
+      await control.command('clickWhenEnabled', selector('stand-in-source-collaboration'))
+      await control.command('clickWhenEnabled', selector('stand-in-source-tags-toggle'))
+      const tagInput = selector('stand-in-connection-tags-input')
+      const invalidTag = 'Unfinished tag '.repeat(4).trim()
+      await control.command('fill', tagInput, { value: invalidTag })
+      await control.command('waitFor', '#stand-in-connection-tags-error', { visible: true })
+      await control.command('waitFor', `${selector('stand-in-primary-save')}:disabled`)
+      await control.command('clickWhenEnabled', selector('stand-in-primary-profile-close'))
+      await control.command('waitFor', selector('stand-in-project-tags-keep-editing'), {
+        visible: true,
+      })
+      await control.command('clickWhenEnabled', selector('stand-in-project-tags-keep-editing'))
+      assert.equal(await control.command('getValue', tagInput), invalidTag)
+      await captureScreenshot(control, 'stand-in-tag-draft-protected.png')
+      await control.command('fill', tagInput, { value: '' })
+      await control.command('waitFor', `${selector('stand-in-primary-save')}:enabled`)
+      await control.command('clickWhenEnabled', selector('stand-in-source-collaboration'))
+      assert.deepEqual(await rpc('runtime.stand_in.personal.get', { userId: USER_ID }), before)
       await control.command('clickWhenEnabled', selector('stand-in-primary-profile-close'))
       await control.command('waitFor', selector('stand-in-profile-panel'), { visible: false })
     },

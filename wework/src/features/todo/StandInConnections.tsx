@@ -7,6 +7,10 @@ import { roleSelectsProject, standInPolicy } from '@/api/personalStandIn'
 import { useTranslation } from '@/hooks/useTranslation'
 import { TagEditor } from '@wegent/collaboration'
 import { StandInProcessingSettings } from './StandInProcessingSettings'
+import { useEffect, useImperativeHandle, useState, type Ref } from 'react'
+import { ConfirmDialog } from '@/components/common/ConfirmDialog'
+import type { AutomationNavigationHandle } from '@/features/automations/AutomationsPage'
+import { useStandInPanelNavigation } from './useStandInPanelNavigation'
 
 /** Edit project intake scope, exclusions and handling policies for an independent stand-in. */
 export function StandInConnections({
@@ -16,6 +20,8 @@ export function StandInConnections({
   onChange,
   disabled,
   focusedProjectId,
+  ref: navigationRef,
+  onDraftDirtyChange,
 }: {
   role: StandInRole
   projects: CollaborationProject[]
@@ -23,8 +29,19 @@ export function StandInConnections({
   onChange(role: StandInRole): void
   disabled: boolean
   focusedProjectId?: string
+  ref?: Ref<AutomationNavigationHandle>
+  onDraftDirtyChange?(dirty: boolean): void
 }) {
   const { t } = useTranslation('common')
+  const [tagDraftDirty, setTagDraftDirty] = useState(false)
+  const [discard, setDiscard] = useState(false)
+  const [draftVersion, setDraftVersion] = useState(0)
+  const navigation = useStandInPanelNavigation(tagDraftDirty, disabled, () => setDiscard(true))
+  useImperativeHandle(navigationRef, () => ({ requestLeave: navigation.requestLeave }))
+  useEffect(() => {
+    onDraftDirtyChange?.(tagDraftDirty)
+    return () => onDraftDirtyChange?.(false)
+  }, [tagDraftDirty, onDraftDirtyChange])
   const source = role.collaboration
   const setSource = (patch: Partial<typeof source>) =>
     onChange({ ...role, collaboration: { ...source, ...patch } })
@@ -59,7 +76,7 @@ export function StandInConnections({
           data-testid="stand-in-source-collaboration"
           checked={source.enabled}
           disabled={disabled}
-          onCheckedChange={enabled => setSource({ enabled })}
+          onCheckedChange={enabled => navigation.requestLeave(() => setSource({ enabled }))}
           aria-label={t('standIn.personal.collaboration')}
         />
       </label>
@@ -158,8 +175,10 @@ export function StandInConnections({
           </summary>
           <div className="mt-2 rounded-md border border-border p-2">
             <TagEditor
+              key={draftVersion}
               tags={source.tags}
               onChange={tags => setSource({ tags })}
+              onDraftDirtyChange={setTagDraftDirty}
               disabled={disabled}
               suggestions={[...new Set(projects.flatMap(project => project.tags ?? []))]}
               placeholder={t('standIn.personal.add_tag')}
@@ -173,6 +192,15 @@ export function StandInConnections({
           </p>
         </details>
       </fieldset>
+      {tagDraftDirty && (
+        <p
+          role="status"
+          className="text-sm text-text-secondary"
+          data-testid="stand-in-project-tags-draft-help"
+        >
+          {t('standIn.workspace.tag_draft_help')}
+        </p>
+      )}
       <StandInProcessingSettings
         disabled={disabled}
         sessionScope="issue"
@@ -202,6 +230,26 @@ export function StandInConnections({
                 }),
             })),
         ]}
+      />
+      <ConfirmDialog
+        open={discard}
+        title={t('standIn.personal.discard_help')}
+        description={t('standIn.personal.discard_description')}
+        cancelLabel={t('standIn.personal.keep_editing')}
+        confirmLabel={t('standIn.personal.discard')}
+        confirmTestId="stand-in-project-tags-discard"
+        cancelTestId="stand-in-project-tags-keep-editing"
+        destructive
+        onClose={() => {
+          navigation.cancelLeave()
+          setDiscard(false)
+        }}
+        onConfirm={() => {
+          setDiscard(false)
+          setTagDraftDirty(false)
+          setDraftVersion(value => value + 1)
+          navigation.confirmLeave(() => {})
+        }}
       />
     </div>
   )
