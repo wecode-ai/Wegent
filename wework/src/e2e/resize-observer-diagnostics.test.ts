@@ -90,3 +90,37 @@ test('attributes synchronous DOM writes to their callback without reading layout
   diagnostics.stop()
   parent.remove()
 })
+
+test('retains deferred DOM commits between native deliveries without attributing their cause', async () => {
+  let deliver!: ResizeObserverCallback
+  class NativeObserver {
+    constructor(callback: ResizeObserverCallback) {
+      deliver = callback
+    }
+  }
+  const scope = {
+    ResizeObserver: NativeObserver,
+    MutationObserver,
+    document,
+  } as unknown as Window & typeof globalThis
+  const diagnostics = installResizeObserverDiagnostics(scope)
+  const target = document.createElement('div')
+  target.dataset.testid = 'deferred-layout'
+  document.body.append(target)
+  const observer = new scope.ResizeObserver(() => {
+    queueMicrotask(() => {
+      target.style.height = '43px'
+    })
+  })
+  deliver([{ target, contentRect: { width: 100, height: 20 } } as ResizeObserverEntry], observer)
+  expect(diagnostics.snapshot().recent[0].writeCount).toBe(0)
+  await new Promise<void>(resolve => queueMicrotask(resolve))
+  expect(diagnostics.snapshot().betweenCallbacks.flatMap(batch => batch.writes)).toContainEqual({
+    tag: 'DIV',
+    testId: 'deferred-layout',
+    attribute: 'style',
+  })
+  expect(JSON.stringify(diagnostics.snapshot())).not.toContain('43px')
+  diagnostics.stop()
+  target.remove()
+})
