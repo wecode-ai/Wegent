@@ -99,9 +99,18 @@ async function createPickerTask(control, uiTimeoutMs) {
   return waitForValue(
     async () => {
       const state = JSON.parse(await control.command('getWorkbenchDebugSnapshot', 'body'))
-      return state.workbench?.currentRuntimeTask
+      return {
+        task: state.workbench?.currentRuntimeTask,
+        lifecycle: state.workbench?.activeLifecycle?.task,
+        currentTaskRunning: state.workbench?.lifecycleCurrentTaskRunning,
+      }
     },
-    task => Boolean(task?.taskId) && task.running === false,
+    ({ task, lifecycle, currentTaskRunning }) =>
+      Boolean(task?.taskId) &&
+      lifecycle?.taskId === task.taskId &&
+      lifecycle.status === 'done' &&
+      lifecycle.running === false &&
+      currentTaskRunning === false,
     'The standalone picker task did not settle',
     uiTimeoutMs
   )
