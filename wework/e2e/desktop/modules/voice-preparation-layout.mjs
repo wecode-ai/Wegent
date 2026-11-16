@@ -44,6 +44,12 @@ export async function verifyVoiceThemeTransitions(control) {
     )
     await control.command('navigate', 'body', { value: '/settings/general' })
     await control.command('waitFor', '[data-testid="voice-input-settings"]')
+    const language = await control.command('getAttribute', 'html', { value: 'lang' })
+    assert.equal(
+      (await control.command('getText', '[data-testid="settings-category-coding"]')).trim(),
+      language.startsWith('en') ? 'Coding' : '编码',
+      'General settings categories must follow the selected interface language'
+    )
     await assertReadableVoiceSurface(
       control,
       'body',
