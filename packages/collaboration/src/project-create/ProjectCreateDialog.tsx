@@ -56,6 +56,8 @@ import type {
   ProjectCreateModalProps,
 } from "./types";
 import { useProjectCreateController } from "./useProjectCreateController";
+import { ProjectPeoplePicker } from "./ProjectPeoplePicker";
+import type { CollaborationWorkspaceMember } from "../types";
 
 function DefaultModal({ title, children, onClose }: ProjectCreateModalProps) {
   return (
@@ -291,6 +293,9 @@ export function ProjectCreateDialog(props: ProjectCreateDialogProps) {
   const translate = createCollaborationTranslator(labels.locale);
   const generationComposerRef = useRef<ComposerInputHandle>(null);
   const [collaboratorPickerOpen, setCollaboratorPickerOpen] = useState(false);
+  const [addedPeople, setAddedPeople] = useState<
+    CollaborationWorkspaceMember[]
+  >([]);
   const [advancedSettingsOpen, setAdvancedSettingsOpen] = useState(false);
   const [templateSelected, setTemplateSelected] = useState(
     Boolean(props.initialTemplate),
@@ -406,12 +411,16 @@ export function ProjectCreateDialog(props: ProjectCreateDialogProps) {
     },
     [],
   );
-  const selectedMembers =
-    resourceSetup?.members.filter(
-      (member) =>
-        member.user_id !== resourceSetup.currentUser.id &&
-        state.memberUserIds.includes(member.user_id),
-    ) ?? [];
+  const people = [...(resourceSetup?.members ?? []), ...addedPeople].filter(
+    (member, index, all) =>
+      all.findIndex((candidate) => candidate.user_id === member.user_id) ===
+      index,
+  );
+  const selectedMembers = people.filter(
+    (member) =>
+      member.user_id !== resourceSetup?.currentUser.id &&
+      state.memberUserIds.includes(member.user_id),
+  );
   const selectedGenerationHumans = resourceSetup
     ? [
         {
@@ -438,8 +447,7 @@ export function ProjectCreateDialog(props: ProjectCreateDialogProps) {
         return labels.currentUser;
       }
       return (
-        resourceSetup?.members.find((member) => String(member.user_id) === id)
-          ?.user_name ?? id
+        people.find((member) => String(member.user_id) === id)?.user_name ?? id
       );
     }
     return resourceSetup?.agents.find((agent) => agent.id === id)?.name ?? id;
@@ -945,6 +953,7 @@ export function ProjectCreateDialog(props: ProjectCreateDialogProps) {
                   groupGenerating
                 }
                 onChange={(event) => {
+                  setAddedPeople([]);
                   commands.setMemberUserIds([]);
                   commands.setAgentResourceIds([]);
                   commands.setExecutionEnvironmentDeviceIds(null);
@@ -1293,6 +1302,45 @@ export function ProjectCreateDialog(props: ProjectCreateDialogProps) {
                     className={`${portalTheme.className ?? ""} collaboration-project-create-collaborator-menu`}
                     data-testid="collaboration-project-create-collaborator-menu"
                   >
+                    {resourceSetup.searchUsers ||
+                    people.some(
+                      (member) =>
+                        member.user_id !== resourceSetup.currentUser.id,
+                    ) ? (
+                      <ProjectPeoplePicker
+                        labels={labels}
+                        people={people.map((member) => ({
+                          id: member.user_id,
+                          user_name: member.user_name,
+                          email: member.email,
+                        }))}
+                        excludedIds={[
+                          resourceSetup.currentUser.id,
+                          ...state.memberUserIds,
+                        ]}
+                        searchUsers={resourceSetup.searchUsers}
+                        onSelect={(user) => {
+                          setAddedPeople((current) => [
+                            ...current.filter(
+                              (member) => member.user_id !== user.id,
+                            ),
+                            {
+                              id: user.id,
+                              user_id: user.id,
+                              user_name: user.user_name,
+                              email: user.email,
+                              role: "Developer",
+                            },
+                          ]);
+                          commands.setMemberUserIds([
+                            ...state.memberUserIds,
+                            user.id,
+                          ]);
+                          commands.setCollaborationGroupDraft(null);
+                          setCollaboratorPickerOpen(false);
+                        }}
+                      />
+                    ) : null}
                     {resourceSetup.groups.length > 0 ? (
                       <div>
                         <small>{labels.availableGroups}</small>
@@ -1358,7 +1406,13 @@ export function ProjectCreateDialog(props: ProjectCreateDialogProps) {
                       </div>
                     ) : null}
                     {resourceSetup.groups.length === 0 &&
-                    availableAgents.length === 0 ? (
+                    availableAgents.length === 0 &&
+                    !resourceSetup.searchUsers &&
+                    !people.some(
+                      (member) =>
+                        member.user_id !== resourceSetup.currentUser.id &&
+                        !state.memberUserIds.includes(member.user_id),
+                    ) ? (
                       <p>{labels.noAvailableCollaborators}</p>
                     ) : null}
                   </Popover.Content>

@@ -2589,6 +2589,57 @@ describe("CollaborationPlatformApp real component flow", () => {
     );
   });
 
+  it("selects workspace people and searched people before creating a project", async () => {
+    const { api } = createApi({ initialProjects: [] });
+    await render(<PlatformHarness api={api} currentUser={{ id: 1, name: "我" }} />);
+    await chooseBlankProjectCreation();
+    await click(byTestId("collaboration-project-create-add-collaborator"));
+    await click(portalByTestId('collaboration-project-create-member-' + member.user_id));
+    expect(container.querySelector('[aria-label="取消 ' + member.user_name + '"]')).toBeTruthy();
+    await click(byTestId("collaboration-project-create-add-collaborator"));
+    expect(document.body.querySelector('[data-testid="collaboration-project-create-member-' + member.user_id + '"]')).toBeNull();
+    await change(portalByTestId("collaboration-project-create-people-search") as HTMLInputElement, "王芳");
+    await act(async () => {
+      await vi.waitFor(() => expect(api.members.searchUsers).toHaveBeenCalledWith("王芳"));
+    });
+    await click(portalByTestId("collaboration-project-create-member-8"));
+    expect(container.querySelector('[aria-label="取消 王芳"]')).toBeTruthy();
+    await change(byTestId("collaboration-project-name-input") as HTMLInputElement, project.name);
+    await click(byTestId("collaboration-project-create-confirm"));
+    expect(api.members.add).toHaveBeenCalledWith(project.id, 8, "Developer");
+    expect(api.members.add).not.toHaveBeenCalledWith(project.id, 1, "Developer");
+  });
+
+  it("removes a selected person before project creation", async () => {
+    const { api } = createApi({ initialProjects: [] });
+    await render(<PlatformHarness api={api} currentUser={{ id: 1, name: "我" }} />);
+    await chooseBlankProjectCreation();
+    await click(byTestId("collaboration-project-create-add-collaborator"));
+    await click(portalByTestId('collaboration-project-create-member-' + member.user_id));
+    await click(container.querySelector('[aria-label="取消 ' + member.user_name + '"]')!);
+    await change(byTestId("collaboration-project-name-input") as HTMLInputElement, project.name);
+    await click(byTestId("collaboration-project-create-confirm"));
+    expect(api.members.add).not.toHaveBeenCalled();
+  });
+
+  it("shows people search failures and recovers on the next query", async () => {
+    const { api } = createApi({ initialProjects: [] });
+    vi.mocked(api.members.searchUsers).mockRejectedValueOnce(new Error("offline"));
+    await render(<PlatformHarness api={api} />);
+    await chooseBlankProjectCreation();
+    await click(byTestId("collaboration-project-create-add-collaborator"));
+    await change(portalByTestId("collaboration-project-create-people-search") as HTMLInputElement, "王");
+    await act(async () => {
+      await vi.waitFor(() => expect(api.members.searchUsers).toHaveBeenCalledWith("王"));
+    });
+    expect(document.body.textContent).toContain("人员搜索失败");
+    await change(portalByTestId("collaboration-project-create-people-search") as HTMLInputElement, "王芳");
+    await act(async () => {
+      await vi.waitFor(() => expect(api.members.searchUsers).toHaveBeenCalledWith("王芳"));
+    });
+    expect(document.body.textContent).not.toContain("人员搜索失败");
+  });
+
   it("starts without Agents and lets the user add the local Agent manually", async () => {
     const { api } = createApi({
       initialWorkspaces: [localWorkspace],
