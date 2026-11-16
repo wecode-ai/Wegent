@@ -49,9 +49,7 @@ fn notify_active_turn(
     thread_id: &str,
     observed: Option<String>,
 ) -> Option<String> {
-    let Some(turn_id) = observed.filter(|turn_id| active_turn_id.as_ref() != Some(turn_id)) else {
-        return None;
-    };
+    let turn_id = observed.filter(|turn_id| active_turn_id.as_ref() != Some(turn_id))?;
     if let Some(callback) = callback.as_ref() {
         callback(thread_id.to_owned(), turn_id.clone());
     }
