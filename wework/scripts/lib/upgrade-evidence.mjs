@@ -5,9 +5,24 @@ import {
   validateUpgradeCatalog,
 } from '../../electron/src/runtime/upgrade-policy.mjs'
 
-export function releaseVerificationChannels(channel, selected = '', sourceVersion = '') {
+export function releasePublicationChannels(channel, policy = {}) {
   if (!['stable', 'beta'].includes(channel)) throw new Error('Invalid release channel')
-  const channels = releaseUpgradeChannels(channel, sourceVersion)
+  if (policy.releasePurpose === undefined) return releaseUpgradeChannels(channel)
+  if (policy.releasePurpose !== 'bridge' || channel !== 'stable')
+    throw new Error('Bridge releases publish only to stable')
+  return ['stable']
+}
+
+export function releaseVerificationChannels(
+  channel,
+  selected = '',
+  sourceVersion = '',
+  policy = {}
+) {
+  if (!['stable', 'beta'].includes(channel)) throw new Error('Invalid release channel')
+  const channels = sourceVersion
+    ? releaseUpgradeChannels(channel, sourceVersion)
+    : releasePublicationChannels(channel, policy)
   if (selected && !channels.includes(selected))
     throw new Error('Verification channel is outside the target release channels')
   return selected ? [selected] : channels

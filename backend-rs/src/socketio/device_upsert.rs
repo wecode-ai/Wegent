@@ -238,6 +238,7 @@ pub async fn upsert_device(
                 payload,
                 runtime_transfer_host,
                 client_ip,
+                state.unique_app_device_names,
             )
             .await
         })
@@ -269,6 +270,7 @@ async fn upsert_registration<T>(
     payload: &RegisterPayload,
     runtime_transfer_host: Option<&str>,
     client_ip: Option<&str>,
+    unique_app_device_names: bool,
 ) -> MysqlResult<i64>
 where
     T: MysqlTransaction + Send,
@@ -288,6 +290,7 @@ where
         payload.runtime_instance_id.as_deref(),
         payload.app_device_id.as_deref(),
         payload.device_type,
+        unique_app_device_names,
     ) {
         Ok(selected) => selected.cloned(),
         Err(conflict) => return Err(rejection(conflict)),
@@ -417,7 +420,8 @@ fn device_insert_error(
 ///
 /// The source reads all rows (ordered by primary key) and then:
 /// 1. prefers an exact `(runtimeInstanceId, appDeviceId)` match, active first;
-/// 2. lets a different App installation own an independent record-scoped route;
+/// 2. allocates a separate App route where the store permits the name, or
+///    returns an actionable conflict when the store enforces unique names;
 /// 3. rejects >1 active row as ambiguous;
 /// 4. otherwise falls back to the single active row;
 /// 5. for inactive duplicates, keeps the one whose Runtime installation matches
@@ -428,13 +432,16 @@ fn select_registration_device<'a>(
     runtime_instance_id: Option<&str>,
     app_device_id: Option<&str>,
     device_type: DeviceType,
+    unique_app_device_names: bool,
 ) -> Result<Option<&'a DeviceKindRow>, String> {
+    let app_name_is_unique = unique_app_device_names && device_type == DeviceType::App;
     let runtime = runtime_instance_id.filter(|value| !value.is_empty());
     if let Some(runtime) = runtime {
         let exact: Vec<&DeviceKindRow> = devices
             .iter()
             .filter(|device| {
-                spec_string(&device.json, "runtimeInstanceId") == Some(runtime)
+                (!app_name_is_unique || can_restore_as_app(&device.json))
+                    && spec_string(&device.json, "runtimeInstanceId") == Some(runtime)
                     && spec_string(&device.json, "appDeviceId") == app_device_id
             })
             .collect();
@@ -444,7 +451,19 @@ fn select_registration_device<'a>(
         }
     }
     if device_type == DeviceType::App {
-        // A distinct Wework installation owns an independent record-scoped route.
+        if app_name_is_unique && !devices.is_empty() {
+            let same_runtime = runtime.is_some()
+                && devices.iter().any(|device| {
+                    can_restore_as_app(&device.json)
+                        && spec_string(&device.json, "runtimeInstanceId") == runtime
+                });
+            return Err(if same_runtime {
+                "App device identity changed; reconnect using the original installation identity"
+                    .into()
+            } else {
+                "Device name is already registered; configure a unique persistent device ID for this installation".into()
+            });
+        }
         return Ok(None);
     }
     let active: Vec<&DeviceKindRow> = devices
@@ -474,6 +493,10 @@ fn select_registration_device<'a>(
         return Ok(Some(by_runtime[0]));
     }
     Ok(devices.first())
+}
+
+fn can_restore_as_app(json: &Value) -> bool {
+    is_local_device(json) || matches!(spec_string(json, "deviceType"), Some("app" | "remote"))
 }
 
 /// `upsert_device_crd`'s create branch.

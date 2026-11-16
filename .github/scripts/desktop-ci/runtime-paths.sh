@@ -12,6 +12,36 @@ classify_path() {
   fi
 
   case "$path" in
+    # Reuse real subagent isolation and restored-history coverage, not native Mobile UI.
+    wework-mobile/src/components/ConversationAgentsPill* | \
+      wework-mobile/src/domain/mobileSubagents* | \
+      wework-mobile/src/domain/mobileProcessingBlocks* | \
+      wework-mobile/src/services/mobileTranscriptTransfer*)
+      select_target "core:streaming-subagents"
+      return
+      ;;
+    # The existing cloud fixture verifies Mobile's file transport, not native UI.
+    wework-mobile/src/components/files/* | wework-mobile/src/domain/mobileFile* | \
+      wework-mobile/src/services/mobileFile* | wework-mobile/src/services/mobilePreviewRuntime* | \
+      wework-mobile/src/services/runtimeFilesApi* | wework-mobile/src/services/runtimeApi* | \
+      wework-mobile/src/services/runtimeStream* | wework-mobile/src/types/runtimeCommand.ts | \
+      wework-mobile/src/services/mobileAbort.ts | \
+      wework-mobile/src/hooks/useMobileRuntime* | \
+      wework-mobile/src/types/files.ts | wework-mobile/src/types/workspaceGit.ts | \
+      wework-mobile/src/domain/mobileWorkspaceGit* | wework-mobile/src/services/mobileWorkspaceGit* | \
+      wework-mobile/src/components/ConversationChangesPill* | wework-mobile/preview/* | \
+      wework-mobile/src/components/ConversationMenu* | wework-mobile/src/hooks/useConversationActions* | \
+      wework-mobile/src/domain/conversationActions* | wework-mobile/src/services/mobileConversationArchive* | \
+      wework/e2e/desktop/modules/workspace-file-chunks-flow.mjs | \
+      wework/e2e/desktop/modules/conversation-menu-flow.mjs | \
+      wework/e2e/desktop/modules/workspace-git-review-flow.mjs)
+      select_target "cloud:workspace-attachments"
+      return
+      ;;
+    executor/src/runtime_work/remote_task_access.rs)
+      select_catalog_path_targets "$path"
+      return
+      ;;
     wework/src/features/todo/ProjectCoordinatorConversation*|wework/src/features/todo/ProjectCoordinatorPublication*|wework/src/features/todo/ProjectCoordinationPanel*|executor/src/runtime_work/handler/project_coordinator.rs|executor/src/runtime_work/handler/project_router*|executor/src/task_runtime/project_router_store.rs|executor/src/task_runtime/store/project_coordinator.rs|wework/e2e/desktop/scenarios/project-coordinator-publication.scenario.mjs|wework/e2e/desktop/scenarios/project-coordination.scenario.mjs)
       select_target "core:stand-in-profile"
       select_target "core:stand-in-permissions"
@@ -209,7 +239,7 @@ classify_path() {
       wework/src/components/chat/composer/composerAppsSnapshot* | \
       wework/src/components/plugins/PluginManagementWorkspace* | \
       wework/src/features/plugins/pluginInventory*)
-      select_target "cloud:plugin-composer-long-list"
+      select_target "cloud:plugin-collaboration-composer-isolation"
       ;;
     wework/e2e/desktop/modules/plugin-catalog-boundaries.mjs | \
       wework/e2e/desktop/modules/plugin-source-continuation.mjs | \
@@ -249,10 +279,6 @@ classify_path() {
       fi
       return
       ;;
-    wework/e2e/desktop/scenarios/plugin-composer-long-list.scenario.mjs)
-      select_target "cloud:plugin-composer-long-list"
-      return
-      ;;
     wework/e2e/desktop/scenarios/plugin-collaboration-composer-isolation.scenario.mjs | \
       packages/chat-core/src/runtime-composer-api* | \
       packages/chat-core/src/runtime-composer-snapshot* | \
@@ -274,7 +300,6 @@ classify_path() {
       select_plugin_sync_checkpoints
       select_target "cloud:plugin-toggle-persistence"
       select_uninstall_checkpoints
-      select_target "cloud:plugin-composer-long-list"
       select_target "cloud:plugin-collaboration-composer-isolation"
       return
       ;;
@@ -439,7 +464,7 @@ classify_path() {
       fi
       select_target "core:collaboration-parent-board"
       if [[ "$path" == packages/collaboration/src/composer/* ]]; then
-        select_target "core:drawing-attachment"
+        select_target "core:task-attachments"
       fi
       select_target "core:collaboration-shared-core"
       select_target "core:collaboration-issue-archive"
@@ -451,7 +476,6 @@ classify_path() {
       select_target "core:collaboration-issue-comment-attachments"
       select_target "core:collaboration-issue-attachment-preview"
       select_target "core:collaboration-issue-comment-notification"
-      select_target "core:collaboration-board-sorting"
       select_target "core:collaboration-board-backlog"
       select_target "core:collaboration-board-move-recovery"
       select_target "core:collaboration-home-preload"

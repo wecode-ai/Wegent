@@ -1,0 +1,843 @@
+[data-testid='collaboration-exp-app'] .assistant-dashboard-intro > p {
+  color: rgb(var(--color-text-secondary));
+  font-size: var(--text-sm);
+  line-height: 1.8;
+}
+[data-testid='collaboration-exp-app'] .assistant-section-heading h3 span {
+  color: rgb(var(--color-text-muted));
+  margin-left: 6px;
+}
+[data-testid='collaboration-exp-app'] .assistant-section-heading .assistant-text-button {
+  font-size: var(--experience-text-label);
+}
+[data-testid='collaboration-exp-app'] .assistant-decision-card > span {
+  color: rgb(var(--color-text-muted));
+  align-items: center;
+  gap: 8px;
+  font-size: var(--experience-text-label);
+  display: flex;
+}
+[data-testid='collaboration-exp-app'] .assistant-decision-card > small {
+  align-items: center;
+  gap: 8px;
+  margin-top: auto;
+  font-size: var(--text-xs);
+  display: flex;
+}
+[data-testid='collaboration-exp-app'] .assistant-recent-progress > button > span:not(.status-mark) {
+  flex: 1 1 0%;
+  min-width: 0px;
+}
+[data-testid='collaboration-exp-app'] .assistant-recent-progress strong {
+  font-size: var(--text-xs);
+  font-weight: 500;
+  display: block;
+}
+[data-testid='collaboration-exp-app'] .assistant-recent-progress small {
+  color: rgb(var(--color-text-muted));
+  margin-top: 5px;
+  font-size: var(--experience-text-label);
+  display: block;
+}
+[data-testid='collaboration-exp-app'] .assistant-recent-progress time {
+  color: rgb(var(--color-text-muted));
+  white-space: nowrap;
+  font-size: var(--experience-text-label);
+}
+[data-testid='collaboration-exp-app'] .assistant-dashboard-intro {
+  border: 1px solid rgb(var(--color-border));
+  border-radius: 12px;
+  background: rgb(var(--color-bg-surface));
+  grid-template-columns: minmax(0px, 1.24fr) minmax(250px, 0.76fr);
+  gap: 22px;
+  padding: 20px 24px;
+  display: grid;
+  position: relative;
+  overflow: hidden;
+}
+[data-testid='collaboration-exp-app'] .assistant-dashboard-copy {
+  align-self: center;
+  min-width: 0px;
+}
+[data-testid='collaboration-exp-app'] .assistant-dashboard-intro h2 {
+  letter-spacing: -0.035em;
+  text-wrap: balance;
+  max-width: none;
+  margin: 9px 0px 10px;
+  font-size: clamp(var(--text-heading-lg), 2.15vw, var(--text-display));
+  line-height: 1.35;
+}
+[data-testid='collaboration-exp-app'] .assistant-dashboard-intro .private-eyebrow {
+  align-items: center;
+  gap: 7px;
+  display: inline-flex;
+}
+[data-testid='collaboration-exp-app'] .assistant-dashboard-intro .private-eyebrow::before {
+  content: '';
+  background: rgb(var(--color-text-muted));
+  border-radius: 50%;
+  width: 6px;
+  height: 6px;
+}
+[data-testid='collaboration-exp-app'] .assistant-dashboard-intro > .assistant-dashboard-copy > p {
+  max-width: 46ch;
+  color: rgb(var(--color-text-secondary));
+  font-size: var(--text-sm);
+  margin: 0px;
+  line-height: 1.85;
+}
+[data-testid='collaboration-exp-app'] .assistant-live-snapshot::after {
+  content: '';
+  opacity: 0;
+  background: linear-gradient(90deg, transparent, rgb(var(--color-focus)), transparent);
+  transform-origin: 0px center;
+  height: 1px;
+  position: absolute;
+  bottom: -26px;
+  left: 26px;
+  right: 0px;
+  transform: scaleX(0.2);
+}
+[data-testid='collaboration-exp-app'] .assistant-live-snapshot[data-live='true']::after {
+  opacity: 0.5;
+}
+[data-testid='collaboration-exp-app'] .assistant-live-snapshot-head {
+  align-items: center;
+  gap: 10px;
+  min-width: 0px;
+  display: flex;
+}
+[data-testid='collaboration-exp-app'] .assistant-live-snapshot-head > span:last-child {
+  gap: 3px;
+  min-width: 0px;
+  display: grid;
+}
+[data-testid='collaboration-exp-app'] .assistant-live-snapshot-head strong {
+  font-size: var(--text-sm);
+  font-weight: 600;
+}
+[data-testid='collaboration-exp-app'] .assistant-live-snapshot-head small {
+  color: rgb(var(--color-text-muted));
+  font-size: var(--text-xs);
+  line-height: var(--text-xs-line);
+}
+[data-testid='collaboration-exp-app'] .assistant-live-signal {
+  border: 1px solid rgb(var(--color-border));
+  background: rgb(var(--color-bg-base));
+  border-radius: 50%;
+  flex: 0 0 auto;
+  width: 12px;
+  height: 12px;
+  position: relative;
+}
+[data-testid='collaboration-exp-app']
+  .assistant-live-snapshot[data-live='true']
+  .assistant-live-signal {
+  border-color: rgb(var(--color-focus));
+}
+[data-testid='collaboration-exp-app']
+  .assistant-live-snapshot[data-live='true']
+  .assistant-live-signal::after {
+  content: '';
+  border-radius: inherit;
+  background: rgb(var(--color-focus));
+  position: absolute;
+  inset: 3px;
+}
+[data-testid='collaboration-exp-app'] .assistant-live-work {
+  text-align: left;
+  border: 1px solid rgb(var(--color-border));
+  background: rgb(var(--color-bg-base));
+  min-width: 0px;
+  color: rgb(var(--color-text-primary));
+  border-radius: 12px;
+  gap: 4px;
+  padding: 10px 36px 10px 12px;
+  display: grid;
+  position: relative;
+}
+[data-testid='collaboration-exp-app'] .assistant-live-work:hover {
+  border-color: rgb(var(--color-border));
+  background: rgb(var(--color-bg-hover));
+  transform: translateY(-1px);
+}
+[data-testid='collaboration-exp-app'] .assistant-live-work:active {
+  transform: translateY(0px);
+}
+[data-testid='collaboration-exp-app'] .assistant-live-work-label {
+  min-width: 0px;
+  color: rgb(var(--color-text-muted));
+  font-size: var(--text-xs);
+  line-height: var(--text-xs-line);
+  align-items: center;
+  gap: 7px;
+  display: flex;
+}
+[data-testid='collaboration-exp-app'] .assistant-live-work-label > :not(.status-mark) {
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  overflow: hidden;
+}
+[data-testid='collaboration-exp-app'] .assistant-live-work strong {
+  font-size: var(--text-sm);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 600;
+  line-height: 1.55;
+  overflow: hidden;
+}
+[data-testid='collaboration-exp-app'] .assistant-live-work > svg {
+  color: rgb(var(--color-text-muted));
+  position: absolute;
+  top: 50%;
+  right: 13px;
+  transform: translateY(-50%);
+}
+[data-testid='collaboration-exp-app'] .assistant-live-work:hover > svg {
+  color: rgb(var(--color-text-primary));
+  transform: translate(3px, -50%);
+}
+[data-testid='collaboration-exp-app'] .assistant-live-empty {
+  color: rgb(var(--color-text-muted));
+  font-size: var(--text-xs);
+  margin: 0px;
+  line-height: 1.7;
+}
+[data-testid='collaboration-exp-app'] .assistant-live-metrics {
+  grid-template-columns: repeat(3, minmax(0px, 1fr));
+  gap: 8px;
+  margin-top: auto;
+  display: grid;
+}
+[data-testid='collaboration-exp-app'] .assistant-live-metrics > div {
+  border-top: 1px solid rgb(var(--color-border));
+  gap: 2px;
+  padding-top: 7px;
+  display: grid;
+}
+[data-testid='collaboration-exp-app'] .assistant-live-metrics dd {
+  font-size: var(--text-lg);
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+}
+[data-testid='collaboration-exp-app'] .assistant-live-metrics dt {
+  color: rgb(var(--color-text-muted));
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--experience-text-caption);
+  line-height: 1.5;
+  overflow: hidden;
+}
+[data-testid='collaboration-exp-app'] .assistant-live-metrics > div[data-state='waiting'] dd {
+  color: rgb(var(--color-error));
+}
+[data-testid='collaboration-exp-app'] .assistant-live-metrics > div[data-state='running'] dd {
+  color: rgb(var(--color-focus));
+}
+[data-testid='collaboration-exp-app'] .assistant-dashboard-section {
+  margin-top: 18px;
+}
+[data-testid='collaboration-exp-app'] .assistant-section-heading {
+  justify-content: space-between;
+  align-items: center;
+  display: flex;
+  min-height: 34px;
+  margin-bottom: 8px;
+}
+[data-testid='collaboration-exp-app'] .assistant-section-heading > div {
+  align-items: baseline;
+  gap: 8px;
+  display: flex;
+}
+[data-testid='collaboration-exp-app'] .assistant-section-heading h3 {
+  margin: 0px;
+  font-size: var(--text-sm);
+  font-weight: 600;
+}
+[data-testid='collaboration-exp-app'] .assistant-section-live {
+  color: rgb(var(--color-focus));
+  font-size: var(--experience-text-caption);
+}
+[data-testid='collaboration-exp-app'] .assistant-decision-grid {
+  grid-template-columns: repeat(2, minmax(0px, 1fr));
+  display: grid;
+  gap: 12px;
+}
+[data-testid='collaboration-exp-app'] .assistant-decision-card::before {
+  content: '';
+  background: rgb(var(--color-error));
+  opacity: 0.78;
+  border-radius: 0px 3px 3px 0px;
+  width: 3px;
+  position: absolute;
+  top: 17px;
+  bottom: 17px;
+  left: 0px;
+}
+[data-testid='collaboration-exp-app'] .assistant-decision-card:hover {
+  border-color: rgb(var(--color-border));
+  background: rgb(var(--color-bg-surface));
+  box-shadow: var(--shadow-md);
+  transform: translateY(-2px);
+}
+[data-testid='collaboration-exp-app'] .assistant-decision-card:active {
+  transform: translateY(0px);
+}
+[data-testid='collaboration-exp-app'] .assistant-decision-kicker {
+  max-width: 100%;
+  color: rgb(var(--color-text-muted));
+  font-size: var(--text-xs);
+  line-height: var(--text-xs-line);
+  align-items: center;
+  gap: 7px;
+  display: flex;
+}
+[data-testid='collaboration-exp-app'] .assistant-decision-kicker > span:last-child {
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  overflow: hidden;
+}
+[data-testid='collaboration-exp-app'] .assistant-decision-card strong {
+  font-weight: 600;
+  font-size: var(--text-lg);
+  letter-spacing: -0.012em;
+  margin: 11px 0px 6px;
+  line-height: 1.55;
+}
+[data-testid='collaboration-exp-app'] .assistant-decision-card p {
+  color: rgb(var(--color-text-secondary));
+  font-size: var(--text-xs);
+  line-height: 1.8;
+  margin: 0px 0px 13px;
+}
+[data-testid='collaboration-exp-app'] .assistant-decision-footer {
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  margin-top: auto;
+  display: flex;
+}
+[data-testid='collaboration-exp-app'] .assistant-decision-footer small {
+  font-size: var(--text-xs);
+  font-weight: 500;
+}
+[data-testid='collaboration-exp-app'] .assistant-action-arrow {
+  border: 1px solid rgb(var(--color-border));
+  width: 30px;
+  height: 30px;
+  color: rgb(var(--color-text-muted));
+  border-radius: 50%;
+  flex: 0 0 auto;
+  place-items: center;
+  display: grid;
+}
+[data-testid='collaboration-exp-app'] .assistant-decision-card:hover .assistant-action-arrow {
+  border-color: rgb(var(--color-focus));
+  background: rgb(var(--color-focus) / 0.09);
+  color: rgb(var(--color-focus));
+  transform: translate(3px);
+}
+[data-testid='collaboration-exp-app'] .assistant-recent-progress {
+  border: 1px solid rgb(var(--color-border));
+  background: rgb(var(--color-bg-base));
+  border-radius: 14px;
+  overflow: hidden;
+}
+[data-testid='collaboration-exp-app'] .assistant-recent-progress > button:last-child {
+  border-bottom: 0px;
+}
+[data-testid='collaboration-exp-app'] .assistant-recent-progress > button:hover {
+  background: rgb(var(--color-bg-hover));
+}
+[data-testid='collaboration-exp-app'] .assistant-recent-progress > button[data-state='running'] {
+  background: color-mix(in srgb, rgb(var(--color-focus)) 5%, rgb(var(--color-bg-base)));
+}
+[data-testid='collaboration-exp-app']
+  .assistant-recent-progress
+  > button[data-state='running']::before {
+  content: '';
+  background: rgb(var(--color-focus));
+  border-radius: 0px 2px 2px 0px;
+  width: 2px;
+  position: absolute;
+  top: 12px;
+  bottom: 12px;
+  left: 0px;
+}
+[data-testid='collaboration-exp-app'] .assistant-progress-copy {
+  min-width: 0px;
+}
+[data-testid='collaboration-exp-app'] .assistant-progress-copy strong {
+  font-size: var(--text-sm);
+}
+[data-testid='collaboration-exp-app'] .assistant-progress-copy small {
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  overflow: hidden;
+}
+[data-testid='collaboration-exp-app'] .assistant-progress-arrow {
+  width: 24px;
+  color: rgb(var(--color-text-muted));
+  opacity: 0.45;
+  place-items: center;
+  display: grid;
+  transform: translate(-2px);
+}
+[data-testid='collaboration-exp-app']
+  .assistant-recent-progress
+  > button:hover
+  .assistant-progress-arrow {
+  opacity: 1;
+  transform: translate(2px);
+}
+[data-testid='collaboration-exp-app'] .assistant-home {
+  display: flex;
+  height: 100%;
+  min-height: 0;
+  min-width: 0;
+  flex-direction: column;
+  overflow: hidden;
+}
+[data-testid='collaboration-exp-app'] .assistant-dashboard-scroll {
+  min-height: 0;
+  min-width: 0;
+  flex: 1;
+  overflow-x: hidden;
+  overflow-y: auto;
+}
+[data-testid='collaboration-exp-app'] .assistant-dashboard-body {
+  margin: 0px auto;
+  width: min(100%, 1040px);
+  padding: 20px 28px;
+  container-type: inline-size;
+  box-sizing: border-box;
+}
+[data-testid='collaboration-exp-app'] .assistant-header-tools {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+[data-testid='collaboration-exp-app'] .assistant-activity-button {
+  display: inline-flex;
+  min-height: 32px;
+  align-items: center;
+  gap: 7px;
+  padding: 8px 12px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: rgb(var(--color-text-secondary));
+  white-space: nowrap;
+}
+[data-testid='collaboration-exp-app'] .assistant-activity-button:hover,
+[data-testid='collaboration-exp-app'] .assistant-activity-button[aria-expanded='true'] {
+  background: rgb(var(--color-bg-hover));
+}
+[data-testid='collaboration-exp-app'] .assistant-text-button {
+  display: inline-flex;
+  min-height: 40px;
+  align-items: center;
+  gap: 6px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: rgb(var(--color-text-secondary));
+}
+[data-testid='collaboration-exp-app'] .assistant-home button:focus-visible,
+[data-testid='collaboration-exp-app'] .assistant-activity-button:focus-visible {
+  outline: 2px solid rgb(var(--color-focus));
+  outline-offset: 2px;
+}
+[data-testid='collaboration-exp-app'] .assistant-recent-panel {
+  margin-top: 12px;
+  overflow: hidden;
+  border: 1px solid rgb(var(--color-border));
+  border-radius: 12px;
+  background: rgb(var(--color-bg-base));
+}
+[data-testid='collaboration-exp-app'] .assistant-decision-card {
+  text-align: left;
+  border: 1px solid rgb(var(--color-border));
+  background: rgb(var(--color-bg-base));
+  color: rgb(var(--color-text-primary));
+  flex-direction: column;
+  align-items: flex-start;
+  display: flex;
+  min-width: 0px;
+  min-height: 170px;
+  border-radius: 14px;
+  padding: 17px 18px 15px 21px;
+  position: relative;
+  overflow: hidden;
+  width: 100%;
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+[data-testid='collaboration-exp-app'] .assistant-decision-card > strong {
+  display: -webkit-box;
+  overflow: hidden;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+}
+[data-testid='collaboration-exp-app'] .assistant-live-snapshot {
+  border-left: 1px solid rgb(var(--color-border));
+  flex-direction: column;
+  gap: 10px;
+  min-width: 0px;
+  padding-left: 22px;
+  display: flex;
+  position: relative;
+  margin: 0;
+  border-radius: 0;
+  background: transparent;
+}
+[data-testid='collaboration-exp-app'] .assistant-chat-input-dock {
+  width: min(100% - 48px, 880px);
+  flex: 0 0 auto;
+  margin: 12px auto 20px;
+}
+[data-testid='collaboration-exp-app']
+  .assistant-chat-input-dock
+  [data-testid='project-chat-composer-form'] {
+  padding: 12px;
+  border: 1px solid rgb(var(--color-border));
+  border-radius: 22px;
+  background: rgb(var(--color-bg-base));
+  box-shadow: 0 2px 8px rgb(0 0 0 / 0.03);
+}
+[data-testid='collaboration-exp-app']
+  .assistant-chat-input-dock
+  [data-testid='project-chat-composer-form']:focus-within {
+  border-color: rgb(var(--color-focus));
+  box-shadow: 0 0 0 2px rgb(var(--color-focus) / 0.09);
+}
+[data-testid='collaboration-exp-app']
+  .assistant-chat-input-dock
+  [data-testid='collaboration-exp-assistant-input'] {
+  min-height: 54px;
+  padding: 3px 6px 10px;
+  line-height: 1.7;
+}
+[data-testid='collaboration-exp-app']
+  .assistant-chat-input-dock
+  [data-composer-toolbar-group='features'] {
+  flex: 1;
+  flex-wrap: nowrap;
+}
+[data-testid='collaboration-exp-app']
+  .assistant-chat-input-dock
+  [data-composer-toolbar-group='actions'] {
+  min-width: 0;
+  flex: 0 0 auto;
+}
+[data-testid='collaboration-exp-app']
+  .assistant-chat-input-dock
+  [data-testid='model-selector-button'] {
+  width: 28px !important;
+  min-width: 28px;
+  max-width: 28px;
+  padding: 0;
+  justify-content: center;
+}
+[data-testid='collaboration-exp-app']
+  .assistant-chat-input-dock
+  [data-testid='model-selector-button']
+  > span {
+  display: none;
+}
+[data-testid='collaboration-exp-app'] .assistant-role-select {
+  display: inline-flex;
+  flex: 0 1 auto;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  width: auto;
+  max-width: 150px;
+  min-width: 0;
+  min-height: 32px;
+  padding: 4px;
+  border: 0;
+  background: transparent;
+  font-size: var(--experience-text-label);
+  text-align: left;
+}
+[data-testid='collaboration-exp-app'] .assistant-role-select > span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+[data-testid='collaboration-exp-app'] .assistant-role-select > svg {
+  flex: 0 0 auto;
+}
+[data-testid='collaboration-exp-app'] .assistant-private-label {
+  min-width: 0;
+  overflow: hidden;
+  color: rgb(var(--color-text-muted));
+  font-size: var(--experience-text-caption);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+[data-testid='collaboration-exp-app'] .assistant-recent-progress > button {
+  text-align: left;
+  border-top: 0px;
+  border-right: 0px;
+  border-left: 0px;
+  border-image: none;
+  width: 100%;
+  color: rgb(var(--color-text-primary));
+  background: 0px 0px;
+  align-items: center;
+  gap: 12px;
+  display: flex;
+  border-bottom: 1px solid rgb(var(--color-border));
+  padding: 14px 16px;
+  position: relative;
+  min-height: 44px;
+}
+@container (width <= 660px) {
+  [data-testid='collaboration-exp-app'] .assistant-dashboard-intro {
+    grid-template-columns: 1fr;
+    gap: 22px;
+  }
+  [data-testid='collaboration-exp-app'] .assistant-live-snapshot {
+    border-top: 1px solid rgb(var(--color-border));
+    border-left: 0px;
+    padding: 20px 0px 0px;
+  }
+  [data-testid='collaboration-exp-app'] .assistant-live-snapshot::after {
+    bottom: 0px;
+    left: 0px;
+  }
+}
+@media (width <= 767px) {
+  [data-testid='collaboration-exp-app'] .assistant-decision-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  [data-testid='collaboration-exp-app'] .assistant-dashboard-body {
+    padding: 18px 12px 24px;
+  }
+  [data-testid='collaboration-exp-app'] .assistant-dashboard-intro {
+    border-radius: 16px;
+    padding: 18px;
+  }
+  [data-testid='collaboration-exp-app'] .assistant-dashboard-intro h2 {
+    max-width: none;
+    font-size: var(--text-market-title);
+    margin: 0;
+  }
+  [data-testid='collaboration-exp-app'] .assistant-dashboard-intro .private-eyebrow,
+  [data-testid='collaboration-exp-app'] .assistant-dashboard-intro > .assistant-dashboard-copy > p {
+    display: none;
+  }
+  [data-testid='collaboration-exp-app'] .assistant-live-snapshot {
+    display: none;
+  }
+  [data-testid='collaboration-exp-app'] .assistant-live-metrics {
+    gap: 8px;
+  }
+  [data-testid='collaboration-exp-app'] .assistant-decision-card {
+    min-height: 160px;
+  }
+  [data-testid='collaboration-exp-app'] .assistant-dashboard-section {
+    margin-top: 16px;
+  }
+}
+@keyframes assistant-enter {
+  0% {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  100% {
+    opacity: 1;
+    transform: translateY(0px);
+  }
+}
+@keyframes assistant-presence-enter {
+  0% {
+    opacity: 0.45;
+    transform: translateY(5px);
+  }
+  100% {
+    opacity: 1;
+    transform: translateY(0px);
+  }
+}
+@keyframes assistant-card-enter {
+  0% {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  100% {
+    opacity: 1;
+    transform: translateY(0px);
+  }
+}
+@keyframes assistant-row-enter {
+  0% {
+    opacity: 0;
+    transform: translateY(5px);
+  }
+  100% {
+    opacity: 1;
+    transform: translateY(0px);
+  }
+}
+@keyframes assistant-signal-breathe {
+  0%,
+  100% {
+    opacity: 0.42;
+    transform: scale(0.8);
+  }
+  50% {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+@keyframes assistant-waiting-pulse {
+  0%,
+  100% {
+    box-shadow: 0 0 0 0 color-mix(in srgb, rgb(var(--color-error)) 24%, transparent);
+  }
+  50% {
+    box-shadow: 0 0 0 3px color-mix(in srgb, rgb(var(--color-error)) 0%, transparent);
+  }
+}
+@keyframes assistant-live-trace {
+  0% {
+    transform: scaleX(0.18);
+  }
+  55% {
+    transform: scaleX(0.82);
+  }
+  100% {
+    transform: scaleX(0.18);
+  }
+}
+@keyframes assistant-active-rail {
+  0%,
+  100% {
+    opacity: 0.35;
+    transform: scaleY(0.45);
+  }
+  50% {
+    opacity: 1;
+    transform: scaleY(1);
+  }
+}
+@media (prefers-reduced-motion: no-preference) {
+  [data-testid='collaboration-exp-app'] .assistant-dashboard-intro {
+    animation: 0.42s cubic-bezier(0.2, 0.75, 0.25, 1) 0s 1 normal both running assistant-enter;
+  }
+  [data-testid='collaboration-exp-app'] .assistant-live-snapshot[data-live='true']::after {
+    animation: 2.8s ease-in-out 0s infinite normal none running assistant-live-trace;
+  }
+  [data-testid='collaboration-exp-app']
+    .assistant-live-snapshot[data-live='true']
+    .assistant-live-signal::after {
+    animation: 1.8s ease-in-out 0s infinite normal none running assistant-signal-breathe;
+  }
+  [data-testid='collaboration-exp-app'] .assistant-dashboard-section {
+    animation: assistant-enter 0.42s calc(var(--enter-index, 0) * 80ms + 0.12s)
+      cubic-bezier(0.2, 0.75, 0.25, 1) both;
+  }
+  [data-testid='collaboration-exp-app']
+    .assistant-recent-progress
+    > button[data-state='running']::before {
+    animation: 2.2s ease-in-out 0s infinite normal none running assistant-active-rail;
+  }
+  [data-testid='collaboration-exp-app'] .assistant-decision-card {
+    animation: assistant-card-enter 0.38s calc(var(--enter-index, 0) * 70ms + 0.18s)
+      cubic-bezier(0.2, 0.75, 0.25, 1) both;
+    transition:
+      transform 0.16s,
+      border-color 0.16s,
+      background-color 0.16s,
+      box-shadow 0.16s;
+  }
+  [data-testid='collaboration-exp-app'] .assistant-recent-progress > button {
+    animation: assistant-row-enter 0.34s calc(var(--enter-index, 0) * 45ms + 0.15s)
+      cubic-bezier(0.2, 0.75, 0.25, 1) both;
+    transition: background-color 0.14s;
+  }
+  [data-testid='collaboration-exp-app'] .assistant-live-work {
+    transition:
+      border-color 0.14s,
+      background-color 0.14s,
+      transform 0.14s;
+  }
+  [data-testid='collaboration-exp-app'] .assistant-live-work > svg {
+    transition:
+      color 0.14s,
+      transform 0.14s;
+  }
+  [data-testid='collaboration-exp-app'] .assistant-action-arrow {
+    transition:
+      border-color 0.14s,
+      background-color 0.14s,
+      color 0.14s,
+      transform 0.14s;
+  }
+  [data-testid='collaboration-exp-app'] .assistant-progress-arrow {
+    transition:
+      opacity 0.14s,
+      transform 0.14s;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  [data-testid='collaboration-exp-app'] .workspace-shell[data-area='assistants'] .chat-input {
+    transition: none;
+  }
+  [data-testid='collaboration-exp-app'] .assistant-live-work:hover,
+  [data-testid='collaboration-exp-app'] .assistant-live-work:hover > svg,
+  [data-testid='collaboration-exp-app'] .assistant-decision-card:hover,
+  [data-testid='collaboration-exp-app'] .assistant-decision-card:hover .assistant-action-arrow,
+  [data-testid='collaboration-exp-app']
+    .workspace-shell[data-area='assistants']
+    .chat-input:focus-within {
+    transform: none;
+  }
+}
+
+@media (max-width: 767px) {
+  [data-testid='collaboration-exp-app'] .assistant-activity-button {
+    min-height: 44px;
+    gap: 4px;
+    padding: 8px 6px;
+    font-size: var(--experience-text-label);
+  }
+
+  [data-testid='collaboration-exp-app'] .assistant-chat-input-dock {
+    width: calc(100% - 24px);
+    margin-block: 8px 12px;
+  }
+
+  [data-testid='collaboration-exp-app']
+    .assistant-chat-input-dock
+    [data-testid='project-chat-composer-form'] {
+    padding: 8px;
+    border-radius: 20px;
+  }
+
+  [data-testid='collaboration-exp-app']
+    .assistant-chat-input-dock
+    [data-testid='model-selector-button'] {
+    min-width: 44px;
+    min-height: 44px;
+    max-width: 44px;
+  }
+
+  [data-testid='collaboration-exp-app'] .assistant-text-button,
+  [data-testid='collaboration-exp-app'] .assistant-role-select {
+    min-height: 44px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  [data-testid='collaboration-exp-app'] .assistant-live-work > svg,
+  [data-testid='collaboration-exp-app'] .assistant-live-work:hover > svg {
+    transform: translateY(-50%);
+  }
+}

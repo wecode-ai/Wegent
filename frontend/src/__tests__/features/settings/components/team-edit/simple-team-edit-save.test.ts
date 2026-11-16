@@ -29,6 +29,7 @@ const botForm: SimpleBotFormValue = {
   name: 'Helper Bot',
   shellName: 'Chat',
   modelName: 'gpt-4.1',
+  modelId: 77,
   modelType: 'public',
   modelNamespace: 'default',
   prompt: 'Answer clearly.',
@@ -67,6 +68,7 @@ describe('simple team edit save helpers', () => {
     expect(request).toEqual({
       name: 'Helper Bot',
       shell_name: 'Chat',
+      model_id: 77,
       agent_config: {
         bind_model: 'gpt-4.1',
         bind_model_type: 'public',

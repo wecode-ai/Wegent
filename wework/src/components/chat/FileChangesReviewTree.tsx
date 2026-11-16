@@ -3,7 +3,7 @@ import { Search } from 'lucide-react'
 import type { CSSProperties } from 'react'
 import { useEffect, useMemo, useState } from 'react'
 import { useTranslation } from '@/hooks/useTranslation'
-import type { DiffFileSection } from './parseUnifiedDiff'
+import { getDiffFileStatus, type DiffFileSection } from './parseUnifiedDiff'
 
 const PIERRE_FILE_TREE_CSS = `
   :host {
@@ -115,7 +115,7 @@ export function ReviewFileTree({
     () =>
       sections.map(section => ({
         path: section.path,
-        status: getPierreGitStatus(section),
+        status: getDiffFileStatus(section),
       })),
     [sections]
   )
@@ -214,11 +214,4 @@ function PierreReviewFileTree({
       }
     />
   )
-}
-
-function getPierreGitStatus(section: DiffFileSection) {
-  if (section.lines.some(line => line.startsWith('new file mode'))) return 'added' as const
-  if (section.lines.some(line => line.startsWith('deleted file mode'))) return 'deleted' as const
-  if (section.oldPath && section.oldPath !== section.path) return 'renamed' as const
-  return 'modified' as const
 }

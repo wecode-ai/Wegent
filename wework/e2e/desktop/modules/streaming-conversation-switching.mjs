@@ -1,6 +1,5 @@
 import assert from 'node:assert/strict'
-import { join } from 'node:path'
-import { createDevtoolsClient, writeDiagnosticFile } from '../../../scripts/ai-verify-devtools.mjs'
+import { startRendererCpuProfile } from './renderer-cpu-profile.mjs'
 import { reloadMainWindow, waitForWorkbenchDebugState } from './workspace-flows.mjs'
 import { requestExecutor } from './executor-rpc.mjs'
 import {
@@ -82,45 +81,6 @@ async function diagnoseSwitchingFailure(control, timeoutMs, stage) {
   }
 }
 
-async function startSwitchingCpuProfile(directory, timeoutMs) {
-  let client
-  let target
-  try {
-    client = await createDevtoolsClient(directory, timeoutMs)
-    const targets = await client({ action: 'targets' })
-    target = targets.find(
-      entry =>
-        entry.type === 'window' &&
-        !entry.url.startsWith('devtools:') &&
-        !entry.url.includes('startup-splash')
-    )?.id
-    assert.ok(target, 'The main renderer is unavailable for CPU sampling')
-    await client({ action: 'command', target, method: 'Profiler.enable' })
-    await client({ action: 'command', target, method: 'Profiler.start' })
-  } catch {
-    if (target) await client({ action: 'detach', target }).catch(() => {})
-    console.info('[conversation-switching] CPU profile unavailable', { phase: 'start' })
-    return async () => {}
-  }
-  const startedAt = Date.now()
-  let stopping
-  return () =>
-    (stopping ??= (async () => {
-      try {
-        const { profile } = await client({ action: 'command', target, method: 'Profiler.stop' })
-        await writeDiagnosticFile(join(directory, 'conversation-switching-initial.cpuprofile'), {
-          ...profile,
-          startedAtUnixMs: startedAt,
-          finishedAtUnixMs: Date.now(),
-        })
-      } catch {
-        console.info('[conversation-switching] CPU profile unavailable', { phase: 'stop' })
-      } finally {
-        await client({ action: 'detach', target }).catch(() => {})
-      }
-    })())
-}
-
 export function createConversationSwitchingChecks({ uiTimeoutMs, resultDir }) {
   const longResponseTimeoutMs = Math.max(uiTimeoutMs, LONG_RESPONSE_TIMEOUT_MS)
   let releaseTail
@@ -194,7 +154,11 @@ export function createConversationSwitchingChecks({ uiTimeoutMs, resultDir }) {
         await openNewChatWithE2EModel(control, uiTimeoutMs)
         await control.command('fill', COMPOSER_SELECTOR, { value: PROMPT })
         await control.command('startRuntimeStreamDiagnostics', 'body')
-        stopCpuProfile = await startSwitchingCpuProfile(resultDir, uiTimeoutMs)
+        stopCpuProfile = await startRendererCpuProfile(
+          resultDir,
+          'conversation-switching-initial.cpuprofile',
+          uiTimeoutMs
+        )
         await control.command('press', COMPOSER_SELECTOR, { key: 'Enter' })
         // This final-answer prefix follows all 520 model progress messages.
         await control.command('waitFor', ASSISTANT_CONTENT_SELECTOR, {

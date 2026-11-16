@@ -121,7 +121,9 @@ wework_desktop_other_e2e_matrix={"include":[]}' \
 
 for native_scenario in \
   wework/e2e/desktop/scenarios/native-lifecycle.scenario.mjs \
-  wework/e2e/desktop/scenarios/native-guidance.scenario.mjs; do
+  wework/e2e/desktop/scenarios/native-guidance.scenario.mjs \
+  wework/e2e/desktop/scenarios/mobile-local-payload.scenario.mjs \
+  wework-mobile/src/services/localRuntimeApi.ts; do
   assert_desktop_case "native lifecycle regression is covered by the shared Core CI runner: $native_scenario" \
   'wework_desktop_e2e=true
 wework_desktop_core_e2e=true

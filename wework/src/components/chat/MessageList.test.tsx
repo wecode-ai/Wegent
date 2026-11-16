@@ -1319,7 +1319,7 @@ describe('MessageList', () => {
       />
     )
 
-    expect(screen.queryByTestId('final-processing-toggle')).not.toBeInTheDocument()
+    expect(screen.getByTestId('final-processing-toggle')).toHaveAttribute('aria-expanded', 'true')
     expect(screen.getByRole('button', { name: '收起工具详情' })).toHaveAttribute(
       'aria-expanded',
       'true'
@@ -1350,6 +1350,54 @@ describe('MessageList', () => {
     fireEvent.click(screen.getByRole('button', { name: '收起工具详情' }))
 
     expect(screen.getByTestId('final-processing-toggle')).toHaveAttribute('aria-expanded', 'false')
+  })
+
+  test('collapses a completed response while waiting for the next assistant', () => {
+    const blocks: ProcessingBlock[] = [
+      {
+        id: 'process-text',
+        subtaskId: 11,
+        type: 'text',
+        content: '正在检查运行中的过程文本。',
+        status: 'done',
+        createdAt: 1770000000000,
+      },
+      {
+        id: 'tool-1',
+        subtaskId: 11,
+        type: 'tool',
+        toolName: 'Bash',
+        toolInput: { command: 'pwd' },
+        toolOutput: '/tmp/project',
+        status: 'done',
+        createdAt: 1770000000100,
+      },
+    ]
+
+    render(
+      <MessageList
+        isWaitingForAssistant
+        messages={[
+          {
+            id: 'completed-before-next',
+            role: 'assistant',
+            content: '上一轮已经完成。',
+            status: 'done',
+            blocks,
+            createdAt: '2026-11-16T08:00:00.000Z',
+          },
+        ]}
+      />
+    )
+
+    const toggle = screen.getByTestId('final-processing-toggle')
+    expect(toggle).toHaveAttribute('aria-expanded', 'false')
+    expect(screen.queryByText('正在检查运行中的过程文本。')).not.toBeInTheDocument()
+
+    fireEvent.click(toggle)
+
+    expect(screen.getByTestId('final-processing-toggle')).toHaveAttribute('aria-expanded', 'true')
+    expect(screen.getByText('正在检查运行中的过程文本。')).toBeInTheDocument()
   })
 
   test('isolates tool detail expansion by conversation, turn and call across guidance segments', () => {

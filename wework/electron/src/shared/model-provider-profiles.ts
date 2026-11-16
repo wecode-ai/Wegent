@@ -1,4 +1,7 @@
-import type { ModelApiFormat as LocalModelApiFormat } from '../host/model-configuration-contract.js'
+import type {
+  ModelApiFormat as LocalModelApiFormat,
+  ModelProvider,
+} from '../host/model-configuration-contract.js'
 type LocalModelToolProfile = 'custom' | 'function' | 'shell'
 type LocalModelWebSearchMode = 'disabled' | 'cached' | 'live'
 
@@ -242,5 +245,22 @@ export function findLocalModelProviderProfile(id?: string | null): LocalModelPro
   return (
     LOCAL_MODEL_PROVIDER_PROFILES.find(profile => profile.id === id) ??
     LOCAL_MODEL_PROVIDER_PROFILES.find(profile => profile.id === 'custom')!
+  )
+}
+
+/** Recognize a managed profile only when its configured endpoint and options still match. */
+export function findConfiguredLocalModelProviderProfile(
+  provider: Pick<ModelProvider, 'base_url' | 'api_format'> &
+    Partial<Pick<ModelProvider, 'request_path' | 'models_path' | 'models_api_key_header'>>
+): LocalModelProviderProfile | undefined {
+  return LOCAL_MODEL_PROVIDER_PROFILES.find(
+    profile =>
+      profile.id !== 'custom' &&
+      profile.baseUrl.replace(/\/+$/, '') === provider.base_url.replace(/\/+$/, '') &&
+      profile.apiFormat === provider.api_format &&
+      (!provider.request_path || profile.requestPath === provider.request_path) &&
+      (!provider.models_path || profile.modelsPath === provider.models_path) &&
+      (!provider.models_api_key_header ||
+        (profile.modelsApiKeyHeader ?? 'Authorization') === provider.models_api_key_header)
   )
 }

@@ -893,7 +893,7 @@ async fn the_done_frame_publishes_the_contexts_field() {
         893_490_636_671_584,
     );
     event.error = Some("boom".to_owned());
-    emit_error_frames(&redis, &event, Some(6501))
+    emit_terminal_frames(&redis, &event, Some(6501), &Value::Null, None)
         .await
         .expect("error frames");
     let state = redis.state.lock().expect("state");

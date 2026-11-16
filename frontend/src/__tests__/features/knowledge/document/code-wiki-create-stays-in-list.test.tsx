@@ -8,7 +8,10 @@ import { toast } from 'sonner'
 
 import { createCodeWiki } from '@/features/knowledge/code-wiki/createCodeWiki'
 import { useKnowledgeBaseDialogs } from '@/features/knowledge/document/hooks/useKnowledgeBaseDialogs'
-import { createKnowledgeBase } from '@/apis/knowledge'
+import { createKnowledgeBase, deleteKnowledgeBase } from '@/apis/knowledge'
+import type { KnowledgeBase } from '@/types/knowledge'
+import type { ContentDeletionOutcome } from '@/apis/knowledge-deletion'
+import client from '@/apis/client'
 
 jest.mock('next/navigation', () => ({
   useRouter: jest.fn(() => ({ push: jest.fn() })),
@@ -25,6 +28,7 @@ jest.mock('@/hooks/useTranslation', () => ({
 jest.mock('@/apis/knowledge', () => ({
   migrateKnowledgeBaseToGroup: jest.fn(),
   createKnowledgeBase: jest.fn(),
+  deleteKnowledgeBase: jest.fn(),
 }))
 
 jest.mock('@/features/knowledge/code-wiki/createCodeWiki', () => ({
@@ -32,6 +36,91 @@ jest.mock('@/features/knowledge/code-wiki/createCodeWiki', () => ({
 }))
 
 describe('creating a Code Wiki', () => {
+  it('does not dispatch an old deletion after the account changes during import', async () => {
+    const scope = jest.spyOn(client, 'getCacheScope').mockReturnValue('account-a')
+    try {
+      const sidebar = {
+        groups: [],
+        selectedGroupId: null,
+        currentUser: { id: 1 },
+        selectedKbId: 1,
+        refreshAll: jest.fn(),
+        clearSelection: jest.fn(),
+      }
+      jest.mocked(deleteKnowledgeBase).mockResolvedValue({
+        content_deleted: true,
+        index_cleanup: 'confirmed',
+        error_code: null,
+        can_continue: false,
+      })
+      const { result } = renderHook(() => useKnowledgeBaseDialogs({ sidebar }))
+      act(() => result.current.setDeletingKb({ id: 1 } as KnowledgeBase))
+      let operation!: Promise<void>
+      act(() => {
+        operation = result.current.handleDelete(true)
+        scope.mockReturnValue('account-b')
+      })
+      await act(async () => {
+        await operation
+      })
+      expect(deleteKnowledgeBase).not.toHaveBeenCalled()
+    } finally {
+      scope.mockRestore()
+    }
+  })
+  it.each([false, true])(
+    'does not overwrite a new deletion target after pending deletion (account change: %s)',
+    async accountChanged => {
+      let resolve!: (outcome: ContentDeletionOutcome) => void
+      const pending = new Promise<ContentDeletionOutcome>(done => {
+        resolve = done
+      })
+      jest.mocked(deleteKnowledgeBase).mockReturnValue(pending)
+      const push = jest.fn()
+      jest.mocked(useRouter).mockReturnValue({ ...useRouter(), push })
+      const sidebar = {
+        groups: [],
+        selectedGroupId: null,
+        currentUser: { id: 1 },
+        selectedKbId: 1,
+        refreshAll: jest.fn().mockResolvedValue(undefined),
+        clearSelection: jest.fn(),
+      }
+      const { result, rerender } = renderHook(
+        ({ userId, selectedKbId }) =>
+          useKnowledgeBaseDialogs({
+            sidebar: {
+              ...sidebar,
+              currentUser: { id: userId },
+              selectedKbId,
+            },
+          }),
+        { initialProps: { userId: 1, selectedKbId: 1 } }
+      )
+      act(() => result.current.setDeletingKb({ id: 1 } as KnowledgeBase))
+      let operation!: Promise<void>
+      await act(async () => {
+        operation = result.current.handleDelete(true)
+        await Promise.resolve()
+      })
+      rerender({ userId: accountChanged ? 2 : 1, selectedKbId: 2 })
+      act(() => result.current.setDeletingKb({ id: 2 } as KnowledgeBase))
+      await act(async () => {
+        resolve({
+          content_deleted: true,
+          index_cleanup: 'unconfirmed',
+          error_code: 'external_engine_unavailable',
+          can_continue: false,
+        })
+        await operation
+      })
+      expect(sidebar.clearSelection).not.toHaveBeenCalled()
+      expect(push).not.toHaveBeenCalled()
+      expect(result.current.deletingKb?.id).toBe(2)
+      expect(result.current.isDeleting).toBe(false)
+      expect(toast.warning).not.toHaveBeenCalled()
+    }
+  )
   beforeEach(() => {
     jest.clearAllMocks()
     jest.mocked(createCodeWiki).mockResolvedValue({

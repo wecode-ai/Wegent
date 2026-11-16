@@ -8,6 +8,7 @@ import { registerModelConfigurationCapabilities } from './model-configuration-ca
 import { ModelConfigurationStore } from './model-configuration-store.js'
 import { SecureValueStore } from './secure-value-store.js'
 import { createTestSecretProtection } from '../../test/secret-protection.js'
+import { createRedirectServer } from '../../test/redirect-server.js'
 import type { ModelProvider } from './model-configuration-contract.js'
 
 vi.mock('electron', () => ({ app: {}, dialog: {}, shell: {} }))
@@ -85,6 +86,61 @@ test('refuses to forward a saved credential to a draft connection address', asyn
     })
   ).rejects.toThrow(/API key again/)
   expect(fetcher).not.toHaveBeenCalled()
+})
+
+test.each(['response.failed', 'response.incomplete', 'error'])(
+  'rejects a terminal %s after a valid native Responses tool call',
+  async type => {
+    const events = [
+      {
+        type: 'response.output_item.done',
+        item: {
+          id: 'call_1',
+          type: 'function_call',
+          name: 'wework_capability_probe',
+          arguments: '{"input":"PING"}',
+        },
+      },
+      { type, error: { message: 'native-only-secret' } },
+    ]
+    const fetcher = vi.fn<typeof fetch>().mockResolvedValue(
+      new Response(events.map(event => `data: ${JSON.stringify(event)}\n\n`).join(''), {
+        headers: { 'content-type': 'text/event-stream' },
+      })
+    )
+    vi.stubGlobal('fetch', fetcher)
+    const result = await router.invoke(principal, 'modelConfiguration.test', {
+      provider: {
+        ...provider,
+        api_key: undefined,
+        models: [{ ...provider.models[0], api_format: 'openai-responses' }],
+      },
+    })
+    expect(result).toEqual([{ model: 'Assistant', error: 'connection_test_failed' }])
+    expect(JSON.stringify(result)).not.toContain('native-only-secret')
+  }
+)
+
+test('does not deliver the saved native probe credential to a redirect target', async () => {
+  const servers = await createRedirectServer()
+  try {
+    const current = await store.read()
+    await store.save(current.revision, [{ ...provider, base_url: servers.url }])
+    const result = await router.invoke(principal, 'modelConfiguration.test', {
+      provider: { ...provider, base_url: servers.url, api_key: undefined },
+    })
+    expect(result).toEqual([{ model: 'Assistant', error: 'connection_test_failed' }])
+    expect(servers.requests).toEqual([
+      {
+        url: '/v1/messages',
+        authorization: 'Bearer native-only-secret',
+        apiKey: 'native-only-secret',
+      },
+    ])
+    expect(servers.redirectedRequests).toEqual([])
+  } finally {
+    await servers.close()
+  }
 })
 
 test('uses each model protocol override and isolates a failed model probe', async () => {

@@ -40,6 +40,13 @@ body:has(#wework-debug-panel [role='dialog']) .electron-titlebar-drag-region {
   -webkit-app-region: no-drag;
 }
 
+/* Chromium can omit promoted sidebar overlays from a backdrop filter. */
+body:has([data-testid='cloud-todo-create-panel'])
+  :is([data-testid='desktop-sidebar'], [data-testid='collaboration-platform-sidebar'])
+  svg {
+  filter: blur(2px);
+}
+
 /* While a panel resize drag is active, embedded browser surfaces (<webview>
    guest content or the iframe fallback) must not intercept pointer events,
    otherwise document-level drag handlers stop receiving pointermove/pointerup
@@ -70,7 +77,7 @@ body[data-wework-panel-resizing] [data-testid='workspace-browser-frame'] {
 :root {
   color-scheme: light;
   --color-bg-base: 255 255 255;
-  --color-bg-surface: 247 247 248;
+  --color-bg-surface: 244 244 244;
   --color-bg-hover: 20 184 166 / 0.08;
   --color-focus: 51 156 255;
   --color-search-match: 255 195 0;
@@ -85,8 +92,8 @@ body[data-wework-panel-resizing] [data-testid='workspace-browser-frame'] {
   --color-primary-contrast: 255 255 255;
   --color-border: 224 224 224;
   --color-muted: 245 245 245;
-  --color-titlebar: 247 247 248;
-  --color-sidebar: 246 246 246 / 0.88;
+  --color-titlebar: var(--color-bg-surface);
+  --color-sidebar: var(--color-bg-surface) / 0.92;
   --color-sidebar-active: 26 28 31 / 0.07;
   --color-sidebar-hover: 26 28 31 / 0.05;
   --color-sidebar-marked: 255 244 214;
@@ -541,6 +548,15 @@ body[data-wework-panel-resizing] [data-testid='workspace-browser-frame'] {
   background-color: rgb(var(--color-scrollbar-thumb-hover));
 }
 
+.sidebar-worklists-scrollbar:hover .sidebar-worklists-scrollbar-thumb,
+.sidebar-worklists-scrollbar:active .sidebar-worklists-scrollbar-thumb {
+  background-color: color-mix(
+    in srgb,
+    rgb(var(--color-scrollbar-thumb-hover)) 80%,
+    rgb(var(--color-text-primary))
+  );
+}
+
 @media (prefers-reduced-motion: reduce) {
   .runtime-task-title-shimmer {
     animation: none;
@@ -591,8 +607,8 @@ body[data-wework-panel-resizing] [data-testid='workspace-browser-frame'] {
   --color-primary-contrast: 255 255 255;
   --color-border: 43 43 43;
   --color-muted: 48 48 48;
-  --color-titlebar: 33 33 33;
-  --color-sidebar: 33 33 33 / 0.92;
+  --color-titlebar: var(--color-bg-surface);
+  --color-sidebar: var(--color-bg-surface) / 0.92;
   --color-sidebar-active: 255 255 255 / 0.1;
   --color-sidebar-hover: 255 255 255 / 0.06;
   --color-sidebar-marked: 82 64 24;

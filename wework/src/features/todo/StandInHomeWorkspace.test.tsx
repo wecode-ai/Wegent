@@ -10,6 +10,21 @@ import { StandInHomeWorkspace } from './StandInHomeWorkspace'
 const conversation = vi.hoisted(() => vi.fn())
 const navigate = vi.hoisted(() => vi.fn())
 vi.mock('@/lib/navigation', () => ({ navigateTo: navigate }))
+vi.mock('./StandInConversation', () => ({
+  StandInConversation: (props: {
+    scope: string
+    active: boolean
+    userId: number
+    deviceId: string
+  }) => (
+    <input
+      aria-label="Collaboration chat"
+      data-scope={props.scope}
+      data-active={String(props.active)}
+      data-owner={`${props.userId}:${props.deviceId}`}
+    />
+  ),
+}))
 vi.mock('@/components/layout/workspace-panels/TemporaryChatPanel', () => ({
   TemporaryChatPanel: (props: { controlledAddress: { taskId: string }; active: boolean }) => {
     conversation(props)
@@ -57,7 +72,7 @@ function work(id: string): StandInInboxWork {
     },
   } as StandInInboxWork
 }
-async function setup(items: StandInInboxWork[], overrides = {}) {
+async function setup(items: StandInInboxWork[], overrides = {}, showWork = true) {
   await i18n.changeLanguage('en')
   const api = {
     inbox: vi.fn().mockResolvedValue({ items, sourceErrors: [] }),
@@ -91,14 +106,34 @@ async function setup(items: StandInInboxWork[], overrides = {}) {
     ] as CollaborationProject[],
     onOpenTask: vi.fn(),
   }
-  return { ...render(<StandInHomeWorkspace {...props} />), props, api }
+  const result = render(<StandInHomeWorkspace {...props} />)
+  if (showWork) fireEvent.click(screen.getByTestId('personal-home-assistant-view-toggle'))
+  return { ...result, props, api }
 }
 
-it('defaults to Issue work and continues the original task inline while retaining drafts', async () => {
+it('opens an independent collaboration chat and retains its draft across work views', async () => {
+  const { api } = await setup([], {}, false)
+  const chat = screen.getByLabelText('Collaboration chat')
+  expect(chat).toBeVisible()
+  expect(chat).toHaveAttribute('data-scope', 'collaboration')
+  expect(chat).toHaveAttribute('data-owner', '7:bound')
+  expect(chat).toHaveAttribute('data-active', 'true')
+  expect(api.inbox).not.toHaveBeenCalled()
+  fireEvent.change(chat, { target: { value: 'Discuss project work' } })
+  fireEvent.click(screen.getByTestId('personal-home-assistant-view-toggle'))
+  await screen.findByText('No assistant tasks yet')
+  expect(api.inbox).toHaveBeenCalledOnce()
+  expect(chat).not.toBeVisible()
+  expect(chat).toHaveAttribute('data-active', 'false')
+  fireEvent.click(screen.getByTestId('personal-home-assistant-view-toggle'))
+  expect(chat).toBeVisible()
+  expect(chat).toHaveValue('Discuss project work')
+})
+
+it('continues the original Issue task inline while retaining drafts', async () => {
   const { props } = await setup([work('one'), work('two')])
   await screen.findByText('Work one')
   expect(screen.queryByRole('textbox')).not.toBeInTheDocument()
-  expect(screen.queryByTestId('personal-home-general-chat')).not.toBeInTheDocument()
   fireEvent.click(screen.getByTestId('personal-home-work-one'))
   expect(conversation).toHaveBeenLastCalledWith(
     expect.objectContaining({

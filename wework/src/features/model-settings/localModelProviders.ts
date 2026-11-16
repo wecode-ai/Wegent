@@ -8,6 +8,7 @@ import {
 export {
   LOCAL_MODEL_PROVIDER_PROFILES,
   findLocalModelProviderProfile,
+  findConfiguredLocalModelProviderProfile,
 } from '../../../electron/src/shared/model-provider-profiles'
 export type {
   LocalModelProviderProfileId,
@@ -16,7 +17,12 @@ export type {
   LocalModelProviderConnectionTest,
 } from '../../../electron/src/shared/model-provider-profiles'
 
-export function localModelSupportsImageInput(config: LocalModelConfig): boolean {
+export function localModelSupportsImageInput(
+  config: Pick<
+    LocalModelConfig,
+    'catalogEntry' | 'providerProfileId' | 'modelId' | 'baseUrl' | 'apiFormat'
+  >
+): boolean {
   const declaredModalities = config.catalogEntry?.input_modalities
   if (Array.isArray(declaredModalities) && declaredModalities.includes('image')) return true
 

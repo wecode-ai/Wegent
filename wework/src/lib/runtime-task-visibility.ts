@@ -1,4 +1,5 @@
 import type { RuntimeTaskAddress } from '@/types/api'
+import { standInConversationTaskId } from '@/api/personalStandIn'
 
 export function isStandInMemoryReviewTask(
   task: Pick<RuntimeTaskAddress, 'runtimeHandle'>
@@ -21,6 +22,12 @@ export function isPrimaryStandInConversation(
     typeof identity.userId === 'number' &&
     Number.isSafeInteger(identity.userId) &&
     identity.userId >= 0 &&
-    task.taskId === `stand-in-chat-${identity.userId}-primary`
+    (identity.conversationScope == null || identity.conversationScope === 'collaboration') &&
+    task.taskId ===
+      standInConversationTaskId(
+        identity.userId,
+        undefined,
+        identity.conversationScope === 'collaboration' ? 'collaboration' : undefined
+      )
   )
 }

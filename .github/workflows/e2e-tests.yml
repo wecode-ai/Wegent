@@ -191,7 +191,7 @@ jobs:
       - name: Resolve Backend Rust E2E runtime
         id: runtime
         env:
-          SOURCE_DIGEST: ${{ hashFiles('backend-rs/Cargo.toml', 'backend-rs/Cargo.lock', 'backend-rs/src/**', 'backend-rs/crates/**', 'shared/rust/**', 'shared/assets/codex-models/**', 'backend-rs/examples/**', 'backend-rs/migrations/**', '.github/runtime-images/backend-rs-e2e.Dockerfile', '.github/runtime-images/backend-rs-builder.Dockerfile', '.github/ci/rust-toolchain', '.github/actions/setup-rust-cache/action.yml') }}
+          SOURCE_DIGEST: ${{ hashFiles('backend-rs/Cargo.toml', 'backend-rs/Cargo.lock', 'backend-rs/src/**', 'backend-rs/crates/**', 'shared/rust/**', 'shared/assets/codex-models/**', 'shared/assets/calendars/**', 'backend-rs/examples/**', 'backend-rs/migrations/**', '.github/runtime-images/backend-rs-e2e.Dockerfile', '.github/runtime-images/backend-rs-builder.Dockerfile', '.github/ci/rust-toolchain', '.github/actions/setup-rust-cache/action.yml') }}
         run: |
           echo "image=$(.github/scripts/resolve-backend-rs-e2e-runtime.sh)" \
             >> "$GITHUB_OUTPUT"
@@ -455,6 +455,7 @@ jobs:
             BASE_IMAGE=${{ steps.runtime.outputs.base-image }}
             DEPS_IMAGE=${{ steps.dependencies.outputs.image }}
           push: true
+          load: true
           tags: ${{ steps.runtime.outputs.image }}
           cache-from: type=registry,ref=ghcr.io/${{ github.repository_owner }}/wegent-executor:buildcache-e2e
 
@@ -471,29 +472,21 @@ jobs:
           tags: wegent/e2e-claudecode-executor:latest
           cache-from: type=registry,ref=ghcr.io/${{ github.repository_owner }}/wegent-executor:buildcache-e2e
 
-      - name: Restore published fork Executor runtime
-        if: steps.access.outputs.artifact == 'true' && steps.image-check.outputs.exists == 'true'
+      - name: Restore published Executor runtime
+        if: steps.image-check.outputs.exists == 'true'
         env:
           IMAGE: ${{ steps.runtime.outputs.image }}
+          FORK_ARTIFACT: ${{ steps.access.outputs.artifact }}
         run: |
           docker pull "$IMAGE"
-          docker tag "$IMAGE" wegent/e2e-claudecode-executor:latest
+          if [[ "$FORK_ARTIFACT" == "true" ]]; then
+            docker tag "$IMAGE" wegent/e2e-claudecode-executor:latest
+          fi
 
-      - name: Extract fork Executor binary
-        if: steps.access.outputs.artifact == 'true'
-        run: |
-          mkdir -p executor/target/release
-          container_id="$(docker create wegent/e2e-claudecode-executor:latest)"
-          trap 'docker rm -f "$container_id" >/dev/null 2>&1 || true' EXIT
-          docker cp "$container_id:/app/executor" executor/target/release/wegent-executor
-          chmod 0755 executor/target/release/wegent-executor
-
-      - name: Extract registry Executor binary
-        if: steps.access.outputs.artifact != 'true'
+      - name: Extract Executor binary
         env:
-          EXECUTOR_E2E_IMAGE: ${{ steps.runtime.outputs.image }}
+          EXECUTOR_E2E_IMAGE: ${{ steps.access.outputs.artifact == 'true' && 'wegent/e2e-claudecode-executor:latest' || steps.runtime.outputs.image }}
         run: |
-          docker pull "$EXECUTOR_E2E_IMAGE"
           mkdir -p executor/target/release
           container_id="$(docker create "$EXECUTOR_E2E_IMAGE")"
           trap 'docker rm -f "$container_id" >/dev/null 2>&1 || true' EXIT
@@ -1151,6 +1144,25 @@ jobs:
             uv run --no-sync python tests/e2e/system_mcp_gateway.py \
             2>&1 | tee "$E2E_REPORT_DIR/system-mcp.log"
 
+      - name: Run terminal handoff gateway E2E
+        if: matrix.shardIndex == 1
+        working-directory: ./backend
+        env:
+          DATABASE_URL: mysql+pymysql://root:test123@mysql:3306/wegent_test
+          REDIS_URL: redis://redis:6379/0
+          SECRET_KEY: test-secret-key-for-ci-testing
+          ENVIRONMENT: development
+          DB_AUTO_MIGRATE: "false"
+          E2E_API_URL: http://localhost:8000
+          WEGENT_HYBRID_STATE_FILE: ${{ github.workspace }}/backend/backend-hybrid.state
+          E2E_REPORT_DIR: ${{ github.workspace }}/.ci-artifacts/subscription-callback-gateway
+          PYTHONPATH: ..:.
+        run: |
+          set -o pipefail
+          mkdir -p "$E2E_REPORT_DIR"
+          uv run --no-sync python tests/e2e/terminal_handoff_gateway.py \
+            2>&1 | tee "$E2E_REPORT_DIR/terminal-handoff.log"
+
       - name: Upload subscription callback gateway E2E report
         if: always() && matrix.shardIndex == 1
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
@@ -1640,6 +1652,7 @@ jobs:
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
 
       - name: Log in to GHCR
+        if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
         uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9
         with:
           registry: ghcr.io

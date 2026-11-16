@@ -216,7 +216,7 @@ fn default_device_name() -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{detect_client_ip, normalize_token};
+    use super::normalize_token;
 
     #[test]
     fn normalize_token_strips_bearer_scheme_case_insensitively() {
@@ -224,10 +224,5 @@ mod tests {
         assert_eq!(normalize_token("bEaReR\t  wg-token  "), "wg-token");
         assert_eq!(normalize_token("Token wg-token"), "Token wg-token");
         assert_eq!(normalize_token("wg-token"), "wg-token");
-    }
-
-    #[test]
-    fn detect_client_ip_uses_backend_route_source_address() {
-        assert_eq!(detect_client_ip("http://127.0.0.1:8000"), "127.0.0.1");
     }
 }

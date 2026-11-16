@@ -7,7 +7,7 @@ import {
   removeMigratedLocalModelConfigs,
   type LocalModelConfig,
 } from './localModelSettings'
-import { createDefaultLocalModelCatalogEntry } from './localModelCatalog'
+import { providerModelCatalogEntry } from './localModelCatalog'
 import { codexCatalogModelIdForUpstream } from './codexCatalog'
 import { modelInterfaceToolProfile } from '../../../electron/src/host/model-interface-runtime'
 import { getProviderModelConfigs, replaceProviderModelConfigs } from './providerModelState'
@@ -63,16 +63,7 @@ export function resolveProviderModel(
   })
   const displayName = model.display_name || model.model_id
   const profileId = model.provider_profile_id ?? 'custom'
-  const catalogEntry =
-    model.catalog_entry ??
-    (profileId === 'custom'
-      ? createDefaultLocalModelCatalogEntry({
-          id: model.id,
-          displayName,
-          toolProfile,
-          contextWindow: model.context_window,
-        })
-      : undefined)
+  const catalogEntry = providerModelCatalogEntry(model)
   const requestPath =
     model.request_path ??
     (model.api_format && model.api_format !== provider.api_format

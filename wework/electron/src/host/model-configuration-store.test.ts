@@ -7,6 +7,8 @@ import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
 import { ModelConfigurationStore } from './model-configuration-store.js'
 import { SecureValueStore } from './secure-value-store.js'
 import { createTestSecretProtection } from '../../test/secret-protection.js'
+import { createRedirectServer } from '../../test/redirect-server.js'
+import { findLocalModelProviderProfile } from '../shared/model-provider-profiles.js'
 import { verifyLegacyModelBindings } from '../../../e2e/desktop/modules/upgrade-model-binding.mjs'
 import {
   parseModelConfiguration,
@@ -607,6 +609,113 @@ describe('Provider model discovery', () => {
     expect(values).toEqual(secretsBefore)
   })
 
+  test.each(['minimax', 'minimax-global'])(
+    'discovers %s with the saved key bound to its original execution endpoint',
+    async preset => {
+      const profile = findLocalModelProviderProfile(preset)
+      const store = new ModelConfigurationStore(directory, secrets)
+      const initial = await store.read()
+      const snapshot = await store.save(initial.revision, [
+        {
+          id: preset,
+          name: profile.displayName,
+          base_url: profile.baseUrl,
+          api_format: profile.apiFormat,
+          api_key: 'native-minimax-secret',
+          models_path: profile.modelsPath,
+          models_api_key_header: profile.modelsApiKeyHeader,
+          models: [],
+        },
+      ])
+      const sourceBefore = await readFile(snapshot.path, 'utf8')
+      const secretsBefore = new Map(values)
+      const request = vi.fn().mockResolvedValue(response({ data: [{ id: 'MiniMax-M2.7' }] }))
+      vi.stubGlobal('fetch', request)
+
+      expect(JSON.stringify(snapshot)).not.toContain('native-minimax-secret')
+      expect(snapshot.providers[0]).toMatchObject({ api_key_configured: true })
+      await expect(store.discover(preset, snapshot.providers[0])).resolves.toEqual(['MiniMax-M2.7'])
+      expect(request).toHaveBeenCalledExactlyOnceWith(
+        `${profile.modelsBaseUrl}${profile.modelsPath}`,
+        expect.objectContaining({
+          headers: { Authorization: 'Bearer native-minimax-secret' },
+          redirect: 'error',
+        })
+      )
+      expect(await readFile(snapshot.path, 'utf8')).toBe(sourceBefore)
+      expect(values).toEqual(secretsBefore)
+    }
+  )
+
+  test.each([
+    'https://attacker.example/v1',
+    'https://api.minimaxi.com',
+    'https://api.minimax.io/anthropic',
+  ])('refuses to reuse a saved MiniMax key for a changed draft address: %s', async baseUrl => {
+    const store = new ModelConfigurationStore(directory, secrets)
+    const initial = await store.read()
+    const saved = await store.save(initial.revision, [
+      {
+        id: 'minimax',
+        name: 'MiniMax',
+        base_url: 'https://api.minimaxi.com/anthropic',
+        api_format: 'anthropic-messages',
+        api_key: 'native-minimax-secret',
+        models: [],
+      },
+    ])
+    const request = vi.fn()
+    vi.stubGlobal('fetch', request)
+    await expect(
+      store.discover('minimax', { ...saved.providers[0], base_url: baseUrl })
+    ).rejects.toThrow(/API key again/)
+    expect(request).not.toHaveBeenCalled()
+  })
+
+  test('retains an explicitly customized discovery path on an official execution endpoint', async () => {
+    const store = new ModelConfigurationStore(directory, secrets)
+    const request = vi.fn().mockResolvedValue(response({ data: [] }))
+    vi.stubGlobal('fetch', request)
+    await store.discover('custom-minimax', {
+      ...draft,
+      base_url: 'https://api.minimaxi.com/anthropic',
+      api_format: 'anthropic-messages',
+      models_path: '/private-models',
+      models_api_key_header: 'X-Api-Key',
+    })
+    expect(request).toHaveBeenCalledExactlyOnceWith(
+      'https://api.minimaxi.com/anthropic/private-models',
+      expect.objectContaining({ headers: { 'X-Api-Key': 'draft-key' }, redirect: 'error' })
+    )
+  })
+
+  test('does not deliver a saved discovery credential to a redirect target', async () => {
+    const servers = await createRedirectServer()
+    try {
+      const store = new ModelConfigurationStore(directory, secrets)
+      const initial = await store.read()
+      const saved = await store.save(initial.revision, [
+        {
+          id: 'local',
+          name: 'Local redirect fixture',
+          base_url: servers.url,
+          api_format: 'openai-responses',
+          api_key: 'native-redirect-secret',
+          models: [],
+        },
+      ])
+      await expect(store.discover('local', saved.providers[0])).rejects.toThrow(
+        /failed or timed out/
+      )
+      expect(servers.requests).toEqual([
+        { url: '/models', authorization: 'Bearer native-redirect-secret', apiKey: undefined },
+      ])
+      expect(servers.redirectedRequests).toEqual([])
+    } finally {
+      await servers.close()
+    }
+  })
+
   test('a replacement draft key takes precedence but does not rotate the saved key', async () => {
     await writeFile(join(directory, 'model.yml'), YAML)
     const store = new ModelConfigurationStore(directory, secrets)
@@ -694,6 +803,9 @@ describe('Provider model discovery', () => {
       { ...draft, base_url: 'https://user:secret@relay.example' },
       { ...draft, api_key: 123 },
       { ...draft, models_path: '//other.example/models' },
+      { ...draft, models_path: '@other.example/models' },
+      { ...draft, models_path: 'https://other.example/models' },
+      { ...draft, models_path: '/\\other.example/models' },
     ])
       await expect(store.discover('new', input)).rejects.toThrow()
     expect(request).not.toHaveBeenCalled()

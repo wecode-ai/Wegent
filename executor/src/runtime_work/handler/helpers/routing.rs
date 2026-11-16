@@ -71,7 +71,11 @@ fn apply_local_execution_state(
                 .is_some_and(|state| {
                     state.phase == crate::runtime_work::lifecycle::NativeExecutionPhase::Recovering
                 });
-            crate::runtime_work::lifecycle::queue_native_execution(link, queue_position, recovering);
+            crate::runtime_work::lifecycle::queue_native_execution(
+                link,
+                queue_position,
+                recovering,
+            );
         }
         link.running = false;
         link.status = "queued".to_owned();
@@ -126,6 +130,20 @@ fn apply_local_task_failure(link: &mut RuntimeTaskLink, error: &AppIpcError) {
             "lastErrorCode".to_owned(),
             Value::String(error.code.clone()),
         );
+    }
+    record_runtime_start_failure(link, error);
+}
+
+fn record_runtime_start_failure(link: &mut RuntimeTaskLink, error: &AppIpcError) {
+    if link.runtime_handle["lastTurnId"].is_null() {
+        let message = crate::agents::redact_diagnostic_text(&error.message);
+        link.runtime_handle["startupFailure"] = json!({
+            "code":error.code,
+            "message":message,
+            "failedAt":link.completed_at.unwrap_or_else(now_ms)
+        });
+        link.runtime_handle["lastError"] = json!(message);
+        link.runtime_handle["lastErrorCode"] = json!(error.code);
     }
 }
 
@@ -509,6 +527,7 @@ fn store_runtime_execution_request(runtime_handle: &mut Value, request: &Executi
                 | "collaborationMode"
                 | "collaboration_mode"
                 | "collaboration_model"
+                | "conversationContext"
                 | "modelSelection"
                 | "model_selection"
                 | "origin"
@@ -591,6 +610,7 @@ mod stand_in_request_snapshot_tests {
             ..Default::default()
         };
         let fields = json!({"user_id":7,"runtime_command_id":"command-1", "client_user_message_id":"message-1",
+            "conversationContext":"private_discussion",
             "standInReportTo":{"userId":7,"taskId":"stand-in-chat-7-primary"},
             "standInSourceBindings":[{"recordId":"record","source":{"id":"group","profile":"corp","kind":"group"}}]});
         request.extra.extend(fields.as_object().unwrap().clone());

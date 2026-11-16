@@ -227,7 +227,9 @@ class PipelineCollaborationStrategy(CollaborationStrategy):
             from app.schemas.kind import Task, Team
             from app.services.readers.kinds import KindType, kindReader
 
-            subtask = task_stores.subtask_store.get_by_id(db, subtask_id=subtask_id)
+            subtask = task_stores.subtask_store.get_basic_by_id(
+                db, subtask_id=subtask_id
+            )
             if not subtask:
                 logger.info(
                     "[PipelineStrategy] Auto-advance skipped: subtask not found "

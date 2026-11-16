@@ -5,7 +5,7 @@ import type { DesktopHostEventBroker } from './desktop-host-events.js'
 import type { SecureValueStore } from './secure-value-store.js'
 import { ModelConfigurationStore } from './model-configuration-store.js'
 import { protectedCredentialDirectory } from './credential-storage-paths.js'
-import { probeModelConnection } from '../shared/model-connection-probe.js'
+import { testModelConnection } from '../vendor/chat-core/model-connection-probe.js'
 import { findLocalModelProviderProfile } from '../shared/model-provider-profiles.js'
 
 /** Register native provider operations and publish revisions only after successful mutations. */
@@ -79,7 +79,7 @@ export function registerModelConfigurationCapabilities(
             ? profile.connectionTest
             : undefined
         try {
-          await probeModelConnection(
+          await testModelConnection(
             {
               requestUrl: probe
                 ? `${probe.baseUrl}${probe.requestPath}`
@@ -89,7 +89,10 @@ export function registerModelConfigurationCapabilities(
               toolProfile: probe ? 'function' : model.tool_profile,
               apiKey: provider.api_key,
             },
-            { verifyExactProbePayload: false }
+            {
+              verifyExactProbePayload: false,
+              fetcher: (input, init) => fetch(input, { ...init, redirect: 'error' }),
+            }
           )
           return { model: model.display_name || model.model_id }
         } catch {

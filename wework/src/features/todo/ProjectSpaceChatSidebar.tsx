@@ -444,6 +444,13 @@ export function ProjectSpaceChatSidebar({
         )}
       </header>
 
+      <p
+        data-testid="project-space-chat-capabilities"
+        className="shrink-0 px-4 py-2 text-sm text-text-secondary"
+      >
+        {t('workbench.project_space_chat.capabilities', { name: project.name })}
+      </p>
+
       <TemporaryChatPanel
         key={`${project.project_store}:${project.id}:${chatInstance}`}
         currentProject={selectedLocalProject}
@@ -452,6 +459,7 @@ export function ProjectSpaceChatSidebar({
         testId="project-space-chat-panel"
         initialAddress={selectedConversation?.address ?? null}
         createTask={createConversation}
+        runtimeContext={runtimeContext}
         onAddressChange={rememberAddress}
         sendEphemeral={false}
         emptyStateText={

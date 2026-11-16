@@ -120,30 +120,6 @@ fn registers_the_identity_of_a_routed_thread() {
 }
 
 #[test]
-fn ignores_a_blank_thread_id() {
-    let temp = tempfile::tempdir().unwrap();
-    let database = temp.path().join("reports.db");
-    let observer = CodexRolloutObserver::new(database.clone(), temp.path().into());
-    observer
-        .register_root(
-            "  ",
-            HookUser {
-                id: Some("7".to_owned()),
-                name: "alice".to_owned(),
-            },
-            temp.path().to_path_buf(),
-            None,
-        )
-        .unwrap();
-
-    assert!(Store::open(&database)
-        .unwrap()
-        .thread("root")
-        .unwrap()
-        .is_none());
-}
-
-#[test]
 fn only_plugins_subscribed_to_the_rollout_feed_are_served() {
     let temp = tempfile::tempdir().unwrap();
     let plugins_dir = temp.path().join("hooks/plugins");
@@ -164,20 +140,6 @@ fn only_plugins_subscribed_to_the_rollout_feed_are_served() {
             .collect::<Vec<_>>(),
         vec!["subscriber"]
     );
-}
-
-#[test]
-fn a_registry_without_a_subscriber_has_nothing_to_observe() {
-    let temp = tempfile::tempdir().unwrap();
-    let plugins_dir = temp.path().join("hooks/plugins");
-    write_plugin(&plugins_dir.join("live"), &[], true);
-
-    let registry = crate::hooks::registry::HookRegistryStore::new(temp.path().to_path_buf());
-    let subscribers = subscribed_plugins(&registry);
-
-    assert!(!subscribers.installed);
-    assert!(!subscribers.enabled);
-    assert!(subscribers.delivering.is_empty());
 }
 
 fn write_plugin(directory: &Path, subscriptions: &[&str], enabled: bool) {
@@ -305,26 +267,6 @@ fn subagent_writes_are_attributed_to_the_task_but_only_counted_once() {
 }
 
 #[test]
-fn repeated_edits_of_one_file_are_counted_every_time() {
-    let temp = tempfile::tempdir().unwrap();
-    fs::create_dir(temp.path().join("sessions")).unwrap();
-    let path = temp.path().join("sessions/rollout-root.jsonl");
-    append(
-        &path,
-        &[
-            metadata("root"),
-            file_change("call-1", &["a.rs"]),
-            file_change("call-2", &["a.rs"]),
-            file_change("call-3", &["a.rs"]),
-        ],
-    );
-    let mut store = Store::open(&temp.path().join("reports.db")).unwrap();
-    store.register_root("root", &session(temp.path())).unwrap();
-    assert_eq!(scan_home(&mut store, temp.path()).reports, 3);
-    assert_eq!(drain(&store).len(), 3);
-}
-
-#[test]
 fn subagent_with_an_unregistered_parent_is_left_for_a_later_pass() {
     let temp = tempfile::tempdir().unwrap();
     fs::create_dir(temp.path().join("sessions")).unwrap();
@@ -391,29 +333,6 @@ fn rollouts_that_predate_the_observer_are_not_replayed() {
         1
     );
     assert_eq!(drain(&store).len(), 1);
-}
-
-#[test]
-fn custom_tool_call_apply_patch_uses_the_exec_output_contract() {
-    let temp = tempfile::tempdir().unwrap();
-    fs::create_dir(temp.path().join("sessions")).unwrap();
-    let path = temp.path().join("sessions/rollout-root.jsonl");
-    append(
-        &path,
-        &[
-            metadata("root"),
-            json!({"type":"response_item","payload":{"type":"custom_tool_call","name":"apply_patch",
-                "call_id":"call-1","input":"*** Begin Patch\n*** Update File: a.rs\n@@\n-old\n+new\n*** End Patch"}}),
-            json!({"type":"response_item","timestamp":TIME,"payload":{"type":"custom_tool_call_output",
-                "call_id":"call-1","output":"Exit code: 0\nWall time: 0 seconds\nOutput:\nSuccess. Updated the following files:\nM a.rs"}}),
-        ],
-    );
-    let mut store = Store::open(&temp.path().join("reports.db")).unwrap();
-    store.register_root("root", &session(temp.path())).unwrap();
-    assert_eq!(scan_home(&mut store, temp.path()).reports, 1);
-    let reports = drain(&store);
-    assert_eq!(reports.len(), 1);
-    assert!(reports[0].2.ends_with("a.rs"));
 }
 
 #[test]

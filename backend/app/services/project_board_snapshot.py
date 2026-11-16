@@ -13,8 +13,8 @@ from app.schemas.delivery import (
     LoopItemTaskBindingResponse,
 )
 from app.schemas.project_board import ProjectBoardSnapshotResponse
-from app.services.cloud_projects import cloud_project_service
 from app.services.cloud_projects.access import CloudProjectAccess
+from app.services.cloud_projects.service import cloud_project_service
 from app.services.loop_items.external_provider import external_loop_item_provider
 from app.services.loop_items.service import loop_item_service
 from app.services.project_chat.service import project_chat_service

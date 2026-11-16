@@ -25,6 +25,7 @@ vi.mock('../../e2e/desktop/modules/shared.mjs', async importOriginal => ({
 
 test('does not inject the cloud failure while a completed task still owns a prediction', async () => {
   const reachedFault = new Error('The idle fixture can now inject the failure')
+  const expectedPreferences = { replyPredictionsEnabled: false, trayUsageEnabled: false }
   fixture.failBundle.mockImplementation(async () => {
     throw reachedFault
   })
@@ -51,8 +52,8 @@ test('does not inject the cloud failure while a completed task still owns a pred
   const command = vi.fn(async (action: string, selector: string, options?: { value?: string }) => {
     if (action === 'setAppPreferences') {
       expect(selector).toBe('body')
-      expect(options).toEqual({ value: JSON.stringify({ replyPredictionsEnabled: false }) })
-      return JSON.stringify({ replyPredictionsEnabled: false })
+      expect(options).toEqual({ value: JSON.stringify(expectedPreferences) })
+      return JSON.stringify(expectedPreferences)
     }
     if (action === 'ensureLocalModelCatalogReady') return null
     expect(action).toBe('restartLocalCodexAppServerIfIdle')
@@ -75,7 +76,7 @@ test('does not inject the cloud failure while a completed task still owns a pred
   release()
   expect(await verification).toBe(reachedFault)
   expect(command).toHaveBeenNthCalledWith(1, 'setAppPreferences', 'body', {
-    value: JSON.stringify({ replyPredictionsEnabled: false }),
+    value: JSON.stringify(expectedPreferences),
   })
   expect(prematureFaults).toBe(0)
   expect(attempts).toBe(2)

@@ -14,6 +14,7 @@ import {
   releaseUpgradeChannels,
   releaseUpgradePlan,
   releaseVerificationChannels,
+  releasePublicationChannels,
   verifyReleaseUpgradePlan,
   upgradeSource,
 } from './lib/upgrade-evidence.mjs'
@@ -61,6 +62,16 @@ test('next release candidates respect the current source floor and require exact
     verifyReleaseUpgradePlan(plan, async () => null),
     /publication blocked/
   )
+})
+
+test('a stable bridge preserves the existing Beta channel while ordinary releases advance both', () => {
+  const policy = { releasePurpose: 'bridge' }
+  assert.deepEqual(releasePublicationChannels('stable', policy), ['stable'])
+  assert.deepEqual(releaseVerificationChannels('stable', '', '', policy), ['stable'])
+  assert.deepEqual(releasePublicationChannels('stable'), ['stable', 'beta'])
+  assert.throws(() => releasePublicationChannels('beta', policy), /only to stable/)
+  assert.throws(() => releasePublicationChannels('stable', { releasePurpose: 'unknown' }))
+  assert.throws(() => releaseVerificationChannels('stable', 'beta', '', policy), /outside/)
 })
 
 test('channel shards preserve target publication boundaries', () => {

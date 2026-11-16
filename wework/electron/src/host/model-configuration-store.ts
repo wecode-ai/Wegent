@@ -12,6 +12,7 @@ import {
   type ResolvedProviderModel,
 } from './model-configuration-schema.js'
 import type { SecureValueStore } from './secure-value-store.js'
+import { findConfiguredLocalModelProviderProfile } from '../shared/model-provider-profiles.js'
 
 const EMPTY_FILE =
   '# WeWork local model connections. Cloud models are managed separately.\nversion: 1\nproviders: []\n'
@@ -514,14 +515,17 @@ export class ModelConfigurationStore {
       return { provider, apiKey }
     })
     const { provider, apiKey } = connection
-    const path = provider.models_path ?? '/models'
+    const profile = findConfiguredLocalModelProviderProfile(provider)
+    const baseUrl = profile?.modelsBaseUrl ?? provider.base_url
+    const path = provider.models_path ?? profile?.modelsPath ?? '/models'
+    const requestUrl = `${baseUrl}${path}`
     const headers: Record<string, string> = {}
     if (apiKey)
       headers[provider.models_api_key_header ?? 'Authorization'] =
         provider.models_api_key_header === 'X-Api-Key' ? apiKey : `Bearer ${apiKey}`
     let response: Response
     try {
-      response = await fetch(`${provider.base_url}${path}`, {
+      response = await fetch(requestUrl, {
         headers,
         redirect: 'error',
         signal: AbortSignal.timeout(15_000),

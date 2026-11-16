@@ -341,6 +341,10 @@ pub(crate) fn validated_trigger_config(trigger: &Option<Value>) -> (Value, bool,
                 .and_then(Value::as_str)
                 .unwrap_or("UTC")
                 .to_string();
+            let workday_only = cron
+                .get("workday_only")
+                .and_then(Value::as_bool)
+                .unwrap_or(false);
             // `Cron interval must be at least N minutes` for `*/N` minute
             // steps below the minimum; fixed to `*/N_min` for display.
             let mut valid = true;
@@ -358,7 +362,11 @@ pub(crate) fn validated_trigger_config(trigger: &Option<Value>) -> (Value, bool,
                     .join(" ");
             }
             (
-                json!({"expression": fixed_expression, "timezone": timezone}),
+                json!({
+                    "expression": fixed_expression,
+                    "timezone": timezone,
+                    "workday_only": workday_only,
+                }),
                 valid,
                 if valid {
                     None

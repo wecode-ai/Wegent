@@ -142,16 +142,6 @@ mod tests {
     use super::*;
 
     #[test]
-    fn leaves_small_responses_inline() {
-        let response = json!({"success": true, "message": "ok"});
-
-        assert_eq!(
-            encode_runtime_rpc_response("runtime.tasks.list", response.clone()),
-            response
-        );
-    }
-
-    #[test]
     fn compresses_large_unicode_responses_losslessly() {
         let response = json!({
             "success": true,

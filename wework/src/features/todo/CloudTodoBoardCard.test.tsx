@@ -134,6 +134,7 @@ describe('CloudTodoBoardCard', () => {
 
     render(
       <CloudTodoBoardCard
+        projectStore="backend"
         item={{
           ...item,
           can_edit: undefined,
@@ -176,6 +177,7 @@ describe('CloudTodoBoardCard', () => {
       changeRequestMonitorMocks.useTaskChangeRequest.mockReturnValue(null)
       render(
         <CloudTodoBoardCard
+          projectStore="backend"
           item={{ ...item, status }}
           taskBindings={
             bound
@@ -199,6 +201,7 @@ describe('CloudTodoBoardCard', () => {
     const onPreviewPinnedChange = vi.fn()
     render(
       <CloudTodoBoardCard
+        projectStore="backend"
         item={item}
         taskBindings={[
           {
@@ -252,6 +255,7 @@ describe('CloudTodoBoardCard', () => {
   it('forwards the bound task model to the shared progress conversation', async () => {
     render(
       <CloudTodoBoardCard
+        projectStore="backend"
         item={item}
         taskBindings={[
           {

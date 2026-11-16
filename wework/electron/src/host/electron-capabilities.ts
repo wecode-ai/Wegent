@@ -1046,6 +1046,7 @@ export function createElectronCapabilityRouter(
         target: params.target,
         address: objectParam(params, 'address'),
         callId: stringParam(params, 'callId'),
+        ...(typeof params.turnId === 'string' ? { turnId: params.turnId } : {}),
       },
       owner
     )

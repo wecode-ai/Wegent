@@ -44,6 +44,7 @@ from app.schemas.knowledge_search import KnowledgeSearchRequest
 from app.schemas.rag import SplitterConfig
 from app.services.knowledge.retrieval_capabilities import derive_retrieval_capabilities
 from app.services.knowledge.splitter_config import normalize_splitter_config
+from shared.knowledge_cleanup import ContentDeletionOutcome
 from shared.knowledge_module import VALID_RETRIEVAL_MODES
 
 logger = logging.getLogger(__name__)
@@ -1514,6 +1515,19 @@ class BatchOperationResult(BaseModel):
         default_factory=list, description="List of failed document IDs"
     )
     message: str = Field(..., description="Operation result message")
+
+
+class BatchDocumentDeletionOutcome(ContentDeletionOutcome):
+    """The committed deletion outcome for one requested document."""
+
+    document_id: int
+
+
+class BatchDeletionResult(BatchOperationResult):
+    """Deletion counts retain their meaning even when external cleanup fails."""
+
+    items: list[BatchDocumentDeletionOutcome] = Field(default_factory=list)
+    unconfirmed_count: int = 0
 
 
 # ============== Accessible Knowledge Schemas ==============

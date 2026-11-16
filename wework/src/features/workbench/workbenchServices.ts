@@ -85,7 +85,21 @@ export interface WorkspaceSessionApi {
 
 export type ProjectSpaceLocation = 'local' | 'cloud'
 export type DeliveryApi = ReturnType<typeof createDeliveryApi>
+export interface LocalProjectMigrationSnapshot {
+  version: number
+  fingerprint: string
+  archived: boolean
+  migration_target: string | null
+  migration_fingerprint: string | null
+}
 export type LocalProjectSpaceApi = DeliveryApi & {
+  readProjectMigrationSnapshot?(projectId: string): Promise<LocalProjectMigrationSnapshot>
+  archiveMigratedProject?(
+    projectId: string,
+    version: number,
+    fingerprint: string,
+    target: string
+  ): Promise<void>
   importLocalCodeProject?(input: {
     runtimeProjectKey: string
     name: string

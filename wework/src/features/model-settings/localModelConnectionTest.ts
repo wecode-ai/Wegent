@@ -1,11 +1,20 @@
 import {
   buildLocalModelRequestUrl,
+  defaultLocalModelToolProfile,
   normalizeLocalModelApiFormat,
+  normalizeLocalModelId,
   type LocalModelApiFormat,
   type LocalModelToolProfile,
 } from './localModelSettings'
-
-import { probeModelConnection } from '../../../electron/src/shared/model-connection-probe'
+import { testModelConnection } from '../../../../packages/chat-core/src/model-connection-probe'
+export type {
+  ModelConnectionProbeOptions as TestLocalModelConnectionOptions,
+  ModelConnectionProbeResult as TestLocalModelConnectionResult,
+} from '../../../../packages/chat-core/src/model-connection-probe'
+import type {
+  ModelConnectionProbeOptions,
+  ModelConnectionProbeResult,
+} from '../../../../packages/chat-core/src/model-connection-probe'
 
 export interface TestLocalModelConnectionInput {
   baseUrl: string
@@ -16,27 +25,18 @@ export interface TestLocalModelConnectionInput {
   apiKey?: string | null
 }
 
-export interface TestLocalModelConnectionOptions {
-  fetcher?: typeof fetch
-  timeoutMs?: number
-  verifyExactProbePayload?: boolean
-}
-
-export interface TestLocalModelConnectionResult {
-  status: number
-  toolCalling: true
-}
-
-export function testLocalModelConnection(
+export async function testLocalModelConnection(
   input: TestLocalModelConnectionInput,
-  options: TestLocalModelConnectionOptions = {}
-): Promise<TestLocalModelConnectionResult> {
+  options: ModelConnectionProbeOptions = {}
+): Promise<ModelConnectionProbeResult> {
   const apiFormat = normalizeLocalModelApiFormat(input.apiFormat)
-  return probeModelConnection(
+  return testModelConnection(
     {
-      ...input,
-      apiFormat,
       requestUrl: buildLocalModelRequestUrl(input.baseUrl, input.requestPath, apiFormat),
+      apiFormat,
+      modelId: normalizeLocalModelId(input.modelId),
+      toolProfile: input.toolProfile ?? defaultLocalModelToolProfile(apiFormat),
+      apiKey: input.apiKey,
     },
     options
   )

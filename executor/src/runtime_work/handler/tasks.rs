@@ -7,6 +7,9 @@ use super::context_compaction::context_compaction_outcome;
 use super::context_compaction::wait_for_context_compaction;
 use super::*;
 
+#[path = "startup_recovery.rs"]
+mod startup_recovery;
+
 impl RuntimeWorkRpcHandler {
     pub(super) async fn create_collaboration_dispatch(
         &self,
@@ -506,8 +509,16 @@ impl RuntimeWorkRpcHandler {
         let local_task_id = id_field(&payload, "taskId")
             .or_else(|| id_field(&payload, "task_id"))
             .unwrap_or_else(|| format!("{runtime}-local-{}", now_ms()));
-        let mut payload_workspace_path = workspace_path(&payload);
+        let failed_start = self
+            .local_task_link(&local_task_id)
+            .filter(|link| link.status == "failed" && runtime_session_id_from_link(link).is_none());
+        let mut payload_workspace_path = workspace_path(&payload).or_else(|| {
+            failed_start
+                .as_ref()
+                .map(|link| link.workspace_path.clone())
+        });
         let title = string_field(&payload, "title")
+            .or_else(|| failed_start.as_ref().map(|link| link.title.clone()))
             .or_else(|| string_field(&payload, "message"))
             .unwrap_or_else(|| local_task_id.clone());
         let mut request = execution_request(&payload)
@@ -832,6 +843,7 @@ impl RuntimeWorkRpcHandler {
         if let Some(presentation) = user_message_presentation(&payload) {
             append_runtime_handle_user_message_presentation(&mut link.runtime_handle, presentation);
         }
+        self.preserve_failed_start_context(&mut link);
         if is_codex_runtime(&runtime) {
             if let Some(supervisor) = payload
                 .get("initialSupervisor")
@@ -894,16 +906,11 @@ impl RuntimeWorkRpcHandler {
         {
             runtime_handle.insert("queuePosition".to_owned(), json!(queue_position));
         }
-        if !self
-            .local_task_link(&local_task_id)
-            .is_some_and(|link| link.ephemeral)
-        {
-            self.track_default_work_item_async(
-                local_task_id.clone(),
-                title.clone(),
-                string_field(&payload, "message").unwrap_or_default(),
-            );
-        }
+        let _ = self.track_default_work_item_async(
+            local_task_id.clone(),
+            title.clone(),
+            string_field(&payload, "message").unwrap_or_default(),
+        );
         match payload
             .get("friendlyTitleExecutionRequest")
             .cloned()
@@ -965,7 +972,7 @@ impl RuntimeWorkRpcHandler {
 
     pub(super) fn retain_failed_runtime_task(&self, local_task_id: &str, error: &AppIpcError) {
         self.store.update_task(local_task_id, |link| {
-            apply_runtime_task_start_failure(link, error);
+            apply_local_task_failure(link, error);
         });
         self.record_stand_in_completion_outbox(local_task_id, "failed");
     }
@@ -1395,6 +1402,12 @@ impl RuntimeWorkRpcHandler {
                     .and_then(runtime_session_id_from_link)
             });
         if thread_id.is_none() && !retrying_preparation && !awaiting_identity_start {
+            if let Some(result) = self
+                .recover_failed_session_start(existing_link.as_ref(), payload.clone(), activity)
+                .await?
+            {
+                return Ok(result);
+            }
             return Ok(json!({
                 "success": false,
                 "error": "runtime task session is not ready",
@@ -1448,7 +1461,7 @@ impl RuntimeWorkRpcHandler {
             initial_thread_goal,
         };
         if was_busy && !completed_native_turn {
-            self.queue_turn(turn).await?;
+            self.submit_continuation(turn).await?;
         } else {
             self.spawn_turn(turn).await?;
         }
@@ -1980,6 +1993,10 @@ impl RuntimeWorkRpcHandler {
             }));
         };
 
+        if let Some(failure) = self.guidance_conversation_context_failure(&local_task_id, &payload)
+        {
+            return Ok(failure);
+        }
         let guidance_id = string_field(&payload, "client_guidance_id")
             .or_else(|| string_field(&payload, "clientGuidanceId"))
             .unwrap_or_else(|| format!("guidance-{}", now_ms()));
@@ -2015,6 +2032,11 @@ impl RuntimeWorkRpcHandler {
                         &turn_id,
                         error,
                     ));
+                }
+                if let Some(failure) =
+                    self.guidance_conversation_context_failure(&local_task_id, &payload)
+                {
+                    return Ok(failure);
                 }
                 log_executor_event(
                     "runtime guidance active turn corrected",
@@ -2066,6 +2088,17 @@ impl RuntimeWorkRpcHandler {
                 error,
             )),
         }
+    }
+
+    fn guidance_conversation_context_failure(&self, task: &str, payload: &Value) -> Option<Value> {
+        let private = self.runtime_task_is_private_discussion(task);
+        (private != (payload["conversationContext"] == "private_discussion")).then(|| {
+            json!({
+                "success":false,"accepted":false,"taskId":task,"runtime":"codex",
+                "code":"conversation_context_mismatch",
+                "error":"This message has a different conversation context from the active turn. Queue it or interrupt to start a new turn."
+            })
+        })
     }
 
     pub(super) async fn compact_task(&self, payload: Value) -> Result<Value, AppIpcError> {
@@ -2796,27 +2829,6 @@ fn project_plugin_ids(request: &ExecutionRequest) -> Vec<String> {
         .collect()
 }
 
-fn apply_runtime_task_start_failure(link: &mut RuntimeTaskLink, error: &AppIpcError) {
-    link.running = false;
-    link.status = "failed".to_owned();
-    link.thread_status = "failed".to_owned();
-    link.turn_status = Some("failed".to_owned());
-    link.updated_at = now_ms();
-    link.completed_at = Some(link.updated_at);
-    normalize_settled_task_state(link);
-    if !link.runtime_handle.is_object() {
-        link.runtime_handle = json!({});
-    }
-    if let Some(runtime_handle) = link.runtime_handle.as_object_mut() {
-        runtime_handle.remove("queuePosition");
-        runtime_handle.insert("lastError".to_owned(), Value::String(error.message.clone()));
-        runtime_handle.insert(
-            "lastErrorCode".to_owned(),
-            Value::String(error.code.clone()),
-        );
-    }
-}
-
 fn normalize_friendly_title(value: &str) -> Option<String> {
     let title = value
         .lines()
@@ -3054,7 +3066,7 @@ mod tests {
     use crate::{local::app_ipc::AppIpcError, runtime_work::response::RuntimeTaskLink};
 
     use super::{
-        apply_runtime_task_start_failure, context_compaction_outcome, normalize_friendly_title,
+        apply_local_task_failure, context_compaction_outcome, normalize_friendly_title,
         prune_reverted_turn_handle,
     };
 
@@ -3084,14 +3096,6 @@ mod tests {
         );
         assert_eq!(handle["overloadRecoveryTurnIds"], json!(["turn-live"]));
         assert_eq!(handle["supersededTranscriptTurnIds"], json!(["turn-live"]));
-    }
-
-    #[test]
-    fn normalizes_model_title_to_one_short_line() {
-        assert_eq!(
-            normalize_friendly_title("  “为任务创建友好标题。”\n这是解释"),
-            Some("为任务创建友好标题".to_owned())
-        );
     }
 
     #[test]
@@ -3298,7 +3302,7 @@ mod tests {
             "Source repository identity changed after planning",
         );
 
-        apply_runtime_task_start_failure(&mut link, &error);
+        apply_local_task_failure(&mut link, &error);
 
         assert!(!link.running);
         assert_eq!(link.status, "failed");

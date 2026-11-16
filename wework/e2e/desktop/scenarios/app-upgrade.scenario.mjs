@@ -26,7 +26,11 @@ import { createUpgradeUpdateServer } from '../modules/upgrade-update-server.mjs'
 import { startRefreshedAppUpdate } from '../modules/app-update-refresh.mjs'
 import { finishFailedUpgradeRetry } from '../modules/failed-upgrade-retry.mjs'
 import { prepareReleaseProcess } from '../../../electron/src/runtime/release-preparation-progress.mjs'
-import { stopProcessGroup, waitForOwnedProcessExit } from '../process-lifecycle.mjs'
+import {
+  stopProcessGroup,
+  stopRecoveryProcess,
+  waitForOwnedProcessExit,
+} from '../process-lifecycle.mjs'
 import { seedUnstartedActivation } from '../modules/unstarted-activation-fixture.mjs'
 import { waitForInterruptedRollback } from '../modules/interrupted-rollback.mjs'
 import {
@@ -911,11 +915,7 @@ export async function createDesktopScenario(options) {
           await fs.readFile(join(root, 'recovery-pid'), 'utf8').catch(() => '0')
         )
         if (recoveryPid && !passed) {
-          try {
-            process.kill(recoveryPid)
-          } catch (error) {
-            if (error.code !== 'ESRCH') throw error
-          }
+          await stopRecoveryProcess(recoveryPid)
         }
         const pid = Number(await fs.readFile(join(root, 'active-pid'), 'utf8').catch(() => '0'))
         if (pid) {

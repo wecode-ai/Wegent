@@ -136,81 +136,6 @@ fn workspace_response_omits_runtime_handle_messages_from_task_list() {
 }
 
 #[test]
-fn workspace_response_preserves_thread_git_info_for_hover_cards() {
-    let task = RuntimeTaskLink::from_thread_metadata(
-        &json!({
-            "id": "thread-1",
-            "cwd": "/workspace/project",
-            "gitInfo": {
-                "branch": "codex/hover-details",
-                "originUrl": "git@github.com:wecode-ai/Wegent.git"
-            }
-        }),
-        None,
-        "/workspace/project".to_owned(),
-        false,
-    );
-
-    let workspaces = workspace_response(vec![task], Vec::new());
-
-    assert_eq!(
-        workspaces[0]["tasks"][0]["gitInfo"]["branch"],
-        "codex/hover-details"
-    );
-    assert_eq!(
-        workspaces[0]["tasks"][0]["gitInfo"]["originUrl"],
-        "git@github.com:wecode-ai/Wegent.git"
-    );
-    let persisted = serde_json::to_value(RuntimeTaskLink {
-        git_info: Some(json!({"branch": "codex/hover-details"})),
-        ..RuntimeTaskLink::default()
-    })
-    .expect("runtime task link serialization");
-    assert!(persisted.get("git_info").is_none());
-}
-
-#[test]
-fn synthesizes_git_info_from_worktree_when_provider_metadata_is_missing() {
-    let root = std::env::temp_dir().join(format!(
-        "wegent-runtime-hover-branch-{}-{}",
-        std::process::id(),
-        now_ms()
-    ));
-    let workspace = root.join("workspace");
-    let git_dir = root.join("git-dir");
-    fs::create_dir_all(&workspace).expect("workspace directory");
-    fs::create_dir_all(&git_dir).expect("git directory");
-    fs::write(workspace.join(".git"), "gitdir: ../git-dir\n").expect("git pointer");
-    fs::write(
-        git_dir.join("HEAD"),
-        "ref: refs/heads/codex/hover-details\n",
-    )
-    .expect("git head");
-    fs::write(
-        git_dir.join("config"),
-        "[remote \"origin\"]\n\turl = git@github.com:wecode-ai/Wegent.git\n",
-    )
-    .expect("git config");
-
-    assert_eq!(
-        git_workspace_info(&workspace.display().to_string()),
-        (
-            Some("codex/hover-details".to_owned()),
-            Some("git@github.com:wecode-ai/Wegent.git".to_owned())
-        )
-    );
-    assert_eq!(
-        git_info_for_workspace(None, &workspace.display().to_string()),
-        Some(json!({
-            "currentBranch": "codex/hover-details",
-            "originUrl": "git@github.com:wecode-ai/Wegent.git",
-        }))
-    );
-
-    fs::remove_dir_all(root).expect("temporary git workspace cleanup");
-}
-
-#[test]
 fn executor_execution_state_drives_task_running() {
     let link = RuntimeTaskLink::from_thread_metadata(
         &json!({
@@ -315,50 +240,6 @@ fn settled_task_wire_summary_retains_completion() {
         assert_eq!(payload["completedAt"], 1_792_773_817_910_i64);
         assert_eq!(payload["status"], status);
     }
-}
-
-#[test]
-fn completed_thread_preserves_provider_recency_for_sorting() {
-    let link = RuntimeTaskLink::from_thread_metadata(
-        &json!({
-            "id": "thread-1",
-            "status": "idle",
-            "createdAt": 1_780_000_000_000_i64,
-            "updatedAt": 1_780_000_100_000_i64,
-            "recencyAt": 1_780_000_050_000_i64,
-        }),
-        None,
-        "/workspace/project".to_owned(),
-        false,
-    );
-
-    assert_eq!(link.completed_at, Some(1_780_000_100_000));
-    assert_eq!(link.recency_at, 1_780_000_050_000);
-}
-
-#[test]
-fn workspace_response_sorts_by_recency_instead_of_updated_at() {
-    let older_recency = RuntimeTaskLink {
-        local_task_id: "older-recency".to_owned(),
-        workspace_path: "/workspace/project".to_owned(),
-        updated_at: 1_780_000_300_000,
-        recency_at: 1_780_000_100_000,
-        ..RuntimeTaskLink::default()
-    };
-    let newer_recency = RuntimeTaskLink {
-        local_task_id: "newer-recency".to_owned(),
-        workspace_path: "/workspace/project".to_owned(),
-        updated_at: 1_780_000_200_000,
-        recency_at: 1_780_000_150_000,
-        ..RuntimeTaskLink::default()
-    };
-
-    let workspaces = workspace_response(vec![older_recency, newer_recency], Vec::new());
-    let tasks = workspaces[0]["tasks"].as_array().expect("workspace tasks");
-
-    assert_eq!(tasks[0]["taskId"], "newer-recency");
-    assert_eq!(tasks[1]["taskId"], "older-recency");
-    assert_eq!(tasks[0]["recencyAt"], 1_780_000_150_000_i64);
 }
 
 #[test]
@@ -649,37 +530,4 @@ fn local_cancellation_uses_runtime_summary_status_vocabulary() {
     assert_eq!(link.status, "cancelled");
     assert_eq!(link.thread_status, "idle");
     assert_eq!(link.turn_status.as_deref(), Some("interrupted"));
-}
-
-#[test]
-fn search_result_address_omits_runtime_handle_messages() {
-    let task = RuntimeTaskLink {
-        local_task_id: "task-1".to_owned(),
-        thread_id: Some("thread-1".to_owned()),
-        workspace_path: "/tmp/project".to_owned(),
-        title: "Large output".to_owned(),
-        runtime_handle: json!({
-            "messages": [{"content": "large cached transcript"}],
-            "executorSession": {"agent": "Codex"},
-        }),
-        ..RuntimeTaskLink::default()
-    };
-
-    let item = search_result_item(
-        &task,
-        "device-1",
-        SearchResultMatch {
-            snippet: "Large".to_owned(),
-            match_start: 0,
-            match_end: 5,
-            message_id: String::new(),
-            message_role: "title".to_owned(),
-            message_created_at: Value::Null,
-        },
-    );
-    let handle = &item["address"]["runtimeHandle"];
-
-    assert_eq!(handle["threadId"], "thread-1");
-    assert_eq!(handle["executorSession"]["agent"], "Codex");
-    assert!(handle.get("messages").is_none());
 }

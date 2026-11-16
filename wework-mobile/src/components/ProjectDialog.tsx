@@ -1,11 +1,13 @@
 import Ionicons from '@expo/vector-icons/Ionicons'
 import type { GlassColorScheme } from 'expo-glass-effect'
 import { useEffect, useMemo, useState } from 'react'
-import { Pressable, ScrollView, StyleSheet, View } from 'react-native'
+import { Platform, Pressable, ScrollView, StyleSheet, TextInput, View } from 'react-native'
+import { KeyboardAwareScrollView } from 'react-native-keyboard-controller'
 import { ActivityIndicator, Portal, Text, useTheme } from 'react-native-paper'
+import { useSafeAreaInsets } from 'react-native-safe-area-context'
 
 import type { DeviceInfo } from '@/types/runtime'
-import { KeyboardSafeTextInput, KeyboardSafeView } from './KeyboardSafeInput'
+import { ErrorNotice } from './errors/ErrorNotice'
 import {
   LiquidGlassButton,
   LiquidGlassSurface,
@@ -23,6 +25,7 @@ interface ProjectDialogProps {
 
 export function ProjectDialog(props: ProjectDialogProps) {
   const theme = useTheme()
+  const insets = useSafeAreaInsets()
   const glassColorScheme: GlassColorScheme = theme.dark ? 'dark' : 'light'
   const [deviceId, setDeviceId] = useState(props.selectedDeviceId ?? '')
   const [name, setName] = useState('')
@@ -30,7 +33,8 @@ export function ProjectDialog(props: ProjectDialogProps) {
   const [error, setError] = useState<string | null>(null)
   const [submitting, setSubmitting] = useState(false)
   const onlineDevices = useMemo(
-    () => props.devices.filter(device => device.status !== 'offline'),
+    () =>
+      props.devices.filter(device => device.status !== 'offline' && device.device_type !== 'app'),
     [props.devices]
   )
 
@@ -66,12 +70,24 @@ export function ProjectDialog(props: ProjectDialogProps) {
 
   return (
     <Portal>
-      <KeyboardSafeView style={styles.keyboardLayer}>
+      <KeyboardAwareScrollView
+        bounces={false}
+        bottomOffset={24}
+        contentContainerStyle={styles.scrollContent}
+        keyboardDismissMode={Platform.OS === 'ios' ? 'interactive' : 'on-drag'}
+        keyboardShouldPersistTaps="handled"
+        showsVerticalScrollIndicator={false}
+        style={styles.keyboardLayer}
+        testID="project-form-scroll"
+      >
         <Pressable
           accessibilityLabel="取消新建云端项目"
           accessibilityRole="button"
           onPress={props.onDismiss}
-          style={styles.backdrop}
+          style={[
+            styles.backdrop,
+            { paddingTop: insets.top + 16, paddingBottom: insets.bottom + 16 },
+          ]}
           testID="project-dialog-backdrop"
         >
           <Pressable
@@ -90,12 +106,7 @@ export function ProjectDialog(props: ProjectDialogProps) {
               isInteractive={false}
               style={styles.dialogGlass}
             >
-              <ScrollView
-                bounces={false}
-                contentContainerStyle={styles.content}
-                keyboardShouldPersistTaps="handled"
-                showsVerticalScrollIndicator={false}
-              >
+              <View style={styles.content}>
                 <View style={styles.header}>
                   <View style={styles.titleBlock}>
                     <Text style={styles.title} variant="headlineSmall">
@@ -127,6 +138,7 @@ export function ProjectDialog(props: ProjectDialogProps) {
                 <ScrollView
                   contentContainerStyle={styles.devices}
                   horizontal
+                  keyboardShouldPersistTaps="handled"
                   showsHorizontalScrollIndicator={false}
                 >
                   {onlineDevices.map(device => {
@@ -176,7 +188,7 @@ export function ProjectDialog(props: ProjectDialogProps) {
 
                 <View style={[styles.field, { backgroundColor: fieldBackground }]}>
                   <Ionicons color={theme.colors.onSurfaceVariant} name="folder-outline" size={21} />
-                  <KeyboardSafeTextInput
+                  <TextInput
                     accessibilityLabel="项目名称"
                     onChangeText={setName}
                     placeholder="项目名称（可选）"
@@ -193,7 +205,7 @@ export function ProjectDialog(props: ProjectDialogProps) {
                     name="terminal-outline"
                     size={21}
                   />
-                  <KeyboardSafeTextInput
+                  <TextInput
                     accessibilityLabel="远程绝对路径"
                     autoCapitalize="none"
                     autoCorrect={false}
@@ -208,15 +220,7 @@ export function ProjectDialog(props: ProjectDialogProps) {
                 </View>
 
                 {error ? (
-                  <View style={styles.errorRow}>
-                    <Ionicons color={theme.colors.error} name="alert-circle-outline" size={18} />
-                    <Text
-                      style={[styles.errorText, { color: theme.colors.error }]}
-                      variant="bodySmall"
-                    >
-                      {error}
-                    </Text>
-                  </View>
+                  <ErrorNotice error={error} title="无法创建项目" testID="project-create-error" />
                 ) : null}
 
                 <View style={styles.actions}>
@@ -255,25 +259,26 @@ export function ProjectDialog(props: ProjectDialogProps) {
                     </Text>
                   </LiquidGlassButton>
                 </View>
-              </ScrollView>
+              </View>
             </LiquidGlassSurface>
           </Pressable>
         </Pressable>
-      </KeyboardSafeView>
+      </KeyboardAwareScrollView>
     </Portal>
   )
 }
 
 const styles = StyleSheet.create({
   keyboardLayer: { flex: 1 },
+  scrollContent: { flexGrow: 1 },
   backdrop: {
-    flex: 1,
+    flexGrow: 1,
     paddingHorizontal: 16,
     alignItems: 'center',
     justifyContent: 'center',
     backgroundColor: 'rgba(0,0,0,0.14)',
   },
-  positioner: { width: '100%', maxWidth: 380, maxHeight: '86%' },
+  positioner: { width: '100%', maxWidth: 380 },
   dialogGlass: { borderRadius: 32, overflow: 'hidden' },
   content: { padding: 20, gap: 16 },
   header: { flexDirection: 'row', alignItems: 'flex-start', gap: 12 },
@@ -309,8 +314,6 @@ const styles = StyleSheet.create({
     gap: 10,
   },
   input: { flex: 1, minWidth: 0, minHeight: 54, fontSize: 17, paddingVertical: 0 },
-  errorRow: { flexDirection: 'row', alignItems: 'flex-start', gap: 7, paddingHorizontal: 4 },
-  errorText: { flex: 1 },
   actions: { flexDirection: 'row', gap: 10, marginTop: 4 },
   actionGlass: { flex: 1, height: 46, borderRadius: 23 },
   actionContent: {

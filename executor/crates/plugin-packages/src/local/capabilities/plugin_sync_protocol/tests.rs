@@ -10,6 +10,8 @@ use super::*;
 mod concurrency_tests;
 #[path = "differential_tests.rs"]
 mod differential_tests;
+#[path = "package_recovery_tests.rs"]
+mod package_recovery_tests;
 #[path = "scope_tests.rs"]
 mod scope_tests;
 

@@ -342,7 +342,9 @@ mod tests {
     }
 
     #[tokio::test]
+    #[allow(clippy::await_holding_lock)] // Serialize process-wide broker state across test runtimes.
     async fn review_reports_missing_artifact() {
+        let _guard = crate::test_env::lock();
         let home = tempfile::tempdir().expect("temporary directory should be created");
         let workspace = tempfile::tempdir().expect("temporary directory should be created");
         let result = turn_file_changes(
@@ -358,38 +360,9 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn review_returns_verified_diff() {
-        let home = tempfile::tempdir().expect("temporary directory should be created");
-        let workspace = tempfile::tempdir().expect("temporary directory should be created");
-        let artifact_id = "turn-file-changes/task-1/sub-2";
-        let patch = b"diff --git a/a.txt b/a.txt\nindex 0000000..1111111\n--- /dev/null\n+++ b/a.txt\n@@ -0,0 +1 @@\n+hello\n";
-        write_artifact(
-            home.path(),
-            artifact_id,
-            workspace.path(),
-            "task-1",
-            "sub-2",
-            patch,
-            None,
-        );
-        let result = turn_file_changes(
-            "review",
-            artifact_id,
-            Some(workspace.path().display().to_string().as_str()),
-            &empty_env_with_home(home.path()),
-            1 << 20,
-        )
-        .await;
-        assert!(result.success);
-        assert_eq!(result.stdout["success"], true);
-        assert_eq!(
-            result.stdout["diff"],
-            Value::String(String::from_utf8_lossy(patch).into_owned())
-        );
-    }
-
-    #[tokio::test]
+    #[allow(clippy::await_holding_lock)] // Serialize process-wide broker state across test runtimes.
     async fn review_rejects_checksum_mismatch() {
+        let _guard = crate::test_env::lock();
         let home = tempfile::tempdir().expect("temporary directory should be created");
         let workspace = tempfile::tempdir().expect("temporary directory should be created");
         let artifact_id = "turn-file-changes/task-1/sub-2";

@@ -66,6 +66,7 @@ test('retains resource timings before runtime initialization and a blocked seed'
     runtimeReady.resolve()
     await Promise.race([bridgeReady.promise, installation])
     expect(window.__WEWORK_E2E__).toBeDefined()
+    expect(window.__WEWORK_E2E__?.getControlDiagnostics()).toEqual(expect.any(Array))
     expect(completed).toBe(false)
     expect(setResourceTimingBufferSize).toHaveBeenCalledOnce()
     expect(fetch).not.toHaveBeenCalled()

@@ -129,6 +129,11 @@ async def test_device_register_debounces_repeated_db_upserts(monkeypatch):
         AsyncMock(return_value=True),
     )
 
+    monkeypatch.setattr(
+        device_namespace.device_service,
+        "get_device_online_info",
+        AsyncMock(side_effect=[{"socket_id": "sid-1"}, None]),
+    )
     payload = {
         "device_id": "device-1",
         "name": "MacBook",
@@ -149,6 +154,10 @@ async def test_device_register_debounces_repeated_db_upserts(monkeypatch):
         "device_route_id": "device-1",
     }
     assert len(upsert_calls) == 1
+
+    # A missing online key may mean this registration was removed.
+    assert (await namespace.on_device_register("sid-3", payload))["success"]
+    assert len(upsert_calls) == 2
 
 
 @pytest.mark.asyncio
@@ -607,6 +616,57 @@ async def test_stale_heartbeat_does_not_overwrite_newer_device_socket(monkeypatc
 
 
 @pytest.mark.asyncio
+async def test_expired_heartbeat_waits_for_removal_and_checks_registration(monkeypatch):
+    namespace = DeviceNamespace()
+    identity_lock = asyncio.Lock()
+    recovering = asyncio.Event()
+
+    @asynccontextmanager
+    async def lock(user_id):
+        assert user_id == 7
+        recovering.set()
+        async with identity_lock:
+            yield
+
+    monkeypatch.setattr(device_namespace, "device_identity_lock", lock)
+    monkeypatch.setattr(
+        namespace,
+        "get_session",
+        AsyncMock(return_value={"user_id": 7, "device_id": "device-1"}),
+    )
+    monkeypatch.setattr(namespace, "save_session", AsyncMock())
+    monkeypatch.setattr(
+        device_namespace.device_service,
+        "get_device_online_info",
+        AsyncMock(return_value=None),
+    )
+    monkeypatch.setattr(
+        device_namespace.device_service,
+        "refresh_device_heartbeat",
+        AsyncMock(return_value=False),
+    )
+    restore_online = AsyncMock()
+    monkeypatch.setattr(
+        device_namespace.device_service, "set_device_online", restore_online
+    )
+    lookup = AsyncMock(return_value=False)
+    monkeypatch.setattr(device_namespace, "run_sync_in_executor", lookup)
+
+    async with identity_lock:
+        heartbeat = asyncio.create_task(
+            namespace.on_device_heartbeat("sid-old", {"device_id": "device-1"})
+        )
+        await asyncio.wait_for(recovering.wait(), timeout=1)
+        lookup.assert_not_awaited()
+
+    assert await asyncio.wait_for(heartbeat, timeout=1) == {
+        "error": "Device is not registered"
+    }
+    lookup.assert_awaited_once()
+    restore_online.assert_not_awaited()
+
+
+@pytest.mark.asyncio
 async def test_transient_disconnect_rechecks_device_before_failing_tasks(monkeypatch):
     namespace = DeviceNamespace()
 
@@ -646,3 +706,61 @@ async def test_transient_disconnect_rechecks_device_before_failing_tasks(monkeyp
     set_offline.assert_not_awaited()
     device_namespace.run_sync_in_executor.assert_not_awaited()
     namespace._broadcast_device_offline.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_rejected_device_status_does_not_broadcast(monkeypatch):
+    namespace = DeviceNamespace()
+    monkeypatch.setattr(
+        namespace,
+        "get_session",
+        AsyncMock(return_value={"user_id": 7, "device_id": "device-1"}),
+    )
+    update = AsyncMock(return_value=False)
+    monkeypatch.setattr(
+        device_namespace.device_service, "update_device_status_in_redis", update
+    )
+    broadcast = AsyncMock()
+    monkeypatch.setattr(namespace, "_broadcast_device_status", broadcast)
+
+    result = await namespace.on_device_status(
+        "sid-old", {"device_id": "device-1", "status": "busy"}
+    )
+
+    assert result == {"error": "Stale device connection"}
+    update.assert_awaited_once_with(7, "device-1", "busy", socket_id="sid-old")
+    broadcast.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_heartbeat_lookup_failure_returns_reconnect_ack(monkeypatch):
+    from sqlalchemy.exc import SQLAlchemyError
+
+    namespace = DeviceNamespace()
+    monkeypatch.setattr(
+        namespace,
+        "get_session",
+        AsyncMock(return_value={"user_id": 7, "device_id": "device-1"}),
+    )
+    monkeypatch.setattr(namespace, "save_session", AsyncMock())
+    monkeypatch.setattr(
+        device_namespace.device_service,
+        "get_device_online_info",
+        AsyncMock(return_value=None),
+    )
+    monkeypatch.setattr(
+        device_namespace.device_service,
+        "refresh_device_heartbeat",
+        AsyncMock(return_value=False),
+    )
+    monkeypatch.setattr(
+        device_namespace,
+        "run_sync_in_executor",
+        AsyncMock(side_effect=SQLAlchemyError("lookup unavailable")),
+    )
+
+    result = await namespace.on_device_heartbeat("sid", {"device_id": "device-1"})
+
+    assert result == {
+        "error": "Device identity operation is temporarily unavailable; reconnect to retry"
+    }

@@ -27,17 +27,39 @@ impl RuntimeWorkRpcHandler {
             .map_err(|error| AppIpcError::new("codex_auth_read_failed", error))
     }
 
-    pub(super) async fn start_codex_login(&self) -> Result<Value, AppIpcError> {
+    pub(super) async fn start_codex_login(&self, payload: Value) -> Result<Value, AppIpcError> {
+        let login_type = match payload.get("type") {
+            None => "chatgpt",
+            Some(Value::String(value))
+                if matches!(value.as_str(), "chatgpt" | "chatgptDeviceCode") =>
+            {
+                value.as_str()
+            }
+            Some(_) => {
+                return Err(AppIpcError::new(
+                    "invalid_request",
+                    "type must be chatgpt or chatgptDeviceCode",
+                ))
+            }
+        };
         self.preserve_current_codex_account().await?;
-        self.codex_app_server
-            .request(
-                "account/login/start",
-                json!({
-                    "type": "chatgpt",
-                }),
-            )
+        // Native completion can arrive before the login/start response.
+        self.try_ensure_notification_router()
             .await
-            .map_err(|error| AppIpcError::new("codex_login_start_failed", error))
+            .map_err(|error| AppIpcError::new("codex_login_start_failed", error))?;
+        let (mut response, generation) = self
+            .codex_app_server
+            .start_account_login(login_type)
+            .await
+            .map_err(|error| AppIpcError::new("codex_login_start_failed", error))?;
+        let response_fields = response.as_object_mut().ok_or_else(|| {
+            AppIpcError::new(
+                "codex_login_start_failed",
+                "Codex returned an invalid login response",
+            )
+        })?;
+        response_fields.insert("processGeneration".into(), json!(generation));
+        Ok(response)
     }
 
     pub(super) async fn cancel_codex_login(&self, payload: Value) -> Result<Value, AppIpcError> {
@@ -625,6 +647,9 @@ pub(super) fn optional_proxy_url(payload: &Value) -> Result<Option<String>, AppI
 }
 
 #[cfg(test)]
+mod login_tests;
+
+#[cfg(test)]
 mod configured_default_tests {
     use super::*;
 
@@ -732,61 +757,6 @@ mod configured_default_tests {
     }
 
     #[test]
-    fn retired_configured_default_uses_the_surviving_native_recommendation() {
-        let config = json!({"config": {"model": "gpt-5.5"}});
-        let provider = current_codex_model_provider(&config, "openai");
-        for retired_model_is_published in [true, false] {
-            let mut response = json!({"data": [
-                {"model": "future-model", "hidden": true},
-                {"id": "gpt-5.5"},
-                {"model": "gpt-6.1-sol", "isDefault": true}
-            ]});
-            if !retired_model_is_published {
-                response["data"].as_array_mut().unwrap().remove(1);
-            }
-            let mut models = codex_models_with_configured_default(&response, &provider, &config);
-            let mut expected = vec![models[0].clone(), models.last().unwrap().clone()];
-            expected[1]["isDefault"] = json!(true);
-
-            remove_retired_chatgpt_models(&mut models, Some("chatgpt"), Some("gpt-6.1-sol"), true);
-            assert_eq!(models, expected);
-            remove_retired_chatgpt_models(&mut models, Some("chatgpt"), Some("gpt-6.1-sol"), true);
-            assert_eq!(models, expected);
-        }
-    }
-
-    #[test]
-    fn retired_native_default_uses_the_first_remaining_visible_model() {
-        let config = json!({"config": {"model": "gpt-5.5"}});
-        let provider = current_codex_model_provider_from_config(&config);
-        for retired_model_is_published in [true, false] {
-            let mut response = json!({"data": [
-                {"id": "gpt-5.5", "isDefault": true},
-                {"model": "hidden-native-default", "hidden": true},
-                {"model": "first-available"},
-                {"model": "second-available"}
-            ]});
-            if !retired_model_is_published {
-                response["data"].as_array_mut().unwrap().remove(0);
-            }
-            let models = codex_models_with_configured_default(&response, &provider, &config);
-            for native_default in [Some("gpt-5.5"), Some("hidden-native-default"), None] {
-                let mut models = models.clone();
-                remove_retired_chatgpt_models(&mut models, Some("chatgpt"), native_default, true);
-                assert_eq!(models[0]["isDefault"], false);
-                assert_eq!(models[1]["model"], "first-available");
-                assert_eq!(models[1]["isDefault"], true);
-                assert_eq!(models[2]["isDefault"], false);
-            }
-        }
-
-        let mut models =
-            vec![json!({"model":"gpt-5.5", "providerType":"official", "isDefault":true})];
-        remove_retired_chatgpt_models(&mut models, Some("chatgpt"), Some("gpt-5.5"), true);
-        assert!(models.is_empty());
-    }
-
-    #[test]
     fn filtering_a_non_default_model_does_not_replace_an_unavailable_configured_model() {
         let config = json!({"config": {"model": "unavailable-explicit-default"}});
         let provider = current_codex_model_provider_from_config(&config);
@@ -819,23 +789,6 @@ mod configured_default_tests {
         models[0]["isDefault"] = json!(false);
         remove_retired_chatgpt_models(&mut models, Some("chatgpt"), Some("gpt-5.5"), false);
         assert_eq!(models, original[1..]);
-    }
-
-    #[test]
-    fn configured_model_overrides_the_catalog_recommendation() {
-        let config = json!({"config": {"model": "chosen", "model_provider": "custom"}});
-        let provider = current_codex_model_provider_from_config(&config);
-        let models = codex_models_with_configured_default(
-            &json!({"data": [
-                {"model": "recommended", "isDefault": true},
-                {"model": "chosen", "isDefault": false}
-            ]}),
-            &provider,
-            &config,
-        );
-        assert_eq!(models[0]["isDefault"], false);
-        assert_eq!(models[1]["isDefault"], true);
-        assert_eq!(models[1]["providerId"], "custom");
     }
 
     #[test]

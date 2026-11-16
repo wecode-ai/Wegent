@@ -268,7 +268,16 @@ jest.mock('@/features/settings/components/skills/RichSkillSelector', () => ({
   ),
 }))
 
-jest.mock('@/features/settings/components/skills/SkillManagementModal', () => () => null)
+jest.mock('@/features/settings/components/skills/SkillManagementModal', () => {
+  function MockSkillManagementModal({ onSkillsChange }: { onSkillsChange: () => void }) {
+    return (
+      <button data-testid="refresh-skills" onClick={onSkillsChange}>
+        Refresh skills
+      </button>
+    )
+  }
+  return MockSkillManagementModal
+})
 jest.mock('@/features/prompt-tune/components/PromptFineTuneDialog', () => () => null)
 jest.mock('@/features/settings/components/knowledge/KnowledgeBaseMultiSelector', () => ({
   KnowledgeBaseMultiSelector: ({
@@ -901,12 +910,48 @@ describe('Simple TeamEditDialog', () => {
     )
 
     await waitFor(() => {
-      expect(mockedFetchUnifiedSkillsList).toHaveBeenCalledWith({ scope: 'personal' })
       expect(mockedFetchUnifiedSkillsList).toHaveBeenCalledWith({
-        scope: 'group',
-        groupName: 'engineering',
+        binding: { namespace: 'engineering', targetGroupNames: ['engineering'] },
       })
     })
+  })
+
+  it('retains the skill selector during refresh failure and supports retry', async () => {
+    render(
+      <TeamEditDialog
+        open
+        onClose={jest.fn()}
+        teams={[]}
+        setTeams={jest.fn()}
+        editingTeamId={0}
+        bots={[]}
+        setBots={jest.fn()}
+        toast={jest.fn()}
+      />
+    )
+    await waitFor(() => expect(mockedFetchUnifiedSkillsList).toHaveBeenCalled())
+    fireEvent.click(screen.getByTestId('simple-additional-capabilities-toggle'))
+    expect(await screen.findByRole('button', { name: 'Add skill' })).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: 'Add skill' }))
+    expect(screen.getByText('Repo Reader')).toBeInTheDocument()
+    let rejectRefresh!: (error: Error) => void
+    mockedFetchUnifiedSkillsList.mockImplementationOnce(
+      () =>
+        new Promise((_, reject) => {
+          rejectRefresh = reject
+        })
+    )
+    fireEvent.click(screen.getByTestId('refresh-skills'))
+    expect(screen.getByRole('button', { name: 'Add skill' })).toBeInTheDocument()
+    expect(screen.getByText('Repo Reader')).toBeInTheDocument()
+    await act(async () => rejectRefresh(new Error('unavailable')))
+    expect(await screen.findByTestId('simple-team-skills-retry')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Add skill' })).toBeInTheDocument()
+    expect(screen.getByText('Repo Reader')).toBeInTheDocument()
+    fireEvent.click(screen.getByTestId('simple-team-skills-retry'))
+    await waitFor(() =>
+      expect(screen.queryByTestId('simple-team-skills-retry')).not.toBeInTheDocument()
+    )
   })
 
   it('does not load team-only skills for a personal agent', async () => {
@@ -924,7 +969,9 @@ describe('Simple TeamEditDialog', () => {
     )
 
     await waitFor(() => {
-      expect(mockedFetchUnifiedSkillsList).toHaveBeenCalledWith({ scope: 'personal' })
+      expect(mockedFetchUnifiedSkillsList).toHaveBeenCalledWith({
+        binding: { namespace: 'default', targetGroupNames: [] },
+      })
     })
     expect(mockedFetchUnifiedSkillsList).not.toHaveBeenCalledWith(
       expect.objectContaining({ scope: 'all' })
@@ -1738,6 +1785,40 @@ describe('Simple TeamEditDialog', () => {
     })
   })
 
+  it('sends the Team context when saving an existing group agent', async () => {
+    const team = makeTeam({ id: 77, namespace: 'engineering' })
+    mockedGetAgentBindings.mockResolvedValueOnce({
+      agent_id: team.id,
+      personal: false,
+      group_names: ['engineering'],
+    })
+
+    render(
+      <TeamEditDialog
+        open
+        onClose={jest.fn()}
+        teams={[team]}
+        setTeams={jest.fn()}
+        editingTeamId={team.id}
+        bots={[makeBot({ namespace: 'default' })]}
+        setBots={jest.fn()}
+        toast={jest.fn()}
+      />
+    )
+
+    fireEvent.change(await screen.findByLabelText('Display name'), {
+      target: { value: 'Group editable agent' },
+    })
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }))
+
+    await waitFor(() => {
+      expect(mockedUpdateBot).toHaveBeenCalledWith(
+        10,
+        expect.objectContaining({ team_id: team.id })
+      )
+    })
+  })
+
   it('loads all existing team bindings when editing an agent', async () => {
     const team = makeTeam({ namespace: 'default' })
     const writableGroups = [
@@ -1826,8 +1907,7 @@ describe('Simple TeamEditDialog', () => {
     fireEvent.click(await screen.findByTestId('simple-additional-capabilities-toggle'))
     await waitFor(() => {
       expect(mockedFetchUnifiedSkillsList).toHaveBeenCalledWith({
-        scope: 'group',
-        groupName: 'engineering',
+        binding: { botId: 10, namespace: 'default', targetGroupNames: ['engineering'] },
       })
       expect(screen.getByText('h52wbox-cloud')).toBeInTheDocument()
     })

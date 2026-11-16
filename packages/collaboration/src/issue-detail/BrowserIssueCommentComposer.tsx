@@ -33,6 +33,7 @@ type CommentApi = Pick<SharedWorkspaceApi, 'attachments' | 'taskBindings' | 'iss
 
 /** Browser services around the exact PC main composer, controls, uploads and execution orchestration. */
 export function BrowserIssueCommentComposer({
+  issueActions,
   assignment,
   api,
   runtime,
@@ -50,6 +51,7 @@ export function BrowserIssueCommentComposer({
   onTaskUpdated,
   onCommentPersisted,
 }: {
+  issueActions?: import('./issueCommentActions').CommentIssueActions
   assignment?: import('./useCommentAssignment').CommentAssignment
   api: CommentApi
   runtime: SharedWorkspaceRuntimeApi
@@ -108,7 +110,11 @@ export function BrowserIssueCommentComposer({
       model: selectedModel,
       options: { ...options, [id]: value },
     })
-  async function submit(text: string, mentions: IssueMentionOption[]) {
+  async function submit(
+    text: string,
+    mentions: IssueMentionOption[],
+    submission?: { commentOnly?: boolean }
+  ) {
     if (
       !canComment ||
       loading ||
@@ -125,11 +131,12 @@ export function BrowserIssueCommentComposer({
       executionFailed = true
     }
     try {
-      if (!serverExecution && agent && !execution.target)
+      if (!submission?.commentOnly && !serverExecution && agent && !execution.target)
         throw new Error(t('activity.comment_execution_target_required'))
-      if (!serverExecution && agent && !execution.modelsReady)
+      if (!submission?.commentOnly && !serverExecution && agent && !execution.modelsReady)
         throw new Error(execution.error ?? t('activity.comment_models_loading'))
       if (
+        !submission?.commentOnly &&
         !serverExecution &&
         selectedModel &&
         !execution.models.some(
@@ -157,11 +164,13 @@ export function BrowserIssueCommentComposer({
         replyToMessageId: null,
         model: serverExecution ? null : (model?.name ?? null),
         mentions: [
-          ...(serverExecution
-            ? commentAgentMentions(text, agents)
-            : agent
-              ? [{ type: 'agent' as const, id: agent.id, label: agent.name }]
-              : []),
+          ...(submission?.commentOnly
+            ? []
+            : serverExecution
+              ? commentAgentMentions(text, agents)
+              : agent
+                ? [{ type: 'agent' as const, id: agent.id, label: agent.name }]
+                : []),
           ...mentions.filter(mention => mention.type === 'user'),
         ],
       })
@@ -171,7 +180,7 @@ export function BrowserIssueCommentComposer({
       // Persistence succeeded. A rejected execution must not cause a duplicate comment on retry.
       draft.setDraft('')
       draft.attachments.resetAttachments()
-      if (serverExecution) {
+      if (!submission?.commentOnly && serverExecution) {
         onMessages(
           await serverExecution({
             projectId: project.id,
@@ -180,7 +189,7 @@ export function BrowserIssueCommentComposer({
             attachmentIds: attachments.map(file => Number(file.id)),
           })
         )
-      } else if (agent && execution.target)
+      } else if (!submission?.commentOnly && agent && execution.target)
         await startTaskAiRun({
           client,
           project,
@@ -234,6 +243,7 @@ export function BrowserIssueCommentComposer({
         </div>
       )}
       <IssueMainCommentComposer
+        issueActions={issueActions}
         assignment={assignment}
         mentionCandidates={mentionCandidates}
         translate={t}

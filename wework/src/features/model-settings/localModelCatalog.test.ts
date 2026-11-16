@@ -4,6 +4,7 @@ import { describe, expect, it } from 'vitest'
 import {
   createDefaultLocalModelCatalogEntry,
   normalizeLocalModelCatalogEntry,
+  providerModelCatalogEntry,
 } from './localModelCatalog'
 
 describe('localModelCatalog', () => {
@@ -76,4 +77,28 @@ describe('localModelCatalog', () => {
       base_instructions: 'User-authored instructions',
     })
   })
+})
+
+it('shares provider catalog defaults and preserves explicit overrides across PC and Mobile', () => {
+  const model = {
+    id: 'stable',
+    model_id: 'upstream',
+    context_window: 128000,
+    tool_profile: 'function' as const,
+  }
+  expect(providerModelCatalogEntry(model)).toMatchObject({
+    slug: 'wework-custom-stable',
+    context_window: 128000,
+    display_name: 'upstream',
+  })
+  expect(providerModelCatalogEntry({ ...model, provider_profile_id: 'deepseek' })).toBeUndefined()
+  const catalog_entry = {
+    ...createDefaultLocalModelCatalogEntry({
+      id: 'stable',
+      displayName: 'Upstream',
+      toolProfile: 'function',
+    }),
+    default_reasoning_level: 'high',
+  }
+  expect(providerModelCatalogEntry({ ...model, catalog_entry })).toBe(catalog_entry)
 })

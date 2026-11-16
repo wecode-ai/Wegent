@@ -412,6 +412,23 @@ test('source history directly queries only the exact group or direct peer throug
   }
 })
 
+test('native history distinguishes self-chat from own messages to other people or groups', async () => {
+  for (const [kind, peer, sender, selfChat] of [
+    ['direct', 'own', 'own', true],
+    ['direct', 'alice', 'own', false],
+    ['direct', 'alice', 'alice', false],
+    ['group', 'selected', 'own', false],
+  ]) {
+    const source = { ...readSource(kind), id: peer, name: 'Same display name' }
+    const fixture = readFixture([
+      { messages: [nativeMessage('message', { senderId: sender, sender: source.name })] },
+    ])
+    const result = await createProvider().readSource(fixture.ctx, { source, query: { limit: 2 } })
+    assert.equal(result.items[0].isOwn, sender === 'own')
+    assert.equal(result.items[0].isSelfConversation, selfChat)
+  }
+})
+
 test('SDK native continuation preserves precision and same-timestamp messages without rescanning', async () => {
   const source = readSource()
   const time = new Date(Date.now() - 60000).toISOString().replace('Z', '123456Z')

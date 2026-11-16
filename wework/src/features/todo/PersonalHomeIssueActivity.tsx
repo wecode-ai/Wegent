@@ -97,14 +97,14 @@ export function PersonalHomeIssueActivity({
 
   return (
     <div data-testid={`personal-home-assignment-${issueId}`}>
-      {summary && <div className="mt-2">{summary}</div>}
+      {summary && <div className="mt-1">{summary}</div>}
       {assignment?.body && (
-        <blockquote className="mt-2 border-l border-border pl-3 text-sm text-text-secondary">
-          <span className="mb-1 block text-xs text-text-muted">
+        <blockquote className="mt-1 border-l border-border pl-3 text-sm text-text-secondary">
+          <span className="mr-2 inline text-xs text-text-muted">
             {t('personalHome.assignmentReason')}
             {assignment.created_by_user_name ? ` · ${assignment.created_by_user_name}` : ''}
           </span>
-          <span className="line-clamp-2 whitespace-pre-wrap">{assignment.body}</span>
+          <span className="line-clamp-1 whitespace-pre-wrap">{assignment.body}</span>
         </blockquote>
       )}
       {tasks.length > 0 && (
@@ -120,7 +120,7 @@ export function PersonalHomeIssueActivity({
           aria-haspopup={tasks.length > 1 ? 'dialog' : undefined}
           aria-expanded={tasks.length > 1 ? Boolean(taskAnchor) : undefined}
           title={tasks.map(task => `${task.title} · ${statusLabel(task.status)}`).join('\n')}
-          className="mt-2 inline-flex min-h-11 max-w-full items-center gap-2 whitespace-nowrap rounded-md py-1 text-sm text-text-secondary transition-colors hover:text-text-primary keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-focus/30 md:min-h-7"
+          className="mt-1 inline-flex min-h-11 max-w-full items-center gap-2 whitespace-nowrap rounded-md py-1 text-sm text-text-secondary transition-colors hover:text-text-primary keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-focus/30 md:min-h-7"
           onClick={event => {
             event.stopPropagation()
             if (tasks.length === 1) onOpenTask?.(tasks[0].binding)

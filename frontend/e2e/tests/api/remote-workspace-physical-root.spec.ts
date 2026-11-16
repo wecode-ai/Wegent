@@ -3,7 +3,7 @@ import { resolve } from 'node:path'
 
 import { ADMIN_USER } from '../../config/test-users'
 import { expect, test } from '../../fixtures/test-fixtures'
-import { createApiClient } from '../../utils/api-client'
+import { createApiClient, createBackendRequestHeaders } from '../../utils/api-client'
 
 type TreeEntry = {
   name: string
@@ -77,21 +77,24 @@ test('Rust workspace API browses a real Executor repository using returned physi
       prompt: 'physical remote workspace E2E',
       team_id: teamId,
       type: 'offline',
-      task_type: 'code',
+      // This scenario prepares the executor itself, so create an undispatched turn.
+      task_type: 'task',
       auto_delete_executor: 'false',
       source: 'web',
     })
     expect(created.status, JSON.stringify(created.data)).toBe(201)
     taskId = reservedTaskId
-    const detail = await api.get<{ subtasks: Array<{ id: number; role: string }> }>(
+    const detail = await api.get<{ subtasks: Array<{ id: number; role: string; status: string }> }>(
       `/api/tasks/${taskId}`
     )
     expect(detail.status).toBe(200)
     const assistant = detail.data!.subtasks.find(subtask => subtask.role === 'ASSISTANT')
     expect(assistant).toBeTruthy()
+    expect(assistant!.status).toBe('PENDING')
 
     // Provision the production Docker executor without invoking an agent or a model.
     const prepared = await request.post(`${managerUrl}/executor-manager/executors/prepare`, {
+      headers: createBackendRequestHeaders(),
       data: {
         task_id: taskId,
         subtask_id: assistant!.id,
@@ -111,6 +114,7 @@ test('Rust workspace API browses a real Executor repository using returned physi
     expect(runtime.status).toBe('success')
     expect(executorName).toBeTruthy()
     const addressResponse = await request.get(`${managerUrl}/executor-manager/executor/address`, {
+      headers: createBackendRequestHeaders(),
       params: { executor_name: executorName! },
     })
     expect(addressResponse.status()).toBe(200)
@@ -162,6 +166,7 @@ test('Rust workspace API browses a real Executor repository using returned physi
 
     // Bind the prepared runtime through the real Manager-to-Backend callback path.
     const binding = await request.post(`${managerUrl}/executor-manager/callback`, {
+      headers: createBackendRequestHeaders(),
       data: {
         event_type: 'response.completed',
         task_id: taskId,
@@ -258,6 +263,7 @@ test('Rust workspace API browses a real Executor repository using returned physi
   } finally {
     if (executorName) {
       const deleted = await request.post(`${managerUrl}/executor-manager/executor/delete`, {
+        headers: createBackendRequestHeaders(),
         data: { executor_name: executorName },
       })
       expect.soft(deleted.status(), await deleted.text()).toBe(200)

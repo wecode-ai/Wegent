@@ -13,6 +13,9 @@ import { useTranslation } from '@/hooks/useTranslation'
 import { getDshApps, resolveDshApp } from '@/features/dsh-runtime/dshApps'
 import { subscribeDshSlot, WEWORK_DSH_SLOTS } from '@/features/dsh-runtime/dshUiSlots'
 import { openHarnessAppTab } from '@/features/harness-apps/harnessAppTabs'
+import { useAppPreferenceFeatureState } from '@/features/experimental-features/useAppPreferenceFeatureState'
+import { isCollaborationExpPath } from '@/features/collaboration-exp/collaborationExpFeature'
+import { buildCollaborationExpRoute } from '@/features/collaboration-exp/integration/deepLinks'
 
 function openAuxiliaryRoute(
   tabs: ReturnType<typeof useWorkspaceTabs>,
@@ -24,7 +27,11 @@ function openAuxiliaryRoute(
     navigateWorkspaceTab(tabs, inferWorkspaceTabKind(pathname), contentRoute)
     return
   }
-  const existing = tabs.tabs.find(tab => tab.contentRoute === contentRoute)
+  const existing = tabs.tabs.find(tab =>
+    isCollaborationExpPath(contentRoute)
+      ? isCollaborationExpPath(tab.contentRoute)
+      : tab.contentRoute === contentRoute
+  )
   if (existing) tabs.selectTab(existing.id, { title, contentRoute })
   else tabs.openTab('auxiliary', { title, contentRoute })
 }
@@ -32,6 +39,8 @@ function openAuxiliaryRoute(
 export function WeworkSchemeBridge() {
   const tabs = useWorkspaceTabs()
   const { t } = useTranslation('common')
+  const experiment = useAppPreferenceFeatureState('collaborationExperienceEnabled')
+  const experimentRef = useRef(experiment)
   const interactionsTitle = t('interactions.title')
   const pendingTitle = useRef(interactionsTitle)
   const connection = useContext(CloudConnectionContext)
@@ -45,7 +54,8 @@ export function WeworkSchemeBridge() {
     connectionRef.current = connection
     tabsRef.current = tabs
     pendingTitle.current = interactionsTitle
-  }, [connection, tabs, interactionsTitle])
+    experimentRef.current = experiment
+  }, [connection, tabs, interactionsTitle, experiment])
   const deferForCloud = useCallback(
     (url: string, deferInRenderer: boolean, cloud: typeof connection) => {
       if (deferInRenderer) pendingUrls.current.add(url)
@@ -60,6 +70,30 @@ export function WeworkSchemeBridge() {
     async (url: string, deferInRenderer = true): Promise<boolean> => {
       const destination = parseWeworkScheme(url)
       if (!destination) return true
+      if (destination.kind === 'collaboration-exp') {
+        if (!experimentRef.current.loaded) {
+          if (deferInRenderer) pendingUrls.current.add(url)
+          return false
+        }
+        if (!experimentRef.current.enabled) return true
+        const params = new URLSearchParams(destination.contentRoute.split('?')[1])
+        if (
+          params.get('projectStore') === 'backend' &&
+          (!connectionRef.current?.isConnected || !connectionRef.current.token)
+        ) {
+          return deferForCloud(url, deferInRenderer, connectionRef.current)
+        }
+        openAuxiliaryRoute(
+          tabsRef.current,
+          t('workbench.workspace_tab_collaboration_exp'),
+          params.has('issueId') || params.has('nodeId')
+            ? buildCollaborationExpRoute(params, {
+                focusRequest: `${Date.now()}-${++focusRequestRef.current}`,
+              })
+            : destination.contentRoute
+        )
+        return true
+      }
       if (destination.kind === 'interaction') {
         const currentTabs = tabsRef.current
         const contentRoute = weworkDestinationRoute(destination)
@@ -116,6 +150,29 @@ export function WeworkSchemeBridge() {
       ) {
         return deferForCloud(url, deferInRenderer, cloud)
       }
+      const experimentTab =
+        destination.kind === 'board' && experimentRef.current.enabled
+          ? tabsRef.current.tabs.find(tab => isCollaborationExpPath(tab.contentRoute))
+          : undefined
+      if (destination.kind === 'board' && experimentTab) {
+        const contentRoute = buildCollaborationExpRoute(experimentTab.contentRoute.split('?')[1], {
+          view: 'tasks',
+          projectStore: destination.projectStore ?? 'backend',
+          projectId: destination.projectId,
+          issueId: destination.itemId ?? null,
+          nodeId: null,
+          discussion: null,
+          inspector: null,
+          timelineFilter: null,
+          projectView: null,
+          assistantDeviceId: null,
+          assistantTaskId: null,
+          commentId: destination.commentId ?? null,
+          focusRequest: destination.itemId ? `${Date.now()}-${++focusRequestRef.current}` : null,
+        })
+        tabsRef.current.selectTab(experimentTab.id, { contentRoute })
+        return true
+      }
       navigateWorkspaceTab(
         tabsRef.current,
         destination.kind === 'task' ? 'task' : 'board',
@@ -141,6 +198,10 @@ export function WeworkSchemeBridge() {
     if (!connection?.isConnected || !connection.token) return
     retryPendingSchemes()
   }, [connection?.isConnected, connection?.token, retryPendingSchemes])
+
+  useEffect(() => {
+    if (experiment.loaded) retryPendingSchemes()
+  }, [experiment.enabled, experiment.loaded, retryPendingSchemes])
 
   useEffect(
     () => subscribeDshSlot(WEWORK_DSH_SLOTS.app, retryPendingSchemes),

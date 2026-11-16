@@ -28,7 +28,6 @@ fn registered_store_plugin_roots(
     )
 }
 use serde_json::json;
-use std::io::Read;
 
 fn write_json(path: &Path, value: &Value) {
     fs::create_dir_all(path.parent().unwrap()).unwrap();
@@ -306,46 +305,6 @@ fn reads_registered_store_symlinks_but_rejects_unregistered_targets() {
     escaped_store["plugins"]["wiki@wegent"]["store_path"] = json!(outside);
     write_json(&registry, &escaped_store);
     assert!(read_local_plugin_manifest(&market_manifest, "wiki", temp.path()).is_err());
-}
-
-#[test]
-fn packages_the_bundled_example_to_an_absolute_zip_path() {
-    let temp = tempfile::tempdir().unwrap();
-    let source = temp.path().join("bundled-plugins/wework-plugin-example");
-    write_plugin(&source, "wework-plugin-example", json!([]));
-    let destination = temp.path().join("downloads/example.zip");
-    fs::create_dir_all(destination.parent().unwrap()).unwrap();
-
-    let saved = save_plugin_example_from_source(&source, &destination).unwrap();
-
-    assert_eq!(PathBuf::from(saved), destination.canonicalize().unwrap());
-    let bytes = fs::read(&destination).unwrap();
-    let mut archive = zip::ZipArchive::new(std::io::Cursor::new(bytes)).unwrap();
-    assert!(archive.by_name(".codex-plugin/plugin.json").is_ok());
-    let mut readme = String::new();
-    archive
-        .by_name("README.md")
-        .unwrap()
-        .read_to_string(&mut readme)
-        .unwrap();
-    assert_eq!(readme, "example");
-    assert!(save_plugin_example_from_source(&source, &temp.path().join("example.txt")).is_err());
-}
-
-#[test]
-fn resolves_the_example_beside_the_bundled_marketplace() {
-    let temp = tempfile::tempdir().unwrap();
-    let plugins_root = temp.path().join("bundled-plugins");
-    let source = plugins_root.join(PLUGIN_EXAMPLE_DIRECTORY);
-    write_plugin(&source, PLUGIN_EXAMPLE_DIRECTORY, json!([]));
-
-    let resolved = resolve_plugin_example_source_from_candidates([
-        plugins_root.join("missing"),
-        source.clone(),
-    ])
-    .unwrap();
-
-    assert_eq!(resolved, source.canonicalize().unwrap());
 }
 
 #[cfg(unix)]

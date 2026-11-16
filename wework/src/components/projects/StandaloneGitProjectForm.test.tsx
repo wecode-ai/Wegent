@@ -166,6 +166,48 @@ describe('Remote project Git configuration', () => {
     expect(open).toHaveBeenCalledWith(device.device_id, '/original/repository', 'repository')
   })
 
+  test.each(['credentials-required', 'authentication-failed'])(
+    'shows %s before configuration becomes available after the account check',
+    async code => {
+      let finishSummary!: (value: { accounts: never[]; effective_count: number }) => void
+      mocks.summary.mockImplementationOnce(
+        () =>
+          new Promise(resolve => {
+            finishSummary = resolve
+          })
+      )
+      const clone = vi.fn().mockRejectedValue(errorFor(code))
+      const { close, open } = renderForm(clone)
+      await fillForm()
+      await userEvent.click(screen.getByTestId('remote-project-git-submit'))
+
+      expect(await screen.findByTestId('remote-project-git-error')).toHaveTextContent(
+        'git.example:8443'
+      )
+      expect(mocks.summary).toHaveBeenCalledOnce()
+      expect(screen.getByTestId('remote-project-git-submit')).toBeDisabled()
+      expect(screen.queryByTestId('remote-project-git-configure')).not.toBeInTheDocument()
+      expect(close).not.toHaveBeenCalled()
+      expect(open).not.toHaveBeenCalled()
+
+      await act(async () => finishSummary({ accounts: [], effective_count: 0 }))
+
+      expect(await screen.findByTestId('remote-project-git-configure')).toBeVisible()
+      expect(screen.getByTestId('remote-project-git-submit')).toBeEnabled()
+      expect(screen.getByTestId('remote-project-git-url-input')).toHaveValue(url)
+      expect(screen.getByTestId('remote-project-git-branch-input')).toHaveValue('develop')
+      expect(screen.getByTestId('remote-project-git-parent-input')).toHaveValue('/original')
+      expect(clone).toHaveBeenCalledExactlyOnceWith(device.device_id, {
+        url,
+        branch: 'develop',
+        targetPath: '/original/repository',
+      })
+      expect(mocks.sync).not.toHaveBeenCalled()
+      expect(close).not.toHaveBeenCalled()
+      expect(open).not.toHaveBeenCalled()
+    }
+  )
+
   test.each(['network-error', 'repository-inaccessible', 'ssh-authentication-failed'])(
     'does not turn %s into a cloud login problem',
     async code => {

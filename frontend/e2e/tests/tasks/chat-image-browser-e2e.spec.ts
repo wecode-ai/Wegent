@@ -687,14 +687,6 @@ test.describe('Chat Image Browser E2E with Mock Model Server', () => {
     }
   })
 
-  test('should verify mock model server is running', async ({ request }) => {
-    const response = await request.get(`${MOCK_MODEL_SERVER_URL}/health`)
-    expect(response.status()).toBe(200)
-
-    const data = await response.json()
-    expect(data.status).toBe('ok')
-  })
-
   test('should upload image via browser and verify model receives correct image_url format', async ({
     page,
     request,

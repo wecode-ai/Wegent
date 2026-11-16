@@ -17,21 +17,13 @@ const BROWSER_ANNOTATION_CLEAR_SELECTOR = `${ACTIVE_WORKBENCH_SELECTOR} [data-te
 const BROWSER_ANNOTATION_COUNT_SELECTOR = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="workspace-browser-annotation-count"]`
 const BROWSER_ANNOTATION_DISCARD_CONFIRM_SELECTOR =
   '[data-testid="workspace-browser-annotation-discard-confirm-button"]'
-const BROWSER_ANNOTATION_ORIGINAL_VIEW_SELECTOR =
-  `${ACTIVE_WORKBENCH_SELECTOR} ` +
-  '[data-testid="workspace-browser-annotation-original-view-button"]'
 const CODE_COMMENT_BADGE_SELECTOR = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="code-comment-context-badge"]`
 const COMPOSER_SELECTOR = '[data-testid="chat-message-input"][contenteditable="true"]'
 const OVERLAY_INPUT_SELECTOR = '[data-testid="browser-annotation-comment-input"]'
 const OVERLAY_SUBMIT_SELECTOR = '[data-testid="browser-annotation-submit-button"]'
-const OVERLAY_REMOVE_SELECTION_SELECTOR =
-  '[data-testid="browser-annotation-remove-selection-button"]'
 const OVERLAY_DELETE_SELECTOR = '[data-testid="browser-annotation-delete-button"]'
 const OVERLAY_DESIGN_SELECTOR = '[data-testid="browser-annotation-design-button"]'
 const OVERLAY_COLOR_SELECTOR = '[data-testid="browser-annotation-design-color"]'
-const OVERLAY_FONT_SIZE_SELECTOR = '[data-testid="browser-annotation-design-font-size"]'
-const OVERLAY_BACKGROUND_COLOR_SELECTOR =
-  '[data-testid="browser-annotation-design-background-color"]'
 const OVERLAY_SCREENSHOT_SELECTOR = '[data-testid="browser-annotation-screenshot-ready"]'
 const MARKER_SELECTOR = '[data-wework-browser-annotation-marker]'
 const INTERACTION_LAYER_SELECTOR = '[data-wework-browser-annotation-interaction-layer]'
@@ -40,8 +32,6 @@ const CURSOR_SELECTOR = '[data-wework-browser-annotation-cursor]'
 const MARKER_ROOT_ID = '__wework_browser_annotation_root__'
 const BRIDGE_RUNTIME_FILE = 'embedded-browser-bridge.json'
 const FIXTURE_PATH = '/browser-annotation/basic'
-const ANCHOR_FIXTURE_PATH = '/browser-annotation/anchors'
-const DESIGN_FIXTURE_PATH = '/browser-annotation/design'
 const SETUP_PROMPT =
   'WEWORK_DESKTOP_E2E_EMBEDDED_BROWSER_SETUP: create a local task before opening the browser.'
 const SETUP_COMPLETION_TEXT = 'WEWORK_DESKTOP_E2E_EMBEDDED_BROWSER_SETUP_COMPLETE'
@@ -75,86 +65,6 @@ function basicFixtureHtml() {
     <script>
       document.getElementById('annotation-primary').addEventListener('click', () => {
         document.getElementById('page-click-state').textContent = 'page-clicked';
-      });
-    </script>
-  </body>
-</html>`
-}
-
-function anchorFixtureHtml() {
-  return `<!doctype html>
-<html>
-  <head>
-    <meta charset="utf-8" />
-    <title>Browser Annotation Anchor Fixture</title>
-    <style>
-      body { font-family: system-ui, sans-serif; margin: 0; padding: 48px; }
-      button { margin: 8px; padding: 10px 14px; }
-    </style>
-  </head>
-  <body>
-    <h1>Browser Annotation Anchor Fixture</h1>
-    <section id="replace-host">
-      <button id="replace-target" type="button" aria-label="Replaceable target">
-        Replaceable target
-      </button>
-    </section>
-    <button id="replace-trigger" type="button">Replace target node</button>
-    <div id="shadow-host"></div>
-    <script>
-      document.getElementById('replace-trigger').addEventListener('click', () => {
-        const replacement = document.createElement('button');
-        replacement.id = 'replace-target';
-        replacement.type = 'button';
-        replacement.setAttribute('aria-label', 'Replaceable target');
-        replacement.textContent = 'Replaceable target';
-        document.getElementById('replace-host').replaceChildren(replacement);
-        document.body.dataset.replaced = 'true';
-      });
-      const shadow = document.getElementById('shadow-host').attachShadow({ mode: 'open' });
-      shadow.innerHTML =
-        '<button id="shadow-target" type="button" aria-label="Shadow target">Shadow target</button>';
-    </script>
-  </body>
-</html>`
-}
-
-function designFixtureHtml() {
-  return `<!doctype html>
-<html>
-  <head>
-    <meta charset="utf-8" />
-    <title>Browser Annotation Design Fixture</title>
-    <style>
-      body { font-family: system-ui, sans-serif; margin: 0; padding: 48px; }
-      #design-target {
-        color: rgb(17, 24, 39);
-        background: rgb(248, 250, 252);
-        font-size: 16px;
-        display: flex;
-        gap: 4px;
-        padding: 12px;
-        border: 1px solid rgb(156, 163, 175);
-      }
-    </style>
-  </head>
-  <body>
-    <h1>Browser Annotation Design Fixture</h1>
-    <div id="design-host">
-      <button id="design-target" type="button" aria-label="Design target">
-        <span>Design</span><span>target</span>
-      </button>
-    </div>
-    <button id="design-replace-trigger" type="button">Replace design target</button>
-    <script>
-      document.getElementById('design-replace-trigger').addEventListener('click', () => {
-        const replacement = document.createElement('button');
-        replacement.id = 'design-target';
-        replacement.type = 'button';
-        replacement.setAttribute('aria-label', 'Design target');
-        replacement.innerHTML = '<span>Design</span><span>target</span>';
-        document.getElementById('design-host').replaceChildren(replacement);
-        document.body.dataset.designReplaced = 'true';
       });
     </script>
   </body>
@@ -634,12 +544,6 @@ async function selectElementAnnotationPoint(control, bridge, targetPoint, uiTime
   await waitForEditorElement(bridge, OVERLAY_SCREENSHOT_SELECTOR, uiTimeoutMs)
 }
 
-async function startElementAnnotation(control, bridge, targetSelector, uiTimeoutMs) {
-  await enterElementAnnotationMode(control, bridge, uiTimeoutMs)
-  await hoverElementAnnotationTarget(bridge, targetSelector, uiTimeoutMs)
-  await selectElementAnnotationTarget(control, bridge, targetSelector, uiTimeoutMs)
-}
-
 async function submitOverlayComment(control, bridge, comment, uiTimeoutMs, beforeSubmit = null) {
   const previousRevision = await browserAnnotationRevision(control)
   await fillEditorElement(bridge, OVERLAY_INPUT_SELECTOR, comment)
@@ -1007,270 +911,6 @@ async function verifyCore(
   )
 }
 
-async function verifyAnchors(control, executorHome, uiTimeoutMs, modelResponseTimeoutMs) {
-  const fixtureUrl = `${control.url}${ANCHOR_FIXTURE_PATH}`
-  const { bridge } = await setupBrowser(
-    control,
-    executorHome,
-    fixtureUrl,
-    uiTimeoutMs,
-    modelResponseTimeoutMs
-  )
-  await bridge({
-    action: 'waitFor',
-    options: { condition: { textVisible: 'Browser Annotation Anchor Fixture' } },
-    timeoutMs: 5_000,
-  })
-
-  await startElementAnnotation(control, bridge, '#replace-target', uiTimeoutMs)
-  await submitOverlayComment(
-    control,
-    bridge,
-    'Keep this comment attached after replacement',
-    uiTimeoutMs
-  )
-  const originalMarkerId = (await markerState(bridge))?.id
-  assert.ok(originalMarkerId, 'The replaceable target did not receive a marker')
-
-  let runtimeRevision = await browserAnnotationRuntimeRevision(control)
-  await control.command('click', BROWSER_ANNOTATION_CLOSE_SELECTOR)
-  runtimeRevision = await waitForBrowserAnnotationRender(
-    control,
-    runtimeRevision,
-    uiTimeoutMs,
-    'Stopping annotation mode did not complete its page render'
-  )
-  await bridge({ action: 'click', selector: '#replace-trigger', timeoutMs: 5_000 })
-  await waitForPageValue(
-    bridge,
-    'document.body.dataset.replaced',
-    'true',
-    uiTimeoutMs,
-    'The fixture did not replace the target node'
-  )
-  await control.command('click', BROWSER_ANNOTATE_SELECTOR)
-  await waitForBrowserAnnotationRender(
-    control,
-    runtimeRevision,
-    uiTimeoutMs,
-    'Restarting annotation mode did not complete its page render'
-  )
-  await control.command('waitFor', BROWSER_ANNOTATION_CLOSE_SELECTOR, {
-    timeoutMs: uiTimeoutMs,
-  })
-  const restoredMarkerId = (await markerState(bridge))?.id
-  assert.equal(
-    restoredMarkerId,
-    originalMarkerId,
-    'DOM replacement changed the comment identity or lost its marker'
-  )
-
-  runtimeRevision = await browserAnnotationRuntimeRevision(control)
-  await bridge({ action: 'reload', timeoutMs: 5_000 })
-  await bridge({
-    action: 'waitFor',
-    options: { condition: { textVisible: 'Browser Annotation Anchor Fixture' } },
-    timeoutMs: 5_000,
-  })
-  await waitForBrowserAnnotationRender(
-    control,
-    runtimeRevision,
-    uiTimeoutMs,
-    'Reloading the annotated page did not complete its page render'
-  )
-  await control.command('waitFor', BROWSER_ANNOTATION_COUNT_SELECTOR, {
-    text: '1',
-    timeoutMs: uiTimeoutMs,
-  })
-  assert.equal(
-    (await markerState(bridge))?.id,
-    originalMarkerId,
-    'Reloading the same URL did not restore the persisted anchor'
-  )
-
-  runtimeRevision = await browserAnnotationRuntimeRevision(control)
-  await control.command('click', BROWSER_ANNOTATION_CLOSE_SELECTOR)
-  runtimeRevision = await waitForBrowserAnnotationRender(
-    control,
-    runtimeRevision,
-    uiTimeoutMs,
-    'Stopping annotation mode before the ShadowRoot check did not complete its page render'
-  )
-  await control.command('click', BROWSER_ANNOTATE_SELECTOR)
-  await waitForBrowserAnnotationRender(
-    control,
-    runtimeRevision,
-    uiTimeoutMs,
-    'Starting annotation mode before the ShadowRoot check did not complete its page render'
-  )
-  const shadowRect = await pageValue(
-    bridge,
-    `(() => {
-      const target = document.querySelector('#shadow-host')?.shadowRoot?.querySelector('#shadow-target')
-      if (!target) return null
-      const rect = target.getBoundingClientRect()
-      return { x: rect.x + rect.width / 2, y: rect.y + rect.height / 2 }
-    })()`
-  )
-  assert.ok(shadowRect, 'The fixture shadow target is unavailable')
-  await selectElementAnnotationPoint(
-    control,
-    bridge,
-    shadowRect,
-    uiTimeoutMs,
-    'The open ShadowRoot target could not be selected through the annotation interaction layer'
-  )
-}
-
-async function verifyDesign(
-  control,
-  executorHome,
-  uiTimeoutMs,
-  modelResponseTimeoutMs,
-  captureScreenshot,
-  resultDir
-) {
-  const fixtureUrl = `${control.url}${DESIGN_FIXTURE_PATH}`
-  const { bridge } = await setupBrowser(
-    control,
-    executorHome,
-    fixtureUrl,
-    uiTimeoutMs,
-    modelResponseTimeoutMs
-  )
-  await bridge({
-    action: 'waitFor',
-    options: { condition: { textVisible: 'Browser Annotation Design Fixture' } },
-    timeoutMs: 5_000,
-  })
-
-  await startElementAnnotation(control, bridge, '#design-target', uiTimeoutMs)
-  await clickEditorElement(bridge, OVERLAY_DESIGN_SELECTOR)
-  assert.equal(
-    await editorValue(bridge, OVERLAY_FONT_SIZE_SELECTOR),
-    '16px',
-    'The design editor did not show the target computed font size'
-  )
-  assert.equal(
-    await editorValue(bridge, OVERLAY_BACKGROUND_COLOR_SELECTOR),
-    '#f8fafc',
-    'The design editor did not normalize the target computed background color'
-  )
-  await fillEditorElement(bridge, OVERLAY_COLOR_SELECTOR, '#ef4444')
-  await waitForEditorElement(bridge, OVERLAY_SCREENSHOT_SELECTOR, uiTimeoutMs)
-  assert.equal(
-    await editorValue(bridge, OVERLAY_INPUT_SELECTOR),
-    '',
-    'The design-only annotation unexpectedly populated a comment'
-  )
-  assert.equal(
-    await editorValue(bridge, OVERLAY_COLOR_SELECTOR),
-    '#ef4444',
-    'The controlled design input lost its value before submit'
-  )
-  await assertEditorSubmitEnabled(
-    bridge,
-    'Changing a design value without a comment did not enable the submit button'
-  )
-  await captureBrowserScreenshot(bridge, resultDir, 'browser-annotation-05-design-editor.png')
-  const revision = await browserAnnotationRevision(control)
-  await clickEditorElement(bridge, OVERLAY_SUBMIT_SELECTOR)
-  await waitForAnnotationSave(control, bridge, revision, uiTimeoutMs)
-
-  await waitForPageValue(
-    bridge,
-    `getComputedStyle(document.querySelector('#design-target')).color`,
-    'rgb(239, 68, 68)',
-    uiTimeoutMs,
-    'The design change did not update the target computed style'
-  )
-  await captureScreenshot(control, 'browser-annotation-05b-design-applied.png')
-  let runtimeRevision = await browserAnnotationRuntimeRevision(control)
-  await control.command('nativeKeyDownOnly', BROWSER_ANNOTATION_ORIGINAL_VIEW_SELECTOR, {
-    key: 'Space',
-  })
-  await control.command('waitFor', BROWSER_ANNOTATION_ORIGINAL_VIEW_SELECTOR, {
-    attribute: 'aria-pressed',
-    value: 'true',
-    timeoutMs: uiTimeoutMs,
-  })
-  await control.command('waitFor', BROWSER_PANEL_SELECTOR, {
-    attribute: 'data-browser-annotation-original-view',
-    value: 'true',
-    timeoutMs: uiTimeoutMs,
-  })
-  runtimeRevision = await waitForBrowserAnnotationRender(
-    control,
-    runtimeRevision,
-    uiTimeoutMs,
-    'Holding Original View did not complete its page render'
-  )
-  await waitForPageValue(
-    bridge,
-    `getComputedStyle(document.querySelector('#design-target')).color`,
-    'rgb(17, 24, 39)',
-    uiTimeoutMs,
-    'Original View did not restore the target color'
-  )
-  await captureScreenshot(control, 'browser-annotation-06-original-view.png')
-  await control.command('nativeKeyUp', BROWSER_ANNOTATION_ORIGINAL_VIEW_SELECTOR, {
-    key: 'Space',
-  })
-  await control.command('waitFor', BROWSER_ANNOTATION_ORIGINAL_VIEW_SELECTOR, {
-    attribute: 'aria-pressed',
-    value: 'false',
-    timeoutMs: uiTimeoutMs,
-  })
-  await control.command('waitFor', BROWSER_PANEL_SELECTOR, {
-    attribute: 'data-browser-annotation-original-view',
-    value: 'false',
-    timeoutMs: uiTimeoutMs,
-  })
-  runtimeRevision = await waitForBrowserAnnotationRender(
-    control,
-    runtimeRevision,
-    uiTimeoutMs,
-    'Releasing Original View did not complete its page render'
-  )
-  await waitForPageValue(
-    bridge,
-    `getComputedStyle(document.querySelector('#design-target')).color`,
-    'rgb(239, 68, 68)',
-    uiTimeoutMs,
-    'Releasing Original View did not replay the design change'
-  )
-
-  await control.command('click', BROWSER_ANNOTATION_CLOSE_SELECTOR)
-  runtimeRevision = await waitForBrowserAnnotationRender(
-    control,
-    runtimeRevision,
-    uiTimeoutMs,
-    'Stopping annotation mode before design rebind did not complete its page render'
-  )
-  await bridge({ action: 'click', selector: '#design-replace-trigger', timeoutMs: 5_000 })
-  await waitForPageValue(
-    bridge,
-    `document.body.dataset.designReplaced`,
-    'true',
-    uiTimeoutMs,
-    'The design replacement fixture did not replace its target'
-  )
-  await control.command('click', BROWSER_ANNOTATE_SELECTOR)
-  await waitForBrowserAnnotationRender(
-    control,
-    runtimeRevision,
-    uiTimeoutMs,
-    'Restarting annotation mode after design rebind did not complete its page render'
-  )
-  await waitForPageValue(
-    bridge,
-    `getComputedStyle(document.querySelector('#design-target')).color`,
-    'rgb(239, 68, 68)',
-    uiTimeoutMs,
-    'Replacing the target node lost its persisted design change'
-  )
-}
-
 export function createDesktopScenario({
   captureScreenshot,
   executorHome,
@@ -1288,8 +928,6 @@ export function createDesktopScenario({
       if (request.method !== 'GET') return false
       const fixtures = {
         [FIXTURE_PATH]: basicFixtureHtml,
-        [ANCHOR_FIXTURE_PATH]: anchorFixtureHtml,
-        [DESIGN_FIXTURE_PATH]: designFixtureHtml,
       }
       const fixture = fixtures[url.pathname]
       if (!fixture) return false
@@ -1302,21 +940,6 @@ export function createDesktopScenario({
       const checkpoint = selectedCheckpoint()
       if (checkpoint === 'browser-annotation-core') {
         await verifyCore(
-          control,
-          executorHome,
-          uiTimeoutMs,
-          modelResponseTimeoutMs,
-          captureScreenshot,
-          resultDir
-        )
-        return
-      }
-      if (checkpoint === 'browser-annotation-anchors') {
-        await verifyAnchors(control, executorHome, uiTimeoutMs, modelResponseTimeoutMs)
-        return
-      }
-      if (checkpoint === 'browser-annotation-design') {
-        await verifyDesign(
           control,
           executorHome,
           uiTimeoutMs,

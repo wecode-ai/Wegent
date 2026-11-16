@@ -32,14 +32,15 @@ pub(super) async fn execute(state: &AppState, request: &ExecutionRequest) -> Res
     let mut completed = false;
     for _ in 0..720 {
         if super::cancelled(state, request).await? {
-            super::finish(state, request, "CANCELLED", None, None).await?;
-            super::emit(
-                state,
-                request,
-                "chat:cancelled",
-                json!({"type":"cancelled"}),
-            )
-            .await?;
+            if super::finish(state, request, "CANCELLED", None, None).await? {
+                super::emit(
+                    state,
+                    request,
+                    "chat:cancelled",
+                    json!({"type":"cancelled"}),
+                )
+                .await?;
+            }
             return Ok(());
         }
         let status = match http(model, brz_http::Method::GET, endpoint.clone(), 30)?
@@ -91,14 +92,25 @@ pub(super) async fn execute(state: &AppState, request: &ExecutionRequest) -> Res
         super::finish(state, request, "CANCELLED", None, None).await?;
         return Ok(());
     }
-    super::finish(state, request, "COMPLETED", Some(&result), None).await?;
-    super::emit(
-        state,
-        request,
-        "chat:done",
-        json!({"type":"done","result":result}),
-    )
-    .await?;
+    let committed = super::finish(state, request, "COMPLETED", Some(&result), None).await?;
+    publish_completion(committed, || {
+        super::emit(
+            state,
+            request,
+            "chat:done",
+            json!({"type":"done","result":result}),
+        )
+    })
+    .await
+}
+
+async fn publish_completion<F>(committed: bool, publish: impl FnOnce() -> F) -> Result<()>
+where
+    F: std::future::Future<Output = Result<()>>,
+{
+    if committed {
+        publish().await?;
+    }
     Ok(())
 }
 
@@ -260,6 +272,15 @@ fn report(events: &[(String, Value)]) -> Value {
 
 #[cfg(test)]
 mod tests {
+    #[tokio::test]
+    async fn stale_research_completion_does_not_publish_success() {
+        publish_completion(false, || async {
+            panic!("a cancelled result cannot emit chat:done")
+        })
+        .await
+        .unwrap();
+    }
+
     use super::*;
     #[test]
     fn interaction_events_separate_thoughts_from_the_report_and_keep_annotations() {

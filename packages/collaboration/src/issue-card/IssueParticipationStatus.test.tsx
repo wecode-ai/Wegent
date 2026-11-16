@@ -112,7 +112,7 @@ describe('Issue participation status', () => {
       expect(html).toMatch(
         /cloud-todo-card-header-actors-issue" class="ml-auto[^]*issue-participation-issue/
       )
-      expect(html).toContain('dateTime="2026-11-03"')
+      expect(html).toContain('dateTime="2026-11-03T00:00:00Z"')
       expect(markup('in_review', [], 'zh-CN', undefined, fullCard)).toContain('>李四</span>')
     }
   )

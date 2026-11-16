@@ -238,6 +238,8 @@ const mocks = vi.hoisted(() => {
       prepareRuntimeModel: vi.fn().mockResolvedValue(true),
       listRuntimeWork: cloudListRuntimeWork,
       createRuntimeTask: cloudCreateRuntimeTask,
+      sendRuntimeMessage: vi.fn().mockResolvedValue({ accepted: true }),
+      interruptAndSendRuntimeMessage: vi.fn().mockResolvedValue({ accepted: true }),
       rollbackRuntimeTask: vi.fn(),
       compactRuntimeTask: vi.fn(),
       searchRuntimeWork: cloudSearchRuntimeWork,
@@ -519,6 +521,30 @@ function deferred<T>() {
 }
 
 describe('stand-in save routing', () => {
+  it('attests the local Runtime without requiring Backend device discovery', async () => {
+    mocks.localListDevices.mockResolvedValue([
+      { id: 0, device_id: 'local-device', device_type: 'local', status: 'online' },
+    ])
+    mocks.cloudListDevices.mockRejectedValue(new Error('Backend unavailable'))
+    const identity = { deviceId: 'local-device', backendDeviceId: 'app-record-42' }
+    mocks.localServices.standInApi.deviceIdentity.mockResolvedValue(identity)
+
+    expect(await createServices().standInApi!.deviceIdentity('local-device')).toEqual(identity)
+    expect(mocks.cloudListDevices).not.toHaveBeenCalled()
+  })
+
+  it('requires attestation when only the local catalog labels a device as cloud', async () => {
+    mocks.localListDevices.mockResolvedValue([
+      { id: 0, device_id: 'local-device', device_type: 'cloud', status: 'online' },
+    ])
+    mocks.cloudListDevices.mockResolvedValue([])
+    const identity = { deviceId: 'local-device', backendDeviceId: 'app-record-42' }
+    mocks.localServices.standInApi.deviceIdentity.mockResolvedValue(identity)
+
+    expect(await createServices().standInApi!.deviceIdentity('local-device')).toEqual(identity)
+    expect(mocks.localServices.standInApi.deviceIdentity).toHaveBeenCalledWith('local-device')
+  })
+
   it.each(['local-device', 'remote-device'])(
     'routes saves by the selected Executor %s rather than the stored device field',
     async deviceId => {
@@ -564,8 +590,14 @@ describe('stand-in save routing', () => {
       const other = selected === local ? cloud : local
       const identity = { deviceId: 'desktop-alias', backendDeviceId: deviceId }
       selected.deviceIdentity.mockResolvedValue(identity)
-      expect(await services.standInApi!.deviceIdentity(deviceId)).toEqual(identity)
-      expect(selected.deviceIdentity).toHaveBeenCalledExactlyOnceWith(deviceId)
+      expect(await services.standInApi!.deviceIdentity(deviceId)).toEqual(
+        deviceId === 'local-device' ? identity : { deviceId, backendDeviceId: deviceId }
+      )
+      if (deviceId === 'local-device') {
+        expect(selected.deviceIdentity).toHaveBeenCalledExactlyOnceWith(deviceId)
+      } else {
+        expect(selected.deviceIdentity).not.toHaveBeenCalled()
+      }
       expect(other.deviceIdentity).not.toHaveBeenCalled()
       expect(selected.personalSave).toHaveBeenCalledExactlyOnceWith(7, settings, deviceId)
       expect(other.personalSave).not.toHaveBeenCalled()
@@ -1065,6 +1097,52 @@ describe('qualified local sidebar routing', () => {
 })
 
 describe('local project execution ownership', () => {
+  it.each(['request', 'handle'] as const)(
+    'keeps remote local-project continuations on the target computer (%s origin)',
+    async originSource => {
+      mocks.localListDevices.mockResolvedValue([
+        { id: 0, device_id: 'local-device', device_type: 'local', status: 'online' },
+      ])
+      mocks.cloudListDevices.mockResolvedValue([
+        {
+          id: 22,
+          device_id: 'app-record-22',
+          execution_target_id: 'app-record-22',
+          runtime_instance_id: 'installation-b',
+          device_type: 'app',
+          status: 'online',
+          runtime_features: { remoteTaskAccess: { version: 1, enabled: true } },
+        },
+      ])
+      const services = createServices()
+      await services.deviceApi.listDevices()
+      await services.cloudBackgroundApi!.listDevices!()
+      const origin = {
+        type: 'project_automation' as const,
+        projectStore: 'local' as const,
+        cloudProjectId: 'project',
+        loopItemId: 'issue',
+      }
+      const followup = {
+        address: {
+          deviceId: 'app-record-22',
+          taskId: 'peer-project-task',
+          ...(originSource === 'handle' ? { runtimeHandle: { origin } } : {}),
+        },
+        message: 'continue on the selected computer',
+        ...(originSource === 'request' ? { origin } : {}),
+      }
+      for (const method of ['sendRuntimeMessage', 'interruptAndSendRuntimeMessage'] as const) {
+        mocks.localOnlyServices.runtimeWorkApi[method].mockClear()
+        mocks.cloudServices.runtimeWorkApi[method].mockClear()
+        await services.runtimeWorkApi![method](followup)
+        expect(mocks.cloudServices.runtimeWorkApi[method]).toHaveBeenCalledExactlyOnceWith(followup)
+        expect(mocks.localOnlyServices.runtimeWorkApi[method]).not.toHaveBeenCalled()
+      }
+      expect(followup.address.deviceId).toBe('app-record-22')
+    }
+  )
+
   it('uses the registered cloud device in the Issue execution grant without changing the local route', async () => {
     mocks.localListDevices.mockResolvedValue([
       { id: 0, device_id: 'local-device', device_type: 'local', status: 'online' },
@@ -1414,6 +1492,159 @@ describe('createHybridWorkbenchServices', () => {
     ).rejects.toThrow('executor-not-found:other-app')
     expect(mocks.cloudServices.composerCatalogApi.readCatalog).toHaveBeenCalledTimes(1)
   })
+  it('shows an enabled peer once, keeps self local, and routes peer reads to its own Backend address', async () => {
+    mocks.localListDevices.mockResolvedValue([
+      {
+        id: 0,
+        device_id: 'local-device',
+        runtime_instance_id: 'installation-a',
+        device_type: 'local',
+        status: 'online',
+        name: 'Computer',
+        bind_shell: 'claudecode',
+      },
+    ])
+    const app = (id: number, runtime: string, enabled: boolean) => ({
+      id,
+      device_id: `app-record-${id}`,
+      execution_target_id: `app-record-${id}`,
+      app_device_id: 'shared-legacy-id',
+      runtime_instance_id: runtime,
+      device_type: 'app',
+      status: 'online',
+      name: 'Computer',
+      bind_shell: 'claudecode',
+      runtime_features: { remoteTaskAccess: { version: 1, enabled } },
+    })
+    mocks.cloudListDevices.mockResolvedValue([
+      app(11, 'installation-a', true),
+      app(22, 'installation-b', true),
+      app(33, 'installation-c', false),
+    ])
+    const services = createServices()
+    // Background discovery may run before the normal local list loads.
+    expect(
+      (await services.cloudBackgroundApi!.listDevices!()).map(device => device.device_id)
+    ).toEqual(['app-record-22'])
+    expect((await services.deviceApi.listDevices()).map(device => device.device_id)).toEqual([
+      'local-device',
+      'app-record-22',
+    ])
+    await services.runtimeWorkApi!.listRuntimeWork({ deviceId: 'app-record-22' })
+    expect(mocks.cloudListRuntimeWork).toHaveBeenCalledWith({ deviceId: 'app-record-22' })
+    expect(mocks.localListRuntimeWork).not.toHaveBeenCalled()
+    expect(mocks.cloudRuntimeIpcRequest).not.toHaveBeenCalled()
+    mocks.cloudListDevices.mockResolvedValue([
+      app(11, 'installation-a', true),
+      app(22, 'installation-b', false),
+    ])
+    await services.cloudBackgroundApi!.listDevices!()
+    expect((await services.deviceApi.listDevices()).map(device => device.device_id)).toEqual([
+      'local-device',
+    ])
+  })
+
+  it('reclassifies a cached cloud runtime client when discovery identifies a peer App', async () => {
+    const services = createServices()
+    const deviceId = 'app-record-22'
+    await services.runtimeWorkApi!.searchRuntimeTranscript({
+      deviceId,
+      taskId: 'restored-task',
+      query: 'needle',
+    })
+    mocks.cloudListDevices.mockResolvedValue([
+      {
+        id: 22,
+        device_id: deviceId,
+        execution_target_id: deviceId,
+        runtime_instance_id: 'installation-b',
+        device_type: 'app',
+        status: 'online',
+        name: 'Other computer',
+        bind_shell: 'claudecode',
+        runtime_features: { remoteTaskAccess: { version: 1, enabled: true } },
+      },
+    ])
+    await services.cloudBackgroundApi!.listDevices!()
+    mocks.cloudRuntimeIpcRequest.mockClear()
+    const request = { deviceId, runtime: 'codex' as const, message: 'run' }
+    mocks.cloudCreateRuntimeTask.mockResolvedValue({ accepted: true, taskId: 'new-task' })
+
+    await services.runtimeWorkApi!.prepareRuntimeModel(request)
+    await services.runtimeWorkApi!.createRuntimeTask(request)
+
+    expect(mocks.cloudServices.runtimeWorkApi.prepareRuntimeModel).toHaveBeenCalledWith(request)
+    expect(mocks.cloudCreateRuntimeTask).toHaveBeenCalledWith(request)
+    expect(mocks.cloudRuntimeIpcRequest).not.toHaveBeenCalled()
+  })
+
+  it('searches each remote App through its scoped runtime request without aggregate duplicates', async () => {
+    mocks.cloudListDevices.mockResolvedValue(
+      [11, 22].map(id => ({
+        id,
+        device_id: `app-record-${id}`,
+        execution_target_id: `app-record-${id}`,
+        runtime_instance_id: `installation-${id}`,
+        device_type: 'app',
+        status: 'online',
+        name: `Computer ${id}`,
+        bind_shell: 'claudecode',
+        runtime_features: { remoteTaskAccess: { version: 1, enabled: true } },
+      }))
+    )
+    mocks.cloudRuntimeIpcRequest.mockImplementation(async (method, _params, deviceId) => {
+      expect(method).toBe('runtime.tasks.search')
+      return {
+        items: [
+          {
+            address: { deviceId, taskId: 'task' },
+            title: deviceId,
+            updatedAt: '2026-11-13T00:00:00Z',
+          },
+        ],
+      }
+    })
+    const response = await createServices().runtimeWorkApi!.searchRuntimeWork({
+      source: 'cloud',
+      query: 'task',
+      limit: 2,
+    })
+    expect(response.items.map(item => item.address.deviceId)).toEqual([
+      'app-record-11',
+      'app-record-22',
+    ])
+    expect(mocks.cloudSearchRuntimeWork).not.toHaveBeenCalled()
+    expect(mocks.cloudRuntimeIpcRequest).toHaveBeenCalledTimes(2)
+  })
+
+  it('keeps cloud discovery available when local identity cannot be loaded, excluding unverified Apps', async () => {
+    mocks.localListDevices.mockRejectedValueOnce(new Error('Local IPC unavailable'))
+    const cloud = {
+      id: 1,
+      device_id: 'cloud-device',
+      device_type: 'cloud',
+      name: 'Cloud',
+      status: 'online',
+      bind_shell: 'claudecode',
+    }
+    mocks.cloudListDevices.mockResolvedValue([
+      cloud,
+      {
+        ...cloud,
+        id: 2,
+        device_id: 'app-record-2',
+        execution_target_id: 'app-record-2',
+        runtime_instance_id: 'unknown-installation',
+        device_type: 'app',
+        runtime_features: { remoteTaskAccess: { version: 1, enabled: true } },
+      },
+    ])
+    const services = createServices()
+    const devices = await services.cloudBackgroundApi!.listDevices!()
+    expect(devices.map(device => device.device_id)).toEqual(['cloud-device'])
+    expect(mocks.cloudListDevices).toHaveBeenCalledOnce()
+  })
+
   beforeEach(() => {
     vi.clearAllMocks()
     mocks.localSidebarIdentity.mockReset()
