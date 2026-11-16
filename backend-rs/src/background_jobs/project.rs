@@ -39,7 +39,7 @@ pub(crate) mod assignments;
 #[path = "project_dispatch.rs"]
 mod dispatch;
 #[path = "project_due.rs"]
-mod due;
+pub(crate) mod due;
 #[path = "project_events.rs"]
 mod events;
 #[path = "project_groups.rs"]

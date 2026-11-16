@@ -28,6 +28,9 @@
 
 use std::sync::Arc;
 
+#[path = "device_pull_workday.rs"]
+pub(super) mod workday;
+
 use brz_mysql::{FromMysqlRow, MysqlResult, MysqlTransaction};
 use brz_redis::{Redis, SetExpiration, SetOptions};
 use brz_socket_io::ClientError;
@@ -154,13 +157,14 @@ async fn claim_execution(app: &AppState, command: &PullCommand<'_>) -> anyhow::R
                 "success": false, "task": null, "error": "Claimed execution has no Runtime task identity"
             }));
         };
-        let payload =
-            super::device_pull_payload::compile_request(app, command, &reserved, &mut prepared)
-                .await?;
-        if claim::renew_redelivery(app, command, &reserved).await? {
+        if claim::renew_redelivery(app, command, &reserved).await?
+            && workday::eligible(app, &reserved.execution()).await?
+        {
+            let payload =
+                super::device_pull_payload::compile_request(app, command, &reserved, &mut prepared)
+                    .await?;
             return Ok(delivery(reserved.id, &prepared.runtime_task_id, payload));
         }
-        return Ok(json!({"success": true, "task": null}));
     }
     crate::background_jobs::robot::prepare_queued_assignments(app).await?;
     let identities =

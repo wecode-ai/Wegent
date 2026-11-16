@@ -272,6 +272,51 @@ describe('buildAutomationTaskOptions', () => {
 })
 
 describe('automation schedule draft conversion', () => {
+  test.each(['local', 'cloud'] as const)(
+    'round trips the statutory workday filter without changing cron dates on %s',
+    source => {
+      const draft = emptyAutomationDraft(source)
+      expect(draft.workdayOnly).toBe(false)
+      expect(scheduleFromAutomationDraft(draft)).toEqual({
+        type: 'cron',
+        expression: '0 9 * * 1-5',
+      })
+      draft.workdayOnly = true
+      const schedule = scheduleFromAutomationDraft(draft)
+      expect(schedule).toEqual({ type: 'cron', expression: '0 9 * * 1-5', workdayOnly: true })
+      const saved = automationDraftFromAutomation({
+        id: 'workday',
+        version: 1,
+        source,
+        name: 'Work',
+        description: '',
+        prompt: 'Work',
+        schedule,
+        timezone: 'Europe/London',
+        enabled: true,
+        conversationMode: 'independent',
+        notificationPolicy: 'all_runs',
+        createdAt: '',
+        updatedAt: '',
+      })
+      expect(saved.workdayOnly).toBe(true)
+      saved.name = 'Renamed'
+      expect(scheduleFromAutomationDraft(saved)).toEqual(schedule)
+      saved.workdayOnly = false
+      expect(scheduleFromAutomationDraft(saved)).toEqual({
+        type: 'cron',
+        expression: '0 9 * * 1-5',
+      })
+      saved.workdayOnly = true
+      saved.cronPreset = 'daily'
+      expect(scheduleFromAutomationDraft(saved)).toEqual({
+        type: 'cron',
+        expression: '0 9 * * *',
+        workdayOnly: true,
+      })
+      expect(emptyAutomationDraft(source).workdayOnly).toBe(false)
+    }
+  )
   test.each(['0 * * * *', '15 */3 * * *', '*/15 8-18 * * 1-5', '0 9 */2 * *'])(
     'preserves the exact saved cron when only its name changes: %s',
     expression => {

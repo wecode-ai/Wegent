@@ -82,6 +82,14 @@ it('does not show a stale next run for paused work', () => {
   expect(row.queryByText(/下次运行/)).not.toBeInTheDocument()
 })
 
+it('distinguishes Monday–Friday recurrence from the statutory workday filter', () => {
+  const row = renderSchedule({
+    ...scheduledReview,
+    schedule: { type: 'cron', expression: '0 9 * * 1-5', workdayOnly: true },
+  })
+  expect(row.getByText('周一至周五 09:00 · 仅中国大陆法定工作日')).toBeVisible()
+})
+
 it.each([
   ['Asia/Shanghai', 'UTC', '2026-11-09T09:00:00Z', '11月9日'],
   ['America/Los_Angeles', 'Asia/Shanghai', '2026-11-09T01:00:00Z', '11月9日'],

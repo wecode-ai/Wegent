@@ -138,7 +138,7 @@ fn automation() -> Value {
         json!({"id":string(),"version":{"type":"integer","minimum":1},"name":string(),
             "description":string(),"prompt":string(),"schedule":{"type":"object","properties":{
                 "type":{"enum":["interval","cron","one_time"]},"value":{"type":"integer"},
-                "unit":{"enum":["minutes","hours","days"]},"expression":string(),"execute_at":string()},"required":["type"]},
+                "unit":{"enum":["minutes","hours","days"]},"expression":string(),"workdayOnly":{"type":"boolean"},"execute_at":string()},"required":["type"]},
             "timezone":string(),"enabled":{"type":"boolean"},
             "conversationMode":{"enum":["independent","continue_thread"]},
             "notificationPolicy":{"enum":["all_runs","attention_only","never"]},

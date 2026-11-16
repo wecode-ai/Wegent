@@ -338,6 +338,7 @@ export interface WorkspaceAutomationRule {
   eventType: import("../automation/types").AutomationEventType | null;
   eventConfig: Record<string, unknown>;
   cronExpression: string | null;
+  workdayOnly?: boolean;
   timezone: string;
   runnerSelection?: import("../agent-form/runnerRouting").RunnerSelection;
   executionDeviceId: string | null;
@@ -360,6 +361,7 @@ export interface WorkspaceAutomationInput {
   eventType: import("../automation/types").AutomationEventType | null;
   eventConfig: Record<string, unknown>;
   cronExpression: string | null;
+  workdayOnly?: boolean;
   timezone: string;
   runnerSelection?: import("../agent-form/runnerRouting").RunnerSelection;
   executionDeviceId: string | null;
