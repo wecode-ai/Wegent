@@ -562,6 +562,11 @@
   color: inherit;
 }
 
+.collaboration-project-collaborator-search > input::placeholder {
+  color: rgb(var(--color-text-secondary));
+  opacity: 1;
+}
+
 .collaboration-project-collaborator-picker [role='tablist'] {
   flex: none;
   margin: 0;
@@ -742,7 +747,7 @@
 
 .collaboration-project-create-inline-error {
   margin: 0;
-  color: rgb(var(--color-danger, 220 38 38));
+  color: rgb(var(--color-error));
   font-size: 12px;
 }
 
@@ -1277,6 +1282,11 @@
   gap: 12px;
 }
 
+.collaboration-project-create-discard-description {
+  margin: 0;
+  color: rgb(var(--color-text-secondary));
+}
+
 .collaboration-project-create-generated-principles {
   display: grid;
   gap: 6px;
@@ -1483,11 +1493,8 @@
 }
 
 .collaboration-project-create-error {
-  border-radius: 8px;
   margin: 0;
-  padding: 8px 12px;
   font-size: 12px;
-  background: rgb(var(--color-error) / 0.1);
 }
 
 .collaboration-project-create-footer {
@@ -1656,7 +1663,7 @@
   text-align: right;
 }
 
-.collaboration-dialog footer button:not(.collaboration-primary-button) {
+.collaboration-dialog footer :where(button:not(.collaboration-primary-button)) {
   min-height: 36px;
   border: 1px solid rgb(var(--color-border));
   border-radius: 8px;
@@ -1769,8 +1776,14 @@
     grid-template-columns: minmax(0, 1fr);
   }
 
+  .collaboration-project-create-dialog button,
   .collaboration-project-create-footer button,
-  .collaboration-project-create-footer button:not(.collaboration-primary-button) {
+  .collaboration-project-create-footer button:not(.collaboration-primary-button),
+  .collaboration-template-create-section .collaboration-template-actions button,
+  .collaboration-project-create-group-summary-header button,
+  .collaboration-project-create-group-remove,
+  .collaboration-project-create-group-recommendation button,
+  .collaboration-project-create-configuration button {
     min-height: 44px;
     min-width: 44px;
   }

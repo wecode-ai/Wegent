@@ -31,6 +31,10 @@ Start with the project name, then confirm its group, visibility and collaborator
 
 If the model list fails to load while configuring Team responsibilities, select **Reload models**. Your instructions and participants remain intact. You can also return to the project and create it without that Team configuration.
 
+Closing, canceling or pressing Escape on a creation form with unsaved content first offers **Keep editing** or **Discard draft**. An empty form closes directly. Returning from unsaved generated responsibilities also requires an explicit discard decision. This confirmation appears within the same creation window.
+
+Cloud project names allow up to 100 characters and local project names up to 255, excluding surrounding spaces. If a name exceeds its limit, an inline message shows its length and the limit while preserving the input. Shorten the name to continue creating the project.
+
 Select a group name to open its home and review cross-project operations and items needing attention. When the content exceeds the window height, scroll down in the main content area on the right to reach the remaining projects and items.
 
 Global catalogs, group settings, and project settings remain separate levels. Code directories are separate resources, and project AI team settings do not replace group membership management.

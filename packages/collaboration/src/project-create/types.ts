@@ -161,6 +161,13 @@ export interface ProjectCreateLabels {
   title: string;
   name: string;
   namePlaceholder: string;
+  nameTooLong: string;
+  discardProjectTitle: string;
+  discardProjectDescription: string;
+  discardGroupTitle: string;
+  discardGroupDescription: string;
+  keepEditing: string;
+  discardDraft: string;
   location: string;
   locationImmutable: string;
   localLocation: string;

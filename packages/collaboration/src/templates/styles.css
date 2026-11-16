@@ -379,11 +379,6 @@
   .collaboration-runtime-disclosure .collaboration-runtime-device {
     min-height: 44px;
   }
-
-  .collaboration-runtime-disclosure > summary,
-  .collaboration-runtime-disclosure .collaboration-runtime-device {
-    min-height: 44px;
-  }
 }
 .collaboration-template-binding {
   display: grid;

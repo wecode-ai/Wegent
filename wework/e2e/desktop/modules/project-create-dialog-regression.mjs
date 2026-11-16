@@ -8,96 +8,27 @@ import {
   revealCollaborationSidebarElement,
 } from './workspace-flows.mjs'
 import { openProjectBoard } from './collaboration-board-personal-view.mjs'
+import { getSingleElementMetrics } from './conversation-layout.mjs'
 import { waitForValue } from './workspace-agent-setup.mjs'
 import { CLOUD_PUBLIC_MODEL_NAME, DEFAULT_STEP_TIMEOUT_MS, resultDir } from './shared.mjs'
-import {
-  assistantMessage,
-  createSse,
-  readRequestBody,
-  responseCompleted,
-  responseCreated,
-} from './response-protocol.mjs'
+import { GENERATED_GROUP_NAME, GROUP_DRAFT_REQUEST } from './project-create-group-model.mjs'
+export { handleProjectCreateGroupModel } from './project-create-group-model.mjs'
 
 const testId = value => `[data-testid="${value}"]`
 const DIALOG = testId('collaboration-project-create-dialog')
 const MENU = testId('collaboration-project-create-collaborator-menu')
 const SEARCH = testId('collaboration-project-create-people-search')
-const GROUP_DRAFT_REQUEST = 'PROJECT_CREATE_GROUP_DRAFT_E2E'
-const GENERATED_GROUP_NAME = '真实分工验收小组'
-
-/** Only the upstream model is scripted; prompt construction and draft parsing remain real. */
-export async function handleProjectCreateGroupModel(request, response, url) {
-  if (request.method !== 'POST' || !['/responses', '/v1/responses'].includes(url.pathname))
-    return false
-  const body = await readRequestBody(request)
-  const messages = Array.isArray(body.input) ? body.input : []
-  const prompt = messages
-    .filter(message => message.role === 'user')
-    .map(message =>
-      typeof message.content === 'string'
-        ? message.content
-        : (message.content ?? []).map(part => part.text ?? '').join('\n')
-    )
-    .findLast(
-      text =>
-        text.includes(GROUP_DRAFT_REQUEST) &&
-        text.includes('你是项目协作架构师。') &&
-        /^协作者：\[/m.test(text)
-    )
-  if (!prompt) return false
-  assert.ok(body.model, 'Group generation must reach the model with its selected identity')
-  const participants = JSON.parse(prompt.match(/^协作者：(\[[^\n]+\])/m)[1])
-  assert.ok(participants.length >= 3, 'The real prompt must include its owner and selected agents')
-  assert.equal(
-    new Set(participants.map(participant => `${participant.kind}:${participant.id}`)).size,
-    participants.length
-  )
-  const events = [{ type: 'group', name: GENERATED_GROUP_NAME }]
-  for (const [index, participant] of participants.entries()) {
-    assert.ok(['human', 'agent'].includes(participant.kind) && participant.id && participant.name)
-    events.push({
-      type: 'participant_started',
-      kind: participant.kind,
-      id: String(participant.id),
-      leader: index === 0,
-    })
-    for (const delta of [
-      `${participant.name}负责根据真实需求梳理实施边界、逐项核对验收条件，并把发现的问题和依赖及时反馈给负责人。`.repeat(
-        5
-      ),
-      '执行完成后提交可复现的验证步骤、实际结果、风险说明与交付位置，确保下一位协作者能够独立继续工作。'.repeat(
-        5
-      ),
-    ])
-      events.push({
-        type: 'participant_delta',
-        kind: participant.kind,
-        id: String(participant.id),
-        delta,
-      })
-  }
-  events.push(
-    { type: 'principle', text: '负责人拆解任务并统一验收，成员独立执行并提交证据。' },
-    { type: 'principle', text: '阻塞先反馈影响和需要的决策，未确认前保留已有工作。' },
-    { type: 'stage', id: 'requirements', name: '需求确认' },
-    { type: 'stage', id: 'implementation', name: '实现与验证' },
-    { type: 'stage', id: 'acceptance', name: '验收交付' }
-  )
-  const id = `project-create-group-${Date.now()}`
-  response.writeHead(200, { 'content-type': 'text/event-stream; charset=utf-8' })
-  response.end(
-    createSse([
-      responseCreated(id),
-      assistantMessage(JSON.stringify({ events })),
-      responseCompleted(id),
-    ])
-  )
-  return true
-}
+const DISCARD = `${DIALOG} ${testId('collaboration-project-create-discard')}`
+const CLOSE = `${DIALOG} ${testId('collaboration-project-create-close')}`
+const CANCEL = `${DIALOG} ${testId('collaboration-project-create-cancel')}`
+const BACK = testId('collaboration-project-create-configuration-back')
+const readMetrics = (control, selector) => getSingleElementMetrics(control, selector, selector)
+const resizeWindow = (control, width, height) =>
+  control.command('setMainWindowSize', 'body', { value: JSON.stringify({ width, height }) })
 
 export async function waitForProjectCreateViewport(control, width = 1024, height = 768) {
   return waitForValue(
-    async () => JSON.parse(await control.command('getElementMetrics', 'body'))[0],
+    () => readMetrics(control, 'body'),
     metrics => metrics?.viewportWidth === width && metrics.viewportHeight === height,
     `Project creation viewport did not resize to ${width}x${height}`,
     DEFAULT_STEP_TIMEOUT_MS
@@ -106,7 +37,7 @@ export async function waitForProjectCreateViewport(control, width = 1024, height
 
 export async function assertProjectCreateActionHit(control, selector) {
   await control.command('waitFor', selector, { visible: true })
-  const [metrics] = JSON.parse(await control.command('getElementMetrics', selector))
+  const metrics = await readMetrics(control, selector)
   if (!metrics?.hitTestVisible)
     await saveProjectCreateFocusEvidence('project-create-hit-failure', selector)
   assert.ok(
@@ -126,15 +57,7 @@ async function saveProjectCreateFocusEvidence(name, selector) {
 }
 
 async function collectProjectCreateFocusEvidence(name, selector) {
-  const client = await createDevtoolsClient(resultDir, DEFAULT_STEP_TIMEOUT_MS)
-  const target = (await client({ action: 'targets' })).find(
-    entry =>
-      entry.type === 'window' &&
-      entry.url.includes('/wework/app/') &&
-      !entry.url.includes('startup-splash')
-  )?.id
-  assert.ok(target, 'The isolated renderer must be available for project focus diagnostics')
-  try {
+  return withProjectRenderer(async (client, target) => {
     const evidence = await client({
       action: 'command',
       target,
@@ -166,6 +89,20 @@ async function collectProjectCreateFocusEvidence(name, selector) {
       join(resultDir, `${name}.json`),
       JSON.stringify(evidence.result?.value, null, 2)
     )
+  })
+}
+
+async function withProjectRenderer(inspect) {
+  const client = await createDevtoolsClient(resultDir, DEFAULT_STEP_TIMEOUT_MS)
+  const target = (await client({ action: 'targets' })).find(
+    entry =>
+      entry.type === 'window' &&
+      entry.url.includes('/wework/app/') &&
+      !entry.url.includes('startup-splash')
+  )?.id
+  assert.ok(target, 'The isolated renderer must be available for project diagnostics')
+  try {
+    return await inspect(client, target)
   } finally {
     await client({ action: 'detach', target })
   }
@@ -175,9 +112,8 @@ async function verifyProjectCreateFocusRestoration(control, scoped) {
   const nameInput = scoped(testId('collaboration-project-name-input'))
   const opener = scoped(testId('collaboration-workspace-project-create'))
   const draftName = await control.command('getValue', nameInput)
-  await control.command('nativePress', scoped(testId('collaboration-project-create-close')), {
-    key: 'Escape',
-  })
+  await control.command('nativePress', CLOSE, { key: 'Escape' })
+  await confirmDiscard(control)
   await control.command('waitFor', DIALOG, { visible: false })
   await control.command('nativePress', opener, { key: 'Enter' })
   await control.command('waitFor', DIALOG, { visible: true })
@@ -196,6 +132,92 @@ async function verifyProjectCreateFocusRestoration(control, scoped) {
   await control.command('nativePress', opener, { key: 'Enter' })
   await control.command('waitFor', DIALOG, { visible: true })
   await control.command('fill', nameInput, { value: draftName })
+  await control.command('nativePress', CLOSE, { key: 'Escape' })
+  await confirmDiscard(control)
+  await control.command('waitFor', DIALOG, { visible: false })
+  assert.equal(
+    await control.command('getActiveElementTestId', 'body'),
+    'collaboration-workspace-project-create'
+  )
+  await control.command('nativePress', opener, { key: 'Enter' })
+  await control.command('waitFor', DIALOG, { visible: true })
+  await control.command('fill', nameInput, { value: draftName })
+}
+
+async function confirmDiscard(control) {
+  await control.command('waitFor', DISCARD, { visible: true })
+  await control.command(
+    'clickWhenEnabled',
+    `${DISCARD} ${testId('collaboration-project-create-discard-confirm')}`
+  )
+}
+
+async function keepDraft(control, resume, action = 'Escape') {
+  if (action === 'Escape') await control.command('nativePress', CLOSE, { key: 'Escape' })
+  else await control.command('click', action === 'header' ? CLOSE : CANCEL)
+  await control.command('waitFor', DISCARD, { visible: true })
+  assert.equal(
+    await control.command('getActiveElementTestId', 'body'),
+    'collaboration-project-create-configuration-back'
+  )
+  assert.equal(Number(await control.command('getElementCount', `${DIALOG} form:not([hidden])`)), 0)
+  const actions = JSON.parse(await control.command('getElementMetrics', `${DISCARD} footer button`))
+  assert.equal(actions.length, 2)
+  if (actions[0].viewportWidth <= 767)
+    assert.ok(
+      actions.every(button => button.height >= 44 && button.width >= 44),
+      'Mobile discard actions must have 44px targets'
+    )
+  const back = `${DISCARD} ${BACK}`
+  if (action === 'Escape') await control.command('nativePress', back, { key: 'Escape' })
+  else await control.command('click', action === 'header' ? CLOSE : back)
+  await control.command('waitFor', DISCARD, { visible: false })
+  await control.command('waitFor', resume, { visible: true })
+}
+
+async function verifyCloudNameLength(control, scoped) {
+  const input = scoped(testId('collaboration-project-name-input'))
+  const submit = scoped(testId('collaboration-project-create-confirm'))
+  const original = await control.command('getValue', input)
+  await control.command('fill', input, { value: `  ${'😀'.repeat(101)}  ` })
+  await control.command('waitFor', `${input}[aria-invalid="true"]`, { visible: true })
+  const id = await control.command('getAttribute', input, { value: 'aria-describedby' })
+  assert.ok(id, 'An overlong Unicode name must reference its error')
+  const error = `${DIALOG} [id=${JSON.stringify(id)}]`
+  const message = await control.command('getText', error)
+  assert.match(message, /100/)
+  assert.match(message, /101/)
+  await control.command('waitFor', `${submit}:disabled`, { visible: true })
+  await control.command('fill', input, { value: `  ${'😀'.repeat(100)}  ` })
+  await control.command('waitFor', `${input}[aria-invalid="true"]`, { visible: false })
+  await control.command('waitFor', error, { visible: false })
+  await control.command('waitFor', `${submit}:not(:disabled)`, { visible: true })
+  await control.command('fill', input, { value: original })
+}
+
+async function assertCollaboratorMenuBounds(control) {
+  const body = await readMetrics(
+    control,
+    `${DIALOG} form:not([hidden]) > .collaboration-project-create-body`
+  )
+  const footer = await readMetrics(
+    control,
+    `${DIALOG} form:not([hidden]) > .collaboration-project-create-footer`
+  )
+  const menu = await waitForValue(
+    () => readMetrics(control, MENU),
+    value => value.top >= body.top - 1 && value.bottom <= Math.min(body.bottom, footer.top) + 1,
+    'Collaborator popup must settle inside the scroll body',
+    DEFAULT_STEP_TIMEOUT_MS
+  )
+  assert.ok(
+    menu.top >= body.top - 1 && menu.bottom <= Math.min(body.bottom, footer.top) + 1,
+    `Collaborator popup escaped the scroll body or covered its footer: ${JSON.stringify({ body, footer, menu })}`
+  )
+  await assertProjectCreateActionHit(
+    control,
+    `${DIALOG} ${testId('collaboration-project-create-confirm')}`
+  )
 }
 
 async function verifyTemplateRoleValidation(control, scoped) {
@@ -229,6 +251,10 @@ async function verifyTemplateRoleValidation(control, scoped) {
   })
   await control.command('clickWhenEnabled', apply)
   await control.command('waitFor', configuration, { visible: false })
+  const selected = scoped(testId('project-create-template-summary'))
+  const summary = await control.command('getText', selected)
+  await keepDraft(control, selected, 'header')
+  assert.equal(await control.command('getText', selected), summary)
   await control.command(
     'waitFor',
     scoped(`${testId('collaboration-project-create-confirm')}:not(:disabled)`),
@@ -244,44 +270,33 @@ async function verifyTemplateRoleValidation(control, scoped) {
 
 async function withProjectCreationAgents(request, workspace, verify) {
   const cleanups = []
+  const agentsPath = `/api/v1/workspaces/${workspace.id}/agents`
+  const create = (path, values) => request(path, { method: 'POST', body: JSON.stringify(values) })
   try {
-    const bot = await request('/api/bots', {
-      method: 'POST',
-      body: JSON.stringify({
-        name: `project-create-keyboard-bot-${process.pid}`,
-        namespace: 'default',
-        shell_name: 'Codex',
-        agent_config: { bind_model: CLOUD_PUBLIC_MODEL_NAME, bind_model_type: 'public' },
-      }),
+    const bot = await create('/api/bots', {
+      name: `project-create-keyboard-bot-${process.pid}`,
+      namespace: 'default',
+      shell_name: 'Codex',
+      agent_config: { bind_model: CLOUD_PUBLIC_MODEL_NAME, bind_model_type: 'public' },
     })
     cleanups.push(() => request(`/api/bots/${bot.id}`, { method: 'DELETE' }))
     const resources = []
     for (const suffix of ['coordinator', 'worker']) {
-      const team = await request('/api/teams', {
-        method: 'POST',
-        body: JSON.stringify({
-          name: `project-create-${suffix}-${process.pid}`,
-          namespace: 'default',
-          bots: [{ bot_id: bot.id, role: 'worker', bot_prompt: '' }],
-          bind_mode: ['task'],
-          requires_workspace: false,
-          is_active: true,
-        }),
+      const team = await create('/api/teams', {
+        name: `project-create-${suffix}-${process.pid}`,
+        namespace: 'default',
+        bots: [{ bot_id: bot.id, role: 'worker', bot_prompt: '' }],
+        bind_mode: ['task'],
+        requires_workspace: false,
+        is_active: true,
       })
       cleanups.push(() =>
         request(`/api/teams/${team.id}?force=true&confirm_name=${encodeURIComponent(team.name)}`, {
           method: 'DELETE',
         })
       )
-      resources.push(
-        await request(`/api/v1/workspaces/${workspace.id}/agents`, {
-          method: 'POST',
-          body: JSON.stringify({ team_id: team.id }),
-        })
-      )
-      cleanups.push(() =>
-        request(`/api/v1/workspaces/${workspace.id}/agents/${team.id}`, { method: 'DELETE' })
-      )
+      resources.push(await create(agentsPath, { team_id: team.id }))
+      cleanups.push(() => request(`${agentsPath}/${team.id}`, { method: 'DELETE' }))
     }
     await verify(resources)
   } finally {
@@ -315,15 +330,7 @@ function visibleButtonCenters(metrics) {
 }
 
 async function assertModelMenuCenters(indices) {
-  const client = await createDevtoolsClient(resultDir, DEFAULT_STEP_TIMEOUT_MS)
-  const target = (await client({ action: 'targets' })).find(
-    entry =>
-      entry.type === 'window' &&
-      entry.url.includes('/wework/app/') &&
-      !entry.url.includes('startup-splash')
-  )?.id
-  assert.ok(target, 'The isolated renderer must be available to inspect menu hit targets')
-  try {
+  return withProjectRenderer(async (client, target) => {
     const result = await client({
       action: 'command',
       target,
@@ -347,28 +354,27 @@ async function assertModelMenuCenters(indices) {
       result.result.value.every(button => button.hit),
       `A visible model menu button has an obstructed center: ${JSON.stringify(result.result.value)}`
     )
-  } finally {
-    await client({ action: 'detach', target })
-  }
+  })
 }
 
 async function verifyMobileGroupConfiguration(control, configuration) {
-  const previousSize = await control.command('setMainWindowSize', 'body', {
-    value: JSON.stringify({ width: 375, height: 812 }),
-  })
+  const previousSize = await resizeWindow(control, 375, 812)
   const original = JSON.parse(previousSize)
   try {
     await waitForProjectCreateViewport(control, 375, 812)
+    const back = await readMetrics(control, `${configuration} ${BACK}`)
+    assert.ok(
+      back.width >= 44 && back.height >= 44,
+      'Mobile configuration Back must have a 44px target'
+    )
     const generate = `${configuration} ${testId('collaboration-project-create-generate-group')}`
     await control.command('scrollIntoView', generate, { visible: true })
-    const [group] = JSON.parse(await control.command('getElementMetrics', configuration))
-    const [body] = JSON.parse(
-      await control.command(
-        'getElementMetrics',
-        `${configuration} .collaboration-project-create-configuration-body`
-      )
+    const group = await readMetrics(control, configuration)
+    const body = await readMetrics(
+      control,
+      `${configuration} .collaboration-project-create-configuration-body`
     )
-    const [action] = JSON.parse(await control.command('getElementMetrics', generate))
+    const action = await readMetrics(control, generate)
     assert.ok(
       group.scrollWidth <= group.clientWidth,
       `Mobile group configuration overflowed: ${JSON.stringify(group)}`
@@ -423,11 +429,9 @@ async function verifyMobileGroupConfiguration(control, configuration) {
 async function assertGeneratedGroupLayout(control, configuration) {
   const body = `${configuration} .collaboration-project-create-configuration-body`
   const save = `${configuration} ${testId('collaboration-project-create-apply-group')}`
-  const [roster] = JSON.parse(
-    await control.command(
-      'getElementMetrics',
-      `${configuration} ${testId('collaboration-project-create-group-roster')}`
-    )
+  const roster = await readMetrics(
+    control,
+    `${configuration} ${testId('collaboration-project-create-group-roster')}`
   )
   const duties = JSON.parse(
     await control.command(
@@ -457,12 +461,12 @@ async function assertGeneratedGroupLayout(control, configuration) {
     `${configuration} ${testId('collaboration-project-create-group-name')}`
   )
   await assertProjectCreateActionHit(control, save)
-  const [before] = JSON.parse(await control.command('getElementMetrics', save))
+  const before = await readMetrics(control, save)
   assert.ok(
     before.height >= 44 && before.width >= 44,
     'The mobile save action must have a 44px touch target'
   )
-  const [content] = JSON.parse(await control.command('getElementMetrics', body))
+  const content = await readMetrics(control, body)
   assert.ok(
     content.scrollHeight > content.clientHeight,
     'Long responsibilities must exercise the actual scrollable draft'
@@ -473,7 +477,7 @@ async function assertGeneratedGroupLayout(control, configuration) {
   )
   assert.ok(Number(await control.command('scrollToBottomAsUser', body)) > 0)
   await assertProjectCreateActionHit(control, save)
-  const [after] = JSON.parse(await control.command('getElementMetrics', save))
+  const after = await readMetrics(control, save)
   assert.ok(
     Math.abs(after.top - before.top) <= 1 && Math.abs(after.bottom - before.bottom) <= 1,
     'Scrolling long responsibilities moved the save action out of its fixed footer'
@@ -481,9 +485,7 @@ async function assertGeneratedGroupLayout(control, configuration) {
 }
 
 async function verifyGeneratedGroupDraft(control, scoped, configuration, agents, draftName) {
-  const previousSize = await control.command('setMainWindowSize', 'body', {
-    value: JSON.stringify({ width: 375, height: 812 }),
-  })
+  const previousSize = await resizeWindow(control, 375, 812)
   const original = JSON.parse(previousSize)
   try {
     await waitForProjectCreateViewport(control, 375, 812)
@@ -517,6 +519,7 @@ async function verifyGeneratedGroupDraft(control, scoped, configuration, agents,
       `Real group generation failed: ${await control.command('getText', error)}`
     )
     await control.command('waitFor', editor, { text: GENERATED_GROUP_NAME })
+    await keepDraft(control, editor)
     await assertGeneratedGroupLayout(control, configuration)
     const name = `${editor} ${testId('collaboration-project-create-group-name')}`
     const nameInput = `${editor} > header input`
@@ -547,11 +550,28 @@ async function verifyGeneratedGroupDraft(control, scoped, configuration, agents,
     await control.command('waitFor', configuration, { visible: false })
     const summary = scoped(testId('collaboration-project-create-group-summary'))
     await control.command('waitFor', summary, { text: editedName })
+    await keepDraft(control, summary, 'back')
+    await control.command('waitFor', summary, { text: editedName })
     assert.equal(
       await control.command('getValue', scoped(testId('collaboration-project-name-input'))),
       draftName
     )
     for (const agent of agents) await control.command('waitFor', summary, { text: agent.name })
+    const discover = scoped(testId('project-create-choose-template'))
+    await control.command('scrollIntoView', discover)
+    const discoverSize = await readMetrics(control, discover)
+    assert.ok(
+      discoverSize.width >= 44 && discoverSize.height >= 44,
+      'Mobile Discover templates must have a 44px target'
+    )
+    const add = scoped(testId('collaboration-project-create-add-collaborator'))
+    await control.command('scrollIntoView', add)
+    await control.command('click', add)
+    await control.command('waitFor', MENU, { visible: true })
+    await assertCollaboratorMenuBounds(control)
+    await control.command('nativePress', SEARCH, { key: 'Escape' })
+    await control.command('waitFor', MENU, { visible: false })
+    await control.command('waitFor', summary, { text: editedName })
     await control.command('click', `${summary} .collaboration-project-create-group-remove`)
     await control.command('waitFor', summary, { visible: false })
     for (const agent of agents)
@@ -593,7 +613,7 @@ async function verifyGroupConfigurationDraft(control, scoped, workspace, agents)
   }
   const opener = scoped(testId('collaboration-project-create-organize-group'))
   const configuration = scoped(testId('collaboration-project-create-model-picker'))
-  const back = `${configuration} ${testId('collaboration-project-create-configuration-back')}`
+  const back = `${configuration} ${BACK}`
   const assertDraftRetained = async () => {
     await control.command('waitFor', configuration, { visible: false })
     await control.command('waitFor', DIALOG, { visible: true })
@@ -617,9 +637,7 @@ async function verifyGroupConfigurationDraft(control, scoped, workspace, agents)
     1,
     'Opening group configuration left focus outside its controls'
   )
-  await control.command('setMainWindowSize', 'body', {
-    value: JSON.stringify({ width: 1024, height: 768 }),
-  })
+  await resizeWindow(control, 1024, 768)
   await waitForProjectCreateViewport(control)
   await verifyMobileGroupConfiguration(control, configuration)
   await control.command('nativePress', back, { key: 'Tab' })
@@ -628,7 +646,7 @@ async function verifyGroupConfigurationDraft(control, scoped, workspace, agents)
     'collaboration-project-create-close',
     'Tab must wrap to the shared dialog header from group configuration'
   )
-  await control.command('nativePress', scoped(testId('collaboration-project-create-close')), {
+  await control.command('nativePress', CLOSE, {
     key: 'Shift+Tab',
   })
   assert.equal(
@@ -676,18 +694,16 @@ async function verifyGroupConfigurationDraft(control, scoped, workspace, agents)
   await control.command('nativePress', opener, { key: 'Enter' })
   await control.command('waitFor', configuration, { visible: true })
   await verifyGeneratedGroupDraft(control, scoped, configuration, agents, draftName)
-  await control.command('nativePress', scoped(testId('collaboration-project-create-close')), {
-    key: 'Escape',
-  })
+  await control.command('nativePress', CLOSE, { key: 'Escape' })
+  await confirmDiscard(control)
   await control.command('waitFor', DIALOG, { visible: false })
 }
 
 export async function verifyProjectCreateDialogUi(control, scoped) {
-  const previousSize = await control.command('setMainWindowSize', 'body', {
-    value: JSON.stringify({ width: 1024, height: 768 }),
-  })
+  const previousSize = await resizeWindow(control, 1024, 768)
   try {
     await waitForProjectCreateViewport(control)
+    await verifyCloudNameLength(control, scoped)
     const labelledBy = await control.command('getAttribute', DIALOG, {
       value: 'aria-labelledby',
     })
@@ -695,16 +711,7 @@ export async function verifyProjectCreateDialogUi(control, scoped) {
     const title = `${DIALOG} h2[id=${JSON.stringify(labelledBy)}]`
     assert.equal(Number(await control.command('getElementCount', title)), 1)
     assert.ok((await control.command('getText', title)).trim())
-    assert.equal(
-      await control.command(
-        'getAttribute',
-        `${DIALOG} ${testId('collaboration-project-create-close')}`,
-        {
-          value: 'aria-label',
-        }
-      ),
-      '关闭'
-    )
+    assert.equal(await control.command('getAttribute', CLOSE, { value: 'aria-label' }), '关闭')
     await assertProjectCreateActionHit(
       control,
       scoped(testId('collaboration-project-create-confirm'))
@@ -723,7 +730,7 @@ export async function verifyProjectCreateDialogUi(control, scoped) {
       'collaboration-project-create-close',
       'Tab escaped the project creation dialog instead of wrapping to its first control'
     )
-    await control.command('nativePress', scoped(testId('collaboration-project-create-close')), {
+    await control.command('nativePress', CLOSE, {
       key: 'Shift+Tab',
     })
     assert.equal(
@@ -747,13 +754,7 @@ export async function verifyProjectCreateDialogUi(control, scoped) {
       0,
       'Template configuration must reuse the parent dialog'
     )
-    await control.command(
-      'nativePress',
-      `${templateCatalog} ${testId('collaboration-project-create-configuration-back')}`,
-      {
-        key: 'Escape',
-      }
-    )
+    await control.command('nativePress', `${templateCatalog} ${BACK}`, { key: 'Escape' })
     await control.command('waitFor', templateCatalog, { visible: false })
     await control.command('waitFor', DIALOG, { visible: true })
     await verifyTemplateRoleValidation(control, scoped)
@@ -796,6 +797,7 @@ export async function verifyProjectCreateDialogUi(control, scoped) {
 
     await control.command('click', scoped(testId('collaboration-project-create-add-collaborator')))
     await control.command('waitFor', MENU, { visible: true })
+    await assertCollaboratorMenuBounds(control)
     for (const [category, emptyText] of [
       ['members', '当前分组暂无其他可添加人员。'],
       ['agents', '暂无其他可添加的智能体。'],
@@ -858,13 +860,8 @@ async function verifyGitProviderValidation(control, scoped, request, workspace) 
 
   const token = scoped(testId('cloud-project-provider-token'))
   await control.command('scrollIntoView', token, { visible: true })
-  const [input] = JSON.parse(await control.command('getElementMetrics', token))
-  const [icon] = JSON.parse(
-    await control.command(
-      'getElementMetrics',
-      `${DIALOG} .collaboration-project-create-token > svg`
-    )
-  )
+  const input = await readMetrics(control, token)
+  const icon = await readMetrics(control, `${DIALOG} .collaboration-project-create-token > svg`)
   const padding = Number.parseFloat(
     await control.command('getComputedStyleValue', token, { value: 'padding-left' })
   )

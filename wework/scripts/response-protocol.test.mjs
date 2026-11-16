@@ -4,7 +4,7 @@ import { describe, expect, test } from 'vitest'
 import { Readable } from 'node:stream'
 import { gzipSync } from 'node:zlib'
 import { generateCollaborationGroupDraft } from '../src/features/collaboration/collaborationGroupDraftGeneration'
-import { handleProjectCreateGroupModel } from '../e2e/desktop/modules/project-create-dialog-regression.mjs'
+import { handleProjectCreateGroupModel } from '../e2e/desktop/modules/project-create-group-model.mjs'
 import {
   createSse,
   delegatedTaskResultEvents,

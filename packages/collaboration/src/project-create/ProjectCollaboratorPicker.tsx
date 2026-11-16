@@ -1,6 +1,6 @@
 import * as Popover from '@radix-ui/react-popover'
 import { Bot, Plus, Search, UserRound, UsersRound } from 'lucide-react'
-import { useEffect, useRef, useState, type ReactNode } from 'react'
+import { useEffect, useState, type ReactNode } from 'react'
 import {
   CollaborationParticipantsTabs,
   type ParticipantTab,
@@ -96,12 +96,12 @@ export function ProjectCollaboratorPicker({
       </p>
     </div>
   )
-  const trigger = useRef<HTMLButtonElement>(null)
+  const [trigger, setTrigger] = useState<HTMLButtonElement | null>(null)
   return (
     <Popover.Root open={open} onOpenChange={onOpenChange}>
       <Popover.Trigger asChild>
         <button
-          ref={trigger}
+          ref={setTrigger}
           type="button"
           className="collaboration-project-create-collaborator-trigger"
           data-testid="collaboration-project-create-add-collaborator"
@@ -117,12 +117,13 @@ export function ProjectCollaboratorPicker({
           side="bottom"
           align="start"
           sideOffset={6}
+          collisionBoundary={trigger?.closest('.collaboration-project-create-body')}
           collisionPadding={8}
           className={`${theme.className ?? ''} collaboration-project-create-collaborator-menu`}
           data-testid="collaboration-project-create-collaborator-menu"
           aria-label={labels.addCollaborator}
           onCloseAutoFocus={event => {
-            if (trigger.current?.closest('[hidden], [inert]')) event.preventDefault()
+            if (trigger?.closest('[hidden], [inert]')) event.preventDefault()
           }}
         >
           <div className="collaboration-project-collaborator-picker">

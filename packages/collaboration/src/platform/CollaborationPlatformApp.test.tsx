@@ -3268,6 +3268,23 @@ describe("CollaborationPlatformApp real component flow", () => {
       expect.any(Function),
       expect.any(Function),
     );
+    await click(
+      portalByTestId(
+        "collaboration-project-create-model-picker",
+      ).querySelector<HTMLButtonElement>(
+        '[data-testid="collaboration-project-create-configuration-back"]',
+      )!,
+    );
+    const discard = portalByTestId("collaboration-project-create-discard");
+    expect(discard.textContent).toContain("本次未保存的分工和生成结果将丢失");
+    await click(
+      discard.querySelector<HTMLButtonElement>(
+        '[data-testid="collaboration-project-create-configuration-back"]',
+      )!,
+    );
+    expect(
+      portalByTestId("collaboration-project-create-group-editor").textContent,
+    ).toContain("负责人参与实现，成员及时反馈阻塞");
     await click(portalByTestId("collaboration-project-create-apply-group"));
 
     expect(
@@ -3276,6 +3293,22 @@ describe("CollaborationPlatformApp real component flow", () => {
     expect(
       byTestId("collaboration-project-create-group-summary").textContent,
     ).toContain("负责人 · 仅协调");
+    await click(portalByTestId("collaboration-project-create-edit-group"));
+    await click(
+      portalByTestId(
+        "collaboration-project-create-model-picker",
+      ).querySelector<HTMLButtonElement>(
+        '[data-testid="collaboration-project-create-configuration-back"]',
+      )!,
+    );
+    expect(
+      document.querySelector(
+        '[data-testid="collaboration-project-create-discard"]',
+      ),
+    ).toBeNull();
+    expect(
+      byTestId("collaboration-project-create-group-summary").textContent,
+    ).toContain("产品交付小组");
   });
 
   it("keeps Agents unselected when project resources finish loading", async () => {

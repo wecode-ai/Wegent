@@ -14,6 +14,15 @@ export const projectCreateLabels: Record<
     title: "新建项目",
     name: "名称",
     namePlaceholder: "例如：Wegent V4",
+    nameTooLong: "名称最多 {max} 个字符，当前为 {count} 个。",
+    discardProjectTitle: "放弃项目草稿？",
+    discardProjectDescription:
+      "已填写的项目名称、说明、协作者和配置将丢失，项目尚未创建。",
+    discardGroupTitle: "放弃本次分工？",
+    discardGroupDescription:
+      "本次未保存的分工和生成结果将丢失；项目草稿与之前保存的分工会保留。",
+    keepEditing: "继续编辑",
+    discardDraft: "放弃草稿",
     location: "保存位置",
     locationImmutable: "创建后不可更改",
     localLocation: "本地分组",
@@ -143,6 +152,15 @@ export const projectCreateLabels: Record<
     title: "New project",
     name: "Name",
     namePlaceholder: "For example: Wegent V4",
+    nameTooLong: "The name allows up to {max} characters; {count} entered.",
+    discardProjectTitle: "Discard the project draft?",
+    discardProjectDescription:
+      "The project name, description, collaborators and configuration you entered will be lost. The project has not been created.",
+    discardGroupTitle: "Discard these responsibilities?",
+    discardGroupDescription:
+      "Unsaved responsibilities and generated results will be lost. Your project draft and previously saved responsibilities will remain.",
+    keepEditing: "Keep editing",
+    discardDraft: "Discard draft",
     location: "Storage location",
     locationImmutable: "Cannot be changed after creation",
     localLocation: "Local space",

@@ -92,6 +92,11 @@ export function createProjectPythonNoticeRegression({ captureScreenshot }) {
           'click',
           `${DIALOG} [data-testid="collaboration-project-create-close"]`
         )
+        const discard = `${DIALOG} [data-testid="collaboration-project-create-discard"]`
+        const discardAction = `${discard} [data-testid="collaboration-project-create-discard-confirm"]`
+        await control.command('waitFor', discard, { visible: true })
+        await assertActionHit(control, discardAction)
+        await control.command('click', discardAction)
         await control.command('waitFor', DIALOG, { visible: false })
         await control.command('waitFor', NOTICE, { text: '准备失败' })
         await control.command('navigate', 'body', { value: '/settings/execution-environments' })

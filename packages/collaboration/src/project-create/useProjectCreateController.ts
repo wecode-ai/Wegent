@@ -2,7 +2,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-import { useMemo, useRef, useState } from "react";
+import { useMemo, useRef, useState, type SetStateAction } from "react";
 
 import type { CollaborationExecutionEnvironment } from "../types";
 
@@ -64,6 +64,43 @@ export function projectCreateErrorMessage(
       ? cause.message
       : labels.createFailed)
   );
+}
+
+export function projectCreateNameErrorMessage(
+  cause: unknown,
+  labels: ProjectCreateLabels,
+  count: number,
+): string | null {
+  if (!cause || typeof cause !== "object") return null;
+  const error = cause as { status?: unknown; detail?: unknown };
+  if (error.status !== 422 || !error.detail || typeof error.detail !== "object")
+    return null;
+  const errors = (error.detail as { errors?: unknown }).errors;
+  if (!Array.isArray(errors)) return null;
+  for (const item of errors) {
+    if (!item || typeof item !== "object" || !Array.isArray(item.loc)) continue;
+    if (
+      item.loc.length !== 2 ||
+      item.loc[0] !== "body" ||
+      item.loc[1] !== "name"
+    )
+      continue;
+    const max =
+      item.ctx && typeof item.ctx === "object"
+        ? item.ctx.max_length
+        : undefined;
+    if (
+      item.type === "string_too_long" &&
+      Number.isSafeInteger(max) &&
+      max > 0
+    ) {
+      return labels.nameTooLong
+        .replace("{max}", String(max))
+        .replace("{count}", String(count));
+    }
+    if (typeof item.msg === "string" && item.msg.trim()) return item.msg;
+  }
+  return null;
 }
 
 /** Keep template submission and its default device selection on the same readiness boundary. */
@@ -129,6 +166,56 @@ export function useProjectCreateController({
   const createdProjectLocation = useRef(location);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [serverNameError, setServerNameError] = useState<{
+    name: string;
+    location: ProjectCreateLocation;
+    message: string;
+  } | null>(null);
+  const nameLength = Array.from(name.trim()).length;
+  const nameMaxLength = location === "cloud" ? 100 : 255;
+  const currentServerNameError =
+    serverNameError?.name === name.trim() &&
+    serverNameError.location === location
+      ? serverNameError.message
+      : null;
+  const nameError =
+    nameLength > nameMaxLength
+      ? labels.nameTooLong
+          .replace("{max}", String(nameMaxLength))
+          .replace("{count}", String(nameLength))
+      : currentServerNameError;
+  const submitErrorField = currentServerNameError ? ("name" as const) : null;
+  const defaultEnvironmentIds = new Set(
+    defaultExecutionEnvironmentDeviceIds(
+      resourceSetup?.executionEnvironments ?? [],
+    ),
+  );
+  const selectedEnvironmentIds =
+    selectedEnvironmentDeviceIds === null
+      ? null
+      : new Set(selectedEnvironmentDeviceIds);
+  const environmentSelectionChanged =
+    selectedEnvironmentIds !== null &&
+    (selectedEnvironmentIds.size !== defaultEnvironmentIds.size ||
+      [...selectedEnvironmentIds].some((id) => !defaultEnvironmentIds.has(id)));
+  const hasDraft =
+    !createdProject &&
+    Boolean(
+      name.trim() ||
+      description.trim() ||
+      location !== initialLocation ||
+      taskProvider !== "local" ||
+      visibility !== "private" ||
+      defaultIssueSecurity !== "open" ||
+      repositoryAddress ||
+      token ||
+      aitableUrl ||
+      memberUserIds.length ||
+      agentResourceIds.length ||
+      templateDocument ||
+      collaborationGroupDrafts.length ||
+      environmentSelectionChanged,
+    );
   const repositoryProvider =
     taskProvider === "github" || taskProvider === "gitlab";
   const isAITableProvider = taskProvider === "dingtalk_aitable";
@@ -143,6 +230,7 @@ export function useProjectCreateController({
     Boolean(
       createdProject ||
       (name.trim() &&
+        !nameError &&
         !templatePending &&
         (!repositoryProvider || repositoryAddress.trim()) &&
         (!isAITableProvider || aitableLink) &&
@@ -157,6 +245,7 @@ export function useProjectCreateController({
     }
     setSaving(true);
     setError(null);
+    setServerNameError(null);
     try {
       const target = targets.find(
         (candidate) => candidate.location === location,
@@ -259,7 +348,21 @@ export function useProjectCreateController({
       onCreated(project, location);
     } catch (cause) {
       host?.track?.("failed");
-      setError(projectCreateErrorMessage(cause, labels, host));
+      const fieldError = projectCreateNameErrorMessage(
+        cause,
+        labels,
+        nameLength,
+      );
+      if (fieldError) {
+        setServerNameError({
+          name: name.trim(),
+          location,
+          message: fieldError,
+        });
+        setError(null);
+      } else {
+        setError(projectCreateErrorMessage(cause, labels, host));
+      }
     } finally {
       setSaving(false);
     }
@@ -268,6 +371,11 @@ export function useProjectCreateController({
   return {
     state: {
       name,
+      nameError,
+      nameMaxLength,
+      nameLength,
+      submitErrorField,
+      hasDraft,
       description,
       location,
       taskProvider,
@@ -291,9 +399,15 @@ export function useProjectCreateController({
     },
     commands: {
       setTemplateDocument,
-      setName,
+      setName: (value: SetStateAction<string>) => {
+        setName(value);
+        setServerNameError(null);
+      },
       setDescription,
-      setLocation,
+      setLocation: (value: SetStateAction<ProjectCreateLocation>) => {
+        setLocation(value);
+        setServerNameError(null);
+      },
       setTaskProvider,
       setVisibility,
       setDefaultIssueSecurity,
