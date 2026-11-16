@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 
 const CONTENT = '[data-workspace-tab-content][aria-hidden="false"]'
 const scope = selector => `${CONTENT} ${selector}`
-const TITLE = 'Issue 阅读与回复回归'
+const TITLE = 'Issue 阅读与回复回归：窄窗口与字号变化后的长标题完整显示'
 const DESCRIPTION = [
   '## 目标',
   '让参与者打开详情即可理解目标与验收结果。',
@@ -61,6 +61,22 @@ async function verifyConstrainedDiscussion(control, captureScreenshot, replySele
     })
   )
   try {
+    await control.command('click', scope('[data-testid="issue-reply-cancel"]'))
+    const sendActions = scope('[data-testid="task-comment-form-send-actions"]')
+    await control.command('waitFor', sendActions)
+    await control.command('scrollIntoViewAsUser', sendActions)
+    await control.command('click', sendActions)
+    const sendOption = '[data-testid="task-comment-form-send-option"]'
+    const closeOption = '[data-testid="task-comment-form-close"]'
+    await control.command('waitFor', sendOption, { visible: true })
+    await verifyTouchTargets(control, sendOption + ', ' + closeOption)
+    await control.command('nativePress', closeOption, { key: 'Escape' })
+    await control.command('waitFor', sendOption, { visible: false })
+    await control.command('scrollIntoViewAsUser', replySelector)
+    await control.command('click', replySelector)
+    await control.command('waitFor', scope('[data-testid="issue-reply-composer"]'), {
+      visible: true,
+    })
     await verifyNarrowProperties(control)
     await control.command(
       'scrollIntoViewAsUser',
@@ -187,15 +203,6 @@ async function verifyConstrainedDiscussion(control, captureScreenshot, replySele
       draftViewport.height - draftForm.height - 16 >= draftViewport.height / 2,
       `Long drafts must preserve the reading budget: ${JSON.stringify(draftMetrics)}`
     )
-    await control.command('click', scope('[data-testid="task-comment-form-send-actions"]'))
-    const sendOption = '[data-testid="task-comment-form-send-option"]'
-    await control.command('waitFor', sendOption, { visible: true })
-    await verifyTouchTargets(
-      control,
-      '[data-testid="task-comment-form-send-option"], [data-testid="task-comment-form-close"]'
-    )
-    await control.command('nativePress', sendOption, { key: 'Escape' })
-    await control.command('waitFor', sendOption, { visible: false })
     await control.command(
       'nativePress',
       replySelector.replace('cloud-task-activity-reply-toggle-', 'issue-comment-create-child-'),
@@ -302,7 +309,12 @@ async function verifyTallReplyReading(
     await captureScreenshot(control, 'issue-detail-reading-06-tall-reply-discussion.png')
     await control.command('scrollIntoViewAsUser', footer)
     await verifyComposerVisible(control)
-    await control.command('waitFor', composer, { text: draft, visible: true })
+    await control.command('waitFor', composer, { visible: true })
+    assert.equal(
+      await control.command('getValue', composer),
+      draft,
+      'Returning to the composer must preserve every draft line'
+    )
     await captureScreenshot(control, 'issue-detail-reading-07-tall-reply-controls.png')
     await control.command('click', `${attachment} [data-testid="remove-attachment-button"]`)
     await control.command('waitFor', attachment, { visible: false })
@@ -311,10 +323,83 @@ async function verifyTallReplyReading(
       await control.command('getComputedStyleValue', footer, { value: 'position' }),
       'sticky'
     )
-    await control.command('waitFor', composer, { text: draft })
+    assert.equal(
+      await control.command('getValue', composer),
+      draft,
+      'Removing the attachment must preserve every draft line'
+    )
     await verifyComposerVisible(control)
   } finally {
     await control.command('setMainWindowSize', 'body', { value: previousSize })
+  }
+}
+
+async function setIssueUIFontSize(control, issueId, size) {
+  await control.command('click', scope('[data-testid="settings-button"]'))
+  await control.command('waitFor', '[data-testid="settings-menu-button"]', { visible: true })
+  await control.command('click', '[data-testid="settings-menu-button"]')
+  const back = scope('[data-testid="settings-back-button"]')
+  await control.command('waitFor', back, { visible: true })
+  await control.command('click', scope('[data-testid="settings-nav-appearance"]'))
+  const input = scope('[data-testid="appearance-ui-font-size-input"]')
+  await control.command('scrollIntoViewAsUser', input)
+  await control.command('waitFor', input, { visible: true })
+  await control.command('fill', input, { value: String(size) })
+  await control.command('nativePress', input, { key: 'Enter' })
+  await control.command('click', back)
+  const detail = scope('[data-testid="cloud-todo-detail"]')
+  const metrics = JSON.parse(await control.command('getElementMetrics', detail))
+  if (!metrics.some(row => row.visibleIntersection)) {
+    const card = scope(`[data-testid="cloud-todo-card-${issueId}"]`)
+    await control.command('waitFor', card, { visible: true })
+    await control.command('click', card)
+  }
+  await control.command('waitFor', detail, { visible: true })
+  const title = scope('[data-testid="cloud-todo-detail-title"]')
+  assert.equal(
+    await control.command('getComputedStyleValue', title, { value: '--text-base' }),
+    `${size}px`
+  )
+}
+
+async function verifyIssueTypography(control, issueId, captureScreenshot) {
+  const previous = await control.command('setMainWindowSize', 'body', {
+    value: JSON.stringify({ width: 1280, height: 900 }),
+  })
+  const title = scope('[data-testid="cloud-todo-detail-title"]')
+  const body = scope('[data-testid="cloud-todo-detail-description"]')
+  try {
+    await setIssueUIFontSize(control, issueId, 16)
+    for (const [selector, token] of [
+      [title, '--text-heading-lg'],
+      [body, '--text-base'],
+    ]) {
+      assert.equal(
+        await control.command('getComputedStyleValue', selector, { value: 'font-size' }),
+        await control.command('getComputedStyleValue', selector, { value: token }),
+        'Issue typography must follow the actual appearance settings'
+      )
+    }
+    assert.equal(
+      await control.command('getComputedStyleValue', title, { value: 'font-weight' }),
+      '500'
+    )
+    await control.command('setMainWindowSize', 'body', {
+      value: JSON.stringify({ width: 480, height: 760 }),
+    })
+    await control.command('scrollIntoViewAsUser', title)
+    const [geometry] = JSON.parse(await control.command('getElementMetrics', title))
+    assert.ok(
+      geometry.scrollHeight <= geometry.clientHeight + 1,
+      `Scaled titles must remain fully visible: ${JSON.stringify(geometry)}`
+    )
+    await captureScreenshot(control, 'issue-detail-reading-08-large-typography.png')
+  } finally {
+    await control.command('setMainWindowSize', 'body', {
+      value: JSON.stringify({ width: 1280, height: 900 }),
+    })
+    await setIssueUIFontSize(control, issueId, 14)
+    await control.command('setMainWindowSize', 'body', { value: previous })
   }
 }
 
@@ -516,4 +601,5 @@ export async function verifyIssueDetailReading(control, { captureScreenshot, uiT
     `Expanding details must not shrink the reading column: ${JSON.stringify({ beforeExpansion, expanded })}`
   )
   await control.command('click', expand)
+  await verifyIssueTypography(control, issueId, captureScreenshot)
 }

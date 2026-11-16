@@ -4,6 +4,7 @@ import { IssueDeliveryContent } from "./issue-detail/IssueDeliveryContent";
 import { IssueDeliveryEditor } from "./issue-detail/IssueDeliveryEditor";
 import { collaborationIssueCardPriorityClasses as priorityBadgeClasses } from "./issue-card/priorityBadgeClasses";
 import { useIssueFieldSaves } from "./issue-detail/useIssueFieldSaves";
+import { useIssueTitleSize } from "./issue-detail/useIssueTitleSize";
 import { IssueHeaderContext } from "./issue-detail/IssueHeaderContext";
 import { persistIssueDetailFields } from "./issue-detail/persistIssueDetailFields";
 import {
@@ -1090,7 +1091,13 @@ export function TodoEditor(props: TodoEditorProps) {
       root.removeEventListener("scroll", update);
     };
   }, [item?.id, canPinPersonalTaskAction]);
-  const titleRef = useRef<HTMLTextAreaElement>(null);
+  const titleRef = useIssueTitleSize({
+    value: title,
+    issueId: item?.id ?? null,
+    editing: editingContent,
+    expanded: fullScreen,
+    workspacePanel,
+  });
   const descriptionCollapseRef = useRef<HTMLDivElement>(null);
   const propertiesTriggerRef = useRef<HTMLButtonElement>(null);
   const [propertiesExpanded, setPropertiesExpanded] = useState(false);
@@ -1260,37 +1267,6 @@ export function TodoEditor(props: TodoEditorProps) {
     if (!node) return;
     node.scrollTop = 0;
   }, [editItemId, isCreate]);
-
-  useLayoutEffect(() => {
-    const textarea = titleRef.current;
-    if (!textarea) return;
-
-    const resize = () => {
-      textarea.style.height = "auto";
-      if (textarea.scrollHeight > 0) {
-        textarea.style.height = `${textarea.scrollHeight}px`;
-      }
-    };
-    resize();
-
-    let observedWidth = textarea.parentElement?.clientWidth ?? 0;
-    const resizeObserver =
-      typeof ResizeObserver === "undefined" || !textarea.parentElement
-        ? null
-        : new ResizeObserver((entries) => {
-            const width = entries[0]?.contentRect.width ?? 0;
-            if (width === observedWidth) return;
-            observedWidth = width;
-            resize();
-          });
-    if (textarea.parentElement) resizeObserver?.observe(textarea.parentElement);
-    window.addEventListener("resize", resize);
-
-    return () => {
-      resizeObserver?.disconnect();
-      window.removeEventListener("resize", resize);
-    };
-  }, [editItemId, editingContent, fullScreen, title, workspacePanel]);
 
   useEffect(() => {
     if (!workspacePanel || descriptionExpanded) return;
@@ -3172,7 +3148,7 @@ export function TodoEditor(props: TodoEditorProps) {
                       "目标或事项标题",
                     )}
                     className={cn(
-                      "block w-full resize-none overflow-hidden border-0 bg-transparent font-bold tracking-tight text-text-primary outline-none placeholder:text-text-muted",
+                      "block w-full resize-none overflow-hidden border-0 bg-transparent font-medium tracking-tight text-text-primary outline-none placeholder:text-text-muted",
                       twoColumn
                         ? "task-detail-title"
                         : "py-1.5 text-heading-lg",

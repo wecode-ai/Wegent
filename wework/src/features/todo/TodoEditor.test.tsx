@@ -5,6 +5,7 @@ import userEvent from '@testing-library/user-event'
 import { startTransition, Suspense, useState } from 'react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { TodoEditor } from './TodoEditor'
+import { CollaborationTheme } from '@wegent/collaboration/theme'
 
 function deferred<T>() {
   let resolve!: (value: T) => void
@@ -47,6 +48,50 @@ const baseItem = {
 const project = { id: '11', name: 'Wework' } as unknown as CloudProject
 
 describe('TodoEditor external item sync', () => {
+  it('keeps a wrapped title fully visible when typography changes without remounting', async () => {
+    const originalFont = document.documentElement.style.getPropertyValue('--text-heading-lg')
+    let measuredHeight = 44
+    const height = vi.spyOn(Element.prototype, 'scrollHeight', 'get').mockImplementation(function (
+      this: HTMLElement
+    ) {
+      return this.dataset.testid === 'cloud-todo-detail-title' ? measuredHeight : 0
+    })
+    const editor = (fontSize: string) => (
+      <CollaborationTheme mode="light" variables={{ '--text-heading-lg': fontSize }}>
+        <TodoEditor
+          mode="edit"
+          item={baseItem}
+          project={project}
+          allItems={[baseItem]}
+          presentation="workspace-panel"
+          readFirst
+          onUpdated={vi.fn()}
+          onClose={vi.fn()}
+          api={api}
+        />
+      </CollaborationTheme>
+    )
+    try {
+      const view = render(editor('24px'))
+      const title = screen.getByTestId('cloud-todo-detail-title')
+      expect(title).toHaveStyle({ height: '44px' })
+      title.focus()
+      measuredHeight = 73
+      view.rerender(editor('27px'))
+      expect(title).toHaveStyle({ height: '73px' })
+      measuredHeight = 90
+      act(() => document.documentElement.style.setProperty('--text-heading-lg', '30px'))
+      await waitFor(() => expect(title).toHaveStyle({ height: '90px' }))
+      expect(screen.getByTestId('cloud-todo-detail-title')).toBe(title)
+      expect(title).toHaveFocus()
+      expect(title).toHaveValue(baseItem.title)
+    } finally {
+      if (originalFont)
+        document.documentElement.style.setProperty('--text-heading-lg', originalFont)
+      else document.documentElement.style.removeProperty('--text-heading-lg')
+      height.mockRestore()
+    }
+  })
   it.each([false, true])(
     'explains local participant availability (workspace panel: %s)',
     async workspacePanel => {

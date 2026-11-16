@@ -391,9 +391,6 @@
 }
 
 .task-detail-left {
-  --task-detail-title-font-size: 1.625rem;
-  --task-detail-body-font-size: 0.9375rem;
-
   flex: 1;
   min-width: 0;
   overflow-y: auto;
@@ -426,11 +423,9 @@
   width: 100%;
   field-sizing: fixed;
   min-height: 40px;
-  font-size: 25px;
   margin: 0;
   padding: 0;
   border-radius: 0;
-  font-weight: 650;
   line-height: 1.35;
 }
 
@@ -603,15 +598,15 @@
 
 .task-detail-default-assistant-copy strong {
   color: rgb(var(--color-text-primary));
-  font-size: 13px;
-  font-weight: 650;
+  font-size: var(--text-sm);
+  font-weight: 500;
 }
 
 .task-detail-default-assistant-copy small,
 .task-detail-default-assistant-copy span {
   overflow: hidden;
   color: rgb(var(--color-text-muted));
-  font-size: 11px;
+  font-size: var(--text-xs);
   line-height: 1.45;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -628,7 +623,7 @@
   border-radius: 9px;
   color: rgb(var(--color-bg-base));
   background: rgb(var(--color-text-primary));
-  font-size: 12px;
+  font-size: var(--text-xs);
   font-weight: 600;
   white-space: nowrap;
 }
@@ -1058,7 +1053,7 @@
 .issue-automation-execution-head strong {
   color: rgb(var(--color-text-primary));
   font-size: var(--text-sm);
-  font-weight: 650;
+  font-weight: 500;
 }
 
 .issue-automation-execution-head > span {
@@ -1167,7 +1162,7 @@
 }
 
 .task-detail-workspace-description .task-detail-desc.is-collapsed textarea {
-  min-height: calc(var(--task-detail-body-font-size) * 1.75);
+  min-height: calc(var(--text-base) * 1.75);
   max-height: 240px;
   overflow: hidden;
   resize: none;
@@ -1896,7 +1891,7 @@
   color: rgb(var(--color-text-secondary));
   background: rgb(var(--color-bg-base));
   font-size: var(--text-xs);
-  font-weight: 650;
+  font-weight: 500;
 }
 
 .task-detail-current-assignment-avatar.is-agent {
@@ -2022,13 +2017,16 @@
 
 .task-detail-title {
   field-sizing: content;
-  font-size: var(--task-detail-title-font-size);
-  font-weight: 650;
   line-height: 1.3;
   outline: none;
   border-radius: 8px;
   padding: 4px 8px;
   margin: 0 -8px;
+}
+
+.task-detail-left .task-detail-title {
+  font-size: var(--text-heading-lg);
+  font-weight: 500;
 }
 
 .task-detail-title:hover {
@@ -2116,7 +2114,7 @@
 
 .task-detail-desc .bn-editor {
   min-height: 0;
-  font-size: var(--task-detail-body-font-size);
+  font-size: var(--text-base);
   line-height: 1.75;
   color: rgb(var(--color-text-primary));
   background: transparent;
