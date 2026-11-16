@@ -50,7 +50,14 @@ export function createDesktopScenario(options) {
       await control.command('click', selector('template-tab-discover'))
       await control.command('clickWhenEnabled', selector('template-details-product-lifecycle'))
       await control.command('clickWhenEnabled', selector('template-use'))
-      await control.command('click', `${selector('template-runtime-configuration')} > summary`)
+      await control.command(
+        'clickWhenEnabled',
+        `${selector('template-runtime-configuration')} > summary`,
+        {
+          visible: true,
+          timeoutMs: uiTimeoutMs,
+        }
+      )
       const field = selector('template-model-codex')
       await control.command('waitFor', `${field}:enabled`)
       await control.command('fill', selector('template-group-name-main'), {

@@ -25,7 +25,14 @@ export function createDesktopScenario({ uiTimeoutMs, captureScreenshot }) {
       await control.command('click', selector('template-tab-discover'))
       await control.command('clickWhenEnabled', selector('template-details-product-lifecycle'))
       await control.command('clickWhenEnabled', selector('template-use'))
-      await control.command('click', `${selector('template-runtime-configuration')} > summary`)
+      await control.command(
+        'clickWhenEnabled',
+        `${selector('template-runtime-configuration')} > summary`,
+        {
+          visible: true,
+          timeoutMs: uiTimeoutMs,
+        }
+      )
       const modelSelector = selector('template-model-codex')
       await control.command('waitFor', `${modelSelector}:enabled`)
       const initialCatalog = await requestExecutor(

@@ -4880,7 +4880,7 @@ source = ${JSON.stringify(staleBundledMarketplacePath)}`
       }
       await writeFile(
         join(resultDir, 'performance.json'),
-        JSON.stringify(control.performance.report(!testFailed), null, 2)
+        JSON.stringify(control.performance.report(!testFailed && !control.fatalError), null, 2)
       )
     })
     await runTeardownStep('desktop application', async () => stopDesktopAppProcess(app))
@@ -4903,7 +4903,10 @@ source = ${JSON.stringify(staleBundledMarketplacePath)}`
         })
       }
     })
-    await runTeardownStep('desktop controller', async () => control.close())
+    await runTeardownStep('desktop controller', async () => {
+      await control.close()
+      if (control.fatalError) throw control.fatalError
+    })
     await runTeardownStep('blocking network proxy', async () => blockingNetworkProxy?.stop())
     await runTeardownStep('cloud history search proxy', async () => cloudHistorySearch?.cleanup())
     await runTeardownStep('cloud environment', async () => cloudEnvironment?.stop())
