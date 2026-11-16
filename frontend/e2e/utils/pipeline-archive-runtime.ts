@@ -91,10 +91,12 @@ export async function runtimeProcess<T>(
 }
 
 /**
- * The manager closes idle keep-alive sockets, and a client that reuses one can
- * observe a reset before the request is served. The manager records no failed
- * request and keeps serving, so retry this idempotent metadata lookup the same
- * way other E2E polling helpers treat transport errors.
+ * Playwright's APIRequestContext keeps a Node keep-alive agent. A manager
+ * request that omits `Connection: close` leaves a reusable socket in that
+ * agent; the E2E Manager closes idle sockets, so a later request can inherit
+ * a closed socket and read ECONNRESET before the Manager logs the request.
+ * Every Manager call now sends `Connection: close` to keep the pool empty;
+ * retain a bounded retry only as a safety net for this idempotent lookup.
  */
 async function getRuntimeMetadata(
   request: APIRequestContext,
