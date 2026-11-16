@@ -58,6 +58,8 @@ pnpm --filter wework test src/features/todo/CloudTodoWorkspace.test.tsx src/feat
 
 首轮 Web CI 的两个创建流程稳定报出高级设置按钮被 footer 遮挡，桌面 CI 的成员搜索框也落在视口外。恢复原有 div 滚动容器，将原生 disabled fieldset 放入其中并使用 display: contents，保留锁定行为。现有 Dialog 的 4 项测试通过。内置浏览器的 300×150 诊断视口中，旧结构 scrollIntoView 后整体容器移到 y=-621.5，内部 scrollTop 仍为 0；修复后容器保持 y=55.5，内部 scrollTop=649，目标按钮命中正确。该小视口诊断未复现 CI 的 footer 拦截，完整 Web/桌面流程以新一轮 CI 为准。
 
+第二轮 CI（63ba3178）：单元测试、lint 和完整 Platform E2E 均通过，包含此前失败的两个 Web 分片。桌面 Core shard 10 再次确认首次打开成员菜单后搜索框 y=722.7，位于视口外，尚未进入成员选择断言。真实 Radix、ProjectPeoplePicker 与 base.css 的最小浏览器诊断稳定复现：891×741 视口、触发器 bottom=729 时，禁用碰撞检测使菜单 y=735、搜索框 y=778.25；恢复默认碰撞检测并设置 8px 边距后，菜单自动上翻到 y=570.5，搜索框 y=613.75，命中 INPUT 且实际选择成员成功。修复保留同一组件和交互断言，未增加等待时间或跳过场景；现有 Dialog 4 项测试通过。
+
 # Verification and rollback
 
 The unit plan covers cloud member creation, partial failures, search recovery, authoritative server-roster checks, the existing template pipeline, local-source hiding and the disabled flag. The existing CI-covered `collaboration-shared-core` scenario now includes real-account member persistence and reload checks. Local E2E and real Electron verification were not run, as instructed. The initial test results above were recorded before integration with the latest main branch. Set `VITE_COLLAB_PROJECT_CREATE_MEMBERS_V1=false` in the Wework build environment and rebuild to disable ordinary-entry member creation without deleting existing memberships.

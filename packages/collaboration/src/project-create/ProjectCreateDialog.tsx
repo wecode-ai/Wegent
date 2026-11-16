@@ -1331,7 +1331,7 @@ export function ProjectCreateDialog(props: ProjectCreateDialogProps) {
                       side="bottom"
                       align="start"
                       sideOffset={6}
-                      avoidCollisions={false}
+                      collisionPadding={8}
                       className={`${portalTheme.className ?? ""} collaboration-project-create-collaborator-menu`}
                       data-testid="collaboration-project-create-collaborator-menu"
                     >
