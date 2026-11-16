@@ -7,14 +7,16 @@ export function projectMetadataWorkspace(work: RuntimeProjectWork): RuntimeDevic
   const roots = work.project.roots
   const normalize = (path: string) => path.trim().replace(/\/+$/u, '') || '/'
   const primary = roots?.[0]?.path
+  const primaryWorkspace = primary
+    ? work.deviceWorkspaces.find(item => normalize(item.workspacePath) === normalize(primary))
+    : undefined
   const workspace =
     work.deviceWorkspaces.length === 1
       ? work.deviceWorkspaces[0]
-      : primary
-        ? work.deviceWorkspaces.find(item => normalize(item.workspacePath) === normalize(primary))
-        : new Set(work.deviceWorkspaces.map(item => item.remoteHostId || item.deviceId)).size <= 1
+      : (primaryWorkspace ??
+        (new Set(work.deviceWorkspaces.map(item => item.remoteHostId || item.deviceId)).size <= 1
           ? work.deviceWorkspaces[0]
-          : undefined
+          : undefined))
   if (!workspace) throw new Error('无法确定项目所属设备，请刷新项目列表')
   return workspace
 }
@@ -24,14 +26,14 @@ export function projectMutationTargets(work: RuntimeProjectWork) {
   const project = work.project
   const primary = {
     deviceId: workspace.deviceId,
-    projectKey: project.key,
+    projectKey: project.ownerProjectKey || project.key,
     workspacePath: workspace.workspacePath,
     runtime: 'codex' as const,
   }
   const mirror =
     project.sidebarStateKey &&
     project.stateDeviceId &&
-    (project.stateDeviceId !== workspace.deviceId || project.sidebarStateKey !== project.key)
+    (project.stateDeviceId !== workspace.deviceId || project.sidebarStateKey !== primary.projectKey)
       ? { ...primary, deviceId: project.stateDeviceId, projectKey: project.sidebarStateKey }
       : null
   return { primary, mirror }
@@ -80,12 +82,17 @@ export function useProjectActions({
   const removeProject = useCallback(
     async (work: RuntimeProjectWork) => {
       const { primary, mirror } = projectMutationTargets(work)
-      for (const target of [primary, ...(mirror ? [mirror] : [])]) {
+      const workspace = projectMetadataWorkspace(work)
+      const offlineRemote =
+        !workspace.available &&
+        (workspace.workspaceSource === 'remote' || Boolean(workspace.remoteHostId))
+      const targets = offlineRemote && mirror ? [mirror] : [primary, ...(mirror ? [mirror] : [])]
+      for (const target of targets) {
         const result = await api.removeWorkspace(target)
         if (!result.accepted) throw new Error(result.error || '无法移除项目')
       }
       onRemoved?.(work)
-      await refresh([primary.deviceId, ...(mirror ? [mirror.deviceId] : [])])
+      await refresh(targets.map(target => target.deviceId))
     },
     [api, refresh, onRemoved]
   )

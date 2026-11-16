@@ -35,7 +35,7 @@ afterEach(async () => {
 async function setup() {
   const api = {
     setProjectPinned: vi.fn(async () => ({ accepted: true })),
-    renameWorkspace: vi.fn(async () => ({ accepted: true })),
+    renameWorkspace: vi.fn(async (_input: unknown) => ({ accepted: true })),
     removeWorkspace: vi.fn(async () => ({ accepted: true })),
   }
   const reloadWork = vi.fn(async (_deviceId: string) => {})
@@ -108,6 +108,67 @@ describe('PC project management parity', () => {
         deviceWorkspaces: [workspace, { ...workspace, deviceId: 'other' }],
       })
     ).toThrow('无法确定项目所属设备')
+  })
+  it('matches PC metadata selection when a saved root is stale on one owner', () => {
+    const first = { ...workspace, workspacePath: '/moved-repo' }
+    expect(
+      projectMetadataWorkspace({
+        ...project,
+        deviceWorkspaces: [first, { ...workspace, workspacePath: '/other-root' }],
+      })
+    ).toBe(first)
+  })
+  it('renames the actual owner project before its sidebar reference', async () => {
+    const { api, actions } = await setup()
+    const remote: RuntimeProjectWork = {
+      ...project,
+      project: {
+        ...project.project,
+        key: 'wegent-remote:computer:owner-key',
+        sidebarStateKey: 'wegent-remote:computer:owner-key',
+        ownerProjectKey: 'owner-key',
+        stateDeviceId: 'state-owner',
+      },
+    }
+    await actions.renameProject(remote, 'Renamed')
+    expect(api.renameWorkspace.mock.calls.map(([target]) => target)).toEqual([
+      {
+        deviceId: 'computer',
+        projectKey: 'owner-key',
+        workspacePath: '/repo',
+        runtime: 'codex',
+        name: 'Renamed',
+      },
+      {
+        deviceId: 'state-owner',
+        projectKey: 'wegent-remote:computer:owner-key',
+        workspacePath: '/repo',
+        runtime: 'codex',
+        name: 'Renamed',
+      },
+    ])
+  })
+  it('removes an offline remote sidebar reference without contacting its unavailable owner', async () => {
+    const { api, actions, reloadWork } = await setup()
+    await actions.removeProject({
+      ...project,
+      project: {
+        ...project.project,
+        sidebarStateKey: 'sidebar-key',
+        stateDeviceId: 'state-owner',
+        ownerProjectKey: 'owner-key',
+      },
+      deviceWorkspaces: [
+        { ...workspace, available: false, workspaceSource: 'remote', remoteHostId: 'computer' },
+      ],
+    })
+    expect(api.removeWorkspace).toHaveBeenCalledExactlyOnceWith({
+      deviceId: 'state-owner',
+      projectKey: 'sidebar-key',
+      workspacePath: '/repo',
+      runtime: 'codex',
+    })
+    expect(reloadWork).toHaveBeenCalledExactlyOnceWith('state-owner')
   })
   it('does not refresh on rejected writes or repeat accepted writes after read failure', async () => {
     const { api, actions, reloadWork } = await setup()
