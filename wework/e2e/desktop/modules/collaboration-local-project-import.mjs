@@ -9,6 +9,7 @@ import {
   reloadMainWindow,
   expandCollaborationSpaces,
   revealCollaborationSidebarElement,
+  LOCAL_COLLABORATION_WORKSPACE_ID,
 } from './workspace-flows.mjs'
 
 async function waitForLocalProject(control, projectId, timeoutMs) {
@@ -85,7 +86,7 @@ export async function verifyCollaborationLocalProjectImport(
     })
     await control.command('click', '[data-testid="workspace-tab-select-fixed-board"]')
     const localWorkspace = inCollaborationSidebar(
-      '[data-testid="collaboration-project-tree"] > .collaboration-workspace-group:first-child [data-testid^="collaboration-workspace-actions"]'
+      `[data-testid="collaboration-workspace-tree-${LOCAL_COLLABORATION_WORKSPACE_ID}"] [data-testid^="collaboration-workspace-actions"]`
     )
     const cloudWorkspace = inCollaborationSidebar(
       `[data-testid="collaboration-workspace-${cloudWorkspaceId}"]`
