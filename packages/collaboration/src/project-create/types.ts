@@ -119,7 +119,6 @@ export interface ProjectCreateResourceSetup {
   searchUsers?(query: string): Promise<CollaborationUser[]>;
   groups: CollaborationGroup[];
   executionEnvironments?: CollaborationExecutionEnvironment[];
-  requiresTemplateEnvironmentSelection?: boolean;
   executionEnvironmentLoading?: boolean;
   executionEnvironmentError?: string;
   retryExecutionEnvironments?(): void;
@@ -209,7 +208,7 @@ export interface ProjectCreateLabels {
   collaborators: string;
   currentUser: string;
   addCollaborator: string;
-  searchPeople: string;
+  searchCollaborators: string;
   searchingPeople: string;
   availablePeople: string;
   peopleSearchFailed: string;
@@ -272,7 +271,6 @@ export interface ProjectCreateLabels {
 }
 
 export interface ProjectCreateDialogProps {
-  importActions?: ReactNode;
   initialTemplate?: import("../templates/types").CollaborationTemplate | null;
   targets: ProjectCreateTarget[];
   defaultLocation: ProjectCreateLocation;

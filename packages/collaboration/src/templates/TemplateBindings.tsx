@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
-import { X } from 'lucide-react'
+import { ChevronRight, X } from 'lucide-react'
 import type { CollaborationGroupMember } from '../types'
 import type { CollaborationLocale } from '../i18n'
 import type { ProjectCreateCollaborationGroupDraft } from '../project-create/types'
@@ -314,6 +314,7 @@ export function TemplateBindingsDialog({
   const error = failure ? templateFailureMessage(failure, locale) : null
   const recovery = failure instanceof TemplateApplyRecoveryError ? failure : null
   const failed = failure instanceof PartialTemplateApplyError || recovery?.retryBlocked === true
+  const [configurationMounted, setConfigurationMounted] = useState(false)
   const [modelState, setModelState] = useState<{
     configuration: TemplateModelConfiguration
     models: Partial<Record<RunnerModelIdentity['runtime'], RunnerModelIdentity>>
@@ -353,7 +354,7 @@ export function TemplateBindingsDialog({
             type="button"
             className="collaboration-primary-button"
             data-testid="template-bindings-apply"
-            disabled={!selection || busy || failed || runtimes.some(runtime => !models[runtime])}
+            disabled={!selection || busy || failed}
             onClick={async () => {
               if (!selection) return
               if (
@@ -370,17 +371,10 @@ export function TemplateBindingsDialog({
               setFailure(null)
               try {
                 const args = [selection.drafts, selection.document] as const
-                if (runtimes.length && modelConfiguration) {
+                if (modelConfiguration) {
                   await onApply(
                     ...args,
-                    templateRoutingResolver(
-                      modelConfiguration.host,
-                      modelConfiguration.location,
-                      modelConfiguration.projectId,
-                      locale,
-                      modelConfiguration.environmentId,
-                      models
-                    )
+                    templateRoutingResolver(modelConfiguration.environmentId, models)
                   )
                 } else {
                   await onApply(...args)
@@ -428,33 +422,53 @@ export function TemplateBindingsDialog({
         onChange={(drafts, document) => setSelection(drafts ? { drafts, document } : null)}
       />
       {!selection && <p className="collaboration-template-muted">{m.unbound}</p>}
-      {renderConfiguration?.(busy || failed)}
-      {runtimes.map(runtime => (
-        <TemplateModelSelection
-          key={JSON.stringify([
-            runtime,
-            modelConfiguration?.location,
-            modelConfiguration?.projectId,
-            modelConfiguration?.environmentId,
-          ])}
-          runtime={runtime}
-          showRuntime={runtimes.length > 1}
-          configuration={modelConfiguration!}
-          locale={locale}
-          disabled={busy || failed}
-          onChange={model =>
-            setModelState(current => ({
-              configuration: modelConfiguration!,
-              models: {
-                ...(current && sameTemplateModelScope(current.configuration, modelConfiguration)
-                  ? current.models
-                  : {}),
-                [runtime]: model,
-              },
-            }))
-          }
-        />
-      ))}
+      {(renderConfiguration || runtimes.length > 0) && (
+        <details
+          className="collaboration-runtime-disclosure"
+          data-testid="template-runtime-configuration"
+          onToggle={event => {
+            if (event.currentTarget.open) setConfigurationMounted(true)
+          }}
+        >
+          <summary>
+            <ChevronRight aria-hidden="true" />
+            <span>{m.optionalRuntimeConfiguration}</span>
+          </summary>
+          <p className="collaboration-runtime-hint">{m.deferredRuntimeHint}</p>
+          {configurationMounted && (
+            <>
+              {renderConfiguration?.(busy || failed)}
+              {runtimes.map(runtime => (
+                <TemplateModelSelection
+                  key={JSON.stringify([
+                    runtime,
+                    modelConfiguration?.location,
+                    modelConfiguration?.projectId,
+                    modelConfiguration?.environmentId,
+                  ])}
+                  runtime={runtime}
+                  showRuntime={runtimes.length > 1}
+                  configuration={modelConfiguration!}
+                  locale={locale}
+                  disabled={busy || failed}
+                  onChange={model =>
+                    setModelState(current => ({
+                      configuration: modelConfiguration!,
+                      models: {
+                        ...(current &&
+                        sameTemplateModelScope(current.configuration, modelConfiguration)
+                          ? current.models
+                          : {}),
+                        [runtime]: model,
+                      },
+                    }))
+                  }
+                />
+              ))}
+            </>
+          )}
+        </details>
+      )}
       {error && (
         <p role="alert" className="collaboration-template-error">
           {error}

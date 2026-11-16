@@ -331,9 +331,7 @@ describe('CollaborationApp shared project board', () => {
     const card = await screen.findByTestId('collaboration-issue-issue-1')
     await dragCardTo(card, screen.getByTestId('cloud-todo-column-dropzone-in_progress'))
     await waitFor(() =>
-      expect(screen.getByRole('alert')).toHaveTextContent(
-        '机器人没有符合配置且获项目授权的执行环境'
-      )
+      expect(screen.getByRole('alert')).toHaveTextContent('请到项目设置 → 执行环境添加或授权设备')
     )
     expect(update).toHaveBeenCalledTimes(1)
     expect(update).toHaveBeenCalledWith(current.id, {

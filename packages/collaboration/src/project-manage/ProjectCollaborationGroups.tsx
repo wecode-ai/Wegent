@@ -291,12 +291,7 @@ function ScopedProjectCollaborationGroups({
               drafts,
               locale,
               templateMessages[locale].partial,
-              templateRoutingResolver(
-                agentConfiguration,
-                location,
-                projectId,
-                locale,
-              ),
+              templateRoutingResolver(),
               onGroupsRefreshed,
             );
             try {

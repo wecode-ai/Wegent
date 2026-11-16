@@ -86,6 +86,10 @@
     "working": "正在处理…"
   },
   "issue_creation": {
+    "configure_devices": "选择或添加设备",
+    "runtime_label": "运行环境（可选）",
+    "runtime_optional_hint": "可先创建事项，运行智能体时再配置。",
+
     "add_participants": "添加参与者",
     "participant_type": "参与者类型",
     "participant_human": "人员",
@@ -4341,6 +4345,7 @@
     "runner_personal_devices": "个人设备",
     "runner_shared_devices": "共享设备",
     "runner_environment_unavailable": "环境不可用",
+    "runner_environment_setup_hint": "尚未配置运行环境。请到项目设置 → 执行环境添加设备，再重试。",
     "runner_environment_unavailable_hint": "原执行环境已不可用或无权访问，请重新选择环境。",
     "runner_model_requires_environment": "选择执行环境后可配置模型。",
     "runner_account_unknown": "未报告账号来源",
@@ -4361,6 +4366,8 @@
     "runner_selection_confirm": "确认执行配置",
     "runner_selection_cancelled": "已取消执行配置选择",
     "runner_status_unknown": "状态待确认",
+    "runner_default_unavailable": "默认设备当前不可用。",
+    "runner_clear_default": "清除默认设备",
     "runner_personal_default": "个人默认执行环境",
     "runner_project_pool_hint": "选择云端模型，运行时从项目已授权且支持该模型的环境中自动分配。",
     "runner_model_at_runtime_hint": "使用时选择有权使用的云端模型。",

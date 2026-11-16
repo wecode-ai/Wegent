@@ -48,7 +48,19 @@ function fixture() {
       createCollaborationGroup: vi.fn(async () => group),
       listCollaborationGroups: vi.fn(async () => [] as CollaborationGroup[]),
     },
-    agents: { create: vi.fn() },
+    agents: {
+      create: vi.fn(),
+      list: vi.fn(async () =>
+        ['coordinator', 'executor'].map(id => ({
+          id,
+          executionPolicy: { mode: 'fixed', environment_id: 'runner' },
+          modelPolicy: {
+            mode: 'fixed',
+            model: { runtime: 'codex', provider: 'test', model_id: 'model' },
+          },
+        }))
+      ),
+    },
     automations: {
       list: vi.fn(async () => [] as WorkspaceAutomationRule[]),
       create: vi.fn(),
@@ -106,6 +118,24 @@ describe('template execution defaults', () => {
     )
     expect(exported.spec.resources.collaboration.groups[0].roles[0].defaultKind).toBe('agent')
     expect(JSON.stringify(exported)).not.toContain(group.id)
+  })
+
+  it('imports definitions and leaves automatic execution disabled until routing is configured', async () => {
+    const { api, document, drafts, project } = fixture()
+    vi.mocked(api.agents.list).mockResolvedValue(
+      ['coordinator', 'executor'].map(id => ({
+        id,
+        name: id,
+        executionPolicy: { mode: 'user_select' },
+        modelPolicy: { mode: 'user_select' },
+      }))
+    )
+    await applyProjectTemplate(api, project.id, document, drafts, 'zh-CN', 'Partial')
+    expect(api.projects.createCollaborationGroup).toHaveBeenCalledOnce()
+    expect(api.automations!.create).toHaveBeenCalledWith(
+      project.id,
+      expect.objectContaining({ enabled: false })
+    )
   })
 
   it('rejects a competing creation rule before adding any group', async () => {
@@ -276,11 +306,14 @@ describe('template failure reconciliation', () => {
         ])
       ),
     })
+    const humanGroup = { ...group, ...drafts[0] } as CollaborationGroup
+    vi.mocked(api.projects.createCollaborationGroup!).mockResolvedValue(humanGroup)
     const resolveRouting = vi.fn()
     await expect(
       applyProjectTemplate(api, 'project-1', document, drafts, 'zh-CN', 'Partial', resolveRouting)
-    ).resolves.toEqual([group])
+    ).resolves.toEqual([humanGroup])
     expect(api.agents.create).not.toHaveBeenCalled()
+    expect(api.agents.list).not.toHaveBeenCalled()
     expect(resolveRouting).not.toHaveBeenCalled()
     expect(api.projects.createCollaborationGroup).toHaveBeenCalledWith(
       'project-1',
@@ -329,7 +362,11 @@ it('preserves routing filters and selects the enabled rule when exporting a proj
   expect(api.automations!.create).toHaveBeenCalledWith(
     project.id,
     expect.objectContaining({
-      eventConfig: { executionTarget: 'existing_issue', tags: ['review'], priorities: ['high'] },
+      eventConfig: {
+        executionTarget: 'existing_issue',
+        tags: ['review'],
+        priorities: ['high'],
+      },
     })
   )
 })

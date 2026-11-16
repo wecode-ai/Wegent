@@ -15,6 +15,36 @@ export async function verifyIssueDetailPropertyUi(control, scope, timeoutMs) {
     '状态\n负责人\n里程碑\n时间范围',
     'Each Issue property must have exactly one label in the property grid'
   )
+  const metadata = scope('[data-testid="issue-primary-metadata"]')
+  await control.command('waitFor', metadata, { visible: true, timeoutMs })
+  const metadataText = await control.command('getText', metadata)
+  assert.match(metadataText, /标签/)
+  assert.match(metadataText, /参与者/)
+  const propertyHeight = await control.command(
+    'getComputedStyleValue',
+    `${summary} .task-detail-property`,
+    {
+      value: 'min-height',
+    }
+  )
+  assert.equal(
+    await control.command('getComputedStyleValue', `${metadata} .task-detail-rail-prop`, {
+      value: 'min-height',
+    }),
+    propertyHeight,
+    'Primary metadata must share the property row height'
+  )
+  assert.equal(
+    await control.command('getComputedStyleValue', `${metadata} .task-detail-rail-key`, {
+      value: 'font-weight',
+    }),
+    await control.command('getComputedStyleValue', propertyLabels, { value: 'font-weight' }),
+    'Primary metadata labels must share the property label weight'
+  )
+  await control.command('waitFor', `${metadata} [data-testid="cloud-todo-collaborators"]`, {
+    visible: true,
+    timeoutMs,
+  })
   assert.doesNotMatch(
     summaryText,
     /可见范围/,

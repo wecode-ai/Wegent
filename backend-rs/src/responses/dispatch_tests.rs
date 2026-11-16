@@ -672,3 +672,61 @@ async fn pipeline_receipt_redis_failure_is_not_acknowledged_as_success() {
     );
     assert!(receiver.await.unwrap().is_err());
 }
+
+#[tokio::test]
+async fn executor_transport_error_retains_its_connection_cause_without_binding_credentials() {
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let url = format!("http://{}", listener.local_addr().unwrap());
+    drop(listener);
+    let error = send_executor(
+        &HttpClient::builder().build().unwrap(),
+        &url,
+        &crate::executor_binding::DispatchRequest {
+            body: json!({}),
+            binding_token: "private-binding-token".into(),
+        },
+    )
+    .await
+    .expect_err("the listener is closed");
+    assert!(error.contains("source:"), "{error}");
+    assert!(error.contains("ConnectionRefused"), "{error}");
+    assert!(!error.contains("private-binding-token"));
+}
+
+#[tokio::test]
+async fn executor_dispatch_does_not_reuse_a_closing_keepalive_socket() {
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let url = format!("http://{}", listener.local_addr().unwrap());
+    let server = tokio::spawn(async move {
+        let (mut first, _) = listener.accept().await.unwrap();
+        assert!(read_http_request(&mut first).await);
+        first
+            .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n")
+            .await
+            .unwrap();
+        // Expire the first socket as soon as another request tries to reuse it.
+        let expired = tokio::spawn(async move {
+            let mut byte = [0];
+            first.read(&mut byte).await.unwrap_or(0)
+        });
+        let (mut second, _) = listener.accept().await.unwrap();
+        assert!(read_http_request(&mut second).await);
+        second
+            .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n")
+            .await
+            .unwrap();
+        assert_eq!(
+            expired.await.unwrap(),
+            0,
+            "the expired socket received a second submission"
+        );
+    });
+    let http = executor_dispatch_http_client().unwrap();
+    let submission = crate::executor_binding::DispatchRequest {
+        body: json!({}),
+        binding_token: "test-binding".into(),
+    };
+    send_executor(&http, &url, &submission).await.unwrap();
+    send_executor(&http, &url, &submission).await.unwrap();
+    server.await.unwrap();
+}
