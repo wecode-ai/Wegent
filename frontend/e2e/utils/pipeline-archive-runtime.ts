@@ -1,4 +1,4 @@
-import { APIRequestContext, expect } from '@playwright/test'
+import { APIRequestContext, APIResponse, expect } from '@playwright/test'
 import { createBackendRequestHeaders } from './api-client'
 
 export type Runtime = { base_url: string; container_name: string; executor_namespace: string }
@@ -90,6 +90,31 @@ export async function runtimeProcess<T>(
   return (stdout.trim() ? JSON.parse(stdout) : undefined) as T
 }
 
+/**
+ * Playwright's APIRequestContext keeps a Node keep-alive agent. A manager
+ * request that omits `Connection: close` leaves a reusable socket in that
+ * agent; the E2E Manager closes idle sockets, so a later request can inherit
+ * a closed socket and read ECONNRESET before the Manager logs the request.
+ * Every Manager call now sends `Connection: close` to keep the pool empty;
+ * retain a bounded retry only as a safety net for this idempotent lookup.
+ */
+async function getRuntimeMetadata(
+  request: APIRequestContext,
+  url: string,
+  options: { headers: Record<string, string>; params?: Record<string, string> }
+): Promise<APIResponse> {
+  const deadline = Date.now() + 30_000
+  for (;;) {
+    try {
+      return await request.get(url, options)
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      if (!/socket hang up|ECONNRESET/i.test(message) || Date.now() >= deadline) throw error
+      await new Promise(resolve => setTimeout(resolve, 100))
+    }
+  }
+}
+
 export async function resolveRuntime(
   request: APIRequestContext,
   manager: string,
@@ -99,7 +124,7 @@ export async function resolveRuntime(
 ): Promise<Runtime> {
   const managerHeaders = createBackendRequestHeaders()
   if (mode === 'sandbox') {
-    const sandbox = await request.get(`${manager}/sandboxes/${taskId}`, {
+    const sandbox = await getRuntimeMetadata(request, `${manager}/sandboxes/${taskId}`, {
       headers: managerHeaders,
     })
     expect(sandbox.ok(), await sandbox.text()).toBe(true)
@@ -118,7 +143,7 @@ export async function resolveRuntime(
   ).subtasks
   const executor = subtasks.find(subtask => subtask.executor_name)
   expect(executor?.executor_name).toBeTruthy()
-  const address = await request.get(`${manager}/executor/address`, {
+  const address = await getRuntimeMetadata(request, `${manager}/executor/address`, {
     headers: managerHeaders,
     params: {
       executor_name: executor!.executor_name!,

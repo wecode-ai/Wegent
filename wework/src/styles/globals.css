@@ -40,6 +40,13 @@ body:has(#wework-debug-panel [role='dialog']) .electron-titlebar-drag-region {
   -webkit-app-region: no-drag;
 }
 
+/* Chromium can omit promoted sidebar overlays from a backdrop filter. */
+body:has([data-testid='cloud-todo-create-panel'])
+  :is([data-testid='desktop-sidebar'], [data-testid='collaboration-platform-sidebar'])
+  svg {
+  filter: blur(2px);
+}
+
 /* While a panel resize drag is active, embedded browser surfaces (<webview>
    guest content or the iframe fallback) must not intercept pointer events,
    otherwise document-level drag handlers stop receiving pointermove/pointerup
@@ -539,6 +546,15 @@ body[data-wework-panel-resizing] [data-testid='workspace-browser-frame'] {
 .project-board-scrollbar:hover .project-board-scrollbar-thumb,
 .project-board-scrollbar:active .project-board-scrollbar-thumb {
   background-color: rgb(var(--color-scrollbar-thumb-hover));
+}
+
+.sidebar-worklists-scrollbar:hover .sidebar-worklists-scrollbar-thumb,
+.sidebar-worklists-scrollbar:active .sidebar-worklists-scrollbar-thumb {
+  background-color: color-mix(
+    in srgb,
+    rgb(var(--color-scrollbar-thumb-hover)) 80%,
+    rgb(var(--color-text-primary))
+  );
 }
 
 @media (prefers-reduced-motion: reduce) {

@@ -25,6 +25,10 @@ Groups collapse and expand independently. Only the project region scrolls; perso
 
 For remote projects, **Choose a group** initially selects **Personal group**, or you can choose an existing group. The first use creates an independent personal group, which later requests reuse. Existing business groups and their projects are not adopted or moved. The add-folder button beside Projects creates a group. Switching groups preserves the project name and description and clears the previous group's member, agent, and template selections; configure these again in the target group before creating.
 
+When creating a cloud project, open **Project collaborators → Add collaborators** to select group members, or use **Search name or email** to find other existing users. Selected people appear in the collaborator list and can be removed before creation. Clicking **Create project** adds them with the Developer role in the project without adding them to its group. Search failures display an error; change the query to retry.
+
+Select a group name to open its home and review cross-project operations and items needing attention. When the content exceeds the window height, scroll down in the main content area on the right to reach the remaining projects and items.
+
 Global catalogs, group settings, and project settings remain separate levels. Code directories are separate resources, and project AI team settings do not replace group membership management.
 
 | Feature                           | Entry and steps                                                                                                                              | Conditions and limits                                                                                                       |
@@ -120,10 +124,19 @@ Open **Milestones** in the project. The Issue-detail selector only associates ex
 | ---------------------------------- | --------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------ |
 | Add project member                 | Project settings → AI team → Members → Add member → search username/email → choose role → click result                      | Clicking adds immediately; no extra Save button; requires management permission                                    |
 | Responsibilities, role and removal | Edit responsibilities/capabilities on the row and blur to save; change role/remove where allowed                            | Inherited membership, effective role and permissions constrain actions; not every member can be removed            |
-| Discuss and assign                 | Issue discussion → Assign to → select member → Send and assign                                                              | Selection alone does not submit; without text the action is Assign; Keep current preserves assignee                |
+| Discuss, assign or move            | Issue details → discussion composer → Assign to or Move to → select target → Send and update                                | Selection only stages changes; without text, select Update issue; use × to cancel a selection                      |
+| Close and reopen                   | Issue details → arrow beside Send inside the composer, bottom right → Close issue or Reopen issue                           | With a draft, the action is Comment and close; details stay open and closure uses the existing Completed state     |
 | Manual work                        | Update progress/completion using the status selector; communicate explanations and results through comments and attachments | Ordinary properties autosave; discussion assignment submits with Send, not an extra acceptance form                |
 | Archive Issue                      | Details → More information → Archive issue → Confirm archive                                                                | Archival, not permanent deletion; check subtasks/linked runs and do not assume success if stopping execution fails |
 | Restore Issue                      | Project board → Archived → Restore; Load more for further entries                                                           | Different from archived runtime conversations in global settings; project visibility still applies                 |
+
+Assignee and destination chips in the discussion composer stage changes for the next submission. Selecting them neither posts a comment nor updates the issue. **Send and update** saves the comment first, then applies assignment and lane changes. With no comment, **Update issue** applies changes alone. With no staged changes, sending retains ordinary comment behavior. Cancel a staged change with its × control, **Keep current** in the assignee menu, or **Cancel lane change** in the destination menu. A comment accompanying changes records discussion without starting an extra AI execution for the previous assignee; assignment automation keeps its existing behavior.
+
+Select **Move to** to search the current board's destination lanes, or select an existing chip to change the destination. **Board position** displays the saved view and matching lanes until submission. Details opened from a card retain its view and source lane; home, search and direct links use the project's default view. When an issue matches multiple lanes without an explicit source, choices show “source → destination” to avoid removing unrelated tags. Moving uses the same rules as dragging; a tag named “Closed” does not close an issue.
+
+The send button and its **Send options** menu share a button group inside the bottom-right corner of the composer. **Close issue** in that menu works without a comment. With a draft, **Comment and close** saves it before completing the issue; staged assignments and moves also participate. The action becomes **Reopen issue**, restoring the most recent valid unfinished state, or the project's first unfinished state when history is unavailable. Closure requires issue editing permission, an existing Completed state and at least one unfinished state.
+
+Failed comment persistence retains the draft and selections without applying changes. If the comment succeeds but assignment or movement fails, an error states that the comment is already sent and retains unfinished selections. Retrying performs remaining work without repeating the original comment or successful assignment. A concurrent change to the source lane requires reselection instead of overwriting another member's move.
 
 ## Individual code-project menu operations
 
@@ -415,9 +428,13 @@ In a collaboration project, open **Project settings → Execution environment** 
 
 Manual work does not require execution-environment initialization or an extra form. Choose status or assignee in Issue details; property changes save independently of unsaved description. See this page's [project operations](#project-controls) for discussion assignment, archive and restore.
 
+<a id="project-conversations"></a>
+
 ## Message AI
 
 Select the always-visible **Ask AI** button on the right of the board to expand its conversation sidebar. The **New conversation** icon next to a project in the collaboration sidebar also opens it. No collaboration group, AI leader, or experimental feature is required. Both local and cloud projects are supported. New conversations run on the current computer with the current project board as their default context, subject to the user's actual access and execution permissions.
+
+The sidebar keeps the current project and Issue capabilities visible. Ask **list issues** to query this project's Issues, or request Issue creation, status changes, or assignment changes. Results identify the project and Issue; an empty result explicitly states that no matching Issues were found in the current project. Say **list personal tasks** or **list my conversations** for personal execution tasks or conversations. The assistant asks for clarification only when the target is ambiguous. The home assistant has no implicitly selected project; name the project when needed.
 
 The board filter toolbar adapts to its pane's available width. In a narrow pane, grouping, group-value, tag, milestone, parent-row, and Ask AI controls collapse to icons, and the search field becomes shorter. This also applies when the conversation sidebar is open. Hover or keyboard-focus an icon for its full label; filtering and switching behavior stay unchanged.
 
@@ -575,6 +592,6 @@ Independent Issue details show invited Agents and Teams. Before **Ask AI to help
 
 ## Create child Issues from comments
 
-In the Issue comment composer, select **Create child Issue**, write a comment, choose an assignee, and select **Send and create child Issue**. The original comment is saved before the child is created. The selected assignee owns the child; the parent assignment remains unchanged. A failed creation or assignment keeps an actionable error, and retry reuses a child already created. Creation uses a stable operation identifier, so concurrent requests or a lost response do not create duplicate children.
+In the Issue comment composer toolbar, use the **Assignment mode** branch icon and select **Create child Issue**, write a comment, choose an assignee, and select **Send and create child Issue**. The original comment is saved before the child is created. The selected assignee owns the child; the parent assignment remains unchanged. A failed creation or assignment keeps an actionable error, and retry reuses a child already created. Creation uses a stable operation identifier, so concurrent requests or a lost response do not create duplicate children.
 
 Use **Create child Issue** beside any existing visible comment, including comments with or without mentions. Confirming the assignee also adds a discussion reply linking to the new child. Current Issue edit and comment permissions apply; mentions grant no additional access. Children retain the stricter of parent visibility and the project default so copied comments do not become project-public.

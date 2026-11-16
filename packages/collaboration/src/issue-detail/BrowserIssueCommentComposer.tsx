@@ -33,6 +33,7 @@ type CommentApi = Pick<SharedWorkspaceApi, 'attachments' | 'taskBindings' | 'iss
 
 /** Browser services around the exact PC main composer, controls, uploads and execution orchestration. */
 export function BrowserIssueCommentComposer({
+  issueActions,
   assignment,
   api,
   runtime,
@@ -50,6 +51,7 @@ export function BrowserIssueCommentComposer({
   onTaskUpdated,
   onCommentPersisted,
 }: {
+  issueActions?: import('./issueCommentActions').CommentIssueActions
   assignment?: import('./useCommentAssignment').CommentAssignment
   api: CommentApi
   runtime: SharedWorkspaceRuntimeApi
@@ -241,6 +243,7 @@ export function BrowserIssueCommentComposer({
         </div>
       )}
       <IssueMainCommentComposer
+        issueActions={issueActions}
         assignment={assignment}
         mentionCandidates={mentionCandidates}
         translate={t}

@@ -17,6 +17,8 @@ import '@/app/tasks/tasks.css'
 import '@/features/common/scrollbar.css'
 import { GithubStarButton } from '@/features/layout/GithubStarButton'
 import { ThemeToggle } from '@/features/theme/ThemeToggle'
+import { Button } from '@/components/ui/button'
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { useTranslation } from '@/hooks/useTranslation'
 import { saveLastTab } from '@/utils/userPreferences'
 import { useIsMobile } from '@/features/layout/hooks/useMediaQuery'
@@ -25,7 +27,7 @@ import { paths } from '@/config/paths'
 import { useDevices } from '@/contexts/DeviceContext'
 import { useTeamContext } from '@/contexts/TeamContext'
 import { useDeviceChatSidecar } from '@extensions/device-chat-sidecar'
-import { ChevronDown, Monitor, WifiOff } from 'lucide-react'
+import { ChevronDown, Code2, Loader2, Monitor, WifiOff } from 'lucide-react'
 import type { DeviceInfo } from '@/apis/devices'
 import { TaskParamSync, DeviceParamSync } from '@/features/tasks/components/params'
 import { isOpenClawDevice } from '@/features/devices/utils/device-status'
@@ -38,6 +40,7 @@ import {
   resolveOrdinaryDeviceChatTarget,
 } from '@/features/devices/utils/device-visibility'
 import { useAdvancedDeviceMode } from '@/features/devices/hooks/useAdvancedDeviceMode'
+import { useDeviceIde } from '@/features/devices/hooks/useDeviceIde'
 import { useProjectContext } from '@/features/projects/contexts/projectContext'
 import { useUser } from '@/features/common/UserContext'
 
@@ -56,7 +59,7 @@ export default function DeviceChatPage() {
   const { teams, isTeamsLoading, loadError, refreshTeams } = useTeamContext()
 
   // Device state
-  const { devices, selectedDeviceId, setSelectedDeviceId } = useDevices()
+  const { devices, selectedDeviceId, setSelectedDeviceId, isDeviceUpgrading } = useDevices()
   const { user } = useUser()
 
   // Check if deviceId is specified in URL
@@ -198,14 +201,20 @@ export default function DeviceChatPage() {
     isExistingTask ? persistedTaskDeviceId : selectedDeviceId
   )
   const selectedDevice = devices.find(d => d.device_id === activeDeviceId)
+  const routeDevicePending =
+    !isExistingTask &&
+    routeDeviceId &&
+    resolveDeviceSelectionId(devices, routeDeviceId) !== activeDeviceId
+  const ideDevice = routeDevicePending ? undefined : selectedDevice
+  const ide = useDeviceIde(ideDevice, ideDevice && isDeviceUpgrading(ideDevice.device_id))
   const isDeviceLocked = isProjectContext || isExistingTask
   const getDeviceName = (device: DeviceInfo) =>
     device.device_type === 'app' ? `${t('wework_device_prefix')}${device.name}` : device.name
   const getDeviceStatus = (status: DeviceInfo['status']) =>
     t(status === 'online' ? 'status_online' : status === 'busy' ? 'status_busy' : 'status_offline')
 
-  const deviceSelector = (
-    <div className="relative min-w-0 lg:mr-2 lg:flex lg:items-center lg:gap-2">
+  const devicePicker = (
+    <div className="relative min-w-0 flex-1 lg:mr-2 lg:flex lg:items-center lg:gap-2">
       <Monitor className="hidden h-4 w-4 shrink-0 text-text-muted lg:block" aria-hidden="true" />
       <select
         data-testid="device-chat-target-select"
@@ -243,6 +252,38 @@ export default function DeviceChatPage() {
         )}
         {!isDeviceLocked && <ChevronDown className="h-4 w-4 shrink-0 text-text-muted" />}
       </div>
+    </div>
+  )
+
+  const deviceSelector = (
+    <div className="flex min-w-0 items-center gap-2">
+      {ide && (
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <Button
+              type="button"
+              variant="outline"
+              size="icon"
+              data-testid="device-chat-open-ide"
+              aria-label={ide.label}
+              aria-disabled={Boolean(ide.disabledReason) || ide.opening}
+              aria-busy={ide.opening}
+              className="h-11 w-11 shrink-0 aria-disabled:cursor-not-allowed aria-disabled:opacity-50 lg:h-8 lg:w-8"
+              onClick={() => void ide.open()}
+            >
+              {ide.opening ? (
+                <Loader2 aria-hidden="true" className="h-4 w-4 animate-spin" />
+              ) : (
+                <Code2 aria-hidden="true" className="h-4 w-4" />
+              )}
+            </Button>
+          </TooltipTrigger>
+          <TooltipContent side="bottom">
+            {ide.disabledReason || (ide.opening ? t('ide.opening') : ide.label)}
+          </TooltipContent>
+        </Tooltip>
+      )}
+      {devicePicker}
     </div>
   )
 

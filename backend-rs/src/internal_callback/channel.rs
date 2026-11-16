@@ -10,6 +10,7 @@
 //! `channel:task_callback:{channel_type}:{task_id}` and returns without
 //! forwarding when the key is absent. Terminal events are skipped.
 use brz_redis::{Redis, RedisBytes};
+use sha2::{Digest, Sha256};
 
 use super::event::ExecutionEvent;
 
@@ -59,8 +60,16 @@ fn is_terminal(event_type: &str) -> bool {
 }
 
 /// `runtime_local_task_callback_key` (`channels/callback.py:40`).
-pub(crate) fn runtime_local_task_callback_key(device_id: &str, local_task_id: &str) -> String {
-    format!("runtime:{device_id}:{local_task_id}")
+pub(crate) fn runtime_local_task_callback_key(
+    device_id: &str,
+    local_task_id: &str,
+    callback_id: Option<&str>,
+) -> String {
+    let key = format!("runtime:{device_id}:{local_task_id}");
+    match callback_id.filter(|id| !id.is_empty()) {
+        Some(id) => format!("{key}:{:x}", Sha256::digest(id.as_bytes())),
+        None => key,
+    }
 }
 
 /// A registered IM channel (`ChannelType`, `channels/callback.py:45`).
@@ -452,6 +461,7 @@ mod tests {
     struct QueueRedis {
         reads: Mutex<Vec<Read>>,
         count: Mutex<usize>,
+        keys: Mutex<Vec<String>>,
     }
 
     impl QueueRedis {
@@ -459,6 +469,7 @@ mod tests {
             Self {
                 reads: Mutex::new(reads),
                 count: Mutex::new(0),
+                keys: Mutex::new(Vec::new()),
             }
         }
         fn reads(&self) -> usize {
@@ -507,11 +518,17 @@ mod tests {
             ))
         }
 
-        async fn get<K, R>(&self, _key: K) -> RedisResult<Option<R>>
+        async fn get<K, R>(&self, key: K) -> RedisResult<Option<R>>
         where
             K: EncodeRedisArg + Send,
             R: FromRedisBulk + Send,
         {
+            let mut command = brz_redis::cmd("GET");
+            command.arg_encoded(key)?;
+            self.keys
+                .lock()
+                .unwrap()
+                .push(String::from_utf8(command.arg_at(1).unwrap().to_vec()).unwrap());
             *self.count.lock().unwrap() += 1;
             let next = {
                 let mut reads = self.reads.lock().unwrap();
@@ -592,7 +609,7 @@ mod tests {
     fn card_info(msg: &str, card_subtask: Option<i64>) -> String {
         let mut info = json!({
             "channel_type": "dingtalk",
-            "channel_id": 2098751540,
+            "channel_id": 1001,
             "card_instance_id": "card-1",
             "chat_card": {"content_key": "content"},
             "incoming_message_data": {"msgId": msg},
@@ -603,18 +620,109 @@ mod tests {
         info.to_string()
     }
 
+    #[test]
+    fn runtime_callback_addresses_match_python_registration() {
+        let base = "runtime:device:stand-in-chat-7-primary";
+        for callback in [None, Some("")] {
+            assert_eq!(
+                runtime_local_task_callback_key("device", "stand-in-chat-7-primary", callback),
+                base
+            );
+        }
+        for (callback, digest) in [
+            (
+                "message-1",
+                "9deb880b43bdf6f465a0afb130aed71b31cf219626f3637f577d4167cd80e5f2",
+            ),
+            (
+                "会话:消息",
+                "a55551b058de1759ffc005a20e23a2172e648cc71d42da6524774fa6c1f0fa11",
+            ),
+        ] {
+            assert_eq!(
+                runtime_local_task_callback_key(
+                    "device",
+                    "stand-in-chat-7-primary",
+                    Some(callback)
+                ),
+                format!("{base}:{digest}")
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn stand_in_turns_use_the_same_message_address_for_progress_and_completion() {
+        use crate::internal_callback::event::EventType;
+
+        let delivery = RecordingDelivery::default();
+        let mut addresses = Vec::new();
+        for message in ["message-1", "message-2"] {
+            let key =
+                runtime_local_task_callback_key("device", "stand-in-chat-7-primary", Some(message));
+            let info = Box::leak(card_info(message, Some(0)).into_boxed_str());
+            let redis = QueueRedis::new(vec![
+                Read::Hit(info),
+                Read::Hit(info),
+                Read::Hit(info),
+                Read::Miss,
+                Read::Hit(info),
+                Read::Hit(info),
+                Read::Hit(info),
+                Read::Hit(info),
+            ]);
+            let source = json!({"message_id":message,"channel_id":1001});
+            assert!(accepts_runtime_source(&redis, Channel::DingTalk, &key, &source).await);
+            assert!(
+                forward_event_to_channel_callbacks_for_key(
+                    &redis,
+                    &delivery,
+                    &key,
+                    7,
+                    &event(EventType::Chunk)
+                )
+                .await
+            );
+            assert!(
+                handle_task_completed(
+                    &redis,
+                    &delivery,
+                    &key,
+                    7,
+                    "COMPLETED",
+                    Some(&json!({"value":"Hi，我在。"})),
+                    None
+                )
+                .await
+            );
+            let dingtalk_key = format!("channel:task_callback:dingtalk:{key}");
+            let telegram_key = format!("channel:task_callback:telegram:{key}");
+            assert!(
+                redis
+                    .keys
+                    .lock()
+                    .unwrap()
+                    .iter()
+                    .all(|read| { read == &dingtalk_key || read == &telegram_key })
+            );
+            addresses.push((Channel::DingTalk, key));
+        }
+        assert_ne!(addresses[0], addresses[1]);
+        assert_eq!(*delivery.emitted.lock().unwrap(), addresses);
+        assert_eq!(*delivery.sent.lock().unwrap(), addresses);
+    }
+
     #[tokio::test]
     async fn the_dingtalk_freshness_gate_compares_the_source_message_and_channel() {
         let redis = QueueRedis::new(vec![Read::Hit(Box::leak(
             card_info("msg-1", None).into_boxed_str(),
         ))]);
-        let source = json!({"message_id": "msg-old", "channel_id": 2098751540});
+        let source = json!({"message_id": "msg-old", "channel_id": 1001});
         assert!(!accepts_runtime_source(&redis, Channel::DingTalk, "runtime:d:l", &source).await);
 
         let redis = QueueRedis::new(vec![Read::Hit(Box::leak(
             card_info("msg-1", None).into_boxed_str(),
         ))]);
-        let source = json!({"message_id": "msg-1", "channel_id": 2098751540});
+        let source = json!({"message_id": "msg-1", "channel_id": 1001});
         assert!(accepts_runtime_source(&redis, Channel::DingTalk, "runtime:d:l", &source).await);
 
         // An unbound card has no freshness constraint.
@@ -701,7 +809,7 @@ mod tests {
     fn the_callback_reader_unwraps_the_source_double_encoding() {
         let document = json!({
             "channel_type": "dingtalk",
-            "channel_id": 2098751540,
+            "channel_id": 1001,
             "card_instance_id": "card-1",
             "chat_card": {"content_key": "content"},
             "card_subtask_id": 0,

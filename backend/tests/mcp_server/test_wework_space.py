@@ -34,6 +34,17 @@ from app.services.project_incoming_hooks import project_incoming_hook_service
 from tests.utils.collaboration import authorize_project, authorize_project_agent
 
 
+@pytest.mark.parametrize("name", ["list_board_items", "search_board_items"])
+def test_issue_query_tool_descriptions_distinguish_personal_tasks(name: str) -> None:
+    tool = getattr(wework_space, name)
+    description = tool._mcp_tool_info["description"]
+
+    assert "Issues (事项)" in description
+    assert "distinct from personal tasks and conversations" in description
+    assert "project and Issue ID" in description
+    assert "queried project has no matching Issues" in description
+
+
 class _SessionContext:
     def __init__(self, db: Session) -> None:
         self._db = db

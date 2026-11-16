@@ -6,6 +6,10 @@ sidebar_position: 24
 
 The Wework desktop app follows the Codex App sidebar state model. Project and live task content comes from the Codex app-server, while sidebar metadata comes from `.codex-global-state.json` in the target device's `CODEX_HOME`. While a remote device is online, Wework also stores a local task-list summary for startup recovery after that device goes offline.
 
+## List scrollbar
+
+The left task list uses a 6px scrollbar without horizontal padding. When the list can scroll, hovering over the sidebar or focusing a sidebar control with the keyboard reveals the scrollbar. Hovering over or dragging the scrollbar further increases the thumb contrast using the current theme.
+
 ## Hover detail lifetime
 
 Sidebar project and task details follow pointer hover. They close after the pointer leaves both the row and the popup, even if a popup button retains focus. `HoverCard.interactive` only enables actions inside the popup; callers that need focus-driven visibility must explicitly enable `openOnFocus`. Project pinning is independent of popup visibility.
