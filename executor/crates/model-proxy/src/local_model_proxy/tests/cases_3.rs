@@ -425,6 +425,150 @@ async fn keeps_foreign_encrypted_history_sanitized_after_the_switch_request() {
 }
 
 #[tokio::test]
+async fn restores_foreign_history_boundary_after_route_restart() {
+    let captured = Arc::new(tokio::sync::Mutex::new(Vec::new()));
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("upstream listener");
+    let address = listener.local_addr().expect("upstream address");
+    let server = tokio::spawn({
+        let captured = captured.clone();
+        async move {
+            axum::serve(
+                listener,
+                Router::new().route(
+                    "/backend-api/codex/responses",
+                    post(move |body: Bytes| {
+                        let captured = captured.clone();
+                        async move {
+                            captured.lock().await.push(
+                                serde_json::from_slice::<Value>(&body)
+                                    .expect("captured request body"),
+                            );
+                            (
+                                [(header::CONTENT_TYPE, "text/event-stream")],
+                                "event: response.completed\ndata: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp-native\"}}\n\n",
+                            )
+                        }
+                    }),
+                ),
+            )
+            .await
+            .expect("upstream server");
+        }
+    });
+    let upstream = LocalModelProxyUpstream {
+        base_url: format!("http://{address}/backend-api/codex"),
+        request_url: Some(format!("http://{address}/backend-api/codex/responses")),
+        api_format: "openai-responses".to_owned(),
+        convert_custom_tools: false,
+        native_tool_search: true,
+        native_namespace_tools: true,
+        api_key: String::new(),
+        default_headers: Vec::new(),
+        proxy_url: None,
+        model_id: None,
+        routing_model_id: Some("gpt-6.1-sol".to_owned()),
+        codex_request_mode: CodexRequestMode::Passthrough,
+        max_output_tokens: None,
+        model_context_window: None,
+    };
+    let switched_token = register("official-route-restart", upstream.clone());
+    mark_model_switch(&switched_token);
+    let switch_request = serde_json::to_vec(&json!({
+        "model": "gpt-6.1-sol",
+        "stream": true,
+        "previous_response_id": "resp_foreign",
+        "input": [
+            {
+                "type": "context_compaction",
+                "encrypted_content": "foreign-compaction"
+            },
+            {
+                "type": "message",
+                "role": "user",
+                "content": [{"type": "input_text", "text": "switch"}]
+            }
+        ]
+    }))
+    .expect("switch request body");
+    let response = handle(proxy_headers(&switched_token), Bytes::from(switch_request))
+        .await
+        .expect("switch response");
+    assert_eq!(response.status(), StatusCode::OK);
+    to_bytes(response.into_body(), usize::MAX)
+        .await
+        .expect("switch response body");
+    // Executor restart drops this route together with all in-memory history state.
+    unregister_harness(&switched_token);
+
+    let restarted_token = register("official-route-restart", upstream);
+    assert_ne!(restarted_token, switched_token);
+    let continuation = serde_json::to_vec(&json!({
+        "model": "gpt-6.1-sol",
+        "stream": true,
+        "previous_response_id": "resp-native",
+        "input": [
+            {
+                "type": "reasoning",
+                "id": "rs_foreign_state_only",
+                "summary": [{"type": "summary_text", "text": "foreign summary"}],
+                "content": [],
+                "encrypted_content": "foreign-state-seal"
+            },
+            {
+                "type": "context_compaction",
+                "encrypted_content": "foreign-compaction"
+            },
+            {
+                "type": "message",
+                "role": "developer",
+                "content": [{
+                    "type": "input_text",
+                    "text": "<model_switch>Persistent historical marker.</model_switch>"
+                }]
+            },
+            {
+                "type": "reasoning",
+                "id": "rs_native",
+                "summary": [{"type": "summary_text", "text": "native summary"}],
+                "content": [],
+                "encrypted_content": "native-seal"
+            },
+            {
+                "type": "message",
+                "role": "user",
+                "content": [{"type": "input_text", "text": "continue"}]
+            }
+        ]
+    }))
+    .expect("continuation request body");
+    let response = handle(proxy_headers(&restarted_token), Bytes::from(continuation))
+        .await
+        .expect("continuation response");
+    assert_eq!(response.status(), StatusCode::OK);
+    to_bytes(response.into_body(), usize::MAX)
+        .await
+        .expect("continuation response body");
+
+    let requests = captured.lock().await;
+    assert_eq!(requests.len(), 2);
+    let forwarded = &requests[1];
+    assert_eq!(forwarded["previous_response_id"], "resp-native");
+    assert_eq!(forwarded["input"].as_array().unwrap().len(), 4);
+    assert!(forwarded["input"][0].get("id").is_none());
+    assert!(forwarded["input"][0].get("encrypted_content").is_none());
+    assert_eq!(forwarded["input"][1]["role"], "developer");
+    assert_eq!(forwarded["input"][2]["id"], "rs_native");
+    assert_eq!(forwarded["input"][2]["encrypted_content"], "native-seal");
+    assert_eq!(forwarded["input"][3]["role"], "user");
+
+    drop(requests);
+    unregister(&restarted_token);
+    server.abort();
+}
+
+#[tokio::test]
 async fn failed_model_switch_remains_pending_for_retry() {
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
         .await

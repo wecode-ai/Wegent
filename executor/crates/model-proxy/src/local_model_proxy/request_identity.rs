@@ -341,7 +341,16 @@ pub(super) fn contains_model_switch_marker(request: &Value) -> bool {
         .and_then(Value::as_array)
         .into_iter()
         .flatten()
-        .filter_map(|item| item.get("content").and_then(Value::as_array))
+        .any(item_contains_model_switch_marker)
+}
+
+pub(super) fn item_contains_model_switch_marker(item: &Value) -> bool {
+    if item.get("role").and_then(Value::as_str) != Some("developer") {
+        return false;
+    }
+    item.get("content")
+        .and_then(Value::as_array)
+        .into_iter()
         .flatten()
         .filter_map(|content| content.get("text").and_then(Value::as_str))
         .any(|text| text.contains("<model_switch>"))

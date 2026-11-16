@@ -47,19 +47,33 @@ pub(super) fn normalize_official_reasoning_history(
             new_foreign_keys.insert(key);
         }
     }
+    // The persisted switch marker survives executor restarts. History before
+    // the latest marker belongs to the previous provider; later items belong
+    // to the current provider and must keep their native sealed reasoning.
+    let switch_boundary = request
+        .get("input")
+        .and_then(Value::as_array)
+        .and_then(|items| {
+            items
+                .iter()
+                .rposition(super::request_identity::item_contains_model_switch_marker)
+        });
     if let Some(items) = request.get_mut("input").and_then(Value::as_array_mut) {
         let original = std::mem::take(items);
         let mut retained = Vec::with_capacity(original.len());
-        for mut item in original {
+        for (index, mut item) in original.into_iter().enumerate() {
             let encrypted_state = super::request_identity::has_encrypted_model_state(&item);
+            let before_switch_boundary = switch_boundary.is_some_and(|boundary| index < boundary);
             if item.get("type").and_then(Value::as_str) == Some("reasoning") {
                 let key = history_item_key(&item);
                 let known_foreign = known_foreign_keys.contains(&key);
+                let foreign_encrypted_state =
+                    encrypted_state && (model_switched || before_switch_boundary || known_foreign);
                 let content_has_text = item
                     .get("content")
                     .and_then(Value::as_array)
                     .is_some_and(|content| !content.is_empty());
-                if known_foreign || content_has_text || (model_switched && encrypted_state) {
+                if known_foreign || content_has_text || foreign_encrypted_state {
                     normalized_reasoning_items += sanitize_foreign_reasoning_item(&mut item);
                     new_foreign_keys.insert(key);
                     changed += 1;
@@ -73,7 +87,7 @@ pub(super) fn normalize_official_reasoning_history(
             } else if encrypted_state {
                 let key = history_item_key(&item);
                 let known_foreign = known_foreign_keys.contains(&key);
-                if known_foreign || model_switched {
+                if known_foreign || model_switched || before_switch_boundary {
                     new_foreign_keys.insert(key);
                     changed += 1;
                 } else {
@@ -319,6 +333,93 @@ mod tests {
         assert_eq!(changed, 1);
         assert!(request["input"][0].get("id").is_none());
         assert_eq!(request["input"][0]["summary"][0]["text"], "summary");
+    }
+
+    #[test]
+    fn restores_foreign_history_boundary_without_in_memory_state() {
+        let body = serde_json::to_vec(&json!({
+            "previous_response_id": "resp_native_after_switch",
+            "input": [
+                {
+                    "type": "reasoning",
+                    "id": "rs_foreign_state_only",
+                    "summary": [{"type": "summary_text", "text": "old provider summary"}],
+                    "content": [],
+                    "encrypted_content": "foreign-seal"
+                },
+                {
+                    "type": "context_compaction",
+                    "encrypted_content": "foreign-compaction"
+                },
+                {
+                    "type": "message",
+                    "role": "developer",
+                    "content": [{
+                        "type": "input_text",
+                        "text": "<model_switch>Persistent marker.</model_switch>"
+                    }]
+                },
+                {
+                    "type": "reasoning",
+                    "id": "rs_native",
+                    "summary": [{"type": "summary_text", "text": "native summary"}],
+                    "content": [],
+                    "encrypted_content": "native-seal"
+                },
+                {
+                    "type": "message",
+                    "role": "user",
+                    "content": [{"type": "input_text", "text": "continue"}]
+                }
+            ]
+        }))
+        .unwrap();
+
+        let (body, changed, foreign_keys) =
+            normalize_official_reasoning_history(body, &Default::default(), false).unwrap();
+        let request = serde_json::from_slice::<serde_json::Value>(&body).unwrap();
+
+        assert_eq!(changed, 1);
+        assert_eq!(foreign_keys.len(), 2);
+        assert_eq!(request["previous_response_id"], "resp_native_after_switch");
+        assert_eq!(request["input"].as_array().unwrap().len(), 4);
+        assert!(request["input"][0].get("id").is_none());
+        assert!(request["input"][0].get("encrypted_content").is_none());
+        assert_eq!(request["input"][1]["role"], "developer");
+        assert_eq!(request["input"][2]["id"], "rs_native");
+        assert_eq!(request["input"][2]["encrypted_content"], "native-seal");
+        assert_eq!(request["input"][3]["role"], "user");
+    }
+
+    #[test]
+    fn ignores_model_switch_text_outside_developer_instructions() {
+        let body = serde_json::to_vec(&json!({
+            "input": [
+                {
+                    "type": "reasoning",
+                    "id": "rs_native",
+                    "summary": [{"type": "summary_text", "text": "native summary"}],
+                    "content": [],
+                    "encrypted_content": "native-seal"
+                },
+                {
+                    "type": "message",
+                    "role": "user",
+                    "content": [{
+                        "type": "input_text",
+                        "text": "<model_switch>User text must not define the boundary.</model_switch>"
+                    }]
+                }
+            ]
+        }))
+        .unwrap();
+
+        let (normalized, changed, foreign_keys) =
+            normalize_official_reasoning_history(body.clone(), &Default::default(), false).unwrap();
+
+        assert_eq!(changed, 0);
+        assert!(foreign_keys.is_empty());
+        assert_eq!(normalized, body);
     }
 
     #[test]
