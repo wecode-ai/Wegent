@@ -148,8 +148,8 @@ export async function createDesktopScenario(options) {
       const rules = await request(`${projectPath()}/automations`)
       assert.equal(rules.length, 1)
       assert.equal(rules[0].enabled, true)
-      assert.equal(rules[0].target_kind, 'collaboration_group')
-      assert.equal(rules[0].target_id, groups[0].id)
+      assert.equal(rules[0].targetKind, 'collaboration_group')
+      assert.equal(rules[0].targetId, groups[0].id)
       const latest = await request(projectPath())
       const board = latest.board_views.views.find(
         view => view.id === latest.board_views.default_view_id
