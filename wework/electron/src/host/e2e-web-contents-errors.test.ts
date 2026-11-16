@@ -47,3 +47,46 @@ test('normal renderer exits are recorded without becoming unexpected errors', ()
     exitCode: 0,
   })
 })
+
+test('explicit renderer diagnostics survive at info level and malformed diagnostics fail collection', () => {
+  vi.stubEnv('VITE_WEWORK_E2E', 'true')
+  const record = vi.spyOn(e2eErrorLog, 'record').mockImplementation(() => undefined)
+  const contents = Object.assign(new EventEmitter(), { id: 10 })
+  installE2EWebContentsErrors(contents as unknown as WebContents)
+  const diagnostic = {
+    type: 'conversation-scope',
+    details: { taskId: 'task-1', changedFields: ['runtime'] },
+  }
+  contents.emit(
+    'console-message',
+    {},
+    1,
+    '[wework-e2e-diagnostic] ' + JSON.stringify(diagnostic),
+    1,
+    ''
+  )
+  expect(record).toHaveBeenLastCalledWith('renderer', 'diagnostic', 'info', {
+    webContentsId: 10,
+    diagnostic,
+  })
+  expect(() =>
+    contents.emit('console-message', {}, 1, '[wework-e2e-diagnostic] {', 1, '')
+  ).not.toThrow()
+  expect(record).toHaveBeenLastCalledWith('renderer', 'diagnostic-protocol-failed', 'error', {
+    webContentsId: 10,
+  })
+  contents.emit('console-message', {}, 2, '[wework-e2e-diagnostic] warning', 1, '')
+  expect(record).toHaveBeenLastCalledWith(
+    'renderer',
+    'renderer-warning',
+    'warning',
+    expect.objectContaining({ webContentsId: 10 })
+  )
+  contents.emit('console-message', {}, 3, '[wework-e2e-diagnostic] error', 1, '')
+  expect(record).toHaveBeenLastCalledWith(
+    'renderer',
+    'renderer-error',
+    'error',
+    expect.objectContaining({ webContentsId: 10 })
+  )
+})

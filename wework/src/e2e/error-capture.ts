@@ -1,10 +1,24 @@
 import { installResizeObserverDiagnostics } from './resize-observer-diagnostics'
 import { getDesktopE2ERuntimeConfig } from './runtime-config'
 
+function captureEnabled(): boolean {
+  if (typeof window === 'undefined' || getDesktopE2ERuntimeConfig().disabled) return false
+  return (
+    import.meta.env.VITE_WEWORK_E2E === 'true' || Boolean(getDesktopE2ERuntimeConfig().controlUrl)
+  )
+}
+
+export function reportE2EDiagnostic(type: string, details: Record<string, unknown>): void {
+  if (!captureEnabled()) return
+  try {
+    console.info('[wework-e2e-diagnostic]', JSON.stringify({ type, details }))
+  } catch (error) {
+    reportE2EError('diagnostic-serialization-failed', error)
+  }
+}
+
 export function reportE2EError(type: string, error: unknown, diagnostics?: unknown): void {
-  if (typeof window === 'undefined') return
-  if (getDesktopE2ERuntimeConfig().disabled) return
-  if (import.meta.env.VITE_WEWORK_E2E !== 'true' && !getDesktopE2ERuntimeConfig().controlUrl) return
+  if (!captureEnabled()) return
   console.error(
     '[wework-e2e-error]',
     JSON.stringify({

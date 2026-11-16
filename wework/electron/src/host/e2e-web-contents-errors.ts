@@ -25,6 +25,22 @@ export function installE2EWebContentsErrors(contents: WebContents): void {
     })
   })
   contents.on('console-message', (_event, level, message, lineNumber, sourceId) => {
+    const diagnosticPrefix = '[wework-e2e-diagnostic] '
+    if (level < 2 && message.startsWith(diagnosticPrefix)) {
+      try {
+        const diagnostic = JSON.parse(message.slice(diagnosticPrefix.length))
+        if (
+          typeof diagnostic?.type !== 'string' ||
+          !diagnostic.details ||
+          typeof diagnostic.details !== 'object'
+        )
+          throw new Error('Invalid diagnostic payload')
+        e2eErrorLog.record('renderer', 'diagnostic', 'info', { webContentsId, diagnostic })
+      } catch {
+        e2eErrorLog.record('renderer', 'diagnostic-protocol-failed', 'error', { webContentsId })
+      }
+      return
+    }
     if (level !== 2 && level !== 3) return
     recordE2ERendererError(
       message,
