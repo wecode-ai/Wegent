@@ -1,6 +1,6 @@
 import { isRuntimeReadCancellation } from '@/features/workbench/runtimeConversationReadCancellation'
 import { createRequestId } from '@/lib/request-id'
-import { reportE2EError } from '@/e2e/error-capture'
+import { reportE2EDiagnostic, reportE2EError } from '@/e2e/error-capture'
 import { recordExecutorActivity, registerExecutorActivity } from '@/e2e/executor-activity'
 import { logModelLoading } from '@/lib/model-loading-diagnostics'
 import { deliverRuntimeTransport, isRuntimeTransportReplay } from '@/e2e/runtime-transport-gates'
@@ -84,6 +84,21 @@ export async function describeDshExecutor(): Promise<DshExecutorDescription> {
   return observeExecutorRequest('executor.describe', {}, {}, readDshExecutorDescription)
 }
 
+function recordResponseBodyFailure(error: unknown, method: string, status: number) {
+  // Fetch body consumption rejects with transport errors too; only malformed
+  // JSON produces SyntaxError. Keep both failures visible under their own kind.
+  const parseFailure = error instanceof SyntaxError
+  const stage = parseFailure ? 'body_parse_failed' : 'body_read_failed'
+  recordExecutorActivity({ kind: parseFailure ? 'parseFailures' : 'transportFailures' })
+  reportE2EDiagnostic('executor-response-body-failure', {
+    method,
+    stage,
+    status,
+    errorType: error instanceof Error ? error.name : typeof error,
+  })
+  return stage
+}
+
 async function readDshExecutorDescription(): Promise<DshExecutorDescription> {
   let response: Response
   try {
@@ -96,7 +111,7 @@ async function readDshExecutorDescription(): Promise<DshExecutorDescription> {
   try {
     body = await response.json()
   } catch (error) {
-    recordExecutorActivity({ kind: 'parseFailures' })
+    recordResponseBodyFailure(error, 'executor.describe', response.status)
     throw error
   }
   if (!response.ok) throw transportError(response.status, body as DshExecutorErrorBody)
@@ -252,19 +267,24 @@ async function performDshExecutorRequest<T>(
     parsedBody = await response.json()
   } catch (error) {
     if (isRuntimeReadCancellation(error, options.signal)) throw error
-    recordExecutorActivity({ kind: 'parseFailures' })
-    diagnostic('body_parse_failed')
-    transportDiagnostic('body_parse_failed', {
+    const stage = recordResponseBodyFailure(error, method, response.status)
+    diagnostic(stage)
+    transportDiagnostic(stage, {
       status: response.status,
       errorType: error instanceof Error ? error.name : typeof error,
     })
-    console.warn('[Wework] Executor RPC response parsing failed', {
-      request_id: requestId,
-      method,
-      elapsed_ms: Date.now() - startedAt,
-      status: response.status,
-      error_type: error instanceof Error ? error.name : typeof error,
-    })
+    console.warn(
+      stage === 'body_parse_failed'
+        ? '[Wework] Executor RPC response parsing failed'
+        : '[Wework] Executor RPC response body read failed',
+      {
+        request_id: requestId,
+        method,
+        elapsed_ms: Date.now() - startedAt,
+        status: response.status,
+        error_type: error instanceof Error ? error.name : typeof error,
+      }
+    )
     throw connectionError(error)
   }
   if (parsedBody === null || typeof parsedBody !== 'object' || Array.isArray(parsedBody)) {
