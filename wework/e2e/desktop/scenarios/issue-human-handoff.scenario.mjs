@@ -13,6 +13,7 @@ import {
   selectCollaborationProjectView,
 } from '../modules/workspace-flows.mjs'
 import { ensureExperimentalFeaturesEnabled } from '../modules/preferences-automation-flows.mjs'
+import { verifyIssueQuestionReflow } from '../modules/issue-question-reflow.mjs'
 import {
   assistantMessage,
   createSse,
@@ -562,6 +563,12 @@ export function createDesktopScenario({
           `${surface} ${testId(`issue-human-request-assignee-${question.id}`)}`,
           `${surface} ${testId('request-user-input-submit-button')}`,
         ])
+        await verifyIssueQuestionReflow(control, {
+          contentScope: ACTIVE,
+          question: surface,
+          originalDescription: MARKER,
+          captureScreenshot,
+        })
         const previousSize = await control.command('setMainWindowSize', 'body', {
           value: JSON.stringify({ width: 480, height: 760 }),
         })

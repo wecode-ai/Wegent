@@ -7,6 +7,62 @@ afterEach(() => {
   vi.unstubAllGlobals()
 })
 
+it('refreshes a question moved by preceding content without resizing the viewport or question', () => {
+  const observed = new Set<Element>()
+  let resize!: ResizeObserverCallback
+  vi.stubGlobal(
+    'ResizeObserver',
+    class {
+      constructor(callback: ResizeObserverCallback) {
+        resize = callback
+      }
+      observe = (element: Element) => observed.add(element)
+      unobserve = (element: Element) => observed.delete(element)
+      disconnect = vi.fn()
+    }
+  )
+  let questionTop = 200
+  vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(function (
+    this: HTMLElement
+  ) {
+    if (this.classList.contains('task-detail-human-request'))
+      return { top: questionTop, bottom: questionTop + 100, height: 100 } as DOMRect
+    return { top: 0, bottom: 440, height: 94 } as DOMRect
+  })
+  const computed = window.getComputedStyle.bind(window)
+  vi.spyOn(window, 'getComputedStyle').mockImplementation(element =>
+    element.tagName === 'FOOTER'
+      ? ({
+          position:
+            (element as HTMLElement).dataset.humanRequestVisible === 'true' ? 'static' : 'sticky',
+          bottom: '16px',
+        } as CSSStyleDeclaration)
+      : computed(element)
+  )
+  function Fixture() {
+    const ref = useIssueComposerViewport(true)
+    return (
+      <div data-testid="viewport" style={{ overflowY: 'auto' }}>
+        <div data-testid="content">
+          <div>Description</div>
+          <section className="task-detail-human-request">Question</section>
+          <footer ref={ref} />
+        </div>
+      </div>
+    )
+  }
+  render(<Fixture />)
+  const viewport = screen.getByTestId('viewport')
+  expect(viewport.style.scrollPaddingBottom).toBe('')
+  questionTop = 600
+  act(() => {
+    const content = screen.getByTestId('content')
+    if (observed.has(content))
+      resize([{ target: content } as ResizeObserverEntry], {} as ResizeObserver)
+  })
+  expect(viewport.style.scrollPaddingBottom).toBe('110px')
+})
+
 it('reserves the current composer footprint for browser scrolling and restores the viewport', () => {
   let resize!: ResizeObserverCallback
   const disconnect = vi.fn()

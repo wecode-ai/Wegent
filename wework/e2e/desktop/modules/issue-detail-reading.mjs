@@ -61,6 +61,34 @@ async function verifyConstrainedDiscussion(control, captureScreenshot, replySele
     })
   )
   try {
+    await control.command(
+      'scrollIntoViewAsUser',
+      scope('[data-testid="cloud-todo-detail-tag-input"]')
+    )
+    await control.command('fill', scope('[data-testid="cloud-todo-detail-tag-input"]'), {
+      value: '触控回归,',
+    })
+    const removeTag = scope('[data-testid="cloud-todo-detail-tag-tag-remove-触控回归"]')
+    await control.command('waitFor', removeTag, { visible: true })
+    await verifyTouchTargets(control, removeTag)
+    await control.command('click', removeTag)
+    await control.command('waitFor', removeTag, { visible: false })
+    await control.command('scrollIntoViewAsUser', scope('[data-testid="issue-milestone"]'))
+    await control.command('click', scope('[data-testid="issue-milestone"]'))
+    const milestone = '[data-testid="issue-milestone-option-empty"]'
+    await control.command('waitFor', milestone, { visible: true })
+    await verifyTouchTargets(control, '[data-testid^="issue-milestone-option-"]')
+    await control.command('nativePress', milestone, { key: 'Escape' })
+    await control.command('waitFor', milestone, { visible: false })
+    await control.command(
+      'scrollIntoViewAsUser',
+      scope('[data-testid="cloud-todo-detail-start-date-trigger"]')
+    )
+    await control.command(
+      'waitFor',
+      scope('[data-testid="cloud-todo-detail-start-date-trigger"]'),
+      { visible: true }
+    )
     await control.command('click', scope('[data-testid="cloud-todo-detail-start-date-trigger"]'))
     const dateFields =
       '[data-testid="cloud-todo-detail-start-date"], [data-testid="cloud-todo-detail-due-date"]'
@@ -138,6 +166,30 @@ async function verifyConstrainedDiscussion(control, captureScreenshot, replySele
     await control.command('fill', composer, {
       value: Array.from({ length: 8 }, (_, index) => `未发送草稿 ${index + 1}`).join('\n'),
     })
+    const draftMetrics = JSON.parse(
+      await control.command(
+        'getElementMetrics',
+        [
+          scope('[data-testid="cloud-todo-detail-scroll"]'),
+          scope('[data-testid="task-comment-form"]'),
+        ].join(', ')
+      )
+    )
+    const draftViewport = draftMetrics.find(row => row.testId === 'cloud-todo-detail-scroll')
+    const draftForm = draftMetrics.find(row => row.testId === 'task-comment-form')
+    assert.ok(
+      draftViewport.height - draftForm.height - 16 >= draftViewport.height / 2,
+      `Long drafts must preserve the reading budget: ${JSON.stringify(draftMetrics)}`
+    )
+    await control.command('click', scope('[data-testid="task-comment-form-send-actions"]'))
+    const sendOption = '[data-testid="task-comment-form-send-option"]'
+    await control.command('waitFor', sendOption, { visible: true })
+    await verifyTouchTargets(
+      control,
+      '[data-testid="task-comment-form-send-option"], [data-testid="task-comment-form-close"]'
+    )
+    await control.command('nativePress', sendOption, { key: 'Escape' })
+    await control.command('waitFor', sendOption, { visible: false })
     await control.command(
       'nativePress',
       replySelector.replace('cloud-task-activity-reply-toggle-', 'issue-comment-create-child-'),
@@ -173,6 +225,56 @@ async function verifyConstrainedDiscussion(control, captureScreenshot, replySele
     await control.command('fill', composer, { value: '' })
   } finally {
     await control.command('setMainWindowSize', 'body', { value: JSON.stringify(previous) })
+  }
+}
+
+async function verifyTouchTargets(control, selector) {
+  const targets = JSON.parse(await control.command('getElementMetrics', selector))
+  assert.ok(targets.length > 0, `Expected touch targets: ${selector}`)
+  for (const target of targets) {
+    assert.ok(
+      target.width >= 44 && target.height >= 44,
+      `Mobile targets must be at least 44px: ${JSON.stringify(target)}`
+    )
+  }
+}
+
+async function verifyStagedPreview(control, attachment, filename, captureScreenshot) {
+  const previousSize = await control.command('setMainWindowSize', 'body', {
+    value: JSON.stringify({ width: 480, height: 760 }),
+  })
+  try {
+    await verifyTouchTargets(control, `${attachment} [data-testid="remove-attachment-button"]`)
+    assert.equal(
+      await control.command(
+        'getAttribute',
+        `${attachment} [data-testid="remove-attachment-button"]`,
+        { value: 'aria-label' }
+      ),
+      '移除附件'
+    )
+    await control.command(
+      'click',
+      `${attachment} [data-testid="attachment-document-preview-button"]`
+    )
+    const preview = '[data-testid="cloud-file-preview-dialog"]'
+    await control.command('waitFor', preview, { text: filename, visible: true })
+    await control.command('waitFor', '[data-testid="cloud-file-preview-text"]', {
+      text: 'Issue reply route regression',
+      visible: true,
+    })
+    await verifyTouchTargets(
+      control,
+      '[data-testid="cloud-file-preview-close"], [data-testid="cloud-file-preview-download"]'
+    )
+    await captureScreenshot(control, 'issue-detail-reading-05-staged-attachment-preview.png')
+    await control.command('nativePress', '[data-testid="cloud-file-preview-close"]', {
+      key: 'Escape',
+    })
+    await control.command('waitFor', preview, { visible: false })
+    await control.command('waitFor', attachment, { text: filename, visible: true })
+  } finally {
+    await control.command('setMainWindowSize', 'body', { value: previousSize })
   }
 }
 
@@ -318,6 +420,7 @@ export async function verifyIssueDetailReading(control, { captureScreenshot, uiT
   await control.command('waitFor', attachment, { text: filename, visible: true })
   assert.ok((await control.command('getText', replyComposer)).includes(body))
   await captureScreenshot(control, 'issue-detail-reading-04-restored-reply-draft.png')
+  await verifyStagedPreview(control, attachment, filename, captureScreenshot)
   await control.command('click', `${attachment} [data-testid="remove-attachment-button"]`)
   await control.command('waitFor', attachment, { visible: false })
   await control.command('fill', composer, { value: '' })

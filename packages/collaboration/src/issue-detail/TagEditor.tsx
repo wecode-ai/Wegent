@@ -125,9 +125,11 @@ export function TagEditor({
         <span
           key={tag}
           data-testid={`${testIdPrefix}-tag-${tag}`}
-          className="inline-flex items-center gap-1 rounded-full bg-muted px-2 py-0.5 text-xs text-text-secondary"
+          className="inline-flex min-w-0 max-w-full items-center gap-1 rounded-full bg-muted px-2 py-0.5 text-xs text-text-secondary"
         >
-          {tag}
+          <span className="min-w-0 truncate" title={tag}>
+            {tag}
+          </span>
           {!disabled && (
             <button
               type="button"
@@ -136,7 +138,7 @@ export function TagEditor({
               onClick={() =>
                 onChange(tags.filter((candidate) => candidate !== tag))
               }
-              className="flex h-3.5 w-3.5 items-center justify-center rounded-full text-text-muted transition hover:bg-hover hover:text-text-primary"
+              className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full text-text-muted transition hover:bg-hover hover:text-text-primary md:h-3.5 md:w-3.5"
             >
               <X className="h-2.5 w-2.5" />
             </button>

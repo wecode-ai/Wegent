@@ -51,6 +51,11 @@ export function useIssueComposerViewport(enabled: boolean) {
     const observer = new ResizeObserver(update)
     observer.observe(composer)
     observer.observe(viewport)
+    // Preceding content can move a question without resizing the question itself.
+    let content = composer
+    while (content.parentElement && content.parentElement !== viewport)
+      content = content.parentElement
+    observer.observe(content)
     const forms = new MutationObserver((records) => {
       if (
         records.some((record) =>

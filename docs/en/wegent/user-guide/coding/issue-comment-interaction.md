@@ -13,7 +13,8 @@ Descriptions initially preview up to `240px`, preserving goal text and acceptanc
 When the editable title scrolls out of view while reading activity, the header retains a compact Issue title and current status.
 When the linked-task entry scrolls away, Create task becomes a compact header action without consuming another row of reading space.
 In narrow windows, an open detail dialog uses the full collaboration area. Closing it restores project navigation, preserving room for reading and full-size controls.
-During the current app session, unsent comment text, attachments, and its reply destination are retained separately by tab, account, project store, project, and Issue. Return from settings to continue editing. A successful send clears the draft; cancelling a reply retains the text and attachments while leaving that reply destination.
+During the current app session, unsent comments retain their text, attachments, and reply destinations separately by tab, server, account, project store, project, and Issue. Return from settings to continue editing. A successful send clears the draft; cancelling a reply retains the text and attachments while leaving that reply destination.
+Open an unsent attachment to preview it within the Issue. Close the preview or press Esc to return to the composer with its text and attachments intact.
 Descriptions expose a keyboard-accessible Edit description action that focuses the editor. Loading and normalizing Markdown alone does not mark the content as unsaved.
 Titles and properties save immediately; description edits use Save. A shared header indicator reports unsaved changes, saving, saved, or failure. Failed changes remain available for retry.
 Replies to ordinary human discussions say they continue the discussion. Only discussions with execution records promise execution continuation; stand-in conversations and human work assignments retain their own reply explanations.
@@ -23,7 +24,7 @@ While a pending human question is visible in the reading viewport, the comment c
 
 Opening an Issue from the Collaboration board shows creation, status changes, and comments in time order in the right detail drawer. An execution belongs to the comment that started it: the comment shows its run status, and its task entry opens the linked transcript, workspace, Terminal, and files. The execution page is read-only and does not expose a second reply composer. Return to the source Issue and reply in the corresponding discussion to add instructions.
 
-A comment initially shows a body preview, with expansion for long content. The author, run status, time, and Reply action remain visible when the body is collapsed. Reply opens that comment's inline composer on demand. Replies remain available while an execution is active: later instructions enter the same execution's message queue, do not start a concurrent run, and do not expose a low-level "task is already running" error. Completed runs display their persisted terminal status instead of an unverified status.
+A comment initially shows a body preview, with expansion for long content. The author, run status, time, and Reply action remain visible when the body is collapsed. In the timeline, Reply selects that discussion in the bottom composer; non-timeline layouts open the card's inline composer. Replies remain available while an execution is active: later instructions enter the same execution's message queue, do not start a concurrent run, and do not expose a low-level "task is already running" error. Completed runs display their persisted terminal status instead of an unverified status.
 
 The Issue status describes the current work phase. It moves to In progress when the agent starts or receives a follow-up, then moves to In review after the final queued instruction finishes. Historical AI replies keep the Completed state of their own turn; that state does not imply that the Issue has no newer active run. Use the Issue header and latest execution card as the current progress indicators.
 
@@ -36,7 +37,8 @@ For AI managed workflows, the manager writes an execution prompt for each child 
 - `V`: the visible bottom edge of the actual detail scroll container.
 - `G = max(16px, safe-area-inset-bottom)`: pinned bottom inset.
 - `N`: the composer's normal-flow bottom in viewport coordinates.
-- `B`: its actual bottom. While activity is visible and the composer fits, `B = min(N, V-G)` on every frame, within `1px`.
+- `H`: a pending human question intersects the reading viewport.
+- `B`: its actual bottom. While activity is visible and the composer fits, `B = N` when `H` is true; otherwise `B = min(N, V-G)` on every frame, within `1px`.
 - Its horizontal edges match the content column within `1px`; state changes must not change width.
 - Keep one DOM instance to preserve focus, drafts, attachments and IME composition.
 
@@ -48,6 +50,10 @@ stateDiagram-v2
   InFlow --> Pinned: Scroll up until N exceeds V-G
   Pinned --> Pinned: Height or viewport changes
   InFlow --> InFlow: Content changes without crossing the boundary
+  Pinned --> QuestionVisible: A pending question enters the viewport
+  InFlow --> QuestionVisible: A pending question enters the viewport
+  QuestionVisible --> Pinned: Question leaves and N exceeds V-G
+  QuestionVisible --> InFlow: Question leaves and N is at or below V-G
 ```
 
 ## Frame-by-frame behavior
@@ -55,7 +61,8 @@ stateDiagram-v2
 | Situation                              | Required behavior                                                                  | Prohibited behavior                                         |
 | -------------------------------------- | ---------------------------------------------------------------------------------- | ----------------------------------------------------------- |
 | Enter activity                         | Pin for long content; remain after short content without excessive whitespace      | Flash in the middle before snapping down                    |
-| Scroll the middle                      | Keep `B = V-G`; only content moves                                                 | Body text visible below the pinned composer                 |
+| Scroll the middle                      | Keep `B = V-G` when `H` is false; only content moves                                | Body text visible below the pinned composer                 |
+| A pending question is visible          | Use normal flow (`B = N`) and release sticky scroll clearance                       | A pinned composer covering question or submission controls |
 | Approach the end                       | Transition continuously when `N = V-G`                                             | Position animation, jitter or duplicate inputs              |
 | Reach the end                          | Use normal flow; at least `12px` after the final event and `32px` page-end spacing | Permanent occlusion or duplicate spacer height              |
 | Reverse scrolling                      | Retrace the same geometry without resetting draft, focus or scroll                 | Force scrolling to the bottom                               |
@@ -89,7 +96,7 @@ If collapsing moves the activity above the panel, bring its top into view instea
 
 Use short and multi-screen Markdown threads, code blocks, a final run event, attachments and send errors.
 Check desktop and narrow panels at entry, mid-scroll, `1px` on both sides of the transition, the end and reverse scrolling.
-Include multiline input, expanded settings and viewport resizing. Record scrollTop, scroll-container rect, composer rect and normal-flow bottom per frame; assert the formula and retain middle/end screenshots.
+Include multiline input, expanded settings and viewport resizing. Record `H`, scrollTop, scroll-container rect, composer rect and normal-flow bottom per frame; assert the applicable formula and retain middle/end screenshots. Move a pending question into and out of the viewport, including through preceding-content expansion, and verify normal flow and sticky clearance switch with its visibility.
 Append content while reading the middle and verify no forced bottom jump. The final event must be fully readable at the end.
 
 An isolated CSS check proves only layout mechanics. Unit tests, type checks and still images do not replace real Electron scroll acceptance.

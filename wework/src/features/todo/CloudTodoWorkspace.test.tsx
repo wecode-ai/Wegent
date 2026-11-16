@@ -1938,7 +1938,15 @@ describe('CloudTodoWorkspace', () => {
     const workbench = {
       services: workbenchServices,
       state: { devices: [], runtimeWork: null },
-      projectChat: { requestCatalogs: vi.fn() },
+      projectChat: {
+        requestCatalogs: vi.fn(),
+        attachmentStateByScope: {},
+        handleFileSelectForScope: vi.fn(),
+        addExistingAttachmentForScope: vi.fn(),
+        removeAttachmentForScope: vi.fn(),
+        dismissAttachmentErrorForScope: vi.fn(),
+        resetAttachmentsForScope: vi.fn(),
+      },
       createProjectRuntimeTask: vi.fn(),
       cancelRuntimeTask: vi.fn(),
       sendRuntimePaneMessage: vi.fn(),

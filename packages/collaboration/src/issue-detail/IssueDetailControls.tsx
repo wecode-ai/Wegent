@@ -293,7 +293,7 @@ export function IssueDetailSearchableSelect<TValue extends string>({
                       onChange(option.value);
                       setOpen(false);
                     }}
-                    className={`flex min-h-9 w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left text-sm hover:bg-muted ${option.section ? "pl-7" : ""} ${
+                    className={`flex min-h-11 w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left text-sm hover:bg-muted md:min-h-9 ${option.section ? "pl-7" : ""} ${
                       option.value === value ? "bg-muted font-medium" : ""
                     }`}
                   >
@@ -315,7 +315,7 @@ export function IssueDetailSearchableSelect<TValue extends string>({
                           return next;
                         })
                       }
-                      className="flex min-h-9 w-full items-center rounded-lg px-2.5 py-2 text-left text-sm font-medium text-text-secondary hover:bg-muted hover:text-text-primary"
+                      className="flex min-h-11 w-full items-center rounded-lg px-2.5 py-2 text-left text-sm font-medium text-text-secondary hover:bg-muted hover:text-text-primary md:min-h-9"
                     >
                       {showAllLabel?.(option.group, totalInGroup)}
                     </button>
@@ -340,7 +340,7 @@ export function IssueDetailSearchableSelect<TValue extends string>({
                     setOpen(false);
                     action.onSelect();
                   }}
-                  className="flex min-h-9 w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left text-sm font-medium text-text-secondary transition-colors hover:bg-muted hover:text-text-primary focus-visible:outline-none keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-focus/30"
+                  className="flex min-h-11 w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left text-sm font-medium text-text-secondary transition-colors hover:bg-muted hover:text-text-primary focus-visible:outline-none keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-focus/30 md:min-h-9"
                 >
                   {action.icon ? (
                     <span
