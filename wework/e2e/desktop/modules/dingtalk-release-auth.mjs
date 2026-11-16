@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import { execFile } from 'node:child_process'
 import { createHash } from 'node:crypto'
-import { readFile, writeFile } from 'node:fs/promises'
+import { mkdir, readFile, rm, writeFile } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { promisify } from 'node:util'
@@ -30,6 +30,16 @@ export function createDingtalkReleaseChecks({ checkpoint, resultDir, sourceRoot 
     handleHttp: (...args) => protocol.handleHttp(...args),
     async verify(options) {
       await verifyDingtalkReleaseAuth({ upgrade, directory, protocol, ...options })
+      if (upgrade) {
+        // The next existing case owns a different account and transfer receipt.
+        // Clear only this checkpoint's synthetic store after uninstall settles.
+        assert.equal(sourceRoot, join(resultDir, 'dws-source'))
+        for (const name of ['config', 'keychain']) {
+          const path = join(sourceRoot, name)
+          await rm(path, { recursive: true, force: true })
+          await mkdir(path, { recursive: true })
+        }
+      }
       await openPlugin(options.control, { slug: options.returnPluginKey })
     },
   }
@@ -236,6 +246,15 @@ async function verifyDingtalkReleaseAuth({
       list => !list.items.some(item => Number(item.metadata.labels.id) === id),
       timeoutMs,
       'Release fixture uninstall did not complete'
+    )
+    await waitForValue(
+      () =>
+        Promise.all(
+          [executorHome, dirname(cloud.remoteCodexHome)].map(home => managedRoot(home, id))
+        ),
+      roots => roots.every(root => root === null),
+      timeoutMs,
+      'Release fixture uninstall did not settle on both executors'
     )
   } else {
     assert.equal((await health('dingtalk-access')).status, 'ok')
