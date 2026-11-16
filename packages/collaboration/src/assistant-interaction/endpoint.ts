@@ -2,6 +2,7 @@ import type { AssistantEndpoint, AssistantEndpointKind } from "./types";
 
 export interface AssistantEndpointInput {
   kind: AssistantEndpointKind;
+  endpointRef?: string;
   ownerUserId: number;
   roleId: string;
   displayName: string;
@@ -10,6 +11,7 @@ export interface AssistantEndpointInput {
 }
 
 export interface ProjectAssistantEndpointRecord {
+  endpointRef: string;
   userId: number;
   roleId: string;
   endpointKind: AssistantEndpointKind;
@@ -26,8 +28,15 @@ export function createAssistantEndpoint(
     throw new TypeError("Assistant endpoint owner must be a non-negative user");
   const roleId = input.roleId.trim();
   if (!roleId) throw new TypeError("Assistant endpoint role is required");
+  const endpointRef = input.endpointRef?.trim();
+  if (endpointRef && !endpointRef.startsWith(`${input.kind}:`))
+    throw new TypeError("Assistant endpoint reference does not match its kind");
+  if (input.kind === "wegent_agent" && !endpointRef)
+    throw new TypeError(
+      "Wegent assistant endpoints require the exact agent reference",
+    );
   return {
-    id: `${input.kind}:${input.ownerUserId}:${roleId}`,
+    id: endpointRef || `${input.kind}:${input.ownerUserId}:${roleId}`,
     kind: input.kind,
     ownerUserId: input.ownerUserId,
     displayName: input.displayName.trim() || roleId,
@@ -47,6 +56,7 @@ export function assistantEndpointFromRoster(
 ): AssistantEndpoint {
   return createAssistantEndpoint({
     kind: record.endpointKind,
+    endpointRef: record.endpointRef,
     ownerUserId: record.userId,
     roleId: record.roleId,
     displayName: record.displayName,

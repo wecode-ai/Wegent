@@ -281,6 +281,11 @@
     "summaryPlaceholder": "Briefly describe the problem and the deliverable.",
     "defaults": "Project, assignee and date have defaults. You can change them in the task details after creation.",
     "assistantRoster": "Assign scoped work to project assistants",
+    "riskLevel": "Execution risk",
+    "risk": {
+      "high": "Higher risk · confirm before acting",
+      "low": "Low risk · policy may act automatically"
+    },
     "registerInProject": "Register in {{project}}",
     "cancel": "Cancel",
     "submit": "Create and open task",

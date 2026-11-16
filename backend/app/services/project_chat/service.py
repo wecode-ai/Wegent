@@ -2883,11 +2883,12 @@ class ProjectChatService:
         """Render one member-specific shared view over the internal projection."""
 
         from app.services.project_chat.message_provenance import (
+            message_runtime_owner_id,
             shared_message_metadata,
         )
 
         view = cls.to_view(row, db=db)
-        if view.actor_user_id == str(viewer_user_id):
+        if message_runtime_owner_id(db, row) == viewer_user_id:
             return view
         return view.model_copy(
             update={

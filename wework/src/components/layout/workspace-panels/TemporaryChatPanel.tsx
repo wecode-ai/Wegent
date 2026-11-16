@@ -135,6 +135,7 @@ interface TemporaryChatPanelProps {
     message: string
     clientUserMessageId: string
     attachmentIds?: number[]
+    interruptWhenBusy?: boolean
     runtimeOptions?: AssistantInteractionRequest['runtimeOptions']
   }) => Promise<{ sent: boolean; error?: string | null }>
   onAddressChange?: (address: RuntimeTaskAddress | null) => void
@@ -929,6 +930,7 @@ export function TemporaryChatPanel({
                   message,
                   clientUserMessageId: queuedMessage.id,
                   attachmentIds: remoteAttachmentIds(currentAttachments),
+                  interruptWhenBusy: options.interruptWhenBusy === true,
                   runtimeOptions: {
                     ...selectedModelFields,
                     ...(localRuntimeAttachments(currentAttachments).length

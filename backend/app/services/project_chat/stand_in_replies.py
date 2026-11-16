@@ -35,6 +35,25 @@ def stand_in_reply_recipient(db: Session, message_id: str) -> dict | None:
     }
 
 
+def _dispatch_endpoint_belongs_to(
+    metadata: dict, *, user_id: int, role_id: str
+) -> bool:
+    endpoint = metadata.get("assistant_endpoint_ref")
+    if not isinstance(endpoint, str):
+        return False
+    parts = endpoint.split(":")
+    if len(parts) < 3 or parts[-1] != role_id:
+        return False
+    owner = metadata.get("assistant_owner_user_id")
+    if owner is not None and owner != user_id:
+        return False
+    try:
+        endpoint_owner = int(parts[1])
+    except ValueError:
+        return False
+    return endpoint_owner == user_id
+
+
 @trace_sync("stand_in.public_issue_reply", tracer_name="backend.project_chat")
 def publish_stand_in_reply(
     db: Session,
@@ -100,15 +119,16 @@ def publish_stand_in_reply(
     message_id = str(uuid.uuid4())
     metadata = dict(item.metadata_json or {})
     policy = metadata.get("assistant_autonomy_policy")
-    endpoint_role = metadata.get("assistant_endpoint_ref")
-    role_matches = isinstance(endpoint_role, str) and endpoint_role.endswith(
-        f":{identity.role_id}"
+    owner_matches = _dispatch_endpoint_belongs_to(
+        metadata, user_id=user_id, role_id=identity.role_id
     )
+    can_transition = item.status not in {"completed", "in_review"}
     auto_publish = (
         metadata.get("assistant_dispatch_role") == "member"
-        and role_matches
+        and owner_matches
         and metadata.get("awaiting_public_summary") is True
         and metadata.get("publish_policy") == "summary_only"
+        and metadata.get("risk_level") == "low"
         and identity.publish_policy == "summary_only"
         and identity.status == "completed"
         and bool(body.strip())
@@ -119,9 +139,12 @@ def publish_stand_in_reply(
     )
     dispatch_review = (
         metadata.get("assistant_dispatch_role") == "member"
-        and role_matches
+        and owner_matches
+        and metadata.get("awaiting_public_summary") is True
+        and metadata.get("publish_policy") == "summary_only"
         and identity.status == "completed"
         and not auto_publish
+        and can_transition
     )
     message_metadata = {
         "execution_dispatch": "comment_only",
@@ -147,8 +170,9 @@ def publish_stand_in_reply(
         metadata["awaiting_public_summary"] = False
         metadata["assistant_publication_message_id"] = message_id
         metadata["assistant_result_message_id"] = message_id
-        item.status = "completed"
-        item.completed_at = datetime.now(UTC).replace(tzinfo=None)
+        if can_transition:
+            item.status = "completed"
+            item.completed_at = datetime.now(UTC).replace(tzinfo=None)
     elif dispatch_review:
         metadata["awaiting_public_summary"] = False
         metadata["assistant_result_message_id"] = message_id

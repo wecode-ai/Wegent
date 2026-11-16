@@ -279,6 +279,11 @@
     "summaryPlaceholder": "一句话说明要解决什么、交付什么。",
     "defaults": "项目、负责人和日期都有默认值；创建后随时能在任务详情中修改。",
     "assistantRoster": "将范围内的任务分配给你的项目助理",
+    "riskLevel": "执行风险",
+    "risk": {
+      "high": "高风险 · 操作前确认",
+      "low": "低风险 · 可按策略自动执行"
+    },
     "registerInProject": "登记到 {{project}}",
     "cancel": "取消",
     "submit": "创建并打开任务",

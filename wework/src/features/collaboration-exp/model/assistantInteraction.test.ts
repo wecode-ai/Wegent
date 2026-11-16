@@ -109,6 +109,15 @@ describe.each(['local_wework', 'cloud_device', 'wegent_agent'] as const)(
       ])
     })
 
+    it('forwards interrupt intent instead of preserving the busy queue', async () => {
+      const f = fixture(kind)
+      const interaction = createAssistantInteraction(f.endpoint, f.conversation, f.transport)
+      await interaction.send({ ...f.request, interruptWhenBusy: true })
+      expect(f.sendRuntimeMessage).toHaveBeenCalledWith(
+        expect.objectContaining({ interruptWhenBusy: true, queueIfBusy: false })
+      )
+    })
+
     it('rejects cross-owner and cross-Issue requests before calling a provider', async () => {
       const f = fixture(kind)
       const interaction = createAssistantInteraction(f.endpoint, f.conversation, f.transport)
@@ -147,6 +156,15 @@ describe.each(['local_wework', 'cloud_device', 'wegent_agent'] as const)(
       await expect(interaction.history()).rejects.toMatchObject({ code: 'history_unavailable' })
       expect(f.getRuntimeTranscript).toHaveBeenCalledTimes(1)
     })
+
+    it('rejects a runtime response that drifts to another task', async () => {
+      const f = fixture(kind)
+      f.sendRuntimeMessage.mockResolvedValue({ accepted: true, taskId: 'other-task' })
+      const interaction = createAssistantInteraction(f.endpoint, f.conversation, f.transport)
+      await expect(interaction.send(f.request)).rejects.toMatchObject({
+        code: 'request_rejected',
+      })
+    })
   }
 )
 
@@ -156,13 +174,15 @@ describe('assistant endpoint adapters', () => {
     ['cloud_device', cloudDeviceEndpoint],
     ['wegent_agent', wegentAgentEndpoint],
   ] as const)('%s uses the same stable owner-and-role identity', (kind, factory) => {
+    const endpointRef = kind === 'wegent_agent' ? `${kind}:7:agent-1:review` : undefined
     const endpoint = factory({
       ownerUserId: 7,
       roleId: 'review',
       displayName: 'Review assistant',
+      ...(endpointRef ? { endpointRef } : {}),
     })
     expect(endpoint).toMatchObject({
-      id: `${kind}:7:review`,
+      id: endpointRef ?? `${kind}:7:review`,
       kind,
       ownerUserId: 7,
     })
@@ -182,7 +202,7 @@ describe('assistant endpoint adapters', () => {
   })
 
   it('bridges the existing Runtime operations without creating a second store', async () => {
-    const send = vi.fn(async () => true)
+    const send = vi.fn(async () => ({ accepted: true, taskId: 'task' }))
     const cancel = vi.fn(async () => false)
     const transcript = vi.fn(async (address: { deviceId: string; taskId: string }) => ({
       taskId: address.taskId,
@@ -212,6 +232,7 @@ describe('assistant endpoint adapters', () => {
   it('projects a roster record into the shared endpoint capability contract', () => {
     expect(
       assistantEndpointFromRoster({
+        endpointRef: 'wegent_agent:7:agent-1:review',
         userId: 7,
         roleId: 'review',
         endpointKind: 'wegent_agent',
@@ -220,7 +241,7 @@ describe('assistant endpoint adapters', () => {
         capabilityTags: ['review', 'security'],
       })
     ).toMatchObject({
-      id: 'wegent_agent:7:review',
+      id: 'wegent_agent:7:agent-1:review',
       ownerUserId: 7,
       capabilities: { skills: ['review', 'security'] },
     })

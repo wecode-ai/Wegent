@@ -2,6 +2,7 @@
 
 import pytest
 
+from app.models.delivery import ProjectChatAgent
 from app.models.project_chat_message import ProjectChatMessage
 from app.services.project_chat.message_provenance import message_provenance
 from app.services.project_chat.service import project_chat_service
@@ -182,3 +183,48 @@ def test_shared_view_removes_process_output_from_another_member(test_db, test_us
     test_db.flush()
     shared = project_chat_service.to_shared_view(row, db=test_db, viewer_user_id=8)
     assert shared.content == ""
+
+
+def test_runtime_address_follows_agent_owner_not_trigger_author(test_db, test_user):
+    trigger = ProjectChatMessage(
+        message_id="trigger",
+        project_id="project-one",
+        task_id="ISSUE-1",
+        sender_type="user",
+        sender_id=str(test_user.id),
+        sender_name=test_user.user_name,
+        content="Run the shared agent",
+    )
+    agent = ProjectChatAgent(
+        id="shared-agent",
+        cloud_project_id="project-one",
+        title="Shared agent",
+        name="Shared agent",
+        created_by_user_id=999,
+        metadata_json={},
+    )
+    row = message(
+        message_id="agent-result",
+        agent_id=agent.id,
+        trigger_message_id=trigger.message_id,
+        runtime_device_id="owner-device",
+        runtime_task_id="owner-task",
+        status="completed",
+    )
+    test_db.add_all([trigger, agent, row])
+    test_db.flush()
+
+    trigger_view = project_chat_service.to_shared_view(
+        row, db=test_db, viewer_user_id=test_user.id
+    )
+    assert trigger_view.runtime_address is None
+    assert trigger_view.trace_state == "restricted"
+
+    owner_view = project_chat_service.to_shared_view(
+        row, db=test_db, viewer_user_id=agent.created_by_user_id
+    )
+    assert owner_view.runtime_address == {
+        "deviceId": "owner-device",
+        "taskId": "owner-task",
+    }
+    assert owner_view.trace_state == "available"

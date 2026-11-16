@@ -13,10 +13,10 @@ use crate::cloud_projects::role_for_priority;
 use crate::http_compat::FastApiError;
 use crate::state::AppState;
 
-use super::roster::roster_entries;
+use super::roster::{default_autonomy_policy, roster_entries};
 use super::{
-    ProjectAssistantRosterEntry, authorize_project, automatic, capability_match, digest,
-    dispatch_status, dispatch_write_error, text, wegent_agent_id,
+    ProjectAssistantRosterEntry, authorize_project, automatic_for, capability_match, digest,
+    dispatch_status_for, dispatch_write_error, effective_autonomy_policy, text, wegent_agent_id,
 };
 
 #[derive(Debug, Deserialize, Serialize)]
@@ -41,7 +41,13 @@ struct AssistantDispatchRequest {
     manager_user_id: Option<i64>,
     #[serde(default)]
     confirmation_state: String,
+    #[serde(default = "default_risk_level")]
+    risk_level: String,
     assignments: Vec<DispatchAssignment>,
+}
+
+fn default_risk_level() -> String {
+    "high".into()
 }
 
 #[derive(Debug, Deserialize, Serialize)]
@@ -68,6 +74,7 @@ fn validate_dispatch(input: &AssistantDispatchRequest) -> Result<(), FastApiErro
     if input.intent_id.trim().is_empty()
         || input.goal.trim().is_empty()
         || input.assignments.is_empty()
+        || !matches!(input.risk_level.as_str(), "low" | "medium" | "high")
         || input
             .assignments
             .iter()
@@ -75,7 +82,7 @@ fn validate_dispatch(input: &AssistantDispatchRequest) -> Result<(), FastApiErro
     {
         return Err(FastApiError::detail(
             StatusCode::UNPROCESSABLE_ENTITY,
-            "Dispatch intent, goal, and scoped briefs are required",
+            "Dispatch intent, goal, risk level, and scoped briefs are required",
         ));
     }
     Ok(())
@@ -113,6 +120,52 @@ async fn create_assistant_dispatch(
     }
     validate_dispatch(&request)?;
     let access = authorize_project(&state.mysql, project_id, user.id, "Developer").await?;
+    let dispatch_id = digest(&[
+        "assistant-dispatch",
+        &access.project.id,
+        &user.id.to_string(),
+        &request.intent_id,
+    ]);
+    let request_fingerprint = serde_json::to_string(&request)
+        .map(|value| digest(&[&value]))
+        .map_err(|_| FastApiError::validation(json!([])))?;
+    if let Some(existing) = crate::background_jobs::project::store::get(
+        &state.mysql,
+        "assistant_dispatch",
+        &dispatch_id,
+    )
+    .await
+    .map_err(|error| {
+        tracing::error!(%error, "assistant dispatch recovery failed");
+        FastApiError::internal()
+    })? {
+        if existing.metadata.0["request_fingerprint"].as_str() != Some(request_fingerprint.as_str())
+        {
+            return Err(FastApiError::detail(
+                StatusCode::CONFLICT,
+                "Dispatch intent already has different content",
+            ));
+        }
+        return Ok(dispatch_from_metadata(
+            &dispatch_id,
+            &request.intent_id,
+            existing.metadata.0,
+            true,
+        ));
+    }
+    let task_provider = access
+        .project
+        .metadata
+        .as_ref()
+        .and_then(|json| json.0.value.as_ref())
+        .and_then(|metadata| metadata.task_provider.as_deref())
+        .unwrap_or("local");
+    if matches!(task_provider, "github" | "gitlab") {
+        return Err(FastApiError::detail(
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "Assistant dispatch requires a local Issue provider",
+        ));
+    }
     let roster = roster_entries(state, &access.project.id).await?;
     let roster_by_id = roster
         .iter()
@@ -125,7 +178,7 @@ async fn create_assistant_dispatch(
             Some(id) => roster_by_id.get(id).copied(),
             None => roster
                 .iter()
-                .find(|entry| entry.user_id == assignment.user_id),
+                .find(|entry| entry.user_id == assignment.user_id && entry.enabled),
         }
         .filter(|entry| entry.user_id == assignment.user_id && entry.enabled)
         .ok_or_else(|| {
@@ -156,7 +209,9 @@ async fn create_assistant_dispatch(
             .map(|(assignment, _)| assignment.user_id)
             .unwrap_or_else(|| i64::from(user.id)),
     };
-    let manager_roster_entry = roster.iter().find(|entry| entry.user_id == manager);
+    let manager_roster_entry = roster
+        .iter()
+        .find(|entry| entry.user_id == manager && entry.enabled);
     if !users.contains(&manager)
         && manager != i64::from(user.id)
         && !has_permission(
@@ -190,15 +245,6 @@ async fn create_assistant_dispatch(
             .map(|user| user.user_name)
             .ok_or_else(|| FastApiError::validation(json!([])))?
     };
-    let dispatch_id = digest(&[
-        "assistant-dispatch",
-        &access.project.id,
-        &user.id.to_string(),
-        &request.intent_id,
-    ]);
-    let request_fingerprint = serde_json::to_string(&request)
-        .map(|value| digest(&[&value]))
-        .map_err(|_| FastApiError::validation(json!([])))?;
     let due_at = request.due_at.as_deref().map(validate_date).transpose()?;
     let (result, pending) = state
         .mysql
@@ -208,9 +254,8 @@ async fn create_assistant_dispatch(
                 .await?
                 .ok_or(brz_mysql::MysqlError::RowNotFound)?;
             if let Some(existing) = store::locked(tx, "assistant_dispatch", &dispatch_id).await? {
-                if existing.metadata.0["request_fingerprint"]
-                    .as_str()
-                    .is_some_and(|value| value != request_fingerprint)
+                if existing.metadata.0["request_fingerprint"].as_str()
+                    != Some(request_fingerprint.as_str())
                 {
                     return Err(brz_mysql::MysqlError::InvalidQuery {
                         reason: "intent id already has different dispatch content".into(),
@@ -254,7 +299,8 @@ async fn create_assistant_dispatch(
                 "dispatch_id": dispatch_id,
                 "intent_id": request.intent_id,
                 "assistant_dispatch": true,
-                "risk_ceiling": "low",
+                "risk_ceiling": &request.risk_level,
+                "risk_level": &request.risk_level,
             });
             let mut root_metadata = issues::issue_metadata(
                 &locked_project,
@@ -273,6 +319,22 @@ async fn create_assistant_dispatch(
                 "at": Utc::now().to_rfc3339(),
             }]);
             root_metadata["assistant_dispatch_role"] = json!("manager");
+            root_metadata["assistant_owner_user_id"] = json!(manager);
+            root_metadata["publish_policy"] = json!("summary_only");
+            root_metadata["risk_level"] = json!(&request.risk_level);
+            if let Some(entry) = manager_roster_entry {
+                root_metadata["assistant_endpoint_ref"] = json!(entry.endpoint_ref);
+                root_metadata["assistant_autonomy_policy"] =
+                    effective_autonomy_policy(entry, &request.risk_level);
+                root_metadata["awaiting_public_summary"] = json!(true);
+                root_metadata["tags"] = json!(dispatch_tags(
+                    &["assistant-dispatch"],
+                    entry.capability_tags.as_slice()
+                ));
+            } else {
+                root_metadata["assistant_autonomy_policy"] = default_autonomy_policy();
+                root_metadata["awaiting_public_summary"] = json!(false);
+            }
             let root = issues::insert_issue_on(
                 tx,
                 &locked_project,
@@ -298,9 +360,13 @@ async fn create_assistant_dispatch(
                 .iter()
                 .find(|(assignment, _)| assignment.user_id == manager)
                 .map(|(_, entry)| *entry)
-                .or_else(|| roster.iter().find(|entry| entry.user_id == manager));
+                .or_else(|| {
+                    roster
+                        .iter()
+                        .find(|entry| entry.user_id == manager && entry.enabled)
+                });
             if let Some(manager_entry) = manager_entry.filter(|entry| {
-                entry.endpoint_kind == "wegent_agent" && automatic(entry)
+                entry.endpoint_kind == "wegent_agent" && automatic_for(entry, &request.risk_level)
             })
             {
                 if let Some(notification) = enqueue_wegent_agent(
@@ -365,6 +431,7 @@ async fn create_assistant_dispatch(
                     "assistant_roster_entry_id": entry.id,
                     "owner_user_id": assignment.user_id,
                     "publish_policy": "summary_only",
+                    "risk_level": &request.risk_level,
                 });
                 let mut metadata = issues::issue_metadata(
                     &locked_project,
@@ -377,10 +444,16 @@ async fn create_assistant_dispatch(
                 metadata["assistant_brief"] = json!(assignment.brief);
                 metadata["assistant_owner_user_id"] = json!(assignment.user_id);
                 metadata["assistant_endpoint_ref"] = json!(entry.endpoint_ref);
-                metadata["assistant_autonomy_policy"] = entry.autonomy_policy.clone();
+                metadata["assistant_autonomy_policy"] =
+                    effective_autonomy_policy(entry, &request.risk_level);
                 metadata["publish_policy"] = json!("summary_only");
                 metadata["assistant_dispatch_role"] = json!("member");
                 metadata["awaiting_public_summary"] = json!(true);
+                metadata["risk_level"] = json!(&request.risk_level);
+                metadata["tags"] = json!(dispatch_tags(
+                    &["assistant-dispatch", "scoped-assignment"],
+                    entry.capability_tags.as_slice()
+                ));
                 metadata["assignment_history"] = json!([{
                     "by_user_id": user.id,
                     "to_type": "user",
@@ -391,7 +464,7 @@ async fn create_assistant_dispatch(
                 }]);
                 if entry.availability == "offline" {
                     metadata["queued_reason"] = json!("waiting_device");
-                } else if !automatic(entry) {
+                } else if !automatic_for(entry, &request.risk_level) {
                     metadata["queued_reason"] = json!("waiting_confirmation");
                 }
                 let child = issues::insert_issue_on(
@@ -411,7 +484,7 @@ async fn create_assistant_dispatch(
                     (
                         root.id.as_str(),
                         assignment.user_id,
-                        if dispatch_status(entry) == "queued" {
+                        if dispatch_status_for(entry, &request.risk_level) == "queued" {
                             "queued"
                         } else {
                             "pending"
@@ -425,7 +498,9 @@ async fn create_assistant_dispatch(
                 let assigned = store::locked(tx, "task", &child.id)
                     .await?
                     .ok_or(brz_mysql::MysqlError::RowNotFound)?;
-                if entry.endpoint_kind == "wegent_agent" && automatic(entry) {
+                if entry.endpoint_kind == "wegent_agent"
+                    && automatic_for(entry, &request.risk_level)
+                {
                     if let Some(notification) = enqueue_wegent_agent(
                         tx,
                         state,
@@ -478,7 +553,7 @@ async fn create_assistant_dispatch(
                     issue_id: child.id,
                     user_id: assignment.user_id,
                     roster_entry_id: entry.id.clone(),
-                    status: dispatch_status(entry).into(),
+                    status: dispatch_status_for(entry, &request.risk_level).into(),
                 });
             }
             tx.execute(
@@ -525,6 +600,20 @@ async fn create_assistant_dispatch(
         crate::background_jobs::project::notifications::deliver(state, notification).await;
     }
     Ok(result)
+}
+
+fn dispatch_tags(base: &[&str], capabilities: &[String]) -> Vec<String> {
+    let mut tags = base
+        .iter()
+        .map(|tag| (*tag).to_string())
+        .collect::<Vec<_>>();
+    for capability in capabilities {
+        let capability = capability.trim();
+        if !capability.is_empty() && !tags.iter().any(|tag| tag == capability) {
+            tags.push(capability.to_string());
+        }
+    }
+    tags
 }
 
 struct WegentEnqueue<'a> {
@@ -643,5 +732,26 @@ pub(super) fn dispatch_from_metadata(
         manager_user_id: metadata["manager_user_id"].as_i64().unwrap_or_default(),
         children: serde_json::from_value(metadata["children"].clone()).unwrap_or_default(),
         replayed,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::dispatch_tags;
+
+    #[test]
+    fn dispatch_tags_carry_role_filters_without_duplicates() {
+        assert_eq!(
+            dispatch_tags(
+                &["assistant-dispatch", "scoped-assignment"],
+                &["review".into(), "review".into(), "security".into()]
+            ),
+            vec![
+                "assistant-dispatch",
+                "scoped-assignment",
+                "review",
+                "security"
+            ]
+        );
     }
 }

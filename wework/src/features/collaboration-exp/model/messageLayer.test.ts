@@ -50,14 +50,22 @@ describe('shared assistant message layers', () => {
     }
   )
 
-  it('requires a real task address before exposing an execution link', () => {
+  it('keeps agent text public even when it has a runtime source address', () => {
     expect(
       timeline({
-        runtimeAddress: { deviceId: '', taskId: 'task' },
+        runtimeAddress: { deviceId: 'device', taskId: 'task' },
       })
-    ).toMatchObject({ kind: 'comment', executionAddress: null })
+    ).toMatchObject({
+      kind: 'comment',
+      body: 'Public conclusion',
+      executionAddress: null,
+    })
+  })
+
+  it('exposes an execution link only for execution message types', () => {
     expect(
       timeline({
+        type: 'agent_status',
         runtimeAddress: { deviceId: 'device', taskId: 'task' },
       })
     ).toMatchObject({ kind: 'execution', body: null })

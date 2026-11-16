@@ -89,9 +89,14 @@ fn valid_endpoint_identity(endpoint_ref: &str, user_id: i64, role_id: &str) -> b
                 && parts.next() == Some(role_id)
                 && parts.next().is_none()
         }
-        Some("wegent_agent") => endpoint_ref
-            .strip_prefix("wegent_agent:")
-            .is_some_and(|value| !value.trim().is_empty()),
+        Some("wegent_agent") => {
+            let mut parts = endpoint_ref.split(':');
+            parts.next() == Some("wegent_agent")
+                && parts.next().and_then(|value| value.parse::<i64>().ok()) == Some(user_id)
+                && parts.next().is_some_and(|agent| !agent.trim().is_empty())
+                && parts.next() == Some(role_id)
+                && parts.next().is_none()
+        }
         _ => false,
     }
 }
@@ -231,7 +236,7 @@ pub(super) async fn roster_entries(
         .map_err(roster_read_error)?;
     let mut entries = Vec::new();
     for row in rows {
-        if row.status != "active" {
+        if !matches!(row.status.as_str(), "active" | "disabled") {
             continue;
         }
         let Ok(user_id) = i32::try_from(row.user_id) else {
@@ -257,7 +262,8 @@ pub(super) async fn roster_entries(
             .map_err(|_| FastApiError::internal())?
             .map(|user| user.user_name)
             .unwrap_or_else(|| "未知成员（历史数据）".into());
-        entries.push(entry_from_row(project_id, row, user_name));
+        let enabled = row.status == "active";
+        entries.push(entry_from_row(project_id, row, user_name, enabled));
     }
     Ok(entries)
 }
@@ -266,6 +272,7 @@ fn entry_from_row(
     project_id: &str,
     row: RosterRow,
     user_name: String,
+    enabled: bool,
 ) -> ProjectAssistantRosterEntry {
     let metadata = row.metadata.0;
     ProjectAssistantRosterEntry {
@@ -277,7 +284,7 @@ fn entry_from_row(
         endpoint_ref: text(&metadata, "endpoint_ref"),
         endpoint_kind: text(&metadata, "endpoint_kind"),
         display_name: text(&metadata, "display_name"),
-        enabled: true,
+        enabled,
         capability_tags: strings(&metadata, "capability_tags"),
         autonomy_policy: metadata
             .get("autonomy_policy")
@@ -344,7 +351,21 @@ mod tests {
             7,
             "review"
         ));
-        assert!(valid_endpoint_identity("wegent_agent:agent-1", 7, "review"));
+        assert!(valid_endpoint_identity(
+            "wegent_agent:7:agent-1:review",
+            7,
+            "review"
+        ));
+        assert!(!valid_endpoint_identity(
+            "wegent_agent:8:agent-1:review",
+            7,
+            "review"
+        ));
+        assert!(!valid_endpoint_identity(
+            "wegent_agent:7:agent-1:other",
+            7,
+            "review"
+        ));
     }
 
     #[test]

@@ -163,6 +163,7 @@ export function AssistantHome({
   ) => {
     const shared = services.sharedWorkspaceApi
     if (!shared?.projects.saveAssistantRosterEntry) return false
+    const configuredRole = source.settings?.roles.find(role => role.id === roleId)
     const endpoint = localWeworkEndpoint({
       ownerUserId: ownerId,
       roleId: roleId ?? '@primary',
@@ -181,7 +182,7 @@ export function AssistantHome({
         endpointRef: endpoint.id,
         displayName: roleName,
         enabled: true,
-        capabilityTags: [],
+        capabilityTags: configuredRole?.collaboration.tags ?? [],
         autonomyPolicy: policy as unknown as Record<string, unknown>,
         availability: 'online',
         ...(saved ? { version: saved.version } : {}),
@@ -203,49 +204,59 @@ export function AssistantHome({
     )
       return false
     try {
-      await services.standInApi.personalSave(
-        ownerId,
-        { ...source.settings, roles: source.settings.roles.filter(item => item.id !== role.id) },
-        source.deviceId
-      )
       const shared = services.sharedWorkspaceApi
       const endpoint = localWeworkEndpoint({
         ownerUserId: ownerId,
         roleId: role.id,
         displayName: role.name,
       })
-      const disability = await Promise.allSettled(
-        projects
-          .filter(({ project }) => project.project_store !== 'local')
-          .map(async ({ project }) => {
-            if (!shared?.projects.listAssistantRoster || !shared.projects.saveAssistantRosterEntry)
-              return
-            const entry = (await shared.projects.listAssistantRoster(project.id)).find(
-              candidate => candidate.endpointRef === endpoint.id
-            )
-            if (!entry) return
-            await shared.projects.saveAssistantRosterEntry(project.id, {
-              userId: entry.userId,
-              roleId: entry.roleId,
-              endpointRef: entry.endpointRef,
-              displayName: entry.displayName,
-              enabled: false,
-              capabilityTags: entry.capabilityTags,
-              autonomyPolicy: entry.autonomyPolicy,
-              availability: entry.availability,
-              version: entry.version,
+      const entries = (
+        await Promise.all(
+          projects
+            .filter(({ project }) => project.project_store !== 'local')
+            .map(async ({ project }) => {
+              if (!shared?.projects.listAssistantRoster) return null
+              const entry = (await shared.projects.listAssistantRoster(project.id)).find(
+                candidate => candidate.endpointRef === endpoint.id
+              )
+              return entry ?? null
             })
+        )
+      ).flatMap(entry => (entry ? [entry] : []))
+      const disability = await Promise.allSettled(
+        entries.map(async entry => {
+          if (!shared?.projects.saveAssistantRosterEntry)
+            throw new Error('Assistant roster update is unavailable')
+          await shared.projects.saveAssistantRosterEntry(entry.projectId, {
+            userId: entry.userId,
+            roleId: entry.roleId,
+            endpointRef: entry.endpointRef,
+            displayName: entry.displayName,
+            enabled: false,
+            capabilityTags: entry.capabilityTags,
+            autonomyPolicy: entry.autonomyPolicy,
+            availability: entry.availability,
+            version: entry.version,
           })
+        })
+      )
+      const failed = disability.find(result => result.status === 'rejected')
+      if (failed?.status === 'rejected') throw failed.reason
+      await services.standInApi.personalSave(
+        ownerId,
+        { ...source.settings, roles: source.settings.roles.filter(item => item.id !== role.id) },
+        source.deviceId
       )
       source.refresh()
-      const failed = disability.find(result => result.status === 'rejected')
-      setError(failed?.status === 'rejected' ? getStandInErrorMessage(failed.reason) : null)
+      setError(null)
       return true
     } catch (cause) {
+      source.refresh()
       setError(getStandInErrorMessage(cause))
       return false
     }
   }
+
   const resolveProposal = async (accept: boolean) => {
     if (
       !selectedProposal ||

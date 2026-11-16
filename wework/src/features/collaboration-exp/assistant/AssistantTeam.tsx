@@ -144,7 +144,7 @@ export function AssistantTeam({
                     }}
                     className="min-h-11 text-xs text-text-muted underline md:min-h-8"
                   >
-                    {t('assistant.registerInProject', { project: project.name })}
+                    {t('create.registerInProject', { project: project.name })}
                   </button>
                 ))}
             </div>

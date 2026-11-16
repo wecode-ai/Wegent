@@ -48,36 +48,33 @@ pub(crate) async fn finish(
     let mut metadata = task.meta();
     let applied = project_ai_state(&mut metadata, message, status, detail, now);
     let auto_published =
-        apply_assistant_publication(&task.cloud_project_id, &mut metadata, message, status);
+        applied && apply_assistant_publication(&task, &mut metadata, message, status);
     issues::update_change_request_source(
         &mut metadata,
         &format!("activity:{}", message.message_id),
         &message.content,
     );
-    let review = if can_review(&task, &metadata, message) {
+    let review = if applied && can_review(&task, &metadata, message) {
         append_review_history(tx, &task, &mut metadata, now).await?
     } else {
         false
     };
-    let dispatch_review = !auto_published
-        && status == "completed"
-        && metadata["assistant_dispatch_role"] == "member"
-        && append_review_history(tx, &task, &mut metadata, now).await?;
+    let dispatch_review =
+        dispatch_review_allowed(&task, &metadata, message, status, applied, auto_published)
+            && append_review_history(tx, &task, &mut metadata, now).await?;
     if applied || review || dispatch_review || auto_published || metadata != task.metadata.0 {
-        let (next_status, reset_sort) = if review || dispatch_review {
-            ("in_review", true)
-        } else if auto_published {
-            ("completed", true)
-        } else {
-            (task.status.as_str(), false)
-        };
+        let transition =
+            assistant_transition(&task.status, review, dispatch_review, auto_published);
+        let (next_status, reset_sort) = transition
+            .map(|status| (status, true))
+            .unwrap_or((task.status.as_str(), false));
         tx.execute(
             "UPDATE loop_items SET metadata=?,status=?,completed_at=CASE WHEN ? THEN '1970-01-01 00:00:01' WHEN ? THEN UTC_TIMESTAMP(6) ELSE completed_at END,sort_order=CASE WHEN ? THEN 0 ELSE sort_order END,version=version+?,updated_at=CURRENT_TIMESTAMP(6) WHERE id=? AND resource_type='task'",
             (
                 Json(metadata),
                 next_status,
                 review || dispatch_review,
-                auto_published,
+                transition == Some("completed"),
                 reset_sort,
                 i64::from(applied)
                     + i64::from(review)
@@ -91,8 +88,44 @@ pub(crate) async fn finish(
     Ok(())
 }
 
+fn assistant_transition(
+    task_status: &str,
+    review: bool,
+    dispatch_review: bool,
+    auto_published: bool,
+) -> Option<&'static str> {
+    if review || dispatch_review {
+        Some("in_review")
+    } else if auto_published && !matches!(task_status, "completed" | "in_review") {
+        Some("completed")
+    } else {
+        None
+    }
+}
+
+fn dispatch_review_allowed(
+    task: &Node,
+    metadata: &Value,
+    message: &Message,
+    status: &str,
+    applied: bool,
+    auto_published: bool,
+) -> bool {
+    applied
+        && !auto_published
+        && status == "completed"
+        && metadata["assistant_dispatch_role"] == "member"
+        && metadata["awaiting_public_summary"] == true
+        && metadata["publish_policy"] == "summary_only"
+        && !matches!(task.status.as_str(), "completed" | "in_review")
+        && metadata["assistant_owner_user_id"].as_i64() == Some(task.assignee_user_id)
+        && task.assignee_agent_id == message.agent_id
+        && metadata["ai_state"]["project_chat_message_id"].as_str()
+            == Some(message.message_id.as_str())
+}
+
 fn apply_assistant_publication(
-    project_id: &str,
+    task: &Node,
     metadata: &mut Value,
     message: &mut Message,
     status: &str,
@@ -101,7 +134,11 @@ fn apply_assistant_publication(
     let authorized = status == "completed"
         && metadata["awaiting_public_summary"] == true
         && metadata["publish_policy"] == "summary_only"
-        && project_id == message.project_id
+        && metadata["risk_level"] == "low"
+        && metadata["assistant_dispatch_role"] == "member"
+        && metadata["assistant_owner_user_id"].as_i64() == Some(task.assignee_user_id)
+        && task.assignee_agent_id == message.agent_id
+        && task.cloud_project_id == message.project_id
         && !message.agent_id.is_empty()
         && !message.content.trim().is_empty()
         && policy["automatic"].as_bool() == Some(true)
@@ -221,7 +258,7 @@ fn project_ai_state(
     let run = message.metadata.0["run_id"].as_str().unwrap_or("");
     let old_run = previous.get("run_id").and_then(Value::as_str).unwrap_or("");
     let old_status = previous.get("status").and_then(Value::as_str).unwrap_or("");
-    if terminal(status) && !old_run.is_empty() && old_run != run && !terminal(old_status) {
+    if terminal(status) && !old_run.is_empty() && old_run != run {
         return false;
     }
     let mut next = previous.clone();
@@ -422,6 +459,38 @@ pub(super) mod tests {
         }
     }
 
+    fn task(status: &str) -> Node {
+        Node {
+            id: "P-1".into(),
+            resource_type: "task".into(),
+            cloud_project_id: "project".into(),
+            parent_id: String::new(),
+            loop_item_id: String::new(),
+            name: String::new(),
+            project_key: String::new(),
+            next_item_number: 0,
+            local_project_id: 0,
+            assignee_user_id: 7,
+            assignee_team_id: 0,
+            priority: "none".into(),
+            title: "Issue".into(),
+            description: String::new(),
+            status: status.into(),
+            source: String::new(),
+            created_by_user_id: 7,
+            user_id: 7,
+            task_user_id: 0,
+            task_id: String::new(),
+            task_title: String::new(),
+            device_id: String::new(),
+            backend_task_id: 0,
+            assignee_agent_id: "a".into(),
+            metadata: Json(json!({})),
+            due_at: None,
+            version: 1,
+        }
+    }
+
     pub(crate) async fn verify_issue_activity_projection(mysql: &impl Mysql) -> anyhow::Result<()> {
         let since = Utc::now();
         mysql.execute(
@@ -494,6 +563,16 @@ pub(super) mod tests {
             Utc::now().naive_utc()
         ));
         assert_eq!(metadata, original);
+        let mut settled = json!({"ai_state":{"run_id":"new","status":"completed","project_chat_message_id":"new-message"},"content_revision":7});
+        let original = settled.clone();
+        assert!(!project_ai_state(
+            &mut settled,
+            &message(),
+            "completed",
+            "",
+            Utc::now().naive_utc()
+        ));
+        assert_eq!(settled, original);
     }
 
     #[test]
@@ -517,6 +596,9 @@ pub(super) mod tests {
     #[test]
     fn only_explicit_low_risk_policy_can_auto_publish_the_assistant_summary() {
         let mut metadata = json!({
+            "assistant_dispatch_role":"member",
+            "assistant_owner_user_id":7,
+            "risk_level":"low",
             "awaiting_public_summary":true,
             "publish_policy":"summary_only",
             "assistant_autonomy_policy":{
@@ -528,8 +610,9 @@ pub(super) mod tests {
         let mut completed = message();
         completed.project_id = "project".into();
         completed.content = "Verified summary".into();
+        let task = task("in_progress");
         assert!(apply_assistant_publication(
-            "project",
+            &task,
             &mut metadata,
             &mut completed,
             "completed"
@@ -543,10 +626,80 @@ pub(super) mod tests {
         metadata["awaiting_public_summary"] = json!(true);
         metadata["assistant_autonomy_policy"]["ask_before_act"] = json!(true);
         assert!(!apply_assistant_publication(
-            "project",
+            &task,
             &mut metadata,
             &mut completed,
             "completed"
+        ));
+        metadata["assistant_autonomy_policy"]["ask_before_act"] = json!(false);
+        metadata["risk_level"] = json!("high");
+        assert!(!apply_assistant_publication(
+            &task,
+            &mut metadata,
+            &mut completed,
+            "completed"
+        ));
+    }
+
+    #[test]
+    fn automatic_assistant_results_do_not_override_user_review_states() {
+        assert_eq!(
+            assistant_transition("in_progress", false, false, true),
+            Some("completed")
+        );
+        assert_eq!(assistant_transition("in_review", false, false, true), None);
+        assert_eq!(assistant_transition("completed", false, false, true), None);
+    }
+
+    #[test]
+    fn stale_or_completed_dispatch_results_cannot_enter_review() {
+        let mut metadata = json!({
+            "assistant_dispatch_role":"member",
+            "assistant_owner_user_id":7,
+            "awaiting_public_summary":true,
+            "publish_policy":"summary_only",
+            "ai_state":{"project_chat_message_id":"old-message"}
+        });
+        let message = message();
+        let running = task("in_progress");
+        assert!(dispatch_review_allowed(
+            &running,
+            &metadata,
+            &message,
+            "completed",
+            true,
+            false
+        ));
+        assert!(!dispatch_review_allowed(
+            &running,
+            &metadata,
+            &message,
+            "completed",
+            false,
+            false
+        ));
+        metadata["ai_state"]["project_chat_message_id"] = json!("newer-message");
+        assert!(!dispatch_review_allowed(
+            &running,
+            &metadata,
+            &message,
+            "completed",
+            true,
+            false
+        ));
+        assert!(!dispatch_review_allowed(
+            &task("completed"),
+            &json!({
+                "assistant_dispatch_role":"member",
+                "assistant_owner_user_id":7,
+                "awaiting_public_summary":true,
+                "publish_policy":"summary_only",
+                "ai_state":{"project_chat_message_id":"old-message"}
+            }),
+            &message,
+            "completed",
+            true,
+            false
         ));
     }
 }

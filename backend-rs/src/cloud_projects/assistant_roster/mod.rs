@@ -3,7 +3,7 @@
 use brz_http_server::StatusCode;
 use brz_mysql::Mysql;
 use serde::Serialize;
-use serde_json::Value;
+use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 
 use crate::cloud_projects::members::has_permission;
@@ -44,9 +44,11 @@ pub(super) fn endpoint_kind(endpoint_ref: &str) -> Option<&'static str> {
 }
 
 pub(super) fn wegent_agent_id(endpoint_ref: &str) -> Option<&str> {
-    let value = endpoint_ref.strip_prefix("wegent_agent:")?;
-    let id = value.rsplit_once(':').map_or(value, |(_, id)| id);
-    (!id.is_empty()).then_some(id)
+    let mut parts = endpoint_ref.strip_prefix("wegent_agent:")?.split(':');
+    let _owner = parts.next()?;
+    let agent = parts.next()?;
+    let role = parts.next()?;
+    (parts.next().is_none() && !agent.is_empty() && !role.is_empty()).then_some(agent)
 }
 
 pub(super) fn capability_match(
@@ -62,18 +64,34 @@ pub(super) fn capability_match(
         .count()
 }
 
-pub(super) fn automatic(entry: &ProjectAssistantRosterEntry) -> bool {
-    entry
-        .autonomy_policy
+pub(super) fn effective_autonomy_policy(
+    entry: &ProjectAssistantRosterEntry,
+    risk_level: &str,
+) -> Value {
+    let mut policy = entry.autonomy_policy.clone();
+    if risk_level != "low"
+        && let Some(policy) = policy.as_object_mut()
+    {
+        policy.insert("automatic".into(), json!(false));
+        policy.insert("ask_before_act".into(), json!(true));
+    }
+    policy
+}
+
+pub(super) fn automatic_for(entry: &ProjectAssistantRosterEntry, risk_level: &str) -> bool {
+    effective_autonomy_policy(entry, risk_level)
         .get("automatic")
         .and_then(Value::as_bool)
         .unwrap_or(false)
 }
 
-pub(super) fn dispatch_status(entry: &ProjectAssistantRosterEntry) -> &'static str {
+pub(super) fn dispatch_status_for(
+    entry: &ProjectAssistantRosterEntry,
+    risk_level: &str,
+) -> &'static str {
     if entry.availability == "offline" {
         "waiting_device"
-    } else if !automatic(entry) {
+    } else if !automatic_for(entry, risk_level) {
         "waiting_confirmation"
     } else {
         "queued"
@@ -182,8 +200,6 @@ pub(super) fn dispatch_write_error(error: brz_mysql::MysqlError) -> FastApiError
 
 #[cfg(test)]
 mod tests {
-    use serde_json::json;
-
     use super::dispatch::dispatch_from_metadata;
     use super::roster::default_autonomy_policy;
     use super::*;
@@ -205,14 +221,21 @@ mod tests {
     fn endpoint_kind_is_derived_by_the_server() {
         assert_eq!(endpoint_kind("local_wework:7:review"), Some("local_wework"));
         assert_eq!(endpoint_kind("cloud_device:7:review"), Some("cloud_device"));
-        assert_eq!(endpoint_kind("wegent_agent:7:review"), Some("wegent_agent"));
+        assert_eq!(
+            endpoint_kind("wegent_agent:7:agent-1:review"),
+            Some("wegent_agent")
+        );
         assert_eq!(endpoint_kind("unregistered:7:review"), None);
     }
 
     #[test]
     fn wegent_endpoint_resolves_the_project_agent_id() {
-        assert_eq!(wegent_agent_id("wegent_agent:agent-1"), Some("agent-1"));
-        assert_eq!(wegent_agent_id("wegent_agent:7:agent-1"), Some("agent-1"));
+        assert_eq!(
+            wegent_agent_id("wegent_agent:7:agent-1:review"),
+            Some("agent-1")
+        );
+        assert_eq!(wegent_agent_id("wegent_agent:agent-1"), None);
+        assert_eq!(wegent_agent_id("wegent_agent:7:agent-1"), None);
         assert_eq!(wegent_agent_id("local_wework:7:review"), None);
     }
 
@@ -254,11 +277,13 @@ mod tests {
             availability: "online".into(),
             version: 1,
         };
-        assert_eq!(dispatch_status(&entry), "waiting_confirmation");
+        assert_eq!(dispatch_status_for(&entry, "low"), "waiting_confirmation");
         entry.autonomy_policy = json!({"automatic":true});
-        assert_eq!(dispatch_status(&entry), "queued");
+        assert_eq!(dispatch_status_for(&entry, "low"), "queued");
+        assert_eq!(dispatch_status_for(&entry, "high"), "waiting_confirmation");
+        assert_eq!(dispatch_status_for(&entry, "low"), "queued");
         entry.availability = "offline".into();
-        assert_eq!(dispatch_status(&entry), "waiting_device");
+        assert_eq!(dispatch_status_for(&entry, "low"), "waiting_device");
     }
 
     #[test]

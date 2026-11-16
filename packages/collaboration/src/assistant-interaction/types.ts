@@ -50,6 +50,7 @@ export interface AssistantInteractionRequest {
   visibility: "private";
   message: string;
   attachmentIds?: number[];
+  interruptWhenBusy?: boolean;
   runtimeOptions?: Omit<
     RuntimeSendRequest,
     | "address"

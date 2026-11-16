@@ -8,10 +8,18 @@ export interface RuntimeAssistantBridge {
     message: string;
     clientUserMessageId: string;
     attachmentIds?: number[];
+    interruptWhenBusy?: boolean;
     runtimeOptions?: AssistantInteractionRequest["runtimeOptions"];
     conversationContext: "private_discussion";
-    queueIfBusy: true;
-  }): Promise<boolean>;
+    queueIfBusy: boolean;
+  }): Promise<{
+    accepted: boolean;
+    taskId: string;
+    status?: "queued" | "running";
+    queuePosition?: number | null;
+    turnId?: string;
+    error?: string | null;
+  }>;
   cancel(address: RuntimeTaskAddress): Promise<boolean>;
   transcript(
     address: RuntimeTaskAddress,
@@ -24,8 +32,7 @@ export function createRuntimeAssistantTransport(
 ): AssistantInteractionTransport {
   return {
     async sendRuntimeMessage(input) {
-      const accepted = await bridge.send(input);
-      return { accepted, taskId: input.address.taskId };
+      return bridge.send(input);
     },
     async cancelRuntimeTask(address) {
       return { accepted: await bridge.cancel(address) };

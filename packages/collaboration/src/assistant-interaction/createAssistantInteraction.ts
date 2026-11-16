@@ -14,9 +14,10 @@ export interface AssistantInteractionTransport {
     message: string;
     clientUserMessageId: string;
     attachmentIds?: number[];
+    interruptWhenBusy?: boolean;
     runtimeOptions?: AssistantInteractionRequest["runtimeOptions"];
     conversationContext: "private_discussion";
-    queueIfBusy: true;
+    queueIfBusy: boolean;
   }): Promise<{ accepted: boolean; taskId: string; error?: string | null }>;
   cancelRuntimeTask(
     address: RuntimeTaskAddress,
@@ -92,11 +93,12 @@ export function createAssistantInteraction(
       message: request.message,
       clientUserMessageId: request.idempotencyKey,
       attachmentIds: request.attachmentIds,
+      ...(request.interruptWhenBusy ? { interruptWhenBusy: true } : {}),
       ...(request.runtimeOptions
         ? { runtimeOptions: request.runtimeOptions }
         : {}),
       conversationContext: "private_discussion",
-      queueIfBusy: true,
+      queueIfBusy: !request.interruptWhenBusy,
     });
     if (!result.accepted || result.taskId !== conversation.address.taskId)
       throw new AssistantInteractionError(

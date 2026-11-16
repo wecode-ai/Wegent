@@ -70,10 +70,16 @@ function CreateIssueForm({
   const [title, setTitle] = useState('')
   const [summary, setSummary] = useState('')
   const [dueDate, setDueDate] = useState(tomorrowDate)
+  const [riskLevel, setRiskLevel] = useState<'high' | 'low'>('high')
   const [selection, setSelection] = useState('standalone')
   const [assignee, setAssignee] = useState('self')
   const [assistantRoster, setAssistantRoster] = useState<ProjectAssistantRosterEntry[]>([])
   const [assistantRosterKey, setAssistantRosterKey] = useState('')
+  const [assistantRosterError, setAssistantRosterError] = useState<{
+    key: string
+    message: string
+  } | null>(null)
+  const [assistantRosterRetry, setAssistantRosterRetry] = useState(0)
   const [selectedAssistants, setSelectedAssistants] = useState<string[]>([])
   const [dispatchIntent, setDispatchIntent] = useState<{
     id: string
@@ -96,6 +102,7 @@ function CreateIssueForm({
   const targetStore = standalone ? 'local' : selectedProject?.project_store
   const targetId = standalone ? DEFAULT_WORK_ITEM_PROJECT_ID : selectedProject?.id
   const source = sources.find(candidate => candidate.store === targetStore)
+  const assistantRosterScopeKey = JSON.stringify([source?.store, targetId])
   const [loaded, setLoaded] = useState<{
     source: ExperienceSource
     id: string
@@ -163,22 +170,23 @@ function CreateIssueForm({
     void source.api.projects.listAssistantRoster(targetId).then(
       entries => {
         if (cancelled) return
+        setAssistantRosterError(current => (current?.key === currentKey ? null : current))
         setAssistantRoster(entries)
         setAssistantRosterKey(currentKey)
-        setSelectedAssistants(current => current.filter(id => entries.some(row => row.id === id)))
+        setSelectedAssistants(current =>
+          current.filter(id => entries.some(row => row.id === id && row.enabled))
+        )
       },
       cause => {
         if (!cancelled) {
-          setAssistantRoster([])
-          setAssistantRosterKey(currentKey)
-          setError(errorText(cause))
+          setAssistantRosterError({ key: currentKey, message: errorText(cause) })
         }
       }
     )
     return () => {
       cancelled = true
     }
-  }, [source, targetId, retry])
+  }, [source, targetId, retry, assistantRosterRetry])
 
   const members =
     current?.members.filter(
@@ -191,10 +199,14 @@ function CreateIssueForm({
   const assigneeLabel =
     assigneeOptions.find(option => option.value === assignee)?.label ??
     t('create.assigneeUnavailable')
+  const assignableAssistantRoster = assistantRoster.filter(entry => entry.enabled)
+  const currentAssistantRosterError =
+    assistantRosterError?.key === assistantRosterScopeKey ? assistantRosterError.message : null
   const changeTarget = (update: () => void) => {
     update()
     setAssignee('self')
     setError(null)
+    setRiskLevel('high')
     setSelectedAssistants([])
     setDispatchIntent(null)
   }
@@ -241,6 +253,7 @@ function CreateIssueForm({
           title.trim(),
           summary.trim(),
           dueDate,
+          riskLevel,
           assignee,
           selectedAssistants,
         ])
@@ -250,6 +263,7 @@ function CreateIssueForm({
         const dispatch = await source.api.projects.createAssistantDispatch(project.id, {
           intentId,
           goal: title.trim(),
+          riskLevel,
           description: summary.trim(),
           ...(dueDate ? { dueAt: dueDate } : {}),
           managerUserId: assigneeUserId,
@@ -396,15 +410,34 @@ function CreateIssueForm({
                   onChange={event => setSummary(event.target.value)}
                 />
               </label>
+              {assistantRosterKey === assistantRosterScopeKey &&
+              assignableAssistantRoster.length > 0 ? (
+                <label className="experience-create-field">
+                  <span>{t('create.riskLevel')}</span>
+                  {select(
+                    'riskLevel',
+                    riskLevel,
+                    t(`create.risk.${riskLevel}`),
+                    [
+                      { value: 'high', label: t('create.risk.high') },
+                      { value: 'low', label: t('create.risk.low') },
+                    ],
+                    value => {
+                      setRiskLevel(value === 'low' ? 'low' : 'high')
+                      setDispatchIntent(null)
+                    }
+                  )}
+                </label>
+              ) : null}
             </div>
-            {assistantRosterKey === JSON.stringify([source?.store, targetId]) &&
-            assistantRoster.length > 0 ? (
+            {assistantRosterKey === assistantRosterScopeKey &&
+            assignableAssistantRoster.length > 0 ? (
               <fieldset
                 className="experience-create-callout"
                 data-testid="collaboration-exp-create-assistant-roster"
               >
                 <legend>{t('create.assistantRoster')}</legend>
-                {assistantRoster.map(entry => {
+                {assignableAssistantRoster.map(entry => {
                   const selected = selectedAssistants.includes(entry.id)
                   return (
                     <label key={entry.id}>
@@ -457,6 +490,18 @@ function CreateIssueForm({
               <p role="alert">{t('create.permissionDenied')}</p>
             ) : null}
             {error ? <p role="alert">{error}</p> : null}
+            {currentAssistantRosterError ? (
+              <p role="alert">
+                {currentAssistantRosterError}{' '}
+                <button
+                  type="button"
+                  data-testid="collaboration-exp-create-assistant-roster-retry"
+                  onClick={() => setAssistantRosterRetry(value => value + 1)}
+                >
+                  {t('retry')}
+                </button>
+              </p>
+            ) : null}
           </div>
           <footer className="experience-create-footer">
             <button

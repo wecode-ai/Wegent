@@ -28,7 +28,8 @@ use super::project_chat_messages::{
     InsertMessage, existing_agent_response, existing_client_message, insert_message,
     load_active_agent_response, load_agent, load_message_by_id, load_messages, load_trigger,
     load_user_message, message_view_with_actor, metadata_map, project_task_exists,
-    runtime_activity_key, update_message, utc_isoformat_micros, uuid4, validate_agent,
+    runtime_activity_key, shared_message_payload, update_message, utc_isoformat_micros, uuid4,
+    validate_agent,
 };
 use crate::background_jobs::project::notifications;
 use crate::board_snapshot::repository::{BoardSnapshotRepository, ProjectAccess, has_permission};
@@ -836,9 +837,10 @@ async fn emit_created(state: &AppState, runtime: &Arc<SocketRuntime>, view: &Val
         .unwrap_or_default();
     let task_id = view.get("taskId").and_then(Value::as_str);
     let room = project_chat_room(project_id, task_id);
+    let shared = shared_message_payload(view);
     if let Err(error) = runtime
         .emitters()
-        .project_chat_message(&room, false, view)
+        .project_chat_message(&room, false, &shared)
         .await
     {
         tracing::warn!(%error, room, "project chat local delivery failed");
@@ -846,7 +848,7 @@ async fn emit_created(state: &AppState, runtime: &Arc<SocketRuntime>, view: &Val
     publish_room_event(
         state,
         PROJECT_CHAT_CREATED_EVENT,
-        view,
+        &shared,
         RUNTIME_NAMESPACE,
         &room,
     )

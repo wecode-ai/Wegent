@@ -102,6 +102,22 @@ function chooseProject(fixture: ReturnType<typeof setup>) {
   choose('project', `${project.name} · create.${project.project_store}`)
 }
 
+const rosterEntry = (enabled = true) => ({
+  id: 'roster-colleague',
+  projectId: 'first-shared-project',
+  userId: 8,
+  userName: 'Colleague',
+  roleId: 'review',
+  endpointRef: 'local_wework:8:review',
+  endpointKind: 'local_wework' as const,
+  displayName: 'Review assistant',
+  enabled,
+  capabilityTags: ['review'],
+  autonomyPolicy: { automatic: true, askBeforeAct: false },
+  availability: 'online' as const,
+  version: 1,
+})
+
 describe('CreateExperienceIssue', () => {
   beforeEach(() => {
     mocks.workbench = {
@@ -276,6 +292,7 @@ describe('CreateExperienceIssue', () => {
       'first-shared-project',
       expect.objectContaining({
         goal: 'Ship the migration',
+        riskLevel: 'high',
         managerUserId: 7,
         confirmationState: 'confirmed',
         assignments: [
@@ -289,6 +306,32 @@ describe('CreateExperienceIssue', () => {
     )
     expect(f.getIssue).toHaveBeenCalledWith('root-issue')
     expect(f.create).not.toHaveBeenCalled()
+  })
+
+  it('keeps disabled roster records out of new dispatch assignments', async () => {
+    const f = setup('backend')
+    f.listAssistantRoster.mockResolvedValue([rosterEntry(false)])
+    render(<CreateExperienceIssue {...f.props} />)
+    chooseProject(f)
+    await waitFor(() => expect(f.listAssistantRoster).toHaveBeenCalledOnce())
+    expect(
+      screen.queryByTestId('collaboration-exp-create-assistant-roster-colleague')
+    ).not.toBeInTheDocument()
+  })
+
+  it('retries a failed roster load without discarding the Issue form', async () => {
+    const f = setup('backend')
+    f.listAssistantRoster
+      .mockRejectedValueOnce(new Error('roster offline'))
+      .mockResolvedValueOnce([rosterEntry()])
+    render(<CreateExperienceIssue {...f.props} />)
+    chooseProject(f)
+    await enterGoal('Keep this goal')
+    await screen.findByText('roster offline')
+    fireEvent.click(screen.getByTestId('collaboration-exp-create-assistant-roster-retry'))
+    await screen.findByTestId('collaboration-exp-create-assistant-roster-colleague')
+    expect(f.listAssistantRoster).toHaveBeenCalledTimes(2)
+    expect(screen.getByTestId('collaboration-exp-create-goal')).toHaveValue('Keep this goal')
   })
 
   it('rejects a source returning another store instead of routing its object into this store', async () => {

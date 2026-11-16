@@ -65,6 +65,41 @@ def message_actor_id(db: Session, row: ProjectChatMessage) -> int | None:
     return None
 
 
+def message_runtime_owner_id(db: Session, row: ProjectChatMessage) -> int | None:
+    """Return the identity that owns the persisted Runtime address."""
+
+    if row.sender_type == "user":
+        return int(row.sender_id) if row.sender_id.isdecimal() else None
+    metadata = row.metadata_json if isinstance(row.metadata_json, dict) else {}
+    identity = metadata.get("stand_in")
+    if isinstance(identity, dict):
+        user_id = identity.get("user_id")
+        if type(user_id) is int and user_id > 0:
+            return user_id
+    if row.agent_id:
+        agent = (
+            db.query(ProjectChatAgent)
+            .filter_by(id=row.agent_id, cloud_project_id=row.project_id)
+            .first()
+        )
+        if agent is not None:
+            return agent.created_by_user_id
+    if row.trigger_message_id:
+        trigger = (
+            db.query(ProjectChatMessage)
+            .filter_by(
+                message_id=row.trigger_message_id,
+                project_id=row.project_id,
+                task_id=row.task_id,
+                sender_type="user",
+            )
+            .first()
+        )
+        if trigger is not None and trigger.sender_id.isdecimal():
+            return int(trigger.sender_id)
+    return None
+
+
 def message_provenance(db: Session, row: ProjectChatMessage) -> dict[str, object]:
     """Unconfirmed AI output never acquires authority from its own metadata."""
 

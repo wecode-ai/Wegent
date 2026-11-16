@@ -14,6 +14,7 @@ const mocks = vi.hoisted(() => ({
   historyAvailable: true,
   runtimeSend: vi.fn(),
   runtimeApiSend: vi.fn(),
+  runtimeApiInterruptSend: vi.fn(),
   runtimeApiCancel: vi.fn(),
   runtimeApiTranscript: vi.fn(),
   panel: vi.fn(),
@@ -25,6 +26,7 @@ vi.mock('@/features/workbench/useWorkbench', () => ({
     services: {
       runtimeWorkApi: {
         sendRuntimeMessage: mocks.runtimeApiSend,
+        interruptAndSendRuntimeMessage: mocks.runtimeApiInterruptSend,
         cancelRuntimeTask: mocks.runtimeApiCancel,
         getRuntimeTranscript: mocks.runtimeApiTranscript,
       },
@@ -44,6 +46,7 @@ vi.mock('@/components/layout/workspace-panels/TemporaryChatPanel', () => ({
     assistantSend?(input: {
       message: string
       clientUserMessageId: string
+      interruptWhenBusy?: boolean
       runtimeOptions?: { modelId?: string }
     }): Promise<{ sent: boolean; error?: string | null }>
     onHistorySourceAvailabilityChange?(value: boolean): void
@@ -118,6 +121,7 @@ beforeEach(() => {
   mocks.apiBaseUrl = 'https://cloud.example/api'
   mocks.historyAvailable = true
   mocks.runtimeApiSend.mockResolvedValue({ accepted: true, taskId: 'task-1' })
+  mocks.runtimeApiInterruptSend.mockResolvedValue({ accepted: true, taskId: 'task-1' })
 })
 afterEach(cleanup)
 
@@ -141,6 +145,23 @@ describe('private discussion pane', () => {
       conversationContext: 'private_discussion',
       queueIfBusy: true,
     })
+  })
+
+  it('forwards interrupt intent to the Runtime interrupt-and-send operation', async () => {
+    const { props } = fixture()
+    render(<PrivateDiscussionPane {...props} />)
+    const panelProps = mocks.panel.mock.calls.at(-1)?.[0]
+    await expect(
+      panelProps.assistantSend({
+        message: 'Replace the current direction',
+        clientUserMessageId: 'interrupt-request',
+        interruptWhenBusy: true,
+      })
+    ).resolves.toEqual({ sent: true })
+    expect(mocks.runtimeApiInterruptSend).toHaveBeenCalledWith(
+      expect.objectContaining({ message: 'Replace the current direction' })
+    )
+    expect(mocks.runtimeApiSend).not.toHaveBeenCalled()
   })
 
   it('uses task context and the original source history without a second embedded pane heading', () => {

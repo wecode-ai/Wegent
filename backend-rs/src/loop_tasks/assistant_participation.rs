@@ -361,7 +361,7 @@ async fn source_owner_ids<M: Mysql>(
              SELECT DISTINCT COALESCE( \
                CASE WHEN JSON_TYPE(JSON_EXTRACT(m.metadata,'$.stand_in.user_id'))='INTEGER' \
                  THEN CAST(JSON_UNQUOTE(JSON_EXTRACT(m.metadata,'$.stand_in.user_id')) AS UNSIGNED) END, \
-               CAST(t.sender_id AS UNSIGNED), a.created_by_user_id) AS owner_user_id \
+               a.created_by_user_id, CAST(t.sender_id AS UNSIGNED)) AS owner_user_id \
                FROM project_chat_messages m \
                LEFT JOIN project_chat_messages t ON t.message_id=m.trigger_message_id \
                  AND t.project_id=m.project_id AND t.task_id=m.task_id AND t.sender_type='user' \
@@ -371,7 +371,7 @@ async fn source_owner_ids<M: Mysql>(
                  AND COALESCE( \
                    CASE WHEN JSON_TYPE(JSON_EXTRACT(m.metadata,'$.stand_in.user_id'))='INTEGER' \
                      THEN CAST(JSON_UNQUOTE(JSON_EXTRACT(m.metadata,'$.stand_in.user_id')) AS UNSIGNED) END, \
-                   CAST(t.sender_id AS UNSIGNED), a.created_by_user_id, 0) > 0 \
+                   a.created_by_user_id, CAST(t.sender_id AS UNSIGNED), 0) > 0 \
              ORDER BY owner_user_id",
             (project, issue, project, issue, project, issue, project, issue),
         )
@@ -445,7 +445,7 @@ async fn participation_sources<M: Mysql>(
              FROM loop_item_executions WHERE cloud_project_id=? AND loop_item_id=? \
                AND executor_owner_user_id=? \
              UNION ALL \
-             SELECT 'message', m.message_id, ?, \
+             SELECT 'message', m.message_id, ?, NULLIF(m.runtime_task_id,'') AS conversation_id, \
                NULLIF(JSON_UNQUOTE(JSON_EXTRACT(m.metadata,'$.stand_in.role_id')),'null') AS role_id, \
                m.runtime_device_id, m.runtime_task_id, \
                CASE WHEN m.runtime_device_id<>'' AND m.runtime_task_id<>'' THEN 1 ELSE 0 END AS available, m.created_at \
@@ -460,7 +460,7 @@ async fn participation_sources<M: Mysql>(
                  (m.sender_type='agent' AND COALESCE( \
                    CASE WHEN JSON_TYPE(JSON_EXTRACT(m.metadata,'$.stand_in.user_id'))='INTEGER' \
                      THEN CAST(JSON_UNQUOTE(JSON_EXTRACT(m.metadata,'$.stand_in.user_id')) AS UNSIGNED) END, \
-                   CAST(t.sender_id AS UNSIGNED), a.created_by_user_id)=?))",
+                   a.created_by_user_id, CAST(t.sender_id AS UNSIGNED))=?))",
             (
                 project,
                 issue,
@@ -877,6 +877,9 @@ mod tests {
         assert!(sql.contains("executor_owner_user_id=?"));
         assert!(sql.contains("m.project_id=? AND m.task_id=?"));
         assert!(sql.contains("a.resource_type='chat_agent'"));
+        assert!(sql.contains(
+            "'message', m.message_id, ?, NULLIF(m.runtime_task_id,'') AS conversation_id,"
+        ));
         assert!(!sql.contains("SELECT content"));
         assert!(!sql.contains("wework_transcripts"));
     }

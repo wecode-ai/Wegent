@@ -159,16 +159,18 @@ function PrivateDiscussionContent(props: PrivateDiscussionPaneProps & { accountK
       scopedConversation,
       createRuntimeAssistantTransport({
         async send(input) {
-          const result = await runtime.sendRuntimeMessage({
+          const send = input.interruptWhenBusy
+            ? runtime.interruptAndSendRuntimeMessage
+            : runtime.sendRuntimeMessage
+          return send({
             ...input.runtimeOptions,
             address: input.address,
             message: input.message,
             clientUserMessageId: input.clientUserMessageId,
             ...(input.attachmentIds?.length ? { attachmentIds: input.attachmentIds } : {}),
             conversationContext: input.conversationContext,
-            queueIfBusy: input.queueIfBusy,
+            ...(input.queueIfBusy ? { queueIfBusy: true } : {}),
           })
-          return result.accepted
         },
         async cancel(target) {
           return (await runtime.cancelRuntimeTask(target)).accepted
@@ -313,6 +315,7 @@ function PrivateDiscussionContent(props: PrivateDiscussionPaneProps & { accountK
                           visibility: 'private',
                           message: input.message,
                           attachmentIds: input.attachmentIds,
+                          interruptWhenBusy: input.interruptWhenBusy,
                           runtimeOptions: input.runtimeOptions,
                         })
                         return { sent: true }

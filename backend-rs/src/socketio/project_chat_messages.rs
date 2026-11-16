@@ -22,7 +22,7 @@ use super::project_chat_events::{AgentFailureRequest, AgentStartRequest};
 
 #[path = "project_chat_authorship.rs"]
 mod authorship;
-pub(crate) use authorship::message_view_with_actor;
+pub(crate) use authorship::{message_view_with_actor, shared_message_payload};
 
 /// One `project_chat_messages` row used by the view.
 #[derive(Clone, Debug, brz_mysql::FromMysqlRow)]

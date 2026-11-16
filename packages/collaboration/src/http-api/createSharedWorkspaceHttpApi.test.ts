@@ -606,3 +606,61 @@ it("routes assistant participation reads and backfills through Issue endpoints",
     { dryRun: false },
   );
 });
+
+it("routes assistant roster and risk-scoped dispatch through the project API", async () => {
+  const { transport, post } = createTransport();
+  const roster = {
+    id: "roster-1",
+    projectId: "project/1",
+    userId: 7,
+    userName: "Owner",
+    roleId: "review",
+    endpointRef: "local_wework:7:review",
+    endpointKind: "local_wework" as const,
+    displayName: "Reviewer",
+    enabled: true,
+    capabilityTags: ["review"],
+    autonomyPolicy: { automatic: true, askBeforeAct: false },
+    availability: "online" as const,
+    version: 1,
+  };
+  const rosterInput = {
+    userId: 7,
+    roleId: "review",
+    endpointRef: "local_wework:7:review",
+    displayName: "Reviewer",
+    enabled: true,
+    capabilityTags: ["review"],
+    autonomyPolicy: { automatic: true, askBeforeAct: false },
+    availability: "online" as const,
+  };
+  post.mockResolvedValueOnce(roster).mockResolvedValueOnce({
+    dispatchId: "dispatch-1",
+    intentId: "intent-1",
+    rootIssueId: "ISSUE-1",
+    managerUserId: 7,
+    children: [],
+    replayed: false,
+  });
+  const api = createSharedWorkspaceHttpApi(transport);
+
+  await api.projects.saveAssistantRosterEntry("project/1", rosterInput);
+  await api.projects.createAssistantDispatch("project/1", {
+    intentId: "intent-1",
+    goal: "Review the change",
+    riskLevel: "low",
+    confirmationState: "confirmed",
+    assignments: [{ rosterEntryId: "roster-1", userId: 7, brief: "Review" }],
+  });
+
+  expect(post).toHaveBeenNthCalledWith(
+    1,
+    "/v1/cloud-projects/project%2F1/assistant-roster",
+    rosterInput,
+  );
+  expect(post).toHaveBeenNthCalledWith(
+    2,
+    "/v1/cloud-projects/project%2F1/assistant-dispatches",
+    expect.objectContaining({ riskLevel: "low", intentId: "intent-1" }),
+  );
+});
