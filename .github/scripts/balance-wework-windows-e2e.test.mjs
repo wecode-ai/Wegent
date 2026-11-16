@@ -363,6 +363,15 @@ test('timing evidence contains positive successful samples with source run links
   assert.match(evidence.preparationSource, /\/actions\/runs\/\d+\/job\/\d+$/)
   assert.ok(Number.isFinite(evidence.runnerOverheadSeconds) && evidence.runnerOverheadSeconds > 0)
   assert.match(evidence.runnerOverheadSource, /\/actions\/runs\/\d+\/job\/\d+$/)
+  const current = evidence.currentPrMeasurements
+  assert.ok(evidence.runs.includes(current.run))
+  assert.match(current.head, /^[a-f0-9]{40}$/)
+  assert.ok(Object.keys(current.sources).length > 0)
+  for (const [checkpoint, source] of Object.entries(current.sources)) {
+    assert.ok(Object.hasOwn(evidence.seconds, checkpoint), checkpoint)
+    assert.ok(source.startsWith(`${current.run}/job/`), source)
+    assert.match(source, /\/job\/\d+$/)
+  }
 })
 
 function replayedShardSeconds(shard, seconds, overheadSeconds) {
