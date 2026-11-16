@@ -290,6 +290,46 @@ test('drops a hidden group model when a refresh resolves another group identity'
   expect(hook.result.current.isConfiguredModelUnavailable).toBe(true)
 })
 
+test('validates a task selection seeded before the catalog is ready', async () => {
+  const hiddenTask = selection('hidden-model')
+  const placeholder: UnifiedModel = {
+    name: 'hidden-model',
+    type: 'public',
+    namespace: 'default',
+    resourceUserId: 0,
+  }
+  const api = {
+    listModels: vi.fn().mockResolvedValue({ data: [models[1]] }),
+    getModel: vi.fn().mockRejectedValue(new ApiError('removed', 404)),
+  }
+  const hook = renderHook(
+    ({ enabled }: { enabled: boolean }) =>
+      useWorkbenchModels({
+        api,
+        locked: false,
+        enabled,
+        scopeKey: scopeA,
+        selectionConfig: hiddenTask,
+        persistSelection: false,
+        fallbackWhenConfiguredModelUnavailable: false,
+      }),
+    { initialProps: { enabled: false } }
+  )
+
+  // A runtime task seeds its recorded selection before the catalog is enabled.
+  act(() => hook.result.current.setSelectionForScope(scopeA, placeholder, {}, hiddenTask))
+  expect(api.getModel).not.toHaveBeenCalled()
+
+  hook.rerender({ enabled: true })
+
+  await waitFor(() =>
+    expect(api.getModel).toHaveBeenCalledWith('hidden-model', 'public', 'wework', 'llm')
+  )
+  await waitFor(() => expect(hook.result.current.selectedModel).toBeNull())
+  expect(hook.result.current.isSelectionReady).toBe(false)
+  expect(hook.result.current.isConfiguredModelUnavailable).toBe(true)
+})
+
 test('keeps the replacement flow when the persisted cloud model no longer resolves', async () => {
   const deletedTask = selection('deleted-model')
   const api = {
