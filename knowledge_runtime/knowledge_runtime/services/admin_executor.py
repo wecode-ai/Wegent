@@ -31,6 +31,7 @@ from shared.models import (
     RemotePurgeKnowledgeIndexRequest,
     RemoteTestConnectionRequest,
     RemoteTestConnectionResponse,
+    RetrievalScope,
 )
 from shared.telemetry.decorators import trace_async
 
@@ -196,6 +197,8 @@ class AdminExecutor:
             config.retriever_config
         )
         knowledge_id = str(request.knowledge_base_id)
+        if not config.document_ids:
+            return RemoteListChunksResponse(chunks=[], total=0)
 
         result = await manage_index(
             storage_backend,
@@ -204,6 +207,7 @@ class AdminExecutor:
             max_chunks=request.max_chunks,
             metadata_condition=request.metadata_condition,
             user_id=config.index_owner_user_id,
+            scope=RetrievalScope(document_ids=config.document_ids),
         )
         document_refs = {
             reference

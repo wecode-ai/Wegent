@@ -278,7 +278,9 @@ class TestAdminExecutor:
         ):
             admin_executor._config_loader.resolve_admin_config.return_value = (
                 AdminResolvedConfig(
-                    index_owner_user_id=7, retriever_config=mock_retriever_config
+                    index_owner_user_id=7,
+                    retriever_config=mock_retriever_config,
+                    document_ids=[11],
                 )
             )
 

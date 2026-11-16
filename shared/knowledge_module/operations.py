@@ -118,6 +118,7 @@ async def manage_index(
     user_id: int | None = None,
     max_chunks: int = 10000,
     metadata_condition: dict[str, Any] | None = None,
+    scope: RetrievalScope | None = None,
 ) -> dict[str, Any]:
     """Manage one authorized index and normalize its public chunk records."""
     if operation == "purge":
@@ -138,6 +139,7 @@ async def manage_index(
         max_chunks=max_chunks,
         metadata_condition=metadata_condition,
         user_id=user_id,
+        scope=scope,
     )
     records = [
         {

@@ -99,8 +99,9 @@ async def test_chunk_listing_hides_deleted_and_foreign_documents(
 
 
 @pytest.mark.asyncio
-async def test_bounded_inspection_does_not_claim_the_whole_knowledge_base(
-    shared_model_db: Session, listing: tuple
+@pytest.mark.parametrize("native_scope", [True, False])
+async def test_listing_passes_live_scope_and_keeps_unscoped_engines_bounded(
+    shared_model_db: Session, listing: tuple, native_scope: bool
 ) -> None:
     loader, request, storage = listing
     shared_model_db.delete(shared_model_db.get(KnowledgeDocument, 11))
@@ -111,7 +112,7 @@ async def test_bounded_inspection_does_not_claim_the_whole_knowledge_base(
         *, max_chunks: int, scope: RetrievalScope | None = None, **kwargs: Any
     ) -> list[dict[str, Any]]:
         candidates = stored
-        if scope is not None:
+        if native_scope and scope is not None:
             candidates = [chunk for chunk in candidates if chunk["doc_ref"] == "doc_12"]
         return candidates[:max_chunks]
 
@@ -124,11 +125,13 @@ async def test_bounded_inspection_does_not_claim_the_whole_knowledge_base(
         window = await executor.list_chunks(
             request.model_copy(update={"max_chunks": 1})
         )
-        assert window.chunks == []
-        assert window.total == 0
+        assert [chunk.content for chunk in window.chunks] == (
+            ["body-1-doc_12"] if native_scope else []
+        )
+        assert window.total == (1 if native_scope else 0)
         storage.get_all_chunks.assert_called_once()
         assert storage.get_all_chunks.call_args.kwargs["max_chunks"] == 1
-        assert "scope" not in storage.get_all_chunks.call_args.kwargs
+        assert storage.get_all_chunks.call_args.kwargs["scope"].document_ids == [12]
         wider = await executor.list_chunks(request.model_copy(update={"max_chunks": 2}))
 
     assert [chunk.content for chunk in wider.chunks] == ["body-1-doc_12"]
@@ -151,7 +154,7 @@ async def test_empty_document_scope_excludes_all_index_candidates(
 
     assert result.chunks == []
     assert result.total == 0
-    storage.get_all_chunks.assert_called_once()
+    storage.get_all_chunks.assert_not_called()
 
 
 @pytest.mark.asyncio
