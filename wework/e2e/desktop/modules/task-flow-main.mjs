@@ -74,6 +74,11 @@ import {
 import { verifyCoreDshUiPluginComposition } from './core-dsh-ui-plugin-flows.mjs'
 
 import { DesktopE2EServer } from './desktop-server.mjs'
+import { DesktopErrorCollector } from '../error-collector.mjs'
+import { DesktopUiRefreshCollector } from '../ui-refresh-collector.mjs'
+import { DesktopPerformanceJournal } from '../performance-journal.mjs'
+import { verifyErrorCollection } from './error-collection.mjs'
+import { verifyUiRefreshCollection } from './ui-refresh-collection.mjs'
 import { upgradeUserEnvironment } from './upgrade-user-environment.mjs'
 import { desktopApplicationDataDirectory, resolveUpgradeUserHome } from './upgrade-user-home.mjs'
 
@@ -1134,6 +1139,7 @@ async function main() {
     : join(resultDir, 'electron-user-data')
   const appLogPath = join(resultDir, 'app.log')
   const executorLogPath = join(resultDir, 'executor.log')
+  const errorCollector = new DesktopErrorCollector(join(resultDir, 'errors.jsonl'), appLogPath)
   await Promise.all([
     mkdir(workspacePath, { recursive: true }),
     mkdir(secondaryProjectPath, { recursive: true }),
@@ -1236,6 +1242,17 @@ async function main() {
     enableMarketplaceConnectorAppsStub: RUNS_PLUGIN_E2E || runsProjectPluginE2E,
   })
   control.matrixEvidenceDirectory = resultDir
+  control.errors = errorCollector
+  control.refreshes = new DesktopUiRefreshCollector(control, resultDir)
+  control.performance = new DesktopPerformanceJournal({
+    checkpoint: SELECTED_DESKTOP_SEGMENT || 'task-flow',
+    platform: process.platform,
+    arch: process.arch,
+    variant: process.env.WEWORK_E2E_PERFORMANCE_VARIANT || process.env.GITHUB_JOB || 'local',
+    sourceSha: process.env.WEWORK_E2E_SOURCE_SHA || 'local',
+    runId: process.env.GITHUB_RUN_ID || 'local',
+    runAttempt: process.env.GITHUB_RUN_ATTEMPT || '1',
+  })
   const modelSwitchVerification = []
   let app
   const applicationProcessHistory = []
@@ -1255,6 +1272,8 @@ async function main() {
     desktopScenario = await loadDesktopScenario(process.env.WEWORK_E2E_DESKTOP_SCENARIO_MODULE, {
       appIdentifier,
       checkpoint: SELECTED_DESKTOP_SEGMENT,
+      errors: errorCollector,
+      refreshes: control.refreshes,
       captureScreenshot: (control, name, selector, options) =>
         captureVerificationScreenshot(control, name, selector, options),
       codexSqliteHome,
@@ -1420,6 +1439,7 @@ async function main() {
         desktopScenario?.authToken ??
         'wework-desktop-e2e-cloud-token',
       WEWORK_E2E_CONTROL_URL: control.controlUrl,
+      WEWORK_E2E_ERROR_LOG: errorCollector.path,
       WEWORK_DESKTOP_CONTROL_REGISTRY_DIR: join(resultDir, 'desktop-control'),
       WEWORK_E2E_MODEL_API_KEY: MODEL_API_KEY,
       WEWORK_E2E_MODEL_SERVER_URL: control.url,
@@ -1684,6 +1704,10 @@ async function main() {
       /^https?:/,
       'The Electron desktop controller did not connect from its local renderer origin'
     )
+    if (DESKTOP_SEGMENT === 'core-task-flow') {
+      await verifyErrorCollection(control, DEFAULT_STEP_TIMEOUT_MS)
+      await verifyUiRefreshCollection(control)
+    }
     if (VERIFIES_INITIAL_TELEMETRY_CONSENT) {
       await verifyInitialTelemetryConsent(control, [
         workspacePath,
@@ -4847,7 +4871,25 @@ source = ${JSON.stringify(staleBundledMarketplacePath)}`
         teardownFailures.push({ error, label })
       }
     }
+    await runTeardownStep('performance evidence', async () => {
+      if (app?.exitCode === null && app?.signalCode === null) {
+        const reads = await Promise.allSettled([control.command('getRoute', 'body')])
+        for (const read of reads)
+          if (read.status === 'rejected')
+            control.performance.errors.add('Final renderer snapshot was not acknowledged')
+      }
+      await writeFile(
+        join(resultDir, 'performance.json'),
+        JSON.stringify(control.performance.report(!testFailed), null, 2)
+      )
+    })
     await runTeardownStep('desktop application', async () => stopDesktopAppProcess(app))
+    await runTeardownStep('error evidence summary', async () => {
+      await writeFile(
+        join(resultDir, 'errors-summary.json'),
+        JSON.stringify(errorCollector.summary(), null, 2)
+      )
+    })
     await runTeardownStep('native cloud authorization', async () => nativeCloudLogin?.restore())
     // Scenario fixtures can still need the controller, proxies, and backend during cleanup.
     await runTeardownStep('desktop scenario', async () => desktopScenario?.cleanup?.())

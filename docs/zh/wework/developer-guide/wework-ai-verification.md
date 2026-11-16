@@ -6,6 +6,109 @@ sidebar_position: 39
 
 Wework 支持启动隔离的开发验证会话，让 AI 在真实 Electron 应用中完成 UI 操作和断言。该机制复用桌面端 E2E 的 WebView 控制通道，不会操作外部 Chrome，也不会连接开发者日常使用的 Wework 窗口。
 
+## 桌面 E2E 错误采集与断言
+
+共享桌面 runner 在启动应用前创建 `errors.jsonl`，并通过 `control.errors` 和场景工厂参数 `errors` 提供查询与断言。记录不轮转、不截断堆栈，使用进程 PID、采集实例 ID、实例内递增序号、时间、来源、类型和严重程度关联错误；应用重启会创建新的实例 ID。日志在写入前复用现有脱敏规则。截图、日志及该记录均为测试产物，不提交仓库。
+
+当前接入点与验证如下。表格描述已接入的边界，不代表任意代码路径都已经运行验证。
+
+| 来源                   | 接入的错误出口                                                                                                                       | 聚焦验证                                                                                 |
+| ---------------------- | ------------------------------------------------------------------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------- |
+| 主进程                 | 启动日志、console warning/error、未捕获异常监视器（包含默认转成异常的 Promise rejection）                                            | `electron/src/host/e2e-error-sources.test.ts`                                            |
+| 渲染器                 | 所有 WebContents 的 console warning/error、加载失败、进程退出；Wework 页面中的 window error、unhandledrejection、显式 `captureError` | `src/e2e/error-capture.test.ts`、`electron/src/host/e2e-error-sources.test.ts`           |
+| 托管运行时             | RuntimeSupervisor 管理的 Core DSH／Executor 的完整 stdout、stderr、启动错误及异常退出                                                | `electron/src/host/e2e-error-sources.test.ts`（真实子进程）                              |
+| 桌面驱动               | 原生驱动子进程输出、失败响应和连接失败                                                                                               | `electron/src/host/computer-use-driver-process.ts`；仍需真实桌面故障验证                 |
+| Host 协议              | capability 失败响应和协议解析失败                                                                                                    | `electron/src/host/e2e-error-sources.test.ts`；capability 另由既有 HostPipe 单元测试覆盖 |
+| 页面调用边界           | HTTP 客户端传输及失败响应、Host／Executor／Terminal 的业务失败（含 HTTP 200）、无效协议及连接失败、Executor／Terminal 事件流断开     | `src/e2e/error-boundaries.test.ts`、既有 transport 单元测试                              |
+| 网络及 Electron 子进程 | Session 网络失败、HTTP 4xx/5xx、Electron 子进程异常退出                                                                              | `electron/src/host/e2e-network-errors.test.ts`；Electron 事件接线仍需真实桌面验证        |
+| 采集本身               | 未启动、所需来源缺失、断序／重复、半条记录、序列化或写入失败                                                                         | `scripts/desktop-error-collector.test.mjs`、`electron/src/host/e2e-error-log.test.ts`    |
+
+异步子进程通过 Node 原生 `child_process` diagnostics channel 自动登记生命周期，Node Worker 通过原生 worker 事件登记异常，使用 `errorMonitor` 观察而不接管原有错误处理。对应真实进程／线程验证位于 `electron/src/host/e2e-process-errors.test.ts`；桌面驱动边界另有 `computer-use-driver-process.test.ts`。不会为了采集而读取外部命令的管道；自有托管运行时和驱动的输出在原有消费点收集。Worker 只旁听已经消费的输出流，不改变其流模式；尚未消费、无法观察的流会记录完整性失败，不能认证为已完整采集。非零退出和信号终止保守记录为错误事实，主动终止的预期事件也应明确断言。
+
+跨重启应在旧进程退出前确认其区间，随后在新进程中重新取 `mark()`。同一个断言区间包含不同采集实例时，异步认证会失败；当前进程的 checkpoint 不证明此前已退出进程的最后输出完整。
+
+场景必须明确执行断言，runner 不自动把所有既有故障场景改成零错误场景。推荐 `assertCollectedErrors`：它通过隔离验证 IPC 向主进程请求落盘 checkpoint，核对累计写入失败次数、序号和已提交字节位置，检查截至该位置的稳定快照；即使最后一次写入失败且 stderr 丢失，也不能通过。`assertErrors`／`assertHealthy` 是本地记录检查，不能代替主进程确认。正常流程传空预期数组；故障流程应使用精确的来源、错误代码、类型和次数，并拒绝剩余错误：
+
+```js
+control.errors.assertHealthy({ sources: ["main", "renderer", "runtime"] });
+const after = control.errors.mark();
+// Perform the operation and wait for its observable result and error report.
+await control.errors.assertCollectedErrors(
+  control,
+  [
+    {
+      description: "The executor reports the injected failure once",
+      match: (event) =>
+        event.source === "renderer" &&
+        event.type === "executor:example.operation" &&
+        event.details.code === "injected_failure",
+      count: 1,
+    },
+  ],
+  { after, source: "renderer", sources: ["main", "renderer", "runtime"] },
+);
+```
+
+不传 `source` 或 `type` 才会检查所选时间段的全部错误；过滤仅证明指定边界。`query` 可以读取原始运行时输出。stdout 保留为信息，stderr 保守地视为错误，输出块不是业务错误条数，不能据其次数推导业务失败次数。warning 单独查询，不等同于 error。断言前需要等待实际错误报告到达，不能用固定延时作为采集完成的证据。
+
+既有 `core-task-flow` checkpoint 新增采集自检：发出一条明确的 `collector-probe`，等待其真实记录，验证恰好一条，并通过原生 checkpoint 核对落盘。沿用现有 CI、构建和实例，不新增 E2E 作业。该故意产生的错误保留在日志中；后续操作用 `mark()` 划定区间，不配置全局忽略。新增 E2E 覆盖尚需实际运行后才构成真实 Electron 验证证据。
+
+覆盖验收必须同时检查接入点、故障注入和真实桌面执行证据。进程／窗口出现过不证明其所有错误出口都被测试；静默吞掉的异常、没有上报的业务失败、独立 Web Worker、自定义 Session 中后来覆盖网络监听器的代码，以及强杀时未排空的最后输出，不能由此日志自动证明完整。进程停止或失联而无法确认 checkpoint 时，异步采集断言必须失败。历史包没有采集代码时，显式健康断言必须失败，不能将空记录视为没有错误。插件及外部服务只验证调用结果、连接及协议边界，不宣称覆盖其内部实现。新增这类出口必须接入报告并增加故障测试；完成这些验证前，不得宣称“自有进程全覆盖”或“零遗漏”。
+
+## 按操作统计界面更新
+
+共享 runner 的 `control.refreshes`（场景工厂参数 `refreshes`）可以围住一个或多个操作，保存 `ui-refresh.jsonl`，并按区域设置更新预算。共享控制连接现在也会自动开启检查点采集；显式区间与自动区间复用一个 MutationObserver；多个区间可以重叠，结束时排空已排队记录，不使用固定等待猜测刷新完成。操作回调必须自行等待真实业务结果；若要验证后续一段时间没有额外刷新，继续使用既有框架的负向观察窗口。
+
+指标必须分开解释：
+
+- `renders`：已接入组件函数的调用次数，包括 StrictMode 重复调用及未提交的渲染尝试。默认接入 `app`、`workbench-provider`、`desktop-sidebar`、`desktop-workbench-main`、`workbench-conversation`、`right-workspace-panel`；同类组件的多个实例在当前渲染器内合计。可在更细的边界复用 `recordUiRender(id)`。
+- 区域的 `mutationBatches`／`mutationRecords`：该 CSS 选择器覆盖范围内观察到的 DOM 写入批次／记录数，不是浏览器绘制帧数。批次包含 MutationObserver 回调及显式排空；嵌套区域分别统计，不能相加当作全局刷新次数。
+- `rootRemovals`：匹配区域根节点被移除的次数；`maxAddedSubtreeElements`／`maxRemovedSubtreeElements` 是回调观察时新增／移除子树的最大元素规模，用于发现“一次更新就替换大片节点”。它们不是历史插入元素的精确累计值，也不代表像素重绘范围。
+- `reactCommits`：复用 `wework-root` Profiler，保留快速提交的次数及 actualDuration 合计，不受原来慢提交阈值过滤。该范围为 App 的 Profiler 子树。标准生产构建不会启用 React profiling，未观察到有效回调时返回 `null`，不会用 DOM 批次冒充提交次数；本功能不修改生产 React 构建。
+
+例如，已有测试中的 `operationAndWaitForResult` 可以包含多个操作及其业务等待。只有明确要求不影响侧栏的场景，才采用下例的零更新预算；其他预算应依据需求及实际测量制定，不设置通用猜测阈值。
+
+```js
+async function verifyLocalOperation(control, operationAndWaitForResult) {
+  const result = await control.refreshes.measure(
+    "local-panel-operation",
+    {
+      regions: [
+        { name: "sidebar", selector: '[data-testid="desktop-sidebar"]' },
+        {
+          name: "conversation",
+          selector: '[data-testid="desktop-workbench-pane-stack-container"]',
+        },
+      ],
+      renderIds: ["desktop-sidebar", "desktop-workbench-main"],
+    },
+    operationAndWaitForResult,
+  );
+
+  control.refreshes.assertWithin(result, {
+    regions: { sidebar: { mutationBatches: 0, rootRemovals: 0 } },
+    renders: { "desktop-sidebar": 0 },
+  });
+  return result;
+}
+```
+
+也可手动 `start(label, options)`／`stop(token)`，分别覆盖多个操作区间。使用稳定的产品 CSS 选择器；区域从未出现、组件没有接入计数、指标拼错或所需 Profiler 不可用，均不能按 0 通过预算断言。只有明确预期区域不存在时才设置该区域预算的 `allowAbsent: true`。标签使用固定操作名，不放入用户输入或凭据。结果仅保存标识、选择器及数值，不采集 DOM 文本或 HTML。
+
+区间记录包含期间的后台更新，不证明更新全部由操作导致。采集绑定开始时的控制客户端，操作中切换窗口不会混入另一个窗口的计数；各窗口可以分别采集。原渲染器整页重载、退出或丢失采集状态会使结束失败，并保存 `complete: false`，不得返回零更新。DOM 指标仅覆盖当前文档的所选 DOM，不进入 iframe 或 Shadow DOM 内部，也不等同于像素重绘。操作失败仍尝试保存指标，并保留原始失败；采集也失败时一起报告。既有 `core-task-flow` 增加了真实 DOM 瞬时区域写入／移除自检，沿用原 CI 与实例；接入不等于已经运行真实 Electron 验证。
+
+## 逐检查点性能诊断
+
+共享桌面控制通道自动在 ready／started／results 回执中携带累计指标，按 renderer capture ID 合并，保存为每个结果目录的 `performance.json`。CI 在原有桌面作业中生成逐检查点表格，并上传独立数值产物。当前阶段只采集、分析本次运行；不创建 main 基线、不比较历史总量，也不将“未发现增长”当作性能通过。报告明确记录 `baselineStatus: not-established` 和 `comparisonValidated: false`。
+
+指标包含 DOM 写入记录、节点增删和最大子树规模、已接入组件的 render 次数、可用时的 React commit 次数，以及 Executor RPC、独立 describe 请求、事件类型、全量／待处理任务读取、连接重建及失败次数。显式 AbortSignal 取消独立计数；导航中的网络中止仍保留事实，不能自动认定为业务失败或忽略。重复事件到达和实际重复投递分别统计。解析和协议错误保留用于逐项调查，故障注入中的预期错误仍需显式区间断言。
+
+`observations` 保留每个控制命令开始／回执时的非零计数增量、命令 ID 和动作名，以便区分操作期间与命令之间的后台工作。该关联不证明因果关系。只保存类型名、标识和数值，不保存请求参数、事件正文或凭据。方法名相同也可能对应不同资源，不能直接视为重复请求。按需使用 `control.refreshes` 选择更细的区域和业务等待。
+
+测量从控制连接建立持续到最后一次已接收回执；清理前补读活动客户端。接入之前的启动工作、关闭或重载窗口最后回执之后的工作不能由该性能窗口证明完整。缺失数据、计数重置和不可用指标必须标记为不完整，不能补零通过。标准生产 React Profiler 不可用时提交指标为 null。错误落盘完整性有独立契约。
+
+建立基线前先分析相同操作的实际波动，区分启动、周期轮询、业务动作和生命周期终止。机器争用会改变耗时和轮询次数；组件 render、DOM 写入、绘制帧数必须分开解释。后续启用 main 基线仍需一次显式建立阶段，首份可信基线产生后强制门禁，不允许丢失产物时静默重新初始化。
+
 ## 空闲 Executor 请求回归
 
 `idle-executor-requests` 使用无任务、断开云端的隔离真实 Electron 和 Executor，复用共享 runner 的首次遥测拒绝流程，然后重新加载主窗口并观测请求。启动后的工作树能力发现、遥测配置和共享 SSE 订阅必须各一次；前台与关闭到后台各观察 6.5 秒，跨过 5 秒轮询周期，要求继续发现待处理交互并保留 Runtime 身份检查，禁止全量任务目录轮询和重复启动配置。异步插件等已知启动请求允许完成，不以固定延时推断启动完成。

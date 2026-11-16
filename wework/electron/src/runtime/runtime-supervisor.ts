@@ -8,6 +8,7 @@ import { EventEmitter, once } from 'node:events'
 import { readdir, readFile } from 'node:fs/promises'
 import { toNamespacedPath } from 'node:path'
 import { RotatingLog, type RotatingLogOptions } from './rotating-log.js'
+import { e2eErrorLog } from '../host/e2e-error-log.js'
 import { resolveSpawnCommand } from './spawn-command.js'
 
 const PROCESS_GROUP_POLL_INTERVAL_MS = 25
@@ -142,19 +143,29 @@ export class RuntimeSupervisor extends EventEmitter<RuntimeSupervisorEvents> {
   }
 
   private attach(child: ChildProcessWithoutNullStreams): void {
+    const record = (type: string, level: 'info' | 'error', details: Record<string, unknown>) =>
+      e2eErrorLog.record('runtime', type, level, {
+        name: this.options.name,
+        childPid: child.pid,
+        ...details,
+      })
+    record('spawned', 'info', {})
     child.stdout.setEncoding('utf8')
     child.stderr.setEncoding('utf8')
     child.stdout.on('data', chunk => {
       const value = String(chunk)
+      record('stdout', 'info', { message: value })
       this.emit('stdout', value)
       void this.writeLog('stdout', value)
     })
     child.stderr.on('data', chunk => {
       const value = String(chunk)
+      record('stderr', 'error', { message: value })
       this.emit('stderr', value)
       void this.writeLog('stderr', value)
     })
     child.once('error', error => {
+      record('spawn-failed', 'error', { message: error.message, stack: error.stack })
       this.emit('failed', error)
       void this.writeLog('supervisor', `spawn error: ${error.message}`)
     })
@@ -192,6 +203,13 @@ export class RuntimeSupervisor extends EventEmitter<RuntimeSupervisorEvents> {
     if (this.stableTimer) clearTimeout(this.stableTimer)
     this.stableTimer = null
     const expected = this.stopping
+    e2eErrorLog.record('runtime', 'process-exit', expected ? 'info' : 'error', {
+      name: this.options.name,
+      childPid: child.pid,
+      code,
+      signal,
+      expected,
+    })
     this.emit('exit', code, signal, expected)
     void this.writeLog(
       'supervisor',

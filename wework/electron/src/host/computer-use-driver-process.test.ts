@@ -1,7 +1,9 @@
 import { EventEmitter } from 'node:events'
+import { PassThrough } from 'node:stream'
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
 import { ComputerUseDriverProcess } from './computer-use-driver-process.js'
 import type { DriverRequest } from './computer-use-driver-protocol.js'
+import { e2eErrorLog } from './e2e-error-log.js'
 
 const { fork } = vi.hoisted(() => ({ fork: vi.fn() }))
 vi.mock('node:child_process', () => ({ fork }))
@@ -36,6 +38,42 @@ describe('ComputerUseDriverProcess', () => {
     else Reflect.deleteProperty(process, 'helperExecPath')
     vi.useRealTimers()
     vi.clearAllMocks()
+  })
+
+  test('reports E2E driver output and failed replies at the owning process boundary', async () => {
+    vi.stubEnv('VITE_WEWORK_E2E', 'true')
+    const record = vi.spyOn(e2eErrorLog, 'record').mockImplementation(() => undefined)
+    const output = Object.assign(child, { stdout: new PassThrough(), stderr: new PassThrough() })
+    const driver = await ComputerUseDriverProcess.create(vi.fn())
+    try {
+      output.stderr.write('injected native diagnostic')
+      const result = driver.listToolsJson()
+      const request = child.send.mock.lastCall![0]
+      child.emit('message', { id: request.id, ok: false, error: 'injected native failure' })
+      await expect(result).rejects.toThrow('injected native failure')
+      expect(record).toHaveBeenCalledWith(
+        'computer-driver',
+        'stderr',
+        'error',
+        expect.objectContaining({
+          message: 'injected native diagnostic',
+        })
+      )
+      expect(record).toHaveBeenCalledWith(
+        'computer-driver',
+        'request-failed',
+        'error',
+        expect.objectContaining({
+          message: 'injected native failure',
+        })
+      )
+    } finally {
+      await driver.shutdown()
+      record.mockRestore()
+      vi.unstubAllEnvs()
+      output.stdout.destroy()
+      output.stderr.destroy()
+    }
   })
 
   test('executes native tools outside the host while preserving its permission identity', async () => {

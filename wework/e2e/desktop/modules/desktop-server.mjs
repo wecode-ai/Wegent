@@ -2089,6 +2089,7 @@ class DesktopE2EServer {
       }
       this.controlClientsByWindow.set(ready.windowLabel, ready.clientId)
       this.controlWindowsByClient.set(ready.clientId, ready.windowLabel)
+      this.performance?.record(ready.clientId, ready.performance)
       if (previousClientId && previousClientId !== ready.clientId) {
         const previousLongPoll = this.controlLongPolls.get(previousClientId)
         if (previousLongPoll) {
@@ -2177,6 +2178,13 @@ class DesktopE2EServer {
         return true
       }
       if (!pending.started) {
+        this.performance?.record(
+          started.clientId,
+          started.performance,
+          pending.action,
+          'started',
+          started.id
+        )
         pending.started = true
         const diagnostic = this.commandHistory.find(command => command.id === started.id)
         if (diagnostic) diagnostic.startedAt = new Date().toISOString()
@@ -2231,6 +2239,13 @@ class DesktopE2EServer {
         return true
       }
       const diagnostic = this.commandHistory.find(command => command.id === result.id)
+      this.performance?.record(
+        result.clientId,
+        result.performance,
+        pending.action,
+        'result',
+        result.id
+      )
       if (diagnostic) {
         diagnostic.resultReceivedAt = new Date().toISOString()
         diagnostic.actionSucceeded = result.ok === true

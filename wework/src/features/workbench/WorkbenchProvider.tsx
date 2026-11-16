@@ -1,4 +1,5 @@
 import { useWorkbenchServiceConnections } from './workbenchServiceConnections'
+import { recordUiRender } from '@/e2e/ui-refresh-capture'
 import { createHttpClient } from '@/api/http'
 import { createLocalCodexPluginApi } from '@/api/local/codexPlugins'
 import { createPluginApi } from '@/api/plugins'
@@ -239,6 +240,7 @@ function OwnedWorkbenchProvider({
   workbenchIdentity,
   ownershipKey,
 }: WorkbenchProviderProps & { workbenchIdentity: User; ownershipKey: string }) {
+  recordUiRender('workbench-provider')
   const { t } = useTranslation('common')
   const cloudConnection = useOptionalCloudConnection()
   const isWorkspaceTabActive = useOptionalWorkspaceTabActivity()

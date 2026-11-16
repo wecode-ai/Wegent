@@ -20,6 +20,9 @@ import { mainProcessLog } from './host/main-process-log.js'
 import { desktopE2EStartupTiming, StartupProgressReporter } from './host/startup-progress.js'
 import { recordReleaseDiagnostic } from './runtime/release-diagnostics.js'
 import { rendererConsoleDiagnostic } from './host/renderer-console-diagnostic.js'
+import { e2eErrorLog } from './host/e2e-error-log.js'
+import { installE2EWebContentsErrors } from './host/e2e-web-contents-errors.js'
+import { installE2ENetworkErrors, recordE2ENetworkError } from './host/e2e-network-errors.js'
 import { traceShutdownStep } from './runtime/shutdown-diagnostics.js'
 import { installE2ERendererCpuProfiling } from './host/e2e-renderer-cpu-profile.js'
 import { VerificationDevtools } from './host/verification-devtools.js'
@@ -552,7 +555,18 @@ const localWorkspaceCatalogLog = new RuntimeDiagnosticsLog(
   join(app.getPath('logs'), 'local-workspace-catalog.log'),
   '[Wework] Local workspace catalog '
 )
+app.on('session-created', target => installE2ENetworkErrors(target))
+app.on('child-process-gone', (_event, details) => {
+  e2eErrorLog.record(
+    'electron-child',
+    'process-gone',
+    details.reason === 'clean-exit' ? 'info' : 'error',
+    { ...details }
+  )
+})
+e2eErrorLog.record('electron-child', 'collector-started', 'info', {})
 app.on('web-contents-created', (_event, contents) => {
+  installE2EWebContentsErrors(contents)
   const logLoadEvent = (event: string) => () => {
     const address = contents.getURL()
     const route =
@@ -959,6 +973,7 @@ function registerDshWindowLabel(contents: WebContents, label: string): void {
 }
 
 function installDshWindowLabelHeaders(): void {
+  installE2ENetworkErrors(session.defaultSession)
   const releaseRedirect = process.env.WEWORK_E2E_DSH_RELEASE_REDIRECT
   delete process.env.WEWORK_E2E_DSH_RELEASE_REDIRECT
   if (
@@ -969,8 +984,14 @@ function installDshWindowLabelHeaders(): void {
     installE2eDshReleaseRedirect(session.defaultSession.webRequest, releaseRedirect)
   }
   session.defaultSession.webRequest.onErrorOccurred(
-    { urls: ['http://127.0.0.1/*', 'http://localhost/*'] },
+    {
+      urls:
+        process.env.VITE_WEWORK_E2E === 'true'
+          ? ['<all_urls>']
+          : ['http://127.0.0.1/*', 'http://localhost/*'],
+    },
     details => {
+      recordE2ENetworkError(details)
       rendererStartupLoader.requestFailed(details)
       const diagnostic = {
         at: new Date().toISOString(),
@@ -2009,6 +2030,12 @@ function installIpc(): void {
   if (process.env.VITE_WEWORK_E2E === 'true' && process.env.WEWORK_E2E_CONTROL_URL) {
     const downloadsPath = process.env.WEWORK_E2E_DOWNLOADS_DIR?.trim()
     if (downloadsPath) app.setPath('downloads', resolve(downloadsPath))
+    ipcMain.handle('e2e:error-collection-checkpoint', event => {
+      if (!dshWindowLabels.has(event.sender.id) || event.senderFrame !== event.sender.mainFrame) {
+        throw new Error('Error collection verification requires a Wework main frame')
+      }
+      return e2eErrorLog.checkpoint()
+    })
     ipcMain.handle('e2e:runtime-request', (event, input) => {
       if (!dshWindowLabels.has(event.sender.id) || event.senderFrame !== event.sender.mainFrame) {
         throw new Error('Runtime verification requires a Wework main frame')

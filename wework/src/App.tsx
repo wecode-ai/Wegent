@@ -1,4 +1,5 @@
 import { useWorkbenchServiceConnections } from '@/features/workbench/workbenchServiceConnections'
+import { recordUiRender } from '@/e2e/ui-refresh-capture'
 import { NotificationEventsBridge } from '@/features/notifications/NotificationEventsBridge'
 import { LOCAL_USER } from '@/api/local/localSession'
 import {
@@ -851,6 +852,7 @@ function AppRoutes({ onWorkbenchStartupReadyChange, onOpenWeworkForAppshot }: Ap
 }
 
 export default function App() {
+  recordUiRender('app')
   const path = useCurrentPath()
   const content =
     isDesktopRuntime() && path === '/system-drag' ? (

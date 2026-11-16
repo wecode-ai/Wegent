@@ -93,6 +93,12 @@ import {
   releaseLocalExecutorRequestHoldForE2E,
 } from '@/desktop/localExecutor'
 import { executeVerificationControlCommand } from './verification-control'
+import {
+  isUiRefreshCaptureEnabled,
+  startUiRefreshCapture,
+  readUiRefreshCapture,
+  stopUiRefreshCapture,
+} from './ui-refresh-capture'
 import { captureEmbeddedBrowserSnapshot, evalEmbeddedBrowserJson } from '@/lib/embedded-browser'
 import { chooseDesktopControlOption, selectDesktopControlOption } from './desktop-control-select'
 import { cloudIdentityFailure } from './cloud-identity-diagnostics'
@@ -4002,7 +4008,11 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
   throw new Error(`Unsupported desktop control action: ${command.action}`)
 }
 
-async function postDesktopControlResult(url: string, result: DesktopControlResult): Promise<void> {
+async function postDesktopControlResult(
+  url: string,
+  result: DesktopControlResult,
+  performance?: ReturnType<typeof readUiRefreshCapture>
+): Promise<void> {
   const startedAt = Date.now()
   let lastTick = startedAt
   let maxEventLoopLagMs = 0
@@ -4015,7 +4025,7 @@ async function postDesktopControlResult(url: string, result: DesktopControlResul
     response = await fetch(`${url}/results`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', ...desktopControlHeaders() },
-      body: JSON.stringify(result),
+      body: JSON.stringify({ ...result, performance }),
     })
     await response.arrayBuffer()
     if (!response.ok) {
@@ -4043,7 +4053,8 @@ async function postDesktopControlResult(url: string, result: DesktopControlResul
 async function postDesktopControlStarted(
   url: string,
   command: DesktopControlCommand,
-  clientId: string
+  clientId: string,
+  performance?: ReturnType<typeof readUiRefreshCapture>
 ): Promise<void> {
   const startedAt = Date.now()
   let lastTick = startedAt
@@ -4057,7 +4068,7 @@ async function postDesktopControlStarted(
     response = await fetch(`${url}/started`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', ...desktopControlHeaders() },
-      body: JSON.stringify({ id: command.id, clientId }),
+      body: JSON.stringify({ id: command.id, clientId, performance }),
     })
     await response.arrayBuffer()
   } finally {
@@ -4085,6 +4096,21 @@ async function postDesktopControlStarted(
 }
 
 export async function runDesktopControlClient(url: string, windowLabel: string): Promise<void> {
+  const token = isUiRefreshCaptureEnabled() ? startUiRefreshCapture() : undefined
+  try {
+    return await runDesktopControlLoop(url, windowLabel, () =>
+      token ? readUiRefreshCapture(token) : undefined
+    )
+  } finally {
+    if (token) stopUiRefreshCapture(token)
+  }
+}
+
+async function runDesktopControlLoop(
+  url: string,
+  windowLabel: string,
+  performanceSnapshot: () => ReturnType<typeof readUiRefreshCapture> | undefined
+): Promise<void> {
   const clientId = crypto.randomUUID()
   const pollForCommand = () => {
     recordDesktopControlPhase('poll-started')
@@ -4097,7 +4123,12 @@ export async function runDesktopControlClient(url: string, windowLabel: string):
   const readyResponse = await fetch(`${url}/ready`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', ...desktopControlHeaders() },
-    body: JSON.stringify({ clientId, location: window.location.href, windowLabel }),
+    body: JSON.stringify({
+      clientId,
+      location: window.location.href,
+      windowLabel,
+      performance: performanceSnapshot(),
+    }),
   })
   await readyResponse.arrayBuffer()
   if (!readyResponse.ok) {
@@ -4121,7 +4152,7 @@ export async function runDesktopControlClient(url: string, windowLabel: string):
       recordDesktopControlPhase('command-decoded', command)
       const diagnostic = { commandId: command.id, action: command.action, clientId }
       logRuntimeTaskCreateStage('desktop-control-received', diagnostic, 'debug')
-      await postDesktopControlStarted(url, command, clientId)
+      await postDesktopControlStarted(url, command, clientId, performanceSnapshot())
       recordDesktopControlPhase('start-acknowledged', command)
       logRuntimeTaskCreateStage('desktop-control-start-acknowledged', diagnostic, 'debug')
       const completion = completeDesktopControlCommand(
@@ -4135,7 +4166,7 @@ export async function runDesktopControlClient(url: string, windowLabel: string):
           }
         },
         async result => {
-          await postDesktopControlResult(url, result)
+          await postDesktopControlResult(url, result, performanceSnapshot())
           recordDesktopControlPhase('result-acknowledged', command)
         }
       )

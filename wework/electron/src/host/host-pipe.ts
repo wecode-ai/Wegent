@@ -4,6 +4,7 @@ import { EventEmitter } from 'node:events'
 import { createInterface, type Interface } from 'node:readline'
 import type { Readable, Writable } from 'node:stream'
 import { SmartAppVerificationError } from './smart-app-verification-types.js'
+import { e2eErrorLog } from './e2e-error-log.js'
 import {
   HOST_PROTOCOL_VERSION,
   HostCapabilityError,
@@ -35,6 +36,7 @@ export class HostPipeServer extends EventEmitter<HostPipeEvents> {
 
   constructor(private readonly router: HostCapabilityRouter) {
     super()
+    e2eErrorLog.record('host-pipe', 'started', 'info', {})
   }
 
   environment(): NodeJS.ProcessEnv {
@@ -162,6 +164,10 @@ export class HostPipeServer extends EventEmitter<HostPipeEvents> {
         () => this.runCompletions(completions)
       )
     } catch (error) {
+      e2eErrorLog.record('host-pipe', 'capability-failed', 'error', {
+        message: error instanceof Error ? error.message : String(error),
+        stack: error instanceof Error ? error.stack : undefined,
+      })
       const normalized =
         error instanceof HostCapabilityError
           ? error
@@ -235,6 +241,10 @@ export class HostPipeServer extends EventEmitter<HostPipeEvents> {
 
   private protocolFailure(session: HostPipeSession, error: Error): void {
     if (this.session !== session) return
+    e2eErrorLog.record('host-pipe', 'protocol-failed', 'error', {
+      message: error.message,
+      stack: error.stack,
+    })
     this.emit('protocolError', error)
     this.detach()
   }

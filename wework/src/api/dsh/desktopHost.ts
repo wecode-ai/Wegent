@@ -1,4 +1,5 @@
 import { gateRuntimeResponse } from '@/e2e/runtime-transport-gates'
+import { reportE2EError } from '@/e2e/error-capture'
 
 export interface DesktopHostErrorPayload {
   code: string
@@ -129,6 +130,9 @@ export async function invokeDesktopHost<Result>(
           () => new DesktopHostTransportError('Electron host response was interrupted')
         )
       : result
+  } catch (error) {
+    reportE2EError(`host:${capability}`, error)
+    throw error
   } finally {
     if (pendingDiagnostic !== undefined) clearTimeout(pendingDiagnostic)
     if (requestTimeout !== undefined) clearTimeout(requestTimeout)

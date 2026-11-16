@@ -27,6 +27,7 @@ permissions:
   packages: read
 
 env:
+  WEWORK_E2E_SOURCE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
   WEWORK_IDLE_TASKS_CONSIDER_SYSTEM_LOAD: ${{ vars.WEWORK_IDLE_TASKS_CONSIDER_SYSTEM_LOAD || 'false' }}
 
 defaults:
@@ -500,6 +501,12 @@ jobs:
         if: always()
         run: .github/scripts/prune-wework-desktop-e2e-diagnostics.sh
 
+      - name: Collect desktop performance samples
+        if: always()
+        uses: ./.github/actions/collect-wework-performance
+        with:
+          name: linux-core-${{ matrix.id }}
+
       - name: Upload Wework desktop E2E diagnostics
         if: always()
         continue-on-error: true
@@ -880,6 +887,12 @@ jobs:
         if: always()
         run: .github/scripts/prune-wework-desktop-e2e-diagnostics.sh
 
+      - name: Collect desktop performance samples
+        if: always()
+        uses: ./.github/actions/collect-wework-performance
+        with:
+          name: windows-core-${{ matrix.id }}
+
       - name: Upload Windows Wework desktop E2E diagnostics
         if: always()
         continue-on-error: true
@@ -1030,6 +1043,12 @@ jobs:
         if: always()
         run: .github/scripts/prune-wework-desktop-e2e-diagnostics.sh
 
+      - name: Collect desktop performance samples
+        if: always()
+        uses: ./.github/actions/collect-wework-performance
+        with:
+          name: cloud-${{ matrix.id }}
+
       - name: Upload Wework desktop Cloud E2E diagnostics
         if: always()
         continue-on-error: true
@@ -1126,6 +1145,12 @@ jobs:
       - name: Prune transient Wework desktop E2E caches
         if: always()
         run: .github/scripts/prune-wework-desktop-e2e-diagnostics.sh
+
+      - name: Collect desktop performance samples
+        if: always()
+        uses: ./.github/actions/collect-wework-performance
+        with:
+          name: other-${{ matrix.id }}
 
       - name: Upload Wework desktop E2E diagnostics
         if: always()
@@ -1394,6 +1419,12 @@ jobs:
         if: always()
         timeout-minutes: 2
         run: .github/scripts/prune-wework-desktop-e2e-diagnostics.sh
+
+      - name: Collect desktop performance samples
+        if: always()
+        uses: ./.github/actions/collect-wework-performance
+        with:
+          name: macos
 
       - name: Upload Wework desktop macOS diagnostics
         if: always()

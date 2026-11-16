@@ -6,6 +6,109 @@ sidebar_position: 39
 
 Wework can start an isolated development verification session so an AI can operate and assert against the real Electron application. It reuses the desktop E2E WebView control channel, never drives an external Chrome window, and does not attach to a developer's everyday Wework window.
 
+## Desktop E2E error collection and assertions
+
+The shared desktop runner creates `errors.jsonl` before launching the app and exposes queries and assertions through `control.errors` and the scenario factory's `errors` argument. The journal does not rotate or truncate stacks. Entries carry a PID, collector instance ID, per-instance sequence, timestamp, source, type and severity. Restarts receive a new instance ID. Values use the existing log redaction rules before writing. The journal, logs and screenshots are test artifacts and must not be committed.
+
+The following table identifies implemented boundaries, rather than claiming that every application path has been exercised.
+
+| Source                               | Connected error exits                                                                                                                                                                   | Focused verification                                                                                        |
+| ------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------- |
+| Main process                         | Startup logging, console warnings/errors, uncaught exception monitor, including rejections promoted to exceptions by the default policy                                                 | `electron/src/host/e2e-error-sources.test.ts`                                                               |
+| Renderer                             | Console warnings/errors, load failures and process termination for WebContents; window errors, unhandled rejections and explicit `captureError` in the Wework page                      | `src/e2e/error-capture.test.ts`, `electron/src/host/e2e-error-sources.test.ts`                              |
+| Managed runtimes                     | Complete stdout/stderr, spawn errors and unexpected exits for Core DSH/Executor processes managed by RuntimeSupervisor                                                                  | `electron/src/host/e2e-error-sources.test.ts`, using a real child process                                   |
+| Desktop driver                       | Native driver output, failed replies and connection failures                                                                                                                            | `electron/src/host/computer-use-driver-process.ts`; real desktop fault verification remains required        |
+| Host protocol                        | Failed capability replies and protocol parsing failures                                                                                                                                 | `electron/src/host/e2e-error-sources.test.ts`; existing HostPipe unit tests cover capabilities              |
+| Page request boundaries              | HTTP transport and failed responses; Host/Executor/Terminal business failures, including HTTP 200, malformed protocols and connection failures; Executor/Terminal stream disconnections | `src/e2e/error-boundaries.test.ts` and existing transport unit tests                                        |
+| Network and Electron child processes | Session network failures, HTTP 4xx/5xx and unexpected Electron child termination                                                                                                        | `electron/src/host/e2e-network-errors.test.ts`; real Electron event wiring still needs desktop verification |
+| Collector                            | Missing startup or required sources, gaps/duplicates, partial records, serialization and write failures                                                                                 | `scripts/desktop-error-collector.test.mjs`, `electron/src/host/e2e-error-log.test.ts`                       |
+
+Asynchronous subprocess lifecycles register automatically through Node's native `child_process` diagnostics channel. Node Workers register through the native worker event. `errorMonitor` observes failures without taking over existing error handling. Real process/thread tests are in `electron/src/host/e2e-process-errors.test.ts`; driver boundaries also have `computer-use-driver-process.test.ts`. External-command pipes are not consumed for observation. Owned managed-runtime and driver output is collected at existing consumption points. Worker output is observed only when already consumed, without changing its stream mode. Unobserved streams produce an integrity failure rather than a completeness certificate. Nonzero exits and signal termination are conservatively recorded as error facts; expected deliberate termination needs explicit assertions too.
+
+Across restarts, acknowledge the old process's interval before it exits, then take a new `mark()` in the new process. Asynchronous certification rejects intervals spanning collector instances: the current process cannot certify an earlier process's final output.
+
+Scenarios explicitly invoke assertions. The runner does not convert existing intentional-failure scenarios into zero-error scenarios. Prefer `assertCollectedErrors`: it requests a persisted checkpoint through isolated verification IPC, checks cumulative write failures, sequence and committed byte offset, and validates a stable snapshot through that offset. A failed final write cannot pass even if stderr evidence was lost. `assertErrors`/`assertHealthy` inspect local records and do not replace native acknowledgment. Use an empty expectation array for normal flows. Match expected failures by source, code, type and exact count, and reject remaining errors:
+
+```js
+control.errors.assertHealthy({ sources: ["main", "renderer", "runtime"] });
+const after = control.errors.mark();
+// Perform the operation and wait for its observable result and error report.
+await control.errors.assertCollectedErrors(
+  control,
+  [
+    {
+      description: "The executor reports the injected failure once",
+      match: (event) =>
+        event.source === "renderer" &&
+        event.type === "executor:example.operation" &&
+        event.details.code === "injected_failure",
+      count: 1,
+    },
+  ],
+  { after, source: "renderer", sources: ["main", "renderer", "runtime"] },
+);
+```
+
+Omit `source` and `type` to check all errors in the selected interval. Filters establish only the selected boundary. `query` also exposes raw runtime output. Stdout is informational; stderr is conservatively classified as an error. Output chunks are not business-error counts. Query warnings separately. Wait for the actual report before asserting; fixed delays do not establish collection completion.
+
+The existing `core-task-flow` checkpoint adds a collection self-test: emit one explicit `collector-probe`, wait for its real journal entry, assert exactly one occurrence, and verify persistence through the native checkpoint. It reuses the existing CI, build and app instance, without another E2E job. The deliberate error remains in the journal; use `mark()` for subsequent operation intervals rather than a global ignore rule. This added E2E coverage becomes actual Electron evidence only after execution.
+
+Coverage acceptance requires connected exits, fault injection and actual desktop execution evidence. A registered process or window does not prove every error exit was tested. Silently swallowed exceptions, unreported business failures, independent Web Workers, custom Sessions whose network listener is subsequently replaced, and final output lost during forced termination are not automatically certified by this journal. If the process stops or disconnects before acknowledging a checkpoint, the asynchronous assertion must fail. Historical packages without instrumentation must fail explicit health assertions rather than treating empty journals as success. Plugin and external-service coverage ends at returned results, connections and protocols. New exits require reporting and fault tests. Do not claim complete owned-process coverage or zero loss before these checks are fulfilled.
+
+## Measuring UI updates around operations
+
+The shared runner's `control.refreshes` (also the scenario factory's `refreshes` argument) brackets one or more operations, persists `ui-refresh.jsonl`, and supports regional update budgets. The shared control connection also opens an automatic checkpoint capture; explicit and automatic captures reuse one MutationObserver. Windows can overlap; stopping drains pending records rather than guessing completion with a fixed delay. The operation callback must wait for actual business results. Use existing negative observation windows to verify that no further updates occur over a subsequent interval.
+
+Interpret metrics separately:
+
+- `renders` counts instrumented component function calls, including StrictMode repetitions and abandoned render attempts. Built-in boundaries are `app`, `workbench-provider`, `desktop-sidebar`, `desktop-workbench-main`, `workbench-conversation`, and `right-workspace-panel`. Multiple instances of a component type aggregate within the current renderer. Reuse `recordUiRender(id)` for finer boundaries.
+- Regional `mutationBatches`/`mutationRecords` count observed DOM write batches/records within the CSS selector, not browser paint frames. Batches include observer delivery and explicit drains. Nested regions are independent and must not be summed as global refreshes.
+- `rootRemovals` counts selected roots being removed. `maxAddedSubtreeElements`/`maxRemovedSubtreeElements` report the largest inserted/removed subtree observed at delivery, revealing broad node replacement in a single update. They are not exact historical insertion totals or pixel repaint areas.
+- `reactCommits` reuses the `wework-root` Profiler, including fast commits and cumulative actualDuration without the existing slow-commit threshold. Its scope is the App's Profiler subtree. Standard production builds do not enable React profiling; absent effective callbacks produce `null`, not DOM batches presented as commits. This feature does not change the production React build.
+
+An existing `operationAndWaitForResult` callback can contain multiple operations and business waits. Use the zero-sidebar-update budget below only when the scenario explicitly requires the sidebar to remain unaffected. Other budgets require requirements and actual measurements; there is no guessed global threshold.
+
+```js
+async function verifyLocalOperation(control, operationAndWaitForResult) {
+  const result = await control.refreshes.measure(
+    "local-panel-operation",
+    {
+      regions: [
+        { name: "sidebar", selector: '[data-testid="desktop-sidebar"]' },
+        {
+          name: "conversation",
+          selector: '[data-testid="desktop-workbench-pane-stack-container"]',
+        },
+      ],
+      renderIds: ["desktop-sidebar", "desktop-workbench-main"],
+    },
+    operationAndWaitForResult,
+  );
+
+  control.refreshes.assertWithin(result, {
+    regions: { sidebar: { mutationBatches: 0, rootRemovals: 0 } },
+    renders: { "desktop-sidebar": 0 },
+  });
+  return result;
+}
+```
+
+Manual `start(label, options)`/`stop(token)` supports separate operation windows. Use stable product CSS selectors. Never-observed regions, uninstrumented components, misspelled metrics, and unavailable requested profiling cannot pass as zero. Set a region budget's `allowAbsent: true` only for explicit expected absence. Labels should be fixed operation names without user input or credentials. Evidence contains identifiers, selectors and numbers, without DOM text or HTML.
+
+Capture windows include background activity and do not establish causal attribution. Each capture binds to its starting control client: switching windows does not mix another renderer's counters, and windows can be captured separately. Reloading or losing the original renderer/capture fails completion and persists `complete: false`, rather than returning zero. DOM metrics cover the selected DOM in that document, excluding iframe and Shadow DOM internals; they are not pixel repaint metrics. Operation failures still attempt metric collection and preserve the original failure; simultaneous collection failures are reported together. The existing `core-task-flow` adds a real DOM transient-root mutation/removal self-test using its existing CI and app instance. Wiring coverage does not constitute executed Electron evidence.
+
+## Per-checkpoint performance diagnostics
+
+The shared desktop control protocol automatically carries cumulative metrics with ready/started/results acknowledgements. The journal merges snapshots by renderer capture ID into each result directory's `performance.json`. Existing desktop jobs publish a per-checkpoint table and dedicated numeric artifacts. This phase analyzes the current run only: it neither produces a main baseline nor compares historical totals. Reports explicitly declare `baselineStatus: not-established` and `comparisonValidated: false`.
+
+Metrics cover DOM records, node additions/removals and subtree maxima, instrumented component render attempts, React commits when available, Executor RPCs, independent describe requests, event types, full/pending task reads, connection starts and failures. Explicit AbortSignal cancellations are counted separately. Navigation-related network aborts remain recorded facts for lifecycle analysis. Duplicate arrivals and actual duplicate deliveries are distinct. Parse/protocol failures remain visible for investigation, including intentional fault injection that needs explicit interval assertions.
+
+`observations` retains nonzero metric deltas at command start/result boundaries, command IDs and action names. This separates operation intervals from inter-command background work without claiming causality. Evidence contains type names, identities and numbers, never parameters, event bodies or credentials. Identical method names can target different resources and do not establish redundant work. Use `control.refreshes` for narrower regions and business waits.
+
+Measurement spans control registration through the last received acknowledgement, with a final active-client snapshot before cleanup. Earlier startup work and work after a closing/reloading renderer's last acknowledgement are outside this window. Missing evidence, resets and unavailable metrics must remain incomplete instead of becoming zero. Standard production React builds may return null commit metrics. Error persistence has a separate completeness contract.
+
+Analyze measured variation before establishing a baseline: distinguish startup, polling, business actions and lifecycle termination. Runner contention affects timings and polling counts. Keep renders, DOM mutations and paint frames distinct. Future baseline enforcement still requires an explicit first-establishment phase and must never silently bootstrap again after trusted baseline evidence is lost.
+
 ## Idle Executor request regression
 
 `idle-executor-requests` uses isolated real Electron and Executor instances with no tasks and no cloud connection. It reuses the shared runner's initial telemetry refusal, reloads the main window, and observes requests. Worktree capability discovery, telemetry configuration, and the shared SSE subscription must each occur once after reload. Foreground and close-to-background observation windows each last 6.5 seconds, crossing the five-second poll interval: pending-interaction discovery and Runtime identity checks must continue, without full task-catalog polling or repeated startup configuration. Known asynchronous bootstrap requests, such as plugin initialization, may finish; a fixed delay is not used to infer startup readiness.

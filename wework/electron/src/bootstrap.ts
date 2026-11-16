@@ -1,3 +1,4 @@
+import './host/process-output-bootstrap.js'
 import { app } from 'electron'
 import { readFile } from 'node:fs/promises'
 import { showStartupRecovery } from './host/startup-recovery-window.js'

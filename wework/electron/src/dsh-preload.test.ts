@@ -77,6 +77,8 @@ describe('DSH preload', () => {
       )
       expect(Boolean(entry)).toBe(enabled)
       if (entry) {
+        entry[1].errorCollectionCheckpoint()
+        expect(invoke).toHaveBeenCalledWith('e2e:error-collection-checkpoint')
         entry[1].requestRuntime({ url: 'http://127.0.0.1:3000/wework/executor/v1' })
         expect(invoke).toHaveBeenCalledWith('e2e:runtime-request', {
           url: 'http://127.0.0.1:3000/wework/executor/v1',

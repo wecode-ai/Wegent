@@ -1,6 +1,8 @@
 import { format } from 'node:util'
 
 import { RotatingLog } from '../runtime/rotating-log.js'
+import { e2eErrorLog } from './e2e-error-log.js'
+import { installE2EProcessErrors } from './e2e-process-errors.js'
 
 type ConsoleMethod = 'debug' | 'info' | 'log' | 'warn' | 'error'
 
@@ -34,9 +36,16 @@ export class MainProcessLog {
   install(): void {
     if (this.installed) return
     this.installed = true
+    installE2EProcessErrors()
+    e2eErrorLog.record('main', 'started', 'info', {})
     for (const method of CONSOLE_METHODS) {
       const original = console[method].bind(console)
       console[method] = (...args: unknown[]) => {
+        if (method === 'error' || method === 'warn') {
+          e2eErrorLog.record('main', 'console', method === 'error' ? 'error' : 'warning', {
+            message: format(...args),
+          })
+        }
         original(...args)
         void this.write(
           method === 'error' || method === 'warn' ? 'stderr' : 'stdout',
@@ -44,7 +53,12 @@ export class MainProcessLog {
         )
       }
     }
-    process.on('uncaughtExceptionMonitor', error => {
+    process.on('uncaughtExceptionMonitor', (error, origin) => {
+      e2eErrorLog.record('main', 'uncaught-exception', 'error', {
+        message: error.message,
+        stack: error.stack,
+        origin,
+      })
       void this.write('stderr', `Uncaught exception: ${format(error)}`)
     })
   }

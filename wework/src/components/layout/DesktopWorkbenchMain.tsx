@@ -1,3 +1,4 @@
+import { recordUiRender } from '@/e2e/ui-refresh-capture'
 import {
   isQuestionDiscussionTab,
   useQuestionDiscussionWorkspacePanel,
@@ -730,6 +731,7 @@ const MemoizedBottomWorkspacePanel = memo(function MemoizedBottomWorkspacePanel(
 })
 
 export function DesktopWorkbenchMain(props: DesktopWorkbenchMainProps) {
+  recordUiRender('desktop-workbench-main')
   const { state } = useWorkbenchPaneContext()
   const resolveRuntimeTaskSummary = useRuntimeTaskSummaryResolver(state.runtimeWork)
   const { services, openRuntimeTask } = useWorkbench()
@@ -1175,6 +1177,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
   onLocalHarnessSessionClose: (sessionId: string) => void | Promise<void>
   onLocalHarnessSessionExit: (sessionId: string) => void
 }) {
+  recordUiRender('workbench-conversation')
   const paneActive = useWorkbenchPaneActive()
   const showComposerProjectMenuAction = presentation === 'popout'
   const alwaysShowComposerToolbar = presentation === 'popout'

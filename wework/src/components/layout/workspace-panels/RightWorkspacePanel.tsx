@@ -1,4 +1,5 @@
 import { WorkspaceTitleTab } from './WorkspaceTitleTab'
+import { recordUiRender } from '@/e2e/ui-refresh-capture'
 import { revealWorkspaceTab } from './revealWorkspaceTab'
 import { McpAppPanelSlot } from '@/features/mcp-apps/McpAppPanelSlot'
 import { QuestionDiscussionTabPanel } from '@/features/notifications/QuestionDiscussionScope'
@@ -625,6 +626,7 @@ export const RightWorkspacePanel = memo(function RightWorkspacePanel({
   getChatInitialAddress,
   onChatAddressChange,
 }: RightWorkspacePanelProps) {
+  recordUiRender('right-workspace-panel')
   const { t } = useTranslation('common')
   const mcpAppPanels = useMcpAppPanels(currentRuntimeTask)
   const filePanelRef = useRef<FileWorkspacePanelHandle>(null)

@@ -1,4 +1,5 @@
 import { BetaBadge } from '@/components/common/BetaBadge'
+import { recordUiRender } from '@/e2e/ui-refresh-capture'
 import {
   Archive,
   AlarmClock,
@@ -3001,6 +3002,7 @@ export function DesktopSidebar({
   onPointerLeave,
   onToggleSidebar,
 }: DesktopSidebarProps) {
+  recordUiRender('desktop-sidebar')
   const appearanceContext = useOptionalAppearance()
   const appearance = appearanceContext?.appearance ?? defaultAppearance
   const background = getWorkbenchBackground(appearance, appearanceContext?.resolvedMode ?? 'light')
