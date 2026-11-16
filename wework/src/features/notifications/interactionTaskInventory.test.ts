@@ -32,103 +32,8 @@ it('discovers healthy local task requests when the cloud device catalog calls th
   expect(new Set(inventory.items.map(item => item.address.deviceId))).toEqual(
     new Set(['device', 'remote'])
   )
-  expect(inventory.localDeviceIds).toEqual(new Set(['device', 'local']))
   expect(inventory.failedDevices.has('device')).toBe(false)
   expect(inventory.localIssueQuestionsPending).toBe(true)
-})
-
-it('scopes reminders to every alias of the current runtime', async () => {
-  const inventory = await readInteractionTaskInventory({
-    items: [],
-    devices: [
-      {
-        device_id: 'app-record-65',
-        status: 'online',
-        runtime_instance_id: 'runtime-shared',
-        app_device_id: 'app-local',
-        socket_device_id: 'socket-local',
-        runtime_routes: [
-          {
-            kind: 'cloud-relay',
-            device_id: 'cloud-alias',
-            runtime_device_id: 'cloud-runtime-alias',
-            status: 'online',
-          },
-        ],
-      },
-      {
-        device_id: 'other-device',
-        status: 'online',
-        runtime_instance_id: 'runtime-other',
-      },
-    ],
-    services: {
-      getLocalRuntimeSidebarIdentity: async () => ({
-        deviceId: 'local-device',
-        runtimeInstanceId: 'runtime-shared',
-        provenance: 'local-ipc',
-      }),
-      runtimeWorkApi: {
-        listRuntimeWork: async () => ({ projects: [], chats: [], totalTasks: 0 }),
-      },
-    },
-  } as unknown as TaskSource)
-  expect(inventory.localDeviceIds).toEqual(
-    new Set([
-      'local-device',
-      'runtime-shared',
-      'app-record-65',
-      'app-local',
-      'socket-local',
-      'cloud-alias',
-      'cloud-runtime-alias',
-    ])
-  )
-  expect(inventory.localDeviceIds.has('other-device')).toBe(false)
-})
-
-it('includes every alias when the local identity matches an alternate device alias', async () => {
-  const inventory = await readInteractionTaskInventory({
-    items: [],
-    devices: [
-      {
-        device_id: 'app-record-65',
-        status: 'online',
-        runtime_instance_id: 'runtime-app',
-        app_device_id: 'local-device',
-        socket_device_id: 'socket-local',
-        runtime_routes: [
-          {
-            kind: 'cloud-relay',
-            device_id: 'cloud-alias',
-            runtime_device_id: 'cloud-runtime-alias',
-            status: 'online',
-          },
-        ],
-      },
-    ],
-    services: {
-      getLocalRuntimeSidebarIdentity: async () => ({
-        deviceId: 'local-device',
-        runtimeInstanceId: 'runtime-local',
-        provenance: 'local-ipc',
-      }),
-      runtimeWorkApi: {
-        listRuntimeWork: async () => ({ projects: [], chats: [], totalTasks: 0 }),
-      },
-    },
-  } as unknown as TaskSource)
-  expect(inventory.localDeviceIds).toEqual(
-    new Set([
-      'local-device',
-      'runtime-local',
-      'app-record-65',
-      'socket-local',
-      'runtime-app',
-      'cloud-alias',
-      'cloud-runtime-alias',
-    ])
-  )
 })
 
 it('discovers authorized device requests independently and isolates a failed device', async () => {
@@ -212,6 +117,37 @@ it('logs local identity failures without blocking device inventory discovery', a
     const entry = JSON.parse(log.mock.calls[0][1] as string)
     expect(entry.error).toEqual({ message: 'IPC unavailable', code: 'IPC_CLOSED' })
     expect(JSON.stringify(log.mock.calls)).not.toContain('private payload')
+  } finally {
+    log.mockRestore()
+  }
+})
+
+it('discovers remote requests when local runtime identity is unavailable', async () => {
+  const log = vi.spyOn(console, 'info').mockImplementation(() => {})
+  const list = vi.fn().mockResolvedValue({
+    projects: [],
+    chats: [{ ...interactionTask.workspace, deviceId: 'remote', tasks: [interactionTask.task] }],
+    totalTasks: 1,
+  })
+  try {
+    const inventory = await readInteractionTaskInventory({
+      items: [],
+      devices: [{ device_id: 'remote', status: 'online' }],
+      services: {
+        getLocalRuntimeSidebarIdentity: async () => {
+          throw new Error('Local IPC unavailable')
+        },
+        runtimeWorkApi: { listRuntimeWork: list },
+      },
+    } as unknown as TaskSource)
+    expect(list).toHaveBeenCalledExactlyOnceWith({
+      pendingOnly: true,
+      preferCached: true,
+      deviceId: 'remote',
+    })
+    expect(inventory.items.map(item => item.address.deviceId)).toEqual(['remote'])
+    expect(inventory.failedDevices).toEqual(new Set())
+    expect(inventory.failedRequests).toEqual(new Set())
   } finally {
     log.mockRestore()
   }

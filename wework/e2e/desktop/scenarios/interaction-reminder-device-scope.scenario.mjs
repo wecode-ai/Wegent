@@ -1,8 +1,9 @@
 import assert from 'node:assert/strict'
 import { mkdir, rm, writeFile } from 'node:fs/promises'
-import { dirname, join } from 'node:path'
+import { join } from 'node:path'
 import { requestExecutor } from '../modules/executor-rpc.mjs'
 import { selectedToolCall } from '../modules/model-tool-calls.mjs'
+import { wireDeclarations } from '../modules/model-wire-contract.mjs'
 import { waitForWindowState } from '../modules/native-window-state.mjs'
 import {
   assistantMessage,
@@ -15,7 +16,6 @@ import {
   toolOutputText,
 } from '../modules/response-protocol.mjs'
 import {
-  CLOUD_DEVICE_ID,
   CLOUD_PUBLIC_MODEL_NAME,
   CLOUD_PUBLIC_MODEL_OPTIONS,
   DEFAULT_MODEL_ID,
@@ -30,6 +30,7 @@ const REMOTE_FIRST_QUESTION = 'Should the remote review use the legacy policy?'
 const LOCAL_FIRST_QUESTION = 'Should this device keep the current order policy?'
 const REMOTE_SYSTEM_QUESTION = 'Should the remote background review keep the old policy?'
 const LOCAL_SYSTEM_QUESTION = 'Should this device keep the policy in the background?'
+const REMOTE_ANSWER = 'Keep the current policy for the remote background review.'
 const PENDING_TAB = '[data-testid="workspace-tab-select-pending-interactions"]'
 const PENDING_PAGE = '[data-testid="runtime-interactions-page"]'
 const INTERACTION_NOTICE = '[data-testid="runtime-interaction-notice"]'
@@ -70,15 +71,6 @@ async function assertNotificationsRemain(control, predicate, message, durationMs
   } while (Date.now() < deadline)
 }
 
-async function assertElementCountRemains(control, selector, expected, message, durationMs = 1000) {
-  const deadline = Date.now() + durationMs
-  do {
-    const count = Number(await control.command('getElementCount', selector))
-    if (count !== expected) throw new Error(`${message}: found ${count} element(s)`)
-    await new Promise(resolve => setTimeout(resolve, 100))
-  } while (Date.now() < deadline)
-}
-
 async function enableTaskSystemNotifications(control) {
   await control.command('click', '[data-testid="wework-notifications-button"]')
   await control.command('click', '[data-testid="wework-notifications-settings"]')
@@ -103,12 +95,13 @@ function questionForPrompt(prompt) {
 }
 
 function selectQuestionTool(body, question) {
-  const tools = Array.isArray(body.tools) ? body.tools : []
-  const names = tools.map(tool => tool.name ?? tool.function?.name).filter(Boolean)
+  const names = wireDeclarations(body, 'responses')
+    .map(tool => tool.name)
+    .filter(Boolean)
   const name =
     names.find(candidate => candidate.endsWith('request_user_input_async')) ??
-    names.find(candidate => candidate.endsWith('request_user_input'))
-  assert.ok(name, 'The model did not advertise a request-user-input tool')
+    names.find(candidate => candidate.endsWith('request_user_input')) ??
+    'request_user_input_async'
   const argumentsValue = name.endsWith('_async')
     ? { questions: [{ title: question }] }
     : {
@@ -145,6 +138,7 @@ export function createDesktopScenario({
   uiTimeoutMs,
 }) {
   let cloud
+  let remoteDevice
   let remoteSequence = 0
   let localSequence = 0
   const heldQuestions = new Map()
@@ -169,6 +163,7 @@ export function createDesktopScenario({
   }
 
   async function createRemoteQuestion(prompt, title) {
+    const deviceId = remoteDevice.execution_target_id ?? remoteDevice.device_id
     remoteSequence += 1
     const remoteWorkspace = join(
       cloud.runtimeWorkspaceRoot,
@@ -187,7 +182,7 @@ export function createDesktopScenario({
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({
-        deviceId: CLOUD_DEVICE_ID,
+        deviceId,
         workspacePath: remoteWorkspace,
         runtime: 'codex',
         message: prompt,
@@ -204,12 +199,12 @@ export function createDesktopScenario({
       taskId: task.taskId,
       workspacePath: task.workspacePath,
     }
-    assert.equal(address.deviceId, CLOUD_DEVICE_ID)
+    assert.equal(address.deviceId, deviceId)
     await releaseHeldQuestion(prompt)
     await waitForValue(
       async () => {
         const work = await fetchJson(
-          `${cloud.backendUrl}/api/runtime-work?pending_only=true&device_id=${encodeURIComponent(CLOUD_DEVICE_ID)}`,
+          `${cloud.backendUrl}/api/runtime-work?pending_only=true&device_id=${encodeURIComponent(deviceId)}`,
           { headers: { Authorization: `Bearer ${cloud.authToken}` } }
         )
         const workspaces = [
@@ -267,32 +262,14 @@ export function createDesktopScenario({
     return { deviceId: created.deviceId, taskId, workspacePath }
   }
 
-  async function verifyAliases(control) {
-    const local = JSON.parse(await control.command('getLocalExecutorStatus', 'body'))
-    const app = await cloud.waitForConnectedAppDevice()
-    const expected = [
-      local.deviceId,
-      app.device_id,
-      app.app_device_id,
-      app.runtime_instance_id,
-      app.execution_target_id,
-      ...(app.runtime_routes ?? []).flatMap(route => [route.device_id, route.runtime_device_id]),
-    ].filter(Boolean)
-    const scope = await waitForValue(
-      async () => JSON.parse(await control.command('getInteractionDeviceScope', 'body')),
-      value =>
-        value?.localDeviceIds?.length > 0 &&
-        expected.every(id => value.localDeviceIds.includes(id)),
-      'The current device aliases did not enter the interaction reminder scope',
-      uiTimeoutMs
-    )
-    assert.ok(!scope.localDeviceIds.includes(CLOUD_DEVICE_ID))
-    return { localDeviceId: local.deviceId, aliases: expected, scope: scope.localDeviceIds }
-  }
-
   return {
     requiresCloudEnvironment: true,
-    cloudModelCatalogOverrides: [DEFAULT_MODEL_ID, CLOUD_PUBLIC_MODEL_NAME].map(slug => ({
+    remoteExecutorType: 'app',
+    cloudModelCatalogOverrides: [
+      DEFAULT_MODEL_ID,
+      CLOUD_PUBLIC_MODEL_NAME,
+      'desktop-e2e-public-upstream-model',
+    ].map(slug => ({
       slug,
       fields: { experimental_supported_tools: ['request_user_input_async'] },
     })),
@@ -353,7 +330,25 @@ export function createDesktopScenario({
       return true
     },
     async verify(control) {
-      const aliasEvidence = await verifyAliases(control)
+      const localDevice = await cloud.waitForConnectedAppDevice()
+      remoteDevice = await waitForValue(
+        async () =>
+          (await cloud.devices()).find(
+            candidate =>
+              candidate.device_type === 'app' &&
+              candidate.app_device_id === cloud.remoteExecutorEnv.WEGENT_APP_IPC_DEVICE_ID &&
+              candidate.runtime_instance_id === cloud.remoteExecutorEnv.WEGENT_RUNTIME_INSTANCE_ID
+          ),
+        device =>
+          device?.status === 'online' &&
+          Boolean(device.execution_target_id ?? device.device_id) &&
+          device.runtime_features?.remoteTaskAccess?.enabled === true &&
+          device.runtime_features.remoteTaskAccess.taskCreation === true,
+        'The peer App installation did not advertise its locally enabled remote task access',
+        uiTimeoutMs * 4
+      )
+      assert.notEqual(remoteDevice.runtime_instance_id, localDevice.runtime_instance_id)
+      assert.notEqual(remoteDevice.app_device_id, localDevice.app_device_id)
       await enableTaskSystemNotifications(control)
       await control.command('focusMainWindow', 'body')
       await control.command('click', '[data-testid="workspace-tab-select-fixed-board"]')
@@ -365,12 +360,11 @@ export function createDesktopScenario({
       await control.command('waitFor', pendingCountSelector(1), {
         timeoutMs: uiTimeoutMs * 4,
       })
-      await assertElementCountRemains(
-        control,
-        INTERACTION_NOTICE,
-        0,
-        'A remote-only question produced an in-app reminder on the current device'
-      )
+      await control.command('waitFor', INTERACTION_NOTICE, {
+        text: REMOTE_FIRST_QUESTION,
+        timeoutMs: uiTimeoutMs * 4,
+      })
+      await control.command('click', '[data-testid="interaction-notice-dismiss"]')
 
       const localFirst = await createLocalQuestion(
         control,
@@ -384,10 +378,7 @@ export function createDesktopScenario({
         text: LOCAL_FIRST_QUESTION,
         timeoutMs: uiTimeoutMs * 4,
       })
-      assert.equal(
-        (await control.command('getText', INTERACTION_NOTICE)).includes(REMOTE_FIRST_QUESTION),
-        false
-      )
+      await control.command('click', '[data-testid="interaction-notice-dismiss"]')
       await control.command('click', PENDING_TAB)
       await control.command('waitFor', PENDING_PAGE, { text: REMOTE_FIRST_QUESTION })
       await control.command('waitFor', PENDING_PAGE, { text: LOCAL_FIRST_QUESTION })
@@ -411,10 +402,21 @@ export function createDesktopScenario({
       await control.command('waitFor', pendingCountSelector(3), {
         timeoutMs: uiTimeoutMs * 4,
       })
-      await assertNotificationsRemain(
-        control,
-        notifications => notifications.length === 0,
-        'A remote-only question produced a system reminder on the current device'
+      const matchesNotification = (notification, address, question) => {
+        const prefix = interactionUrlPrefix(address)
+        return Boolean(
+          notification.body === question &&
+          notification.url?.startsWith(prefix) &&
+          notification.url.slice(prefix.length)
+        )
+      }
+      await waitForValue(
+        () => taskSystemNotifications(control),
+        notifications =>
+          notifications.length === 1 &&
+          matchesNotification(notifications[0], remoteSystem, REMOTE_SYSTEM_QUESTION),
+        'The remote background question did not produce exactly one routed system reminder',
+        uiTimeoutMs * 4
       )
 
       const localSystem = await createLocalQuestion(
@@ -425,28 +427,24 @@ export function createDesktopScenario({
       await control.command('waitFor', pendingCountSelector(4), {
         timeoutMs: uiTimeoutMs * 4,
       })
-      const localSystemNotification = notifications => {
-        if (notifications.length !== 1 || notifications[0].body !== LOCAL_SYSTEM_QUESTION)
-          return false
-        const prefix = interactionUrlPrefix(localSystem)
-        return Boolean(
-          notifications[0].url?.startsWith(prefix) && notifications[0].url.slice(prefix.length)
-        )
-      }
+      const completeNotificationSet = notifications =>
+        notifications.length === 2 &&
+        notifications.filter(notification =>
+          matchesNotification(notification, remoteSystem, REMOTE_SYSTEM_QUESTION)
+        ).length === 1 &&
+        notifications.filter(notification =>
+          matchesNotification(notification, localSystem, LOCAL_SYSTEM_QUESTION)
+        ).length === 1
       const alerts = await waitForValue(
         () => taskSystemNotifications(control),
-        localSystemNotification,
-        'The local background question did not produce exactly one system reminder',
+        completeNotificationSet,
+        'The remote and local questions did not each produce exactly one system reminder',
         uiTimeoutMs * 4
       )
       await assertNotificationsRemain(
         control,
-        localSystemNotification,
-        'The system reminder set changed after the local background question'
-      )
-      assert.equal(
-        alerts.some(alert => alert.body === REMOTE_SYSTEM_QUESTION),
-        false
+        completeNotificationSet,
+        'A pending question produced a duplicate system reminder'
       )
 
       await control.command('restoreMainWindow', 'body')
@@ -462,14 +460,57 @@ export function createDesktopScenario({
       await control.command('waitFor', PENDING_PAGE, { text: REMOTE_SYSTEM_QUESTION })
       await control.command('waitFor', PENDING_PAGE, { text: LOCAL_SYSTEM_QUESTION })
       await captureScreenshot(control, 'interaction-reminder-device-scope-background.png')
+      const remoteAlert = alerts.find(notification =>
+        matchesNotification(notification, remoteSystem, REMOTE_SYSTEM_QUESTION)
+      )
+      await control.command('activateSystemNotification', 'body', { value: remoteAlert.url })
+      await control.command(
+        'waitFor',
+        `${PENDING_PAGE} [data-testid="interaction-question-heading"]`,
+        {
+          text: REMOTE_SYSTEM_QUESTION,
+        }
+      )
+      const input = `${PENDING_PAGE} [data-testid^="request-user-input-custom-"]:not(:disabled)`
+      await control.command('waitFor', input, { timeoutMs: uiTimeoutMs * 4 })
+      await control.command('fill', input, { value: REMOTE_ANSWER })
+      await control.command(
+        'clickWhenEnabled',
+        `${PENDING_PAGE} [data-testid="request-user-input-submit-button"]`
+      )
+      await control.command('waitFor', pendingCountSelector(3), {
+        timeoutMs: uiTimeoutMs * 4,
+      })
+      const answeredTranscript = await waitForValue(
+        () =>
+          fetchJson(`${cloud.backendUrl}/api/runtime-work/transcript`, {
+            method: 'POST',
+            headers: {
+              Authorization: `Bearer ${cloud.authToken}`,
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify(remoteSystem),
+          }),
+        transcript =>
+          transcript.taskId === remoteSystem.taskId &&
+          JSON.stringify(transcript.turns).includes(REMOTE_ANSWER),
+        'The remote Runtime did not persist the answer submitted from this device',
+        uiTimeoutMs * 4
+      )
       await writeFile(
         join(resultDir, 'interaction-reminder-device-scope.json'),
         JSON.stringify(
           {
-            aliasEvidence,
+            remoteDevice: {
+              deviceId: remoteDevice.execution_target_id ?? remoteDevice.device_id,
+              appDeviceId: remoteDevice.app_device_id,
+              runtimeInstanceId: remoteDevice.runtime_instance_id,
+              remoteTaskAccess: remoteDevice.runtime_features.remoteTaskAccess,
+            },
             remoteTasks: [remoteFirst.taskId, remoteSystem.taskId],
             localTasks: [localFirst.taskId, localSystem.taskId],
             alerts,
+            answeredRemoteTask: answeredTranscript.taskId,
           },
           null,
           2

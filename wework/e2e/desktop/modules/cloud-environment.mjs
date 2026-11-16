@@ -358,6 +358,7 @@ class RealCloudEnvironment {
     managedCloudIdentity = false,
     modelServerUrl,
     modelCatalogOverrides = [],
+    remoteExecutorType = 'cloud',
     scenarioConfigToml = '',
     workspacePath,
   }) {
@@ -368,6 +369,11 @@ class RealCloudEnvironment {
     this.managedCloudIdentity = managedCloudIdentity
     this.modelServerUrl = modelServerUrl
     this.modelCatalogOverrides = modelCatalogOverrides
+    assert.ok(
+      ['cloud', 'app'].includes(remoteExecutorType),
+      'Unsupported remote Executor fixture type'
+    )
+    this.remoteExecutorType = remoteExecutorType
     this.scenarioConfigToml = scenarioConfigToml
     this.workspacePath = workspacePath
     this.generatedRemoteExecutors = []
@@ -875,12 +881,24 @@ class RealCloudEnvironment {
     }
     this.remoteExecutorEnv = this.executorEnv({
       deviceId: CLOUD_DEVICE_ID,
-      deviceName: 'Wework E2E Cloud Device',
-      deviceType: 'cloud',
+      deviceName:
+        this.remoteExecutorType === 'app'
+          ? 'Wework E2E Peer App Device'
+          : 'Wework E2E Cloud Device',
+      deviceType: this.remoteExecutorType,
       home: remoteHome,
       codexHome: this.remoteCodexHome,
       logFile: 'cloud-executor-runtime.log',
     })
+    if (this.remoteExecutorType === 'app') {
+      this.remoteExecutorEnv.WEGENT_APP_IPC_DEVICE_ID = `wework-e2e-peer-app-${process.pid}`
+      this.remoteExecutorEnv.WEGENT_RUNTIME_INSTANCE_ID = `wework-e2e-peer-runtime-${process.pid}`
+      // Seed consent only in this isolated peer installation, before its first registration.
+      await writeFile(
+        join(remoteHome, 'remote-task-access.json'),
+        JSON.stringify({ enabled: true })
+      )
+    }
     this.remoteDockerExecutorEnv = this.executorEnv({
       deviceId: REMOTE_DOCKER_DEVICE_ID,
       deviceName: 'Wework E2E Remote Docker Device',
@@ -1114,7 +1132,8 @@ class RealCloudEnvironment {
     const executor = spawn(this.executorBinary, [], {
       cwd: weworkDir,
       env,
-      stdio: ['ignore', 'pipe', 'pipe'],
+      // App mode keeps the owner IPC connection alive until fixture cleanup.
+      stdio: [env.DEVICE_TYPE === 'app' ? 'pipe' : 'ignore', 'pipe', 'pipe'],
       detached: process.platform !== 'win32',
     })
     executor.once('exit', (code, signal) => {
@@ -1161,7 +1180,11 @@ class RealCloudEnvironment {
     while (Date.now() - startedAt < WORKBENCH_READY_TIMEOUT_MS) {
       const devices = await this.devices()
       const device = devices.find(
-        candidate => candidate.device_type === 'app' && candidate.status === 'online'
+        candidate =>
+          candidate.device_type === 'app' &&
+          candidate.status === 'online' &&
+          (this.remoteExecutorType !== 'app' ||
+            candidate.app_device_id !== this.remoteExecutorEnv.WEGENT_APP_IPC_DEVICE_ID)
       )
       if (device) return device
       await new Promise(resolvePromise => setTimeout(resolvePromise, 250))

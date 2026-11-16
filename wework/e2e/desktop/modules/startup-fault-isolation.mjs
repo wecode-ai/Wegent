@@ -101,6 +101,7 @@ export async function verifyStartupFaultIsolation({ appBinary, environment, resu
           timer.unref()
         }),
       ])
+      assert.deepEqual(exit, { code: 0, signal: null }, output)
       const result = JSON.parse(await readFile(evidencePath, 'utf8'))
       assert.equal(result.error, undefined, result.error)
       assert.equal(result.visible, true)
@@ -110,9 +111,6 @@ export async function verifyStartupFaultIsolation({ appBinary, environment, resu
       assert.ok(result.state.error)
       assert.equal(await readFile(credentials, 'utf8'), saved)
       assert.equal(await readFile(descriptorPath, 'utf8'), original)
-      // Headless Chromium can raise SIGTRAP while tearing down the compositor after
-      // the recovery window has already completed and persisted this evidence.
-      assert.ok(exit.code === 0 || exit.signal === 'SIGTRAP', output)
     } finally {
       await stopProcessGroup(child)
       await writeFile(join(resultDir, `startup-fault-${fault}.log`), output)
@@ -126,6 +124,17 @@ function recoveryWindowAssertion(evidencePath) {
     const { app, BrowserWindow } = require('electron')
     const fs = require('node:fs')
     const output = ${JSON.stringify(evidencePath)}
+    const record = (event, details = {}) => console.info('[recovery-probe]', JSON.stringify({event,...details,at:Date.now()}))
+    for (const event of ['before-quit','will-quit','quit','window-all-closed']) {
+      app.on(event, () => record(event, {windows:BrowserWindow.getAllWindows().length}))
+    }
+    app.on('browser-window-created', (_event, window) => {
+      const id = window.id
+      record('window-created', {id})
+      window.once('closed', () => record('window-closed', {id}))
+      window.webContents.on('render-process-gone', (_event, details) => record('render-process-gone', details))
+    })
+    app.on('child-process-gone', (_event, details) => record('child-process-gone', details))
     const deadline = Date.now() + 10_000
     let checking = false
     let reopenRequested = false
@@ -159,7 +168,7 @@ function recoveryWindowAssertion(evidencePath) {
         }
         clearInterval(timer)
         fs.writeFileSync(output, JSON.stringify({visible:window.isVisible(),retryEnabled,reopened:true,state}))
-        // Let Chromium close both windows before shutting down the in-process compositor.
+        record('quit-requested', {windows:BrowserWindow.getAllWindows().length})
         app.quit()
       } catch (error) {
         clearInterval(timer)

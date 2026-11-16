@@ -1307,6 +1307,7 @@ async function main() {
         managedCloudIdentity: CLOUD_ONLY,
         modelServerUrl: control.url,
         modelCatalogOverrides: desktopScenario?.cloudModelCatalogOverrides ?? [],
+        remoteExecutorType: desktopScenario?.remoteExecutorType,
         scenarioConfigToml: shouldConfigureToolDetailsMcp() ? toolDetailsMcpConfigToml() : '',
         workspacePath: desktopScenario?.remoteWorkspacePath ?? workspacePath,
       })

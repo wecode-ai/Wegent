@@ -1447,6 +1447,31 @@ describe('createHybridWorkbenchServices', () => {
     ])
     await services.runtimeWorkApi!.listRuntimeWork({ deviceId: 'app-record-22' })
     expect(mocks.cloudListRuntimeWork).toHaveBeenCalledWith({ deviceId: 'app-record-22' })
+    await services.runtimeWorkApi!.listRuntimeWork({
+      deviceId: 'installation-b',
+      pendingOnly: true,
+      preferCached: true,
+    })
+    expect(mocks.cloudListRuntimeWork).toHaveBeenLastCalledWith({
+      deviceId: 'app-record-22',
+      pendingOnly: true,
+      preferCached: true,
+    })
+    const address = {
+      deviceId: 'app-record-22',
+      taskId: 'peer-question',
+      workspacePath: '/peer-workspace',
+    }
+    const transcript = { runtime: 'codex', turns: [], messages: [], running: false }
+    mocks.cloudServices.runtimeWorkApi.getRuntimeTranscript.mockResolvedValue(transcript)
+    await expect(services.runtimeWorkApi!.getRuntimeTranscript(address)).resolves.toBe(transcript)
+    expect(mocks.cloudServices.runtimeWorkApi.getRuntimeTranscript).toHaveBeenCalledWith(address)
+    const answer = { address, message: 'Keep existing behavior', clientMessageId: 'peer-answer' }
+    await expect(services.runtimeWorkApi!.sendRuntimeMessage(answer)).resolves.toEqual({
+      accepted: true,
+    })
+    expect(mocks.cloudServices.runtimeWorkApi.sendRuntimeMessage).toHaveBeenCalledWith(answer)
+    expect(mocks.localServices.runtimeWorkApi.getRuntimeTranscript).not.toHaveBeenCalled()
     expect(mocks.localListRuntimeWork).not.toHaveBeenCalled()
     expect(mocks.cloudRuntimeIpcRequest).not.toHaveBeenCalled()
     mocks.cloudListDevices.mockResolvedValue([
@@ -1457,6 +1482,10 @@ describe('createHybridWorkbenchServices', () => {
     expect((await services.deviceApi.listDevices()).map(device => device.device_id)).toEqual([
       'local-device',
     ])
+    await expect(
+      services.runtimeWorkApi!.listRuntimeWork({ deviceId: 'app-record-22', pendingOnly: true })
+    ).rejects.toThrow('executor-not-found:app-record-22')
+    expect(mocks.cloudListRuntimeWork).toHaveBeenCalledTimes(2)
   })
 
   it('reclassifies a cached cloud runtime client when discovery identifies a peer App', async () => {

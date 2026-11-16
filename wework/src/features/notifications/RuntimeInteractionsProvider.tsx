@@ -146,7 +146,6 @@ function RuntimeInteractionsState({
   const [inventory, setInventory] = useState<RuntimeTaskReminderItem[]>(() =>
     cachedNative.map(item => item.task)
   )
-  const [localDeviceIds, setLocalDeviceIds] = useState<ReadonlySet<string>>(() => new Set())
   const inventoryRef = useRef(inventory)
   inventoryRef.current = inventory
   const loadedRef = useRef(loaded)
@@ -314,12 +313,6 @@ function RuntimeInteractionsState({
         if (force) await Promise.all(issueDiscoveryRef.current.resolved.map(archiveResolved))
         const discovered = await readInteractionTaskInventory(current)
         if (!mounted.current || sourceRef.current?.services?.runtimeWorkApi !== api) return
-        setLocalDeviceIds(current => {
-          const next = discovered.localDeviceIds
-          return current.size === next.size && [...next].every(deviceId => current.has(deviceId))
-            ? current
-            : next
-        })
         if (force) await issueDiscoveryRef.current.refresh()
         else await issueDiscoveryRef.current.discover(discovered.localIssueQuestionsPending)
         const retained = inventoryRef.current.filter(
@@ -600,17 +593,6 @@ function RuntimeInteractionsState({
     saveInteractionState(cacheKey, pendingInteractionCache(pending))
   }, [cacheKey, pending])
 
-  useEffect(() => {
-    if (import.meta.env.VITE_WEWORK_E2E !== 'true') return
-    ;(
-      globalThis as typeof globalThis & {
-        __WEWORK_E2E_INTERACTION_DEVICE_SCOPE__?: { localDeviceIds: string[] }
-      }
-    ).__WEWORK_E2E_INTERACTION_DEVICE_SCOPE__ = {
-      localDeviceIds: [...localDeviceIds].sort(),
-    }
-  }, [localDeviceIds])
-
   const clearReplyDraft = useCallback(
     (id: string) => {
       setDraft(id, '')
@@ -874,7 +856,6 @@ function RuntimeInteractionsState({
     let changed = false
     for (const item of pending) {
       if (records[item.id]) continue
-      if (!localDeviceIds.has(item.task.address.deviceId)) continue
       const alreadyViewed = focused && [...views.current.values()].includes(item.id)
       const category = isPersonalStandInTask(item.task)
         ? 'stand_in'
@@ -911,7 +892,6 @@ function RuntimeInteractionsState({
     accountKey,
     delivered,
     focused,
-    localDeviceIds,
     pending,
     preferences,
     source?.currentAddress,
