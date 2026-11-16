@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { mkdir, readFile, rename, rmdir } from 'node:fs/promises'
+import { mkdir, readFile, rename, rm, rmdir } from 'node:fs/promises'
 import { join } from 'node:path'
 import { DEFAULT_STEP_TIMEOUT_MS } from './shared.mjs'
 
@@ -86,7 +86,19 @@ export async function answerWithNativeReplyStorageFailure(
     await control.command('flushRendererStorage', 'body')
     await rename(storagePath, backup)
     moved = true
-    await mkdir(storagePath)
+    // The renderer can flush again between the move and this fixture,
+    // recreating the storage file. Replace whatever it writes until the path
+    // is a directory, so the assertion below observes the real filesystem
+    // failure instead of an EEXIST race.
+    for (let attempt = 0; ; attempt += 1) {
+      try {
+        await mkdir(storagePath)
+        break
+      } catch (error) {
+        if (error?.code !== 'EEXIST' || attempt >= 5) throw error
+        await rm(storagePath, { recursive: true, force: true })
+      }
+    }
     blocked = true
     assert.equal(await control.command('releaseLocalExecutorRequestHold', 'body'), 'true')
     await waitForTaskAnswer()
