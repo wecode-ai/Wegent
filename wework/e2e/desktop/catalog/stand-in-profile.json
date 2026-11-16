@@ -2,6 +2,7 @@
   "order": 33000,
   "groupOrder": 3000,
   "members": [
+    "stand-in-onboarding-skip",
     "stand-in-profile-settings",
     "stand-in-model-catalog",
     "stand-in-processing",

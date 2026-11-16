@@ -485,6 +485,9 @@ export function StandInOverviewPage({
               <SlidersHorizontal aria-hidden="true" className="h-4 w-4" />
             </button>
           </Tooltip>
+          <p data-testid="stand-in-role-help" className="w-full text-sm text-text-secondary">
+            {t('standIn.workspace.role_help')}
+          </p>
         </header>
         {state.loading && !state.saved ? (
           <p role="status" className="p-5 text-text-muted">
@@ -554,6 +557,8 @@ export function StandInOverviewPage({
               setSelectedScheduleId(schedule.id)
             }}
             name={role?.name || t('standIn.title')}
+            configuration={role ?? saved?.primary}
+            projects={props.projects}
             enabled={role ? role.enabled : saved?.primary?.enabled !== false}
             device={props.devices.find(
               device => device.device_id === deviceId || device.app_device_id === deviceId

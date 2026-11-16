@@ -64,6 +64,34 @@ it('shows device, empty activity and outputs without exposing configuration cont
   expect(props.onSettings).toHaveBeenCalledOnce()
 })
 
+it('distinguishes an unconfigured work scope from device availability', async () => {
+  const props = fixture()
+  expect(await screen.findByText('在线')).toBeVisible()
+  expect(screen.getByText('尚未配置工作来源，可以先聊天。到设置中添加关注范围。')).toBeVisible()
+  await userEvent.setup().click(screen.getByTestId('stand-in-details-work-sources'))
+  expect(props.onSettings).toHaveBeenCalledOnce()
+})
+
+it('shows configured source names without claiming they are online or enabled', async () => {
+  fixture({
+    enabled: false,
+    configuration: {
+      connections: [
+        {
+          providerId: 'mail',
+          profile: 'work',
+          kind: 'mailbox',
+          id: 'inbox',
+          name: '工作邮箱',
+          policy: { automatic: true, askBeforeAct: true },
+        },
+      ],
+    },
+  })
+  expect(await screen.findByText('已配置：工作邮箱')).toBeVisible()
+  expect(screen.getByText('已暂停接收')).toBeVisible()
+})
+
 it('does not present unstarted source intake as an independent thread', async () => {
   fixture({
     items: [runtimeItem],

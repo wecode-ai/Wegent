@@ -167,7 +167,7 @@ export function StandInOnboarding({
                     disabled={saving || setupBusy}
                     onClick={close}
                   >
-                    {t('standIn.close')}
+                    {t(guideOpen ? 'standIn.close' : 'standIn.onboarding.exit')}
                   </Button>
                 </div>
                 {result && !guideOpen ? (

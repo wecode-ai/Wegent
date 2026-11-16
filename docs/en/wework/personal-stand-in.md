@@ -307,9 +307,15 @@ The project conversation uses the existing collaboration group leader. Its heade
 
 Roles can receive personal events or all subscribable repository events. The plugin provides capabilities; role instructions determine behavior. Cloud buffers repository Webhooks while the execution device is offline. External writes retain per-operation native approval. See [GitHub and GitLab connections](git-connections.md).
 
+<a id="assistant-first-use"></a>
+
 ## Set up your stand-in
 
-On first use, connect the apps you use, then confirm Get started. The connection step reuses the project, DingTalk, email, and other connections from stand-in settings, including their authorization and scope controls. Connecting an app is optional: Continue is available with no apps selected.
+On first use, select **Chat now, connect later** to enter the conversation directly. The completed guide is remembered without saving or enabling unconfirmed source settings. Edited connection drafts require confirmation before discarding. If recording completion fails, the guide remains available for retry. **Leave assistant** closes the current page without completing the guide.
+
+Alternatively, connect the apps you use, select **Continue**, review the scope, then confirm **Get started**. The connection step reuses the project, DingTalk, email, and other connections from stand-in settings, including their authorization and scope controls.
+
+The header explains that My assistant coordinates work while specialist roles focus on particular responsibilities. **Stand-in details → Work sources to follow** shows the selected identity's configured projects and sources. With none configured, it explains that chat is available; selecting this area opens settings. Configured scope does not establish healthy authorization, connectivity or source execution: device and error states remain separate. **Chat with the assistant in IM** binds private IM conversations; **Manage stand-in → Connections** configures incoming work scope instead.
 
 Review the selected connections before choosing Get started. This saves the connections and enables the primary stand-in. Without connections, you can still chat; there are simply no app updates to analyze yet. Add connections later in settings. Closing the introduction does not save connection drafts, and unsaved changes require a discard confirmation. Account authorization still uses the existing sign-in flow.
 

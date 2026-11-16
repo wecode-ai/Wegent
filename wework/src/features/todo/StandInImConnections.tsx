@@ -119,6 +119,7 @@ export function StandInImConnections({
   const device = devices.find(row => sameDevice(row.device_id))
   return (
     <section aria-label={t('standIn.im.title')} data-testid="stand-in-im-channels">
+      <h3 className="mb-2 text-sm font-medium text-text-secondary">{t('standIn.im.title')}</h3>
       <div className="flex flex-wrap gap-2">
         {channels.map(type => {
           const isConnected = sessions.some(row => row.channel_type === type && connected(row))

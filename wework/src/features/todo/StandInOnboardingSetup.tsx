@@ -76,13 +76,23 @@ export function StandInOnboardingSetup({
   const navigation = useStandInPanelNavigation(!dequal(initialRole, role), busy, () =>
     setDiscard(true)
   )
-  useImperativeHandle(ref, () => ({
-    requestLeave(action) {
-      const leave = () => navigation.requestLeave(action)
-      if (connections.current) connections.current.requestLeave(leave)
-      else leave()
-    },
-  }))
+  const requestLeave = (action: () => void) => {
+    const leave = () => navigation.requestLeave(action)
+    if (connections.current) connections.current.requestLeave(leave)
+    else leave()
+  }
+  useImperativeHandle(ref, () => ({ requestLeave }))
+  const skipConnections = async () => {
+    if (busy) return
+    setBusy(true)
+    onBusyChange(true)
+    try {
+      await onComplete()
+    } finally {
+      setBusy(false)
+      onBusyChange(false)
+    }
+  }
   /** Persist settings before completion, retaining the saved version for completion-only retries. */
   const finish = async () => {
     if (!baseline || !role || busy) return
@@ -254,6 +264,15 @@ export function StandInOnboardingSetup({
         </div>
       )}
       <div className="sticky bottom-0 flex flex-wrap justify-end gap-2 bg-background pt-3">
+        <Button
+          variant="ghost"
+          data-testid="stand-in-onboarding-skip"
+          aria-busy={busy}
+          disabled={busy}
+          onClick={() => requestLeave(() => void skipConnections())}
+        >
+          {t('standIn.onboarding.skip_connections')}
+        </Button>
         {confirming && (
           <Button
             variant="ghost"

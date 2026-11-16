@@ -20,6 +20,9 @@ import type { DeviceInfo, RuntimeTaskAddress } from '@/types/api'
 import type { StandInInboxWork, StandInSourceError } from '@/api/standIn'
 import { AnchorPopover } from './AnchorPopover'
 import { StandInImConnections } from './StandInImConnections'
+import type { StandInRole } from '@/api/personalStandIn'
+import type { CollaborationProject } from '@wegent/collaboration'
+import { findStandInProject } from './standInProjects'
 
 export function StandInDetailsPopover({
   anchor,
@@ -45,6 +48,8 @@ export function StandInDetailsPopover({
   onSchedule,
   suspended = false,
   imConnections,
+  configuration,
+  projects = [],
 }: {
   anchor: HTMLElement
   name: string
@@ -69,8 +74,26 @@ export function StandInDetailsPopover({
   onSchedule?: (schedule: Automation, trigger: HTMLButtonElement) => void
   suspended?: boolean
   imConnections?: Omit<ComponentProps<typeof StandInImConnections>, 'name' | 'onOpenChange'>
+  configuration?: {
+    connections?: StandInRole['connections']
+    collaboration?: StandInRole['collaboration']
+  }
+  projects?: CollaborationProject[]
 }) {
   const { t, i18n } = useTranslation('common')
+  const projectScope = configuration?.collaboration
+  const workSources = [
+    ...(projectScope?.allProjects
+      ? [
+          t('standIn.workspace.all_projects_with_exclusions', {
+            count: projectScope.excludedProjects.length,
+          }),
+        ]
+      : (projectScope?.projects ?? []).map(
+          ref => findStandInProject(projects, ref)?.name ?? ref.id
+        )),
+    ...(configuration?.connections ?? []).map(source => source.name),
+  ]
   const [selected, setSelected] = useState<RuntimeTaskReminderItem | null>(null)
   const [imOpen, setImOpen] = useState(false)
   const [visibleCount, setVisibleCount] = useState(4)
@@ -196,7 +219,7 @@ export function StandInDetailsPopover({
               <h2 className={`truncate font-medium ${compact ? 'text-base' : 'text-lg'}`}>
                 {name}
               </h2>
-              <p className="mt-1 text-sm text-text-muted">{identityStatus}</p>
+              <p className="mt-1 text-sm text-text-secondary">{identityStatus}</p>
             </div>
             {onGuide && (
               <button
@@ -213,6 +236,26 @@ export function StandInDetailsPopover({
           </div>
         </div>
         <div className="space-y-5 px-4 pb-4 pt-4">
+          <section aria-label={t('standIn.workspace.work_sources')}>
+            <button
+              type="button"
+              data-testid="stand-in-details-work-sources"
+              onClick={onSettings}
+              className="min-h-11 w-full rounded-md text-left text-sm hover:bg-muted focus-visible:outline-none keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-focus/70 md:min-h-9"
+            >
+              <span className="mb-1 flex items-center justify-between gap-2 font-medium">
+                {t('standIn.workspace.work_sources')}
+                <ChevronRight aria-hidden="true" className="h-4 w-4 shrink-0" />
+              </span>
+              <span className="block break-words text-text-secondary">
+                {workSources.length
+                  ? t('standIn.workspace.work_sources_configured', {
+                      names: workSources.join(' · '),
+                    })
+                  : t('standIn.workspace.work_sources_empty')}
+              </span>
+            </button>
+          </section>
           {imConnections && (
             <StandInImConnections {...imConnections} name={name} onOpenChange={setImOpen} />
           )}
@@ -232,7 +275,7 @@ export function StandInDetailsPopover({
                   {device?.name || t('standIn.workspace.details_device_unknown')}
                 </p>
                 {device && (
-                  <p className="mt-0.5 text-sm text-text-muted">
+                  <p className="mt-0.5 text-sm text-text-secondary">
                     {t(`standIn.workspace.details_device_${device?.status ?? 'unknown'}`)}
                   </p>
                 )}

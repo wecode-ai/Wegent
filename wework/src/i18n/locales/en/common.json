@@ -5597,7 +5597,7 @@
       "error": "Couldn't open or save notification settings. Try again."
     },
     "im": {
-      "title": "Chat channels",
+      "title": "Chat with the assistant in IM",
       "description": "Send /chat to return to Wegent chat, or /standin to enter stand-in mode again. Switching modes keeps your selected stand-in.",
       "chat_mode": "Wegent chat mode",
       "sign_in": "Close this dialog and select Connect to cloud in the sidebar to sign in, then return here.",
@@ -5829,7 +5829,7 @@
       "role_prompt": "Talk to this role…",
       "review_work": "Review work",
       "pending_work_help": "Work above needs your attention. Open it to review the details, or continue talking with your stand-in here.",
-      "primary_empty": "Tell me about your work, ask for an update, or create a scenario role together.",
+      "primary_empty": "Tell me one thing you want to move forward.",
       "role_empty": "Discuss responsibilities and progress here. Each work item has its own conversation.",
       "work_filters": "Filter work",
       "filter_all": "All",
@@ -5915,7 +5915,7 @@
       "profile_instructions_placeholder": "Describe yourself, what your stand-in should handle, and your preferences.",
       "profile_instructions_help": "Shared by your main stand-in and scenario roles. Each role can have its own responsibilities.",
       "connections": "Connections",
-      "connections_help": "Manage projects, DingTalk, email and calendars for incoming work.",
+      "connections_help": "Choose projects, messages and email for the assistant to follow. IM chat channels are configured separately.",
       "execution_settings": "Execution environment",
       "execution_settings_help": "Choose the default working directory and model for new work. New stand-in chat turns also use this model.",
       "execution_device_help": "The device determines available connections, directories and models. Save or discard changes before switching devices.",
@@ -6016,7 +6016,11 @@
       "project_connection_help": "Receive items assigned to you from the selected projects.",
       "message_connection_help": "Receive messages from the selected groups and contacts.",
       "receive_project_items": "Receive project items",
-      "default_processing": "Default for new projects"
+      "default_processing": "Default for new projects",
+      "role_help": "My assistant coordinates your work. Switch above to a specialist role for a focused responsibility.",
+      "work_sources": "Work sources to follow",
+      "work_sources_configured": "Configured: {{names}}",
+      "work_sources_empty": "No work sources configured. You can chat now and add sources in settings later."
     },
     "memory": {
       "title": "Memory",
@@ -6307,7 +6311,9 @@
       "continue": "Continue",
       "back_apps": "Back to connections",
       "excluded_projects": "Excluding: {{names}}",
-      "project_tags": "Only tags: {{names}}"
+      "project_tags": "Only tags: {{names}}",
+      "skip_connections": "Chat now, connect later",
+      "exit": "Leave assistant"
     },
     "authorization": {
       "confirm_each": "Confirm each send",

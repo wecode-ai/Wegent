@@ -60,6 +60,63 @@ async function continueSetup(user: ReturnType<typeof userEvent.setup>) {
 }
 
 describe('stand-in onboarding', () => {
+  it('skips optional connections without saving settings and remains complete on remount', async () => {
+    const { api, user, onSave, onClose, unmount, configuration } = setup()
+    await user.click(await screen.findByTestId('stand-in-onboarding-skip'))
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument())
+    expect(screen.getByText('Stand-in content')).toBeVisible()
+    expect(onSave).not.toHaveBeenCalled()
+    expect(onClose).not.toHaveBeenCalled()
+    expect(api.completeOnboarding).toHaveBeenCalledWith(
+      7,
+      'mac',
+      false,
+      '09:00',
+      expect.any(String)
+    )
+    unmount()
+    api.onboarding.mockResolvedValue({ state: { version: 1, completed: true } })
+    render(
+      <StandInOnboarding
+        api={api as unknown as StandInExecutorApi}
+        userId={7}
+        deviceId="mac"
+        configuration={configuration}
+      >
+        <p>Reopened assistant</p>
+      </StandInOnboarding>
+    )
+    expect(await screen.findByText('Reopened assistant')).toBeVisible()
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+  })
+
+  it('protects connection drafts before skipping and never saves discarded sources', async () => {
+    const { api, user, onSave } = setup()
+    await user.click(await screen.findByTestId('stand-in-add-projects-connection'))
+    await user.click(screen.getByTestId('stand-in-source-collaboration'))
+    await user.click(screen.getByTestId('stand-in-onboarding-skip'))
+    await user.click(screen.getByTestId('stand-in-onboarding-keep-editing'))
+    expect(screen.getByTestId('stand-in-source-collaboration')).toBeChecked()
+    expect(api.completeOnboarding).not.toHaveBeenCalled()
+    await user.click(screen.getByTestId('stand-in-onboarding-skip'))
+    await user.click(screen.getByTestId('stand-in-onboarding-discard'))
+    await waitFor(() => expect(screen.queryByTestId('stand-in-onboarding')).not.toBeInTheDocument())
+    expect(api.completeOnboarding).toHaveBeenCalledOnce()
+    expect(onSave).not.toHaveBeenCalled()
+  })
+
+  it('keeps skip failures retryable without discarding the assistant', async () => {
+    const { api, user, onSave, onClose } = setup()
+    api.completeOnboarding.mockRejectedValueOnce(new Error('Completion unavailable'))
+    await user.click(await screen.findByTestId('stand-in-onboarding-skip'))
+    expect(await screen.findByRole('alert')).toBeVisible()
+    expect(screen.getByTestId('stand-in-onboarding-skip')).toBeEnabled()
+    expect(onClose).not.toHaveBeenCalled()
+    await user.click(screen.getByTestId('stand-in-onboarding-skip'))
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument())
+    expect(onSave).not.toHaveBeenCalled()
+  })
+
   it.each([true, false])(
     'waits for completion state before opening automatic onboarding (%s)',
     async completed => {

@@ -222,10 +222,10 @@ export function StandInPrimaryProfile({
                 onChange={event => setDraft({ ...draft, preferences: event.target.value })}
                 placeholder={t('standIn.workspace.profile_instructions_placeholder')}
                 rows={5}
-                className="block w-full resize-y appearance-none rounded-lg border-0 bg-transparent p-3 text-sm outline-none"
+                className="block w-full resize-y appearance-none rounded-lg border-0 bg-transparent p-3 text-sm outline-none placeholder:text-text-secondary"
               />
             </div>
-            <span className="text-xs text-text-muted">
+            <span className="text-xs text-text-secondary">
               {t('standIn.workspace.profile_instructions_help')}
             </span>
           </label>
@@ -282,7 +282,7 @@ export function StandInPrimaryProfile({
         >
           <div>
             <h3 className="font-medium">{t('standIn.workspace.execution_settings')}</h3>
-            <p className="mt-1 text-xs text-text-muted">
+            <p className="mt-1 text-xs text-text-secondary">
               {t('standIn.workspace.execution_settings_help')}
             </p>
           </div>
@@ -317,7 +317,9 @@ export function StandInPrimaryProfile({
               />
             }
           />
-          <p className="text-xs text-text-muted">{t('standIn.workspace.execution_device_help')}</p>
+          <p className="text-xs text-text-secondary">
+            {t('standIn.workspace.execution_device_help')}
+          </p>
           {runtimeError && (
             <div role="alert" className="text-sm text-error">
               <p>{runtimeError}</p>

@@ -50,6 +50,7 @@ test('source diagnostics use the shared package runner without certifying upgrad
 
 test('the existing CI profile checkpoint includes the original and model catalog regressions', () => {
   assert.deepEqual(expandDesktopCheckpoints(['stand-in-profile']), [
+    'stand-in-onboarding-skip',
     'stand-in-profile-settings',
     'stand-in-model-catalog',
     'stand-in-processing',
@@ -64,6 +65,7 @@ test('group expansion preserves ordering and runs each checkpoint once', () => {
   assert.deepEqual(
     expandDesktopCheckpoints(['stand-in-profile', 'stand-in-model-catalog', 'stand-in-controls']),
     [
+      'stand-in-onboarding-skip',
       'stand-in-profile-settings',
       'stand-in-model-catalog',
       'stand-in-processing',
