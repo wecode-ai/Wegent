@@ -337,6 +337,10 @@ jobs:
           set -o pipefail
           cargo test --locked --lib cloud_projects::members::roster_mysql_tests -- --ignored \
             2>&1 | tee ../.ci-artifacts/backend-rs-tests/project-roster-mysql.log
+          cargo test --locked --lib cloud_projects::agent_deletion_mysql_tests -- --ignored \
+            2>&1 | tee ../.ci-artifacts/backend-rs-tests/project-agent-deletion-mysql.log
+          cargo test --locked --lib device_records::retention::mysql_tests -- --ignored \
+            2>&1 | tee ../.ci-artifacts/backend-rs-tests/device-retention-mysql.log
 
       - name: Verify project coordination binding ownership and revocation with MySQL
         working-directory: backend-rs
@@ -438,7 +442,7 @@ jobs:
         env:
           PLUGIN_AUTH_MYSQL_TEST_URL: mysql+pymysql://root:plugin_auth_test@127.0.0.1:3306/plugin_auth_test
           PLUGIN_AUTH_REDIS_TEST_URL: redis://127.0.0.1:6379/15
-        run: uv run pytest integration_checks/test_plugin_account_auth_mysql.py integration_checks/test_plugin_write_races_mysql.py integration_checks/test_plugin_connection_requests_mysql.py integration_checks/test_plugin_policy_bootstrap_mysql.py -n 0
+        run: uv run pytest integration_checks/test_plugin_account_auth_mysql.py integration_checks/test_plugin_write_races_mysql.py integration_checks/test_plugin_connection_requests_mysql.py integration_checks/test_plugin_policy_bootstrap_mysql.py integration_checks/test_streaming_block_index_redis.py -n 0
 
       - name: Verify MCP OAuth refresh and authorization races with InnoDB and Redis
         working-directory: backend

@@ -547,6 +547,8 @@ const sharedMessages: Record<
     "todo.file_downloading": "下载中…",
     "todo.view_all_count": "查看全部 {{count}} 个",
     "todo.collapse": "收起",
+    "todo.expand_properties": "展开更多属性",
+    "todo.collapse_properties": "收起更多属性",
     "todo.download_name": "下载 {{name}}",
     "todo.remove_name": "删除 {{name}}",
     "todo.not_set": "未设置",
@@ -655,6 +657,8 @@ const sharedMessages: Record<
     "todo.issue_title": "任务标题",
     "todo.issue_title_placeholder": "目标或事项标题",
     "todo.issue_description": "任务描述",
+    "todo.issue_description_placeholder": "添加描述，说明背景、目标或处理要求…",
+    "todo.no_issue_description": "暂无描述",
     "todo.expand_description": "展开描述",
     "todo.current_conversation": "当前会话",
     "todo.expand_conversation": "点击展开会话",
@@ -817,6 +821,14 @@ const sharedMessages: Record<
       "本地项目仅支持使用 Codex 或 Claude Code 执行器的智能体",
     "todo.project_owned_agent": "项目智能体",
     "todo.edit_project_agent": "编辑",
+    "todo.delete_project_agent": "删除",
+    "todo.delete_project_agent_title": "删除项目智能体？",
+    "todo.delete_project_agent_hint":
+      "删除后，已有任务和执行历史会保留，共享智能体不受影响。",
+    "todo.delete_project_agent_failed": "删除失败，请重试",
+    "todo.project_agent_in_use":
+      "此智能体仍在协作小组中。请先替换或移除小组成员，再删除。",
+    "todo.project_agent_managed": "当前设备智能体由系统管理，无法删除。",
     "todo.update_project_agent_failed": "更新项目智能体失败",
     "todo.codex_runtime_selection_hint":
       "运行环境在启动任务时选择，不与智能体绑定。",
@@ -1127,6 +1139,8 @@ const sharedMessages: Record<
     "todo.file_downloading": "Downloading…",
     "todo.view_all_count": "View all {{count}}",
     "todo.collapse": "Collapse",
+    "todo.expand_properties": "Show more properties",
+    "todo.collapse_properties": "Show fewer properties",
     "todo.download_name": "Download {{name}}",
     "todo.remove_name": "Remove {{name}}",
     "todo.not_set": "Not set",
@@ -1239,6 +1253,9 @@ const sharedMessages: Record<
     "todo.issue_title": "Issue title",
     "todo.issue_title_placeholder": "Goal or issue title",
     "todo.issue_description": "Issue description",
+    "todo.issue_description_placeholder":
+      "Add a description with background, goals, or requirements…",
+    "todo.no_issue_description": "No description yet",
     "todo.expand_description": "Expand description",
     "todo.current_conversation": "Current conversation",
     "todo.expand_conversation": "Expand conversation",
@@ -1413,6 +1430,15 @@ const sharedMessages: Record<
       "Local projects support only Agents that use the Codex or Claude Code runtime.",
     "todo.project_owned_agent": "Project agent",
     "todo.edit_project_agent": "Edit",
+    "todo.delete_project_agent": "Delete",
+    "todo.delete_project_agent_title": "Delete project Agent?",
+    "todo.delete_project_agent_hint":
+      "Existing tasks, execution history and the shared Agent will be kept.",
+    "todo.delete_project_agent_failed": "Deletion failed. Please try again.",
+    "todo.project_agent_in_use":
+      "This Agent is still in a collaboration group. Replace or remove it from the group first.",
+    "todo.project_agent_managed":
+      "The current-device Agent is managed by the system and cannot be deleted.",
     "todo.update_project_agent_failed": "Failed to update the project agent",
     "todo.codex_runtime_selection_hint":
       "Choose an execution environment when starting a run; it is not bound to the agent.",

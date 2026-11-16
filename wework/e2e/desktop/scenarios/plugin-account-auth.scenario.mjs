@@ -636,6 +636,7 @@ export async function createDesktopScenario({
               sourcePids.every(pid => Number.isSafeInteger(pid) && pid > 0 && processIsAlive(pid))
             )
             command = `python3 ${quote(join(cloudRoot, 'scripts/oauth-cli.py'))} read`
+            let reconciledBeforeRestart
             await restartDesktopApp({
               afterStop: async () => {
                 await waitForValue(
@@ -656,9 +657,17 @@ export async function createDesktopScenario({
                   ),
                   cloud.remoteExecutor.pid
                 )
+                reconciledBeforeRestart = await readFile(reconcileMarker, 'utf8')
               },
             })
             await cloud.waitForConnectedAppDevice()
+            // Online registration precedes account synchronization for the new runtime binding.
+            await waitForValue(
+              () => readFile(reconcileMarker, 'utf8'),
+              value => value.length > reconciledBeforeRestart.length,
+              workbenchReadyTimeoutMs,
+              'The restarted executor did not finish account synchronization'
+            )
             const oauth = await connectionFor('oauth')
             await api(`/plugin-connections/${oauth.id}`, 'DELETE', {
               expected_revision: oauth.revision,

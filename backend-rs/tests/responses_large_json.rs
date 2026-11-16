@@ -10,6 +10,8 @@ mod http_e2e;
 mod llm_proxy_deadlines;
 #[path = "support/llm_proxy_timeouts.rs"]
 mod llm_proxy_timeouts;
+#[path = "support/streaming_block_index_http.rs"]
+mod streaming_block_index;
 #[path = "support/responses_terminal_storage.rs"]
 mod terminal_storage;
 
@@ -19,6 +21,14 @@ use wegent_backend_rs::task_store::{
     DefaultTaskStore, TaskStore, TaskStoreCreate, assistant_subtasks_by_task_statement,
     order_assistant_subtasks, subtask_column_index,
 };
+
+#[tokio::test]
+#[ignore = "requires disposable MySQL 8 and Redis; CI runs the Responses HTTP E2E suite"]
+async fn long_streaming_turn_preserves_indexed_blocks_through_http_completion() {
+    let fixture = fixture::Fixture::new().await;
+    streaming_block_index::verify(&fixture).await;
+    fixture.close().await;
+}
 
 #[tokio::test]
 #[ignore = "requires disposable MySQL 8; run explicitly in the Backend Rust CI job"]

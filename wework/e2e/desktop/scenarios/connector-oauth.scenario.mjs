@@ -408,6 +408,26 @@ export function createDesktopScenario({
         0,
         'The continuation must not start while the local connector sync is held'
       )
+      // Advance the real executor's revision for the same account while the
+      // authorization round is held. Its stale app list must be rejected, and
+      // a fresh retry must apply the connector before the task continues.
+      const concurrentToken = await api('/api/connector-runtime/token', { method: 'POST' })
+      const concurrentRevision = Date.now() * 1_000
+      const concurrentSync = await requestPluginExecutor(control, 'runtime.connectors.configure', {
+        apiBaseUrl: backend.backendUrl + '/api',
+        connectorToken: concurrentToken.access_token,
+        expiresAtMs: Date.now() + concurrentToken.expires_in * 1_000,
+        syncRevision: concurrentRevision,
+      })
+      assert.equal(concurrentSync.status, 200)
+      assert.equal(concurrentSync.payload.ok, true)
+      assert.equal(concurrentSync.payload.result.configured, true)
+      assert.notEqual(
+        concurrentSync.payload.result.stale,
+        true,
+        'The concurrent same-account configuration must advance the executor revision'
+      )
+      localSyncHold = { ...held, concurrentRevision }
       await control.command('releaseLocalExecutorRequestHold', 'body')
       try {
         await control.command('waitFor', '[data-testid="cloud-connector-auth-card"]', {

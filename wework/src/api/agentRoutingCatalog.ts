@@ -1,7 +1,6 @@
-import { createRequestCache } from '@wegent/chat-core/request-cache'
+import { getClientRequestCache } from '@wegent/chat-core/request-cache'
 import {
   createSharedWorkspaceHttpApi,
-  mapCollaborationExecutionEnvironmentDto,
   type CollaborationExecutionEnvironment,
   type RunnerEnvironment,
   type RunnerModel,
@@ -15,7 +14,7 @@ type ReadCatalog = (deviceId: string) => Promise<{ models: RunnerModel[]; errors
 
 /** Device inventory never starts model discovery. All transports retain their existing permissions. */
 export function createAgentRoutingCatalog(client: HttpClient, readCatalog?: ReadCatalog) {
-  const cache = createRequestCache(() => client.getCacheScope?.())
+  const cache = getClientRequestCache(client)
   const workspaceApi = createSharedWorkspaceHttpApi(client)
   const personalTypes = new Map<string, string>()
   const environment = (
@@ -40,77 +39,83 @@ export function createAgentRoutingCatalog(client: HttpClient, readCatalog?: Read
 
   return {
     listEnvironments(projectId?: string): Promise<RunnerEnvironment[]> {
-      return cache.get(`environments:${projectId ?? ''}`, async () => {
-        const [personal, shared, project] = await Promise.all([
-          client.get<DeviceListResponse>('/devices'),
-          workspaceApi.workspaces
-            .list()
-            .then(workspaces =>
-              Promise.all(
-                workspaces.map(workspace =>
-                  workspaceApi.workspaces.listExecutionEnvironments(workspace.id)
+      const key = `/v1/resources/execution-environments:inventory:${projectId ?? ''}`
+      return cache.get(
+        key,
+        async () => {
+          const [personal, shared, project] = await Promise.all([
+            client.get<DeviceListResponse>('/devices'),
+            workspaceApi.workspaces
+              .list()
+              .then(workspaces =>
+                Promise.all(
+                  workspaces.map(workspace =>
+                    workspaceApi.workspaces.listExecutionEnvironments(workspace.id)
+                  )
                 )
-              )
-            ),
-          projectId
-            ? client
-                .get<{
-                  items: Record<string, unknown>[]
-                }>(`/v1/cloud-projects/${encodeURIComponent(projectId)}/execution-environments`)
-                .then(response => response.items.map(mapCollaborationExecutionEnvironmentDto))
-            : Promise.resolve([]),
-        ])
-        const authorized = new Set(
-          project
-            .filter(device => device.can_use !== false)
-            .map(device => String(device.device_id ?? device.id))
-        )
-        const rows = new Map<string, RunnerEnvironment>()
-        personalTypes.clear()
-        for (const device of filterClaudeCodeDevices(personal.items)) {
-          personalTypes.set(device.device_id, device.device_type)
-          if (device.app_device_id) {
-            personalTypes.set(device.app_device_id, device.device_type)
+              ),
+            projectId
+              ? workspaceApi.projects.listExecutionEnvironments(projectId)
+              : Promise.resolve([]),
+          ])
+          const authorized = new Set(
+            project
+              .filter(device => device.can_use !== false)
+              .map(device => String(device.device_id ?? device.id))
+          )
+          const rows = new Map<string, RunnerEnvironment>()
+          personalTypes.clear()
+          for (const device of filterClaudeCodeDevices(personal.items)) {
+            personalTypes.set(device.device_id, device.device_type)
+            if (device.app_device_id) {
+              personalTypes.set(device.app_device_id, device.device_type)
+            }
+            rows.set(String(device.id), {
+              id: String(device.id),
+              device_key: device.device_id,
+              ...(device.app_device_id ? { app_device_id: device.app_device_id } : {}),
+              name: device.name,
+              owner_type: 'user',
+              owner_id: '',
+              status: device.status === 'offline' ? 'offline' : 'online',
+              project_authorized: authorized.has(String(device.id)),
+              runtimes: ['codex', 'claude_code'],
+              models: [],
+            })
           }
-          rows.set(String(device.id), {
-            id: String(device.id),
-            device_key: device.device_id,
-            ...(device.app_device_id ? { app_device_id: device.app_device_id } : {}),
-            name: device.name,
-            owner_type: 'user',
-            owner_id: '',
-            status: device.status === 'offline' ? 'offline' : 'online',
-            project_authorized: authorized.has(String(device.id)),
-            runtimes: ['codex', 'claude_code'],
-            models: [],
-          })
-        }
-        for (const device of [...shared.flat(), ...project]) {
-          if (device.can_use === false) continue
-          const row = environment(device, authorized.has(String(device.device_id ?? device.id)))
-          rows.set(row.id, row)
-        }
-        return [...rows.values()]
-      })
+          for (const device of [...shared.flat(), ...project]) {
+            if (device.can_use === false) continue
+            const row = environment(device, authorized.has(String(device.device_id ?? device.id)))
+            rows.set(row.id, row)
+          }
+          return [...rows.values()]
+        },
+        0
+      )
     },
     listNativeModels(target: RunnerEnvironment, projectId?: string): Promise<NativeCatalog> {
-      return cache.get(`native:${projectId ?? ''}:${target.id}`, async () => {
-        const deviceType = personalTypes.get(target.device_key)
-        if (deviceType && deviceType !== 'app' && target.status === 'online' && readCatalog) {
-          const result = await readCatalog(target.device_key)
-          if (!Array.isArray(result.models)) throw new Error('Invalid runner model catalog')
-          return { models: result.models, catalog_error: result.errors?.join(', ') || null }
-        }
-        // Preserve APP/shared access and the server's last reported offline catalogs.
-        const rows = await cache.get(`authorized-catalog:${projectId ?? ''}`, () =>
-          client.get<RunnerEnvironment[]>(
-            `/v1/resources/execution-environments${projectId ? `?project_id=${encodeURIComponent(projectId)}` : ''}`
+      return cache.get(
+        `/v1/resources/execution-environments:native:${projectId ?? ''}:${target.id}`,
+        async () => {
+          const deviceType = personalTypes.get(target.device_key)
+          if (deviceType && deviceType !== 'app' && target.status === 'online' && readCatalog) {
+            const result = await readCatalog(target.device_key)
+            if (!Array.isArray(result.models)) throw new Error('Invalid runner model catalog')
+            return { models: result.models, catalog_error: result.errors?.join(', ') || null }
+          }
+          // Preserve APP/shared access and the server's last reported offline catalogs.
+          const rows = await cache.get(
+            `/v1/resources/execution-environments:catalog:${projectId ?? ''}`,
+            () =>
+              client.get<RunnerEnvironment[]>(
+                `/v1/resources/execution-environments${projectId ? `?project_id=${encodeURIComponent(projectId)}` : ''}`
+              )
           )
-        )
-        const row = rows.find(row => row.id === target.id)
-        if (!row) throw new Error('Runner is no longer available')
-        return { models: row.models, catalog_error: row.catalog_error }
-      })
+          const row = rows.find(row => row.id === target.id)
+          if (!row) throw new Error('Runner is no longer available')
+          return { models: row.models, catalog_error: row.catalog_error }
+        }
+      )
     },
   }
 }

@@ -109,7 +109,8 @@ export function AdminDeviceCard({
   const { t } = useTranslation('admin')
   const isOnline = device.status === 'online'
   const isCloud = device.device_type === 'cloud'
-  const supportsUpgrade = device.bind_shell === 'claudecode' && device.device_type !== 'app'
+  const supportsUpgrade =
+    !isCloud && device.bind_shell === 'claudecode' && device.device_type !== 'app'
   const isUpgradeInProgress = !!upgradeState
   const canUpgrade =
     isOnline &&
@@ -157,7 +158,7 @@ export function AdminDeviceCard({
               </span>
             )}
           </div>
-          {upgradeState && (
+          {!isCloud && upgradeState && (
             <div className="mt-2 flex items-center gap-2 text-xs text-text-secondary flex-wrap">
               <Loader2
                 className={cn(

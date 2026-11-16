@@ -11,6 +11,7 @@
 
 #![forbid(unsafe_code)]
 
+pub mod collaboration;
 pub mod connector;
 pub mod dispatch;
 mod execution;

@@ -302,7 +302,7 @@ describe('waitForLocalConnectorSync lifecycle', () => {
     mocks.request.mockResolvedValue({ changed: false })
   })
 
-  test('reuses one attempt-scoped revision across retries', async () => {
+  test('uses a fresh revision per retry and keeps it fixed within each round', async () => {
     let attempt = 0
     mocks.listInstalled.mockImplementation(async () => ({
       apps:
@@ -336,7 +336,111 @@ describe('waitForLocalConnectorSync lifecycle', () => {
       .filter(([method]) => method === 'runtime.connectors.configure')
       .map(([, params]) => (params as { syncRevision: number }).syncRevision)
     expect(revisions).toHaveLength(2)
-    expect(new Set(revisions).size).toBe(1)
+    expect(revisions[1]).toBeGreaterThan(revisions[0])
+    expect(
+      mocks.request.mock.calls
+        .filter(([method]) => method === 'runtime.connectors.apps.sync')
+        .map(([, params]) => (params as { syncRevision: number }).syncRevision)
+    ).toEqual(revisions)
+  })
+
+  test('recovers after a concurrent same-account sync supersedes the first round', async () => {
+    const apps = [
+      {
+        id: 'ready-app',
+        slug: 'ready-app',
+        runtime_name: 'ready-app',
+        enabled: true,
+        callable: true,
+        tool_summaries: [],
+        connection: { status: 'connected' },
+      },
+    ]
+    let releaseCatalog: (value: { apps: typeof apps }) => void = () => undefined
+    mocks.listInstalled.mockResolvedValue({ apps }).mockImplementationOnce(
+      () =>
+        new Promise(resolve => {
+          releaseCatalog = resolve
+        })
+    )
+    let acceptedRevision = 0
+    let superseded = 0
+    const appliedRevisions: number[] = []
+    mocks.request.mockImplementation(async (method: string, params: { syncRevision: number }) => {
+      if (method === 'runtime.connectors.configure') {
+        if (params.syncRevision <= acceptedRevision) return { configured: true, stale: true }
+        acceptedRevision = params.syncRevision
+        return { configured: true }
+      }
+      // Match the executor's revision barrier instead of accepting stale writes.
+      if (params.syncRevision !== acceptedRevision) {
+        superseded += 1
+        throw Object.assign(new Error('Connector configuration changed before synchronization'), {
+          code: 'connector_sync_superseded',
+        })
+      }
+      appliedRevisions.push(params.syncRevision)
+      return { changed: true }
+    })
+
+    let resumed = false
+    const waiting = waitForLocalConnectorSync({
+      apiBaseUrl: 'https://cloud.example.test/api',
+      token: 'cloud-token',
+      slug: 'ready-app',
+      isCurrent: () => true,
+      timeoutMs: 3_000,
+      intervalMs: 1_000,
+    }).then(result => {
+      resumed = result
+      return result
+    })
+    await vi.advanceTimersByTimeAsync(0)
+
+    await synchronizeConnectorApps({
+      apiBaseUrl: 'https://cloud.example.test/api',
+      token: 'cloud-token',
+      isCurrent: () => true,
+    })
+    const concurrentRevision = acceptedRevision
+    expect(resumed).toBe(false)
+    releaseCatalog({ apps })
+    await vi.advanceTimersByTimeAsync(0)
+    expect(superseded).toBe(1)
+    expect(resumed).toBe(false)
+    await vi.advanceTimersByTimeAsync(4_000)
+
+    await expect(waiting).resolves.toBe(true)
+    expect(acceptedRevision).toBeGreaterThan(concurrentRevision)
+    expect(appliedRevisions).toEqual([concurrentRevision, acceptedRevision])
+    expect(superseded).toBe(1)
+    expect(mocks.issueToken).toHaveBeenCalledTimes(3)
+  })
+
+  test('does not configure or publish when sign-out supersedes an in-flight retry', async () => {
+    let releaseToken: (value: { access_token: string; expires_in: number }) => void = () =>
+      undefined
+    mocks.issueToken.mockImplementationOnce(
+      () =>
+        new Promise(resolve => {
+          releaseToken = resolve
+        })
+    )
+    let current = true
+    const waiting = waitForLocalConnectorSync({
+      apiBaseUrl: 'https://cloud.example.test/api',
+      token: 'account-a-token',
+      slug: 'ready-app',
+      isCurrent: () => current,
+    }).catch((error: unknown) => error)
+
+    current = false
+    releaseToken({ access_token: 'stale-token', expires_in: 900 })
+    await vi.advanceTimersByTimeAsync(5_000)
+
+    expect(await waiting).toBeInstanceOf(ConnectorSyncAbortedError)
+    expect(mocks.request).not.toHaveBeenCalled()
+    expect(mocks.issueToken).toHaveBeenCalledTimes(1)
   })
 
   test('stops between retries once the attempt is superseded', async () => {

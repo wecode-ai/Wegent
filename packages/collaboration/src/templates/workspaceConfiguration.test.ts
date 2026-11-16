@@ -18,14 +18,11 @@ function fixture() {
   } as unknown as SharedWorkspaceApi
   let id = 100
   const host = {
-    resolveTemplateAgentRouting: vi.fn(async () => ({
-      executionPolicy: { mode: 'fixed', environment_id: 'destination-device' },
-      modelPolicy: {
-        mode: 'fixed',
-        model: { runtime: 'codex', provider: 'openai', model_id: 'destination-model' },
-      },
+    listTemplateAgentModels: vi.fn(),
+    createTemplateAgent: vi.fn(async () => ({
+      id: String(++id),
+      name: 'Agent',
     })),
-    createTemplateAgent: vi.fn(async () => ({ id: String(++id), name: 'Agent' })),
   } as unknown as ProjectAgentConfigurationHost
   return { document, drafts, create, addAgent, api, host }
 }
@@ -33,10 +30,17 @@ function fixture() {
 it('uses the model explicitly chosen in the workspace import dialog instead of resolving a default', async () => {
   const { document, drafts, api, host } = fixture()
   const chosen = {
-    executionPolicy: { mode: 'fixed' as const, environment_id: 'chosen-device' },
+    executionPolicy: {
+      mode: 'fixed' as const,
+      environment_id: 'chosen-device',
+    },
     modelPolicy: {
       mode: 'fixed' as const,
-      model: { runtime: 'codex' as const, provider: 'company', model_id: 'chosen-model' },
+      model: {
+        runtime: 'codex' as const,
+        provider: 'company',
+        model_id: 'chosen-model',
+      },
     },
   }
   const resolve = vi.fn(async () => chosen)
@@ -52,7 +56,7 @@ it('uses the model explicitly chosen in the workspace import dialog instead of r
     'zh-CN',
     resolve
   )
-  expect(host.resolveTemplateAgentRouting).not.toHaveBeenCalled()
+  expect(host.listTemplateAgentModels).not.toHaveBeenCalled()
   expect(resolve).toHaveBeenCalledWith('codex')
   for (const agent of document.spec.resources.collaboration.agents!) {
     expect(host.createTemplateAgent).toHaveBeenCalledWith(agent, 'design', chosen)
@@ -75,7 +79,7 @@ it('creates cloud resources in the destination namespace and binds them before t
     document.spec.resources.collaboration.agents![0],
     'design',
     expect.objectContaining({
-      executionPolicy: { mode: 'fixed', environment_id: 'destination-device' },
+      executionPolicy: { mode: 'user_select' },
     })
   )
   expect(addAgent).toHaveBeenCalledWith('space', { teamId: 101 })
@@ -84,7 +88,9 @@ it('creates cloud resources in the destination namespace and binds them before t
     expect.objectContaining({
       leader: expect.objectContaining({ id: '101' }),
       stages: expect.arrayContaining([
-        expect.objectContaining({ assignee: expect.objectContaining({ id: '102' }) }),
+        expect.objectContaining({
+          assignee: expect.objectContaining({ id: '102' }),
+        }),
       ]),
     })
   )
@@ -186,7 +192,7 @@ it.each([
         'Execution settings cannot be preserved'
       )
     ).rejects.toThrow('Execution settings cannot be preserved')
-    expect(host.resolveTemplateAgentRouting).not.toHaveBeenCalled()
+    expect(host.listTemplateAgentModels).not.toHaveBeenCalled()
     expect(host.createTemplateAgent).not.toHaveBeenCalled()
     expect(api.workspaces!.addAgent).not.toHaveBeenCalled()
     expect(api.workspaces!.createCollaborationGroup).not.toHaveBeenCalled()

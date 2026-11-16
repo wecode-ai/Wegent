@@ -8,11 +8,13 @@ Wework includes an opt-in frontend performance diagnostics switch for investigat
 
 ## Debugging Multiple Instances
 
-For everyday development, `pnpm --filter wework dev:mac` uses the release app's Executor Home by default, so projects and tasks are shared with the locally installed release Wework. Each Wework process still communicates with its own executor child through stdio, preventing endpoint collisions or attachment to another executor. Use `pnpm --filter wework dev:mac -- --executor-isolation` when projects and tasks must be isolated temporarily.
+For everyday development, `pnpm --filter wework dev:mac` shares development history under `~/.wegent/development/workbench` across worktrees, separately from release data. Window state, logs, device identity, and IPC remain separate per worktree. The retained `--executor-isolation` argument is accepted; development data isolation is always enabled.
+
+Multiple dev instances can start concurrently with shared history. Preparation is serialized per Home. When the migration journal is complete and rollout metadata and SQLite indexes are current, later instances perform read-only admission without competing for active conversations' writer leases. Pending migrations, legacy providers, or index drift still require locked migration after writers exit. Startup never bypasses locks, rewrites live sessions, or reports failed preparation as ready.
 
 `ai:verify` and desktop E2E do not use that shared default. They explicitly create a temporary Executor Home, projects directory, device ID, and unique Electron app-data namespace, isolating tasks, projects, application data, and the single-instance lock from release and other verification sessions.
 
-Development instances share one Cargo target directory by default so executor source changes can reuse incremental build artifacts. Set `WEGENT_DISABLE_SHARED_CARGO_TARGET=1` to use the project's default target directory when investigating shared build-cache issues.
+Cargo target directories are isolated by component and worktree; sccache shares compilation content. Set `WEGENT_DISABLE_SHARED_CARGO_TARGET=1` to place artifacts under the current worktree's target directory. See [Debug instance context](./wework-debug-instance-context.md) for directory rules.
 
 ## Diagnosing Startup Time
 

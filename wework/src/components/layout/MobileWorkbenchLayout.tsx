@@ -25,6 +25,7 @@ import {
 } from '@/lib/workbench-device'
 import {
   WEWORK_MIN_EXECUTOR_VERSION,
+  isCloudDevice,
   isDeviceBelowWeWorkVersion,
   isWeWorkCompatibleDevice,
 } from '@/lib/device-capabilities'
@@ -281,10 +282,15 @@ const MobileWorkbenchPane = memo(function MobileWorkbenchPane({
           t('workbench.current_device', '当前设备'),
       })
     : activeDeviceVersionUnsupported
-      ? t('workbench.device_status_active_upgrade_required', {
-          device: activeDevice?.name || activeDeviceId || t('workbench.project_device'),
-          version: WEWORK_MIN_EXECUTOR_VERSION,
-        })
+      ? t(
+          activeDevice && isCloudDevice(activeDevice)
+            ? 'workbench.device_status_cloud_version_required'
+            : 'workbench.device_status_active_upgrade_required',
+          {
+            device: activeDevice?.name || activeDeviceId || t('workbench.project_device'),
+            version: WEWORK_MIN_EXECUTOR_VERSION,
+          }
+        )
       : noStandaloneCompatibleDevice
         ? t('workbench.device_status_no_online_device')
         : undefined

@@ -511,10 +511,11 @@
 
 .task-detail-workspace-description.task-detail-content-readonly {
   margin-top: 4px;
-  border: 0;
-  border-radius: 0;
-  padding: 0;
-  background: transparent;
+}
+
+:where(html:not([data-input-modality="pointer"]))
+  .task-detail-workspace-description:focus-within {
+  border-color: rgb(var(--color-focus) / 70%);
 }
 
 .task-detail-workspace-description .task-detail-description-readonly {
@@ -666,6 +667,7 @@
   grid-column: span 2;
   grid-template-columns: subgrid;
   align-items: center;
+  min-height: 36px;
   min-width: 0;
 }
 
@@ -711,7 +713,63 @@
   display: none;
 }
 
+.task-detail-primary-metadata,
+.task-detail-expanded-properties {
+  grid-column: 1 / -1;
+  min-width: 0;
+}
+
+.task-detail-primary-metadata {
+  display: grid;
+  gap: 8px;
+}
+
+.task-detail-primary-metadata .task-detail-rail-key,
+.task-detail-expanded-properties .task-detail-rail-key {
+  width: 3em;
+  font-size: inherit;
+  font-weight: 400;
+  line-height: inherit;
+}
+
+.task-detail-primary-metadata .task-detail-rail-prop,
+.task-detail-expanded-properties .task-detail-rail-prop {
+  min-height: 36px;
+  gap: 12px;
+  padding: 0;
+}
+
+.task-detail-primary-metadata .task-detail-rail-value,
+.task-detail-expanded-properties .task-detail-rail-value {
+  font-size: inherit;
+  font-weight: 500;
+  line-height: inherit;
+}
+
+.task-detail-primary-metadata .task-detail-rail-value-content,
+.task-detail-expanded-properties .task-detail-rail-value-content {
+  min-height: 30px;
+  padding: 0 8px;
+}
+
+.task-detail-primary-metadata .task-detail-tag-editor input {
+  min-height: 30px;
+  font-size: inherit;
+  line-height: inherit;
+}
+
+.task-detail-primary-metadata .task-detail-property-collaborators {
+  flex-wrap: wrap;
+}
+
 @media (max-width: 767px) {
+  .task-detail-property,
+  .task-detail-primary-metadata .task-detail-rail-prop,
+  .task-detail-expanded-properties .task-detail-rail-prop,
+  .task-detail-primary-metadata .task-detail-tag-editor input {
+    min-height: 44px;
+  }
+
   .task-detail-property .task-detail-state-primary {
     min-height: 44px;
   }
@@ -1327,29 +1385,35 @@
 }
 
 .task-detail-workspace-properties-toggle {
-  display: flex;
-  width: 100%;
+  display: inline-flex;
+  width: fit-content;
+  min-height: 28px;
   align-items: center;
-  justify-content: space-between;
-  padding: 9px 2px;
+  gap: 6px;
+  margin-left: -6px;
+  padding: 4px 6px;
+  border-radius: 6px;
   color: rgb(var(--color-text-secondary));
   font-size: var(--text-sm);
+  font-weight: inherit;
   cursor: pointer;
-  list-style: none;
-}
-
-.task-detail-workspace-properties-toggle::-webkit-details-marker {
-  display: none;
+  border: 0;
+  background: transparent;
 }
 
 .task-detail-workspace-properties-toggle:hover {
   color: rgb(var(--color-text-primary));
+  background: rgb(var(--color-bg-muted));
 }
 
-.task-detail-workspace-properties:not([open])
-  .task-detail-workspace-properties-toggle
-  svg {
-  transform: rotate(-90deg);
+.task-detail-expanded-properties .task-detail-workspace-properties {
+  margin-top: 8px;
+}
+
+@media (max-width: 767px) {
+  .task-detail-workspace-properties-toggle {
+    min-height: 44px;
+  }
 }
 
 .task-detail-workspace-properties-grid {

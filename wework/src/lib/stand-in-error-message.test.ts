@@ -35,10 +35,13 @@ describe('stand-in error localization', () => {
   )
   it('keeps compatibility guidance independent of the failed operation in both languages', async () => {
     for (const [language, message] of [
-      ['zh-CN', '当前 Wework 与执行设备的版本不兼容。请前往云端工作查看设备情况，升级后重试。'],
+      [
+        'zh-CN',
+        '当前 Wework 与执行设备的版本不兼容。如果使用云设备，请前往云端工作重启设备，然后重新检查版本。',
+      ],
       [
         'en',
-        'Wework and the execution device use incompatible versions. Open Cloud work to check device status, upgrade, and try again.',
+        'Wework and the execution device use incompatible versions. If it is a cloud device, open Cloud work to restart it and check its version again.',
       ],
     ]) {
       await i18n.changeLanguage(language)

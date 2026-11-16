@@ -19,6 +19,7 @@ import {
   CloudConnectionContext,
   DISCONNECTED_STATE,
 } from '@/features/cloud-connection/CloudConnectionContext'
+import { WorkbenchCloudDeviceRestarts } from '@/features/cloud-devices/WorkbenchCloudDeviceRestarts'
 import '@/i18n'
 import { openExternalUrl } from '@/lib/external-links'
 import { preloadDefaultDshUiTestModules } from '@/test/setup.dom'
@@ -884,11 +885,19 @@ describe('ConnectionsSettingsPage', () => {
     expect(toggle).toHaveAttribute('aria-checked', 'true')
   })
 
-  test('warns about active work and disables sessions while a cloud device restarts', async () => {
-    api.getAllDevices.mockResolvedValue([cloudDevice({ slot_used: 1 })])
+  test('uses the workbench restart state for all devices in the same sandbox', async () => {
+    const target = cloudDevice({ slot_used: 1 })
+    const sibling = cloudDevice({ id: 2, device_id: 'device-2', name: 'Sibling' })
+    const devices = [target, sibling]
+    const refreshWorkbenchDevices = vi.fn().mockResolvedValue(undefined)
+    api.getAllDevices.mockResolvedValue(devices)
     api.restartCloudDevice.mockResolvedValue({ message: 'restart sent' })
 
-    render(<ConnectionsSettingsPage onBack={vi.fn()} />)
+    render(
+      <WorkbenchCloudDeviceRestarts devices={devices} refreshDevices={refreshWorkbenchDevices}>
+        <ConnectionsSettingsPage onBack={vi.fn()} />
+      </WorkbenchCloudDeviceRestarts>
+    )
 
     await screen.findByTestId('connection-device-device-1')
     await userEvent.click(screen.getByTestId('connection-more-button-device-1'))
@@ -907,6 +916,10 @@ describe('ConnectionsSettingsPage', () => {
     expect(screen.getByTestId('connection-code-server-button-device-1')).toBeDisabled()
     expect(screen.getByTestId('connection-device-surface-button-device-1')).toBeDisabled()
     expect(screen.getByTestId('connection-more-button-device-1')).toBeDisabled()
+    expect(screen.getByTestId('connection-more-button-device-2')).toBeDisabled()
+    expect(screen.getByTestId('connection-terminal-button-device-2')).toBeDisabled()
+    expect(refreshWorkbenchDevices).toHaveBeenCalled()
+    expect(api.restartCloudDevice).toHaveBeenCalledExactlyOnceWith('device-1')
     expect(
       within(screen.getByTestId('connection-device-device-1')).getByText('重启中')
     ).toBeVisible()
@@ -928,7 +941,7 @@ describe('ConnectionsSettingsPage', () => {
     expect(within(screen.getByTestId('connection-device-device-1')).getByText('在线')).toBeVisible()
   })
 
-  test('upgrades an available cloud device through the restart-aligned flow', async () => {
+  test('opens the same restart flow from the version badge', async () => {
     api.getAllDevices.mockResolvedValue([
       cloudDevice({
         executor_version: '1.8.5',
@@ -941,32 +954,33 @@ describe('ConnectionsSettingsPage', () => {
 
     render(<ConnectionsSettingsPage onBack={vi.fn()} />)
 
-    const upgradeBadge = await screen.findByTestId('connection-upgrade-badge-device-1')
-    expect(upgradeBadge).toHaveAccessibleName('当前版本：v1.8.5 · 最新版本：v1.9.0 · 点击升级')
+    const versionBadge = await screen.findByTestId('connection-upgrade-badge-device-1')
+    expect(versionBadge).toHaveAccessibleName('当前版本 v1.8.5 · 最新版本 v1.9.0 · 重启设备')
     await userEvent.click(screen.getByTestId('connection-more-button-device-1'))
-    expect(screen.getByTestId('connection-upgrade-menu-item-device-1')).toBeEnabled()
+    expect(screen.queryByTestId('connection-upgrade-menu-item-device-1')).not.toBeInTheDocument()
+    expect(screen.getByTestId('connection-restart-menu-item-device-1')).toBeEnabled()
     await userEvent.click(screen.getByTestId('connection-more-button-device-1'))
-    await userEvent.click(upgradeBadge)
+    await userEvent.click(versionBadge)
 
-    const dialog = screen.getByTestId('confirm-upgrade-device-dialog')
+    const dialog = screen.getByTestId('confirm-restart-device-dialog')
     expect(dialog).toHaveTextContent('当前有任务运行')
     expect(dialog).toHaveTextContent('v1.8.5')
     expect(dialog).toHaveTextContent('v1.9.0')
     expect(api.restartCloudDevice).not.toHaveBeenCalled()
 
-    await userEvent.click(screen.getByTestId('confirm-upgrade-device-button'))
+    await userEvent.click(screen.getByTestId('confirm-restart-device-button'))
 
     expect(api.restartCloudDevice).toHaveBeenCalledWith('device-1')
     expect(api.upgradeDevice).not.toHaveBeenCalled()
     expect(
-      await screen.findByTestId('connection-device-upgrade-status-device-1')
+      await screen.findByTestId('connection-device-restart-status-device-1')
     ).toHaveTextContent('设备将短暂离线')
     expect(screen.getByTestId('connection-terminal-button-device-1')).toBeDisabled()
     expect(screen.getByTestId('connection-more-button-device-1')).toBeDisabled()
     const status = within(screen.getByTestId('connection-device-device-1')).getByTestId(
       'connection-device-status'
     )
-    expect(status).toHaveTextContent('升级中')
+    expect(status).toHaveTextContent('重启中')
     expect(status).toHaveClass('shrink-0', 'whitespace-nowrap')
   })
 

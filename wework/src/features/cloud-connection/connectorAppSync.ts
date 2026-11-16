@@ -152,18 +152,18 @@ export async function waitForLocalConnectorSync({
   /**
    * Lifecycle of the authorization attempt this wait belongs to.
    *
-   * Every retry reuses one attempt-scoped revision and re-checks this guard, so
-   * a retry that outlives a sign-out can neither configure the old account with
-   * a newer revision than the `clear` that ran nor report success.
+   * Each retry checks this guard before allocating a fresh revision, so it can
+   * recover from concurrent same-account synchronization without outbidding a
+   * sign-out's clear or reporting success after the lifecycle ends.
    */
   isCurrent: () => boolean
   timeoutMs?: number
   intervalMs?: number
 }): Promise<boolean> {
-  const syncRevision = nextConnectorSyncRevision()
   const deadline = Date.now() + timeoutMs
   for (;;) {
     if (!isCurrent()) throw new ConnectorSyncAbortedError()
+    const syncRevision = nextConnectorSyncRevision()
     try {
       const result = await synchronizeConnectorApps({
         apiBaseUrl,

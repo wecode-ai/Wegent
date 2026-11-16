@@ -455,6 +455,7 @@ jobs:
             BASE_IMAGE=${{ steps.runtime.outputs.base-image }}
             DEPS_IMAGE=${{ steps.dependencies.outputs.image }}
           push: true
+          load: true
           tags: ${{ steps.runtime.outputs.image }}
           cache-from: type=registry,ref=ghcr.io/${{ github.repository_owner }}/wegent-executor:buildcache-e2e
 
@@ -471,29 +472,21 @@ jobs:
           tags: wegent/e2e-claudecode-executor:latest
           cache-from: type=registry,ref=ghcr.io/${{ github.repository_owner }}/wegent-executor:buildcache-e2e
 
-      - name: Restore published fork Executor runtime
-        if: steps.access.outputs.artifact == 'true' && steps.image-check.outputs.exists == 'true'
+      - name: Restore published Executor runtime
+        if: steps.image-check.outputs.exists == 'true'
         env:
           IMAGE: ${{ steps.runtime.outputs.image }}
+          FORK_ARTIFACT: ${{ steps.access.outputs.artifact }}
         run: |
           docker pull "$IMAGE"
-          docker tag "$IMAGE" wegent/e2e-claudecode-executor:latest
+          if [[ "$FORK_ARTIFACT" == "true" ]]; then
+            docker tag "$IMAGE" wegent/e2e-claudecode-executor:latest
+          fi
 
-      - name: Extract fork Executor binary
-        if: steps.access.outputs.artifact == 'true'
-        run: |
-          mkdir -p executor/target/release
-          container_id="$(docker create wegent/e2e-claudecode-executor:latest)"
-          trap 'docker rm -f "$container_id" >/dev/null 2>&1 || true' EXIT
-          docker cp "$container_id:/app/executor" executor/target/release/wegent-executor
-          chmod 0755 executor/target/release/wegent-executor
-
-      - name: Extract registry Executor binary
-        if: steps.access.outputs.artifact != 'true'
+      - name: Extract Executor binary
         env:
-          EXECUTOR_E2E_IMAGE: ${{ steps.runtime.outputs.image }}
+          EXECUTOR_E2E_IMAGE: ${{ steps.access.outputs.artifact == 'true' && 'wegent/e2e-claudecode-executor:latest' || steps.runtime.outputs.image }}
         run: |
-          docker pull "$EXECUTOR_E2E_IMAGE"
           mkdir -p executor/target/release
           container_id="$(docker create "$EXECUTOR_E2E_IMAGE")"
           trap 'docker rm -f "$container_id" >/dev/null 2>&1 || true' EXIT

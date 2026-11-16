@@ -43,7 +43,7 @@ async function openEditor(
   } as never
   const onUpdated = vi.fn()
   const onClose = vi.fn()
-  render(
+  const view = render(
     <TodoEditor
       mode="edit"
       presentation="workspace-panel"
@@ -56,8 +56,7 @@ async function openEditor(
       onClose={onClose}
     />
   )
-  await userEvent.click(screen.getByTestId('cloud-todo-more-properties'))
-  return { updateLoopItem, onUpdated, onClose }
+  return { updateLoopItem, onUpdated, onClose, view, api, current }
 }
 
 describe('workspace Issue tag editing', () => {
@@ -97,7 +96,38 @@ describe('workspace Issue tag editing', () => {
     expect(screen.getByTestId('cloud-todo-detail-tag-tag-验证')).toBeVisible()
   })
 
-  it('preserves a tag entered through desktop control when properties dismiss', async () => {
+  it('waits for IME composition before saving a tag on an outside click', async () => {
+    const { updateLoopItem } = await openEditor({ readFirst: true })
+    const input = screen.getByTestId('cloud-todo-detail-tag-input')
+    fireEvent.compositionStart(input)
+    fireEvent.change(input, { target: { value: 'yan' } })
+    fireEvent.pointerDown(screen.getByTestId('cloud-todo-detail-title'))
+    expect(updateLoopItem).not.toHaveBeenCalled()
+    expect(screen.queryByTestId('cloud-todo-detail-tag-tag-yan')).not.toBeInTheDocument()
+    fireEvent.change(input, { target: { value: '验证' } })
+    fireEvent.compositionEnd(input)
+    fireEvent.blur(input)
+    await waitFor(() =>
+      expect(updateLoopItem).toHaveBeenCalledWith(
+        item.id,
+        expect.objectContaining({ tags: ['验证'] })
+      )
+    )
+  })
+
+  it('saves a pending tag once when an outside click also blurs the input', async () => {
+    const { updateLoopItem } = await openEditor({ readFirst: true })
+    await userEvent.type(screen.getByTestId('cloud-todo-detail-tag-input'), '点击保存')
+    await userEvent.click(screen.getByTestId('cloud-todo-detail-title'))
+    await waitFor(() => expect(updateLoopItem).toHaveBeenCalledTimes(1))
+    expect(updateLoopItem).toHaveBeenCalledWith(
+      item.id,
+      expect.objectContaining({ tags: ['点击保存'] })
+    )
+    expect(screen.getByTestId('cloud-todo-detail-tag-tag-点击保存')).toBeVisible()
+  })
+
+  it('preserves a desktop-control tag when clicking outside without native blur', async () => {
     await openEditor({ readFirst: true })
     await act(async () => {
       await fillDesktopControlElement(screen.getByTestId('cloud-todo-detail-tag-input'), '待保存')
@@ -108,20 +138,25 @@ describe('workspace Issue tag editing', () => {
       title.dispatchEvent(new PointerEvent('pointerup', { bubbles: true, pointerType: 'mouse' }))
       title.click()
     })
-    fireEvent.click(screen.getByTestId('cloud-todo-more-properties'))
     expect(screen.getByTestId('cloud-todo-detail-tag-tag-待保存')).toBeVisible()
   })
 
   it('commits the property draft even when the inactive window does not emit blur', async () => {
-    await openEditor({ readFirst: true })
+    const { onClose, updateLoopItem } = await openEditor({ readFirst: true })
     const input = screen.getByTestId('cloud-todo-detail-tag-input')
     await userEvent.type(input, '后台标签')
     const blur = vi.spyOn(input, 'blur').mockImplementation(() => {})
     try {
       fireEvent.keyDown(input, { key: 'Escape' })
-      expect(screen.queryByTestId('cloud-todo-more-properties-popover')).not.toBeInTheDocument()
-      fireEvent.click(screen.getByTestId('cloud-todo-more-properties'))
+      expect(screen.getByTestId('cloud-todo-more-properties-popover')).not.toBeVisible()
+      expect(onClose).not.toHaveBeenCalled()
       expect(screen.getByTestId('cloud-todo-detail-tag-tag-后台标签')).toBeVisible()
+      await waitFor(() =>
+        expect(updateLoopItem).toHaveBeenCalledWith(
+          item.id,
+          expect.objectContaining({ tags: ['后台标签'] })
+        )
+      )
     } finally {
       blur.mockRestore()
     }
@@ -141,4 +176,26 @@ describe('workspace Issue tag editing', () => {
     expect(screen.queryByTestId('cloud-todo-detail-tag-input')).not.toBeInTheDocument()
     expect(updateLoopItem).not.toHaveBeenCalled()
   })
+})
+
+it('discards an unfinished tag draft when the host switches Issues without remounting', async () => {
+  const { view, api, onUpdated, onClose, updateLoopItem } = await openEditor()
+  await userEvent.type(screen.getByRole('textbox', { name: '添加标签' }), 'Previous Issue draft')
+  const next = { ...item, id: 'TAG-2', title: 'Other Issue', tags: ['Other'] }
+  view.rerender(
+    <TodoEditor
+      mode="edit"
+      presentation="workspace-panel"
+      item={next}
+      project={project}
+      allItems={[next]}
+      api={api}
+      onUpdated={onUpdated}
+      onClose={onClose}
+    />
+  )
+  const field = screen.getByRole('textbox', { name: '添加标签' })
+  expect(field).toHaveValue('')
+  fireEvent.keyDown(field, { key: 'Enter' })
+  expect(updateLoopItem).not.toHaveBeenCalled()
 })

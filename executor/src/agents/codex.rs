@@ -156,6 +156,7 @@ mod thread_action;
 mod thread_resume;
 
 use debug_stdout::CodexStdout;
+pub(crate) use diagnostics::redact_diagnostic_text;
 use diagnostics::{json_scalar_field, json_string_field};
 #[cfg(test)]
 use home::prepare_wework_codex_home;
@@ -165,7 +166,7 @@ use home::WEGENT_CODEX_HOME_ENV;
 #[cfg(test)]
 use home::WEWORK_CODEX_SUBSCRIPTION_ENABLED_ENV;
 pub(crate) use home::{
-    executor_home, prepare_provider_migration, replace_config,
+    executor_home, prepare_provider_migration, provider_state_is_current, replace_config,
     select_wework_codex_user_instructions, wework_codex_home,
 };
 use home::{read_wework_codex_user_instructions, CODEX_HOME_ENV};
