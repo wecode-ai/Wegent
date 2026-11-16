@@ -933,6 +933,16 @@ def _dispatch_due_subscription(
     try:
         subscription_crd = validate_subscription_for_read(subscription.json)
 
+        cron = subscription_crd.spec.trigger.cron if trigger_type == "cron" else None
+        if trigger_type == "cron" and cron and cron.workday_only:
+            from app.services.subscription.workday import is_china_workday
+
+            if not is_china_workday(datetime.now(timezone.utc)):
+                _advance_due_subscription(
+                    db, subscription, subscription_crd, trigger_type
+                )
+                return False
+
         trigger_reason = _get_trigger_reason(subscription_crd, trigger_type)
         execution = subscription_service.create_execution(
             db,
@@ -1541,6 +1551,32 @@ def _update_next_execution_time(
     db.commit()
 
 
+def _cancel_non_workday_execution(
+    db: Session, ctx: SubscriptionExecutionContext
+) -> bool:
+    """Stop scheduled work delayed in the queue until a China rest day."""
+    if ctx.execution.trigger_type != "cron":
+        return False
+    cron = ctx.subscription_crd.spec.trigger.cron
+    if not cron or not cron.workday_only:
+        return False
+
+    from app.schemas.subscription import BackgroundExecutionStatus
+    from app.services.subscription import subscription_service
+    from app.services.subscription.workday import is_china_workday
+
+    if is_china_workday(datetime.now(timezone.utc)):
+        return False
+    subscription_service.update_execution_status(
+        db,
+        execution_id=ctx.execution.id,
+        status=BackgroundExecutionStatus.CANCELLED,
+        error_message="Scheduled execution cancelled: today is not a China statutory workday",
+        skip_notifications=True,
+    )
+    return True
+
+
 @celery_app.task(
     bind=True,
     name="app.tasks.subscription_tasks.execute_subscription_task",
@@ -1603,6 +1639,12 @@ def execute_subscription_task(
                 }
 
             trigger_type = ctx.trigger_type
+
+            if _cancel_non_workday_execution(db, ctx):
+                return {
+                    "status": "cancelled",
+                    "message": "Not a China statutory workday",
+                }
 
             # Generate task title
             task_title = _generate_task_title(
@@ -1996,6 +2038,12 @@ def execute_subscription_task_sync(
                 }
 
             trigger_type = ctx.trigger_type
+
+            if _cancel_non_workday_execution(db, ctx):
+                return {
+                    "status": "cancelled",
+                    "message": "Not a China statutory workday",
+                }
 
             # Generate task title
             task_title = _generate_task_title(

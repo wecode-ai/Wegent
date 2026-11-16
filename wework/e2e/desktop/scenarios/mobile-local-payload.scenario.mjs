@@ -2,8 +2,8 @@ import assert from 'node:assert/strict'
 import { randomUUID } from 'node:crypto'
 import { mkdir, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
-import { loadSharedBuilders } from '../modules/mobile-local-builders.mjs'
 import { createDesktopScenario as createNativeGuidance } from './native-guidance.scenario.mjs'
+import { loadMobileLocalPayloadBuilders } from '../modules/mobile-local-payload-builders.mjs'
 import { requestExecutor } from '../modules/executor-rpc.mjs'
 import { waitForValue } from '../modules/workspace-agent-setup.mjs'
 import {
@@ -52,7 +52,7 @@ export function createDesktopScenario(options) {
     },
     async verify(control) {
       await existing.verify(control)
-      const builders = await loadSharedBuilders()
+      const builders = await loadMobileLocalPayloadBuilders()
       const rpc = (method, params) => requestExecutor(control, method, params, options.uiTimeoutMs)
       const snapshot = JSON.parse(await control.command('getWorkbenchDebugSnapshot', 'body'))
       const deviceId = snapshot.workbench?.currentRuntimeTask?.deviceId
