@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
-import test from 'node:test'
-import { hasPersistedInteractionAnswer } from './interaction-reminder-device-scope.scenario.mjs'
+import { test } from 'vitest'
+import { hasPersistedInteractionAnswer } from '../e2e/desktop/scenarios/interaction-reminder-device-scope.scenario.mjs'
 
 const expected = {
   taskId: 'remote-task',
