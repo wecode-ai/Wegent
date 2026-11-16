@@ -1,9 +1,9 @@
 import assert from 'node:assert/strict'
 import { randomUUID } from 'node:crypto'
 import { mkdir, writeFile } from 'node:fs/promises'
-import { join } from 'node:path'
+import { createRequire } from 'node:module'
+import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { createServer } from 'vite'
 import { createDesktopScenario as createNativeGuidance } from './native-guidance.scenario.mjs'
 import { requestExecutor } from '../modules/executor-rpc.mjs'
 import { waitForValue } from '../modules/workspace-agent-setup.mjs'
@@ -21,7 +21,13 @@ const FOLLOW_UP = 'WEWORK_MOBILE_LOCAL_FOLLOW_UP'
 const INITIAL_DONE = 'WEWORK_MOBILE_LOCAL_INITIAL_DONE'
 const FOLLOW_UP_DONE = 'WEWORK_MOBILE_LOCAL_FOLLOW_UP_DONE'
 
-async function loadSharedBuilders() {
+export async function loadSharedBuilders() {
+  const clientBundle = process.env.WEWORK_E2E_SOCKET_IO_CLIENT
+  if (clientBundle)
+    return createRequire(import.meta.url)(
+      resolve(dirname(clientBundle), 'mobile-local-payload.cjs')
+    )
+  const { createServer } = await import('vite')
   const loader = await createServer({
     root: fileURLToPath(new URL('../../../../', import.meta.url)),
     configFile: false,

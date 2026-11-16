@@ -165,6 +165,50 @@ test('the shared build counts complete model requests without node_modules', asy
   )
 }, 30_000)
 
+test('the shared build loads real mobile payload builders without Vite or source dependencies', async () => {
+  const fixture = await isolatedConsumer('mobile-local-payload')
+  const script = `
+    import assert from 'node:assert/strict'
+    import { createRequire } from 'node:module'
+    import { pathToFileURL } from 'node:url'
+    assert.throws(() => createRequire(pathToFileURL(process.argv[1])).resolve('vite'), { code: 'MODULE_NOT_FOUND' })
+    const scene = await import(pathToFileURL(process.argv[1]))
+    const builders = await scene.loadSharedBuilders()
+    const provider = builders.modelInterfaceProviderId('mobile')
+    const configured = builders.modelInterfaceRuntimeConfig({
+      id: 'mobile', modelId: 'responses', displayName: 'Mobile',
+      baseUrl: 'http://127.0.0.1:9000/v1', apiFormat: 'openai-responses'
+    })
+    assert.equal(configured.upstream_api_format, 'openai-responses')
+    const modelConfig = builders.resolveLocalRuntimeModelConfig({
+      runtime: 'codex', modelName: 'local-model:mobile', modelType: 'runtime',
+      modelOptions: { runnerModelProvider: provider }
+    })
+    const request = builders.buildLocalRuntimeExecutionRequest({
+      taskId: 'mobile-task', runtime: 'codex', title: 'Mobile', message: 'hello',
+      clientUserMessageId: 'mobile-message', turnSeed: 1, modelConfig,
+      reasoningConfig: null, localDeviceId: 'mobile-device',
+      workspacePath: '/isolated/workspace', workspaceSource: 'local_path',
+      newSession: true, user: { id: 0, user_name: 'local', email: 'local@wework.local' }
+    })
+    assert.equal(request.task_id, 'mobile-task')
+    assert.equal(request.device_id, 'mobile-device')
+    assert.equal(request.client_user_message_id, 'mobile-message')
+    assert.equal(request.workspace.project.path, '/isolated/workspace')
+    assert.deepEqual(request.model_config, { model_id: 'local-model:mobile', model_provider: provider })
+  `
+  await run(
+    process.execPath,
+    [
+      '--input-type=module',
+      '-e',
+      script,
+      join(fixture.desktop, 'scenarios/mobile-local-payload.scenario.mjs'),
+    ],
+    fixture.options
+  )
+}, 30_000)
+
 test('an explicitly configured incomplete artifact never falls back to workspace dependencies', async () => {
   const fixture = await isolatedConsumer('incomplete')
   await rm(join(fixture.client, 'lz-string.cjs'))
