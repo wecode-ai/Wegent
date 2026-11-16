@@ -1,15 +1,13 @@
 // @vitest-environment node
 
 import { expect, test, vi } from 'vitest'
-import {
-  LocalNevisSandboxService,
-  RealCloudEnvironment,
-} from '../../e2e/desktop/modules/cloud-environment.mjs'
-import { LocalPluginObjectStorage } from '../../e2e/desktop/modules/local-plugin-object-storage.mjs'
+import { RealCloudEnvironment } from '../../e2e/desktop/modules/cloud-environment.mjs'
+
+vi.mock('../../e2e/desktop/modules/real-object-storage.mjs', () => ({
+  startRealObjectStorage: vi.fn(async () => ({ backendEnv: {}, stop: vi.fn() })),
+}))
 
 function prepareBackend(initialExecutorLatestVersion?: string) {
-  vi.spyOn(LocalPluginObjectStorage.prototype, 'start').mockResolvedValue(undefined)
-  vi.spyOn(LocalNevisSandboxService.prototype, 'start').mockResolvedValue(undefined)
   const environment = new RealCloudEnvironment({ initialExecutorLatestVersion })
   const events: string[] = []
   let cachedVersion: string | undefined

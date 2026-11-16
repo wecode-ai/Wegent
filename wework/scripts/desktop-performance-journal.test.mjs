@@ -46,6 +46,24 @@ function snapshot() {
 }
 const metadata = { checkpoint: 'sample', platform: 'linux', arch: 'x64', variant: 'core' }
 
+test('reports distinguish Sites protocol integration from real external compatibility', () => {
+  const report = new DesktopPerformanceJournal({
+    ...metadata,
+    verificationType: 'protocol-integration',
+    externalServiceProtocols: ['sites'],
+  }).report(true)
+  assert.match(
+    renderPerformanceReport([report]),
+    /Protocol integration \(sites\); external compatibility unverified/
+  )
+  assert.match(renderPerformanceReport([{ ...report, verificationType: 'real-e2e' }]), /Real E2E/)
+  assert.match(renderPerformanceReport([{ ...report, verificationType: undefined }]), /Unspecified/)
+  assert.match(
+    renderPerformanceReport([{ ...report, externalServiceProtocols: ['git-hosting'] }]),
+    /Protocol integration \(git-hosting\); external compatibility unverified/
+  )
+})
+
 test('cumulative snapshots retain command boundaries without double counting', () => {
   const journal = new DesktopPerformanceJournal(metadata)
   journal.record('client', snapshot())

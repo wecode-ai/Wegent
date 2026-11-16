@@ -30,12 +30,6 @@ import {
   DIAGRAM_REGRESSION_RESPONSE,
 } from './conversation-diagram-fixture.mjs'
 import { nativeApprovalModelResponse } from './native-approval-model.mjs'
-import {
-  installedMiniProgramPlugin,
-  installedSitesPlugin,
-  miniProgramMarketplacePlugin,
-  sitesMarketplacePlugin,
-} from './preferences-automation-flows.mjs'
 import { accountCommandResult } from './account-auth-command.mjs'
 import { CONCURRENT_SCENARIO, respondToConcurrentMcpInput } from './mcp-concurrent-model.mjs'
 import { createMcpElicitationModel } from './mcp-elicitation-model.mjs'
@@ -324,7 +318,6 @@ import {
 } from './shared.mjs'
 
 const DESKTOP_CONTROL_COMMAND_INTERVAL_MS = 250
-const CLOUD_STORED_USER_NAME = 'wework-desktop-e2e-cloud-user'
 const CLOUD_AUTHENTICATED_USER_NAME = 'admin'
 const CLOUD_RUNTIME_IDENTITY_TOOL_CALL_ID = 'wework-cloud-e2e-identity-tool-call'
 const PLUGIN_WORKSPACE_PUBLISH_CALL_ID = 'wework-plugin-workspace-publish'
@@ -495,15 +488,9 @@ const HELD_RESPONSE_SCENARIOS = new Set([
 ])
 
 class DesktopE2EServer {
-  constructor(
-    workspacePath,
-    cloudWorkspacePath = workspacePath,
-    desktopScenario = null,
-    { enableMarketplaceConnectorAppsStub = false } = {}
-  ) {
+  constructor(workspacePath, cloudWorkspacePath = workspacePath, desktopScenario = null) {
     this.workspacePath = workspacePath
     this.cloudWorkspacePath = cloudWorkspacePath
-    this.enableMarketplaceConnectorAppsStub = enableMarketplaceConnectorAppsStub
     this.server = createServer((request, response) => {
       void this.handle(request, response).catch(error => this.fail(error, response))
     })
@@ -534,33 +521,7 @@ class DesktopE2EServer {
     this.modelRequests = []
     this.catalogRequests = []
     this.httpRequests = []
-    this.userPreferences = {}
     this.telemetryRequests = []
-    this.blockedCloudRequests = []
-    this.blockedCloudResponses = new Set()
-    this.blockedCloudWaiters = []
-    this.failCloudModels = false
-    this.cloudModelsAvailable = false
-    this.failedCloudModelRequests = 0
-    this.failedCloudModelWaiter = null
-    this.sitesPluginInstalled = false
-    this.sitesPluginDeviceId = null
-    this.siteEnvironmentRevision = 0
-    this.siteEnvironmentVariables = []
-    this.siteCollaborators = []
-    this.siteAccessPolicy = {
-      id: 'pol_e2e_1',
-      project_id: 'prj_e2e_product',
-      target: 'inner',
-      audience: 'owner',
-      subjects: [],
-      revision_number: 2,
-      created_by: 'wework-desktop-e2e-cloud-user',
-      created_at: '2026-09-08T00:00:00Z',
-    }
-    this.miniProgramPluginInstalled = false
-    this.miniProgramPluginDeviceId = null
-    this.sitesConnectionBootstrapRequests = 0
     this.scenario = 'initial'
     this.modelStage = 'initial'
     this.mcpElicitationModel = createMcpElicitationModel()
@@ -773,8 +734,6 @@ class DesktopE2EServer {
   }
 
   async close() {
-    for (const response of this.blockedCloudResponses) response.destroy()
-    this.blockedCloudResponses.clear()
     for (const { response, timeout } of this.controlLongPolls.values()) {
       clearTimeout(timeout)
       response.destroy()
@@ -817,13 +776,8 @@ class DesktopE2EServer {
   }
 
   awaitBlockedCloudRequest(pathname) {
-    const request = this.blockedCloudRequests.find(item => item.pathname === pathname)
-    if (request) return this.guard(Promise.resolve(request))
-    return this.guard(
-      new Promise(resolvePromise => {
-        this.blockedCloudWaiters.push({ pathname, resolve: resolvePromise })
-      })
-    )
+    assert.ok(this.backendFaults, 'The real Backend fault gate is not initialized')
+    return this.guard(this.backendFaults.awaitBlocked(pathname))
   }
 
   async awaitTelemetryEvent(eventName, timeoutMs = DEFAULT_STEP_TIMEOUT_MS) {
@@ -870,53 +824,16 @@ class DesktopE2EServer {
     return Promise.race([promise, this.fatalErrorPromise])
   }
 
-  blockCloudRequest(request, response, url) {
-    const blockedRequest = {
-      method: request.method,
-      pathname: url.pathname,
-      search: url.search,
-    }
-    this.blockedCloudRequests.push(blockedRequest)
-    this.blockedCloudResponses.add(response)
-    response.once('close', () => this.blockedCloudResponses.delete(response))
-
-    const remainingWaiters = []
-    for (const waiter of this.blockedCloudWaiters) {
-      if (waiter.pathname === url.pathname) {
-        waiter.resolve(blockedRequest)
-      } else {
-        remainingWaiters.push(waiter)
-      }
-    }
-    this.blockedCloudWaiters = remainingWaiters
-  }
-
   failBlockedCloudModels() {
-    this.failCloudModels = true
-    const failedRequests = this.blockedCloudResponses.size
-    for (const response of this.blockedCloudResponses) {
-      json(response, 503, { error: 'Desktop E2E intentional cloud model failure' })
-    }
-    this.blockedCloudResponses.clear()
-    this.failedCloudModelRequests += failedRequests
-    if (failedRequests > 0) {
-      this.failedCloudModelWaiter?.()
-      this.failedCloudModelWaiter = null
-    }
+    this.backendFaults.fail()
   }
 
   restoreCloudModels() {
-    this.failCloudModels = false
-    this.cloudModelsAvailable = true
+    this.backendFaults.restore()
   }
 
   awaitFailedCloudModelRequest() {
-    if (this.failedCloudModelRequests > 0) return this.guard(Promise.resolve())
-    return this.guard(
-      new Promise(resolvePromise => {
-        this.failedCloudModelWaiter = resolvePromise
-      })
-    )
+    return this.guard(this.backendFaults.awaitFailure())
   }
 
   setScenario(scenario) {
@@ -1482,526 +1399,6 @@ class DesktopE2EServer {
       return
     }
 
-    if (request.method === 'GET' && url.pathname === '/api/users/me') {
-      json(response, 200, {
-        id: 9001,
-        user_name: CLOUD_STORED_USER_NAME,
-        email: 'desktop-e2e@wework.local',
-        preferences: this.userPreferences,
-      })
-      return
-    }
-
-    if (request.method === 'PUT' && url.pathname === '/api/users/me') {
-      const body = await readRequestBody(request)
-      this.userPreferences = {
-        ...this.userPreferences,
-        ...(body.preferences ?? {}),
-      }
-      json(response, 200, {
-        id: 9001,
-        user_name: CLOUD_STORED_USER_NAME,
-        email: 'desktop-e2e@wework.local',
-        preferences: this.userPreferences,
-      })
-      return
-    }
-
-    if (request.method === 'GET' && url.pathname === '/api/apps/installed') {
-      json(response, 200, { apps: [] })
-      return
-    }
-
-    // Official/local marketplace plugins may infer on_install connectors from
-    // .app.json entries (e.g. openai-platform). ensureMarketplaceConnectors
-    // lists Wegent connector-apps before plugin/install; stub them as already
-    // connected so desktop E2E can exercise the real install path.
-    if (
-      this.enableMarketplaceConnectorAppsStub &&
-      request.method === 'GET' &&
-      url.pathname === '/api/connector-apps'
-    ) {
-      const connected = status => ({
-        status,
-        external_account_name: status === 'connected' ? 'desktop-e2e' : null,
-        granted_scopes: status === 'connected' ? ['e2e'] : [],
-        expires_at: null,
-      })
-      json(response, 200, [
-        {
-          id: 1,
-          slug: 'openai-platform',
-          name: 'OpenAI Platform',
-          description: 'Desktop E2E stub for OpenAI Developers app connectors',
-          icon_url: null,
-          auth_type: 'oauth2',
-          connection: connected('connected'),
-        },
-        {
-          id: 2,
-          slug: 'openai-developers',
-          name: 'OpenAI Developers',
-          description: 'Desktop E2E stub matching inferred plugin-name connectors',
-          icon_url: null,
-          auth_type: 'oauth2',
-          connection: connected('connected'),
-        },
-        {
-          id: 3,
-          slug: 'github',
-          name: 'GitHub',
-          description: 'Desktop E2E stub for cloud connector authorization flows',
-          icon_url: null,
-          auth_type: 'oauth2',
-          connection: connected('connected'),
-        },
-      ])
-      return
-    }
-
-    if (request.method === 'POST' && url.pathname === '/api/users/me/wegent-runtime-token') {
-      assert.equal(
-        request.headers.authorization,
-        'Bearer wework-desktop-e2e-cloud-token',
-        'The runtime token request did not use the cloud authentication token'
-      )
-      json(response, 200, {
-        auth_token: 'wework-desktop-e2e-runtime-token',
-        token_type: 'bearer',
-        expires_in: 3600,
-      })
-      return
-    }
-
-    if (request.method === 'GET' && url.pathname === '/api/sites/app-types') {
-      json(response, 200, {
-        items: [
-          {
-            app_type: 'web',
-            enabled: true,
-            order: 10,
-            capabilities: [
-              'create',
-              'publish',
-              'edit',
-              'delete',
-              'configure_environment',
-              'manage_access',
-            ],
-            create: {
-              plugin_name: 'wegent-sites',
-              marketplace_name: 'wegent',
-            },
-          },
-          {
-            app_type: 'miniapp',
-            enabled: true,
-            order: 20,
-            capabilities: ['create', 'open_experience'],
-            create: {
-              plugin_name: 'weibo-miniapp-h5-develop-agent',
-              marketplace_name: 'wegent',
-            },
-          },
-        ],
-      })
-      return
-    }
-
-    if (request.method === 'GET' && url.pathname === '/api/sites') {
-      const appType = url.searchParams.get('app_type') || 'web'
-      const query = url.searchParams.get('q')?.trim().toLowerCase() || ''
-      const items =
-        appType === 'miniapp'
-          ? [
-              {
-                app_type: 'miniapp',
-                siteid: 'prj_e2e_mini',
-                taskid: 'prj_e2e_mini',
-                username: 'wework-desktop-e2e-cloud-user',
-                owner_username: 'wework-desktop-e2e-cloud-user',
-                access_role: 'owner',
-                name: 'E2E Mini Program',
-                slug: 'prj_e2e_mini',
-                app_id: 'wx-e2e-mini',
-                status: 'experience',
-                version: '1.0.0',
-                experience_url: 'https://example.test/mini-experience',
-                thumbnail_url: null,
-                created_at: '2026-07-22T00:10:00Z',
-                updated_at: '2026-07-22T00:12:00Z',
-              },
-            ]
-          : [
-              {
-                app_type: 'web',
-                siteid: 'prj_e2e_product',
-                taskid: 'prj_e2e_product',
-                username: 'wework-desktop-e2e-cloud-user',
-                owner_username: 'wework-desktop-e2e-cloud-user',
-                access_role: 'owner',
-                name: 'E2E Product Site',
-                slug: 'prj_e2e_product',
-                internal_url: 'https://sites.internal/e2e-product',
-                external_url: null,
-                publish_status: 'unpublished',
-                last_publish_error: null,
-                thumbnail_url: null,
-                created_at: '2026-07-22T00:00:00Z',
-                updated_at: '2026-07-22T00:00:00Z',
-                published_at: null,
-              },
-            ]
-      const filteredItems = query
-        ? items.filter(item => item.name.toLowerCase().includes(query))
-        : items
-      json(response, 200, {
-        items: filteredItems,
-        total: filteredItems.length,
-        offset: Number.parseInt(url.searchParams.get('offset') || '0', 10),
-        limit: Number.parseInt(url.searchParams.get('limit') || '20', 10),
-      })
-      return
-    }
-
-    if (
-      url.pathname === '/api/sites/prj_e2e_product/environment-variables' &&
-      request.method === 'GET'
-    ) {
-      json(response, 200, {
-        revision_id:
-          this.siteEnvironmentRevision > 0 ? `env_e2e_${this.siteEnvironmentRevision}` : null,
-        project_id: 'prj_e2e_product',
-        revision_number: this.siteEnvironmentRevision,
-        items: this.siteEnvironmentVariables,
-      })
-      return
-    }
-    if (
-      url.pathname === '/api/sites/prj_e2e_product/environment-variables' &&
-      request.method === 'PATCH'
-    ) {
-      assert.ok(
-        typeof request.headers['idempotency-key'] === 'string' &&
-          request.headers['idempotency-key'].length > 0,
-        'Updating Site environment variables did not include an Idempotency-Key'
-      )
-      const body = await readRequestBody(request)
-      assert.ok(Array.isArray(body.operations))
-      for (const operation of body.operations) {
-        if (operation.op === 'remove') {
-          this.siteEnvironmentVariables = this.siteEnvironmentVariables.filter(
-            item => item.key !== operation.key
-          )
-          continue
-        }
-        assert.equal(operation.op, 'upsert')
-        const item =
-          operation.type === 'secret'
-            ? {
-                key: operation.key,
-                type: 'secret',
-                configured: true,
-                updated_by: 'wework-desktop-e2e-cloud-user',
-                updated_at: '2026-09-03T00:00:00Z',
-              }
-            : {
-                key: operation.key,
-                type: 'plain',
-                value: operation.value,
-                updated_by: 'wework-desktop-e2e-cloud-user',
-                updated_at: '2026-09-03T00:00:00Z',
-              }
-        this.siteEnvironmentVariables = [
-          ...this.siteEnvironmentVariables.filter(existing => existing.key !== operation.key),
-          item,
-        ]
-      }
-      this.siteEnvironmentRevision += 1
-      json(response, 201, {
-        id: `env_e2e_${this.siteEnvironmentRevision}`,
-        project_id: 'prj_e2e_product',
-        revision_number: this.siteEnvironmentRevision,
-        variables: this.siteEnvironmentVariables,
-        created_by: 'wework-desktop-e2e-cloud-user',
-        created_at: '2026-09-03T00:00:00Z',
-      })
-      return
-    }
-
-    if (url.pathname === '/api/sites/prj_e2e_product/access' && request.method === 'GET') {
-      json(response, 200, this.siteAccessPolicy)
-      return
-    }
-    if (url.pathname === '/api/sites/prj_e2e_product/access' && request.method === 'PUT') {
-      assert.ok(
-        typeof request.headers['idempotency-key'] === 'string' &&
-          request.headers['idempotency-key'].length > 0,
-        'Updating Site access did not include an Idempotency-Key'
-      )
-      const body = await readRequestBody(request)
-      assert.ok(['all', 'login', 'owner', 'custom'].includes(body.audience))
-      assert.ok(Array.isArray(body.subjects))
-      this.siteAccessPolicy = {
-        ...this.siteAccessPolicy,
-        id: 'pol_e2e_2',
-        audience: body.audience,
-        subjects: body.subjects,
-        revision_number: this.siteAccessPolicy.revision_number + 1,
-        created_at: '2026-09-08T00:01:00Z',
-      }
-      json(response, 200, this.siteAccessPolicy)
-      return
-    }
-
-    const siteCollaboratorsMatch = url.pathname.match(
-      /^\/api\/sites\/prj_e2e_product\/collaborators(?:\/([^/]+))?$/
-    )
-    if (siteCollaboratorsMatch && request.method === 'GET' && !siteCollaboratorsMatch[1]) {
-      json(response, 200, { items: this.siteCollaborators })
-      return
-    }
-    if (siteCollaboratorsMatch && request.method === 'POST' && !siteCollaboratorsMatch[1]) {
-      assert.ok(
-        typeof request.headers['idempotency-key'] === 'string' &&
-          request.headers['idempotency-key'].length > 0,
-        'Adding a Site collaborator did not include an Idempotency-Key'
-      )
-      const body = await readRequestBody(request)
-      assert.equal(typeof body.subject, 'string')
-      const collaborator = {
-        subject: body.subject,
-        added_by: 'wework-desktop-e2e-cloud-user',
-        created_at: '2026-09-03T00:00:00Z',
-      }
-      this.siteCollaborators = [
-        ...this.siteCollaborators.filter(item => item.subject !== collaborator.subject),
-        collaborator,
-      ]
-      json(response, 201, collaborator)
-      return
-    }
-    if (siteCollaboratorsMatch && request.method === 'DELETE' && siteCollaboratorsMatch[1]) {
-      const subject = decodeURIComponent(siteCollaboratorsMatch[1])
-      this.siteCollaborators = this.siteCollaborators.filter(item => item.subject !== subject)
-      response.writeHead(204)
-      response.end()
-      return
-    }
-
-    if (request.method === 'GET' && url.pathname === '/api/plugins/installed') {
-      if (this.applicationPluginInspectionUnavailable) {
-        json(response, 500, { detail: 'Plugin inventory unavailable' })
-        return
-      }
-      json(response, 200, {
-        items: [
-          ...(this.sitesPluginInstalled
-            ? [installedSitesPlugin(this.sitesPluginDeviceId ?? 'local-device')]
-            : []),
-          ...(this.miniProgramPluginInstalled
-            ? [installedMiniProgramPlugin(this.miniProgramPluginDeviceId ?? 'local-device')]
-            : []),
-        ],
-      })
-      return
-    }
-
-    const builtinPluginMatch = url.pathname.match(
-      /^\/api\/plugins\/builtin\/(wegent-sites|weibo-miniapp-h5-develop-agent)\/ensure-installed$/
-    )
-    if (request.method === 'POST' && builtinPluginMatch) {
-      const body = await readRequestBody(request)
-      const pluginName = builtinPluginMatch[1]
-      const isSitesPlugin = pluginName === 'wegent-sites'
-      const targetDeviceId =
-        typeof body.device_id === 'string' && body.device_id.trim() ? body.device_id.trim() : null
-      const installedPlugin = isSitesPlugin
-        ? installedSitesPlugin(targetDeviceId ?? 'local-device')
-        : installedMiniProgramPlugin(targetDeviceId ?? 'local-device')
-      if (targetDeviceId && this.onApplicationPluginInstalled) {
-        await this.onApplicationPluginInstalled(installedPlugin)
-      }
-      const installedPluginId = isSitesPlugin ? 601 : 602
-      if (isSitesPlugin) {
-        this.sitesPluginInstalled = true
-        this.sitesPluginDeviceId = targetDeviceId
-      } else {
-        this.miniProgramPluginInstalled = true
-        this.miniProgramPluginDeviceId = targetDeviceId
-      }
-      if (!targetDeviceId) {
-        if (isSitesPlugin) {
-          this.sitesConnectionBootstrapRequests += 1
-        }
-        json(response, 200, {
-          plugin: installedPlugin,
-          sync: null,
-        })
-        return
-      }
-      json(response, 200, {
-        plugin: installedPlugin,
-        sync: {
-          success: true,
-          device_id: targetDeviceId,
-          mode: 'merge',
-          skills: [],
-          plugins: [{ id: installedPluginId, name: pluginName, status: 'synced' }],
-          mcps: [],
-          errors: [],
-          synced: 1,
-          failed: 0,
-          skipped: 0,
-          results: [
-            {
-              device_id: targetDeviceId,
-              success: true,
-              error: null,
-              skills: [],
-              plugins: [{ id: installedPluginId, name: pluginName, status: 'synced' }],
-              mcps: [],
-              errors: [],
-            },
-          ],
-        },
-      })
-      return
-    }
-
-    if (request.method === 'GET' && url.pathname === '/api/plugins/marketplace') {
-      json(response, 200, {
-        items: [
-          sitesMarketplacePlugin(this.sitesPluginInstalled),
-          miniProgramMarketplacePlugin(this.miniProgramPluginInstalled),
-        ],
-      })
-      return
-    }
-
-    if (request.method === 'GET' && url.pathname === BLOCKED_CLOUD_MODEL_PATH) {
-      if (this.cloudModelsAvailable) {
-        json(response, 200, {
-          data: [
-            {
-              name: `codex-${DEFAULT_MODEL_ID}`,
-              type: 'runtime',
-              displayName: `${DEFAULT_MODEL_LABEL} (Codex)`,
-              provider: 'openai',
-              modelId: DEFAULT_MODEL_ID,
-              namespace: 'default',
-              config: {
-                protocol: 'openai-responses',
-                apiFormat: 'responses',
-                weworkModelKind: 'codex-official',
-                ui: { family: 'codex-official', modelLabel: DEFAULT_MODEL_LABEL },
-              },
-              runtime: { family: 'openai.openai-responses' },
-              isActive: true,
-            },
-            {
-              name: PROVIDER_SWITCH_OFFICIAL_OPTION_ID,
-              type: 'runtime',
-              displayName: PROVIDER_SWITCH_OFFICIAL_LABEL,
-              provider: 'openai',
-              modelId: PROVIDER_SWITCH_OFFICIAL_MODEL_ID,
-              namespace: 'default',
-              config: {
-                protocol: 'openai-responses',
-                apiFormat: 'responses',
-                weworkModelKind: 'codex-official',
-                ui: { family: 'codex-official', modelLabel: PROVIDER_SWITCH_OFFICIAL_MODEL_LABEL },
-              },
-              runtime: { family: 'openai.openai-responses' },
-              isActive: true,
-            },
-            {
-              name: CLOUD_PUBLIC_MODEL_NAME,
-              type: 'public',
-              displayName: CLOUD_PUBLIC_MODEL_LABEL,
-              provider: 'openai',
-              modelId: 'desktop-e2e-public-upstream-model',
-              namespace: 'default',
-              resourceUserId: 0,
-              config: {
-                protocol: 'openai-responses',
-                apiFormat: 'responses',
-                ui: { family: 'gpt', modelLabel: CLOUD_PUBLIC_MODEL_LABEL },
-              },
-              runtime: { family: 'openai.openai-responses' },
-              isActive: true,
-            },
-          ],
-        })
-        return
-      }
-      if (this.failCloudModels) {
-        this.failedCloudModelRequests += 1
-        this.failedCloudModelWaiter?.()
-        this.failedCloudModelWaiter = null
-        json(response, 503, { error: 'Desktop E2E intentional cloud model failure' })
-        return
-      }
-      this.blockCloudRequest(request, response, url)
-      return
-    }
-
-    if (
-      request.method === 'POST' &&
-      url.pathname === '/api/model-runtime/responses' &&
-      this.scenario === 'supervisor'
-    ) {
-      const body = await readRequestBody(request)
-      const requestText = JSON.stringify(body)
-      assert.equal(
-        request.headers.authorization,
-        'Bearer wework-desktop-e2e-cloud-token',
-        'The supervisor model API request did not use the cloud authentication token'
-      )
-      assert.deepEqual(
-        body.model_ref,
-        {
-          name: CLOUD_PUBLIC_MODEL_NAME,
-          type: 'public',
-          namespace: 'default',
-          resource_user_id: 0,
-        },
-        'The supervisor model API request did not preserve the selected cloud model identity'
-      )
-      assert.equal(
-        body.metadata?.source,
-        'wework-supervisor',
-        'The supervisor model API request did not identify its source'
-      )
-      assert.ok(
-        requestText.includes('correction'),
-        'The supervisor evaluator request did not include its structured output schema'
-      )
-      assert.ok(
-        requestText.includes(SUPERVISOR_COMPLETION_TEXT),
-        'The supervisor evaluator did not receive the latest assistant progress'
-      )
-      assert.equal(
-        requestText.includes(SUPERVISOR_PROMPT),
-        false,
-        'The supervisor evaluator received the original user transcript instead of recent AI content'
-      )
-      this.recordScenarioRequest('supervisor', {
-        body,
-        headers: request.headers,
-        pathname: url.pathname,
-      })
-      json(response, 200, {
-        output_text: JSON.stringify({
-          correction: SUPERVISOR_CORRECTION,
-          rationale: 'The completed reply should restate the original constraint.',
-        }),
-        model: CLOUD_PUBLIC_MODEL_NAME,
-        created_at: '2026-08-12T00:00:00Z',
-      })
-      return
-    }
-
     if (request.method === 'GET' && (url.pathname === '/v1/models' || url.pathname === '/models')) {
       this.catalogRequests.push({
         authorization: request.headers.authorization ?? null,
@@ -2039,9 +1436,8 @@ class DesktopE2EServer {
       return
     }
 
-    const cloudResponsesProxy = url.pathname === '/api/runtime-work/llm-responses-proxy/responses'
     const modelProtocol =
-      url.pathname === '/v1/responses' || url.pathname === '/responses' || cloudResponsesProxy
+      url.pathname === '/v1/responses' || url.pathname === '/responses'
         ? 'responses'
         : url.pathname === '/v1/chat/completions' || url.pathname === '/chat/completions'
           ? 'chat'
@@ -2049,28 +1445,7 @@ class DesktopE2EServer {
             ? 'anthropic'
             : null
     if (request.method === 'POST' && modelProtocol) {
-      if (cloudResponsesProxy) {
-        assert.equal(
-          request.headers['x-wegent-model-type'],
-          'public',
-          'The automation cloud model type was not forwarded to the Backend proxy'
-        )
-        assert.equal(
-          request.headers['x-wegent-model-namespace'],
-          'default',
-          'The automation cloud model namespace was not forwarded to the Backend proxy'
-        )
-        assert.equal(
-          request.headers['x-wegent-model-user-id'],
-          '0',
-          'The automation cloud model owner was not forwarded to the Backend proxy'
-        )
-      }
-      await this.handleModelResponse(request, response, modelProtocol, {
-        acceptedAuthorization: cloudResponsesProxy
-          ? 'Bearer wework-desktop-e2e-cloud-token'
-          : undefined,
-      })
+      await this.handleModelResponse(request, response, modelProtocol)
       return
     }
 

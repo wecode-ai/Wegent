@@ -60,16 +60,24 @@ test('explicitly refreshes cloud models after the previously held request was ca
   try {
     const commands = []
     const control = Object.assign(Object.create(DesktopE2EServer.prototype), {
-      failedCloudModelRequests: 0,
-      failedCloudModelWaiter: null,
+      backendFaults: {
+        failures: 0,
+        waiter: null,
+        awaitFailure() {
+          if (this.failures) return Promise.resolve()
+          return new Promise(resolve => {
+            this.waiter = resolve
+          })
+        },
+      },
       fatalErrorPromise: new Promise(() => {}),
       async command(action, selector, options = {}) {
         commands.push({ action, selector, options })
         if (action === 'clickWhenEnabled') {
           assert.equal(selector, '[data-testid="model-selector-button"]')
-          this.failedCloudModelRequests += 1
-          this.failedCloudModelWaiter?.()
-          this.failedCloudModelWaiter = null
+          this.backendFaults.failures += 1
+          this.backendFaults.waiter?.()
+          this.backendFaults.waiter = null
         }
         return ''
       },

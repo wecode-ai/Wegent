@@ -1,4 +1,3 @@
-import { mkdir, writeFile } from 'node:fs/promises'
 import { waitForSnapshot } from './conversation-layout.mjs'
 
 import { telemetryEvents } from './response-protocol.mjs'
@@ -19,6 +18,7 @@ import {
   TELEMETRY_TEST_PROJECT_KEY,
   WORKBENCH_READY_TIMEOUT_MS,
   assert,
+  fetchJson,
   join,
   pathExists,
   readFile,
@@ -810,37 +810,9 @@ async function verifyCloudAutomationLifecycle(
   }
 }
 
-async function verifySitesPluginAutoInstall(control, executorHome) {
-  control.onApplicationPluginInstalled = async plugin => {
-    const name = plugin.spec.source.pluginKey
-    const capabilities = join(executorHome, 'capabilities')
-    const relativePath = 'store/plugins/' + name + '@wegent'
-    const root = join(capabilities, relativePath)
-    await mkdir(join(root, '.claude-plugin'), { recursive: true })
-    await writeFile(
-      join(root, '.claude-plugin/plugin.json'),
-      JSON.stringify({
-        name,
-        version: plugin.spec.version,
-        description: plugin.spec.description,
-        interface: plugin.spec.interface,
-      })
-    )
-    const manifestPath = join(capabilities, 'manifest-v2.json')
-    const manifest = (await pathExists(manifestPath))
-      ? JSON.parse(await readFile(manifestPath, 'utf8'))
-      : { version: 2, plugins: {} }
-    manifest.plugins[name + '@wegent'] = {
-      name,
-      marketplace: 'wegent',
-      enabled: true,
-      version: plugin.spec.version,
-      store_path: relativePath,
-    }
-    await writeFile(manifestPath, JSON.stringify(manifest))
-  }
+async function verifySitesPluginAutoInstall(control) {
   assert.equal(
-    control.sitesConnectionBootstrapRequests,
+    applicationInstallRequestCount(control, '/api/plugins/builtin/wegent-sites/ensure-installed'),
     0,
     'Connecting the cloud account unexpectedly initialized the Sites plugin'
   )
@@ -875,9 +847,13 @@ async function verifySitesPluginAutoInstall(control, executorHome) {
     DEFAULT_STEP_TIMEOUT_MS
   )
   assert.deepEqual(
-    control.siteEnvironmentVariables.map(item => [item.key, item.type, item.value]),
+    (await readSitesBackend(control, '/prj_e2e_product/environment-variables')).items.map(item => [
+      item.key,
+      item.type,
+      item.value,
+    ]),
     [['E2E_API_BASE', 'plain', 'https://api.example.test']],
-    'Saving Site environment variables did not persist through the Backend fixture'
+    'Saving Site environment variables did not persist through the real Backend'
   )
   await captureVerificationScreenshot(control, 'plugins-05-site-environment.png')
   await control.command('click', '[data-testid="environment-close-button"]')
@@ -901,9 +877,9 @@ async function verifySitesPluginAutoInstall(control, executorHome) {
     DEFAULT_STEP_TIMEOUT_MS
   )
   assert.deepEqual(
-    control.siteAccessPolicy.subjects,
+    (await readSitesBackend(control, '/prj_e2e_product/access')).subjects,
     ['e2e-viewer-a', 'e2e-viewer-b'],
-    'Saving Site access did not persist through the Backend fixture'
+    'Saving Site access did not persist through the real Backend'
   )
   await captureVerificationScreenshot(control, 'plugins-06-site-access.png')
   await control.command('click', '[data-testid="site-access-close"]')
@@ -924,9 +900,11 @@ async function verifySitesPluginAutoInstall(control, executorHome) {
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
   assert.deepEqual(
-    control.siteCollaborators.map(item => item.subject),
+    (await readSitesBackend(control, '/prj_e2e_product/collaborators')).items.map(
+      item => item.subject
+    ),
     ['e2e-collaborator'],
-    'Adding a Site collaborator did not persist through the Backend fixture'
+    'Adding a Site collaborator did not persist through the real Backend'
   )
   await control.command(
     'clickWhenEnabled',
@@ -941,9 +919,9 @@ async function verifySitesPluginAutoInstall(control, executorHome) {
     DEFAULT_STEP_TIMEOUT_MS
   )
   assert.deepEqual(
-    control.siteCollaborators,
+    (await readSitesBackend(control, '/prj_e2e_product/collaborators')).items,
     [],
-    'Removing a Site collaborator did not persist through the Backend fixture'
+    'Removing a Site collaborator did not persist through the real Backend'
   )
   await captureVerificationScreenshot(control, 'plugins-07-site-collaborators.png')
   await control.command('click', '[data-testid="site-collaborators-close"]')
@@ -989,7 +967,7 @@ async function verifySitesPluginAutoInstall(control, executorHome) {
   await captureVerificationScreenshot(control, 'plugins-07-site-continue-fresh-task.png')
 
   await navigateToApplications(control)
-  control.applicationPluginInspectionUnavailable = true
+  control.backendFaults.setFault('/api/plugins/installed', 'fail')
   const siteCreateIdentity = await captureApplicationChatIdentity(control)
   const siteInstallRequestsBeforeCreate = applicationInstallRequestCount(control, siteInstallPath)
   await control.command('clickWhenEnabled', '[data-testid="sites-create-button"]', {
@@ -1081,13 +1059,20 @@ async function verifySitesPluginAutoInstall(control, executorHome) {
   })
   assert.equal(applicationInstallRequestCount(control, miniProgramInstallPath), miniInstallsBefore)
   await captureVerificationScreenshot(control, 'plugins-10-local-plugin-reuse.png')
-  control.applicationPluginInspectionUnavailable = false
-  control.onApplicationPluginInstalled = null
+  control.backendFaults.setFault('/api/plugins/installed', 'live')
+}
+
+async function readSitesBackend(control, path) {
+  const cloud = control.cloudEnvironment
+  return fetchJson(`${cloud.backendUrl}/api/sites${path}`, {
+    headers: { Authorization: `Bearer ${cloud.authToken}` },
+    signal: AbortSignal.timeout(DEFAULT_STEP_TIMEOUT_MS),
+  })
 }
 
 function applicationInstallRequestCount(control, pathname) {
-  return control.httpRequests.filter(
-    request => request.method === 'POST' && request.pathname === pathname
+  return control.backendFaults.proxy.requests.filter(
+    request => request.method === 'POST' && request.path === pathname
   ).length
 }
 
@@ -1199,174 +1184,6 @@ async function navigateToApplications(control, tab = 'web') {
   })
 }
 
-function sitesMarketplacePlugin(installed) {
-  return {
-    id: 501,
-    remotePluginId: 'wegent~Plugin_501',
-    name: 'wegent-sites',
-    displayName: '快速建站',
-    description: 'Build and deploy websites with Wegent Sites',
-    version: '0.1.0',
-    author: 'Wegent Team',
-    visibility: 'public',
-    featured: true,
-    installed,
-    enabled: installed,
-    installedPluginId: installed ? 601 : null,
-    sourceType: 'marketplace',
-    interface: {
-      displayName: '快速建站',
-      shortDescription: 'Build and deploy sites with Wegent',
-      category: 'Productivity',
-      defaultPrompt: ['Build an internal website and validate it locally'],
-    },
-    components: {
-      skills: [
-        {
-          name: 'sites:sites-building',
-          description: 'Build and validate sites',
-          path: 'skills/sites-building/SKILL.md',
-        },
-      ],
-      commands: [],
-      agents: [],
-      hooks: [],
-      mcps: [],
-      lsps: [],
-      monitors: [],
-      bins: [],
-    },
-    manifest: { name: 'wegent-sites' },
-    ownerUserId: 0,
-  }
-}
-
-function installedSitesPlugin(deviceId = 'local-device') {
-  const marketplacePlugin = sitesMarketplacePlugin(true)
-  return {
-    apiVersion: 'agent.wecode.io/v1',
-    kind: 'InstalledPlugin',
-    metadata: {
-      name: 'wegent-sites',
-      namespace: 'default',
-      labels: { id: '601' },
-    },
-    spec: {
-      source: {
-        type: 'marketplace',
-        providerKey: 'wegent-marketplace',
-        pluginKey: 'wegent-sites',
-        catalogItemId: '501',
-        marketplace: 'wegent',
-      },
-      displayName: '快速建站',
-      description: marketplacePlugin.description,
-      version: marketplacePlugin.version,
-      author: marketplacePlugin.author,
-      installState: 'installed',
-      enabled: true,
-      componentStates: {},
-      manifest: marketplacePlugin.manifest,
-      components: marketplacePlugin.components,
-      interface: marketplacePlugin.interface,
-      packageRef: {
-        storageKey: 'skill-binaries/601',
-        checksum: 'sha256:desktop-e2e-sites',
-        sizeBytes: 1024,
-      },
-      sourcePayload: { filename: 'wegent-sites.zip' },
-    },
-    status: {
-      state: 'Available',
-      devices: [{ deviceId, state: 'installed' }],
-    },
-  }
-}
-
-function miniProgramMarketplacePlugin(installed) {
-  return {
-    id: 502,
-    remotePluginId: 'wegent~Plugin_502',
-    name: 'weibo-miniapp-h5-develop-agent',
-    displayName: '微博小程序H5开发助手',
-    description: 'Build and publish mini programs',
-    version: '0.1.0',
-    author: 'Wegent Team',
-    visibility: 'public',
-    featured: true,
-    installed,
-    enabled: installed,
-    installedPluginId: installed ? 602 : null,
-    sourceType: 'marketplace',
-    interface: {
-      displayName: '微博小程序H5开发助手',
-      shortDescription: 'Build and publish mini programs with Wegent',
-      category: 'Productivity',
-      defaultPrompt: ['创建并发布一个小程序'],
-    },
-    components: {
-      skills: [
-        {
-          name: 'mini-program:building',
-          description: 'Build and publish mini programs',
-          path: 'skills/building/SKILL.md',
-        },
-      ],
-      commands: [],
-      agents: [],
-      hooks: [],
-      mcps: [],
-      lsps: [],
-      monitors: [],
-      bins: [],
-    },
-    manifest: { name: 'weibo-miniapp-h5-develop-agent' },
-    ownerUserId: 0,
-  }
-}
-
-function installedMiniProgramPlugin(deviceId = 'local-device') {
-  const marketplacePlugin = miniProgramMarketplacePlugin(true)
-  return {
-    apiVersion: 'agent.wecode.io/v1',
-    kind: 'InstalledPlugin',
-    metadata: {
-      name: 'weibo-miniapp-h5-develop-agent',
-      namespace: 'default',
-      labels: { id: '602' },
-    },
-    spec: {
-      source: {
-        type: 'marketplace',
-        providerKey: 'wegent-marketplace',
-        pluginKey: 'weibo-miniapp-h5-develop-agent',
-        catalogItemId: '502',
-        marketplace: 'wegent',
-      },
-      displayName: '微博小程序H5开发助手',
-      description: marketplacePlugin.description,
-      version: marketplacePlugin.version,
-      author: marketplacePlugin.author,
-      installState: 'installed',
-      enabled: true,
-      componentStates: {},
-      manifest: marketplacePlugin.manifest,
-      components: marketplacePlugin.components,
-      interface: marketplacePlugin.interface,
-      packageRef: {
-        storageKey: 'skill-binaries/602',
-        checksum: 'sha256:desktop-e2e-mini-program',
-        sizeBytes: 1024,
-      },
-      sourcePayload: { filename: 'weibo-miniapp-h5-develop-agent.zip' },
-    },
-    status: {
-      state: 'Available',
-      devices: [{ deviceId, state: 'installed' }],
-    },
-  }
-}
-
 export {
   waitForTelemetrySilence,
   verifyTelemetryPreference,
@@ -1379,8 +1196,4 @@ export {
   verifyAutomationLifecycle,
   verifyCloudAutomationLifecycle,
   verifySitesPluginAutoInstall,
-  sitesMarketplacePlugin,
-  installedSitesPlugin,
-  miniProgramMarketplacePlugin,
-  installedMiniProgramPlugin,
 }

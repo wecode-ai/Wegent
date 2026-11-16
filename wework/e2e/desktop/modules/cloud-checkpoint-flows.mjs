@@ -789,8 +789,8 @@ async function verifyCloudCheckpoint({
       await cloudEnvironment.assertPluginAutoUpdateComplete(cloudEnvironment.remoteCodexHome, 6)
     } catch (error) {
       console.error(
-        '[plugin-auto-update] object storage transport',
-        JSON.stringify(cloudEnvironment.pluginObjectStorage.transportEvents)
+        '[plugin-auto-update] real object storage server',
+        await readFile(join(resultDir, 'minio.log'), 'utf8')
       )
       throw error
     }

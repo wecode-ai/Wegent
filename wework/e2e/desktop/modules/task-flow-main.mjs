@@ -1,3 +1,6 @@
+import { publishSitesCreatorPlugins } from './sites-creator-plugins.mjs'
+import { SitesProtocolFixture } from './sites-protocol-fixture.mjs'
+import { BackendFaultGate } from './backend-fault-gate.mjs'
 import {
   RealCloudEnvironment,
   verifyLocalExecutorUsesCloudSocketUrl,
@@ -1238,9 +1241,7 @@ async function main() {
 
   const appIdentifier = `io.wecode.wework.e2e.run${process.pid}`
   let desktopScenario
-  const control = new DesktopE2EServer(workspacePath, workspacePath, null, {
-    enableMarketplaceConnectorAppsStub: RUNS_PLUGIN_E2E || runsProjectPluginE2E,
-  })
+  const control = new DesktopE2EServer(workspacePath, workspacePath)
   control.matrixEvidenceDirectory = resultDir
   control.errors = errorCollector
   control.refreshes = new DesktopUiRefreshCollector(control, resultDir)
@@ -1307,49 +1308,57 @@ async function main() {
     assert.ok(codexVersion.length > 0, 'Real Codex did not return a version')
     console.log(`Using real Codex: ${codexVersion}`)
     let executorBinary
-    const scenarioRequiresCloudEnvironment = desktopScenario?.requiresCloudEnvironment === true
-    if (
+    const needsRemoteRuntime =
       CLOUD_ONLY ||
       CLOUD_FEATURES_ONLY ||
       CLOUD_VISION_ONLY ||
       DESKTOP_SEGMENT === 'remote-device-onboarding' ||
-      scenarioRequiresCloudEnvironment
-    ) {
-      cloudEnvironment = new RealCloudEnvironment({
-        backendEnv: desktopScenario?.backendEnv,
-        claudeBinary: desktopScenario?.claudeBinary,
-        codexBinary,
-        initialExecutorLatestVersion:
-          SELECTED_DESKTOP_SEGMENT === 'cloud-device-lifecycle'
-            ? CLOUD_DEVICE_LIFECYCLE_LATEST_VERSION
-            : undefined,
-        managedCloudIdentity: CLOUD_ONLY,
-        modelServerUrl: control.url,
-        scenarioConfigToml: shouldConfigureToolDetailsMcp() ? toolDetailsMcpConfigToml() : '',
-        workspacePath: desktopScenario?.remoteWorkspacePath ?? workspacePath,
-      })
-      const [builtExecutor] = await Promise.all([buildExecutor(), cloudEnvironment.startBackend()])
-      executorBinary = builtExecutor
-      if (CLOUD_ONLY && SELECTED_DESKTOP_SEGMENT === 'conversation-state') {
-        cloudHistorySearch = createCloudHistorySearchVerification()
-        await cloudHistorySearch.prepareCloud(cloudEnvironment)
-      }
-      await desktopScenario?.prepareCloud?.({
-        authToken: cloudEnvironment.authToken,
-        backendUrl: cloudEnvironment.backendUrl,
-        executeDatabase: (sql, params) => cloudEnvironment.executeDatabase(sql, params),
-        queryDatabase: (sql, params) => cloudEnvironment.queryDatabase(sql, params),
-        publishPluginRelease: options => cloudEnvironment.publishPluginRelease(options),
-        publishOfficialSmartApp: sourcePath => cloudEnvironment.publishOfficialSmartApp(sourcePath),
-        setFrontendUrl: frontendUrl => cloudEnvironment.restartBackendWithFrontendUrl(frontendUrl),
-      })
-    } else {
-      executorBinary = await buildExecutor()
+      desktopScenario?.requiresCloudEnvironment === true
+    control.sitesProtocol = await new SitesProtocolFixture().start()
+    cloudEnvironment = new RealCloudEnvironment({
+      backendEnv: {
+        SITES_API_BASE_URL: control.sitesProtocol.url,
+        ...desktopScenario?.backendEnv,
+      },
+      claudeBinary: desktopScenario?.claudeBinary,
+      codexBinary,
+      initialExecutorLatestVersion:
+        SELECTED_DESKTOP_SEGMENT === 'cloud-device-lifecycle'
+          ? CLOUD_DEVICE_LIFECYCLE_LATEST_VERSION
+          : undefined,
+      managedCloudIdentity: CLOUD_ONLY,
+      modelServerUrl: control.url,
+      scenarioConfigToml: shouldConfigureToolDetailsMcp() ? toolDetailsMcpConfigToml() : '',
+      workspacePath: desktopScenario?.remoteWorkspacePath ?? workspacePath,
+    })
+    const [builtExecutor] = await Promise.all([buildExecutor(), cloudEnvironment.startBackend()])
+    executorBinary = builtExecutor
+    if (CLOUD_ONLY && SELECTED_DESKTOP_SEGMENT === 'conversation-state') {
+      cloudHistorySearch = createCloudHistorySearchVerification()
+      await cloudHistorySearch.prepareCloud(cloudEnvironment)
     }
+    await desktopScenario?.prepareCloud?.({
+      authToken: cloudEnvironment.authToken,
+      backendUrl: cloudEnvironment.backendUrl,
+      executeDatabase: (sql, params) => cloudEnvironment.executeDatabase(sql, params),
+      queryDatabase: (sql, params) => cloudEnvironment.queryDatabase(sql, params),
+      publishPluginRelease: options => cloudEnvironment.publishPluginRelease(options),
+      publishOfficialSmartApp: sourcePath => cloudEnvironment.publishOfficialSmartApp(sourcePath),
+      setFrontendUrl: frontendUrl => cloudEnvironment.restartBackendWithFrontendUrl(frontendUrl),
+    })
+    if (RUNS_PLUGIN_E2E && shouldRunPluginSegment('sites-plugin-auto-install')) {
+      await publishSitesCreatorPlugins(cloudEnvironment, resultDir)
+    }
+    control.cloudEnvironment = cloudEnvironment
+    control.backendFaults = await new BackendFaultGate(
+      cloudEnvironment.backendUrl,
+      BLOCKED_CLOUD_MODEL_PATH,
+      !needsRemoteRuntime && !DESKTOP_SCENARIO_ONLY
+    ).start()
     desktopScenario?.setExecutorBinary?.(executorBinary)
     const desktopAppPromise = buildDesktopApp(appIdentifier, codexBinary)
     const desktopApp =
-      cloudEnvironment && desktopScenario?.requiresRemoteExecutor !== false
+      needsRemoteRuntime && desktopScenario?.requiresRemoteExecutor !== false
         ? (
             await Promise.all([
               desktopAppPromise,
@@ -1433,11 +1442,9 @@ async function main() {
       WEWORK_E2E_DISABLE_COMPONENT_UPDATES: '1',
       WEWORK_E2E_DISABLE_PYTHON_BOOTSTRAP: '1',
       WEWORK_APP_CONFIG_DIR: join(homePath, 'app-config'),
-      WEWORK_E2E_CLOUD_BACKEND_URL: cloudEnvironment?.backendUrl ?? control.url,
-      WEWORK_E2E_CLOUD_TOKEN:
-        cloudEnvironment?.authToken ??
-        desktopScenario?.authToken ??
-        'wework-desktop-e2e-cloud-token',
+      WEWORK_E2E_CLOUD_BACKEND_URL: control.backendFaults.url,
+      WEWORK_BACKEND_URL: `${control.backendFaults.url}/api`,
+      WEWORK_E2E_CLOUD_TOKEN: cloudEnvironment.authToken,
       WEWORK_E2E_CONTROL_URL: control.controlUrl,
       WEWORK_E2E_ERROR_LOG: errorCollector.path,
       WEWORK_DESKTOP_CONTROL_REGISTRY_DIR: join(resultDir, 'desktop-control'),
@@ -1533,7 +1540,10 @@ async function main() {
     if (desktopScenario?.requiresNativeCloudAuthorization) {
       assert.ok(cloudEnvironment, 'Native desktop login requires the real Backend environment')
       nativeCloudLogin = nativeCloudAuthorizationFixture(
-        cloudEnvironment,
+        {
+          backendUrl: appEnvironment.WEWORK_BACKEND_URL.replace(/\/api\/?$/, '').replace(/\/$/, ''),
+          authToken: cloudEnvironment.authToken,
+        },
         electronUserDataDirectory,
         appBinary
       )
@@ -2291,7 +2301,7 @@ source = ${JSON.stringify(staleBundledMarketplacePath)}`
       }
       if (shouldRunPluginSegment('sites-plugin-auto-install')) {
         phase = 'sites-plugin-auto-install'
-        await verifySitesPluginAutoInstall(control, executorHome)
+        await verifySitesPluginAutoInstall(control)
       }
       if (officialPluginFixture) {
         phase = 'plugin-uninstall'
@@ -4775,7 +4785,7 @@ source = ${JSON.stringify(staleBundledMarketplacePath)}`
             ])
           ),
           desktopScenario: desktopScenario?.diagnostics?.() ?? null,
-          cloudModelStage: control.cloudModelStage,
+          backendTransportFaults: Object.fromEntries(control.backendFaults?.faults ?? []),
           matrixCase: control.matrixCase ? matrixCaseId(control.matrixCase) : null,
           matrixStage: control.matrixState?.stage ?? null,
           matrixRequestCount: control.matrixState?.requests.length ?? 0,
@@ -4872,6 +4882,14 @@ source = ${JSON.stringify(staleBundledMarketplacePath)}`
       }
     }
     await runTeardownStep('performance evidence', async () => {
+      const protocols = [
+        ...(desktopScenario?.externalServiceProtocols ?? []),
+        ...(control.sitesProtocol?.requests.length ? ['sites'] : []),
+      ]
+      control.performance.metadata.externalServiceProtocols = [...new Set(protocols)]
+      control.performance.metadata.verificationType = protocols.length
+        ? 'protocol-integration'
+        : 'real-e2e'
       if (app?.exitCode === null && app?.signalCode === null) {
         const reads = await Promise.allSettled([control.command('getRoute', 'body')])
         for (const read of reads)
@@ -4909,7 +4927,11 @@ source = ${JSON.stringify(staleBundledMarketplacePath)}`
     })
     await runTeardownStep('blocking network proxy', async () => blockingNetworkProxy?.stop())
     await runTeardownStep('cloud history search proxy', async () => cloudHistorySearch?.cleanup())
+    await runTeardownStep('Backend fault gate', async () => control.backendFaults?.stop())
     await runTeardownStep('cloud environment', async () => cloudEnvironment?.stop())
+    await runTeardownStep('Sites external protocol fixture', async () =>
+      control.sitesProtocol?.stop()
+    )
     await runTeardownStep('Codex SQLite home', async () =>
       rm(codexSqliteHome, {
         recursive: true,

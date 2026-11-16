@@ -8,6 +8,8 @@ Wework 支持启动隔离的开发验证会话，让 AI 在真实 Electron 应�
 
 ## 桌面 E2E 错误采集与断言
 
+桌面检查点统一使用真实 Backend、数据库和 MinIO；通过真实网络代理注入阻塞、断连及恢复，不生成假的 Backend 响应。模型服务可以使用协议替身。经明确授权，外部 Sites 和 GitHub/GitLab 协议（含 Git CLI 返回）也可以使用替身；Wework、Backend、插件发布/安装/激活和设备凭据同步仍为真实实现。相关检查点及报告标为“协议集成测试”，记录 `verificationType: protocol-integration`，并在 `externalServiceProtocols` 中列出 `sites` 或 `git-hosting`；不代表真实外部服务兼容性已验证，也不允许替换其他服务。需要 Nevis 重启能力的扩展场景必须配置真实隔离服务。
+
 共享桌面 runner 在启动应用前创建 `errors.jsonl`，并通过 `control.errors` 和场景工厂参数 `errors` 提供查询与断言。记录不轮转、不截断堆栈，使用进程 PID、采集实例 ID、实例内递增序号、时间、来源、类型和严重程度关联错误；应用重启会创建新的实例 ID。日志在写入前复用现有脱敏规则。截图、日志及该记录均为测试产物，不提交仓库。
 
 当前接入点与验证如下。表格描述已接入的边界，不代表任意代码路径都已经运行验证。
@@ -117,7 +119,7 @@ async function verifyLocalOperation(control, operationAndWaitForResult) {
 
 故障门主动回放的重复投递保留原始计数，并另记 `injectedDuplicateDeliveries`；只有未被真实故障注入上下文解释的重复投递才标记为不变量异常。该归因来自共享 transport gate，不配置场景名或错误忽略列表。普通网络重放到达后被去重丢弃的帧仍单独记录。
 
-收到 ResizeObserver 循环错误时，E2E 错误记录附带最近 32 次原生 observer 回调的构造堆栈、回调名和最多四个目标的测试标识、标签及尺寸。诊断不采集 DOM 文本，不改变回调时机或抑制异常；它是有界故障上下文，不证明所有历史 resize 回调完整。
+收到 ResizeObserver 循环错误时，E2E 错误记录附带最近 32 次原生 observer 回调的构造堆栈、回调名和最多四个目标的测试标识、标签及尺寸。同时记录每次回调内部的 DOM 写入数量，以及最多八个写入目标的标签、测试标识和属性名，以定位“测量后写布局”的循环来源。诊断不采集 DOM 文本或属性值，不增加布局读取，不改变回调时机或抑制异常；它是有界故障上下文，不证明所有历史 resize 回调完整。
 
 正常 transcript 取消通过实际 AbortSignal 及对应拒绝对象识别，各调用层保留取消和原始拒绝，避免重复记成故障；信号已取消时发生的其他错误仍必须报告。乐观任务打开时，goal 与项目关联读取等待同一个真实创建 Promise 持久化完成，已离开的视图取消自身读取，独立任务不受影响。新增 `runtime-task-readiness` 复用现有 Core CI，实际挂起创建请求，证明读者已到达屏障且尚未发出 RPC，释放后验证真实模型结果和 goal 响应，不使用固定等待证明就绪。
 

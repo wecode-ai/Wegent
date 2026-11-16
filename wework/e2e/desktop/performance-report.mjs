@@ -23,8 +23,8 @@ export function renderPerformanceReport(reports) {
     '',
     'Baseline not established; these are observations, not a performance pass.',
     '',
-    '| Checkpoint | Environment | Functional | Metric coverage | RPCs | Describe | Full task reads | Parse / protocol failures | DOM records |',
-    '| --- | --- | --- | --- | ---: | ---: | ---: | ---: | ---: |',
+    '| Checkpoint | Environment | Test boundary | Functional | Metric coverage | RPCs | Describe | Full task reads | Parse / protocol failures | DOM records |',
+    '| --- | --- | --- | --- | --- | ---: | ---: | ---: | ---: | ---: |',
   ]
   const coverageNotes = []
   for (const report of reports) {
@@ -37,6 +37,11 @@ export function renderPerformanceReport(reports) {
     const values = [
       report.checkpoint,
       `${report.platform}/${report.arch}/${report.variant}`,
+      report.verificationType === 'protocol-integration'
+        ? `Protocol integration (${(report.externalServiceProtocols ?? []).join(', ')}); external compatibility unverified`
+        : report.verificationType === 'real-e2e'
+          ? 'Real E2E'
+          : 'Unspecified',
       report.functionalPassed ? 'passed' : 'failed',
       report.complete ? 'observed' : 'incomplete',
       sum('executor.requests.'),

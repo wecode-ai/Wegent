@@ -235,6 +235,17 @@ export class TransportFaultProxy {
           }
           // Functions keep the real reply inspectable without serializing its bytes or headers.
           entry.readHeldResponse = () => held
+          entry.dropHeldResponse = () => {
+            const reply = held
+            held = null
+            if (!reply || response.destroyed || response.writableEnded) return false
+            response.writeHead(reply.status, reply.headers)
+            response.flushHeaders()
+            entry.committedResponseDropped = true
+            entry.dropped = true
+            response.destroy()
+            return true
+          }
           response.once('close', () => {
             held = null
           })

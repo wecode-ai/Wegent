@@ -1,3 +1,5 @@
+import { TransportFaultProxy } from '../modules/transport-fault-proxy.mjs'
+import { requestJson } from '../modules/harness-app-fixture.mjs'
 import assert from 'node:assert/strict'
 
 import { ensureExperimentalFeaturesEnabled } from '../modules/preferences-automation-flows.mjs'
@@ -15,14 +17,8 @@ import { selectCollaborationProjectView } from '../modules/collaboration-project
 
 const ACTIVE_WORKBENCH_SELECTOR = '[data-workspace-tab-content][aria-hidden="false"]'
 const LOCAL_WORKSPACE_ID = 'wework-local-workspace'
-const CLOUD_WORKSPACE_ID = 'offline-cloud-workspace'
 const PROJECT_NAME = '离线本地项目空间'
 const ISSUE_NAME = '离线本地 Issue'
-
-function json(response, status, body) {
-  response.writeHead(status, { 'content-type': 'application/json' })
-  response.end(JSON.stringify(body))
-}
 
 function scoped(selector) {
   return `${ACTIVE_WORKBENCH_SELECTOR} ${selector}`
@@ -50,6 +46,9 @@ async function projectAgentTestId(control, displayName) {
 
 export function createDesktopScenario({ uiTimeoutMs, workbenchReadyTimeoutMs }) {
   let cloudOffline = false
+  let CLOUD_WORKSPACE_ID
+  let proxy
+  const appEnvironment = {}
   let cloudWorkspaceListFailures = 0
   const cloudAgentMutationRequests = []
   const cloudProjectDetailRequests = []
@@ -61,64 +60,33 @@ export function createDesktopScenario({ uiTimeoutMs, workbenchReadyTimeoutMs }) 
     )
 
   return {
-    async handleHttp(request, response, url) {
-      if (request.method === 'GET' && url.pathname === '/api/v1/workspaces') {
-        if (cloudOffline) {
+    appEnvironment,
+    async prepareCloud({ backendUrl, authToken }) {
+      const workspace = await requestJson(backendUrl, authToken, '/api/v1/workspaces', {
+        method: 'POST',
+        body: JSON.stringify({ name: '云端空间', description: '离线隔离验收空间' }),
+      })
+      CLOUD_WORKSPACE_ID = workspace.id
+      proxy = await new TransportFaultProxy(backendUrl).start()
+      appEnvironment.WEWORK_E2E_CLOUD_BACKEND_URL = proxy.url
+      proxy.rule = entry => {
+        if (entry.method === 'POST' && ['/api/bots', '/api/teams'].includes(entry.path))
+          cloudAgentMutationRequests.push(entry.method + ' ' + entry.path)
+        if (
+          entry.path.startsWith('/api/v1/cloud-projects/') ||
+          entry.path.startsWith('/api/v1/loop-items/')
+        )
+          cloudProjectDetailRequests.push(entry.method + ' ' + entry.path)
+        if (entry.method === 'GET' && entry.path === '/api/models/unified') return 'disconnect'
+        if (cloudOffline && entry.method === 'GET' && entry.path === '/api/v1/workspaces') {
           cloudWorkspaceListFailures += 1
-          json(response, 503, { detail: 'Desktop E2E cloud workspace service is unavailable' })
-          return true
+          return 'disconnect'
         }
-        json(response, 200, {
-          items: [
-            {
-              id: CLOUD_WORKSPACE_ID,
-              name: '云端空间',
-              description: '保存在云端并可跨设备访问的协作空间。',
-              access_role: 'Owner',
-              member_count: 1,
-              agent_count: 0,
-              execution_environment_count: 0,
-              project_count: 0,
-              created_by_user_id: 1,
-              version: 1,
-              created_at: '2026-09-13T00:00:00Z',
-              updated_at: '2026-09-13T00:00:00Z',
-            },
-          ],
-        })
-        return true
+        return null
       }
-      if (request.method === 'GET' && url.pathname === '/api/v1/resources') {
-        json(response, 200, { agents: [], execution_environments: [] })
-        return true
-      }
-      if (request.method === 'GET' && url.pathname === '/api/teams') {
-        json(response, 200, { items: [], total: 0 })
-        return true
-      }
-      if (request.method === 'GET' && url.pathname === '/api/devices') {
-        json(response, 200, { items: [] })
-        return true
-      }
-      if (request.method === 'GET' && url.pathname === '/api/models/unified') {
-        json(response, 503, {
-          detail: 'Desktop E2E cloud model service is unavailable',
-        })
-        return true
-      }
-      if (
-        request.method === 'POST' &&
-        (url.pathname === '/api/bots' || url.pathname === '/api/teams')
-      ) {
-        cloudAgentMutationRequests.push(`${request.method} ${url.pathname}`)
-      }
-      if (
-        url.pathname.startsWith('/api/v1/cloud-projects/') ||
-        url.pathname.startsWith('/api/v1/loop-items/')
-      ) {
-        cloudProjectDetailRequests.push(`${request.method} ${url.pathname}`)
-      }
-      return false
+    },
+    async cleanup() {
+      await proxy?.stop()
     },
 
     async verify(control) {

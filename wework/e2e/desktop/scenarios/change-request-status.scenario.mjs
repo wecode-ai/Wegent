@@ -1,10 +1,11 @@
+import { TransportFaultProxy } from '../modules/transport-fault-proxy.mjs'
 import assert from 'node:assert/strict'
 import { execFile } from 'node:child_process'
 import { chmod, mkdir, readFile, writeFile } from 'node:fs/promises'
 import { delimiter, join } from 'node:path'
 import { promisify } from 'node:util'
 import { waitForAttribute } from '../modules/workspace-flows.mjs'
-import { selectE2EModel } from '../modules/shared.mjs'
+import { selectE2EModel, runChecked, repoDir } from '../modules/shared.mjs'
 import { requestExecutor } from '../modules/executor-rpc.mjs'
 
 const execFileAsync = promisify(execFile)
@@ -18,18 +19,6 @@ const STATE_FILE = '.wework-change-request-e2e-state'
 const TASK_PROMPT = 'Inspect the pull request status for this branch'
 const TASK_COMPLETION = 'Pull request status fixture ready'
 const FOLLOW_UP_COMPLETION = 'Pull request status follow-up ready'
-
-function json(response, status, body) {
-  response.writeHead(status, { 'content-type': 'application/json; charset=utf-8' })
-  response.end(`${JSON.stringify(body)}\n`)
-}
-
-async function readJsonBody(request) {
-  let body = ''
-  request.setEncoding('utf8')
-  for await (const chunk of request) body += chunk
-  return body ? JSON.parse(body) : {}
-}
 
 async function run(command, args, cwd) {
   await execFileAsync(command, args, { cwd })
@@ -231,101 +220,45 @@ export async function createDesktopScenario({
   const statePath = join(homePath, STATE_FILE)
   const gitSyncRequests = []
   let modelRequestCount = 0
+  let cloud
+  let executorBinary
+  let proxy
+  const appEnvironment = {}
   await writeFile(queryLogPath, '')
   await writeFile(statePath, 'pending\n')
   const capture = (control, name, selector = ACTIVE_WORKBENCH_SELECTOR) =>
     captureScreenshot(control, name, selector)
 
   return {
+    externalServiceProtocols: ['git-hosting'],
+    appEnvironment,
+    setExecutorBinary(binary) {
+      executorBinary = binary
+    },
+    setCloudEnvironment(environment) {
+      cloud = environment
+    },
+    async prepareCloud({ backendUrl }) {
+      proxy = await new TransportFaultProxy(backendUrl).start()
+      appEnvironment.WEWORK_E2E_CLOUD_BACKEND_URL = proxy.url
+      proxy.rule = (entry, request) => {
+        if (
+          entry.method !== 'PUT' ||
+          entry.path !== '/api/devices/desktop-e2e-git-target/git-accounts'
+        )
+          return null
+        const chunks = []
+        request.on('data', chunk => chunks.push(chunk))
+        request.once('end', () =>
+          gitSyncRequests.push(JSON.parse(Buffer.concat(chunks).toString('utf8')))
+        )
+        return null
+      }
+    },
+    async cleanup() {
+      await proxy?.stop()
+    },
     async handleHttp(request, response, url) {
-      if (request.method === 'GET' && url.pathname === '/api/auth/wework/config') {
-        json(response, 200, {
-          web_url: `${url.protocol}//${url.host}`,
-          socket_url: `${url.protocol}//${url.host}`,
-        })
-        return true
-      }
-      if (request.method === 'GET' && url.pathname === '/api/users/me/git-accounts/sync-summary') {
-        assert.equal(request.headers.authorization, 'Bearer wework-desktop-e2e-cloud-token')
-        json(response, 200, {
-          accounts: [
-            {
-              id: 'desktop-e2e-git-account',
-              domain: 'git.example.test',
-              provider: 'gitlab',
-              login: 'desktop-e2e-user',
-              email: 'desktop-e2e@example.test',
-              effective: true,
-              duplicate_of: null,
-            },
-          ],
-          effective_count: 1,
-          duplicate_count: 0,
-        })
-        return true
-      }
-      if (request.method === 'GET' && url.pathname === '/api/devices') {
-        assert.equal(request.headers.authorization, 'Bearer wework-desktop-e2e-cloud-token')
-        json(response, 200, {
-          items: [
-            {
-              id: 71,
-              device_id: 'desktop-e2e-git-target',
-              name: 'Git Sync Remote',
-              status: 'online',
-              is_default: false,
-              device_type: 'remote',
-              bind_shell: 'claudecode',
-            },
-            {
-              id: 72,
-              device_id: 'desktop-e2e-busy-cloud',
-              name: 'Busy Cloud',
-              status: 'busy',
-              is_default: false,
-              device_type: 'cloud',
-              bind_shell: 'claudecode',
-            },
-            {
-              id: 73,
-              device_id: 'desktop-e2e-local',
-              name: 'Local Device',
-              status: 'online',
-              is_default: false,
-              device_type: 'local',
-              bind_shell: 'claudecode',
-            },
-          ],
-          total: 3,
-        })
-        return true
-      }
-      if (
-        request.method === 'PUT' &&
-        url.pathname === '/api/devices/desktop-e2e-git-target/git-accounts'
-      ) {
-        assert.equal(request.headers.authorization, 'Bearer wework-desktop-e2e-cloud-token')
-        const body = await readJsonBody(request)
-        gitSyncRequests.push(body)
-        json(response, 200, {
-          device_id: 'desktop-e2e-git-target',
-          status: 'synced',
-          synced_domains: ['git.example.test'],
-          removed_domains: [],
-          duplicate_domains: [],
-          identity_warning_domains: [],
-          cli: [
-            {
-              provider: 'glab',
-              domain: 'git.example.test',
-              status: 'configured',
-              reason_code: null,
-            },
-          ],
-          warning_codes: [],
-        })
-        return true
-      }
       if (request.method === 'POST' && url.pathname === '/v1/responses') {
         for await (const _chunk of request) {
           // Consume the request before returning the deterministic response.
@@ -338,6 +271,28 @@ export async function createDesktopScenario({
     },
 
     async verify(control) {
+      cloud.executorBinary = executorBinary
+      await Promise.all([
+        cloud.startGeneratedRemoteDevice({
+          deviceId: 'desktop-e2e-git-target',
+          deviceName: 'Git Sync Remote',
+        }),
+        cloud.startGeneratedRemoteDevice({
+          deviceId: 'desktop-e2e-busy-cloud',
+          deviceName: 'Busy Cloud',
+          deviceType: 'cloud',
+        }),
+      ])
+      await runChecked(
+        'uv',
+        [
+          'run',
+          'python',
+          '-c',
+          'from app.db.session import SessionLocal; from app.models.user import User; from shared.utils.crypto import encrypt_git_token; db=SessionLocal(); user=db.get(User,1); user.git_info=[{"id":"desktop-e2e-git-account","git_domain":"git.example.test","type":"gitlab","git_login":"desktop-e2e-user","git_email":"desktop-e2e@example.test","git_token":encrypt_git_token("synthetic-desktop-e2e-gitlab-token")}]; db.commit(); db.close()',
+        ],
+        { cwd: join(repoDir, 'backend'), env: cloud.backendEnv }
+      )
       await createLocalProject(control, workspacePath, uiTimeoutMs)
       await selectE2EModel(control, undefined, undefined, ACTIVE_WORKBENCH_SELECTOR)
       const monitorRegistrationWindowStartedAt = Date.now()
@@ -483,6 +438,25 @@ export async function createDesktopScenario({
         Number(await control.command('getElementCount', '[data-testid="git-device-sync-section"]')),
         0,
         'Device Git configuration should not remain under Git hosting settings'
+      )
+      await runChecked(
+        'uv',
+        [
+          'run',
+          'python',
+          '-c',
+          `import asyncio
+from app.services.device_service import DeviceService
+async def mark_busy():
+    online = await DeviceService.get_device_online_info(1, "desktop-e2e-busy-cloud")
+    assert online
+    changed = await DeviceService.update_device_status_in_redis(
+        1, "desktop-e2e-busy-cloud", "busy", socket_id=online["socket_id"]
+    )
+    assert changed
+asyncio.run(mark_busy())`,
+        ],
+        { cwd: join(repoDir, 'backend'), env: cloud.backendEnv }
       )
       await control.command('click', '[data-testid="settings-nav-connections"]')
       await control.command('waitFor', '[data-testid="cloud-connection-status-card"]', {

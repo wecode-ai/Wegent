@@ -4,7 +4,8 @@ import { createPreparationObserver } from './preparation-progress.mjs'
 import { waitForBoardValue } from './collaboration-board-flows.mjs'
 
 import { randomBytes } from 'node:crypto'
-import { LocalPluginObjectStorage } from './local-plugin-object-storage.mjs'
+import { startRealObjectStorage } from './real-object-storage.mjs'
+import { TransportFaultProxy } from './transport-fault-proxy.mjs'
 import { rm } from 'node:fs/promises'
 import { createServer } from 'node:http'
 import { tmpdir } from 'node:os'
@@ -276,79 +277,6 @@ async function startRedisServer(
   throw new Error(`Redis did not start after ${REDIS_START_ATTEMPTS} attempts`)
 }
 
-class LocalNevisSandboxService {
-  constructor() {
-    this.restartRequests = []
-  }
-
-  async start() {
-    this.server = createServer((request, response) => {
-      void this.handle(request, response).catch(error => {
-        if (response.headersSent) {
-          response.destroy(error instanceof Error ? error : undefined)
-          return
-        }
-        response.writeHead(500)
-        response.end()
-      })
-    })
-    await new Promise((resolvePromise, reject) => {
-      this.server.once('error', reject)
-      this.server.listen(0, '127.0.0.1', resolvePromise)
-    })
-    this.port = this.server.address().port
-    this.endpoint = `http://127.0.0.1:${this.port}`
-  }
-
-  sendJson(response, body) {
-    response.writeHead(200, { 'Content-Type': 'application/json' })
-    response.end(JSON.stringify(body))
-  }
-
-  async handle(request, response) {
-    const url = new URL(request.url ?? '/', this.endpoint)
-    const restartMatch = url.pathname.match(
-      /^\/apis\/sandboxes\/v1\/managers\/([^/]+)\/sandboxes\/([^/]+)\/restart$/
-    )
-    if (request.method === 'POST' && restartMatch) {
-      request.resume()
-      const restartRequest = {
-        managerId: decodeURIComponent(restartMatch[1]),
-        sandboxId: decodeURIComponent(restartMatch[2]),
-      }
-      this.restartRequests.push(restartRequest)
-      this.sendJson(response, { id: restartRequest.sandboxId, status: 'restarting' })
-      return
-    }
-    if (request.method === 'POST' && url.pathname.endsWith('/metrics/raw_query')) {
-      request.resume()
-      this.sendJson(response, { data: { data: { result: [] } } })
-      return
-    }
-    response.writeHead(404)
-    response.end()
-  }
-
-  async waitForRestartRequest(afterCount) {
-    const startedAt = Date.now()
-    while (Date.now() - startedAt < DEFAULT_STEP_TIMEOUT_MS) {
-      if (this.restartRequests.length > afterCount) {
-        return this.restartRequests[afterCount]
-      }
-      await new Promise(resolvePromise => setTimeout(resolvePromise, 50))
-    }
-    throw new Error('The local Nevis service did not receive a restart request')
-  }
-
-  async stop() {
-    if (!this.server) return
-    await new Promise(resolvePromise => {
-      this.server.close(resolvePromise)
-      this.server.closeAllConnections?.()
-    })
-  }
-}
-
 class RealCloudEnvironment {
   constructor({
     backendEnv = {},
@@ -400,10 +328,15 @@ class RealCloudEnvironment {
     this.remoteDockerExecutorLogPath = join(resultDir, 'remote-docker-executor.log')
     this.remoteExecutorRuntimeLogPath = join(resultDir, 'cloud-executor-runtime.log')
     this.remoteDockerExecutorRuntimeLogPath = join(resultDir, 'remote-docker-executor-runtime.log')
-    this.pluginObjectStorage = new LocalPluginObjectStorage()
-    await this.pluginObjectStorage.start()
-    this.nevisSandboxService = new LocalNevisSandboxService()
-    await this.nevisSandboxService.start()
+    if (!this.scenarioBackendEnv.ATTACHMENT_S3_ENDPOINT) {
+      this.pluginObjectStorage = await startRealObjectStorage(resultDir, WORKBENCH_READY_TIMEOUT_MS)
+    }
+    if (remoteDeviceE2EExtension.supportsStatusRecovery) {
+      const endpoint =
+        this.scenarioBackendEnv.NEVIS_BASE_URL ?? remoteDeviceE2EExtension.backendEnv.NEVIS_BASE_URL
+      assert.ok(endpoint, 'Nevis recovery E2E requires an explicitly configured real test service')
+      this.nevisTransport = await new TransportFaultProxy(endpoint).start()
+    }
 
     const redisServer = await this.observePreparation('redis-start', () =>
       startRedisServer(this.redisLogPath)
@@ -442,6 +375,9 @@ class RealCloudEnvironment {
       CHAT_SHELL_TOKEN: MODEL_API_KEY,
       WEGENT_SOCKET_URL: this.socketUrl,
       FLOW_SCHEDULER_INTERVAL_SECONDS: '5',
+      NEVIS_MANAGER_ID: '',
+      NEVIS_IMAGE_ID: '',
+      NEVIS_SIGNATURE: '',
       ...remoteDeviceE2EExtension.backendEnv,
       TERMINAL_PROTOCOL_V2_ENABLED: 'true',
       PYTHONIOENCODING: 'utf-8',
@@ -450,15 +386,9 @@ class RealCloudEnvironment {
       INIT_DATA_ENABLED: 'true',
       INIT_DATA_DIR: join(repoDir, 'backend-rs', 'init_data'),
       BUILTIN_PLUGINS_DIR: join(repoDir, 'backend-rs', 'init_data', 'plugins'),
-      ATTACHMENT_S3_ENDPOINT: this.pluginObjectStorage.endpoint,
-      ATTACHMENT_S3_ACCESS_KEY: 'desktop-e2e-access-key',
-      ATTACHMENT_S3_SECRET_KEY: 'desktop-e2e-secret-key',
-      ATTACHMENT_S3_USE_SSL: 'false',
-      NEVIS_BASE_URL: this.nevisSandboxService.endpoint,
-      NEVIS_MANAGER_ID: 'wework-e2e-manager',
-      NEVIS_IMAGE_ID: 'wework-e2e-image',
-      NEVIS_SIGNATURE: 'wework-e2e-signature',
+      ...this.pluginObjectStorage?.backendEnv,
       ...this.scenarioBackendEnv,
+      NEVIS_BASE_URL: this.nevisTransport?.url ?? '',
     }
     this.backendEnv = backendEnv
     // Seed before device requests can start a remote refresh that races fixture updates.
@@ -1392,13 +1322,30 @@ class RealCloudEnvironment {
     }
   }
 
+  nevisRestartRequests() {
+    assert.ok(this.nevisTransport, 'Nevis recovery requires its real test service transport')
+    return this.nevisTransport.requests
+      .filter(
+        request => request.method === 'POST' && /\/sandboxes\/[^/]+\/restart$/.test(request.path)
+      )
+      .map(request => ({
+        managerId: decodeURIComponent(request.path.split('/')[5]),
+        sandboxId: decodeURIComponent(request.path.split('/')[7]),
+      }))
+  }
+
   nevisRestartRequestCount() {
-    return this.nevisSandboxService?.restartRequests.length ?? 0
+    return this.nevisRestartRequests().length
   }
 
   async waitForNevisRestartRequest(afterCount) {
-    assert.ok(this.nevisSandboxService, 'The local Nevis service is not running')
-    return this.nevisSandboxService.waitForRestartRequest(afterCount)
+    const deadline = Date.now() + DEFAULT_STEP_TIMEOUT_MS
+    while (Date.now() < deadline) {
+      const request = this.nevisRestartRequests()[afterCount]
+      if (request) return request
+      await new Promise(resolve => setTimeout(resolve, 50))
+    }
+    throw new Error('The real Nevis service did not receive the restart request')
   }
 
   async startGeneratedRemoteDevice({
@@ -1812,7 +1759,7 @@ class RealCloudEnvironment {
     await Promise.all(this.generatedRemoteExecutors.map(executor => stopProcessGroup(executor)))
     await this.stopBackend()
     await this.pluginObjectStorage?.stop()
-    await this.nevisSandboxService?.stop()
+    await this.nevisTransport?.stop()
     await stopProcess(this.redis)
     await stopProcessGroup(this.mysql)
   }
@@ -1850,7 +1797,6 @@ async function verifyLocalExecutorUsesCloudSocketUrl(control, cloudEnvironment) 
 }
 
 export {
-  LocalNevisSandboxService,
   RealCloudEnvironment,
   startRedisServer,
   startMysqlServer,

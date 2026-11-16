@@ -10,7 +10,7 @@ interface ResizeDelivery {
 
 /** Observe native delivery without changing callback timing, layout or error handling. */
 export function installResizeObserverDiagnostics(target: Window) {
-  const scope = target as Window & Pick<typeof globalThis, 'ResizeObserver'>
+  const scope = target as Window & Pick<typeof globalThis, 'ResizeObserver' | 'MutationObserver'>
   const NativeObserver = scope.ResizeObserver
   const recent: ResizeDelivery[] = []
   let nextId = 0

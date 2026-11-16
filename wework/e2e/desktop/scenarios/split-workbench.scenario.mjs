@@ -52,11 +52,6 @@ function assistantMessage(text) {
   }
 }
 
-function json(response, status, body) {
-  response.writeHead(status, { 'content-type': 'application/json; charset=utf-8' })
-  response.end(JSON.stringify(body))
-}
-
 async function waitForProjectWorkButton(control, timeoutMs) {
   const startedAt = Date.now()
   while (Date.now() - startedAt < timeoutMs) {
@@ -587,100 +582,9 @@ async function assertIndependentTitlebar(control, paneSelector, title) {
 
 export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspacePath }) {
   let active = false
-  let nextAttachmentId = 1
   const modelIsolationFollowUpModels = []
   return {
-    appEnvironment: {
-      // This scenario authenticates no cloud session; keep model fixtures local.
-      WEWORK_E2E_CLOUD_BACKEND_URL: '',
-    },
     async handleHttp(request, response, url) {
-      if (request.method === 'GET' && url.pathname === '/api/auth/wework/config') {
-        json(response, 200, {
-          web_url: `${url.protocol}//${url.host}`,
-          socket_url: `${url.protocol}//${url.host}`,
-        })
-        return true
-      }
-      if (request.method === 'GET' && url.pathname === '/api/users/me') {
-        json(response, 401, { detail: 'Desktop split E2E runs without a cloud session' })
-        return true
-      }
-      if (request.method === 'GET' && url.pathname === '/api/teams') {
-        json(response, 200, { items: [], total: 0 })
-        return true
-      }
-      if (request.method === 'GET' && url.pathname === '/api/devices') {
-        json(response, 200, { items: [] })
-        return true
-      }
-      if (request.method === 'GET' && url.pathname === '/api/models/unified') {
-        json(response, 200, { data: [] })
-        return true
-      }
-      if (request.method === 'GET' && url.pathname === '/api/quota/claude/quota') {
-        json(response, 200, {})
-        return true
-      }
-      if (request.method === 'GET' && url.pathname === '/api/runtime-work/im-notifications') {
-        json(response, 200, {
-          global: { enabled: false, sessionKey: null, session: null },
-          runtimeTaskSubscriptions: [],
-        })
-        return true
-      }
-      if (request.method === 'GET' && url.pathname === '/api/v1/runtime-tasks/cloud-context') {
-        json(response, 200, null)
-        return true
-      }
-      if (request.method === 'PUT' && url.pathname === '/api/users/me') {
-        const body = await readJson(request)
-        json(response, 200, body)
-        return true
-      }
-      if (request.method === 'GET' && url.pathname === '/api/apps/installed') {
-        json(response, 200, { apps: [] })
-        return true
-      }
-      if (request.method === 'POST' && url.pathname === '/api/connector-runtime/token') {
-        json(response, 200, {
-          access_token: 'desktop-e2e-connector-token',
-          token_type: 'bearer',
-          expires_in: 3_600,
-        })
-        return true
-      }
-      if (request.method === 'GET' && url.pathname === '/api/v1/cloud-projects') {
-        json(response, 200, { items: [] })
-        return true
-      }
-      if (
-        request.method === 'PUT' &&
-        url.pathname === '/api/runtime-work/im-notifications/presence'
-      ) {
-        const body = await readJson(request)
-        json(response, 200, { away: Boolean(body.away), ttlSeconds: 60 })
-        return true
-      }
-      if (
-        active &&
-        request.method === 'POST' &&
-        ['/attachments/upload', '/api/attachments/upload'].includes(url.pathname)
-      ) {
-        for await (const _chunk of request) {
-          // Drain the multipart request before replying.
-        }
-        json(response, 200, {
-          id: nextAttachmentId++,
-          filename: SPLIT_ATTACHMENT_FILENAME,
-          file_size: 68,
-          mime_type: 'image/png',
-          status: 'ready',
-          file_extension: '.png',
-          created_at: '2026-08-16T00:00:00.000Z',
-        })
-        return true
-      }
       if (
         active &&
         request.method === 'POST' &&
