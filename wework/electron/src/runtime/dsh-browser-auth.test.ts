@@ -92,7 +92,7 @@ describe('managed DSH authentication cookies', () => {
       })
 
     try {
-      expect(await status('http://127.0.0.1:1/', source.all())).toBe(431)
+      expect(await status('http://127.0.0.1:1/', source.all())).toBe(200)
       for (let index = 0; index < 100; index++) {
         const url = `http://127.0.0.1:${44000 + index}/`
         const authentication = owner(url)
@@ -276,7 +276,11 @@ describe('managed DSH authentication cookies', () => {
           Accept: 'text/html',
         })
       }
-      for (const target of ['http://127.0.0.1:45011/', 'https://example.test/', 'not a URL']) {
+      expect(dshBrowserRequestHeaders('http://127.0.0.1:45011/', headers)).toEqual({
+        [header]: `${foreign.name}=external; site-login=keep`,
+        Accept: 'text/html',
+      })
+      for (const target of ['https://example.test/', 'not a URL']) {
         expect(dshBrowserRequestHeaders(target, headers)).toBe(headers)
       }
       expect(dshBrowserRequestHeaders(url, { [header]: `${foreign.name}=external` })).toEqual({})
