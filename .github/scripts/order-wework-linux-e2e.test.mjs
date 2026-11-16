@@ -580,6 +580,14 @@ test("all real Backend desktop runners consume platform-native MinIO without GHC
   );
   assert.equal(
     windows.find(
+      (step) => step.name === "Download Windows real object storage",
+    ).if,
+    undefined,
+  );
+  const windowsProducer =
+    workflow.jobs["build-wework-desktop-windows-core-e2e"].steps;
+  assert.equal(
+    windowsProducer.find(
       (step) => step.name === "Restore real object storage for desktop E2E",
     ).if,
     undefined,
