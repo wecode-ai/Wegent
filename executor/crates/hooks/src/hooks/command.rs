@@ -11,7 +11,11 @@ use std::{
 };
 
 use serde::Serialize;
-use tokio::{io::AsyncWriteExt, process::Command, time::sleep};
+use tokio::{
+    io::{AsyncRead, AsyncReadExt, AsyncWriteExt},
+    process::Command,
+    time::sleep,
+};
 
 #[cfg(unix)]
 use std::os::unix::process::CommandExt;
@@ -58,19 +62,33 @@ pub async fn execute_command_hook<T: Serialize>(
     };
     #[cfg(unix)]
     let child_id = child.id();
-    let write_result = match child.stdin.take() {
-        Some(mut child_stdin) => child_stdin.write_all(&stdin).await,
-        None => Err(io::Error::new(
-            io::ErrorKind::BrokenPipe,
-            "hook stdin unavailable",
-        )),
-    };
-    if let Err(error) = write_result {
+    let Some(mut child_stdin) = child.stdin.take() else {
         let _ = child.kill().await;
-        return failed_outcome(error.to_string());
-    }
+        return failed_outcome("hook stdin unavailable".to_owned());
+    };
+    let stdout = child.stdout.take().expect("piped hook stdout");
+    let stderr = child.stderr.take().expect("piped hook stderr");
 
-    let output = child.wait_with_output();
+    // Drain output while writing large diffs so neither pipe can block the other.
+    // The timeout also covers a hook that stops reading its input.
+    let output = async move {
+        let write = async move { child_stdin.write_all(&stdin).await };
+        let (_, (stdout, stdout_truncated), (stderr, stderr_truncated), status) = tokio::try_join!(
+            write,
+            drain_preview(stdout),
+            drain_preview(stderr),
+            child.wait()
+        )?;
+        Ok::<_, io::Error>((
+            std::process::Output {
+                status,
+                stdout,
+                stderr,
+            },
+            stdout_truncated,
+            stderr_truncated,
+        ))
+    };
     tokio::pin!(output);
     tokio::select! {
         biased;
@@ -94,8 +112,28 @@ pub async fn execute_command_hook<T: Serialize>(
         }
         output = &mut output => match output {
             Err(error) => failed_outcome(error.to_string()),
-            Ok(output) => outcome_from_output(output),
+            Ok((output,stdout_truncated,stderr_truncated)) => {
+                let mut outcome = outcome_from_output(output);
+                outcome.stdout_truncated |= stdout_truncated;
+                outcome.stderr_truncated |= stderr_truncated;
+                outcome
+            },
         },
+    }
+}
+
+async fn drain_preview(mut stream: impl AsyncRead + Unpin) -> io::Result<(Vec<u8>, bool)> {
+    let mut preview = Vec::with_capacity(OUTPUT_PREVIEW_BYTES);
+    let mut buffer = [0_u8; 8192];
+    let mut truncated = false;
+    loop {
+        let read = stream.read(&mut buffer).await?;
+        if read == 0 {
+            return Ok((preview, truncated));
+        }
+        let keep = read.min(OUTPUT_PREVIEW_BYTES - preview.len());
+        preview.extend_from_slice(&buffer[..keep]);
+        truncated |= keep < read;
     }
 }
 
@@ -300,6 +338,56 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn streams_large_inputs_while_draining_output() {
+        let directory = tempdir().unwrap();
+        let plugin_dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures");
+        let hook = config("./hook-stdin-reader.sh".to_owned());
+        #[cfg(windows)]
+        let hook = CommandHookConfig {
+            command_windows: Some(windows_command(
+                "[Console]::Out.Write('{\"received\":' + [Console]::In.ReadToEnd() + '}')",
+            )),
+            ..hook
+        };
+        let payload = json!({"diff": "x".repeat(1024 * 1024)});
+
+        let outcome = tokio::time::timeout(
+            Duration::from_secs(5),
+            execute_command_hook(&hook, &plugin_dir, directory.path(), &payload),
+        )
+        .await
+        .expect("large hook input must not deadlock");
+
+        assert_eq!(outcome.exit_code, Some(0), "{outcome:?}");
+        assert!(!outcome.timed_out);
+        assert!(outcome.stdout_truncated);
+        assert!(outcome.stdout.contains("\"diff\":"));
+    }
+
+    #[tokio::test]
+    async fn drains_large_stdout_and_stderr_into_bounded_previews() {
+        let directory = tempdir().unwrap();
+        let hook = config(
+            "printf '%1048576s' x | tr ' ' x; printf '%1048576s' y | tr ' ' y >&2".to_owned(),
+        );
+        #[cfg(windows)]
+        let hook = CommandHookConfig {
+            command_windows: Some(windows_command(
+                "[Console]::Out.Write('x' * 1048576); [Console]::Error.Write('y' * 1048576)",
+            )),
+            ..hook
+        };
+
+        let outcome =
+            execute_command_hook(&hook, directory.path(), directory.path(), &json!({})).await;
+
+        assert_eq!(outcome.exit_code, Some(0), "{outcome:?}");
+        assert_eq!(outcome.stdout.len(), OUTPUT_PREVIEW_BYTES);
+        assert_eq!(outcome.stderr.len(), OUTPUT_PREVIEW_BYTES);
+        assert!(outcome.stdout_truncated && outcome.stderr_truncated);
+    }
+
+    #[tokio::test]
     async fn times_out() {
         let directory = tempdir().unwrap();
         let mut hook = config("sleep 2".to_owned());
@@ -308,8 +396,9 @@ mod tests {
             hook.command_windows = Some(windows_command("Start-Sleep -Seconds 2"));
         }
         hook.timeout = 1;
+        let payload = json!({"diff": "x".repeat(1024 * 1024)});
         let outcome =
-            execute_command_hook(&hook, directory.path(), directory.path(), &json!({})).await;
+            execute_command_hook(&hook, directory.path(), directory.path(), &payload).await;
         assert!(outcome.timed_out, "{outcome:?}");
     }
 

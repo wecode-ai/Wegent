@@ -23,7 +23,7 @@ use super::{
     command::execute_command_hook,
     host::{emit_run_event, summary},
     matcher::matches_tool,
-    model::{HookHealth, HookUser, CODEX_ROLLOUT_SUBSCRIPTION},
+    model::{HookEventName, HookHealth, HookUser, CODEX_ROLLOUT_SUBSCRIPTION},
     registry::{HookRegistryStore, ResolvedHookPlugin},
 };
 use store::{SessionContext, Store};
@@ -191,7 +191,12 @@ fn subscribed_plugins(registry: &HookRegistryStore) -> Subscribers {
         delivering: Vec::new(),
     };
     for plugin in registry.discover() {
-        if !plugin.manifest.subscribes(CODEX_ROLLOUT_SUBSCRIPTION) {
+        if !plugin.manifest.subscribes(CODEX_ROLLOUT_SUBSCRIPTION)
+            || !plugin
+                .hooks
+                .iter()
+                .any(|hook| hook.event_name == HookEventName::PostToolUse)
+        {
             continue;
         }
         subscribers.installed = true;
@@ -220,11 +225,10 @@ async fn deliver(
     for plugin in subscribers.delivering {
         let plugin_dir = plugin.directory.clone();
         let plugin_id = plugin.manifest.id.clone();
-        for hook in plugin
-            .hooks
-            .into_iter()
-            .filter(|hook| matches_tool(&hook.matcher, &input.tool_name))
-        {
+        for hook in plugin.hooks.into_iter().filter(|hook| {
+            hook.event_name == HookEventName::PostToolUse
+                && matches_tool(&hook.matcher, &input.tool_name)
+        }) {
             deliveries += 1;
             let started = Instant::now();
             let started_at = now();

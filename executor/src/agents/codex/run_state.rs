@@ -347,7 +347,7 @@ fn codex_error_will_retry(params: &Value) -> bool {
         .unwrap_or(false)
 }
 
-fn is_root_codex_turn_event(params: &Value) -> bool {
+pub(super) fn is_root_codex_turn_event(params: &Value) -> bool {
     let turn = params.get("turn").unwrap_or(params);
     codex_agent_path(turn)
         .or_else(|| codex_agent_path(params))

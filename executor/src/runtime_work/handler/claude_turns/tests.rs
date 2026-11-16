@@ -203,6 +203,119 @@ fn isolated_handler() -> (tempfile::TempDir, RuntimeWorkRpcHandler) {
     (directory, handler)
 }
 
+#[tokio::test]
+async fn rejected_claude_turn_never_captures_git_or_executes_hooks() {
+    let _lock = crate::test_env::lock();
+    let directory = tempfile::tempdir().unwrap();
+    let _home = EnvGuard::set("WEGENT_EXECUTOR_HOME", directory.path().to_str().unwrap());
+    let mut handler = RuntimeWorkRpcHandler::new("device-1", "/bin/false");
+    handler.store = RuntimeWorkStore::new(directory.path().join("index.json"));
+    let workspace = directory.path().join("repo");
+    fs::create_dir(&workspace).unwrap();
+    let git = |args: &[&str]| {
+        let mut command = std::process::Command::new("git");
+        wegent_workspace::native_git::clear_local_git_env(&mut command);
+        let output = command
+            .arg("-C")
+            .arg(&workspace)
+            .args(args)
+            .output()
+            .unwrap();
+        assert!(output.status.success(), "{output:?}");
+    };
+    git(&["init", "-q"]);
+    let capture_marker = directory.path().join("git-capture-ran");
+    let hook_marker = directory.path().join("hook-command-ran");
+    git(&[
+        "config",
+        "filter.authorization-test.clean",
+        &format!("echo captured > \"{}\"", capture_marker.display()),
+    ]);
+    fs::write(
+        workspace.join(".gitattributes"),
+        "*.txt filter=authorization-test\n",
+    )
+    .unwrap();
+    fs::write(workspace.join("source.txt"), "must not be read\n").unwrap();
+    let registry =
+        crate::hooks::registry::HookRegistryStore::new(directory.path().join("executor"));
+    registry
+        .create(
+            serde_json::from_value(json!({
+                "schemaVersion": 1, "id": "authorization-test", "name": "Authorization test",
+                "version": "1.0.0",
+            }))
+            .unwrap(),
+            serde_json::from_value(json!({"TurnCompleted": [{"hooks": [{
+                "type": "command", "async": false,
+                "command": format!("echo executed > \"{}\"", hook_marker.display()),
+            }]}]}))
+            .unwrap(),
+        )
+        .unwrap();
+    handler.hook_service = HookService::new(registry, directory.path().join("codex"));
+    assert!(handler.hook_service.has_turn_completed_hooks());
+    let mut request = ExecutionRequest {
+        task_id: "denied-task".to_owned(),
+        subtask_id: "denied-turn".to_owned(),
+        project_workspace_path: Some(workspace.display().to_string()),
+        extra: serde_json::Map::from_iter([(
+            "origin".to_owned(),
+            json!({
+                "type": "project_assessment",
+            }),
+        )]),
+        ..ExecutionRequest::default()
+    };
+    for (origin, expected_message) in [
+        (
+            "project_assessment",
+            "Read-only project assessments require the Codex text-only runtime",
+        ),
+        (
+            "project_coordinator",
+            "Project conversation owner is missing",
+        ),
+    ] {
+        request
+            .extra
+            .insert("origin".to_owned(), json!({"type": origin}));
+        let sink = ClaudeRuntimeEventSink {
+            handler: handler.clone(),
+            local_task_id: request.task_id.clone(),
+            execution_id: 1,
+            request: request.clone(),
+            transcript: Arc::default(),
+        };
+        let builder =
+            ResponsesEventBuilder::new(&request.task_id, &request.subtask_id, "test-model");
+        let (_cancel_tx, cancel_rx) = oneshot::channel();
+
+        let outcome = handler
+            .run_claude_turn_with_hooks(&request.task_id, &request, &sink, &builder, cancel_rx)
+            .await;
+
+        assert!(matches!(outcome, ExecutionOutcome::Failed { message }
+            if message == expected_message));
+    }
+    assert!(
+        !capture_marker.exists(),
+        "Rejected work must not invoke Git clean filters"
+    );
+    assert!(
+        !hook_marker.exists(),
+        "Rejected work must not execute hook commands"
+    );
+    assert!(handler
+        .hook_service
+        .list()
+        .iter()
+        .find(|plugin| plugin.manifest.id == "authorization-test")
+        .unwrap()
+        .recent_runs
+        .is_empty());
+}
+
 #[test]
 fn claude_transcript_merges_streamed_block_updates() {
     let mut transcript = ClaudeTurnTranscript::default();

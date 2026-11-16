@@ -396,19 +396,31 @@ Open **Settings → Personal → Context**:
 | Default stand-in supervision principles | With experimental features enabled, edit and save; not a project permission policy                                             |
 | Wework instructions                     | Edit the text and save; unsaved text is not applied and instructions cannot override application permissions or security rules |
 
+<a id="runtime-hooks"></a>
+
 ## Quick phrases, Runtime and Hooks
 
 <!-- ui-source: src/components/settings/QuickPhrasesSettingsPage.tsx -->
 <!-- ui-source: src/components/settings/RuntimeSettingsPage.tsx -->
 <!-- ui-source: src/features/hooks/HooksSettingsPage.tsx -->
 
-| Entry                                | Features and steps                                                                                                              | Limits                                                                      |
-| ------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------- |
-| Settings → Personal → Quick phrases  | Create, edit, reorder or delete phrases; select one in the task composer, review and send                                       | Inserting a phrase does not execute a task                                  |
-| Settings → Personal → Runtime        | Create a named configuration with device and model; choose an existing Runtime for project defaults; delete with the row action | A reusable execution configuration, not a Node.js version                   |
-| Settings → Coding → Hooks → Add Hook | Set plugin ID, name, version, tool matcher, command, Windows command, timeout, asynchronous execution and status message; save  | Runs external commands; only configure trusted commands                     |
-| Settings → Coding → Hooks → Import   | Select a local Hook directory and inspect health after import                                                                   | Fix invalid configuration or missing commands first                         |
-| Hook row                             | Enable/disable, edit, delete, reveal its folder or test and inspect the last result                                             | Testing actually executes the command, rather than merely validating syntax |
+| Entry                                | Features and steps                                                                                                                                | Limits                                                                      |
+| ------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------- |
+| Settings → Personal → Quick phrases  | Create, edit, reorder or delete phrases; select one in the task composer, review and send                                                         | Inserting a phrase does not execute a task                                  |
+| Settings → Personal → Runtime        | Create a named configuration with device and model; choose an existing Runtime for project defaults; delete with the row action                   | A reusable execution configuration, not a Node.js version                   |
+| Settings → Coding → Hooks → Add Hook | Choose a trigger event; set plugin ID, name, version, matcher, command, Windows command, timeout, asynchronous execution and status message; save | Runs external commands; only configure trusted commands                     |
+| Settings → Coding → Hooks → Import   | Select a local Hook directory and inspect health after import                                                                                     | Fix invalid configuration or missing commands first                         |
+| Hook row                             | Enable/disable, edit, delete, reveal its folder or test and inspect the last result                                                               | Testing actually executes the command, rather than merely validating syntax |
+
+Under **Settings → Coding → Hooks → Add hook → Trigger event**, choose **File edit completed** to receive `PostToolUse` events filtered by tool name, or **Git diff after each turn** to receive `TurnCompleted` when each main agent turn ends. Starting from an initial execution snapshot, consecutive Git workspace snapshots provide each increment, including subagent, Shell and other command changes in the same workspace. Pre-execution content that remains unchanged is excluded. Non-Git directories do not trigger this event. The turn status matcher defaults to `.*`; customize it to filter completion statuses. Save and enable the hook to receive events.
+
+Commands receive small JSON events on standard input. `TurnCompleted` includes a stable `event_id`, increasing `sequence`, `session_id`, `turn_id`, `cwd`, `status` and `file_changes`. `file_changes.diff_artifact` references the complete Git patch and `files_artifact` references the complete JSONL file list. Both include `path`, `size_bytes`, `sha256` and `format`; large contents are kept outside the event. Handlers should stream these files and archive anything they need to retain before exiting successfully. The executor removes source artifacts after every handler has acknowledged success.
+
+At turn completion the executor seals the Git snapshot and persists the event, then generates files and runs commands in the background without making the main agent wait for the plugin. `TurnCompleted` always uses durable background delivery. The asynchronous execution option still controls `PostToolUse`; Test Hook executes commands directly. Failed events remain pending across restarts and may be redelivered, so handlers must be idempotent by `event_id`. Each handler preserves order within a workspace or session; a failed handler does not block other handlers. Disabled, deleted or unavailable plugins pause delivery while pending data remains durable. Re-enabling or reinstalling the same plugin ID resumes pending deliveries. Deleting a plugin does not delete this unacknowledged data. Changes in the same repository during the main turn's window belong to that turn. A subagent using a separate worktree has a separate workspace. Editing an existing hook preserves its other handlers and subscriptions.
+
+Consecutive turns within one execution reuse the last durably queued ending snapshot, covering writes between notifications. After capture or enqueue failures, a later successful record includes the accumulated net changes. A new user request establishes a fresh baseline. Official Codex notifications can lag behind writes for the next turn, so adjacent turns may be coalesced. Exact per-turn attribution and intermediate versions between snapshots are not guaranteed.
+
+This event requires **Git 2.41 or newer** on the execution device so background generation reads `.gitattributes` from the sealed tree, preventing later attribute changes from altering an earlier patch.
 
 ## Appshots and computer use
 

@@ -33,6 +33,7 @@ pub(super) struct TurnReadOptions {
     pub recover_usage_limits: bool,
     pub wait_for_goal_continuation: bool,
     pub active_turn_started: Option<super::CodexActiveTurnCallback>,
+    pub turn_diff_hook: Option<super::TurnDiffHook>,
     pub overload_turn_recovering: Option<super::CodexActiveTurnCallback>,
     pub overload_continuation_params: Value,
     pub notifications: Option<CodexNotificationSender>,
@@ -47,14 +48,15 @@ fn notify_active_turn(
     active_turn_id: &mut Option<String>,
     thread_id: &str,
     observed: Option<String>,
-) {
+) -> Option<String> {
     let Some(turn_id) = observed.filter(|turn_id| active_turn_id.as_ref() != Some(turn_id)) else {
-        return;
+        return None;
     };
     if let Some(callback) = callback.as_ref() {
         callback(thread_id.to_owned(), turn_id.clone());
     }
-    *active_turn_id = Some(turn_id);
+    *active_turn_id = Some(turn_id.clone());
+    Some(turn_id)
 }
 
 impl JsonRpcConnection {
@@ -156,6 +158,7 @@ impl JsonRpcConnection {
             recover_usage_limits,
             mut wait_for_goal_continuation,
             active_turn_started,
+            turn_diff_hook,
             overload_turn_recovering,
             overload_continuation_params,
             notifications,
@@ -193,12 +196,16 @@ impl JsonRpcConnection {
             };
             if response_id(&message) == Some(turn_request_id) {
                 let response = response_result(message)?;
-                notify_active_turn(
+                if let Some(turn_id) = notify_active_turn(
                     &active_turn_started,
                     &mut active_turn_id,
                     &thread_id,
                     super::turn_start_response_id(&response),
-                );
+                ) {
+                    if let Some(hook) = turn_diff_hook.as_ref() {
+                        hook.started(&thread_id, &turn_id).await;
+                    }
+                }
                 if wait_for_goal_continuation {
                     super::sync_goal_status_from_response(state, &response);
                 }
@@ -208,12 +215,19 @@ impl JsonRpcConnection {
             let observed =
                 super::observed_active_turn_id(active_turn_id.as_deref(), None, &message, state)
                     .map(|(turn_id, _)| turn_id);
-            notify_active_turn(
+            if let Some(turn_id) = notify_active_turn(
                 &active_turn_started,
                 &mut active_turn_id,
                 &thread_id,
                 observed,
-            );
+            ) {
+                if let Some(hook) = turn_diff_hook.as_ref() {
+                    hook.started(&thread_id, &turn_id).await;
+                }
+            }
+            if let Some(hook) = turn_diff_hook.as_ref() {
+                hook.observe(&thread_id, &message).await;
+            }
             if waiting_for_initial_progress
                 && codex_notification_has_initial_progress(&message, state)
             {

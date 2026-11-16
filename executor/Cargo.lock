@@ -3058,6 +3058,7 @@ dependencies = [
  "wegent-executor-test-support",
  "wegent-runtime-config",
  "wegent-subprocess",
+ "wegent-workspace",
 ]
 
 [[package]]
@@ -3244,6 +3245,7 @@ dependencies = [
  "dirs 6.0.0",
  "flate2",
  "libc",
+ "serde",
  "serde_json",
  "sha2",
  "tempfile",

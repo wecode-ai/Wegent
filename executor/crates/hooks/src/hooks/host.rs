@@ -5,27 +5,33 @@
 use std::{
     collections::HashMap,
     path::PathBuf,
-    sync::{Arc, Mutex},
+    sync::{
+        atomic::{AtomicU64, Ordering},
+        Arc, Mutex,
+    },
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 
 use tokio::sync::broadcast;
 use tokio::sync::Semaphore;
+use wegent_workspace::turn_file_changes::GitTurnRange;
 
 use super::{
     command::execute_command_hook,
     matcher::matches_tool,
     model::{
         HookEventName, HookHealth, HookRunStatus, HookRunSummary, HookUser, PostToolUseInput,
-        ResolvedHookPluginView, CODEX_ROLLOUT_SUBSCRIPTION,
+        ResolvedHookPluginView, TurnCompletedInput, TurnHookReceipt, CODEX_ROLLOUT_SUBSCRIPTION,
     },
-    registry::HookRegistryStore,
+    registry::{HookRegistryStore, ResolvedCommandHook},
     rollout::CodexRolloutObserver,
+    turn_delivery::TurnHookOutbox,
 };
 
 const MAX_ASYNC_HOOKS: usize = 4;
 const DEDUP_TTL: Duration = Duration::from_secs(60 * 60);
 const MAX_DEDUP_ENTRIES: usize = 4096;
+static TEST_EVENT_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
 #[derive(Clone)]
 pub struct HookService {
@@ -34,10 +40,13 @@ pub struct HookService {
     capacity: Arc<Semaphore>,
     seen: Arc<Mutex<HashMap<String, Instant>>>,
     event_tx: Arc<Mutex<Option<broadcast::Sender<serde_json::Value>>>>,
+    turn_outbox: TurnHookOutbox,
 }
 
 impl HookService {
     pub fn new(registry: HookRegistryStore, codex_home: PathBuf) -> Self {
+        let event_tx = Arc::new(Mutex::new(None));
+        let turn_outbox = TurnHookOutbox::new(registry.clone(), Arc::clone(&event_tx));
         Self {
             rollout: CodexRolloutObserver::new(
                 registry
@@ -50,7 +59,8 @@ impl HookService {
             registry,
             capacity: Arc::new(Semaphore::new(MAX_ASYNC_HOOKS)),
             seen: Arc::new(Mutex::new(HashMap::new())),
-            event_tx: Arc::new(Mutex::new(None)),
+            event_tx,
+            turn_outbox,
         }
     }
 
@@ -61,6 +71,7 @@ impl HookService {
             .expect("hook event sender lock should not be poisoned") = Some(sender);
         self.rollout
             .start(self.registry.clone(), Arc::clone(&self.event_tx));
+        self.turn_outbox.start();
     }
 
     pub fn list(&self) -> Vec<ResolvedHookPluginView> {
@@ -71,72 +82,98 @@ impl HookService {
     }
 
     pub async fn dispatch(&self, input: PostToolUseInput) {
+        self.dispatch_post_tool_use(input).await;
+    }
+
+    pub fn has_turn_completed_hooks(&self) -> bool {
+        self.registry.discover().iter().any(|plugin| {
+            plugin.enabled
+                && plugin.health == HookHealth::Ready
+                && plugin
+                    .hooks
+                    .iter()
+                    .any(|hook| hook.event_name == HookEventName::TurnCompleted)
+        })
+    }
+
+    pub async fn enqueue_turn_completed(
+        &self,
+        input: TurnCompletedInput,
+        range: Option<GitTurnRange>,
+    ) -> Result<TurnHookReceipt, String> {
+        self.turn_outbox.enqueue(input, range).await
+    }
+
+    pub async fn flush_turn_hooks(&self) -> Result<(), String> {
+        self.turn_outbox.flush().await
+    }
+
+    async fn dispatch_post_tool_use(&self, input: PostToolUseInput) {
         for plugin in self.registry.discover() {
             if !dispatches_from_turn_stream(&plugin) {
                 continue;
             }
             for hook in plugin.hooks {
-                if !matches_tool(&hook.matcher, &input.tool_name) {
+                if hook.event_name != HookEventName::PostToolUse
+                    || !matches_tool(&hook.matcher, &input.tool_name)
+                {
                     continue;
                 }
-                let key = format!(
-                    "{}:{}:{}",
-                    input.tool_use_id, plugin.manifest.id, hook.handler_id
-                );
+                let key = serde_json::json!([
+                    input.session_id,
+                    input.turn_id,
+                    input.tool_use_id,
+                    plugin.manifest.id,
+                    hook.handler_id
+                ])
+                .to_string();
                 if !self.mark_once(key) {
                     continue;
                 }
-                let config = hook.config;
                 let plugin_dir = plugin.directory.clone();
                 let hook_input = input.clone();
                 let plugin_id = plugin.manifest.id.clone();
-                let handler_id = hook.handler_id;
-                if config.asynchronous {
+                let cwd = input.cwd.clone();
+                if hook.config.asynchronous {
                     let Ok(permit) = self.capacity.clone().try_acquire_owned() else {
-                        self.record_skipped(&plugin_id, &handler_id);
+                        self.record_skipped(&plugin_id, &hook.handler_id);
                         continue;
                     };
-                    let registry = self.registry.clone();
-                    let event_tx = Arc::clone(&self.event_tx);
+                    let service = self.clone();
                     tokio::spawn(async move {
                         let _permit = permit;
-                        let started = Instant::now();
-                        let started_at_ms = now_ms();
-                        let outcome = execute_command_hook(
-                            &config,
-                            &plugin_dir,
-                            &hook_input.cwd,
-                            &hook_input,
-                        )
-                        .await;
-                        let run = summary(
-                            plugin_id,
-                            handler_id,
-                            started_at_ms,
-                            started.elapsed(),
-                            outcome,
-                        );
-                        let _ = registry.record_run(run.clone());
-                        emit_run_event(&event_tx, &run);
+                        service
+                            .execute_and_record(plugin_id, hook, plugin_dir, cwd, hook_input)
+                            .await;
                     });
                 } else {
-                    let started = Instant::now();
-                    let started_at_ms = now_ms();
-                    let outcome =
-                        execute_command_hook(&config, &plugin_dir, &hook_input.cwd, &hook_input)
-                            .await;
-                    let run = summary(
-                        plugin_id,
-                        handler_id,
-                        started_at_ms,
-                        started.elapsed(),
-                        outcome,
-                    );
-                    let _ = self.registry.record_run(run.clone());
-                    emit_run_event(&self.event_tx, &run);
+                    self.execute_and_record(plugin_id, hook, plugin_dir, cwd, hook_input)
+                        .await;
                 }
             }
         }
+    }
+
+    async fn execute_and_record(
+        &self,
+        plugin_id: String,
+        hook: ResolvedCommandHook,
+        plugin_dir: PathBuf,
+        cwd: PathBuf,
+        input: PostToolUseInput,
+    ) {
+        let started = Instant::now();
+        let started_at_ms = now_ms();
+        let outcome = execute_command_hook(&hook.config, &plugin_dir, &cwd, &input).await;
+        let run = summary(
+            plugin_id,
+            hook.handler_id,
+            started_at_ms,
+            started.elapsed(),
+            outcome,
+        );
+        let _ = self.registry.record_run(run.clone());
+        emit_run_event(&self.event_tx, &run);
     }
 
     pub async fn test(
@@ -156,24 +193,42 @@ impl HookService {
             .into_iter()
             .find(|hook| hook.handler_id == handler_id)
             .ok_or("hook handler not found")?;
-        let input = PostToolUseInput {
-            user: HookUser {
-                id: None,
-                name: "anonymous".to_owned(),
-            },
-            session_id: "hook-test-session".to_owned(),
-            turn_id: "hook-test-turn".to_owned(),
-            agent_id: None,
-            agent_type: None,
-            transcript_path: None,
-            cwd: cwd.clone(),
-            hook_event_name: HookEventName::PostToolUse,
-            model: None,
-            permission_mode: "workspace-write".to_owned(),
-            tool_name: "apply_patch".to_owned(),
-            tool_use_id: "hook-test-call".to_owned(),
-            tool_input: serde_json::json!({"changes": []}),
-            tool_response: serde_json::json!({"status":"completed"}),
+        let input = match hook.event_name {
+            HookEventName::PostToolUse => serde_json::to_value(PostToolUseInput {
+                user: HookUser {
+                    id: None,
+                    name: "anonymous".to_owned(),
+                },
+                session_id: "hook-test-session".to_owned(),
+                turn_id: "hook-test-turn".to_owned(),
+                agent_id: None,
+                agent_type: None,
+                transcript_path: None,
+                cwd: cwd.clone(),
+                hook_event_name: HookEventName::PostToolUse,
+                model: None,
+                permission_mode: "workspace-write".to_owned(),
+                tool_name: "apply_patch".to_owned(),
+                tool_use_id: "hook-test-call".to_owned(),
+                tool_input: serde_json::json!({"changes": []}),
+                tool_response: serde_json::json!({"status":"completed"}),
+            }).map_err(|error| error.to_string())?,
+            HookEventName::TurnCompleted => serde_json::to_value(TurnCompletedInput {
+                event_id: format!("hook-test-{}-{}-{}",std::process::id(),now_ms(),TEST_EVENT_SEQUENCE.fetch_add(1,Ordering::Relaxed)),
+                sequence: 0,
+                user: HookUser {
+                    id: None,
+                    name: "anonymous".to_owned(),
+                },
+                session_id: "hook-test-session".to_owned(),
+                turn_id: "hook-test-turn".to_owned(),
+                cwd: cwd.clone(),
+                hook_event_name: HookEventName::TurnCompleted,
+                model: None,
+                permission_mode: "workspace-write".to_owned(),
+                status: "completed".to_owned(),
+                file_changes: serde_json::json!({"version":2,"status":"error","file_count":0,"additions":0,"deletions":0,"error":"Synthetic hook test has no captured turn artifacts"}),
+            }).map_err(|error| error.to_string())?,
         };
         let started = Instant::now();
         let started_at_ms = now_ms();
@@ -340,3 +395,7 @@ mod tests {
         )));
     }
 }
+
+#[cfg(test)]
+#[path = "turn_completed_tests.rs"]
+mod turn_completed_tests;

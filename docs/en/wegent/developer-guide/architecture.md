@@ -403,6 +403,34 @@ The Codex runtime is separated by responsibility under `executor/src/agents/code
 
 Codex hook plugins receive `PostToolUse` from the live turn stream by default, so a file written by a subagent thread, or while the executor was not watching (offline, restarting, or with the plugin disabled), never reaches them. The executor therefore also offers a durable rollout feed: a plugin that declares `codex_rollout` in the `subscriptions` list of its `plugin.json` receives its `PostToolUse` hooks from an observer instead. The observer tails the rollouts under `sessions/` and `archived_sessions/` of the isolated Codex Home, delivers one file change per edited file, and resolves subagent threads through `parent_thread_id` up to the task thread, so their writes count towards the same task. Deliveries are keyed by "Codex call id + canonical file path": one edit mirrored by a parent and a subagent session is delivered once, while repeated edits of one file are delivered once per edit. Rollouts that predate the observer resume at end of file, and newly created ones start right after `session_meta`. Plugins that do not subscribe keep the live dispatch, and the observer does not scan while nothing subscribes. Pending deliveries commit together with the read cursor in SQLite and retry with backoff when the hook fails.
 
+The `TurnCompleted` hook follows the main turn lifecycle: capture the initial Git tree, then seal the ending tree and persist its delivery job in SQLite. Git references protect pending trees. Background processing reads only immutable trees, never the changing workspace. Complete patches and JSONL file lists are written with fixed-size buffers and batched file statistics. Hook stdin carries only `diff_artifact` and `files_artifact` paths, byte counts, SHA-256 hashes and small summaries, with no inline diff or full file array. This path does not apply the UI preview's content-size ceiling. At each boundary, current tracked paths from the real index are streamed into the private index with fixed-size buffers, including force-added ignored files. The user's index remains unchanged.
+
+Consecutive turns within one execution reuse the last durably queued ending tree as their next baseline. Capture or enqueue failures do not advance the baseline; a later successful record includes the accumulated net changes, including writes between notifications. A new user request establishes a fresh baseline to exclude pre-execution changes. Boundaries are still captured when Codex notifications are consumed, and the official binary may already have written for the next turn. Adjacent turns may therefore be coalesced; exact per-turn attribution and intermediate versions between snapshots are not guaranteed. Work on an exact boundary protocol remains paused.
+
+The durable outbox uses bounded background execution, preserves per-handler order within a workspace or session and acknowledges each handler independently. Plugin availability is checked when claiming work and before executing commands. Disabled, deleted or unavailable consumers retain pending data without blocking other handlers; re-enabling or reinstalling the same ID resumes delivery. Scheduling deadlines include only available consumers without pending predecessors, preventing paused entries from causing busy loops. Failed jobs remain pending across restarts. Stable `event_id` values and increasing `sequence` values support idempotent plugin handling. Git references are released after generated artifact descriptors are durable; source artifacts are removed after all targets succeed. Plugins that need retention must archive files before returning success. Main-turn completion waits only for the boundary snapshot and durable enqueue; necessary Git reads and persistence still have a cost. Snapshots include subagent, Shell and script changes in the same workspace without relying on editing-tool or child-agent events. Unchanged pre-existing content is excluded and non-Git workspaces do not trigger the hook. Handlers are isolated by event, and `codex_rollout` changes only the source of `PostToolUse`.
+
+This flow requires Git 2.41+. Background diffs use `--attr-source=<ending tree>` to freeze repository attributes. File lists and line statistics use the same source, so later `.gitattributes` changes do not alter sealed turns.
+
+```mermaid
+flowchart LR
+    A[Initial execution snapshot] --> B[Main agent and shared-workspace subagents]
+    B --> C[Seal ending tree]
+    C --> D[Persist delivery job in SQLite]
+    D --> E[Main agent continues]
+    D --> L[Reuse ending tree after durable success]
+    L --> B
+    C -->|Capture or enqueue fails| M[Retain baseline for the next combined range]
+    M --> B
+    D --> J{Available handlers without pending predecessors}
+    J -->|Yes| F[Stream patch and JSONL in background]
+    J -->|No| K[Retain pending data]
+    K -->|Available again| J
+    F --> G[Small descriptor event]
+    G --> H[Recheck availability before reading and archiving]
+    H -->|Disabled| K
+    H --> I[Reclaim sources after all handlers acknowledge]
+```
+
 Live Codex agent-message text must be classified by an explicit phase: only `final` or `final_answer` enters the final answer, while `analysis`, `commentary`, and missing phases enter processing first. Missing phases can occur before or after a tool call, so a default final classification must not trigger Wework's final-processing collapse. When a turn ends, the executor uses explicit final text; if a model never sends a phase, it uses the last unphased text as the terminal answer. Transcript restoration follows the same rule and uses later tools or other process items to distinguish unphased processing text from the final answer.
 
 Wework's built-in browser MCP is provided by the Rust executor's `browser-mcp-server` subcommand and controls the right-side browser through a local bridge address allocated independently for each Electron instance. The packaged app does not require Node.js or a separately deployed browser MCP server, and multiple instances do not share a fixed port.

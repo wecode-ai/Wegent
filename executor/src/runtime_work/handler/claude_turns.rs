@@ -365,28 +365,9 @@ impl RuntimeWorkRpcHandler {
                 .send(builder.response_created(Some("ClaudeCode")))
                 .await;
 
-            let authorization = if request
-                .extra
-                .get("origin")
-                .is_some_and(|origin| origin["type"] == "project_assessment")
-            {
-                Err("Read-only project assessments require the Codex text-only runtime".into())
-            } else {
-                handler.validate_project_coordinator_request(&request).await
-            };
-            let outcome = match authorization {
-                Err(message) => ExecutionOutcome::Failed { message },
-                Ok(()) => tokio::select! {
-                _ = cancel_rx => ExecutionOutcome::Cancelled {
-                    message: "cancelled".to_owned(),
-                },
-                outcome = handler.claude_process_engine.run_with_events(
-                    request.clone(),
-                    sink.clone(),
-                    builder.clone(),
-                ) => outcome,
-                },
-            };
+            let outcome = handler
+                .run_claude_turn_with_hooks(&local_task_id, &request, &sink, &builder, cancel_rx)
+                .await;
 
             scheduled_turn_guard.command_outcome =
                 Some(command_journal::CommandState::from_execution(&outcome));
@@ -542,6 +523,57 @@ impl RuntimeWorkRpcHandler {
                 restore_startup.finish();
             }
         });
+    }
+
+    async fn run_claude_turn_with_hooks(
+        &self,
+        local_task_id: &str,
+        request: &ExecutionRequest,
+        sink: &ClaudeRuntimeEventSink,
+        builder: &ResponsesEventBuilder,
+        cancel_rx: oneshot::Receiver<()>,
+    ) -> ExecutionOutcome {
+        let authorization = if request
+            .extra
+            .get("origin")
+            .is_some_and(|origin| origin["type"] == "project_assessment")
+        {
+            Err("Read-only project assessments require the Codex text-only runtime".into())
+        } else {
+            self.validate_project_coordinator_request(request).await
+        };
+        if let Err(message) = authorization {
+            return ExecutionOutcome::Failed { message };
+        }
+        let turn_diff_hook = self.turn_diff_hook(request);
+        if let Some(hook) = turn_diff_hook.as_ref() {
+            hook.prepare().await;
+            hook.started(local_task_id, &request.subtask_id).await;
+        }
+        let outcome = tokio::select! {
+            _ = cancel_rx => ExecutionOutcome::Cancelled { message: "cancelled".to_owned() },
+            outcome = self.claude_process_engine.run_with_events(
+                request.clone(), sink.clone(), builder.clone(),
+            ) => outcome,
+        };
+        if let Some(hook) = turn_diff_hook.as_ref() {
+            if let Some(session_id) = crate::agent_session::saved_executor_session(request)
+                .and_then(|session| string_field(&session, "sessionId"))
+            {
+                hook.started(&session_id, &request.subtask_id).await;
+            }
+            let status = match &outcome {
+                ExecutionOutcome::Completed { .. } => Some("completed"),
+                ExecutionOutcome::Cancelled { .. } => Some("interrupted"),
+                ExecutionOutcome::WaitingForUserInput { .. } => Some("waiting_for_user_input"),
+                ExecutionOutcome::Failed { .. } => Some("failed"),
+                ExecutionOutcome::Running => None,
+            };
+            if let Some(status) = status {
+                hook.completed(status).await;
+            }
+        }
+        outcome
     }
 
     fn emit_claude_runtime_event(

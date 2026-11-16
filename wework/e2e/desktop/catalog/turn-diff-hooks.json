@@ -1,0 +1,25 @@
+{
+  "order": 157100,
+  "scenario": "./scenarios/turn-diff-hooks.scenario.mjs",
+  "scenarioOnly": true,
+  "paths": [
+    "executor/crates/hooks/**",
+    "executor/crates/workspace/src/turn_file_changes/**",
+    "executor/crates/workspace/src/turn_file_changes.rs",
+    "executor/src/agents/codex.rs",
+    "executor/src/agents/codex/json_rpc.rs",
+    "executor/src/agents/codex/turn_hooks*",
+    "executor/src/agents/codex/run_state.rs",
+    "executor/src/runtime_work/handler/hooks.rs",
+    "executor/src/runtime_work/handler/turns.rs",
+    "executor/src/runtime_work/handler/claude_turns.rs",
+    "wework/src/features/hooks/**"
+  ],
+  "ci": {
+    "core": {
+      "order": 103100,
+      "shard": 7,
+      "position": 8100
+    }
+  }
+}

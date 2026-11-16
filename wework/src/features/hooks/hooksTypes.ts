@@ -1,4 +1,5 @@
 export type HookSource = 'user' | 'bundled' | 'managed'
+export type HookEventName = 'PostToolUse' | 'TurnCompleted'
 export type HookHealthStatus =
   | 'ready'
   | 'disabled'
@@ -19,6 +20,7 @@ export interface HookManifest {
   name: string
   description: string
   version: string
+  subscriptions?: string[]
 }
 export interface CommandHookConfig {
   type: 'command'
@@ -31,6 +33,7 @@ export interface CommandHookConfig {
 }
 export interface HookHandler {
   id: string
+  eventName: HookEventName
   matcher: string
   config: CommandHookConfig
 }
@@ -59,5 +62,5 @@ export interface ResolvedHookPlugin {
 }
 export interface HookDraft {
   manifest: HookManifest
-  hooks: { PostToolUse: Array<{ matcher: string; hooks: CommandHookConfig[] }> }
+  hooks: Partial<Record<HookEventName, Array<{ matcher: string; hooks: CommandHookConfig[] }>>>
 }

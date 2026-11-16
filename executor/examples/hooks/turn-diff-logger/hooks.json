@@ -1,0 +1,17 @@
+{
+  "TurnCompleted": [
+    {
+      "matcher": ".*",
+      "hooks": [
+        {
+          "type": "command",
+          "command": "./bin/log-turn.mjs",
+          "commandWindows": "./bin/log-turn.cmd",
+          "timeout": 300,
+          "async": true,
+          "statusMessage": "Recording turn Git diff locally"
+        }
+      ]
+    }
+  ]
+}

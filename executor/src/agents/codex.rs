@@ -188,8 +188,10 @@ pub(crate) use skill_config::reload_skill_configuration;
 mod local_notifications;
 mod native_activity;
 mod native_turn;
+mod turn_hooks;
 use native_activity::{CodexNativeActivity, CodexNativeRequest};
 pub(crate) use native_turn::completed_native_codex_turn;
+pub use turn_hooks::TurnDiffHook;
 pub use wegent_execution_contracts::notification::{CodexNotification, CodexNotificationSender};
 pub type CodexThreadStartedCallback = Box<dyn FnOnce(String) + Send + 'static>;
 pub type CodexActiveTurnCallback = Box<dyn Fn(String, String) + Send + 'static>;
@@ -212,6 +214,7 @@ pub struct CodexAppServerTurnOptions {
     pub thread_started: Option<CodexThreadStartedCallback>,
     pub active_turn_started: Option<CodexActiveTurnCallback>,
     pub active_turn_finished: Option<CodexActiveTurnFinishedCallback>,
+    pub turn_diff_hook: Option<TurnDiffHook>,
     pub overload_turn_recovering: Option<CodexActiveTurnCallback>,
 }
 
@@ -2337,6 +2340,7 @@ async fn run_codex_app_server_turn_on_shared_client(
         thread_started,
         active_turn_started,
         active_turn_finished,
+        turn_diff_hook,
         overload_turn_recovering,
         defer_interactive_forms: _,
     } = options;
@@ -2354,6 +2358,9 @@ async fn run_codex_app_server_turn_on_shared_client(
     let result: Result<CodexAppServerTurn, String> = async {
         let request = &prepared.request;
         let awaits_initial_goal_turn = initial_thread_goal.is_some() && !request.ephemeral;
+        if let Some(hook) = turn_diff_hook.as_ref() {
+            hook.prepare().await;
+        }
         client
             .ensure_process_for_launch_config(&launch_config)
             .await?;
@@ -2591,6 +2598,9 @@ async fn run_codex_app_server_turn_on_shared_client(
             turn_start_response_id(&turn_start_response)
         };
         if let Some(turn_id) = active_turn_id.as_ref() {
+            if let Some(hook) = turn_diff_hook.as_ref() {
+                hook.started(&thread_id, turn_id).await;
+            }
             if let Some(callback) = active_turn_started.as_ref() {
                 callback(thread_id.clone(), turn_id.clone());
             }
@@ -2623,6 +2633,7 @@ async fn run_codex_app_server_turn_on_shared_client(
                 request_user_input_answers,
                 active_turn_started,
                 active_turn_finished,
+                turn_diff_hook: turn_diff_hook.clone(),
                 overload_turn_recovering,
                 wait_for_goal_continuation,
                 auto_approve_mcp_tool_calls,
@@ -2674,6 +2685,10 @@ async fn run_codex_app_server_turn_on_shared_client(
     }
     .await
     .map_err(|error| temporary_thread_error(&prepared.request, direct_thread_id.as_deref(), error));
+
+    if let Some(hook) = turn_diff_hook.as_ref() {
+        hook.completed(turn_hook_result_status(&result)).await;
+    }
 
     if let Some(thread_id) = subscribed_thread_id {
         let retain_subscription = result.is_ok() && !prepared.request.uses_ephemeral_codex_thread();
@@ -2781,6 +2796,7 @@ async fn run_codex_app_server_turn_with_runtime(
         thread_started,
         active_turn_started,
         active_turn_finished,
+        turn_diff_hook,
         ..
     } = options;
     let prepared = prepare_codex_execution_request(request, cancellation.as_mut()).await?;
@@ -2841,6 +2857,9 @@ async fn run_codex_app_server_turn_with_runtime(
         .await?;
 
         let request = &prepared.request;
+        if let Some(hook) = turn_diff_hook.as_ref() {
+            hook.prepare().await;
+        }
         let thread_plan = codex_thread_plan(
             direct_thread_id.as_deref(),
             fork_thread_id.as_deref(),
@@ -2977,6 +2996,7 @@ async fn run_codex_app_server_turn_with_runtime(
                         && !request.uses_ephemeral_codex_thread(),
                     wait_for_goal_continuation: turn_method == "thread/goal/set",
                     active_turn_started,
+                    turn_diff_hook: turn_diff_hook.clone(),
                     overload_turn_recovering,
                     overload_continuation_params: turn_recovery::continuation_params(
                         turn_start_params(&thread_id, request, &launch_config, Vec::new()),
@@ -3031,6 +3051,9 @@ async fn run_codex_app_server_turn_with_runtime(
         callback();
     }
     terminate_codex_app_server_child(&mut process.child).await;
+    if let Some(hook) = turn_diff_hook.as_ref() {
+        hook.completed(turn_hook_result_status(&result)).await;
+    }
     if let Some(runtime) = runtime_notifications.as_ref() {
         notify_shared_process_closed(runtime, "isolated Codex app-server stopped").await;
     }
@@ -3055,6 +3078,14 @@ fn codex_outcome_name(outcome: &ExecutionOutcome) -> &'static str {
     }
 }
 
+fn turn_hook_result_status(result: &Result<CodexAppServerTurn, String>) -> &'static str {
+    match result {
+        Ok(turn) => codex_outcome_name(&turn.outcome),
+        Err(error) if error == CODEX_APP_SERVER_TURN_CANCELLED => "interrupted",
+        Err(_) => "failed",
+    }
+}
+
 struct SharedTurnNotificationOptions {
     recover_usage_limits: bool,
     runtime_notifications: Option<CodexNotificationHub>,
@@ -3067,6 +3098,7 @@ struct SharedTurnNotificationOptions {
     request_user_input_answers: Option<CodexRequestUserInputReceiver>,
     active_turn_started: Option<CodexActiveTurnCallback>,
     active_turn_finished: Option<CodexActiveTurnFinishedCallback>,
+    turn_diff_hook: Option<TurnDiffHook>,
     wait_for_goal_continuation: bool,
     auto_approve_mcp_tool_calls: bool,
     stand_in_single_approval: bool,
@@ -3205,6 +3237,9 @@ async fn read_shared_turn_notifications(
                             });
                         }
                         GoalContinuationReconciliation::TurnRunning(turn_id) => {
+                            if let Some(hook) = options.turn_diff_hook.as_ref() {
+                                hook.started(thread_id, &turn_id).await;
+                            }
                             if let Some(callback) = options.active_turn_started.as_ref() {
                                 callback(thread_id.to_owned(), turn_id.clone());
                             }
@@ -3318,6 +3353,9 @@ async fn read_shared_turn_notifications(
                     ],
                 );
             }
+            if let Some(hook) = options.turn_diff_hook.as_ref() {
+                hook.started(thread_id, &turn_id).await;
+            }
             if let Some(callback) = options.active_turn_started.as_ref() {
                 callback(thread_id.to_owned(), turn_id.clone());
             }
@@ -3348,6 +3386,9 @@ async fn read_shared_turn_notifications(
                 }
                 continue;
             }
+        }
+        if let Some(hook) = options.turn_diff_hook.as_ref() {
+            hook.observe(thread_id, &message).await;
         }
         if waiting_for_initial_progress && codex_notification_has_initial_progress(&message, state)
         {
@@ -3440,6 +3481,12 @@ async fn read_shared_turn_notifications(
                     }
 
                     options.expected_client_user_message_id = None;
+                    if let (Some(hook), Some(turn_id)) = (
+                        options.turn_diff_hook.as_ref(),
+                        options.active_turn_id.as_ref(),
+                    ) {
+                        hook.started(thread_id, turn_id).await;
+                    }
                     if let (Some(callback), Some(turn_id)) = (
                         options.active_turn_started.as_ref(),
                         options.active_turn_id.as_ref(),
@@ -4151,7 +4198,7 @@ fn turn_start_response_id(response: &Value) -> Option<String> {
 
 fn root_turn_notification_id(message: &Value, state: &CodexRunState) -> Option<String> {
     let params = message_params(message);
-    if state.is_subagent_message(params) {
+    if state.is_subagent_message(params) || !run_state::is_root_codex_turn_event(params) {
         return None;
     }
     params
