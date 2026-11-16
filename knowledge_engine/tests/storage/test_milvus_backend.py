@@ -6,7 +6,7 @@
 Unit tests for MilvusBackend storage backend implementation.
 """
 
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock, call, patch
 
 import pytest
 from llama_index.core.schema import TextNode
@@ -835,7 +835,10 @@ class TestDeleteDocument:
         mock_milvus_vs.return_value = mock_store
 
         mock_node = MagicMock()
-        mock_store.get_nodes.return_value = [mock_node, mock_node]
+        mock_client.query.return_value = [
+            {"doc_ref": "doc_123"},
+            {"doc_ref": "doc_123"},
+        ]
 
         config = {
             "url": "http://localhost:19530/default",
@@ -849,10 +852,18 @@ class TestDeleteDocument:
         assert result["knowledge_id"] == "kb_1"
         assert result["deleted_chunks"] == 2
         assert result["status"] == "deleted"
-        mock_store.delete_nodes.assert_called_once()
-        mock_client.delete.assert_called_once_with(
-            collection_name="test_kb_kb_1__parents",
-            filter='knowledge_id == "kb_1" and doc_ref == "doc_123"',
+        mock_milvus_vs.assert_not_called()
+        mock_client.delete.assert_has_calls(
+            [
+                call(
+                    collection_name="test_kb_kb_1",
+                    filter='knowledge_id == "kb_1" and doc_ref == "doc_123"',
+                ),
+                call(
+                    collection_name="test_kb_kb_1__parents",
+                    filter='knowledge_id == "kb_1" and doc_ref == "doc_123"',
+                ),
+            ]
         )
         # Every client shares the process-global Milvus alias; keep it open.
         mock_client.close.assert_not_called()
