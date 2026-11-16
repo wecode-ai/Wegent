@@ -1219,6 +1219,15 @@
 .task-detail-workspace-description
   .task-detail-desc.is-collapsed
   .bn-editor
+  [data-content-type="heading"] {
+  padding-block: 0;
+  font-size: var(--task-detail-body-font-size);
+  line-height: 1.75;
+}
+
+.task-detail-workspace-description
+  .task-detail-desc.is-collapsed
+  .bn-editor
   [data-content-type="heading"]
   .bn-inline-content {
   margin-block: 0;

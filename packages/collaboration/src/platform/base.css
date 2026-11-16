@@ -95,7 +95,7 @@
 
 .collaboration-project-summary-description {
   overflow: hidden;
-  color: rgb(var(--color-text-muted)) !important;
+  color: rgb(var(--color-text-secondary)) !important;
   font-size: 12px;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -117,7 +117,7 @@
 .collaboration-settings-section p,
 .collaboration-settings label small {
   margin: 0;
-  color: rgb(var(--color-text-muted));
+  color: rgb(var(--color-text-secondary));
 }
 
 .collaboration-status-editor {
@@ -250,7 +250,7 @@
 .collaboration-project-create-field small,
 .collaboration-project-create-hint {
   margin: 0;
-  color: rgb(var(--color-text-muted));
+  color: rgb(var(--color-text-secondary));
   font-size: 12px;
   font-weight: 400;
 }
@@ -316,7 +316,7 @@
 }
 
 .collaboration-project-create-choice small {
-  color: rgb(var(--color-text-muted));
+  color: rgb(var(--color-text-secondary));
   font-size: 12px;
   font-weight: 400;
   line-height: 16px;
@@ -469,7 +469,7 @@
   border: 1px solid rgb(var(--color-border));
   border-radius: 8px;
   padding: 8px 12px;
-  color: rgb(var(--color-text-muted));
+  color: rgb(var(--color-text-secondary));
   background: transparent;
   font-size: 13px;
   text-align: left;
@@ -604,7 +604,7 @@
 .collaboration-project-create-collaborator-menu small,
 .collaboration-project-create-collaborator-menu p {
   margin: 0;
-  color: rgb(var(--color-text-muted));
+  color: rgb(var(--color-text-secondary));
   font-size: 12px;
   line-height: 16px;
 }
@@ -786,7 +786,7 @@
 }
 
 .collaboration-project-create-group-members small {
-  color: rgb(var(--color-text-muted));
+  color: rgb(var(--color-text-secondary));
   font-size: 12px;
 }
 
@@ -803,7 +803,7 @@
 }
 
 .collaboration-project-create-group-principles small {
-  color: rgb(var(--color-text-muted));
+  color: rgb(var(--color-text-secondary));
   font-size: 12px;
 }
 
@@ -896,7 +896,7 @@
 }
 
 .collaboration-project-create-group-workflow > small {
-  color: rgb(var(--color-text-muted));
+  color: rgb(var(--color-text-secondary));
   font-size: 12px;
 }
 
@@ -958,7 +958,7 @@
 }
 
 .collaboration-project-create-generation-progress small {
-  color: rgb(var(--color-text-muted));
+  color: rgb(var(--color-text-secondary));
   font-size: 12px;
 }
 
@@ -1015,7 +1015,7 @@
 
 .collaboration-project-create-assignment-queue > header small {
   max-width: 620px;
-  color: rgb(var(--color-text-muted));
+  color: rgb(var(--color-text-secondary));
   line-height: 18px;
 }
 
@@ -1155,7 +1155,7 @@
 }
 
 .collaboration-project-create-hover-editable > span.is-placeholder {
-  color: rgb(var(--color-text-muted));
+  color: rgb(var(--color-text-secondary));
 }
 
 .collaboration-project-create-hover-editable > span.is-clickable {
@@ -1590,7 +1590,7 @@
 .collaboration-current-assignment > p,
 .collaboration-current-assignment-main small,
 .collaboration-current-assignment-source {
-  color: rgb(var(--color-text-muted));
+  color: rgb(var(--color-text-secondary));
 }
 
 .collaboration-current-assignment > p {
