@@ -634,6 +634,16 @@ it.each([
     'Only Windows clients are affected; collect executor logs.',
   ],
   ['Investigate timeout', 'Investigate timeout', null],
+  [
+    'Investigate timeout',
+    'Investigate timeout\\\n**Only Windows** clients: [collect logs](https://example.com/logs).',
+    'Only Windows clients: collect logs.',
+  ],
+  [
+    'Investigate timeout',
+    'Investigate timeout\nLiteral path: `C:\\logs\\executor`.',
+    'Literal path: C:\\logs\\executor.',
+  ],
 ])(
   'preserves useful context after a repeated title: %s / %s',
   async (title, description, summary) => {

@@ -525,10 +525,15 @@ function deferred<T>() {
   return { promise, reject, resolve }
 }
 
+function createHomeDraft() {
+  return { inputByScope: {}, setInputForScope: vi.fn() }
+}
+
 describe('Wework collaboration workspace API', () => {
   it('keeps the cloud project choice available before cloud login', () => {
     render(
       createElement(WeworkCollaborationPlatform, {
+        homeDraft: createHomeDraft(),
         user: {
           id: 1,
           user_name: 'admin',
@@ -575,6 +580,7 @@ describe('Wework collaboration workspace API', () => {
             CloudConnectionContext.Provider,
             { value: cloudConnection },
             createElement(WeworkCollaborationPlatform, {
+              homeDraft: createHomeDraft(),
               user: { id: 7, user_name: 'local-owner', email: '' } as never,
               localProjects: [],
               services: { projectSpaceApis: { local: createLocalDeliveryApi() } } as never,
@@ -670,6 +676,7 @@ describe('Wework collaboration workspace API', () => {
 
     render(
       createElement(WeworkCollaborationPlatform, {
+        homeDraft: createHomeDraft(),
         user: {
           id: 1,
           user_name: 'admin',
@@ -764,6 +771,7 @@ describe('Wework collaboration workspace API', () => {
 
     render(
       createElement(WeworkCollaborationPlatform, {
+        homeDraft: createHomeDraft(),
         user: {
           id: 1,
           user_name: 'admin',
@@ -808,6 +816,7 @@ describe('Wework collaboration workspace API', () => {
 
     render(
       createElement(WeworkCollaborationPlatform, {
+        homeDraft: createHomeDraft(),
         user: {
           id: 1,
           user_name: 'admin',
@@ -872,6 +881,7 @@ describe('Wework collaboration workspace API', () => {
 
     render(
       createElement(WeworkCollaborationPlatform, {
+        homeDraft: createHomeDraft(),
         user: {
           id: 1,
           user_name: 'admin',
@@ -934,6 +944,7 @@ describe('Wework collaboration workspace API', () => {
     }
     render(
       createElement(WeworkCollaborationPlatform, {
+        homeDraft: createHomeDraft(),
         user: { id: 1, user_name: 'admin', email: 'admin@example.com' } as never,
         localProjects: [],
         services: {
@@ -1008,6 +1019,7 @@ describe('Wework collaboration workspace API', () => {
         )
       const onActiveProjectChange = vi.fn()
       const props = {
+        homeDraft: createHomeDraft(),
         user: {
           id: 1,
           user_name: 'admin',
@@ -1039,6 +1051,7 @@ describe('Wework collaboration workspace API', () => {
 
       view.rerender(
         createElement(WeworkCollaborationPlatform, {
+          homeDraft: createHomeDraft(),
           ...props,
           activeProjectRef: { ...props.activeProjectRef, projectId: route.projectId },
           focusedItemId: 'notification-issue',

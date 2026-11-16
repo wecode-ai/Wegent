@@ -1,3 +1,4 @@
+import { composerMarkdownText } from '@wegent/collaboration/composer'
 import { useLayoutEffect, useRef, type ReactNode } from 'react'
 import { Bell, FolderOpen } from 'lucide-react'
 import type {
@@ -170,7 +171,7 @@ export function PersonalIssueList({
             </span>
           </h3>
           {items.map(item => {
-            const description = item.description?.trim().replace(/\s+/g, ' ') ?? ''
+            const description = composerMarkdownText(item.description ?? '')
             const titlePrefix = item.title.trim().replace(/\s+/g, ' ').replace(/…$/, '')
             const summary = description.startsWith(titlePrefix)
               ? description.slice(titlePrefix.length).trim()

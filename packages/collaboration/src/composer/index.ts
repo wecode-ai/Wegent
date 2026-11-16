@@ -16,3 +16,5 @@ export * from './useComposerAttachments'
 export * from './ProjectComposerBody'
 export * from './ComposerErrorBanner'
 export * from './ComposerPredictionContext'
+
+export { composerMarkdownText } from './composerMarkdownParser'

@@ -1,4 +1,4 @@
-import type { RootContent, PhrasingContent } from "mdast";
+import type { RootContent, PhrasingContent, Nodes } from "mdast";
 import type { Mark, Node as PMNode, Schema } from "prosemirror-model";
 import remarkGfm from "remark-gfm";
 import remarkParse from "remark-parse";
@@ -6,6 +6,28 @@ import { unified } from "unified";
 import { isHttpUrl } from "@wegent/chat-core/http-url";
 
 const parser = unified().use(remarkParse).use(remarkGfm);
+
+/** Read the same Markdown grammar as the editor without exposing its source syntax. */
+export function composerMarkdownText(value: string): string {
+  const read = (node: Nodes): string => {
+    if (node.type === "image" || node.type === "imageReference")
+      return node.alt ?? "";
+    if ("value" in node) return node.value;
+    if (!("children" in node)) return " ";
+    const inline = [
+      "paragraph",
+      "heading",
+      "tableCell",
+      "strong",
+      "emphasis",
+      "delete",
+      "link",
+      "linkReference",
+    ].includes(node.type);
+    return node.children.map(read).join(inline ? "" : " ");
+  };
+  return read(parser.parse(value)).trim().replace(/\s+/g, " ");
+}
 
 export function findComposerMarkdownLinks(value: string) {
   const links: {
