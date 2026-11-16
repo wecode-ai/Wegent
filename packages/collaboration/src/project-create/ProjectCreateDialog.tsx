@@ -2028,14 +2028,6 @@ export function ProjectCreateDialog(props: ProjectCreateDialogProps) {
               </div>
             ) : null}
           </section>
-          {props.importActions ? (
-            <fieldset
-              className="contents"
-              disabled={state.saving || Boolean(state.createdProject)}
-            >
-              {props.importActions}
-            </fieldset>
-          ) : null}
         </div>
         {!groupEditorDraft && !groupModelPickerOpen ? (
           <footer className="collaboration-project-create-footer">

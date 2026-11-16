@@ -2881,39 +2881,6 @@ function CollaborationPlatformAppContent({
         : null}
       {projectDialogOpen ? (
         <ProjectCreateDialog
-          importActions={
-            host.renderProjectImporter &&
-            state.workspaces.some(
-              (workspace) => workspace.location === "local",
-            ) ? (
-              <div className="flex flex-wrap gap-2">
-                {(["folder", "existing"] as const).map((mode) => (
-                  <button
-                    type="button"
-                    key={mode}
-                    className="collaboration-secondary-button"
-                    data-testid={
-                      mode === "folder"
-                        ? "collaboration-workspace-nav-add-folder"
-                        : "collaboration-workspace-nav-import-existing-project"
-                    }
-                    onClick={() => {
-                      const local = state.workspaces.find(
-                        (workspace) => workspace.location === "local",
-                      );
-                      if (!local) return;
-                      setProjectDialogOpen(false);
-                      openWorkspaceProjectCreator(local.id, mode);
-                    }}
-                  >
-                    {mode === "folder"
-                      ? messages.addFolder
-                      : messages.importExistingProject}
-                  </button>
-                ))}
-              </div>
-            ) : undefined
-          }
           initialTemplate={projectTemplate}
           targets={[
             {

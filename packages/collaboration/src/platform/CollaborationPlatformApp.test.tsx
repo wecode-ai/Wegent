@@ -4215,7 +4215,7 @@ describe("CollaborationPlatformApp real component flow", () => {
     ).toBeNull();
   });
 
-  it("keeps project import disabled while creation is pending and restores it on failure", async () => {
+  it("keeps local import actions out of the creation dialog before submission and after failure", async () => {
     const { api } = createApi({
       initialWorkspaces: [localWorkspace],
       initialProjects: [],
@@ -4243,30 +4243,32 @@ describe("CollaborationPlatformApp real component flow", () => {
       />,
     );
     await createPersonalProject();
+    const expectNoDialogImports = () => {
+      const dialog = portalByTestId("collaboration-project-name-input").closest(
+        '[role="dialog"]',
+      );
+      expect(dialog).not.toBeNull();
+      expect(dialog!.textContent).not.toContain("从本地文件夹创建");
+      expect(dialog!.textContent).not.toContain("导入已有项目");
+    };
+    expectNoDialogImports();
     await change(
       portalByTestId("collaboration-project-name-input") as HTMLInputElement,
       "Pending project",
     );
     await click(portalByTestId("collaboration-project-create-confirm"));
     expect(api.projects.create).toHaveBeenCalledOnce();
-    for (const id of [
-      "collaboration-workspace-nav-add-folder",
-      "collaboration-workspace-nav-import-existing-project",
-    ]) {
-      const button = portalByTestId(id) as HTMLButtonElement;
-      expect(button.matches(":disabled")).toBe(true);
-      await act(async () => button.click());
-    }
+    expectNoDialogImports();
     expect(
       document.querySelector('[data-testid="test-pending-importer"]'),
     ).toBeNull();
     await act(async () => pending.reject(new Error("creation failed")));
     await flush();
+    expectNoDialogImports();
     expect(
-      portalByTestId("collaboration-workspace-nav-add-folder").matches(
-        ":disabled",
-      ),
-    ).toBe(false);
+      portalByTestId("collaboration-project-name-input").getAttribute("value"),
+    ).toBe("Pending project");
+    expect(document.body.textContent).toContain("creation failed");
   });
 
   it("uses the host importer for local projects and opens existing projects from the add menu", async () => {

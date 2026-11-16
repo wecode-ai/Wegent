@@ -223,7 +223,7 @@ After enabling **Settings → General → Experimental features**, open **Edit p
 
 ### Create a local or cloud project space
 
-The sidebar places projects without another group under **Personal group**. Open its **… → Create project** action. New projects default to the current device while disconnected and to the cloud while connected. **Create from local folder** and **Import existing project** appear below the form and above **Cancel / Create** in the creation dialog when local import is supported. These secondary actions add projects from this device:
+The sidebar places projects without another group under **Personal group**. Open its **… → Create project** action. New projects default to the current device while disconnected and to the cloud while connected. The creation dialog configures a new project and does not offer folder creation or existing-project import buttons:
 
 - A **local project** is stored on the current device and is available only on that device.
 - A **cloud project** is stored in Wegent Cloud and supports collaboration across devices signed in to the same account. Selecting it while signed out starts the sign-in flow. If the account has no cloud space after sign-in, Wework creates one before continuing project creation.
@@ -311,7 +311,7 @@ DingTalk controls access to AI Table records. Wework project roles control entry
 ### Import more projects into the local space
 
 Wework automatically adds local Task projects to the local space during initial
-setup. To add more projects, open **Personal group → … → Create project**, then select an import action below the form. These actions remain available when connected to the cloud:
+setup. To add more projects, use the **New project** dropdown in a local group’s project list. Import options appear when local import is supported and are not repeated in the creation dialog:
 
 - **Import existing project** lists projects that already exist on the Tasks
   page but are not yet in the local space. Wework deduplicates them by runtime
