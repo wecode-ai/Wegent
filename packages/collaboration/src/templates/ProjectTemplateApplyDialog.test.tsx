@@ -9,7 +9,7 @@ import type { SharedWorkspaceApi } from '../ports/SharedWorkspaceApi'
 import { builtinCollaborationTemplates } from './builtins'
 import { ProjectTemplateApplyDialog } from './ProjectTemplateApplyDialog'
 import type { ProjectAgentConfigurationHost } from '../project-agent-config/types'
-import type { CollaborationExecutionEnvironment } from '../types'
+import type { CollaborationExecutionEnvironment, CollaborationGroup } from '../types'
 import { runnerModelKey, type RunnerModel } from '../agent-form/runnerRouting'
 import { TemplateModelSelection } from './TemplateModelSelection'
 
@@ -54,7 +54,7 @@ function fixture(host?: ProjectAgentConfigurationHost) {
   const api = {
     projects: {
       get: vi.fn(async () => project),
-      listCollaborationGroups: vi.fn(async () => []),
+      listCollaborationGroups: vi.fn(async () => [] as CollaborationGroup[]),
       createCollaborationGroup: vi.fn(async () => ({
         id: 'group',
         name: group.name,
@@ -344,6 +344,111 @@ it('loads only the chosen project and persists groups, routing and board after c
     expect.objectContaining({ boardViews: expect.any(Object) })
   )
   expect(applied).toHaveBeenCalledWith(project)
+})
+
+function applyButton() {
+  return container.querySelector<HTMLButtonElement>('[data-testid="template-bindings-apply"]')!
+}
+
+async function renameDraft(name: string) {
+  await act(async () => {
+    const input = container.querySelector<HTMLInputElement>(
+      '[data-testid="template-group-name-main"]'
+    )!
+    Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!.call(input, name)
+    input.dispatchEvent(new Event('input', { bubbles: true }))
+  })
+}
+
+it('preserves the draft and member binding after a rejected member configuration', async () => {
+  const { api, render, applied } = fixture()
+  api.projects.createCollaborationGroup.mockRejectedValue(
+    Object.assign(new Error('rejected'), { status: 422, detail: 'member must be a Developer' })
+  )
+  await render()
+  await renameDraft('Current draft')
+  const before = container.querySelector<HTMLSelectElement>('select')!.value
+  await act(async () => applyButton().click())
+  expect(
+    container.querySelector<HTMLInputElement>('[data-testid="template-group-name-main"]')!.value
+  ).toBe('Current draft')
+  expect(container.querySelector<HTMLSelectElement>('select')!.value).toBe(before)
+  expect(container.querySelector('[role="alert"]')!.textContent).toContain('成员')
+  expect(applyButton().disabled).toBe(false)
+  expect(api.projects.listCollaborationGroups).toHaveBeenCalledTimes(3)
+  expect(applied).not.toHaveBeenCalled()
+})
+
+it('blocks an unknown creation outcome until a read-only recheck confirms no new group', async () => {
+  const { api, render } = fixture()
+  api.projects.createCollaborationGroup.mockRejectedValue(new TypeError('Failed to fetch'))
+  api.projects.listCollaborationGroups
+    .mockResolvedValueOnce([])
+    .mockResolvedValueOnce([])
+    .mockRejectedValueOnce(new TypeError('Failed to fetch'))
+    .mockResolvedValueOnce([])
+  await render()
+  await renameDraft('Retained draft')
+  await act(async () => applyButton().click())
+  expect(applyButton().disabled).toBe(true)
+  expect(container.querySelector('[role="alert"]')!.textContent).toContain('尚不能确认')
+  await act(async () =>
+    container.querySelector<HTMLButtonElement>('[data-testid="template-bindings-recheck"]')!.click()
+  )
+  expect(api.projects.createCollaborationGroup).toHaveBeenCalledOnce()
+  expect(applyButton().disabled).toBe(false)
+  expect(
+    container.querySelector<HTMLInputElement>('[data-testid="template-group-name-main"]')!.value
+  ).toBe('Retained draft')
+  expect(container.querySelector('[role="alert"]')!.textContent).toContain('未发现本次新增')
+})
+
+it('identifies persisted groups after a lost response and prevents another import', async () => {
+  const { api, render } = fixture()
+  api.projects.createCollaborationGroup.mockRejectedValue(new TypeError('Failed to fetch'))
+  api.projects.listCollaborationGroups
+    .mockResolvedValueOnce([])
+    .mockResolvedValueOnce([])
+    .mockResolvedValueOnce([{ id: 'persisted', name: '产品全流程小组' } as CollaborationGroup])
+  await render()
+  await act(async () => applyButton().click())
+  expect(container.querySelector('[role="alert"]')!.textContent).toContain(
+    '已创建小组：产品全流程小组'
+  )
+  expect(applyButton().disabled).toBe(true)
+  await act(async () => applyButton().click())
+  expect(api.projects.createCollaborationGroup).toHaveBeenCalledOnce()
+})
+
+it('shows a server configuration error together with the saved group and keeps the draft visible', async () => {
+  const { api, render } = fixture()
+  api.projects.update.mockRejectedValue(Object.assign(new Error('server failed'), { status: 500 }))
+  await render()
+  await act(async () => applyButton().click())
+  const alert = container.querySelector('[role="alert"]')!.textContent!
+  expect(alert).toContain('服务端')
+  expect(alert).toContain('已创建小组：产品全流程小组')
+  expect(alert).not.toContain('检查连接')
+  expect(container.querySelector('[data-testid="template-group-name-main"]')).not.toBeNull()
+  expect(applyButton().disabled).toBe(true)
+})
+
+it('refreshes saved groups when the final project refresh fails after successful configuration', async () => {
+  const { api, render, project, applied } = fixture()
+  api.projects.get
+    .mockResolvedValueOnce(project)
+    .mockResolvedValueOnce(project)
+    .mockRejectedValueOnce(Object.assign(new Error('server failed'), { status: 500 }))
+  await render()
+  await act(async () => applyButton().click())
+  const alert = container.querySelector('[role="alert"]')!.textContent!
+  expect(alert).toContain('服务端')
+  expect(alert).toContain('已创建小组：产品全流程小组')
+  expect(api.projects.listCollaborationGroups).toHaveBeenCalledTimes(3)
+  expect(api.projects.createCollaborationGroup).toHaveBeenCalledOnce()
+  expect(api.projects.update).toHaveBeenCalledOnce()
+  expect(applied).not.toHaveBeenCalled()
+  expect(applyButton().disabled).toBe(true)
 })
 
 it('rejects revoked management access before loading candidates or changing project resources', async () => {

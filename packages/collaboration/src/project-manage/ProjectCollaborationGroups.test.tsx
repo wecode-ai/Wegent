@@ -10,6 +10,8 @@ import type { SharedWorkspaceApi } from '../ports/SharedWorkspaceApi'
 import type { CollaborationGroup, CollaborationMember, CollaborationProject } from '../types'
 import { useCollaborationWorkspaceController } from '../workspace-controller/useCollaborationWorkspaceController'
 import { ProjectCollaborationGroups } from './ProjectCollaborationGroups'
+import { builtinCollaborationTemplates } from '../templates/builtins'
+import { bindTemplate } from '../templates/document'
 
 const view = vi.hoisted(() => ({
   props: null as ComponentProps<typeof WorkspaceCollaborationGroupsConfiguration> | null,
@@ -89,6 +91,39 @@ afterEach(() => {
 })
 
 describe('project collaboration-group loading', () => {
+  it('refreshes the displayed groups after a template creation response is lost', async () => {
+    const api = apiFor()
+    const document = structuredClone(builtinCollaborationTemplates()[0].document)
+    delete document.spec.resources.collaboration.project.taskAssignment
+    delete document.spec.resources.collaboration.project.board
+    const definition = document.spec.resources.collaboration.groups[0]
+    const drafts = bindTemplate(document, {
+      [definition.key]: Object.fromEntries(
+        definition.roles.map((role, index) => [
+          role.key,
+          { kind: 'human', id: String(index + 1), responsibility: '' },
+        ])
+      ),
+    })
+    const created = { ...group, id: 'new-group', name: definition.name }
+    vi.mocked(api.projects.listCollaborationGroups!)
+      .mockResolvedValueOnce([group])
+      .mockResolvedValueOnce([group])
+      .mockResolvedValueOnce([group, created])
+    vi.mocked(api.projects.createCollaborationGroup!).mockRejectedValue(
+      new TypeError('Failed to fetch')
+    )
+    await render(api)
+    await act(async () => {
+      await expect(
+        view.props!.commands.createTemplateGroups!(document, drafts)
+      ).rejects.toMatchObject({ outcome: 'partial', retryBlocked: true })
+    })
+    expect(view.props!.groups).toEqual([group, created])
+    expect(container.textContent).toContain(created.name)
+    expect(api.projects.createCollaborationGroup).toHaveBeenCalledOnce()
+  })
+
   it('keeps groups and agents usable after members fail, completes mutations, and retries members', async () => {
     const listMembers = vi
       .fn()

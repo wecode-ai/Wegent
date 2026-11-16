@@ -24,6 +24,7 @@ import type { TemplateRoutingResolver } from './types'
 import { templateFailureMessage, templateMessages } from './messages'
 import { TemplateDialog } from './TemplateDialog'
 import { PartialTemplateApplyError, TemplateConfigurationError } from './apply'
+import { TemplateApplyRecoveryError } from './projectApplyRecovery'
 
 export interface TemplateParticipant extends CollaborationGroupMember {
   label: string
@@ -309,8 +310,10 @@ export function TemplateBindingsDialog({
     document: CollaborationTemplate
   } | null>(null)
   const [busy, setBusy] = useState(false)
-  const [error, setError] = useState<string | null>(null)
-  const [failed, setFailed] = useState(false)
+  const [failure, setFailure] = useState<unknown>(null)
+  const error = failure ? templateFailureMessage(failure, locale) : null
+  const recovery = failure instanceof TemplateApplyRecoveryError ? failure : null
+  const failed = failure instanceof PartialTemplateApplyError || recovery?.retryBlocked === true
   const [modelState, setModelState] = useState<{
     configuration: TemplateModelConfiguration
     models: Partial<Record<RunnerModelIdentity['runtime'], RunnerModelIdentity>>
@@ -360,11 +363,11 @@ export function TemplateBindingsDialog({
                 new Set(selection.drafts.map(group => group.name.trim())).size !==
                   selection.drafts.length
               ) {
-                setError(m.duplicateGroup)
+                setFailure(new TemplateConfigurationError(m.duplicateGroup))
                 return
               }
               setBusy(true)
-              setError(null)
+              setFailure(null)
               try {
                 const args = [selection.drafts, selection.document] as const
                 if (runtimes.length && modelConfiguration) {
@@ -384,18 +387,7 @@ export function TemplateBindingsDialog({
                 }
                 onClose()
               } catch (error) {
-                setFailed(error instanceof PartialTemplateApplyError)
-                setError(
-                  [
-                    'template_model_default_unavailable',
-                    'template_model_unavailable',
-                    'template_environment_unavailable',
-                  ].includes(error instanceof Error ? error.message : '')
-                    ? templateFailureMessage(error, locale)
-                    : error instanceof TemplateConfigurationError
-                      ? error.message
-                      : m.failed
-                )
+                setFailure(error)
               } finally {
                 setBusy(false)
               }
@@ -403,6 +395,23 @@ export function TemplateBindingsDialog({
           >
             {busy ? m.saving : m.apply}
           </button>
+          {recovery?.outcome === 'unknown' && (
+            <button
+              type="button"
+              data-testid="template-bindings-recheck"
+              disabled={busy}
+              onClick={async () => {
+                setBusy(true)
+                try {
+                  setFailure(await recovery.recheck())
+                } finally {
+                  setBusy(false)
+                }
+              }}
+            >
+              {m.refresh}
+            </button>
+          )}
         </>
       }
     >

@@ -65,6 +65,8 @@ When applying a template with Agents to an existing project or workspace, choose
 
 <a id="template-controls"></a>
 
+When applying a template to an existing project fails, the dialog distinguishes expired login or permissions, duplicate names, invalid member or stage configuration, server errors and connection failures, then refreshes collaboration groups. The current name and role bindings are preserved. If some resources were created, check unfinished configuration in project settings before importing again. If creation cannot be confirmed, click **Refresh** to check the state again; submission becomes available after confirming no new resources. Binding every role to existing members creates no template Agents.
+
 To delete an imported personal template, open **Collaboration → Templates → My templates → Delete template** on its card, check its name and confirm. Cancel leaves it unchanged. Only your own personal templates have this action; built-in and other users’ templates cannot be deleted. Unsynced drafts can be deleted offline. Synced templates require a cloud connection and are removed from your account and this device. Existing projects and groups are unaffected. On failure, the template remains available and you can retry in the dialog.
 
 | Action                            | UI steps and result                                                                                                                                                             |

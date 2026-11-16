@@ -90,7 +90,7 @@ function fixture() {
     name: String(input.name),
     ...input,
   }))
-  const api = { agents: { create } } as unknown as SharedWorkspaceApi
+  const api = { agents: { create, list: vi.fn(async () => []) } } as unknown as SharedWorkspaceApi
   return { document, drafts, create, api }
 }
 
@@ -162,7 +162,41 @@ describe('self-contained template Agents', () => {
     } as unknown as SharedWorkspaceApi['projects']
     await expect(
       applyProjectTemplate(api, 'project', document, drafts, 'zh-CN', 'partial', routing)
-    ).rejects.toBeInstanceOf(PartialTemplateApplyError)
+    ).rejects.toMatchObject({ outcome: 'partial', retryBlocked: true })
+  })
+
+  it('rechecks Agents after losing the first creation response before allowing another import', async () => {
+    const { document, drafts, api, create } = fixture()
+    delete document.spec.resources.collaboration.project.taskAssignment
+    delete document.spec.resources.collaboration.project.board
+    api.projects = {
+      listCollaborationGroups: vi.fn(async () => []),
+      createCollaborationGroup: vi.fn(),
+    } as unknown as SharedWorkspaceApi['projects']
+    create.mockRejectedValueOnce(new TypeError('Failed to fetch'))
+    vi.mocked(api.agents.list)
+      .mockResolvedValueOnce([])
+      .mockRejectedValueOnce(new TypeError('Failed to fetch'))
+      .mockResolvedValueOnce([
+        {
+          id: 'persisted-agent',
+          name: document.spec.resources.collaboration.agents![0].name,
+        },
+      ])
+    const error = await applyProjectTemplate(
+      api,
+      'project',
+      document,
+      drafts,
+      'zh-CN',
+      'partial',
+      routing
+    ).catch(cause => cause)
+    expect(error).toMatchObject({ outcome: 'unknown', retryBlocked: true })
+    expect(await error.recheck()).toMatchObject({ outcome: 'partial', retryBlocked: true })
+    expect(create).toHaveBeenCalledOnce()
+    expect(api.projects.createCollaborationGroup).not.toHaveBeenCalled()
+    expect(api.agents.list).toHaveBeenLastCalledWith('project', { forceRefresh: true })
   })
 
   it('exports original prompts with portable references and recreates them in another account', async () => {

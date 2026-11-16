@@ -7,8 +7,9 @@ import type { CollaborationLocale } from '../i18n'
 import type { TemplateRoutingResolver, CollaborationTemplate } from './types'
 import type { ProjectCreateCollaborationGroupDraft } from '../project-create/types'
 import { normalizeCollaborationGroupDraftForPersistence } from '../project-create/collaborationGroupDraft'
-import { materializeTemplateAgents } from './agents'
-import { applyTemplateGroups, PartialTemplateApplyError, TemplateConfigurationError } from './apply'
+import { materializeTemplateAgents, templateAgentId, templateAgentReferences } from './agents'
+import { applyTemplateGroups, TemplateConfigurationError } from './apply'
+import { reconcileProjectTemplateFailure } from './projectApplyRecovery'
 
 export async function prepareTemplateProject(
   api: SharedWorkspaceApi,
@@ -115,43 +116,72 @@ export async function applyProjectTemplate(
   drafts: ProjectCreateCollaborationGroupDraft[],
   locale: CollaborationLocale,
   partialMessage: string,
-  resolveRouting?: TemplateRoutingResolver
+  resolveRouting?: TemplateRoutingResolver,
+  onGroupsRefreshed?: (groups: CollaborationGroup[]) => void
 ) {
   if (!api.projects.createCollaborationGroup) throw new Error('template_group_unavailable')
-  await prepareTemplateProject(api, projectId, document, locale)
-  const resolved = await materializeTemplateAgents(
+  const references = templateAgentReferences(drafts)
+  const agentNames = (document.spec.resources.collaboration.agents ?? [])
+    .filter(agent => references.has(templateAgentId(agent.key)))
+    .map(agent => agent.name)
+  const recovery = {
     api,
     projectId,
-    document,
-    drafts,
-    partialMessage,
-    undefined,
-    resolveRouting
-  )
-  let groups: CollaborationGroup[]
+    locale,
+    groupNames: drafts.map(group => group.name.trim()),
+    baselineGroups: undefined as CollaborationGroup[] | undefined,
+    baselineAgentIds: undefined as Set<string> | undefined,
+    agentNames,
+    unconfirmedAgentCreation: false,
+    mutationStarted: false,
+    createdAgents: false,
+    createdGroups: [] as CollaborationGroup[],
+    onGroupsRefreshed,
+  }
   try {
-    groups = await applyTemplateGroups(
+    recovery.baselineGroups = await api.projects.listCollaborationGroups?.(projectId)
+    await prepareTemplateProject(api, projectId, document, locale)
+    if (agentNames.length) {
+      const agents = await api.agents.list(projectId, { forceRefresh: true })
+      recovery.baselineAgentIds = new Set(agents.map(agent => String(agent.team_id ?? agent.id)))
+    }
+    const resolved = await materializeTemplateAgents(
+      {
+        agents: {
+          ...api.agents,
+          create: async (...args) => {
+            recovery.mutationStarted = true
+            recovery.unconfirmedAgentCreation = true
+            const created = await api.agents.create(...args)
+            recovery.createdAgents = true
+            recovery.unconfirmedAgentCreation = false
+            return created
+          },
+        },
+      },
+      projectId,
+      document,
+      drafts,
+      partialMessage,
+      undefined,
+      resolveRouting
+    )
+    const groups = await applyTemplateGroups(
       resolved.drafts,
-      raw =>
-        api.projects.createCollaborationGroup!(projectId, {
+      async raw => {
+        recovery.mutationStarted = true
+        const created = await api.projects.createCollaborationGroup!(projectId, {
           ...normalizeCollaborationGroupDraftForPersistence(raw),
           coordinationMode: 'manager',
-        }),
+        })
+        recovery.createdGroups.push(created)
+        return created
+      },
       partialMessage
     )
-  } catch (cause) {
-    if (resolved.agentIds.size) throw new PartialTemplateApplyError(partialMessage, { cause })
-    throw cause
-  }
-  try {
     await configureTemplateProject(api, projectId, document, groups, locale)
-  } catch (error) {
-    throw new PartialTemplateApplyError(
-      locale === 'zh-CN'
-        ? '小组已添加，但默认分配或阶段看板未全部配置成功。请在项目设置中检查，避免重复导入。'
-        : 'Groups were added, but task routing or the stage board could not be fully configured. Check project settings before importing again.',
-      { cause: error }
-    )
+    return groups
+  } catch (cause) {
+    throw await reconcileProjectTemplateFailure(cause, recovery)
   }
-  return groups
 }

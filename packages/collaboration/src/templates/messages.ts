@@ -1,6 +1,8 @@
 // SPDX-FileCopyrightText: 2026 Weibo, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
+import { PartialTemplateApplyError, TemplateConfigurationError } from './apply'
+
 export const templateMessages = {
   'zh-CN': {
     title: '协作模板',
@@ -81,7 +83,24 @@ export const templateMessages = {
     noResults: '未找到模板',
     retry: '重试',
     more: '加载更多',
-    failed: '操作未完成，请检查连接后重试。',
+    failed: '操作未完成，请稍后重试；如仍失败，请联系项目维护者。',
+    connectionFailed: '连接失败，请检查连接后重试。',
+    authenticationExpired: '登录已失效，请重新登录后继续。',
+    permissionDenied: '当前账号没有操作权限，请确认项目维护者权限后继续。',
+    requestConflict: '项目配置已发生变化，请检查当前小组和自动分配规则后再试。',
+    invalidConfiguration: '成员或阶段配置无效，请检查角色绑定和阶段负责人。',
+    invalidMembers: '绑定成员不可用，请确认成员仍具有项目 Developer 或更高权限。',
+    invalidStages: '阶段配置无效，请确认阶段负责人属于小组且不是小组负责人。',
+    duplicateMembers: '小组成员不能重复，请调整角色绑定。',
+    invalidLeader: '小组负责人必须属于小组成员，请调整角色绑定。',
+    serverFailed: '服务端处理失败，请稍后重试；如仍失败，请联系项目维护者。',
+    resourceUnavailable: '项目或绑定资源已不可用，请刷新项目并检查访问权限。',
+    groupsNotStarted: '模板尚未开始创建，当前配置已保留。',
+    groupsUnchanged: '已刷新协作小组列表，未发现本次新增的小组，当前配置已保留。',
+    groupsCreated: '已创建小组：{names}。请在项目设置中检查未完成的配置，避免重复导入。',
+    groupsUnknown:
+      '无法刷新协作小组列表，尚不能确认完整状态。请检查项目设置后再导入，避免重复创建。',
+    agentsUnknown: '尚不能确认是否已创建智能体。请刷新状态或检查项目设置，避免重复创建。',
     syncConflict: '模板尚未同步。请检查冲突，或另存为副本。',
     bindingsTitle: '确认协作配置',
     bindingsHint:
@@ -202,7 +221,34 @@ export const templateMessages = {
     noResults: 'No templates found',
     retry: 'Retry',
     more: 'Load more',
-    failed: 'The operation could not finish. Check your connection and try again.',
+    failed: 'The operation could not finish. Try again later or contact a project maintainer.',
+    connectionFailed: 'Connection failed. Check your connection and try again.',
+    authenticationExpired: 'Your login has expired. Sign in again to continue.',
+    permissionDenied:
+      'Your account does not have permission. Confirm project maintainer access to continue.',
+    requestConflict:
+      'Project configuration has changed. Check existing groups and task routing before trying again.',
+    invalidConfiguration:
+      'Invalid member or stage configuration. Check role bindings and stage assignees.',
+    invalidMembers:
+      'A bound member is unavailable. Confirm each member still has project Developer access or higher.',
+    invalidStages:
+      'Invalid stage configuration. Stage assignees must belong to the group and cannot be its coordinator.',
+    duplicateMembers: 'Group members must be unique. Adjust the role bindings.',
+    invalidLeader: 'The coordinator must belong to the group. Adjust the role bindings.',
+    serverFailed:
+      'The server could not process this request. Try again later or contact a project maintainer.',
+    resourceUnavailable:
+      'The project or a bound resource is unavailable. Refresh the project and check access.',
+    groupsNotStarted: 'Template creation has not started. Your configuration is preserved.',
+    groupsUnchanged:
+      'Collaboration groups refreshed; no new groups were found. Your configuration is preserved.',
+    groupsCreated:
+      'Groups were created: {names}. Check unfinished configuration in project settings before importing again.',
+    groupsUnknown:
+      'Could not refresh collaboration groups, so the full current state could not be confirmed. Check project settings before importing again to avoid duplicates.',
+    agentsUnknown:
+      'Agent creation could not be confirmed. Refresh status or check project settings before importing again.',
     syncConflict: 'Template not synced. Resolve the conflict or save a copy.',
     embeddedAgents:
       'Template Agents are created and bound automatically. Models and tools follow the execution environment.',
@@ -267,5 +313,67 @@ export function templateFailureMessage(error: unknown, locale: 'zh-CN' | 'en'): 
   if (code === 'template_agent_multi_bot' || code === 'template_agent_runtime_unsupported')
     return m.unsupportedAgent
   if (code === 'template_agent_definition_unavailable') return m.unavailableAgent
+  if (error instanceof PartialTemplateApplyError && error.cause) {
+    return `${templateFailureMessage(error.cause, locale)} ${error.message}`
+  }
+  if (error instanceof TemplateConfigurationError) return error.message
+  if (error && typeof error === 'object' && 'status' in error && typeof error.status === 'number') {
+    const status = error.status
+    const detail = 'detail' in error ? error.detail : undefined
+    // Only known public API details are rendered; raw bodies may contain internal data.
+    const reason = typeof detail === 'string' ? detail : code
+    let message: string = m.failed
+    if (status === 401) message = m.authenticationExpired
+    else if (status === 403) message = m.permissionDenied
+    else if (status === 404) message = m.resourceUnavailable
+    else if (status === 409) {
+      message =
+        reason === 'Collaboration group name already exists in this owner scope'
+          ? m.duplicateGroup
+          : m.requestConflict
+    } else if (status === 400 || status === 422) {
+      message = templateValidationMessage(reason, detail, locale)
+    } else if (status >= 500) message = m.serverFailed
+    return `${message} (HTTP ${status})`
+  }
+  if (
+    error instanceof TypeError &&
+    /^(Failed to fetch|fetch failed|Load failed|NetworkError when attempting to fetch resource\.?)$/.test(
+      code
+    )
+  )
+    return m.connectionFailed
   return m.failed
+}
+
+function templateValidationMessage(
+  reason: string,
+  detail: unknown,
+  locale: 'zh-CN' | 'en'
+): string {
+  const m = templateMessages[locale]
+  switch (reason) {
+    case 'Human is not available in this Project':
+    case 'Human is not available in this Workspace':
+    case 'Agent is not available in this Project':
+    case 'Agent is not available in this Workspace':
+      return m.invalidMembers
+    case 'Collaboration group members must be unique':
+      return m.duplicateMembers
+    case 'Leader must be a member of the collaboration group':
+      return m.invalidLeader
+    case 'Collaboration group leader cannot execute a stage':
+      return m.bindError
+    case 'Collaboration group stage assignee must be a group member':
+      return m.invalidStages
+  }
+  if (
+    Array.isArray(detail) &&
+    detail.some(
+      issue =>
+        issue && typeof issue === 'object' && Array.isArray(issue.loc) && issue.loc[1] === 'stages'
+    )
+  )
+    return m.invalidStages
+  return m.invalidConfiguration
 }

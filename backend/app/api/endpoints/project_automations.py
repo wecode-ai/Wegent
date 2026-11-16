@@ -3,7 +3,9 @@
 
 """Wework project automation endpoints."""
 
-from fastapi import APIRouter, Depends, status
+import logging
+
+from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 
 from app.api.dependencies import get_db
@@ -28,8 +30,10 @@ from app.services.project_automations import (
     project_automation_service,
 )
 from app.services.workspaces.service import workspace_service
+from shared.telemetry.decorators import trace_sync
 
 router = APIRouter()
+logger = logging.getLogger(__name__)
 
 
 @router.get(
@@ -56,17 +60,43 @@ def list_project_collaboration_groups(
     response_model=CollaborationGroupResponse,
     status_code=status.HTTP_201_CREATED,
 )
+@trace_sync(
+    span_name="project.collaboration_group.create", tracer_name="backend.workspaces"
+)
 def create_project_collaboration_group(
     project_id: int,
     values: CollaborationGroupCreate,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ) -> CollaborationGroupResponse:
-    return CollaborationGroupResponse.model_validate(
-        workspace_service.create_project_collaboration_group(
+    stage = "create"
+    group_id: object | None = None
+    try:
+        group = workspace_service.create_project_collaboration_group(
             db, project_id, current_user.id, values
         )
+        group_id = group["id"]
+        stage = "response"
+        response = CollaborationGroupResponse.model_validate(group)
+    except Exception as error:
+        status_code = error.status_code if isinstance(error, HTTPException) else 500
+        logger.log(
+            logging.WARNING if status_code < 500 else logging.ERROR,
+            "Project collaboration group creation failed: project_id=%s "
+            "group_id=%s stage=%s status=%s error_type=%s",
+            project_id,
+            group_id,
+            stage,
+            status_code,
+            type(error).__name__,
+        )
+        raise
+    logger.info(
+        "Project collaboration group created: project_id=%s group_id=%s status=201",
+        project_id,
+        group_id,
     )
+    return response
 
 
 @router.post(

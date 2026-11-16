@@ -18,6 +18,7 @@ import {
 } from "../templates/agents";
 import { applyProjectTemplate } from "../templates/projectConfiguration";
 import { templateMessages } from "../templates/messages";
+import { reconcileCreatedTemplateFailure } from "../templates/projectApplyRecovery";
 
 function ScopedProjectCollaborationGroups({
   api,
@@ -278,6 +279,11 @@ function ScopedProjectCollaborationGroups({
           },
           async createTemplateGroups(document, drafts) {
             requireActive();
+            const onGroupsRefreshed = (refreshedGroups: CollaborationGroup[]) => {
+              if (!active.current) return;
+              setGroups(refreshedGroups);
+              setGroupsError(null);
+            };
             const created = await applyProjectTemplate(
               api,
               projectId,
@@ -291,10 +297,21 @@ function ScopedProjectCollaborationGroups({
                 projectId,
                 locale,
               ),
+              onGroupsRefreshed,
             );
-            await reload();
-            const latest = await api.projects.get(projectId);
-            if (active.current) onProjectChanged?.(latest);
+            try {
+              await reload();
+              const latest = await api.projects.get(projectId);
+              if (active.current) onProjectChanged?.(latest);
+            } catch (cause) {
+              throw await reconcileCreatedTemplateFailure(cause, {
+                api,
+                projectId,
+                locale,
+                createdGroups: created,
+                onGroupsRefreshed,
+              });
+            }
             return created;
           },
           searchUsers: async () => [],

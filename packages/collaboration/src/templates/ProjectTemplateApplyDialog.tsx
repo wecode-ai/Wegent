@@ -4,7 +4,7 @@
 import { useEffect, useState } from 'react'
 import type { SharedWorkspaceApi } from '../ports/SharedWorkspaceApi'
 import type { ProjectAgentConfigurationHost } from '../project-agent-config/types'
-import type { CollaborationProject } from '../types'
+import type { CollaborationGroup, CollaborationProject } from '../types'
 import type { CollaborationLocale } from '../i18n'
 import type { CollaborationTemplate } from './types'
 import { TemplateBindingsDialog, type TemplateParticipant } from './TemplateBindings'
@@ -12,7 +12,8 @@ import { TemplateDialog } from './TemplateDialog'
 import { templateFailureMessage, templateMessages } from './messages'
 import { templateAgentId, templateAgentReferences, templateRoutingResolver } from './agents'
 import { applyProjectTemplate } from './projectConfiguration'
-import { PartialTemplateApplyError, TemplateConfigurationError } from './apply'
+import { TemplateConfigurationError } from './apply'
+import { reconcileCreatedTemplateFailure } from './projectApplyRecovery'
 import { TemplateProjectEnvironment } from './TemplateProjectEnvironment'
 
 export function ProjectTemplateApplyDialog({
@@ -152,7 +153,11 @@ export function ProjectTemplateApplyDialog({
         ) {
           throw new TemplateConfigurationError(m.chooseProjectEnvironment)
         }
-        await applyProjectTemplate(
+        const onGroupsRefreshed = (groups: CollaborationGroup[]) =>
+          setContext(current =>
+            current ? { ...current, names: groups.map(group => group.name) } : current
+          )
+        const createdGroups = await applyProjectTemplate(
           api,
           projectId,
           configured,
@@ -166,12 +171,19 @@ export function ProjectTemplateApplyDialog({
               projectId,
               locale,
               environmentId
-            )
+            ),
+          onGroupsRefreshed
         )
         try {
           onApplied(await api.projects.get(projectId))
         } catch (cause) {
-          throw new PartialTemplateApplyError(m.partial, { cause })
+          throw await reconcileCreatedTemplateFailure(cause, {
+            api,
+            projectId,
+            locale,
+            createdGroups,
+            onGroupsRefreshed,
+          })
         }
       }}
     />
