@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import { createDevtoolsClient } from '../../../scripts/ai-verify-devtools.mjs'
 import {
   openDirectProjectCreation,
   reloadMainWindow,
@@ -6,18 +7,18 @@ import {
 } from './workspace-flows.mjs'
 import { openProjectBoard } from './collaboration-board-personal-view.mjs'
 import { waitForValue } from './workspace-agent-setup.mjs'
-import { CLOUD_PUBLIC_MODEL_NAME, DEFAULT_STEP_TIMEOUT_MS } from './shared.mjs'
+import { CLOUD_PUBLIC_MODEL_NAME, DEFAULT_STEP_TIMEOUT_MS, resultDir } from './shared.mjs'
 
 const testId = value => `[data-testid="${value}"]`
 const DIALOG = testId('collaboration-project-create-dialog')
 const MENU = testId('collaboration-project-create-collaborator-menu')
 const SEARCH = testId('collaboration-project-create-people-search')
 
-export async function waitForProjectCreateViewport(control) {
+export async function waitForProjectCreateViewport(control, width = 1024, height = 768) {
   return waitForValue(
     async () => JSON.parse(await control.command('getElementMetrics', 'body'))[0],
-    metrics => metrics?.viewportWidth === 1024 && metrics.viewportHeight === 768,
-    'Project creation viewport did not resize to 1024x768',
+    metrics => metrics?.viewportWidth === width && metrics.viewportHeight === height,
+    `Project creation viewport did not resize to ${width}x${height}`,
     DEFAULT_STEP_TIMEOUT_MS
   )
 }
@@ -158,6 +159,128 @@ async function withProjectCreationAgents(request, workspace, verify) {
   }
 }
 
+function visibleButtonCenters(metrics) {
+  return metrics.flatMap((button, index) => {
+    const intersection = button.visibleIntersection
+    const x = (button.left + button.right) / 2
+    const y = (button.top + button.bottom) / 2
+    return button.visible &&
+      intersection &&
+      x >= intersection.left &&
+      x <= intersection.right &&
+      y >= intersection.top &&
+      y <= intersection.bottom
+      ? [{ ...button, index }]
+      : []
+  })
+}
+
+async function assertModelMenuCenters(indices) {
+  const client = await createDevtoolsClient(resultDir, DEFAULT_STEP_TIMEOUT_MS)
+  const target = (await client({ action: 'targets' })).find(
+    entry =>
+      entry.type === 'window' &&
+      entry.url.includes('/wework/app/') &&
+      !entry.url.includes('startup-splash')
+  )?.id
+  assert.ok(target, 'The isolated renderer must be available to inspect menu hit targets')
+  try {
+    const result = await client({
+      action: 'command',
+      target,
+      method: 'Runtime.evaluate',
+      params: {
+        returnByValue: true,
+        expression: `(() => {
+        const buttons = document.querySelectorAll('[data-testid="model-selector-menu"] button')
+        return ${JSON.stringify(indices)}.map(index => {
+          const button = buttons[index]
+          if (!button) return { index, hit: false }
+          const rect = button.getBoundingClientRect()
+          const hit = document.elementFromPoint((rect.left + rect.right) / 2, (rect.top + rect.bottom) / 2)
+          return { index, hit: hit === button || (hit !== null && button.contains(hit)) }
+        })
+      })()`,
+      },
+    })
+    assert.equal(result.result?.value?.length, indices.length)
+    assert.ok(
+      result.result.value.every(button => button.hit),
+      `A visible model menu button has an obstructed center: ${JSON.stringify(result.result.value)}`
+    )
+  } finally {
+    await client({ action: 'detach', target })
+  }
+}
+
+async function verifyMobileGroupConfiguration(control, configuration) {
+  const previousSize = await control.command('setMainWindowSize', 'body', {
+    value: JSON.stringify({ width: 375, height: 812 }),
+  })
+  const original = JSON.parse(previousSize)
+  try {
+    await waitForProjectCreateViewport(control, 375, 812)
+    const generate = `${configuration} ${testId('collaboration-project-create-generate-group')}`
+    await control.command('scrollIntoView', generate, { visible: true })
+    const [group] = JSON.parse(await control.command('getElementMetrics', configuration))
+    const [body] = JSON.parse(
+      await control.command(
+        'getElementMetrics',
+        `${configuration} .collaboration-project-create-configuration-body`
+      )
+    )
+    const [action] = JSON.parse(await control.command('getElementMetrics', generate))
+    assert.ok(
+      group.scrollWidth <= group.clientWidth,
+      `Mobile group configuration overflowed: ${JSON.stringify(group)}`
+    )
+    assert.ok(
+      body.scrollWidth <= body.clientWidth,
+      `Mobile group body overflowed: ${JSON.stringify(body)}`
+    )
+    assert.ok(
+      action.left >= body.left &&
+        action.right <= Math.min(group.right, body.right, action.viewportWidth),
+      `Generate responsibilities escaped the mobile content column: ${JSON.stringify({ group, body, action })}`
+    )
+    await control.command('clickWhenEnabled', `${configuration} ${testId('model-selector-button')}`)
+    const menu = testId('model-selector-menu')
+    await control.command('waitFor', menu, { visible: true })
+    if (
+      Number(
+        await control.command('getElementCount', `${menu} [data-testid^="model-option-"]`, {
+          visible: true,
+        })
+      ) === 0
+    ) {
+      await control.command('clickWhenEnabled', `${menu} ${testId('model-advanced-toggle')}`)
+    }
+    const buttons = await waitForValue(
+      async () =>
+        visibleButtonCenters(
+          JSON.parse(
+            await control.command('getElementMetrics', `${menu} button`, {
+              value: JSON.stringify({ includeText: true, attributeNames: ['data-testid'] }),
+            })
+          )
+        ),
+      values =>
+        values.some(button => button.testId?.startsWith('model-option-')) &&
+        values.every(button => button.height >= 44 && button.width >= 44),
+      'Visible mobile model buttons must expose 44px touch targets',
+      DEFAULT_STEP_TIMEOUT_MS
+    )
+    await assertModelMenuCenters(buttons.map(button => button.index))
+    const option = buttons.find(button => button.testId?.startsWith('model-option-'))
+    await control.command('nativePress', `${menu} ${testId(option.testId)}`, { key: 'Escape' })
+    await control.command('waitFor', menu, { visible: false })
+    await control.command('waitFor', configuration, { visible: true })
+  } finally {
+    await control.command('setMainWindowSize', 'body', { value: previousSize })
+    await waitForProjectCreateViewport(control, original.width, original.height)
+  }
+}
+
 async function verifyGroupConfigurationDraft(control, scoped, workspace, agents) {
   // API-created fixtures must replace the workspace's previously cached empty catalog.
   await reloadMainWindow(control, 'The group configuration fixtures did not reconnect after reload')
@@ -207,6 +330,11 @@ async function verifyGroupConfigurationDraft(control, scoped, workspace, agents)
     1,
     'Opening group configuration left focus outside its controls'
   )
+  await control.command('setMainWindowSize', 'body', {
+    value: JSON.stringify({ width: 1024, height: 768 }),
+  })
+  await waitForProjectCreateViewport(control)
+  await verifyMobileGroupConfiguration(control, configuration)
   await control.command('nativePress', back, { key: 'Tab' })
   assert.equal(
     await control.command('getActiveElementTestId', 'body'),
@@ -400,6 +528,61 @@ export async function verifyProjectCreateDialogUi(control, scoped) {
   }
 }
 
+async function verifyGitProviderValidation(control, scoped, request, workspace) {
+  const projectsPath = `/api/v1/workspaces/${workspace.id}/projects`
+  const projectIds = response => response.items.map(project => String(project.id)).sort()
+  const before = projectIds(await request(projectsPath))
+  const advanced = scoped(testId('collaboration-project-create-advanced'))
+  await control.command('nativePress', advanced, { key: 'Enter' })
+  await control.command('waitFor', `${advanced}[aria-expanded="true"]`, { visible: true })
+  await control.command('nativePress', scoped(testId('cloud-project-task-provider-github')), {
+    key: 'Enter',
+  })
+  await control.command('fill', scoped(testId('cloud-project-provider-repository')), {
+    value: 'https://github.com/invalid-owner-only',
+  })
+  await control.command('nativePress', scoped(testId('collaboration-project-create-confirm')), {
+    key: 'Enter',
+  })
+  const error = `${DIALOG} .collaboration-project-create-error`
+  await control.command('waitFor', error, { text: 'GitHub 仓库地址应包含 owner/repository' })
+  await control.command('waitFor', DIALOG, { visible: true })
+  assert.deepEqual(
+    projectIds(await request(projectsPath)),
+    before,
+    'An invalid repository must not create a cloud project'
+  )
+
+  const token = scoped(testId('cloud-project-provider-token'))
+  await control.command('scrollIntoView', token, { visible: true })
+  const [input] = JSON.parse(await control.command('getElementMetrics', token))
+  const [icon] = JSON.parse(
+    await control.command(
+      'getElementMetrics',
+      `${DIALOG} .collaboration-project-create-token > svg`
+    )
+  )
+  const padding = Number.parseFloat(
+    await control.command('getComputedStyleValue', token, { value: 'padding-left' })
+  )
+  assert.ok(
+    input && icon && Number.isFinite(padding),
+    'Token field must expose its rendered text and icon geometry'
+  )
+  assert.ok(
+    input.left + padding >= icon.right - 1,
+    `The token text overlaps its lock icon: ${JSON.stringify({ inputLeft: input.left, padding, iconRight: icon.right })}`
+  )
+
+  await control.command('nativePress', scoped(testId('cloud-project-task-provider-local')), {
+    key: 'Enter',
+  })
+  await control.command('waitFor', error, { visible: false })
+  await control.command('waitFor', token, { visible: false })
+  await control.command('nativePress', advanced, { key: 'Enter' })
+  await control.command('waitFor', `${advanced}[aria-expanded="false"]`, { visible: true })
+}
+
 export async function verifyPrivateProjectCreation({
   control,
   scoped,
@@ -422,6 +605,7 @@ export async function verifyPrivateProjectCreation({
     await control.command('fill', scoped(testId('collaboration-project-name-input')), {
       value: name,
     })
+    await verifyGitProviderValidation(control, scoped, request, workspace)
     await control.command('click', scoped(testId('cloud-project-visibility-public')))
     await control.command('click', scoped(testId('cloud-project-visibility-private')))
     await control.command('click', scoped(testId('cloud-project-default-issue-security-related')))

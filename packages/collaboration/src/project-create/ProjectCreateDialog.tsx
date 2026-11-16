@@ -1034,7 +1034,7 @@ export function ProjectCreateDialog(props: ProjectCreateDialogProps) {
             )}
             renderToolbar={(toolbarProps) => (
               <div
-                className={`${toolbarProps.className} flex items-center justify-end gap-1.5`}
+                className={`${toolbarProps.className} collaboration-project-create-generation-toolbar flex items-center justify-end gap-1.5`}
                 data-testid="collaboration-project-create-generation-toolbar"
               >
                 <ModelSelector

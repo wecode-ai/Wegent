@@ -299,10 +299,6 @@
   padding: 8px;
 }
 
-.collaboration-project-create-choice.is-compact small {
-  color: rgb(var(--color-text-secondary));
-}
-
 .collaboration-project-create-choice.is-selected {
   border-color: rgb(var(--color-text-primary));
   background: transparent;
@@ -327,7 +323,7 @@
 }
 
 .collaboration-project-create-choice small {
-  color: rgb(var(--color-text-muted));
+  color: rgb(var(--color-text-secondary));
   font-size: 12px;
   font-weight: 400;
   line-height: 16px;
@@ -492,7 +488,7 @@
   border: 1px solid rgb(var(--color-border));
   border-radius: 8px;
   padding: 8px 12px;
-  color: rgb(var(--color-text-muted));
+  color: rgb(var(--color-text-secondary));
   background: transparent;
   font-size: 13px;
   text-align: left;
@@ -627,7 +623,7 @@
 .collaboration-project-create-collaborator-menu small,
 .collaboration-project-create-collaborator-menu p {
   margin: 0;
-  color: rgb(var(--color-text-muted));
+  color: rgb(var(--color-text-secondary));
   font-size: 12px;
   line-height: 16px;
 }
@@ -813,7 +809,7 @@
 }
 
 .collaboration-project-create-group-members small {
-  color: rgb(var(--color-text-muted));
+  color: rgb(var(--color-text-secondary));
   font-size: 12px;
 }
 
@@ -830,7 +826,7 @@
 }
 
 .collaboration-project-create-group-principles small {
-  color: rgb(var(--color-text-muted));
+  color: rgb(var(--color-text-secondary));
   font-size: 12px;
 }
 
@@ -935,7 +931,7 @@
 }
 
 .collaboration-project-create-group-workflow > small {
-  color: rgb(var(--color-text-muted));
+  color: rgb(var(--color-text-secondary));
   font-size: 12px;
 }
 
@@ -997,7 +993,7 @@
 }
 
 .collaboration-project-create-generation-progress small {
-  color: rgb(var(--color-text-muted));
+  color: rgb(var(--color-text-secondary));
   font-size: 12px;
 }
 
@@ -1054,7 +1050,7 @@
 
 .collaboration-project-create-assignment-queue > header small {
   max-width: 620px;
-  color: rgb(var(--color-text-muted));
+  color: rgb(var(--color-text-secondary));
   line-height: 18px;
 }
 
@@ -1194,7 +1190,7 @@
 }
 
 .collaboration-project-create-hover-editable > span.is-placeholder {
-  color: rgb(var(--color-text-muted));
+  color: rgb(var(--color-text-secondary));
 }
 
 .collaboration-project-create-hover-editable > span.is-clickable {
@@ -1206,7 +1202,7 @@
   flex: none;
   border: 0;
   border-radius: 6px;
-  color: rgb(var(--color-text-muted));
+  color: rgb(var(--color-text-secondary));
   background: transparent;
   cursor: pointer;
   opacity: 0;
@@ -1376,7 +1372,7 @@
   display: flex;
   align-items: center;
   gap: 6px;
-  color: rgb(var(--color-text-muted));
+  color: rgb(var(--color-text-secondary));
   font-size: 12px;
 }
 
@@ -1575,9 +1571,10 @@
   color: rgb(var(--color-text-secondary));
 }
 
-.collaboration-dialog input:not([type='checkbox']):not([type='radio']),
-.collaboration-dialog textarea,
-.collaboration-dialog select,
+/* Keep dialog defaults weaker than feature field and focus styles. */
+.collaboration-dialog :where(input:not([type='checkbox']):not([type='radio'])),
+.collaboration-dialog :where(textarea),
+.collaboration-dialog :where(select),
 .collaboration-issue-detail input:not([type='checkbox']):not([type='radio']),
 .collaboration-issue-detail textarea,
 .collaboration-issue-detail select,
@@ -1740,6 +1737,22 @@
 }
 
 @media (max-width: 767px) {
+  .collaboration-project-create-field input:not([type='checkbox']):not([type='radio']),
+  .collaboration-project-create-field select,
+  .collaboration-project-create-field textarea {
+    min-height: 44px;
+  }
+
+  .collaboration-project-create-generation-toolbar {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .collaboration-project-create-generation-toolbar button {
+    min-width: 44px;
+    min-height: 44px;
+  }
+
   .collaboration-project-create-collaborator-token {
     height: auto;
     min-height: 44px;

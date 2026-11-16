@@ -115,7 +115,7 @@ export function ModelSelectorSimplePanel({
       {selectedModel && (
         <p
           data-testid="model-slider-description"
-          className="px-3 pb-2 pt-1 text-center text-xs text-text-muted text-balance"
+          className="px-3 pb-2 pt-1 text-center text-xs text-text-secondary text-balance"
         >
           {presetSelected
             ? t(
