@@ -409,6 +409,8 @@
 }
 
 .task-detail-left.task-detail-workspace-panel {
+  --color-text-muted: var(--color-text-secondary);
+
   padding: 26px 30px 0;
   border-right: 0;
 }
@@ -722,12 +724,14 @@
 
 .task-detail-primary-metadata {
   display: grid;
-  gap: 8px;
+  grid-template-columns: max-content minmax(0, 1fr);
+  gap: 8px 12px;
 }
 
 .task-detail-primary-metadata .task-detail-rail-key,
 .task-detail-expanded-properties .task-detail-rail-key {
-  width: 3em;
+  width: auto;
+  min-width: 3em;
   font-size: inherit;
   font-weight: 400;
   line-height: inherit;
@@ -738,6 +742,12 @@
   min-height: 36px;
   gap: 12px;
   padding: 0;
+}
+
+.task-detail-primary-metadata .task-detail-rail-prop {
+  display: grid;
+  grid-column: 1 / -1;
+  grid-template-columns: subgrid;
 }
 
 .task-detail-primary-metadata .task-detail-rail-value,
@@ -2699,10 +2709,6 @@
   font-weight: var(--font-weight-ui, 445);
 }
 
-.task-detail-new-comment[data-workflow="true"] .task-detail-comment-editor {
-  min-height: 40px;
-}
-
 .task-detail-new-comment[data-workflow="true"]
   .task-detail-new-comment-actions {
   justify-content: flex-start;
@@ -3039,6 +3045,11 @@
   min-width: 0;
   width: 100%;
   margin: 0;
+}
+
+.task-detail-workspace-panel:has(.task-detail-human-requests)
+  .task-detail-comment-bar {
+  position: static;
 }
 
 @media (max-height: 600px) and (pointer: fine) {

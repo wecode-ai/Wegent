@@ -13,26 +13,39 @@ function createFieldSaves<T extends VersionedIssue>(initial: T | null) {
   let accept: ((issue: T) => void) | undefined
   let reportError: ((error: unknown) => void) | undefined
   let active = false
-  let pending = 0
+  const pendingFields = new Map<string, number>()
+  const submissions = new Map<string, number>()
   let saved = false
-  let snapshot: { pending: boolean; error: unknown; saved: boolean } = {
+  let snapshot: {
+    pending: boolean
+    pendingFields: ReadonlySet<string>
+    error: unknown
+    saved: boolean
+  } = {
     pending: false,
+    pendingFields: new Set(),
     error: null,
     saved: false,
   }
   const queue = createVersionMutationQueue<T>(initial?.version ?? 0)
-  const failures = new Map<string, { operation: Operation<T>; error: unknown }>()
+  const failures = new Map<
+    string,
+    { operation: Operation<T>; error: unknown; submission: number }
+  >()
   const listeners = new Set<() => void>()
   const publish = () => {
     snapshot = {
-      pending: pending > 0,
+      pending: pendingFields.size > 0,
+      pendingFields: new Set(pendingFields.keys()),
       error: [...failures.values()].at(-1)?.error ?? null,
       saved,
     }
     if (active) listeners.forEach((listener) => listener())
   }
   async function save(key: string, operation: Operation<T>): Promise<T | undefined> {
-    pending += 1
+    const submission = (submissions.get(key) ?? 0) + 1
+    submissions.set(key, submission)
+    pendingFields.set(key, (pendingFields.get(key) ?? 0) + 1)
     failures.delete(key)
     publish()
     try {
@@ -40,7 +53,7 @@ function createFieldSaves<T extends VersionedIssue>(initial: T | null) {
         async (version) => {
           if (!source) throw new Error('Issue unavailable')
           const updated = await operation({ ...source, version })
-          failures.delete(key)
+          if (submissions.get(key) === submission) failures.delete(key)
           if (updated.version >= source.version) {
             source = updated
             if (active) accept?.(updated)
@@ -51,18 +64,27 @@ function createFieldSaves<T extends VersionedIssue>(initial: T | null) {
         (issue) => issue.version,
       )
     } catch (error) {
-      failures.set(key, { operation, error })
-      if (active) reportError?.(error)
+      if (submissions.get(key) === submission) {
+        failures.set(key, { operation, error, submission })
+        if (active) reportError?.(error)
+      }
       return undefined
     } finally {
-      pending -= 1
+      const remaining = (pendingFields.get(key) ?? 1) - 1
+      if (remaining) pendingFields.set(key, remaining)
+      else pendingFields.delete(key)
       publish()
     }
   }
   return {
     save,
     retry() {
-      for (const [key, failure] of [...failures]) void save(key, failure.operation)
+      for (const [key, failure] of [...failures]) {
+        if (submissions.get(key) === failure.submission) void save(key, failure.operation)
+      }
+    },
+    discardFailure(key: string) {
+      if (failures.delete(key)) publish()
     },
     synchronize(next: T | null, onSaved: (issue: T) => void, onError?: (error: unknown) => void) {
       if (next && (!source || next.version >= source.version)) source = next
@@ -102,5 +124,5 @@ export function useIssueFieldSaves<T extends VersionedIssue>(
     return () => saves.activate(false)
   }, [saves])
   const snapshot = useSyncExternalStore(saves.subscribe, saves.getSnapshot, saves.getSnapshot)
-  return { ...snapshot, save: saves.save, retry: saves.retry }
+  return { ...snapshot, save: saves.save, retry: saves.retry, discardFailure: saves.discardFailure }
 }

@@ -48,7 +48,7 @@ const project = {
   access_role: 'Owner',
 } as CloudProject
 
-function setup(assignmentError?: Error) {
+function setup(assignmentError?: Error, workspacePanel = false) {
   let persisted = initial
   const updateLoopItem = vi.fn(async (_id: string, values: Partial<CloudLoopItem>) => {
     persisted = { ...persisted, ...values, version: persisted.version + 1 }
@@ -77,6 +77,8 @@ function setup(assignmentError?: Error) {
     return (
       <TodoEditor
         mode="edit"
+        presentation={workspacePanel ? 'workspace-panel' : 'modal'}
+        readFirst={workspacePanel}
         item={item}
         project={project}
         allItems={[item]}
@@ -91,6 +93,39 @@ function setup(assignmentError?: Error) {
 }
 
 describe('immediate Issue properties', () => {
+  it('keeps description save and cancel disabled while its write is pending', async () => {
+    const { updateLoopItem } = setup(undefined, true)
+    fireEvent.click(screen.getByTestId('issue-description-edit'))
+    fireEvent.change(screen.getByTestId('test-description'), { target: { value: 'Edited' } })
+    const pending = Promise.withResolvers<CloudLoopItem>()
+    updateLoopItem.mockImplementationOnce(() => pending.promise)
+    fireEvent.click(screen.getByTestId('cloud-todo-save'))
+    expect(screen.getByTestId('cloud-todo-save')).toBeDisabled()
+    expect(screen.getByTestId('cloud-todo-cancel-content-edit')).toBeDisabled()
+    expect(screen.getByTestId('issue-save-status')).toHaveTextContent('保存中')
+    await act(async () => pending.resolve({ ...initial, description: 'Edited', version: 2 }))
+    expect(screen.getByTestId('issue-save-status')).toHaveTextContent('已保存')
+    expect(screen.queryByTestId('cloud-todo-cancel-content-edit')).toBeNull()
+  })
+
+  it('discards a failed description save when the edit is cancelled', async () => {
+    const { updateLoopItem } = setup(undefined, true)
+    fireEvent.click(screen.getByTestId('issue-description-edit'))
+    fireEvent.change(screen.getByTestId('test-description'), { target: { value: 'Abandoned' } })
+    updateLoopItem.mockRejectedValueOnce(new Error('Offline'))
+    fireEvent.click(screen.getByTestId('cloud-todo-save'))
+    await screen.findByTestId('cloud-todo-field-retry')
+    fireEvent.click(screen.getByTestId('cloud-todo-cancel-content-edit'))
+    expect(screen.queryByTestId('cloud-todo-field-retry')).toBeNull()
+    expect(screen.getByTestId('test-description')).toHaveValue('Saved description')
+    const title = screen.getByTestId('cloud-todo-detail-title')
+    fireEvent.change(title, { target: { value: 'Kept title' } })
+    fireEvent.blur(title)
+    await waitFor(() => expect(screen.getByTestId('issue-save-status')).toHaveTextContent('已保存'))
+    expect(updateLoopItem).toHaveBeenCalledTimes(2)
+    expect(updateLoopItem).toHaveBeenLastCalledWith(initial.id, { version: 1, title: 'Kept title' })
+  })
+
   it('marks a retained invalid date range as unsaved after a successful save', async () => {
     const { updateLoopItem } = setup()
     const title = screen.getByTestId('cloud-todo-detail-title')

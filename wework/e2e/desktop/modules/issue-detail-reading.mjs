@@ -54,13 +54,20 @@ async function verifyComposerVisible(control) {
   )
 }
 
-async function verifyConstrainedDiscussion(control, captureScreenshot) {
+async function verifyConstrainedDiscussion(control, captureScreenshot, replySelector) {
   const previous = JSON.parse(
     await control.command('setMainWindowSize', 'body', {
       value: JSON.stringify({ width: 720, height: 450 }),
     })
   )
   try {
+    await control.command(
+      'scrollToRatioAsUser',
+      scope('[data-testid="cloud-todo-detail-scroll"]'),
+      {
+        value: '1',
+      }
+    )
     const action = scope('[data-testid="issue-persistent-task-action"]')
     await control.command('waitFor', action, { visible: true, stableMs: 300 })
     await verifyComposerVisible(control)
@@ -78,7 +85,25 @@ async function verifyConstrainedDiscussion(control, captureScreenshot) {
       scroll.height - reply.height - 16 >= scroll.height / 2,
       'At least half the constrained discussion viewport must remain available for reading'
     )
+    const composer = scope('[data-testid="cloud-task-activity-composer"]')
+    await control.command('fill', composer, {
+      value: Array.from({ length: 8 }, (_, index) => `未发送草稿 ${index + 1}`).join('\n'),
+    })
+    await control.command(
+      'nativePress',
+      replySelector.replace('cloud-task-activity-reply-toggle-', 'issue-comment-create-child-'),
+      { key: 'Tab' }
+    )
+    await control.command('waitFor', `${replySelector}:focus`, { visible: true, stableMs: 300 })
+    const [focusedReply] = JSON.parse(await control.command('getElementMetrics', replySelector))
+    assert.equal(
+      focusedReply.hitTestVisible,
+      true,
+      'The focused reply must not be covered by the long draft composer'
+    )
+    assert.ok(focusedReply.visibleIntersection?.height >= focusedReply.height - 1)
     await captureScreenshot(control, 'issue-detail-reading-03-constrained.png')
+    await control.command('fill', composer, { value: '' })
   } finally {
     await control.command('setMainWindowSize', 'body', { value: JSON.stringify(previous) })
   }
@@ -184,6 +209,6 @@ export async function verifyIssueDetailReading(control, { captureScreenshot, uiT
     '回复此讨论…'
   )
   await captureScreenshot(control, 'issue-detail-reading-02-reply.png')
-  await verifyConstrainedDiscussion(control, captureScreenshot)
+  await verifyConstrainedDiscussion(control, captureScreenshot, replySelector)
   await control.command('click', scope('[data-testid="issue-reply-cancel"]'))
 }

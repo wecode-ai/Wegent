@@ -1,5 +1,5 @@
 import type { CloudLoopItem, CloudProject, LoopItemTaskBinding } from '@/api/deliveries'
-import '@/i18n'
+import i18n from '@/i18n'
 import { act, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { startTransition, Suspense, useState } from 'react'
@@ -47,6 +47,43 @@ const baseItem = {
 const project = { id: '11', name: 'Wework' } as unknown as CloudProject
 
 describe('TodoEditor external item sync', () => {
+  it('uses English accessible names throughout Issue reading controls', async () => {
+    const language = i18n.language
+    await act(async () => {
+      await i18n.changeLanguage('en')
+    })
+    try {
+      render(
+        <TodoEditor
+          mode="edit"
+          presentation="workspace-panel"
+          readFirst
+          showPanelControls
+          showFullscreenControl
+          item={baseItem}
+          project={project}
+          allItems={[baseItem]}
+          onUpdated={vi.fn()}
+          onClose={vi.fn()}
+          api={api}
+        />
+      )
+      expect(screen.getByTestId('cloud-todo-detail-fullscreen')).toHaveAccessibleName(
+        'Expand details'
+      )
+      expect(screen.getByTestId('cloud-todo-state-summary')).toHaveAccessibleName('Current status')
+      expect(screen.getByTestId('cloud-todo-more-properties-popover')).toHaveAttribute(
+        'aria-label',
+        'More properties'
+      )
+      expect(await screen.findByRole('textbox', { name: 'Description' })).toBeVisible()
+    } finally {
+      await act(async () => {
+        await i18n.changeLanguage(language)
+      })
+    }
+  })
+
   it('offers a keyboard action for editing a read-only description', async () => {
     render(
       <TodoEditor

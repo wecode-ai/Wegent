@@ -336,6 +336,10 @@ export function TaskDescriptionEditor({
     },
   })
 
+  useEffect(() => {
+    editor.domElement?.setAttribute('aria-label', ariaLabel)
+  }, [ariaLabel, editor])
+
   // Mirror external markdown into the editor without resetting it on every
   // keystroke: only apply the value when it differs from the markdown we last
   // emitted (or the value we last loaded).

@@ -81,7 +81,7 @@ export function IssueHumanRequests({
     return null
   return (
     <section
-      className="space-y-3 py-3"
+      className="task-detail-human-requests space-y-3 py-3"
       data-testid="issue-human-requests"
       aria-label={t('issueParticipation.waiting')}
     >

@@ -1009,6 +1009,7 @@ export function TodoEditor(props: TodoEditorProps) {
         item.description ?? "",
       ),
   );
+  const savingDescription = fieldSaves.pendingFields.has("description");
   async function saveTitle() {
     if (!item || !editable || !title.trim()) return;
     const next = title.trim();
@@ -1828,7 +1829,7 @@ export function TodoEditor(props: TodoEditorProps) {
   }
 
   async function saveDetails() {
-    if (!item || !editable || !descriptionDirty || saving) return;
+    if (!item || !editable || !descriptionDirty || savingDescription) return;
     const updated = await fieldSaves.save("description", (source) =>
       persistIssueDetailFields(source, { description }, editorPort.issues),
     );
@@ -1839,7 +1840,8 @@ export function TodoEditor(props: TodoEditorProps) {
   }
 
   function cancelContentEditing() {
-    if (!item) return;
+    if (!item || savingDescription) return;
+    fieldSaves.discardFailure("description");
     const source =
       persistedIssueRef.current?.id === item.id
         ? persistedIssueRef.current
@@ -2984,15 +2986,16 @@ export function TodoEditor(props: TodoEditorProps) {
           ) : null}
           {twoColumn && !isCreate && !workspacePanel ? (
             <>
-              {(editable || canAssign) && (descriptionDirty || saving) ? (
+              {(editable || canAssign) &&
+              (descriptionDirty || savingDescription) ? (
                 <button
                   type="button"
                   data-testid="cloud-todo-save"
-                  disabled={saving}
+                  disabled={savingDescription}
                   onClick={() => void saveDetails()}
                   className="mr-2 h-8 rounded-lg bg-text-primary px-3 text-sm font-medium text-background transition hover:opacity-90 disabled:opacity-50"
                 >
-                  {saving
+                  {savingDescription
                     ? t("todo.saving", "保存中…")
                     : t("common.save", "保存")}
                 </button>
@@ -3587,7 +3590,7 @@ export function TodoEditor(props: TodoEditorProps) {
                           <button
                             type="button"
                             data-testid="cloud-todo-cancel-content-edit"
-                            disabled={saving}
+                            disabled={savingDescription}
                             onClick={cancelContentEditing}
                           >
                             {t("common.cancel", "取消")}
@@ -3595,13 +3598,13 @@ export function TodoEditor(props: TodoEditorProps) {
                           <IssueSaveButton
                             testId="cloud-todo-save"
                             className="task-detail-assignment-save"
-                            saving={saving}
+                            saving={savingDescription}
                             notificationAvailable={false}
                             labels={notificationSaveLabels}
-                            disabled={!descriptionDirty || saving}
+                            disabled={!descriptionDirty || savingDescription}
                             onSave={saveDetails}
                           >
-                            {saving
+                            {savingDescription
                               ? t("todo.saving", "保存中…")
                               : t("common.save", "保存")}
                           </IssueSaveButton>
@@ -4478,11 +4481,11 @@ export function TodoEditor(props: TodoEditorProps) {
                       <button
                         type="button"
                         data-testid="cloud-todo-save"
-                        disabled={saving}
+                        disabled={savingDescription}
                         onClick={() => void saveDetails()}
                         className="h-8 rounded-lg bg-text-primary px-3.5 text-sm font-medium text-background transition hover:opacity-90 disabled:opacity-50"
                       >
-                        {saving
+                        {savingDescription
                           ? t("todo.saving_issue", "正在保存…")
                           : t("common.save", "保存")}
                       </button>

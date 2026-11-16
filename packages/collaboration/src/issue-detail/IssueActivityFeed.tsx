@@ -3,6 +3,7 @@ import type { ReactNode, Ref } from "react";
 import type { CollaborationTranslate } from "../i18n";
 import { activityClassNames as cn } from "./activityClassNames";
 import { CompositedSpinner } from "./CompositedSpinner";
+import { useIssueComposerViewport } from "./useIssueComposerViewport";
 
 /** Desktop activity layout; hosts supply records, execution controls and composers. */
 export function IssueActivityFeed({
@@ -35,8 +36,10 @@ export function IssueActivityFeed({
   const rail = mode === "rail";
   const linear = mode === "linear";
   const compact = rail || linear;
+  const composerRef = useIssueComposerViewport(linear);
   const composerFooter = (
     <footer
+      ref={composerRef}
       className={cn(
         rail && "shrink-0 border-t border-border bg-background px-[18px] py-3",
         linear && "task-detail-comment-bar",

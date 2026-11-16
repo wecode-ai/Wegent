@@ -6,6 +6,22 @@ import { normalizeTaskDescription } from './taskDescription'
 import { TaskDescriptionEditor } from './TaskDescriptionEditor'
 
 describe('TaskDescriptionEditor', () => {
+  it('updates the accessible name without replacing the document when language changes', async () => {
+    const onChange = vi.fn()
+    const view = render(
+      <TaskDescriptionEditor value="Existing text" onChange={onChange} ariaLabel="描述" />
+    )
+    view.rerender(
+      <TaskDescriptionEditor value="Existing text" onChange={onChange} ariaLabel="Description" />
+    )
+    const editor = screen.getByRole('textbox', { name: 'Description' })
+    expect(editor).toHaveTextContent('Existing text')
+    expect(onChange).not.toHaveBeenCalled()
+    await userEvent.click(editor)
+    await userEvent.keyboard(' changed')
+    expect(screen.getByRole('textbox', { name: 'Description' })).toHaveTextContent('changed')
+  })
+
   it('keeps loaded markdown clean when enabling editing normalizes its representation', async () => {
     const onChange = vi.fn()
     const value = '## 目标\n正文\n\n### 验收标准\n- 第一项\n- 第二项'

@@ -245,6 +245,7 @@ export function TodoEditor(props: TodoEditorProps) {
     renderDescriptionEditor: context => (
       <TaskDescriptionEditor
         value={context.value}
+        ariaLabel={t('todo.issue_description_label')}
         placeholder={context.placeholder}
         onChange={context.onChange}
         onPasteFiles={context.onPasteFiles}
