@@ -122,6 +122,10 @@ function StandInSettingsEditor({
   )
   const [notice, setNotice] = useState(false)
   const [roleNameError, setRoleNameError] = useState(false)
+  const roleNameInput = useRef<HTMLInputElement>(null)
+  useEffect(() => {
+    if (roleNameError) roleNameInput.current?.focus()
+  }, [roleNameError, view])
   const [confirmDiscard, setConfirmDiscard] = useState(false)
   const projectRef = useMemo(
     () =>
@@ -205,7 +209,8 @@ function StandInSettingsEditor({
     connectionRef.current ? connectionRef.current.requestLeave(closeView) : closeView()
   const closeSettings = () => requestLeave(() => onCancel?.())
   const cancelView = () => {
-    if (onCancel || view === (initialProject ? 'project' : 'main')) {
+    const nestedCreation = view === 'create' && !initialCreate
+    if (!nestedCreation && (onCancel || view === (initialProject ? 'project' : 'main'))) {
       closeSettings()
       return
     }
@@ -231,7 +236,9 @@ function StandInSettingsEditor({
   }))
   const save = async (disconnectProject = false) => {
     if (!draft || !role || moving || connectionDraftDirty) return
-    if (view === 'create' && !role.name.trim()) {
+    if (!saved?.roles.some(value => value.id === role.id) && !role.name.trim()) {
+      if (view === 'project') openView('create')
+      else if (view === 'advanced' || view === 'connections') closeView()
       setRoleNameError(true)
       return
     }
@@ -355,6 +362,9 @@ function StandInSettingsEditor({
   const title = view === 'main' ? 'personal.settings_title' : `personal.${view}_title`
   const projectConfigured =
     role && (role.collaboration.allProjects || role.collaboration.projects.length > 0)
+  const receivingSources = Boolean(
+    role?.enabled && ((projectConfigured && role.collaboration.enabled) || role.connections?.length)
+  )
 
   return (
     <section
@@ -491,6 +501,7 @@ function StandInSettingsEditor({
                     )}
                   </span>
                   <input
+                    ref={roleNameInput}
                     autoFocus={view === 'create'}
                     data-testid="stand-in-role-name"
                     value={role.name}
@@ -568,7 +579,7 @@ function StandInSettingsEditor({
                                   { count: included.length }
                                 )}
                               </p>
-                              {!role.collaboration.enabled && (
+                              {!role.collaboration.enabled && receivingSources && (
                                 <p className="mt-1 text-xs text-text-secondary">
                                   {t('standIn.workspace.connection_receiving_paused')}
                                 </p>
@@ -584,12 +595,17 @@ function StandInSettingsEditor({
                           )}
                         </div>
                       </div>
-                    ) : (
+                    ) : null}
+                    {!receivingSources && (
                       <p
                         className="text-sm text-text-secondary"
                         data-testid="stand-in-sources-empty"
                       >
-                        {t('standIn.personal.no_sources')}
+                        {t(
+                          projectConfigured || role.connections?.length
+                            ? 'standIn.personal.no_receiving_sources'
+                            : 'standIn.personal.no_sources'
+                        )}
                       </p>
                     )}
                   </div>

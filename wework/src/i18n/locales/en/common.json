@@ -5731,6 +5731,7 @@
       "connected_all": "Connected to {{count}} projects, including future projects",
       "connected_selected": "Connected to {{count}} projects",
       "no_sources": "No work connected",
+      "no_receiving_sources": "Work source intake is currently off.",
       "add_source": "Connect more work",
       "automatic": "Handle new tasks automatically",
       "automatic_help": "Enable and save to let your stand-in automatically handle newly assigned tasks.",

@@ -71,6 +71,43 @@ function fixture(overrides: Partial<PersonalStandInSettings> = {}) {
 const userSetup = () => userEvent.setup({ delay: null })
 
 describe('Personal stand-in settings', () => {
+  it.each([false, true])(
+    'keeps new-role name validation after returning (advanced: %s)',
+    async advanced => {
+      const { props, personalSave } = fixture()
+      const user = userSetup()
+      render(<StandInSettingsPage {...props} />)
+      await user.click(await screen.findByTestId('stand-in-list-configure'))
+      await screen.findByTestId('stand-in-role-name')
+      await user.click(screen.getByTestId('stand-in-back'))
+      if (advanced) await user.click(screen.getByTestId('stand-in-advanced-open'))
+      await user.click(screen.getByTestId('stand-in-save'))
+      expect(personalSave).not.toHaveBeenCalled()
+      expect(await screen.findByRole('alert')).toHaveTextContent('请填写助理名称')
+      expect(screen.getByTestId('stand-in-role-name')).toHaveFocus()
+      await user.type(screen.getByTestId('stand-in-role-name'), 'Review role')
+      await user.click(screen.getByTestId('stand-in-save'))
+      await waitFor(() => expect(personalSave).toHaveBeenCalledOnce())
+    }
+  )
+
+  it('cancels nested project-role creation without closing its parent editor', async () => {
+    const { props, personalSave } = fixture()
+    const onCancel = vi.fn()
+    const user = userSetup()
+    render(
+      <StandInSettingsPage {...props} initialProject={props.projects[0]} onCancel={onCancel} />
+    )
+    await user.selectOptions(await screen.findByTestId('stand-in-project-select'), '__new')
+    await screen.findByTestId('stand-in-role-name')
+    await user.click(screen.getByTestId('stand-in-cancel'))
+    expect(screen.queryByTestId('stand-in-role-name')).not.toBeInTheDocument()
+    expect(screen.getByTestId('stand-in-project-select')).not.toHaveValue('__new')
+    expect(screen.queryByTestId('stand-in-discard')).not.toBeInTheDocument()
+    expect(onCancel).not.toHaveBeenCalled()
+    expect(personalSave).not.toHaveBeenCalled()
+  })
+
   it('retries a failed environment request without reloading settings or losing the role draft', async () => {
     const { props, personalGet } = fixture()
     const listRuntimeWork = vi
@@ -122,9 +159,8 @@ describe('Personal stand-in settings', () => {
     const { props, personalSave } = fixture({ roles: [role] })
     render(<StandInSettingsPage {...props} />)
     const summary = await screen.findByTestId('stand-in-source-summary')
-    expect(summary).toHaveTextContent('未开启接收')
     expect(summary).toHaveTextContent('已连接 2 个项目')
-    expect(screen.queryByTestId('stand-in-sources-empty')).not.toBeInTheDocument()
+    expect(screen.getByTestId('stand-in-sources-empty')).toHaveTextContent('当前未开启工作来源接收')
     expect(personalSave).not.toHaveBeenCalled()
   })
 

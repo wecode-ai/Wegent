@@ -5726,6 +5726,7 @@
       "connected_all": "已连接 {{count}} 个项目（包含以后加入的项目）",
       "connected_selected": "已连接 {{count}} 个项目",
       "no_sources": "尚未连接工作",
+      "no_receiving_sources": "当前未开启工作来源接收。",
       "add_source": "连接更多工作",
       "automatic": "自动处理新任务",
       "automatic_help": "开启并保存后，助理会自动处理新分配给你的任务。",
