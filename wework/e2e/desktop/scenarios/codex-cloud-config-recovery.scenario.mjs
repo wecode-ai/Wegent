@@ -3,6 +3,7 @@ import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { createCloudConfigModelService } from '../modules/cloud-config-model-service.mjs'
 import { assertCloudConfigRecovery } from '../modules/cloud-config-recovery-evidence.mjs'
+import { restartCloudConfigDesktop } from '../modules/cloud-config-restart-readiness.mjs'
 import { requestExecutor } from '../modules/executor-rpc.mjs'
 import {
   ACTIVE_WORKBENCH_SELECTOR,
@@ -197,8 +198,7 @@ export function createDesktopScenario({ resultDir, workspacePath }) {
         // A completed task can still have a native composer prediction or read
         // in flight. Reuse the idle-only restart gate before changing auth modes.
         const idleRestart = await waitForValue(
-          async () =>
-            JSON.parse(await control.command('restartLocalCodexAppServerIfIdle', 'body')),
+          async () => JSON.parse(await control.command('restartLocalCodexAppServerIfIdle', 'body')),
           value => value.restarted === true,
           'The native Codex process did not become idle before restoring official auth',
           RECOVERY_TIMEOUT_MS
@@ -345,7 +345,9 @@ export function createDesktopScenario({ resultDir, workspacePath }) {
       const goalFailureCount = await model.failBundle()
       const goalOffset = (await readFile(logPath, 'utf8')).length
       assert.equal(typeof restartDesktopApp, 'function')
-      await restartDesktopApp({ forceStop: true })
+      await restartCloudConfigDesktop(control, restartDesktopApp, RECOVERY_TIMEOUT_MS, {
+        forceStop: true,
+      })
       await completed(goalTask, goalMarker, 3)
       assert.equal(goalPlan.count, 3, 'Goal recovery started a duplicate model turn')
       const afterGoal = (await rpc('runtime.tasks.goal.get', { address: address(goalTask) })).goal
@@ -371,7 +373,7 @@ export function createDesktopScenario({ resultDir, workspacePath }) {
       }
       await openGoalConversation()
       model.recoverBundle()
-      await restartDesktopApp()
+      await restartCloudConfigDesktop(control, restartDesktopApp, RECOVERY_TIMEOUT_MS)
       await completed(goalTask, goalMarker, 3)
       assert.equal(goalPlan.count, 3, 'The completed Goal continued after a cold desktop restart')
       // Main-window startup restores configured fixed tabs, not the last transient task route.
