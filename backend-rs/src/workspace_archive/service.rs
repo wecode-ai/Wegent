@@ -128,10 +128,7 @@ pub(crate) fn recovery_archive_available(task_id: i64, task_json: &Value) -> any
     let Some(archive) = archive_status(task_json).ok().flatten() else {
         return Ok(false);
     };
-    if !archive["storageKey"]
-        .as_str()
-        .is_some_and(|key| !key.is_empty())
-    {
+    if archive["storageKey"].as_str().is_none_or(str::is_empty) {
         return Ok(false);
     }
     match is_expired(archive.get("expiresAt")) {

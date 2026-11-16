@@ -41,6 +41,7 @@ export * from "./workspace";
 export * from "./workspace-controller";
 export * from "./workspace-header/ProjectViewSwitcher";
 export * from "./web-adapter/createSharedWorkspaceFilesViewApi";
+export { BrowserAttachmentPreview } from "./web-adapter/BrowserAttachmentPreview";
 export {
   createAutomationExecutionCatalogApi,
   mapAutomationExecutionCatalog,

@@ -27,6 +27,7 @@ from app.services.loop_item_executions.service import loop_item_execution_servic
 from app.services.notification_target import board_notification_target
 from app.services.project_chat.service import bot_config, compiled_bot_config
 from app.services.wework_notifications import create_notification
+from shared.telemetry.decorators import trace_sync
 
 MANAGER_SYSTEM_INSTRUCTIONS = """You are the manager for one project Issue.
 Coordinate the collaboration group through the project-space management tools.
@@ -83,6 +84,7 @@ def dispatch_collaboration_group_assignment(
     )
 
 
+@trace_sync("collaboration_group.enqueue", tracer_name="backend")
 def _enqueue_ai_leader(
     db: Session,
     *,
@@ -148,7 +150,14 @@ def _enqueue_ai_leader(
         "manager_display_name": str(group.get("name") or "Collaboration manager"),
         "collaboration_group": jsonable_encoder(group),
         "execution_prompt": manager_user_message,
-        "system_prompt": MANAGER_SYSTEM_INSTRUCTIONS,
+        "system_prompt": "\n\n".join(
+            part
+            for part in (
+                str(config.get("system_prompt") or "").strip(),
+                MANAGER_SYSTEM_INSTRUCTIONS,
+            )
+            if part
+        ),
     }
     from app.services.runner_routing import resolve_group_routing
 

@@ -13,7 +13,7 @@ sidebar_position: 4
 该项目为所有模块提供了全面的单元测试支持：
 
 - **后端** (FastAPI): pytest + pytest-asyncio + pytest-cov + pytest-mock
-- **执行器** (AI Agent 引擎): pytest + pytest-mock + pytest-asyncio
+- **执行器** (Rust 工作区): Cargo 单元测试和协议集成测试
 - **执行器管理器** (任务管理): pytest + pytest-mock + pytest-cov
 - **共享模块** (工具库): pytest + pytest-cov
 - **前端** (Next.js + React 19): Jest + @testing-library/react
@@ -38,9 +38,8 @@ sidebar_position: 4
 
 ### 执行器 (`executor/`)
 
-- ✅ Agent 工厂
-- ✅ 基础 agent 类
-- ✅ 模拟 AI 客户端交互（Anthropic、OpenAI）
+- 权限、凭据隔离、任务状态、持久化和故障恢复的单元测试
+- `executor/tests/` 中的进程、HTTP 和运行时协议集成测试
 
 ### 执行器管理器 (`executor_manager/`)
 
@@ -141,24 +140,18 @@ markers =
 
 ```bash
 cd executor
-pytest tests/ --cov=agents
+cargo test --locked -p wegent-executor --lib <模块或用例名称>
+cargo test --locked -p <工作区包名> --lib
+cargo test --locked --test <集成测试文件名>
 ```
 
-### 测试结构
+### 测试维护
 
-```
-executor/tests/
-├── conftest.py              # 执行器特定的 fixture
-└── agents/                  # Agent 测试
-```
+工作区单元测试位于 `executor/src/` 和 `executor/crates/*/src/`，集成测试位于 `executor/tests/`。源码中的测试也可能包含真实进程或 HTTP 联调，应根据测试行为判断其职责。
 
-### 关键 Fixture
+精简单元测试时，优先裁剪普通参数映射、显示格式、目录元数据和文本投影的独立用例；删除独有用例意味着接受对应覆盖减少，不能称为等价去重。保留权限与资源归属、凭据隔离、并发、持久化、恢复和升级回滚的关键边界，不以固定删减比例替代覆盖判断。同步删除不再使用的测试辅助函数和空模块，不通过 `ignore`、合并用例或改变测试发现规则减少数量。
 
-- `mock_anthropic_client`：模拟的 Anthropic API 客户端，用于测试 Claude 模型
-- `mock_openai_client`：模拟的 OpenAI API 客户端，用于测试 GPT 模型
-- `mock_callback_client`：模拟的回调 HTTP 客户端，用于 agent 响应
-- `suppress_resource_warnings`：会话作用域的 fixture，用于抑制 ResourceWarning 消息
-- `cleanup_logging`：会话作用域的 fixture，用于清理日志处理器并防止守护线程错误
+清理后检查受影响包的编译和单元测试，并保留协议集成测试及 E2E 的独立覆盖。完整测试由推送钩子和 CI 按仓库规则执行。
 
 ## 执行器管理器测试
 

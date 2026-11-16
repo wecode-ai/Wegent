@@ -1041,6 +1041,15 @@ async fn default_personal_task_needs_no_project_environment() {
     assert!(payload.get("workspacePath").is_none());
     let request = execution_request(&payload).unwrap();
     assert!(is_standalone_chat_workspace(&request));
+    assert!(request
+        .system_prompt
+        .contains("Delegate substantial assigned execution to native subagents"));
+    assert!(request
+        .system_prompt
+        .contains("Do not narrate each investigation step"));
+    assert!(request
+        .system_prompt
+        .contains("delegation grants no additional permissions"));
 }
 
 #[tokio::test]

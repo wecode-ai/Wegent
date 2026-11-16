@@ -21,6 +21,7 @@
 //! Lifecycle effects are delivered after commit.
 
 use std::collections::HashMap;
+use std::future::Future;
 use std::sync::{Arc, Weak};
 use std::time::Duration;
 
@@ -129,21 +130,24 @@ async fn reconcile_after_register(
     device_id: &str,
     needs_confirmation_only: bool,
 ) {
-    let executions: Vec<ExecutionRow> = match state
-        .mysql
-        .fetch_all(
-            reconcile_statement(needs_confirmation_only),
-            (user_id, device_id),
-        )
-        .await
+    let execution_refs = match load_reconciliation_refs(|after_id| async move {
+        state
+            .mysql
+            .fetch_all(
+                reconcile_statement(needs_confirmation_only),
+                (user_id, device_id, after_id),
+            )
+            .await
+    })
+    .await
     {
-        Ok(rows) => rows,
+        Ok(references) => references,
         Err(error) => {
             tracing::error!(%error, user_id, device_id, "device execution reconcile read failed");
             return;
         }
     };
-    if executions.is_empty() {
+    if execution_refs.is_empty() {
         return;
     }
     let Some(socket_id) = online_socket_id(state, user_id, device_id).await else {
@@ -159,8 +163,7 @@ async fn reconcile_after_register(
     let Some(snapshots) = reported_snapshots(&response) else {
         return;
     };
-    for execution in &executions {
-        let runtime_task_id = execution.runtime_task_id.clone().unwrap_or_default();
+    for (execution_id, runtime_task_id) in execution_refs {
         let snapshot = snapshots.get(&runtime_task_id);
         let (runtime_status, running, turn_status) = match snapshot {
             Some(value) => (
@@ -173,7 +176,7 @@ async fn reconcile_after_register(
         if let Err(error) = reconcile_one(
             state,
             runtime,
-            execution.id,
+            execution_id,
             &runtime_status,
             running,
             turn_status.as_deref(),
@@ -186,10 +189,43 @@ async fn reconcile_after_register(
                 %error,
                 user_id,
                 device_id,
-                execution = execution.id,
+                execution = execution_id,
                 "device execution snapshot reconcile failed"
             );
             return;
+        }
+    }
+}
+
+/// Dispatch envelopes span multiple conversations; manager decisions own completion.
+fn reconcile_execution_refs(executions: &[ExecutionRow]) -> Vec<(i64, String)> {
+    executions
+        .iter()
+        .filter(|row| {
+            runtime_projection::execution_executor_type(row) != "collaboration_group_dispatch"
+        })
+        .map(|row| (row.id, row.runtime_task_id.clone().unwrap_or_default()))
+        .collect()
+}
+
+/// Bound native reconciliation work without letting aggregate envelopes fill its page.
+async fn load_reconciliation_refs<F, P>(mut fetch_page: F) -> MysqlResult<Vec<(i64, String)>>
+where
+    F: FnMut(i64) -> P,
+    P: Future<Output = MysqlResult<Vec<ExecutionRow>>>,
+{
+    let mut references = Vec::new();
+    let mut after_id = 0;
+    loop {
+        let rows = fetch_page(after_id).await?;
+        let Some(last) = rows.last() else {
+            return Ok(references);
+        };
+        after_id = last.id;
+        let remaining = RECONCILE_LIMIT - references.len();
+        references.extend(reconcile_execution_refs(&rows).into_iter().take(remaining));
+        if references.len() == RECONCILE_LIMIT || rows.len() < RECONCILE_LIMIT {
+            return Ok(references);
         }
     }
 }
@@ -209,6 +245,7 @@ fn reconcile_statement(needs_confirmation_only: bool) -> String {
         "SELECT {EXECUTION_COLUMNS} \nFROM loop_item_executions \n\
          WHERE loop_item_executions.executor_owner_user_id = ? \
          AND loop_item_executions.runtime_device_id = ? \
+         AND loop_item_executions.id > ? \
          AND loop_item_executions.runtime_task_id != '' \
          AND loop_item_executions.status IN ({CAPACITY_STATUSES}){confirmation} \
          ORDER BY loop_item_executions.id ASC \n LIMIT {RECONCILE_LIMIT}"

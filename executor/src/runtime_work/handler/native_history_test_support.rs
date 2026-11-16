@@ -103,6 +103,10 @@ pub(in crate::runtime_work::handler) fn install_native_history(
     [Console]::WriteLine((@{id=$request.id;error=$failure} | ConvertTo-Json -Depth 100 -Compress))
     continue
   }
+  $notificationFile = Join-Path $PSScriptRoot ($method + '.notifications.jsonl')
+  if (Test-Path $notificationFile) {
+    foreach ($notification in [IO.File]::ReadLines($notificationFile)) { [Console]::WriteLine($notification) }
+  }
   $result = ConvertFrom-Json ([IO.File]::ReadAllText((Join-Path $PSScriptRoot ($method + '.json'))))
   [Console]::WriteLine((@{id=$request.id;result=$result} | ConvertTo-Json -Depth 100 -Compress))
 }"#,

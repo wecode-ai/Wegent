@@ -118,7 +118,7 @@ pub(in crate::socketio) async fn open_accepted_activity<T: MysqlTransaction>(
             .execute(
                 "UPDATE project_chat_messages SET message_type='agent_chunk', metadata=?, \
              runtime_device_id=?, runtime_task_id=?, runtime_activity_key=?, status=?, \
-             updated_at=UTC_TIMESTAMP(6) WHERE id=?",
+             updated_at=CURRENT_TIMESTAMP(6) WHERE id=?",
                 (
                     brz_mysql::Json(Value::Object(metadata)),
                     device,

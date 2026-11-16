@@ -4,7 +4,7 @@
 
 //! The owned-device identity lock shared by device registration and removal.
 //!
-//! Source: `app/services/device/record_operations.py::app_identity_lock`:
+//! Source: `app/services/device/record_operations.py::device_identity_lock`:
 //!
 //! ```python
 //! async with client.lock(
@@ -17,7 +17,7 @@
 //! redis-py's asyncio `Lock` acquires with `SET key token NX PX 30000`, retries
 //! every 100 ms until the 10 s blocking budget expires, and releases through
 //! the `LUA_RELEASE_SCRIPT` `EVALSHA`, which returns `1` only while this token
-//! still owns the key. `on_device_register` wraps App registrations in this
+//! still owns the key. `on_device_register` wraps registrations in this
 //! lock so deletion cannot race the database-to-online transition; the record
 //! delete endpoint holds it across its transaction too.
 
@@ -27,8 +27,12 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use brz_redis::{ErrorKind, Redis, RedisError, SetExpiration, SetOptions};
 
+use crate::plugins_installed::write_coordination::{RELEASE_SCRIPT, RELEASE_SHA};
+
 /// `Lock(timeout=30)`: the lock key's TTL.
 const IDENTITY_LOCK_TIMEOUT_MS: u64 = 30_000;
+/// Bound the work under the lock before the Redis lease can expire.
+pub(crate) const IDENTITY_LOCK_BODY_TIMEOUT: Duration = Duration::from_secs(20);
 
 /// `Lock(blocking_timeout=10)`: how long acquisition keeps retrying.
 const IDENTITY_LOCK_BLOCKING_TIMEOUT: Duration = Duration::from_secs(10);
@@ -36,11 +40,7 @@ const IDENTITY_LOCK_BLOCKING_TIMEOUT: Duration = Duration::from_secs(10);
 /// redis-py `Lock.sleep`: the pause between acquisition attempts.
 const IDENTITY_LOCK_RETRY_INTERVAL: Duration = Duration::from_millis(100);
 
-/// SHA1 of redis-py's `Lock.LUA_RELEASE_SCRIPT`, the script `Lock.release`
-/// runs with `EVALSHA` so only the acquirer deletes the key.
-const IDENTITY_LOCK_RELEASE_SHA1: &str = "c3f8721cbb97f72bc19e972846bd7aaf91901658";
-
-/// The Redis lock `app_identity_lock` holds.
+/// The Redis lock shared by registration and removal.
 ///
 /// redis-py's `Lock` releases only when the stored value still equals its
 /// token, so an expired or stolen lock is never released by its former owner.
@@ -78,14 +78,18 @@ impl<'a, R: Redis> IdentityLock<'a, R> {
     /// `Lock.release`: `EVALSHA` of the redis-py release script, which returns
     /// `1` only when this token still owns the key.
     pub(crate) async fn release(&self) -> Result<(), RedisError> {
-        let released: i64 = self
+        let result = self
             .redis
-            .evalsha(
-                IDENTITY_LOCK_RELEASE_SHA1,
-                [self.key.as_str()],
-                [self.token.as_str()],
-            )
-            .await?;
+            .evalsha::<_, _, _, i64>(RELEASE_SHA, [self.key.as_str()], [self.token.as_str()])
+            .await;
+        let released = match result {
+            Err(error) if error.kind() == ErrorKind::NoScript => {
+                self.redis
+                    .eval(RELEASE_SCRIPT, [self.key.as_str()], [self.token.as_str()])
+                    .await?
+            }
+            result => result?,
+        };
         release_outcome(released)
     }
 }
@@ -134,7 +138,9 @@ fn release_outcome(released: i64) -> Result<(), RedisError> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use brz_redis::{EncodeRedisArg, EncodeRedisArgs, FromRedisBulk, RedisResult, RedisValues};
+    use brz_redis::{
+        EncodeRedisArg, EncodeRedisArgs, FromRedisBulk, FromRedisValue, RedisResult, RedisValues,
+    };
 
     #[test]
     fn identity_lock_key_matches_the_source_prefix() {
@@ -156,7 +162,7 @@ mod tests {
         assert!(release_outcome(0).is_err());
     }
 
-    /// A `Redis` stub that only answers `SET ... NX`.
+    /// Simulate a Redis server whose script cache is empty.
     struct LockRedis {
         acquired: bool,
     }
@@ -189,6 +195,29 @@ mod tests {
             V: EncodeRedisArg + Send,
         {
             Ok(self.acquired)
+        }
+
+        async fn evalsha<D, K, A, R>(&self, _digest: D, _keys: K, _arguments: A) -> RedisResult<R>
+        where
+            D: EncodeRedisArg + Send,
+            K: EncodeRedisArgs + Send,
+            A: EncodeRedisArgs + Send,
+            R: FromRedisValue + Send,
+        {
+            Err(RedisError::new(
+                ErrorKind::NoScript,
+                "script cache is empty",
+            ))
+        }
+
+        async fn eval<S, K, A, R>(&self, _script: S, _keys: K, _arguments: A) -> RedisResult<R>
+        where
+            S: EncodeRedisArg + Send,
+            K: EncodeRedisArgs + Send,
+            A: EncodeRedisArgs + Send,
+            R: FromRedisValue + Send,
+        {
+            R::from_redis_value(&brz_redis::Value::Int(1))
         }
 
         async fn mget<K, R>(&self, _keys: K) -> RedisResult<Vec<Option<R>>>
@@ -236,7 +265,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn a_free_lock_is_acquired_from_set_nx() {
+    async fn a_free_lock_is_acquired_and_released_with_an_empty_script_cache() {
         let redis = LockRedis { acquired: true };
         let lock = IdentityLock::acquire(&redis, 9)
             .await
@@ -244,6 +273,7 @@ mod tests {
             .expect("the lock is free");
         assert_eq!(lock.key, identity_lock_key(9));
         assert_eq!(lock.token.len(), 32);
+        lock.release().await.expect("release the owned lock");
     }
 
     #[tokio::test(start_paused = true)]

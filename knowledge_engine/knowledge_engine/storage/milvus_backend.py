@@ -15,7 +15,7 @@ Note: Requires Milvus 2.5+ for keyword and hybrid search support.
 
 import json
 import logging
-from typing import Any, ClassVar, Dict, List, Optional
+from typing import Any, ClassVar, Dict, List, Optional, cast
 
 from llama_index.core import StorageContext, VectorStoreIndex
 from llama_index.core.base.embeddings.base import BaseEmbedding
@@ -27,7 +27,11 @@ from llama_index.core.vector_stores.types import (
     VectorStoreQueryMode,
 )
 from llama_index.vector_stores.milvus import MilvusVectorStore
-from llama_index.vector_stores.milvus.base import IndexManagement, _to_milvus_filter
+from llama_index.vector_stores.milvus.base import (
+    DEFAULT_BATCH_SIZE,
+    _to_milvus_filter,
+)
+from pydantic import PrivateAttr
 from pymilvus import AsyncMilvusClient, MilvusClient
 
 from knowledge_engine.embedding.contract import (
@@ -44,6 +48,12 @@ from knowledge_engine.retrieval.search_hints import resolve_search_queries
 from knowledge_engine.storage.base import BaseStorageBackend
 from knowledge_engine.storage.capabilities import STORAGE_BACKEND_SPECS
 from knowledge_engine.storage.chunk_metadata import ChunkMetadata
+from knowledge_engine.storage.milvus_batching import (
+    DEFAULT_BATCH_HEADROOM_BYTES,
+    DEFAULT_MAX_BATCH_BYTES,
+    MilvusWriteClient,
+    validate_batch_limits,
+)
 from knowledge_engine.storage.milvus_dimension import (
     CollectionSnapshot,
     embedding_model_name,
@@ -102,8 +112,15 @@ class LazyAsyncMilvusVectorStore(MilvusVectorStore):
 
     # Store config for lazy async client creation
     _milvusclient_config: Dict[str, Any] = {}
+    _bounded_client: Optional[MilvusWriteClient] = PrivateAttr(default=None)
 
-    def __init__(self, **kwargs: Any) -> None:
+    def __init__(
+        self,
+        *,
+        max_batch_bytes: int = DEFAULT_MAX_BATCH_BYTES,
+        batch_headroom_bytes: int = DEFAULT_BATCH_HEADROOM_BYTES,
+        **kwargs: Any,
+    ) -> None:
         """
         Initialize without creating AsyncMilvusClient.
 
@@ -111,6 +128,12 @@ class LazyAsyncMilvusVectorStore(MilvusVectorStore):
         the parent class to skip AsyncMilvusClient creation.
         """
         import llama_index.vector_stores.milvus.base as milvus_base
+
+        validate_batch_limits(
+            max_batch_bytes,
+            batch_headroom_bytes,
+            kwargs.get("batch_size", DEFAULT_BATCH_SIZE),
+        )
 
         # Store the original AsyncMilvusClient class
         original_async_client = milvus_base.AsyncMilvusClient
@@ -125,6 +148,13 @@ class LazyAsyncMilvusVectorStore(MilvusVectorStore):
         finally:
             # Restore the original AsyncMilvusClient
             milvus_base.AsyncMilvusClient = original_async_client
+
+        self._bounded_client = MilvusWriteClient(
+            self._milvusclient,
+            max_batch_bytes=max_batch_bytes,
+            batch_headroom_bytes=batch_headroom_bytes,
+            max_rows=self.batch_size,
+        )
 
         # Store connection params for lazy async client creation
         # Following the pattern from PR #20695
@@ -141,6 +171,11 @@ class LazyAsyncMilvusVectorStore(MilvusVectorStore):
 
         # Set _async_milvusclient to None for lazy initialization
         self._async_milvusclient = None  # type: ignore
+
+    @property
+    def client(self) -> MilvusClient:
+        # Parent initialization uses the raw client before the write guard exists.
+        return cast(MilvusClient, self._bounded_client or self._milvusclient)
 
     @property
     def aclient(self) -> AsyncMilvusClient:
@@ -194,7 +229,9 @@ class MilvusBackend(BaseStorageBackend):
                 - username: Optional username for authentication
                 - password: Optional password for authentication
                 - indexStrategy: Index/collection naming strategy
-                - ext: Additional config (e.g., dim for vector dimension, db_name)
+                - ext: Additional config (e.g., dim for vector dimension, db_name).
+                  max_batch_bytes defaults to 1 MiB, batch_headroom_bytes to 64 KiB,
+                  and batch_size retains the SDK's row limit (currently 100).
 
         Authentication:
             If both username and password are provided, they are concatenated
@@ -210,6 +247,18 @@ class MilvusBackend(BaseStorageBackend):
 
         # Get vector dimension from ext (default: 1536 for OpenAI embeddings)
         self.dim = self.ext.get("dim", DEFAULT_EMBEDDING_DIM)
+        self._write_options = {
+            key: self.ext[key]
+            for key in ("batch_size", "max_batch_bytes", "batch_headroom_bytes")
+            if key in self.ext
+        }
+        validate_batch_limits(
+            self._write_options.get("max_batch_bytes", DEFAULT_MAX_BATCH_BYTES),
+            self._write_options.get(
+                "batch_headroom_bytes", DEFAULT_BATCH_HEADROOM_BYTES
+            ),
+            self._write_options.get("batch_size", DEFAULT_BATCH_SIZE),
+        )
 
         # Build token for authentication: username:password
         if self.username and self.password:
@@ -393,6 +442,7 @@ class MilvusBackend(BaseStorageBackend):
             enable_sparse=True,  # Enable sparse vector for keyword/hybrid search
             hybrid_ranker=hybrid_ranker,
             hybrid_ranker_params=hybrid_ranker_params,
+            **self._write_options,
         )
 
     @storage_fact("milvus", "index")
@@ -569,7 +619,7 @@ class MilvusBackend(BaseStorageBackend):
         """Return how many nodes belong to the first provider batch."""
         batch_size = getattr(embed_model, "embed_batch_size", None)
         if is_positive_int(batch_size):
-            return batch_size
+            return cast(int, batch_size)
         return len(nodes)
 
     @staticmethod
@@ -1223,37 +1273,46 @@ class MilvusBackend(BaseStorageBackend):
         collection_name = self.get_parent_store_name(knowledge_id, **kwargs)
         client = self._get_client()
 
-        if not client.has_collection(collection_name):
+        existed = client.has_collection(collection_name)
+        if not existed:
             client.create_collection(
                 collection_name=collection_name,
                 dimension=1,
                 auto_id=True,
                 enable_dynamic_field=True,
             )
-        else:
+        rows = [
+            {
+                "vector": [0.0],
+                "parent_node_id": node.node_id,
+                "knowledge_id": knowledge_id,
+                "doc_ref": node.metadata.get("doc_ref"),
+                "source_file": node.metadata.get("source_file"),
+                "content": self.get_node_display_text(node),
+                "title": node.metadata.get("source_file", ""),
+                "metadata_json": json.dumps(node.metadata),
+            }
+            for node in parent_nodes
+        ]
+        writer = MilvusWriteClient(
+            client,
+            max_batch_bytes=self._write_options.get(
+                "max_batch_bytes", DEFAULT_MAX_BATCH_BYTES
+            ),
+            batch_headroom_bytes=self._write_options.get(
+                "batch_headroom_bytes", DEFAULT_BATCH_HEADROOM_BYTES
+            ),
+            max_rows=self._write_options.get("batch_size", DEFAULT_BATCH_SIZE),
+        )
+        writer.validate_insert_rows(collection_name, rows)
+        if existed:
             self._delete_parent_nodes_with_client(
                 client,
                 collection_name,
                 knowledge_id,
                 parent_nodes[0].metadata.get("doc_ref", ""),
             )
-
-        client.insert(
-            collection_name=collection_name,
-            data=[
-                {
-                    "vector": [0.0],
-                    "parent_node_id": node.node_id,
-                    "knowledge_id": knowledge_id,
-                    "doc_ref": node.metadata.get("doc_ref"),
-                    "source_file": node.metadata.get("source_file"),
-                    "content": self.get_node_display_text(node),
-                    "title": node.metadata.get("source_file", ""),
-                    "metadata_json": json.dumps(node.metadata),
-                }
-                for node in parent_nodes
-            ],
-        )
+        writer.insert(collection_name=collection_name, data=rows)
         return {"stored_count": len(parent_nodes)}
 
     def _delete_collection_by_knowledge_id(

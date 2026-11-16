@@ -16,6 +16,8 @@ use crate::filters::{RequestIdFilter, gateway_cors, server_config};
 use crate::{Application, BoxError, Gateway, OriginService, RouteTable, RustApi, bind, serve};
 
 mod routes;
+#[cfg(test)]
+mod runtime_tests;
 use routes::load as load_routes;
 pub use routes::load_routes_config;
 
@@ -23,6 +25,18 @@ const DEFAULT_HOST: &str = "0.0.0.0";
 const DEFAULT_PORT: u16 = 8000;
 pub(crate) const DEFAULT_PYTHON_UPSTREAM: &str = "http://127.0.0.1:8004";
 const DEFAULT_SHUTDOWN_GRACE: Duration = Duration::from_secs(10);
+// The locked OriginService uses hyper-util's 90s idle connection pool. Keep
+// loopback connections alive beyond that lease; the independent public gateway
+// retains its default 15s request-head deadline.
+const ORIGIN_HEADER_READ_TIMEOUT: Duration = Duration::from_secs(120);
+
+fn origin_runtime_config(shutdown_grace: Duration) -> brz_http_server::hyper::Config {
+    brz_http_server::hyper::Config {
+        header_read_timeout: ORIGIN_HEADER_READ_TIMEOUT,
+        shutdown_grace,
+        ..Default::default()
+    }
+}
 
 /// Process configuration shared by public and private hybrid Backend binaries.
 #[derive(Clone, Debug)]
@@ -263,10 +277,7 @@ where
                 tracing::error!(%error, "Socket.IO namespace shutdown failed");
             }
         },
-        brz_http_server::hyper::Config {
-            shutdown_grace: config.shutdown_grace,
-            ..Default::default()
-        },
+        origin_runtime_config(config.shutdown_grace),
     );
     let gateway = build_gateway(&config, Arc::clone(&state), RequestIdFilter::new(api))?
         .with_cors(gateway_cors())?;

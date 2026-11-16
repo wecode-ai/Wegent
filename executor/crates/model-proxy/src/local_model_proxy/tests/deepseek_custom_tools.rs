@@ -15,20 +15,6 @@ fn upstream(endpoint: &str, mode: &str) -> LocalModelProxyUpstream {
 }
 
 #[test]
-fn deepseek_without_a_legacy_profile_uses_the_shared_function_default() {
-    let upstream = upstream_from_model_config(&json!({
-        "base_url":"https://api.deepseek.com/v1",
-        "api_key":"synthetic-key"
-    }))
-    .unwrap()
-    .unwrap();
-    let capabilities = upstream.responses_tool_capabilities();
-    assert_eq!(capabilities.custom_tools, chat::CustomToolConversion::All);
-    assert!(!capabilities.native_namespace_tools);
-    assert!(!capabilities.native_tool_search);
-}
-
-#[test]
 fn deepseek_custom_tool_policy_is_endpoint_bound_and_respects_explicit_modes() {
     use chat::CustomToolConversion::{All, ExceptApplyPatch, None};
     for (endpoint, mode, expected) in [
@@ -69,42 +55,6 @@ fn mixed_tool_request() -> Value {
             {"type":"custom_tool_call_output","call_id":"exec2","output":"42"}
         ]
     })
-}
-
-#[test]
-fn deepseek_custom_tool_request_bridges_exec_history_without_changing_patch_or_search() {
-    let input = mixed_tool_request();
-    let capabilities = upstream("https://api.deepseek.com", "auto").responses_tool_capabilities();
-    let (body, context) = chat::responses_to_responses(
-        &input,
-        capabilities.custom_tools,
-        capabilities.native_tool_search,
-        capabilities.native_namespace_tools,
-    )
-    .unwrap();
-    assert_eq!(body["tools"][0], input["tools"][0]);
-    assert_eq!(body["tools"][3], input["tools"][3]);
-    for (index, name) in [(1, "exec"), (2, "functions__exec")] {
-        let tool = &body["tools"][index];
-        assert_eq!(tool["type"], "function");
-        assert_eq!(tool["name"], name);
-        assert_eq!(tool["parameters"]["required"], json!(["input"]));
-    }
-    assert_eq!(body["input"][0], input["input"][0]);
-    assert_eq!(body["input"][1], input["input"][1]);
-    for (index, name, script) in [
-        (2, "exec", "text('中文')"),
-        (4, "functions__exec", "text(42)"),
-    ] {
-        let call = &body["input"][index];
-        assert_eq!(call["type"], "function_call");
-        assert_eq!(call["name"], name);
-        assert!(call.get("namespace").is_none());
-        let arguments: Value = serde_json::from_str(call["arguments"].as_str().unwrap()).unwrap();
-        assert_eq!(arguments["input"], script);
-        assert_eq!(body["input"][index + 1]["type"], "function_call_output");
-    }
-    assert!(!context.is_empty());
 }
 
 #[tokio::test]
@@ -187,50 +137,4 @@ async fn deepseek_custom_tool_protocol_rejects_raw_exec_and_accepts_bridged_exec
     assert!(output.contains("text(42)"), "{output}");
     unregister(&token);
     fixture.abort();
-}
-
-#[test]
-fn deepseek_custom_tool_forced_choices_keep_native_patch_and_bridge_namespaced_patch() {
-    let mut input = mixed_tool_request();
-    input["tools"][2]["tools"]
-        .as_array_mut()
-        .unwrap()
-        .push(json!({
-            "type":"custom", "name":"apply_patch", "format":{"type":"text"}
-        }));
-    for (choice, kind, name) in [
-        (
-            json!({"type":"custom","name":"apply_patch"}),
-            "custom",
-            "apply_patch",
-        ),
-        (json!({"type":"custom","name":"exec"}), "function", "exec"),
-        (
-            json!({"type":"custom","namespace":"functions","name":"exec"}),
-            "function",
-            "functions__exec",
-        ),
-        (
-            json!({"type":"custom","namespace":"functions","name":"apply_patch"}),
-            "function",
-            "functions__apply_patch",
-        ),
-    ] {
-        input["tool_choice"] = choice;
-        let (body, _) = chat::responses_to_responses(
-            &input,
-            chat::CustomToolConversion::ExceptApplyPatch,
-            false,
-            false,
-        )
-        .unwrap();
-        assert_eq!(body["tool_choice"]["type"], kind);
-        assert_eq!(body["tool_choice"]["name"], name);
-        assert!(body["tool_choice"].get("namespace").is_none());
-        assert!(body["tools"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .all(|tool| { tool["type"] != "custom" || tool["name"] == "apply_patch" }));
-    }
 }

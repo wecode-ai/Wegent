@@ -26,7 +26,7 @@ interface AppearanceHost {
 const DEFAULT_VARIABLES = {
   light: {
     '--color-bg-base': '255 255 255',
-    '--color-bg-surface': '247 247 248',
+    '--color-bg-surface': '244 244 244',
     '--color-text-primary': '26 26 26',
     '--color-text-secondary': '96 99 104',
     '--color-text-muted': '138 143 152',

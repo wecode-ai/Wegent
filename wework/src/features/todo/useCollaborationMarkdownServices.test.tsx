@@ -52,7 +52,7 @@ test.each(['composer-link-chip', 'assistant-markdown-link'])(
   }
 )
 
-test('does not grant collaboration content access to desktop files or visualizations', () => {
+test('does not grant collaboration content access to desktop files or visualizations', async () => {
   window.__WEWORK_RUNTIME_CONFIG__ = { desktopHost: 'electron' }
   const { result } = renderHook(useCollaborationMarkdownServices)
   render(
@@ -61,7 +61,10 @@ test('does not grant collaboration content access to desktop files or visualizat
     </MarkdownServicesProvider>
   )
 
-  expect(screen.getAllByTestId('assistant-markdown-image-loading')).toHaveLength(2)
+  await waitFor(() =>
+    expect(screen.getAllByTestId('assistant-markdown-image-error')).toHaveLength(2)
+  )
+  expect(screen.queryByTestId('assistant-markdown-image-loading')).not.toBeInTheDocument()
   expect(mocks.readLocalFile).not.toHaveBeenCalled()
   expect(result.current.readLocalFile).toBeUndefined()
   expect(result.current.renderVisualization).toBeUndefined()

@@ -1,3 +1,4 @@
+import { showAllCollaborationIssues } from '../modules/collaboration-board-flows.mjs'
 import assert from 'node:assert/strict'
 import { writeFile } from 'node:fs/promises'
 import { createRequire } from 'node:module'
@@ -509,6 +510,7 @@ export function createDesktopScenario({ captureScreenshot, resultDir, uiTimeoutM
       )
       assert.equal(readEmptyIssue.activity_read_sequence, 0)
       await closeIssue()
+      await showAllCollaborationIssues(control, activeSurface)
       const emptyCard = `${activeSurface} [data-testid="cloud-todo-card-${emptyUnreadIssue.id}"]`
       const unreadDot = `${activeSurface} [data-testid="cloud-todo-card-unread-${emptyUnreadIssue.id}"]`
       await control.command('waitFor', emptyCard)

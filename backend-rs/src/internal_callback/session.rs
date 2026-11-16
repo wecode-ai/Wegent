@@ -187,6 +187,15 @@ pub(crate) async fn publish_callback_event<R: Redis>(
     redis.publish(channel, payload).await
 }
 
+pub(crate) async fn publish_terminal_callback<R: Redis>(
+    redis: &R,
+    event: &ExecutionEvent,
+) -> RedisResult<bool> {
+    let key = super::completion::notification_key(event.task_id, event.subtask_id, "callback");
+    let channel = callback_channel(event.subtask_id);
+    super::completion::publish_once(redis, &key, &channel, &python_dumps(&event.to_value())).await
+}
+
 /// `_load_blocks_from_client`: read block metadata and hydrate per-block
 /// content from the internal content keys, then strip the internal field.
 /// Missing text content is tracked separately from the client-safe block payload.

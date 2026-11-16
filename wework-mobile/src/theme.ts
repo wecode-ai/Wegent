@@ -1,7 +1,27 @@
-import { MD3DarkTheme, MD3LightTheme, type MD3Theme } from 'react-native-paper'
+import { Platform } from 'react-native'
+import { configureFonts, MD3DarkTheme, MD3LightTheme, type MD3Theme } from 'react-native-paper'
+
+const systemFonts = configureFonts({
+  config: {
+    fontFamily: Platform.OS === 'ios' ? 'System' : 'sans-serif',
+    letterSpacing: 0,
+  },
+})
 
 const shared = {
   roundness: 3,
+  fonts: {
+    ...systemFonts,
+    titleLarge: { ...systemFonts.titleLarge, fontSize: 20, lineHeight: 26, fontWeight: '600' },
+    titleMedium: { ...systemFonts.titleMedium, fontSize: 17, lineHeight: 24, fontWeight: '400' },
+    titleSmall: { ...systemFonts.titleSmall, fontSize: 15, lineHeight: 20, fontWeight: '600' },
+    labelLarge: { ...systemFonts.labelLarge, fontSize: 16, lineHeight: 22, fontWeight: '600' },
+    labelMedium: { ...systemFonts.labelMedium, fontSize: 13, lineHeight: 18, fontWeight: '500' },
+    labelSmall: { ...systemFonts.labelSmall, fontSize: 12, lineHeight: 16, fontWeight: '500' },
+    bodyLarge: { ...systemFonts.bodyLarge, fontSize: 17, lineHeight: 24, fontWeight: '400' },
+    bodyMedium: { ...systemFonts.bodyMedium, fontSize: 15, lineHeight: 21, fontWeight: '400' },
+    bodySmall: { ...systemFonts.bodySmall, fontSize: 13, lineHeight: 18, fontWeight: '400' },
+  } satisfies MD3Theme['fonts'],
 }
 
 export const lightTheme: MD3Theme = {
@@ -18,19 +38,29 @@ export const lightTheme: MD3Theme = {
     secondaryContainer: '#ededed',
     onSecondaryContainer: '#181818',
     tertiary: '#5d5d5d',
+    onTertiary: '#ffffff',
     tertiaryContainer: '#f3f3f3',
+    onTertiaryContainer: '#181818',
     background: '#ffffff',
+    onBackground: '#171717',
     surface: '#ffffff',
+    onSurface: '#171717',
     surfaceVariant: '#f3f3f3',
+    onSurfaceVariant: '#8e8e93',
     outline: '#dedede',
-    outlineVariant: '#ededed',
+    outlineVariant: '#e7e7e7',
+    surfaceDisabled: 'rgba(0, 0, 0, 0.04)',
+    onSurfaceDisabled: 'rgba(0, 0, 0, 0.3)',
+    inverseSurface: '#242424',
+    inverseOnSurface: '#f5f5f5',
+    inversePrimary: '#ffffff',
     elevation: {
       ...MD3LightTheme.colors.elevation,
       level1: '#f9f9f9',
-      level2: '#f3f3f3',
-      level3: '#ededed',
-      level4: '#ededed',
-      level5: '#ededed',
+      level2: '#f7f7f7',
+      level3: '#f4f4f4',
+      level4: '#f1f1f1',
+      level5: '#eeeeee',
     },
   },
 }
@@ -44,14 +74,27 @@ export const darkTheme: MD3Theme = {
     onPrimary: '#181818',
     primaryContainer: '#303030',
     onPrimaryContainer: '#ffffff',
+    secondary: '#d4d4d4',
+    onSecondary: '#181818',
+    secondaryContainer: '#242424',
+    onSecondaryContainer: '#ffffff',
+    tertiary: '#b8b8b8',
+    onTertiary: '#181818',
+    tertiaryContainer: '#242424',
+    onTertiaryContainer: '#ffffff',
     background: '#000000',
     onBackground: '#ffffff',
     surface: '#181818',
     onSurface: '#ffffff',
-    surfaceVariant: '#303030',
-    onSurfaceVariant: '#afafaf',
-    outline: '#414141',
-    outlineVariant: '#303030',
+    surfaceVariant: '#242424',
+    onSurfaceVariant: '#98989d',
+    outline: '#3a3a3c',
+    outlineVariant: '#2c2c2e',
+    surfaceDisabled: 'rgba(255, 255, 255, 0.06)',
+    onSurfaceDisabled: 'rgba(255, 255, 255, 0.3)',
+    inverseSurface: '#ededed',
+    inverseOnSurface: '#181818',
+    inversePrimary: '#181818',
     elevation: {
       ...MD3DarkTheme.colors.elevation,
       level1: '#181818',

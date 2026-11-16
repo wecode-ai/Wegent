@@ -21,7 +21,7 @@ import {
   isResolvedIssueQuestion,
   issueQuestionIdentity,
   issueQuestionHandoff,
-  matchesIssueResolution,
+  hasRecordedIssueResolution,
 } from './issueHumanInteractions'
 import { createIssueQuestionEnricher } from './enrichIssueQuestions'
 import {
@@ -537,11 +537,7 @@ function RuntimeInteractionsState({
           !item.answered &&
           !isDismissed(item.id, issueQuestionIdentity(item), issueQuestionHandoff(item)) &&
           !isResolvedIssueQuestion(item, issueInteractions.resolved) &&
-          !history.some(
-            entry =>
-              entry.resolvedIssueQuestion &&
-              matchesIssueResolution(item, entry.resolvedIssueQuestion)
-          ) &&
+          !hasRecordedIssueResolution(item, history) &&
           !submitted.has(item.id) &&
           localStorage.getItem(acceptancePrefix + item.id) === null &&
           visible.has(item.task.key) &&
@@ -573,7 +569,11 @@ function RuntimeInteractionsState({
         item => !shared.has(item.id) && !sharedQuestions.has(issueQuestionIdentity(item))
       ),
       ...sharedItems.filter(
-        item => !isDismissed(item.id, issueQuestionIdentity(item), issueQuestionHandoff(item))
+        item =>
+          !isDismissed(item.id, issueQuestionIdentity(item), issueQuestionHandoff(item)) &&
+          (!item.cached ||
+            (!isResolvedIssueQuestion(item, issueInteractions.resolved) &&
+              !hasRecordedIssueResolution(item, history)))
       ),
     ].sort((a, b) => b.createdAt - a.createdAt)
   }, [
@@ -687,10 +687,7 @@ function RuntimeInteractionsState({
       setBusy(new Set(inFlight.current))
       const confirmedResolved = () =>
         isResolvedIssueQuestion(item, issueDiscoveryRef.current.resolved) ||
-        readInteractionHistory(historyKey).some(
-          row =>
-            row.resolvedIssueQuestion && matchesIssueResolution(item, row.resolvedIssueQuestion)
-        )
+        hasRecordedIssueResolution(item, readInteractionHistory(historyKey))
       try {
         if (confirmedResolved()) {
           await retainDraft(interactionHistoryEntry(item, Date.now())).catch(console.error)

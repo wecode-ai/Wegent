@@ -657,6 +657,7 @@ def test_group_automation_keeps_run_identity_and_assignment_snapshot(
     )
     agent.metadata_json = {
         **agent.metadata_json,
+        "system_prompt": "Configured template coordinator instructions.",
         "execution_policy": {"mode": "project_pool"},
         "model_policy": {"mode": "fixed", "model": MODEL},
     }
@@ -704,6 +705,14 @@ def test_group_automation_keeps_run_identity_and_assignment_snapshot(
         group=group,
         automatic=True,
         automation_context={"run_id": "automation-run"},
+    )
+    assert (
+        "Configured template coordinator instructions."
+        in execution.runtime_origin_context["system_prompt"]
+    )
+    assert (
+        "Do not execute member work"
+        in execution.runtime_origin_context["system_prompt"]
     )
     assert execution.automation_run_id == "automation-run"
     assert (
@@ -772,8 +781,9 @@ async def test_queue_explains_offline_capacity_and_revoked_model(
     assert rows[0]["error_message"].startswith("RUNNER_CONFIGURATION_CONFLICT:")
 
 
+@pytest.mark.parametrize("policy_mode", ["fixed", "project_pool"])
 def test_role_downgrade_prevents_queued_execution_claim(
-    test_db, test_admin_user, routing_setup, monkeypatch
+    test_db, test_admin_user, routing_setup, monkeypatch, policy_mode
 ):
     from app.models.resource_member import ResourceMember
     from app.schemas.base_role import BaseRole
@@ -794,6 +804,11 @@ def test_role_downgrade_prevents_queued_execution_claim(
         status="approved",
     )
     test_db.add(grant)
+    if policy_mode == "fixed":
+        test_db.query(ResourceMember).filter(
+            ResourceMember.resource_type == "Device",
+            ResourceMember.resource_id.in_([device.id for device in devices]),
+        ).delete(synchronize_session=False)
     test_db.flush()
     monkeypatch.setattr(
         "app.services.runner_routing.require_cloud_project_role",
@@ -802,7 +817,14 @@ def test_role_downgrade_prevents_queued_execution_claim(
     kwargs = dict(
         config={
             "runtime": "codex",
-            "execution_policy": {"mode": "project_pool"},
+            "execution_policy": {
+                "mode": policy_mode,
+                **(
+                    {"environment_id": str(devices[0].id)}
+                    if policy_mode == "fixed"
+                    else {}
+                ),
+            },
             "model_policy": {"mode": "fixed", "model": MODEL},
         },
         project_id=str(project.id),
@@ -943,7 +965,7 @@ def test_stale_content_writer_preserves_committed_binding(tmp_path):
 
 
 @pytest.mark.parametrize("mode", ["fixed", "project_pool", "user_select"])
-def test_cp12_all_routing_policies_require_current_project_resource_grants(
+def test_cp12_automatic_routing_requires_current_project_resource_grants(
     test_db, routing_setup, mode
 ):
     from app.models.resource_member import ResourceMember
@@ -973,6 +995,7 @@ def test_cp12_all_routing_policies_require_current_project_resource_grants(
             project_id=issue.cloud_project_id,
             issue_id=issue.id,
             selection=selection,
+            automatic=True,
         )
 
 

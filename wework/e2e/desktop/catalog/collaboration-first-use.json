@@ -13,6 +13,9 @@
     "packages/collaboration/src/theme/*",
     "wework/src/features/appearance/*",
     "wework/src/styles/*",
-    "wework/e2e/desktop/modules/appearance-theme.mjs"
+    "wework/e2e/desktop/modules/appearance-theme.mjs",
+    "packages/collaboration/src/platform/CollaborationPlatformNavigation.tsx",
+    "wework/src/features/todo/ProjectSpacePickerMenu.tsx",
+    "wework/src/features/todo/projectSpacePickerModel.ts"
   ]
 }

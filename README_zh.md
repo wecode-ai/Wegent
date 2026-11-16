@@ -228,6 +228,13 @@ pnpm --filter wework dev:mac
                 </a>
             </td>
             <td align="center">
+                <a href="https://github.com/sdadunderscoresdad">
+                    <img src="https://avatars.githubusercontent.com/u/130071748?v=4" width="80;" alt="sdadunderscoresdad"/>
+                    <br />
+                    <sub><b>+7</b></sub>
+                </a>
+            </td>
+            <td align="center">
                 <a href="https://github.com/kissghosts">
                     <img src="https://avatars.githubusercontent.com/u/3409715?v=4" width="80;" alt="kissghosts"/>
                     <br />
@@ -241,20 +248,13 @@ pnpm --filter wework dev:mac
                     <sub><b>junlong chen</b></sub>
                 </a>
             </td>
+		</tr>
+		<tr>
             <td align="center">
                 <a href="https://github.com/cc-yafei">
                     <img src="https://avatars.githubusercontent.com/u/78540184?v=4" width="80;" alt="cc-yafei"/>
                     <br />
                     <sub><b>YaFei Liu</b></sub>
-                </a>
-            </td>
-		</tr>
-		<tr>
-            <td align="center">
-                <a href="https://github.com/sdadunderscoresdad">
-                    <img src="https://avatars.githubusercontent.com/u/130071748?v=4" width="80;" alt="sdadunderscoresdad"/>
-                    <br />
-                    <sub><b>+7</b></sub>
                 </a>
             </td>
             <td align="center">
@@ -337,6 +337,13 @@ pnpm --filter wework dev:mac
                 </a>
             </td>
             <td align="center">
+                <a href="https://github.com/DavidLeeUX">
+                    <img src="https://avatars.githubusercontent.com/u/16267902?v=4" width="80;" alt="DavidLeeUX"/>
+                    <br />
+                    <sub><b>Kva</b></sub>
+                </a>
+            </td>
+            <td align="center">
                 <a href="https://github.com/fengkuizhi">
                     <img src="https://avatars.githubusercontent.com/u/3616484?v=4" width="80;" alt="fengkuizhi"/>
                     <br />
@@ -348,13 +355,6 @@ pnpm --filter wework dev:mac
                     <img src="https://avatars.githubusercontent.com/u/5766215?v=4" width="80;" alt="jnhu76"/>
                     <br />
                     <sub><b>Jm.hu</b></sub>
-                </a>
-            </td>
-            <td align="center">
-                <a href="https://github.com/DavidLeeUX">
-                    <img src="https://avatars.githubusercontent.com/u/16267902?v=4" width="80;" alt="DavidLeeUX"/>
-                    <br />
-                    <sub><b>Kva</b></sub>
                 </a>
             </td>
             <td align="center">
@@ -416,26 +416,26 @@ pnpm --filter wework dev:mac
                 </a>
             </td>
             <td align="center">
+                <a href="https://github.com/WangZhuo2015">
+                    <img src="https://avatars.githubusercontent.com/u/12570477?v=4" width="80;" alt="WangZhuo2015"/>
+                    <br />
+                    <sub><b>wang zhuo</b></sub>
+                </a>
+            </td>
+		</tr>
+		<tr>
+            <td align="center">
                 <a href="https://github.com/flyhope">
                     <img src="https://avatars.githubusercontent.com/u/5442948?v=4" width="80;" alt="flyhope"/>
                     <br />
                     <sub><b>李枨煊</b></sub>
                 </a>
             </td>
-		</tr>
-		<tr>
             <td align="center">
                 <a href="https://github.com/friendfei">
                     <img src="https://avatars.githubusercontent.com/u/5112004?v=4" width="80;" alt="friendfei"/>
                     <br />
                     <sub><b>friendfei</b></sub>
-                </a>
-            </td>
-            <td align="center">
-                <a href="https://github.com/WangZhuo2015">
-                    <img src="https://avatars.githubusercontent.com/u/12570477?v=4" width="80;" alt="WangZhuo2015"/>
-                    <br />
-                    <sub><b>wang zhuo</b></sub>
                 </a>
             </td>
             <td align="center">

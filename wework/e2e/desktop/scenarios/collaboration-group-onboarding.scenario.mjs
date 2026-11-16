@@ -228,7 +228,7 @@ export function createDesktopScenario({ uiTimeoutMs, workbenchReadyTimeoutMs }) 
       })
       await control.command(
         'waitFor',
-        sidebarScoped('[data-testid="collaboration-project-group-local"]'),
+        sidebarScoped('[data-testid="collaboration-project-tree"]'),
         {
           text: PROJECT_NAME,
           timeoutMs: uiTimeoutMs,

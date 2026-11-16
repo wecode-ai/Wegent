@@ -10,7 +10,7 @@ Supports Team, Task, and KnowledgeBase resource types.
 """
 
 import logging
-from typing import Dict, Optional
+from typing import Dict, Optional, Union
 
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
@@ -24,6 +24,7 @@ from app.schemas.share import (
     JoinByLinkRequest,
     JoinByLinkResponse,
     KBShareInfoResponse,
+    KnowledgeBaseMemberListResponse,
     MemberListResponse,
     MyKBPermissionResponse,
     MyPermissionSourcesResponse,
@@ -306,7 +307,7 @@ def join_by_link(
 
 @router.get(
     "/{resource_type}/{resource_id}/members",
-    response_model=MemberListResponse,
+    response_model=Union[KnowledgeBaseMemberListResponse, MemberListResponse],
     summary="Get members",
 )
 def get_members(
