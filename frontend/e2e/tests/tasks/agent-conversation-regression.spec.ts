@@ -2810,7 +2810,7 @@ test.describe('Agent conversation regression', () => {
       ['run', '--no-sync', 'python', 'tests/e2e_remove_executor_session.py'],
       {
         cwd: resolve(process.cwd(), '../backend'),
-        env: { ...process.env, PYTHONPATH: '.:..' },
+        env: { ...process.env, PYTHONPATH: '.:..', UV_NO_SYNC: '1' },
         stdio: ['pipe', 'inherit', 'inherit'],
       }
     )
