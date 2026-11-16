@@ -240,14 +240,90 @@ test("fork and trusted PRs reuse image hits while missing images build exactly o
           artifact !== "true" && exists !== "true",
         );
         assert.equal(
-          enabled("Restore published fork Executor runtime"),
-          artifact === "true" && exists === "true",
+          enabled("Restore published Executor runtime"),
+          exists === "true",
         );
+        assert.equal(enabled("Extract Executor binary"), true);
         assert.equal(enabled("Archive fork Executor E2E runtime"), archive);
         assert.equal(enabled("Upload fork Executor E2E runtime"), archive);
         assert.equal(enabled("Log in to GHCR"), artifact !== "true");
       }
     }
+  }
+});
+
+test("new Executor builds yield a binary when registry readback is unavailable", () => {
+  const producer = workflow("e2e-tests").jobs["build-executor-e2e-runtime"];
+  const build = producer.steps.find(
+    (step) => step.name === "Build and publish Executor E2E image",
+  );
+  assert.equal(build.with.push, true);
+  assert.equal(build.with.load, true);
+  const extract = producer.steps.find(
+    (step) => step.name === "Extract Executor binary",
+  );
+  const directory = mkdtempSync(join(tmpdir(), "executor-local-export-"));
+  try {
+    const docker = join(directory, "docker");
+    writeFileSync(
+      docker,
+      `#!${process.execPath}
+import { appendFileSync, writeFileSync } from 'node:fs'
+const args = process.argv.slice(2)
+appendFileSync(process.env.TEST_DOCKER_LOG, JSON.stringify(args) + '\\n')
+if (args[0] === 'pull') process.exit(37)
+if (args[0] === 'create') {
+  if (args[1] !== process.env.EXECUTOR_E2E_IMAGE) process.exit(38)
+  console.log('built-container')
+} else if (args[0] === 'cp') {
+  if (process.env.TEST_COPY_FAILURE) process.exit(39)
+  writeFileSync(args.at(-1), 'built-executor')
+} else if (args[0] !== 'rm') process.exit(40)
+`,
+    );
+    chmodSync(docker, 0o755);
+    const log = join(directory, "docker.log");
+    for (const copyFailure of ["", "true"]) {
+      writeFileSync(log, "");
+      const result = spawnSync(
+        "bash",
+        ["--noprofile", "--norc", "-e", "-c", extract.run],
+        {
+          cwd: directory,
+          encoding: "utf8",
+          env: {
+            ...process.env,
+            PATH: `${directory}:${process.env.PATH}`,
+            EXECUTOR_E2E_IMAGE: "ghcr.io/example/executor:new-build",
+            TEST_DOCKER_LOG: log,
+            TEST_COPY_FAILURE: copyFailure,
+          },
+        },
+      );
+      assert.equal(result.status, copyFailure ? 39 : 0, result.stderr);
+      const calls = readFileSync(log, "utf8")
+        .trim()
+        .split("\n")
+        .map(JSON.parse);
+      assert.deepEqual(
+        calls.map((args) => args[0]),
+        ["create", "cp", "rm"],
+      );
+      assert.deepEqual(calls[1], [
+        "cp",
+        "built-container:/app/executor",
+        "executor/target/release/wegent-executor",
+      ]);
+      assert.equal(
+        readFileSync(
+          join(directory, "executor/target/release/wegent-executor"),
+          "utf8",
+        ),
+        "built-executor",
+      );
+    }
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
   }
 });
 
