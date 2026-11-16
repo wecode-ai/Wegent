@@ -113,7 +113,7 @@ async fn create_assistant_dispatch(
     }
     validate_dispatch(&request)?;
     let access = authorize_project(&state.mysql, project_id, user.id, "Developer").await?;
-    let roster = roster_entries(&state, &access.project.id).await?;
+    let roster = roster_entries(state, &access.project.id).await?;
     let roster_by_id = roster
         .iter()
         .map(|entry| (entry.id.as_str(), entry))
@@ -230,7 +230,7 @@ async fn create_assistant_dispatch(
             for entry in selected
                 .iter()
                 .map(|(_, entry)| *entry)
-                .chain(manager_roster_entry.into_iter())
+                .chain(manager_roster_entry)
             {
                 if !checked_entries.insert(entry.id.as_str()) {
                     continue;
@@ -306,18 +306,20 @@ async fn create_assistant_dispatch(
                 if let Some(notification) = enqueue_wegent_agent(
                     tx,
                     state,
-                    &locked_project,
-                    &assigned_root,
-                    manager_entry,
-                    &dispatch_id,
-                    if request.description.trim().is_empty() {
-                        &request.goal
-                    } else {
-                        &request.description
+                    WegentEnqueue {
+                        project: &locked_project,
+                        issue: &assigned_root,
+                        entry: manager_entry,
+                        dispatch_id: &dispatch_id,
+                        brief: if request.description.trim().is_empty() {
+                            &request.goal
+                        } else {
+                            &request.description
+                        },
+                        context: root_context.clone(),
+                        assigner: i64::from(user.id),
+                        dispatch_role: "manager",
                     },
-                    root_context.clone(),
-                    i64::from(user.id),
-                    "manager",
                 )
                 .await?
                 {
@@ -427,14 +429,16 @@ async fn create_assistant_dispatch(
                     if let Some(notification) = enqueue_wegent_agent(
                         tx,
                         state,
-                        &locked_project,
-                        &assigned,
-                        entry,
-                        &dispatch_id,
-                        &assignment.brief,
-                        child_context.clone(),
-                        i64::from(user.id),
-                        "member",
+                        WegentEnqueue {
+                            project: &locked_project,
+                            issue: &assigned,
+                            entry,
+                            dispatch_id: &dispatch_id,
+                            brief: &assignment.brief,
+                            context: child_context.clone(),
+                            assigner: i64::from(user.id),
+                            dispatch_role: "member",
+                        },
                     )
                     .await?
                     {
@@ -523,18 +527,32 @@ async fn create_assistant_dispatch(
     Ok(result)
 }
 
+struct WegentEnqueue<'a> {
+    project: &'a store::Node,
+    issue: &'a store::Node,
+    entry: &'a ProjectAssistantRosterEntry,
+    dispatch_id: &'a str,
+    brief: &'a str,
+    context: Value,
+    assigner: i64,
+    dispatch_role: &'a str,
+}
+
 async fn enqueue_wegent_agent(
     tx: &mut impl MysqlTransaction,
     state: &AppState,
-    project: &store::Node,
-    issue: &store::Node,
-    entry: &ProjectAssistantRosterEntry,
-    dispatch_id: &str,
-    brief: &str,
-    mut context: Value,
-    assigner: i64,
-    dispatch_role: &str,
+    request: WegentEnqueue<'_>,
 ) -> brz_mysql::MysqlResult<Option<crate::background_jobs::project::notifications::Pending>> {
+    let WegentEnqueue {
+        project,
+        issue,
+        entry,
+        dispatch_id,
+        brief,
+        mut context,
+        assigner,
+        dispatch_role,
+    } = request;
     let agent_id = wegent_agent_id(&entry.endpoint_ref).ok_or_else(|| {
         brz_mysql::MysqlError::InvalidQuery {
             reason: "Wegent endpoint has no project Agent id".into(),

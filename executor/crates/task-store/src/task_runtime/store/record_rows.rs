@@ -312,19 +312,38 @@ pub(super) fn enrich_comment_actor(
     if comment.sender_type != "agent" {
         return Ok(());
     }
-    let trigger: Option<(String, String)> = connection
-        .query_row(
-            "SELECT sender_id,sender_name FROM loop_item_comments
-             WHERE message_id=?1 AND project_id=?2 AND task_id=?3 AND sender_type='user'
-               AND deleted_at IS NULL",
-            params![
-                comment.trigger_message_id,
-                comment.project_id,
-                comment.task_id
-            ],
-            |row| Ok((row.get(0)?, row.get(1)?)),
-        )
-        .optional()?;
+    let trigger = comment
+        .trigger_message_id
+        .as_deref()
+        .or(comment.reply_to_message_id.as_deref());
+    let trigger = trigger
+        .map(|message_id| {
+            connection
+                .query_row(
+                    "WITH RECURSIVE ancestors(message_id, sender_type, sender_id, sender_name,
+                                          next_message_id, depth) AS (
+                     SELECT message_id, sender_type, sender_id, sender_name,
+                            COALESCE(trigger_message_id, reply_to_message_id), 0
+                     FROM loop_item_comments
+                     WHERE message_id=?1 AND project_id=?2 AND task_id=?3
+                       AND deleted_at IS NULL
+                     UNION ALL
+                     SELECT c.message_id, c.sender_type, c.sender_id, c.sender_name,
+                            COALESCE(c.trigger_message_id, c.reply_to_message_id), a.depth + 1
+                     FROM loop_item_comments c
+                     JOIN ancestors a ON c.message_id=a.next_message_id
+                     WHERE c.project_id=?2 AND c.task_id=?3 AND c.deleted_at IS NULL
+                       AND a.depth < 32
+                 )
+                 SELECT sender_id,sender_name FROM ancestors
+                 WHERE sender_type='user' ORDER BY depth ASC LIMIT 1",
+                    params![message_id, comment.project_id, comment.task_id],
+                    |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)),
+                )
+                .optional()
+        })
+        .transpose()?
+        .flatten();
     if let Some((id, name)) = &trigger {
         if comment
             .actor_user_id

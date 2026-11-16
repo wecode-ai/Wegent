@@ -1,7 +1,5 @@
-import type {
-  RuntimeSendRequest,
-  RuntimeTaskAddress,
-} from "@wegent/chat-core/runtime";
+import type { RuntimeTaskAddress } from "@wegent/chat-core/runtime";
+import type { RuntimeSendRequest } from "@wegent/chat-core/runtime-task-api-types";
 
 export type AssistantEndpointKind =
   | "local_wework"

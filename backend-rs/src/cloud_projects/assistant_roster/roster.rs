@@ -31,7 +31,7 @@ async fn list_project_assistant_roster(
     #[auth] user: SessionUser,
 ) -> Result<Vec<ProjectAssistantRosterEntry>, FastApiError> {
     let project = authorize_project(&state.mysql, project_id, user.id, "Viewer").await?;
-    roster_entries(&state, &project.project.id).await
+    roster_entries(state, &project.project.id).await
 }
 
 #[derive(Debug, Deserialize)]
@@ -291,15 +291,15 @@ fn entry_from_row(
 fn roster_metadata(input: &RosterUpsert) -> Value {
     let mut autonomy_policy = input.autonomy_policy.clone();
     if let Some(policy) = autonomy_policy.as_object_mut() {
-        if !policy.contains_key("ask_before_act") {
-            if let Some(ask_before_act) = policy.remove("askBeforeAct") {
-                policy.insert("ask_before_act".into(), ask_before_act);
-            }
+        if !policy.contains_key("ask_before_act")
+            && let Some(ask_before_act) = policy.remove("askBeforeAct")
+        {
+            policy.insert("ask_before_act".into(), ask_before_act);
         }
-        if !policy.contains_key("risk_ceiling") {
-            if let Some(risk_ceiling) = policy.remove("riskCeiling") {
-                policy.insert("risk_ceiling".into(), risk_ceiling);
-            }
+        if !policy.contains_key("risk_ceiling")
+            && let Some(risk_ceiling) = policy.remove("riskCeiling")
+        {
+            policy.insert("risk_ceiling".into(), risk_ceiling);
         }
         policy.entry("risk_ceiling").or_insert_with(|| json!("low"));
         policy.entry("automatic").or_insert_with(|| json!(false));

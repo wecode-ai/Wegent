@@ -27,8 +27,15 @@ export interface AssistantInteractionTransport {
 }
 
 export class AssistantInteractionError extends Error {
+  readonly code:
+    | "scope_mismatch"
+    | "unsupported_attachments"
+    | "unsupported_cancel"
+    | "history_unavailable"
+    | "request_rejected";
+
   constructor(
-    public readonly code:
+    code:
       | "scope_mismatch"
       | "unsupported_attachments"
       | "unsupported_cancel"
@@ -38,6 +45,7 @@ export class AssistantInteractionError extends Error {
   ) {
     super(message);
     this.name = "AssistantInteractionError";
+    this.code = code;
   }
 }
 

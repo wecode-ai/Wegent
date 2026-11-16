@@ -97,9 +97,6 @@ export const WEWORK_DELIVERY_SHARED_WORKSPACE_METHODS = {
     'restore',
     'reorder',
     'markRead',
-    'listAssistantParticipations',
-    'readAssistantParticipation',
-    'backfillAssistantParticipations',
   ],
   attachments: [
     'list',
@@ -620,20 +617,6 @@ export function createWeworkDeliverySharedWorkspaceApi(
           .markLoopItemRead(issueId, activitySequence, contentRevision)
           .then(toIssue)
       },
-      listAssistantParticipations(issueId) {
-        return client.get(`/v1/loop-items/${encodeURIComponent(issueId)}/assistant-participations`)
-      },
-      readAssistantParticipation(issueId, participationId) {
-        return client.get(
-          `/v1/loop-items/${encodeURIComponent(issueId)}/assistant-participations/${encodeURIComponent(participationId)}`
-        )
-      },
-      backfillAssistantParticipations(issueId, input) {
-        return client.post(
-          `/v1/loop-items/${encodeURIComponent(issueId)}/assistant-participations/backfill`,
-          { dryRun: input?.dryRun ?? true }
-        )
-      },
     },
     attachments: {
       async list(issueId) {
@@ -914,6 +897,10 @@ export function createWeworkSharedWorkspaceApi<
     workspaces: sharedHttpApi.workspaces,
     resources: sharedHttpApi.resources,
     gitRepositories: sharedHttpApi.gitRepositories,
+    issues: {
+      ...delivery.issues,
+      ...sharedHttpApi.issues,
+    },
     projects: {
       ...delivery.projects,
       ...sharedHttpApi.projects,

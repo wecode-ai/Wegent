@@ -29,6 +29,8 @@ import type {
   ProjectAssistantRosterEntry,
   ProjectAssistantRosterInput,
   AssistantParticipation,
+  AssistantParticipationWorkroom,
+  SharedWorkspaceApi,
 } from "../ports/SharedWorkspaceApi";
 import type {
   CollaborationGroup,
@@ -63,6 +65,14 @@ export interface SharedWorkspaceHttpApi {
     | "listExecutionEnvironments"
     | "addExecutionEnvironment"
     | "removeExecutionEnvironment"
+  >;
+  issues: Required<
+    Pick<
+      SharedWorkspaceApi["issues"],
+      | "listAssistantParticipations"
+      | "readAssistantParticipation"
+      | "backfillAssistantParticipations"
+    >
   >;
   comments: SharedWorkspaceCommentsApi;
   assignments: SharedWorkspaceAssignmentsApi;
@@ -507,6 +517,29 @@ export function createSharedWorkspaceHttpApi(
           `/git/repositories/branches?${query.toString()}`,
         );
         return items.map((item) => mapWorkspaceGitBranchDto(record(item)));
+      },
+    },
+    issues: {
+      listAssistantParticipations(issueId) {
+        return transport.get<AssistantParticipation[]>(
+          `/v1/loop-items/${encoded(issueId)}/assistant-participations`,
+        );
+      },
+      readAssistantParticipation(issueId, participationId) {
+        return transport.get<AssistantParticipationWorkroom>(
+          `/v1/loop-items/${encoded(issueId)}/assistant-participations/${encoded(participationId)}`,
+        );
+      },
+      backfillAssistantParticipations(issueId, input) {
+        return transport.post<{
+          dryRun: boolean;
+          created: number;
+          existing: number;
+          items: AssistantParticipation[];
+        }>(
+          `/v1/loop-items/${encoded(issueId)}/assistant-participations/backfill`,
+          { dryRun: input?.dryRun ?? true },
+        );
       },
     },
     projects: {

@@ -92,7 +92,6 @@ function commentToMessage(record: LocalCommentRecord, currentUserId: string): Pr
     publicationSource: record.publication_source,
     confirmationState: record.confirmation_state,
     traceRef: record.trace_ref,
-    traceState: record.trace_state,
     sequenceNumber: record.sequence_number,
     messageId: record.message_id,
     clientMessageId: record.client_message_id ?? null,
@@ -272,7 +271,7 @@ export function createLocalProjectChatClient(
       task_id: input.taskId,
       after_sequence: trigger.sequence_number,
     })
-    return updated.map(commentToMessage)
+    return updated.map(record => commentToMessage(record, currentUserId))
   }
 
   const startAgentResponse: ProjectChatClient['startAgentResponse'] = async input => {

@@ -573,3 +573,36 @@ it("removes exactly one persisted device registration with offline revalidation"
     "/devices/records/42?offline_only=true",
   );
 });
+
+it("routes assistant participation reads and backfills through Issue endpoints", async () => {
+  const { transport, get, post } = createTransport();
+  get.mockResolvedValue([]);
+  post.mockResolvedValue({ dryRun: true, created: 0, existing: 0, items: [] });
+  const api = createSharedWorkspaceHttpApi(transport);
+
+  await api.issues.listAssistantParticipations("issue/1");
+  await api.issues.readAssistantParticipation("issue/1", "participation/1");
+  await api.issues.backfillAssistantParticipations("issue/1");
+  await api.issues.backfillAssistantParticipations("issue/1", {
+    dryRun: false,
+  });
+
+  expect(get).toHaveBeenNthCalledWith(
+    1,
+    "/v1/loop-items/issue%2F1/assistant-participations",
+  );
+  expect(get).toHaveBeenNthCalledWith(
+    2,
+    "/v1/loop-items/issue%2F1/assistant-participations/participation%2F1",
+  );
+  expect(post).toHaveBeenNthCalledWith(
+    1,
+    "/v1/loop-items/issue%2F1/assistant-participations/backfill",
+    { dryRun: true },
+  );
+  expect(post).toHaveBeenNthCalledWith(
+    2,
+    "/v1/loop-items/issue%2F1/assistant-participations/backfill",
+    { dryRun: false },
+  );
+});
