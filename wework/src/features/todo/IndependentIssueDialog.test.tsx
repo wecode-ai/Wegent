@@ -42,10 +42,15 @@ it('keeps IME confirmation and cancellation inside participant search without su
   expect(screen.getByTestId('independent-issue-title')).toHaveValue('输入中的事项')
 })
 
-it('explains an unconfirmed save without losing the draft or exposing transport errors', async () => {
+it.each([
+  new TypeError('Failed to fetch'),
+  new ApiError('Internal Server Error', 500),
+  new ApiError('Bad Gateway', 502),
+  new ApiError('Service Unavailable', 503),
+])('explains an unconfirmed save without losing the draft after %s', async reason => {
   const api = {
     projects: vi.fn().mockResolvedValue({ items: [] }),
-    create: vi.fn().mockRejectedValue(new TypeError('Failed to fetch')),
+    create: vi.fn().mockRejectedValue(reason),
   } as unknown as PersonalIssuesApi
   const close = vi.fn()
   render(
@@ -59,7 +64,7 @@ it('explains an unconfirmed save without losing the draft or exposing transport 
   })
   fireEvent.click(screen.getByTestId('independent-issue-save'))
   expect(await screen.findByRole('alert')).toHaveTextContent('issue_creation.save_unconfirmed')
-  expect(screen.queryByText('Failed to fetch')).not.toBeInTheDocument()
+  expect(screen.queryByText(reason.message)).not.toBeInTheDocument()
   expect(screen.getByTestId('independent-issue-title')).toHaveValue('Preserved title')
   expect(screen.getByTestId('independent-issue-description')).toHaveValue('Preserved description')
   expect(screen.getByTestId('independent-issue-save')).toBeEnabled()

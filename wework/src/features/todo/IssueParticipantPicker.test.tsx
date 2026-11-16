@@ -8,6 +8,47 @@ import { IssueParticipantPicker } from './IssueParticipantPicker'
 vi.mock('@/hooks/useTranslation', () => ({ useTranslation: () => ({ t: (key: string) => key }) }))
 afterEach(cleanup)
 
+it.each(['agent', 'group'] as const)(
+  'filters an already loaded %s directory without reloading it for each keystroke',
+  async kind => {
+    const listAgents = vi.fn().mockResolvedValue({
+      agents: [
+        { id: '12', name: 'Alice Agent', location: 'cloud', owner_type: 'user', owner_id: '7' },
+      ],
+    })
+    const listSpaces = vi.fn().mockResolvedValue([{ id: 'w', location: 'cloud' }])
+    const listGroups = vi.fn().mockResolvedValue([{ id: '15', name: 'Alice Group' }])
+    const collaborationApi = {
+      resources: { list: listAgents },
+      workspaces: { list: listSpaces, listCollaborationGroups: listGroups },
+    } as unknown as SharedWorkspaceApi
+    render(
+      <IssueParticipantPicker
+        api={{} as PersonalIssuesApi}
+        collaborationApi={collaborationApi}
+        userId={7}
+        selected={[]}
+        onChange={vi.fn()}
+        disabled={false}
+      />
+    )
+    fireEvent.click(screen.getByTestId('issue-participant-add'))
+    fireEvent.click(screen.getByTestId(`issue-participant-tab-${kind}`))
+    const result = `issue-participant-invite-${kind}:${kind === 'agent' ? 12 : 15}`
+    await screen.findByTestId(result)
+    const search = screen.getByTestId('independent-issue-search-people')
+    await userEvent.type(search, 'Alice')
+    await screen.findByTestId(result)
+    expect(kind === 'agent' ? listAgents : listSpaces).toHaveBeenCalledOnce()
+    if (kind === 'group') expect(listGroups).toHaveBeenCalledOnce()
+    await userEvent.clear(search)
+    expect(screen.getByTestId(result)).toBeVisible()
+    expect(screen.getByTestId('issue-participant-results-status')).not.toHaveTextContent(
+      'issue_creation.participants_loading'
+    )
+  }
+)
+
 it('keeps a polite result status mounted across loading, empty results and matches', async () => {
   const searchUsers = vi
     .fn()

@@ -37,8 +37,9 @@ export function IssueParticipantPicker({
   const [tab, setTab] = useState<IssueParticipant['kind']>('human')
   const [query, setQuery] = useState('')
   const searchQuery = query.trim()
+  const directoryQuery = tab === 'human' ? searchQuery : ''
   const [revision, setRevision] = useState(0)
-  const requestKey = JSON.stringify([tab, searchQuery, revision])
+  const requestKey = JSON.stringify([tab, directoryQuery, revision])
   const [response, setResponse] = useState<{
     key: string
     api?: PersonalIssuesApi
@@ -63,8 +64,8 @@ export function IssueParticipantPicker({
       () => {
         const load = async (): Promise<IssueParticipant[]> => {
           if (tab === 'human') {
-            if (!searchQuery) return []
-            const page = await api.searchUsers(searchQuery)
+            if (!directoryQuery) return []
+            const page = await api.searchUsers(directoryQuery)
             return page.users.map(user => ({
               key: `human:${user.id}`,
               kind: 'human',
@@ -141,7 +142,7 @@ export function IssueParticipantPicker({
       clearTimeout(timer)
       generation.current = current + 1
     }
-  }, [api, collaborationApi, open, searchQuery, tab, userId, requestKey])
+  }, [api, collaborationApi, open, directoryQuery, tab, userId, requestKey])
   const icon = (kind: IssueParticipant['kind']) =>
     kind === 'agent' ? Bot : kind === 'group' ? Users : UserRound
   const candidates = results.filter(

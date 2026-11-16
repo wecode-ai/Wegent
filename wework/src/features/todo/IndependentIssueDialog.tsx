@@ -143,7 +143,9 @@ export function IndependentIssueDialog({
     try {
       await operation()
     } catch (reason) {
-      const unconfirmed = reason instanceof TypeError && editing
+      const unconfirmed =
+        editing &&
+        (reason instanceof TypeError || (reason instanceof ApiError && reason.status >= 500))
       setError(reason instanceof Error ? reason.message : String(reason))
       setErrorKind(
         unconfirmed
