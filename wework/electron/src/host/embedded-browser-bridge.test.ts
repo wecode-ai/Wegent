@@ -1,6 +1,8 @@
 import { mkdtemp, readFile, stat, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { Agent, request } from 'node:http'
+import type { Socket } from 'node:net'
 import { afterEach, describe, expect, test, vi } from 'vitest'
 import {
   EmbeddedBrowserBridge,
@@ -16,6 +18,50 @@ afterEach(async () => {
 })
 
 describe('EmbeddedBrowserBridge', () => {
+  test('does not reuse idle HTTP connections between browser mutations', async () => {
+    const executorHome = await mkdtemp(join(tmpdir(), 'wework-browser-connections-'))
+    const browser = fakeBrowser()
+    browser.evaluate.mockResolvedValue({ ok: true })
+    const bridge = new EmbeddedBrowserBridge(browser.manager, executorHome, async () => true)
+    bridges.push(bridge)
+    await bridge.start()
+    const env = bridge.environment()
+    const agent = new Agent({ keepAlive: true, maxSockets: 1 })
+    const sockets: Socket[] = []
+    const fill = () =>
+      new Promise<void>((resolve, reject) => {
+        const pending = request(
+          env.WEWORK_EMBEDDED_BROWSER_BRIDGE_URL + '/browser',
+          {
+            agent,
+            method: 'POST',
+            headers: {
+              authorization: 'Bearer ' + env.WEWORK_EMBEDDED_BROWSER_BRIDGE_TOKEN,
+              'content-type': 'application/json',
+            },
+          },
+          response => {
+            expect(response.statusCode).toBe(200)
+            response.resume()
+            response.once('end', resolve)
+            response.once('error', reject)
+          }
+        )
+        pending.once('socket', socket => sockets.push(socket))
+        pending.once('error', reject)
+        pending.end(JSON.stringify({ action: 'fill', selector: '#editor', text: 'edit' }))
+      })
+    try {
+      await fill()
+      await fill()
+      expect(browser.evaluate).toHaveBeenCalledTimes(2)
+      expect(sockets).toHaveLength(2)
+      expect(sockets[0] === sockets[1]).toBe(false)
+    } finally {
+      agent.destroy()
+    }
+  })
+
   test('reads full control for each operation and preserves user takeover', async () => {
     const executorHome = await mkdtemp(join(tmpdir(), 'wework-browser-full-control-'))
     const browser = fakeBrowser()

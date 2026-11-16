@@ -1,3 +1,4 @@
+import { ErrorNotice } from './errors/ErrorNotice'
 import React from 'react'
 import { Keyboard } from 'react-native'
 import { act, create, type ReactTestRenderer } from 'react-test-renderer'
@@ -6,13 +7,18 @@ import type { ChatToolBlock, RequestUserInputPayload } from '@/types/runtime'
 import { RequestUserInputCard } from './RequestUserInputCard'
 
 ;(globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true
+const environment = vi.hoisted(() => ({ platform: 'ios' }))
 vi.mock('@expo/vector-icons/Ionicons', () => ({ default: 'Icon' }))
 vi.mock('react-native', () => ({
   AccessibilityInfo: { setAccessibilityFocus: vi.fn() },
   Keyboard: { dismiss: vi.fn() },
   findNodeHandle: (node: { testID?: string } | null) =>
     node?.testID === 'request-user-input-sheet-heading' ? 2 : node ? 1 : null,
-  Platform: { OS: 'ios' },
+  Platform: {
+    get OS() {
+      return environment.platform
+    },
+  },
   ActivityIndicator: 'ActivityIndicator',
   Modal: ({ visible, children }: { visible: boolean; children: React.ReactNode }) =>
     visible ? <>{children}</> : null,
@@ -79,6 +85,7 @@ describe('native request-user-input card', () => {
     if (renderer) await act(() => renderer.unmount())
     vi.useRealTimers()
     vi.clearAllMocks()
+    environment.platform = 'ios'
   })
   async function render(
     overrides: Partial<React.ComponentProps<typeof RequestUserInputCard>> = {}
@@ -136,29 +143,34 @@ describe('native request-user-input card', () => {
     )
   })
 
-  it('keeps every question and the submit actions in one keyboard-aware scroll area', async () => {
-    await render({
-      block: {
-        ...block,
-        renderPayload: {
-          ...payload,
-          questions: [
-            ...payload.questions!,
-            { id: 'details', question: 'Describe the details', is_other: true },
-          ],
+  it.each(['ios', 'android'])(
+    'keeps the question form accessible while dismissing its keyboard on %s',
+    async platform => {
+      environment.platform = platform
+      await render({
+        block: {
+          ...block,
+          renderPayload: {
+            ...payload,
+            questions: [
+              ...payload.questions!,
+              { id: 'details', question: 'Describe the details', is_other: true },
+            ],
+          },
         },
-      },
-    })
-    await open()
-    const scroll = find('request-user-input-form-scroll')[0]!
-    expect(scroll.type).toBe('KeyboardAwareScrollView')
-    expect(scroll.props.keyboardShouldPersistTaps).toBe('handled')
-    expect(scroll.props.bottomOffset).toBeGreaterThan(0)
-    expect(scroll.findByProps({ testID: 'request-user-input-custom-choice' })).toBeDefined()
-    expect(scroll.findByProps({ testID: 'request-user-input-custom-details' })).toBeDefined()
-    expect(scroll.findByProps({ testID: 'request-user-input-submit' })).toBeDefined()
-    expect(scroll.findAllByType('ScrollView' as never)).toHaveLength(0)
-  })
+      })
+      await open()
+      const scroll = find('request-user-input-form-scroll')[0]!
+      expect(scroll.type).toBe('KeyboardAwareScrollView')
+      expect(scroll.props.keyboardShouldPersistTaps).toBe('handled')
+      expect(scroll.props.keyboardDismissMode).toBe(platform === 'ios' ? 'interactive' : 'on-drag')
+      expect(scroll.props.bottomOffset).toBeGreaterThan(0)
+      expect(scroll.findByProps({ testID: 'request-user-input-custom-choice' })).toBeDefined()
+      expect(scroll.findByProps({ testID: 'request-user-input-custom-details' })).toBeDefined()
+      expect(scroll.findByProps({ testID: 'request-user-input-submit' })).toBeDefined()
+      expect(scroll.findAllByType('ScrollView' as never)).toHaveLength(0)
+    }
+  )
 
   it('keeps failed answers editable and exposes an explicit retry', async () => {
     const onRequestUserInputSubmit = vi
@@ -171,7 +183,7 @@ describe('native request-user-input card', () => {
       find('request-user-input-custom-choice')[0]!.props.onChangeText('Keep this answer')
     )
     await act(() => find('request-user-input-submit')[0]!.props.onPress())
-    expect(find('request-user-input-error')[0]!.props.children).toBe('Device offline')
+    expect(renderer.root.findByType(ErrorNotice).props.error).toBe('Device offline')
     expect(find('request-user-input-custom-choice')[0]!.props.value).toBe('Keep this answer')
     await act(() => find('request-user-input-submit')[0]!.props.onPress())
     expect(onRequestUserInputSubmit).toHaveBeenCalledTimes(2)

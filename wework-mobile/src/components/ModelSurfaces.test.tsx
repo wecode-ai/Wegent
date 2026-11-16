@@ -1,3 +1,4 @@
+import { ErrorNotice } from './errors/ErrorNotice'
 import React from 'react'
 import { act, create, type ReactTestRenderer } from 'react-test-renderer'
 import { afterEach, describe, expect, it, vi } from 'vitest'
@@ -94,7 +95,7 @@ describe('model control surfaces', () => {
     const props = await picker({ loading: true, error: 'Device unavailable' })
     expect(props.onLoadModels).toHaveBeenCalledOnce()
     expect(control('device-models-loading')).toBeDefined()
-    expect(control('device-models-error').props.children).toBe('Device unavailable')
+    expect(renderer.root.findByType(ErrorNotice).props.error).toBe('Device unavailable')
     expect(control('advanced-model-row').props.disabled).toBeUndefined()
     await act(() => control('advanced-model-row').props.onPress())
     expect(control('refresh-device-models').props.disabled).toBe(true)

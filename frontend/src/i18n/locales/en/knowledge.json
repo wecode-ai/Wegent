@@ -988,7 +988,7 @@
       "personalSpace": "Personal space",
       "createInSpace": "Create in this space",
       "permissionDetails": "Permissions",
-      "permissionDescription": "Your effective access and its sources in Wegent.",
+      "permissionDescription": "View your effective permissions, their sources, and all authorized entities.",
       "permissionFailed": "Unable to load permission sources",
       "effectivePermission": "My permission",
       "permissionSource": "Permission source",
@@ -1022,7 +1022,28 @@
       "noMatchingFilters": "No matching filters",
       "typeAndSort": "Type and sort",
       "companySpace": "Company space",
-      "manageTeams": "Manage teams"
+      "manageTeams": "Manage teams",
+      "permissionResult": {
+        "Owner": "Manage",
+        "Maintainer": "Manage",
+        "Developer": "Edit",
+        "Reporter": "View",
+        "RestrictedAnalyst": "Visit Only"
+      },
+      "permissionSourceLabels": {
+        "title": "Permission sources",
+        "creator": "You created this knowledge base",
+        "direct": "Direct grant",
+        "shareLink": "Granted through a share link",
+        "groupMembership": "Inherited from owning group “{{name}}”",
+        "groupOwner": "Group owner",
+        "groupGrant": "Granted through group “{{name}}”",
+        "department": "Granted through department “{{name}}”",
+        "organization": "Organization policy",
+        "other": "Other permission source “{{name}}”",
+        "unnamed": "Unnamed",
+        "withRole": "{{source}} ({{role}})"
+      }
     },
     "creation": {
       "refreshingLocations": "Refreshing creation locations…",
@@ -1046,6 +1067,36 @@
       "selectTargets": "Select people or teams. Only failed authorizations will be retried.",
       "retryFailed": "Retry failed targets",
       "noMatchingSpaces": "No matching spaces"
+    },
+    "authorizationObjects": {
+      "title": "Authorized entities",
+      "count": "{{count}} entities",
+      "description": "Direct grants, the creator, and inherited access from the owning scope",
+      "object": "Entity",
+      "permission": "Permission",
+      "source": "Grant source",
+      "actions": "Actions",
+      "objectPermission": "Permission for {{name}}",
+      "groupRole": "By group role",
+      "organizationRole": "By organization rules",
+      "manageInGroups": "Change in group management",
+      "organizationPolicy": "Determined by organization permission rules",
+      "notRemovable": "Cannot remove",
+      "empty": "No authorized entities",
+      "membershipNote": "Group members are not expanded. Knowledge base access rules still apply.",
+      "organizationNote": "Organization knowledge allows users to view and system administrators to manage.",
+      "readOnlyNote": "You can view all authorized entities. Contact a permission manager to change access.",
+      "types": {
+        "user": "User",
+        "namespace": "Group",
+        "organization": "Organization",
+        "other": "Other entity"
+      },
+      "sources": {
+        "creator": "Creator",
+        "inherited": "Inherited",
+        "direct": "Direct grant"
+      }
     }
   },
   "add_repository": "Add Repository",

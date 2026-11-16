@@ -1,0 +1,8 @@
+.frame {
+  isolation: isolate;
+  border-radius: 16px 0 0 16px;
+  box-shadow:
+    0 0 0 0.5px rgb(var(--color-text-primary) / 12%),
+    0 3px 7.5px rgb(0 0 0 / 3%),
+    0 0 16px rgb(0 0 0 / 2%);
+}

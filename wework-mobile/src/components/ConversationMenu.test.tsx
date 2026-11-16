@@ -1,3 +1,6 @@
+vi.mock('./errors/NativeErrorAlert', () => ({ NativeErrorAlert: 'NativeErrorAlert' }))
+import { ErrorNotice } from './errors/ErrorNotice'
+import { NativeErrorAlert } from './errors/NativeErrorAlert'
 import React from 'react'
 import { act, create, type ReactTestRenderer } from 'react-test-renderer'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -123,10 +126,8 @@ describe('conversation menu', () => {
   it('keeps a rejected mutation visible with the real error', async () => {
     props.onPin.mockRejectedValue(new Error('device offline'))
     await act(() => element('conversation-pin').props.onPress())
-    expect(element('conversation-menu-error-dialog')).toBeDefined()
-    expect(renderer.root.findAllByProps({ accessibilityRole: 'alert' })[0]!.props.children).toBe(
-      'device offline'
-    )
+    expect(renderer.root.findByType(NativeErrorAlert)).toBeDefined()
+    expect(renderer.root.findByType(NativeErrorAlert).props.error).toBe('device offline')
   })
   it('does not substitute a task ID when the conversation thread is not established', async () => {
     await act(() => renderer.update(<ConversationMenu {...props} threadId={null} />))
@@ -164,7 +165,7 @@ describe('conversation menu', () => {
     props.onPin.mockRejectedValueOnce(new Error('device offline')).mockResolvedValue(undefined)
     await act(() => element('conversation-pin').props.onPress())
     expect(renderer.root.findByType('NativeMenu' as never).props.disabled).toBe(true)
-    await act(() => element('conversation-menu-error-dismiss').props.onPress())
+    await act(() => renderer.root.findByType(NativeErrorAlert).props.onDismiss())
     expect(renderer.root.findByType('NativeMenu' as never).props.disabled).toBe(false)
     await act(() => element('conversation-pin').props.onPress())
     expect(props.onPin).toHaveBeenCalledTimes(2)
@@ -177,9 +178,7 @@ describe('conversation menu', () => {
     await act(() => element('conversation-rename-input').props.onChangeText('Retry title'))
     await act(() => element('conversation-rename-save').props.onPress())
     expect(element('conversation-rename-input').props.value).toBe('Retry title')
-    expect(renderer.root.findAllByProps({ accessibilityRole: 'alert' })[0]!.props.children).toBe(
-      'device offline'
-    )
+    expect(renderer.root.findByType(ErrorNotice).props.error).toBe('device offline')
     await act(() => element('conversation-rename-save').props.onPress())
     expect(props.onRename).toHaveBeenLastCalledWith('Retry title')
     expect(renderer.root.findAllByProps({ testID: 'conversation-rename-dialog' })).toHaveLength(0)

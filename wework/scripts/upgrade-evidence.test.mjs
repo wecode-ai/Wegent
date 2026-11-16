@@ -14,6 +14,7 @@ import {
   releaseUpgradeChannels,
   releaseUpgradePlan,
   releaseVerificationChannels,
+  releasePublicationChannels,
   verifyReleaseUpgradePlan,
   upgradeSource,
 } from './lib/upgrade-evidence.mjs'
@@ -40,6 +41,16 @@ function publishedCatalog(channel, versions) {
 }
 
 const automaticTarget = { version: '0.6.1', minSourceVersion: '0.5.13-beta.5' }
+
+test('a stable bridge preserves the existing Beta channel while ordinary releases advance both', () => {
+  const policy = { releasePurpose: 'bridge' }
+  assert.deepEqual(releasePublicationChannels('stable', policy), ['stable'])
+  assert.deepEqual(releaseVerificationChannels('stable', '', '', policy), ['stable'])
+  assert.deepEqual(releasePublicationChannels('stable'), ['stable', 'beta'])
+  assert.throws(() => releasePublicationChannels('beta', policy), /only to stable/)
+  assert.throws(() => releasePublicationChannels('stable', { releasePurpose: 'unknown' }))
+  assert.throws(() => releaseVerificationChannels('stable', 'beta', '', policy), /outside/)
+})
 
 test('channel shards preserve target publication boundaries', () => {
   assert.deepEqual(releaseVerificationChannels('stable'), ['stable', 'beta'])

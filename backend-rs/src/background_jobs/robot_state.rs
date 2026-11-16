@@ -185,7 +185,9 @@ pub(super) async fn prepared_on(
             message.metadata.0 = json!({});
         }
         message.metadata.0["run_status"] = json!(status);
-        tx.execute("UPDATE project_chat_messages SET runtime_device_id=?,runtime_task_id=?,metadata=?,updated_at=UTC_TIMESTAMP(6) WHERE id=?",(row.runtime_device_id.as_str(),row.runtime_task_id.as_str(),brz_mysql::Json(&message.metadata.0),message.id)).await?;
+        message.updated_at =
+            crate::socketio::project_chat_messages::database_timestamp(Utc::now().naive_utc());
+        tx.execute("UPDATE project_chat_messages SET runtime_device_id=?,runtime_task_id=?,metadata=?,updated_at=? WHERE id=?",(row.runtime_device_id.as_str(),row.runtime_task_id.as_str(),brz_mysql::Json(&message.metadata.0),message.updated_at,message.id)).await?;
         effects.messages.push(message);
     }
     if matches!(status, "pending_approval" | "waiting_runtime")

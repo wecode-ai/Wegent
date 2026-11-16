@@ -268,7 +268,7 @@ async fn save_requests(
     requests: &[Value],
 ) -> brz_mysql::MysqlResult<()> {
     tx.execute(
-        "UPDATE loop_items SET metadata=JSON_SET(COALESCE(metadata,JSON_OBJECT()),'$.human_requests',CAST(? AS JSON)),version=version+1,updated_at=UTC_TIMESTAMP() WHERE id=?",
+        "UPDATE loop_items SET metadata=JSON_SET(COALESCE(metadata,JSON_OBJECT()),'$.human_requests',CAST(? AS JSON)),version=version+1,updated_at=CURRENT_TIMESTAMP() WHERE id=?",
         (Json(json!(requests)),issue),
     ).await?;
     tx.execute(

@@ -94,7 +94,7 @@ Edit Agent definitions from **Project settings → AI team**. Project Maintainer
 | --------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------- |
 | Send shortcut, follow-ups, fixed tabs, concurrency, privacy, appearance, context, Appshots, computer use, Hooks | [Individual settings controls](./settings.md#settings-controls)                         |
 | Browser full control, link targets, history, downloads, cache/cookies, device emulation                         | [Browser controls](./browser.md#browser-controls) and toolbar instructions on that page |
-| Providers, custom endpoints, vision sidecar, connection testing, capabilities, Catalog                          | [Model controls](./user-guide/model-settings.md#model-controls)                         |
+| Provider connections, model search, per-model tests, mobile standalone models, capabilities, Catalog            | [Model controls](./user-guide/model-settings.md#model-controls)                         |
 | Attachments, drawing, plan mode, Goal, queues, task views, personal schedules                                   | [Composer and task controls](./tasks.md#task-controls)                                  |
 | Act inside a conversation, select results, complete forms or open a feature                                     | [Describe the operation to Codex](./tasks.md#conversation-interactions)                 |
 | Project menus, members, assignment, archive all chats, archive/restore, boards, execution environments          | [Project operations](./projects.md#project-controls)                                    |
@@ -176,3 +176,5 @@ For recovery-center and local-service notices during launch, see [Startup recove
 Independent and project Issues are available from **Collaboration → My issues → Needs my action / Created by me / Participating**. Start an independent Issue from **Collaboration → My issues → New Issue**. Existing catalogs are under **Collaboration → Collaboration management → Execution devices / Templates / Agents / Teams**. See [Independent Issues and My issues](./projects.md#independent-issues). The collaboration Home retains its existing composer, Issue list and assistant workspace.
 
 Use **Personal group → … → Group settings** to manage the actual personal space owned by the current account. The Projects heading and project rows no longer show plus buttons. See [Project navigation](./projects.md#workspace-resource-controls).
+
+Images, Markdown and file links in Issue activity open attachment previews with retry and original-file download. See [Attachment and document previews](./projects.md#issue-resource-preview).

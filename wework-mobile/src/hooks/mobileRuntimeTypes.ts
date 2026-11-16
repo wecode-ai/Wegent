@@ -37,6 +37,7 @@ export interface MobileRuntimeState {
   modelsLoading: boolean
   modelsError: string | null
   loadModels: (force?: boolean) => Promise<void>
+  loadLocalModels: () => Promise<void>
   selectedModel: UnifiedModel | null
   selectedModelOptions: ModelOptions
   permissionMode: RuntimePermissionMode
@@ -50,6 +51,7 @@ export interface MobileRuntimeState {
   running: boolean
   stopping: boolean
   error: string | null
+  connectionError: string | null
   refresh: () => Promise<void>
   loadMoreMessagesBefore: () => Promise<void>
   openConversation: (item: ConversationItem) => Promise<void>

@@ -42,6 +42,15 @@ impl RuntimeWorkRpcHandler {
     }
 
     pub(super) async fn ensure_notification_router(&self) {
+        if let Err(error) = self.try_ensure_notification_router().await {
+            log_executor_event(
+                "runtime work notification router subscribe failed",
+                &[("error", error)],
+            );
+        }
+    }
+
+    pub(super) async fn try_ensure_notification_router(&self) -> Result<(), String> {
         if self
             .notification_router
             .lock()
@@ -49,36 +58,27 @@ impl RuntimeWorkRpcHandler {
             .as_ref()
             .is_some_and(|task| !task.is_finished())
         {
-            return;
+            return Ok(());
         }
 
-        let notification_rx = match self
+        let notification_rx = self
             .codex_app_server
             .subscribe_runtime_notifications()
-            .await
-        {
-            Ok(receiver) => receiver,
-            Err(error) => {
-                log_executor_event(
-                    "runtime work notification router subscribe failed",
-                    &[("error", error)],
-                );
-                return;
-            }
-        };
+            .await?;
 
         let mut router = self
             .notification_router
             .lock()
             .expect("notification router lock should not be poisoned");
         if router.as_ref().is_some_and(|task| !task.is_finished()) {
-            return;
+            return Ok(());
         }
 
         let handler = self.clone();
         *router = Some(tokio::spawn(async move {
             handler.run_notification_router(notification_rx).await;
         }));
+        Ok(())
     }
 
     pub(super) async fn run_notification_router(
@@ -96,6 +96,7 @@ impl RuntimeWorkRpcHandler {
 
             if message.get("method").and_then(Value::as_str) == Some("codex/app-server/exited") {
                 log_executor_event("runtime work notification router app-server exited", &[]);
+                self.publish_codex_account_event("runtime.codex.app_server.exited", &message);
                 self.settle_native_transport_exit(message.process_generation());
                 continue;
             }
@@ -113,6 +114,10 @@ impl RuntimeWorkRpcHandler {
         message: CodexNotification,
         replaying_route: Option<(&str, u64)>,
     ) {
+        if message.get("method").and_then(Value::as_str) == Some("account/login/completed") {
+            self.publish_codex_account_event("runtime.codex.auth.login.completed", &message);
+            return;
+        }
         let thread_id =
             codex_notification_thread_id(&message).or_else(|| self.unscoped_route_thread_id());
         let Some(thread_id) = thread_id else {
@@ -366,6 +371,19 @@ impl RuntimeWorkRpcHandler {
             }
         }
         self.replay_codex_notifications(pending_replays);
+    }
+
+    fn publish_codex_account_event(&self, event: &str, message: &CodexNotification) {
+        let Some(event_tx) = &self.event_tx else {
+            return;
+        };
+        let mut payload = message["params"].as_object().cloned().unwrap_or_default();
+        payload.insert("deviceId".into(), json!(self.device_id));
+        payload.insert(
+            "processGeneration".into(),
+            json!(message.process_generation()),
+        );
+        let _ = event_tx.send(json!({"type":"event", "event":event, "payload":payload}));
     }
 
     pub(super) fn register_thread_event_route(

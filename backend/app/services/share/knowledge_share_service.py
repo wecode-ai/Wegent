@@ -28,9 +28,12 @@ from app.models.share_link import ResourceType, ShareLink
 from app.models.user import User
 from app.schemas.base_role import BaseRole, has_permission
 from app.schemas.share import (
+    AuthorizationCreator,
     BatchResourceMemberResponse,
     FailedMemberResponse,
+    InheritedAuthorizationSource,
     KBShareInfoResponse,
+    KnowledgeBaseMemberListResponse,
     MyKBPermissionResponse,
     MyPermissionSourcesResponse,
     PendingRequestInfo,
@@ -62,6 +65,37 @@ class KnowledgeShareService(UnifiedShareService):
 
     def __init__(self) -> None:
         super().__init__(ResourceType.KNOWLEDGE_BASE)
+
+    def get_members(
+        self, db: Session, resource_id: int, user_id: int
+    ) -> KnowledgeBaseMemberListResponse:
+        """Include non-member authorization sources after native access validation."""
+        response = super().get_members(db, resource_id, user_id)
+        kb = db.get(Kind, resource_id)
+        creator = db.get(User, kb.user_id)
+        result = KnowledgeBaseMemberListResponse(
+            **response.model_dump(),
+            creator=AuthorizationCreator(
+                user_id=kb.user_id,
+                display_name=creator.user_name if creator else str(kb.user_id),
+            ),
+        )
+        namespace = (
+            db.query(Namespace)
+            .filter(Namespace.name == kb.namespace, Namespace.is_active.is_(True))
+            .first()
+        )
+        if kb.namespace != "default" and namespace is not None:
+            organization = is_organization_namespace(db, kb.namespace)
+            result.inherited_sources.append(
+                InheritedAuthorizationSource(
+                    source_type="organization" if organization else "group_membership",
+                    entity_type="organization" if organization else "namespace",
+                    entity_id=str(namespace.id),
+                    display_name=namespace.display_name or namespace.name,
+                )
+            )
+        return result
 
     def _get_resource(
         self, db: Session, resource_id: int, user_id: int

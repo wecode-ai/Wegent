@@ -2,6 +2,7 @@
   "order": 6000,
   "scenario": "./scenarios/human-interactions.scenario.mjs",
   "scenarioOnly": true,
+  "paths": ["wework/src/e2e/archived-interaction-readiness.test.ts"],
   "ci": {
     "core": {
       "order": 5000,

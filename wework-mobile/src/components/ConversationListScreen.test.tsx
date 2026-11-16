@@ -249,6 +249,11 @@ describe('new conversation controls', () => {
       expect(viewport.props.enabled).toBe(true)
       expect(viewport.findByType('TextInput' as never).props.testID).toBe('conversation-search')
       expect(viewport.findAllByProps({ testID: 'conversation-list' }).length).toBeGreaterThan(0)
+      const results = viewport
+        .findAllByType(FlatList)
+        .find(node => node.props.testID === 'conversation-list')!
+      expect(results.props.keyboardDismissMode).toBe(platform === 'ios' ? 'interactive' : 'on-drag')
+      expect(results.props.keyboardShouldPersistTaps).toBe('handled')
       expect(renderer.root.findAllByType('KeyboardAvoidingView' as never)).toHaveLength(1)
 
       await act(() => pressable('drawer-search-toggle').props.onPress())

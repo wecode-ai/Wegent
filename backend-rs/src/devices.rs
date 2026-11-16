@@ -98,20 +98,6 @@ impl DeviceType {
     }
 }
 
-impl DeviceSpecInput {
-    /// `spec.deviceType` as persisted, before the `DeviceType` normalization
-    /// the identity helpers apply.
-    pub(crate) fn device_type_value(&self) -> Option<&str> {
-        self.device_type.as_deref()
-    }
-
-    /// `spec.runtimeInstanceId` as the raw JSON the identity checks compare
-    /// against the online-state document's `runtime_instance_id`.
-    pub(crate) fn runtime_instance_id_value(&self) -> Option<serde_json::Value> {
-        self.runtime_instance_id.as_ref().map(OpaqueJson::to_value)
-    }
-}
-
 /// The source `kinds` query for one provider's listing (`Kind` model filter).
 /// The projection mirrors the source SQLAlchemy labeled rendering
 /// (`kinds.<column> AS kinds_<column>`) so the prepared statement matches the
@@ -247,6 +233,24 @@ pub struct RuntimeRemoteTaskAccessFeatures {
     pub version: i64,
     pub enabled: bool,
     pub task_creation: bool,
+}
+
+impl RuntimeRemoteTaskAccessFeatures {
+    /// Project only the explicitly typed consent advertised by the runtime.
+    pub fn from_value(value: &serde_json::Value) -> Option<Self> {
+        let version = value
+            .get("version")?
+            .as_i64()
+            .filter(|version| *version == 1)?;
+        Some(Self {
+            version,
+            enabled: value.get("enabled")?.as_bool()?,
+            task_creation: match value.get("taskCreation") {
+                Some(value) => value.as_bool()?,
+                None => false,
+            },
+        })
+    }
 }
 
 /// The configured cloud device store's contribution to one listing entry:
@@ -809,21 +813,7 @@ fn project_runtime_features(info: &OnlineStateInput) -> Option<RuntimeFeatures> 
             .remote_task_access
             .as_ref()
             .filter(|_| valid_header)
-            .and_then(|value| {
-                let value = value.to_value();
-                let version = value
-                    .get("version")?
-                    .as_i64()
-                    .filter(|version| *version == 1)?;
-                Some(RuntimeRemoteTaskAccessFeatures {
-                    version,
-                    enabled: value.get("enabled")?.as_bool()?,
-                    task_creation: match value.get("taskCreation") {
-                        Some(value) => value.as_bool()?,
-                        None => false,
-                    },
-                })
-            }),
+            .and_then(|value| RuntimeRemoteTaskAccessFeatures::from_value(&value.to_value())),
     })
 }
 

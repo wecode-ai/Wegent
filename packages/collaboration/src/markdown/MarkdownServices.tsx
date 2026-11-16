@@ -17,6 +17,8 @@ export interface MarkdownServices {
   navigateTo?: (path: string) => void
   fetchAttachmentBlob?: (id: number) => Promise<Blob>
   readLocalFile?: (path: string) => Promise<Blob>
+  readMarkdownImage?: (src: string, alt?: string) => Promise<Blob>
+  openMarkdownImage?: (src: string, alt?: string) => void | Promise<void>
   resolveImageUrl?: (src: string) => Promise<string>
   renderVisualization?: (part: { file: string; mode?: 'wide'; title?: string }) => ReactNode
   windowMarkdown?: boolean
@@ -26,6 +28,10 @@ export interface MarkdownServices {
 
 export const markdownMessages = {
   'zh-CN': {
+    'image.failed': '图片加载失败',
+    'attachment.retry': '重试',
+    'image.open': '打开图片附件',
+    'image.retry': '重试加载图片',
     'workbench.plantuml_unconfigured': 'PlantUML 预览需要配置渲染服务，当前可查看源码',
     'citation.page': '页码',
     'citation.slide': '幻灯片',
@@ -57,6 +63,10 @@ export const markdownMessages = {
     'code.wrap_off': '禁用自动换行',
   },
   en: {
+    'image.failed': 'Image failed to load',
+    'attachment.retry': 'Retry',
+    'image.open': 'Open image attachment',
+    'image.retry': 'Retry loading image',
     'workbench.plantuml_unconfigured':
       'Configure a PlantUML rendering service to preview this diagram. Source is available below.',
     'citation.page': 'page',

@@ -18,7 +18,7 @@ use chrono::{NaiveDateTime, Utc};
 use crate::sql_support::StatementArg;
 
 /// `CAPACITY_STATUSES`: the execution statuses that still accept events.
-pub(super) const CAPACITY_STATUSES: &str = "'running', 'claimed', 'cancel_requested'";
+pub(crate) const CAPACITY_STATUSES: &str = "'running', 'claimed', 'cancel_requested'";
 
 /// `PROJECT_CHAT_TERMINAL_RUN_STATUSES`.
 pub(super) const TERMINAL_RUN_STATUSES: [&str; 4] =
@@ -268,7 +268,7 @@ pub(super) async fn bind_activity_runtime_turn<T: MysqlTransaction>(
     transaction
         .execute(
             "UPDATE project_chat_messages SET metadata=JSON_SET(metadata, '$.runtime_turn_id', ?), \
-             updated_at=UTC_TIMESTAMP(6) \
+             updated_at=CURRENT_TIMESTAMP(6) \
              WHERE runtime_device_id=? AND runtime_task_id=? AND sender_type='agent' \
              AND status IN ('pending','streaming') \
              AND (deleted_at IS NULL OR deleted_at IN ('1970-01-01 00:00:00', '1970-01-01 00:00:01'))",

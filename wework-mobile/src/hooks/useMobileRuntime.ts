@@ -1,11 +1,10 @@
 import * as Crypto from 'expo-crypto'
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { AppState } from 'react-native'
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 
 import { composerApps } from '@/domain/composerApps'
+import { withPhoneLocalDevice } from '@/domain/withPhoneLocalDevice'
 import {
   mobileCreatableDevices,
-  mobileProjectCreatableDevices,
   mobileOperableDevices,
   selectedOnlineDeviceId,
 } from '@/domain/deviceOrdering'
@@ -16,7 +15,6 @@ import {
   isTerminalRuntimeEvent,
   RuntimeTaskLifecycleProjection,
   runtimeTaskKey,
-  shouldReloadRuntimeWork,
   type RuntimeSendTransition,
 } from '@/domain/runtimeTaskLifecycle'
 import { createConversationWorkspace } from '@/domain/runtimeConversationWorkspace'
@@ -24,23 +22,17 @@ import {
   allWorkspaces,
   flattenConversations,
   mergeRuntimeWorkForDevices,
-  runtimeWorkContainsTask,
   runtimeWorkForDevices,
 } from '@/domain/work'
 import type { RuntimeSessionConfig } from '@/services/backendConfig'
-import { RuntimeApi } from '@/services/runtimeApi'
-import { MobileRuntimeCache, type RuntimeCacheSnapshot } from '@/services/runtimeCache'
-import {
-  DEFAULT_RUNTIME_PERMISSION_MODE,
-  loadRuntimePermissionMode,
-  saveRuntimePermissionMode,
-  type RuntimePermissionMode,
-} from '@/services/runtimePermissionPreference'
-import { RuntimeStream } from '@/services/runtimeStream'
-import { RuntimeWorkInvalidator } from '@/services/runtimeWorkInvalidator'
+import type { RuntimeCacheSnapshot } from '@/services/runtimeCache'
+import { useMobileRuntimeSession, type MobileLocalRuntimeOptions } from './useMobileRuntimeSession'
+import { useMobileProjectCreation } from './useMobileProjectCreation'
+import { useRuntimePermissionPreference } from './useRuntimePermissionPreference'
 import { useMobileTranscript } from './useMobileTranscript'
 import { useWorkspaceGitRef } from './useWorkspaceGitRef'
 import { useDeviceModels } from './useDeviceModels'
+import { useRuntimeDeviceRefresh } from './useRuntimeDeviceRefresh'
 import { useMobileUserInput } from './useMobileUserInput'
 import { useConversationActions } from './useConversationActions'
 import {
@@ -63,28 +55,24 @@ import type {
   RuntimeTranscriptResponse,
 } from '@/types/runtime'
 
-const EMPTY_WORK: RuntimeWorkListResponse = {
-  projects: [],
-  chats: [],
-  totalTasks: 0,
-}
-
-export function useMobileRuntime(config: RuntimeSessionConfig, userId: number): MobileRuntimeState {
+const EMPTY_WORK: RuntimeWorkListResponse = { projects: [], chats: [], totalTasks: 0 }
+const noListRefresh = () => {}
+export function useMobileRuntime(
+  config: RuntimeSessionConfig | null,
+  userId: number,
+  localOptions?: MobileLocalRuntimeOptions
+): MobileRuntimeState {
   const deviceInventoryRef = useRef<DeviceInfo[]>([])
-  const tokenRef = useRef(config.accessToken)
-  tokenRef.current = config.accessToken
-  const stream = useMemo(
-    () => new RuntimeStream(config, () => deviceInventoryRef.current),
-    [config.apiBaseUrl, config.socketBaseUrl, config.socketPath, userId]
+  const { api, stream, cache, local } = useMobileRuntimeSession(
+    config,
+    userId,
+    localOptions,
+    deviceInventoryRef
   )
-  const api = useMemo(
-    () => new RuntimeApi(config, undefined, () => tokenRef.current, stream),
-    [config.apiBaseUrl, userId, stream]
-  )
-  const cache = useMemo(
-    () => new MobileRuntimeCache(config.apiBaseUrl, userId),
-    [config.apiBaseUrl, userId]
-  )
+  const backendIdentity = config ? `${config.apiBaseUrl}\0${userId}` : null
+  const cacheHydration = useMemo(() => ({ cache, ready: false }), [cache])
+  const activeCache = useRef(cacheHydration)
+  activeCache.current = cacheHydration
   const lifecycle = useMemo(() => new RuntimeTaskLifecycleProjection(), [api])
   const [work, setWork] = useState(EMPTY_WORK)
   const workRef = useRef<RuntimeWorkListResponse>(EMPTY_WORK)
@@ -101,29 +89,46 @@ export function useMobileRuntime(config: RuntimeSessionConfig, userId: number): 
   const deviceModels = useDeviceModels(
     api,
     devices.find(device => device.device_id === (currentAddress?.deviceId ?? selectedDeviceId)),
-    cloudModels
+    cloudModels,
+    backendIdentity,
+    local?.status.generation
   )
   const { models, selectedModel, selectedModelOptions } = deviceModels
-  const [permissionMode, setPermissionMode] = useState<RuntimePermissionMode>(
-    DEFAULT_RUNTIME_PERMISSION_MODE
+  const loadLocalModels = useCallback(
+    () => deviceModels.loadDeviceModels(local?.device(), true),
+    [deviceModels.loadDeviceModels, local]
   )
+  useEffect(() => {
+    if (
+      local?.status.state === 'running' &&
+      local.ownsDevice(currentAddress?.deviceId ?? selectedDeviceId ?? undefined)
+    )
+      void deviceModels.loadModels()
+  }, [
+    local,
+    local?.status.generation,
+    local?.status.state,
+    currentAddress?.deviceId,
+    selectedDeviceId,
+    deviceModels.loadModels,
+  ])
+  const { permissionMode, selectPermissionMode } = useRuntimePermissionPreference()
   const gitRef = useWorkspaceGitRef(api, !currentAddress, selectedWorkspace, devices)
   const [loading, setLoading] = useState(true)
-  const [refreshing, setRefreshing] = useState(false)
   const [sending, setSending] = useState(false)
   const [stoppingTaskKey, setStoppingTaskKey] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
+  const [connectionError, setConnectionError] = useState<string | null>(null)
   const unsubscribeRef = useRef<(() => void) | null>(null)
   const currentAddressRef = useRef<RuntimeTaskAddress | null>(null)
   const workRequestRevisionRef = useRef(new Map<string, number>())
   const devicesRef = useRef<DeviceInfo[]>([])
   const modelsRef = useRef<UnifiedModel[]>([])
   const selectedDeviceIdRef = useRef<string | null>(null)
+  const selectionRevisionRef = useRef(0)
   const allDevicesSelectedRef = useRef(false)
   const workByDeviceRef = useRef<Record<string, RuntimeWorkListResponse>>({})
-  const refreshingRef = useRef(false)
   const stopRequestsRef = useRef(new Set<string>())
-  useEffect(() => stream.updateAccessToken(config.accessToken), [config.accessToken, stream])
 
   const currentTaskRunning = currentAddress
     ? runtimeTaskRunning(currentAddress, work, taskRunningByKey)
@@ -131,25 +136,6 @@ export function useMobileRuntime(config: RuntimeSessionConfig, userId: number): 
   const currentTaskStopping = currentAddress
     ? stoppingTaskKey === runtimeTaskKey(currentAddress)
     : false
-
-  useEffect(() => {
-    let active = true
-    void loadRuntimePermissionMode()
-      .then(stored => {
-        if (active) setPermissionMode(stored)
-      })
-      .catch(cause => console.warn('Failed to load runtime permission preference', cause))
-    return () => {
-      active = false
-    }
-  }, [])
-
-  const selectPermissionMode = useCallback((mode: RuntimePermissionMode) => {
-    setPermissionMode(mode)
-    void saveRuntimePermissionMode(mode).catch(cause =>
-      console.warn('Failed to save runtime permission preference', cause)
-    )
-  }, [])
 
   const publishTaskLifecycle = useCallback(() => {
     setTaskRunningByKey(lifecycle.snapshot())
@@ -197,7 +183,7 @@ export function useMobileRuntime(config: RuntimeSessionConfig, userId: number): 
     reloadTranscript,
     loadMoreMessagesBefore,
     retainDevices: retainTranscriptDevices,
-  } = useMobileTranscript(stream, currentAddressRef, setError, observeTranscript)
+  } = useMobileTranscript(stream, currentAddressRef, setConnectionError, observeTranscript)
 
   const userInput = useMobileUserInput({
     api,
@@ -217,6 +203,7 @@ export function useMobileRuntime(config: RuntimeSessionConfig, userId: number): 
   })
 
   const persistCache = useCallback(() => {
+    if (!activeCache.current.ready) return Promise.resolve()
     const snapshot: RuntimeCacheSnapshot = {
       allDevicesSelected: allDevicesSelectedRef.current,
       devices: deviceInventoryRef.current,
@@ -224,8 +211,8 @@ export function useMobileRuntime(config: RuntimeSessionConfig, userId: number): 
       selectedDeviceId: selectedDeviceIdRef.current,
       workByDevice: workByDeviceRef.current,
     }
-    return cache.write(snapshot)
-  }, [cache])
+    return activeCache.current.cache.write(snapshot)
+  }, [])
 
   const publishSelectedDevice = useCallback(
     (deviceId: string | null, cachedWork?: RuntimeWorkListResponse) => {
@@ -236,6 +223,7 @@ export function useMobileRuntime(config: RuntimeSessionConfig, userId: number): 
       const nextWork = cachedWork ?? (deviceId ? workByDeviceRef.current[deviceId] : undefined)
       workRef.current = nextWork ?? EMPTY_WORK
       setWork(workRef.current)
+      if (nextWork) setLoading(false)
       setSelectedWorkspace(null)
       void persistCache().catch(cause => console.warn('Failed to cache selected device', cause))
       return nextWork
@@ -293,11 +281,20 @@ export function useMobileRuntime(config: RuntimeSessionConfig, userId: number): 
       if (!deviceId) return EMPTY_WORK
       const revision = nextWorkRevision(deviceId)
       const deviceName = devicesRef.current.find(device => device.device_id === deviceId)?.name
-      const nextWork = await stream.listWork(deviceId, deviceName)
-      if (workRequestRevisionRef.current.get(deviceId) !== revision) return nextWork
-      if (!devicesRef.current.some(device => device.device_id === deviceId)) return nextWork
-      await commitDeviceWork(deviceId, nextWork)
-      return nextWork
+      if (selectedDeviceIdRef.current === deviceId) setLoading(!workByDeviceRef.current[deviceId])
+      try {
+        const nextWork = await stream.listWork(deviceId, deviceName)
+        if (workRequestRevisionRef.current.get(deviceId) !== revision) return nextWork
+        if (!devicesRef.current.some(device => device.device_id === deviceId)) return nextWork
+        await commitDeviceWork(deviceId, nextWork)
+        return nextWork
+      } finally {
+        if (
+          workRequestRevisionRef.current.get(deviceId) === revision &&
+          selectedDeviceIdRef.current === deviceId
+        )
+          setLoading(false)
+      }
     },
     [commitDeviceWork, nextWorkRevision, stream]
   )
@@ -313,19 +310,6 @@ export function useMobileRuntime(config: RuntimeSessionConfig, userId: number): 
     if (failed) throw failed.reason
   }, [reloadWork])
 
-  const workInvalidator = useMemo(
-    () =>
-      new RuntimeWorkInvalidator(async () => {
-        if (allDevicesSelectedRef.current) await reloadAllWork()
-        else await reloadWork(selectedDeviceIdRef.current)
-      }),
-    [reloadAllWork, reloadWork]
-  )
-
-  const invalidateWork = useCallback(() => {
-    void workInvalidator.invalidate().catch(cause => setError(messageFrom(cause)))
-  }, [workInvalidator])
-
   const subscribe = useCallback(
     async (address: RuntimeTaskAddress) => {
       unsubscribeRef.current?.()
@@ -339,7 +323,7 @@ export function useMobileRuntime(config: RuntimeSessionConfig, userId: number): 
             event,
           })
         },
-        () => void reloadTranscript(address).catch(cause => setError(messageFrom(cause)))
+        () => void reloadTranscript(address).catch(cause => setConnectionError(messageFrom(cause)))
       )
       if (!sameRuntimeAddress(currentAddressRef.current, address)) {
         unsubscribe()
@@ -355,58 +339,80 @@ export function useMobileRuntime(config: RuntimeSessionConfig, userId: number): 
     setCloudModels(nextModels)
   }, [])
 
-  const refreshDevices = useCallback(async (): Promise<string | null> => {
-    const response = await api.listDevices()
-    deviceInventoryRef.current = response.items
-    api.clearPluginCatalogs()
-    const operableDevices = mobileOperableDevices(response.items)
-    const operableDeviceIds = operableDevices.map(device => device.device_id)
-    retainTranscriptDevices(operableDeviceIds)
-    devicesRef.current = operableDevices
-    workByDeviceRef.current = runtimeWorkForDevices(workByDeviceRef.current, operableDeviceIds)
-    setDevices(operableDevices)
-    const current = currentAddressRef.current
-    if (current && !operableDeviceIds.includes(current.deviceId)) {
-      unsubscribeRef.current?.()
-      unsubscribeRef.current = null
-      currentAddressRef.current = null
-      setCurrentAddress(null)
-      setSelectedWorkspace(null)
-      resetTranscript()
-    }
-    if (allDevicesSelectedRef.current) {
-      publishAllDevices()
-      return null
-    }
-    const deviceId = selectedOnlineDeviceId(operableDevices, selectedDeviceIdRef.current)
-    if (deviceId !== selectedDeviceIdRef.current) publishSelectedDevice(deviceId)
-    void persistCache().catch(cause => console.warn('Failed to cache devices', cause))
-    return deviceId
-  }, [
-    api,
-    persistCache,
-    publishAllDevices,
-    publishSelectedDevice,
-    resetTranscript,
-    retainTranscriptDevices,
-  ])
+  const applyDevices = useCallback(
+    (inventory: DeviceInfo[]): string | null => {
+      const currentInventory = withPhoneLocalDevice(inventory, local?.device())
+      deviceInventoryRef.current = currentInventory
+      api.clearPluginCatalogs()
+      const operableDevices = mobileOperableDevices(currentInventory)
+      const operableDeviceIds = operableDevices.map(device => device.device_id)
+      retainTranscriptDevices(operableDeviceIds)
+      devicesRef.current = operableDevices
+      workByDeviceRef.current = runtimeWorkForDevices(workByDeviceRef.current, operableDeviceIds)
+      setDevices(operableDevices)
+      const current = currentAddressRef.current
+      if (current && !operableDeviceIds.includes(current.deviceId)) {
+        unsubscribeRef.current?.()
+        unsubscribeRef.current = null
+        currentAddressRef.current = null
+        setCurrentAddress(null)
+        setSelectedWorkspace(null)
+        resetTranscript()
+      }
+      if (allDevicesSelectedRef.current) {
+        publishAllDevices()
+        return null
+      }
+      const deviceId = selectedOnlineDeviceId(operableDevices, selectedDeviceIdRef.current)
+      if (deviceId !== selectedDeviceIdRef.current) publishSelectedDevice(deviceId)
+      void persistCache().catch(cause => console.warn('Failed to cache devices', cause))
+      return deviceId
+    },
+    [
+      api,
+      local,
+      persistCache,
+      publishAllDevices,
+      publishSelectedDevice,
+      resetTranscript,
+      retainTranscriptDevices,
+    ]
+  )
 
-  const refresh = useCallback(async () => {
-    if (refreshingRef.current) return
-    refreshingRef.current = true
-    setRefreshing(true)
-    setError(null)
-    try {
-      const deviceId = await refreshDevices()
-      if (allDevicesSelectedRef.current) await reloadAllWork()
-      else if (deviceId) await reloadWork(deviceId)
-    } catch (cause) {
-      setError(messageFrom(cause))
-    } finally {
-      refreshingRef.current = false
-      setRefreshing(false)
+  const previousBackendIdentity = useRef(backendIdentity)
+  const hydratedBackendIdentity = useRef(backendIdentity)
+  const hasHydratedCache = useRef(false)
+  useLayoutEffect(() => {
+    if (previousBackendIdentity.current === backendIdentity) return
+    previousBackendIdentity.current = backendIdentity
+    applyModels([])
+    // Revoke the old account's remote view before paint, retaining phone-owned work.
+    applyDevices([])
+  }, [backendIdentity, applyModels, applyDevices])
+
+  const reloadRelated = useCallback(async () => {
+    const response = await api.listModels()
+    if (previousBackendIdentity.current !== backendIdentity) return
+    applyModels(response.data)
+    const address = currentAddressRef.current
+    if (address) {
+      await subscribe(address)
+      await reloadTranscript(address)
     }
-  }, [refreshDevices, reloadAllWork, reloadWork])
+  }, [api, applyModels, subscribe, reloadTranscript, backendIdentity])
+  const { refreshDevices, refresh, refreshing } = useRuntimeDeviceRefresh({
+    api,
+    sessionIdentity: backendIdentity,
+    local,
+    inventory: deviceInventoryRef,
+    selectedDeviceId: selectedDeviceIdRef,
+    allDevicesSelected: allDevicesSelectedRef,
+    applyDevices,
+    reloadWork,
+    reloadAllWork,
+    reloadRelated,
+    setConnectionError,
+  })
 
   useEffect(() => {
     setTaskRunningByKey(lifecycle.snapshot())
@@ -415,76 +421,81 @@ export function useMobileRuntime(config: RuntimeSessionConfig, userId: number): 
   useEffect(
     () =>
       stream.subscribeLifecycle((address, event) => {
-        const taskKnown = runtimeWorkContainsTask(workRef.current, address)
         if (isRunningRuntimeEvent(event.name) && lifecycle.executorStarted(address)) {
           publishTaskLifecycle()
         }
-        if (shouldReloadRuntimeWork(event.name, taskKnown)) invalidateWork()
         if (isTerminalRuntimeEvent(event.name)) {
           const current = currentAddressRef.current
           if (current && runtimeTaskKey(current) === runtimeTaskKey(address)) {
-            void reloadTranscript(address).catch(cause => setError(messageFrom(cause)))
+            void reloadTranscript(address).catch(cause => setConnectionError(messageFrom(cause)))
           }
         }
-      }, invalidateWork),
-    [invalidateWork, lifecycle, publishTaskLifecycle, reloadTranscript, stream]
+      }, noListRefresh),
+    [lifecycle, publishTaskLifecycle, reloadTranscript, stream]
   )
-
-  useEffect(() => {
-    let previousState = AppState.currentState
-    const subscription = AppState.addEventListener('change', nextState => {
-      const becameActive = nextState === 'active' && previousState !== 'active'
-      previousState = nextState
-      if (becameActive) void refresh()
-    })
-    return () => subscription.remove()
-  }, [refresh])
-
-  const previousTokenRef = useRef(config.accessToken)
-  useEffect(() => {
-    if (previousTokenRef.current === config.accessToken) return
-    previousTokenRef.current = config.accessToken
-    if (!error) return
-    // Recover reads rejected before authentication finished, retaining the visible state.
-    void refresh()
-    if (modelsRef.current.length === 0) {
-      void api
-        .listModels()
-        .then(response => {
-          applyModels(response.data)
-          void persistCache().catch(cause => console.warn('Failed to cache models', cause))
-        })
-        .catch(cause => setError(messageFrom(cause)))
-    }
-  }, [api, applyModels, config.accessToken, error, persistCache, refresh])
 
   useEffect(() => {
     let cancelled = false
     void (async () => {
-      const cached = await cache.read()
+      const selectionRevision = selectionRevisionRef.current
+      const cached = await cache.read().catch(cause => {
+        if (!cancelled) setError(messageFrom(cause))
+        return null
+      })
       if (cancelled) return
-      deviceInventoryRef.current = cached.devices
-      const cachedDevices = mobileOperableDevices(cached.devices)
-      devicesRef.current = cachedDevices
-      modelsRef.current = cached.models
-      workByDeviceRef.current = runtimeWorkForDevices(
-        cached.workByDevice,
-        cachedDevices.map(device => device.device_id)
-      )
-      setDevices(cachedDevices)
-      applyModels(cached.models)
-      const cachedDeviceId = selectedOnlineDeviceId(cachedDevices, cached.selectedDeviceId)
-      const cachedWork = cached.allDevicesSelected
-        ? publishAllDevices()
-        : publishSelectedDevice(
-            cachedDeviceId,
-            cachedDeviceId ? cached.workByDevice[cachedDeviceId] : undefined
-          )
-      const hasCachedWork = cached.allDevicesSelected
-        ? cachedDevices.some(device => Boolean(cached.workByDevice[device.device_id]))
-        : Boolean(cachedDeviceId && cached.workByDevice[cachedDeviceId])
-      if (cachedWork && lifecycle.syncWork(cachedWork)) publishTaskLifecycle()
-      setLoading(!hasCachedWork)
+      if (cached) {
+        const backendTransition =
+          hasHydratedCache.current && hydratedBackendIdentity.current !== backendIdentity
+        hasHydratedCache.current = true
+        hydratedBackendIdentity.current = backendIdentity
+        // A storage snapshot must not replace a choice the user has already made.
+        const selectionUnchanged = selectionRevision === selectionRevisionRef.current
+        const inventory =
+          selectionUnchanged || !deviceInventoryRef.current.length
+            ? cached.devices
+            : deviceInventoryRef.current
+        deviceInventoryRef.current = withPhoneLocalDevice(inventory, local?.device())
+        const cachedDevices = mobileOperableDevices(deviceInventoryRef.current)
+        devicesRef.current = cachedDevices
+        modelsRef.current = cached.models
+        const retainedLocalWork = Object.fromEntries(
+          Object.entries(workByDeviceRef.current).filter(([id]) => local?.ownsDevice(id))
+        )
+        workByDeviceRef.current = runtimeWorkForDevices(
+          {
+            ...cached.workByDevice,
+            ...retainedLocalWork,
+            ...(!selectionUnchanged ? workByDeviceRef.current : {}),
+          },
+          cachedDevices.map(device => device.device_id)
+        )
+        setDevices(cachedDevices)
+        applyModels(cached.models)
+        const cachedDeviceId = selectedOnlineDeviceId(cachedDevices, cached.selectedDeviceId)
+        const retainedLocalSelection =
+          local?.ownsDevice(selectedDeviceIdRef.current ?? undefined) &&
+          (backendTransition ||
+            selectionRevision > 0 ||
+            local?.ownsDevice(currentAddressRef.current?.deviceId))
+        const cachedWork =
+          !selectionUnchanged || retainedLocalSelection
+            ? workRef.current
+            : cached.allDevicesSelected
+              ? publishAllDevices()
+              : publishSelectedDevice(
+                  cachedDeviceId,
+                  cachedDeviceId ? cached.workByDevice[cachedDeviceId] : undefined
+                )
+        const hasCachedWork = allDevicesSelectedRef.current
+          ? cachedDevices.some(device => Boolean(workByDeviceRef.current[device.device_id]))
+          : Boolean(
+              selectedDeviceIdRef.current && workByDeviceRef.current[selectedDeviceIdRef.current]
+            )
+        if (cachedWork && lifecycle.syncWork(cachedWork)) publishTaskLifecycle()
+        setLoading(!hasCachedWork)
+        cacheHydration.ready = true
+        void persistCache().catch(cause => console.warn('Failed to cache restored state', cause))
+      }
 
       void api
         .listModels()
@@ -494,60 +505,48 @@ export function useMobileRuntime(config: RuntimeSessionConfig, userId: number): 
           void persistCache().catch(cause => console.warn('Failed to cache models', cause))
         })
         .catch(cause => {
-          if (!cancelled && cached.models.length === 0) setError(messageFrom(cause))
+          if (!cancelled && modelsRef.current.length === 0) setConnectionError(messageFrom(cause))
         })
 
-      let deviceId = cachedDeviceId
+      let deviceId = selectedDeviceIdRef.current
       try {
         deviceId = await refreshDevices()
       } catch (cause) {
-        if (!cancelled) setError(messageFrom(cause))
+        if (!cancelled) setConnectionError(messageFrom(cause))
       }
       if (cancelled) return
 
-      const selectedCachedWork = allDevicesSelectedRef.current
-        ? mergeRuntimeWorkForDevices(
-            workByDeviceRef.current,
-            devicesRef.current.map(device => device.device_id)
-          )
-        : deviceId
-          ? workByDeviceRef.current[deviceId]
-          : undefined
-      if (selectedCachedWork && (allDevicesSelectedRef.current || deviceId)) {
-        workRef.current = selectedCachedWork
-        setWork(selectedCachedWork)
-        setLoading(false)
-      }
       if (allDevicesSelectedRef.current) {
         void reloadAllWork()
           .catch(cause => {
-            if (!cancelled) setError(messageFrom(cause))
+            if (!cancelled) setConnectionError(messageFrom(cause))
           })
           .finally(() => {
             if (!cancelled && allDevicesSelectedRef.current) setLoading(false)
           })
       } else if (deviceId) {
-        void reloadWork(deviceId)
-          .catch(cause => {
-            if (!cancelled) setError(messageFrom(cause))
-          })
-          .finally(() => {
-            if (!cancelled && selectedDeviceIdRef.current === deviceId) setLoading(false)
-          })
+        // Native startup is read by its availability owner, before discovery.
+        if (local?.ownsDevice(deviceId)) {
+          if (local.status.state !== 'running') setLoading(false)
+          return
+        }
+        void reloadWork(deviceId).catch(cause => {
+          if (!cancelled) setConnectionError(messageFrom(cause))
+        })
       } else {
         setLoading(false)
       }
     })()
     return () => {
       cancelled = true
-      unsubscribeRef.current?.()
-      stream.dispose()
     }
   }, [
     api,
     applyModels,
     cache,
+    cacheHydration,
     lifecycle,
+    local,
     persistCache,
     publishSelectedDevice,
     publishAllDevices,
@@ -558,21 +557,26 @@ export function useMobileRuntime(config: RuntimeSessionConfig, userId: number): 
     stream,
   ])
 
+  useEffect(
+    () => () => {
+      unsubscribeRef.current?.()
+      stream.dispose()
+    },
+    [stream]
+  )
+
   const selectDevice = useCallback(
     (deviceId: string) => {
+      selectionRevisionRef.current += 1
       if (!allDevicesSelectedRef.current && deviceId === selectedDeviceIdRef.current) return
-      const cachedWork = publishSelectedDevice(deviceId)
-      setLoading(!cachedWork)
-      void reloadWork(deviceId)
-        .catch(cause => setError(messageFrom(cause)))
-        .finally(() => {
-          if (selectedDeviceIdRef.current === deviceId) setLoading(false)
-        })
+      publishSelectedDevice(deviceId)
+      void reloadWork(deviceId).catch(cause => setConnectionError(messageFrom(cause)))
     },
     [publishSelectedDevice, reloadWork]
   )
 
   const selectAllDevices = useCallback(() => {
+    selectionRevisionRef.current += 1
     if (allDevicesSelectedRef.current) return
     const hasCachedWork = devicesRef.current.some(device =>
       Boolean(workByDeviceRef.current[device.device_id])
@@ -580,7 +584,7 @@ export function useMobileRuntime(config: RuntimeSessionConfig, userId: number): 
     publishAllDevices()
     setLoading(!hasCachedWork)
     void reloadAllWork()
-      .catch(cause => setError(messageFrom(cause)))
+      .catch(cause => setConnectionError(messageFrom(cause)))
       .finally(() => {
         if (allDevicesSelectedRef.current) setLoading(false)
       })
@@ -588,6 +592,7 @@ export function useMobileRuntime(config: RuntimeSessionConfig, userId: number): 
 
   const openConversation = useCallback(
     async (item: ConversationItem) => {
+      selectionRevisionRef.current += 1
       setError(null)
       currentAddressRef.current = item.address
       setCurrentAddress(item.address)
@@ -611,6 +616,7 @@ export function useMobileRuntime(config: RuntimeSessionConfig, userId: number): 
 
   const startNewConversation = useCallback(
     (workspace?: RuntimeDeviceWorkspace) => {
+      selectionRevisionRef.current += 1
       unsubscribeRef.current?.()
       unsubscribeRef.current = null
       currentAddressRef.current = null
@@ -651,6 +657,7 @@ export function useMobileRuntime(config: RuntimeSessionConfig, userId: number): 
 
       try {
         if (!selectedModel) throw new Error('请选择可用模型')
+        deviceModels.selectModel(selectedModel, selectedModelOptions)
         const model = executionFields(selectedModel, {
           ...selectedModelOptions,
           permissionMode,
@@ -770,7 +777,9 @@ export function useMobileRuntime(config: RuntimeSessionConfig, userId: number): 
             }
           }
         }
-        void reloadWork(resolvedAddress.deviceId).catch(cause => setError(messageFrom(cause)))
+        void reloadWork(resolvedAddress.deviceId).catch(cause =>
+          setConnectionError(messageFrom(cause))
+        )
         dispatchToAddress(resolvedAddress, { type: 'user-delivered', id: userMessageId })
         return true
       } catch (cause) {
@@ -838,7 +847,7 @@ export function useMobileRuntime(config: RuntimeSessionConfig, userId: number): 
     try {
       const response = await api.cancelTask(address)
       if (!response.accepted) throw new Error(response.error || '停止当前回复失败')
-      void reloadWork(address.deviceId).catch(cause => setError(messageFrom(cause)))
+      void reloadWork(address.deviceId).catch(cause => setConnectionError(messageFrom(cause)))
       return true
     } catch (cause) {
       clearStoppingTask(address)
@@ -851,13 +860,19 @@ export function useMobileRuntime(config: RuntimeSessionConfig, userId: number): 
     async (asset: RuntimeUploadAsset) => {
       try {
         setError(null)
-        return await api.uploadAttachment(asset)
+        return await api.uploadAttachment(
+          asset,
+          currentAddressRef.current?.deviceId ??
+            selectedWorkspace?.deviceId ??
+            selectedDeviceId ??
+            undefined
+        )
       } catch (cause) {
         setError(messageFrom(cause))
         throw cause
       }
     },
-    [api]
+    [api, selectedDeviceId, selectedWorkspace?.deviceId]
   )
 
   const loadComposerApps = useCallback(async () => {
@@ -867,52 +882,27 @@ export function useMobileRuntime(config: RuntimeSessionConfig, userId: number): 
       selectedDeviceId ??
       selectedOnlineDeviceId(devicesRef.current, null)
     if (!deviceId) throw new Error('请先选择在线 Executor')
+    if (local?.ownsDevice(deviceId))
+      return api.listLocalComposerApps(
+        currentAddressRef.current ?? {
+          deviceId,
+          scope: 'workspace',
+          workspacePath: selectedWorkspace?.workspacePath ?? null,
+        }
+      )
     const installedPlugins = await api.listInstalledPlugins(deviceId)
     return composerApps(installedPlugins)
-  }, [api, selectedDeviceId, selectedWorkspace?.deviceId])
+  }, [api, local, selectedDeviceId, selectedWorkspace])
 
-  const createProject = useCallback(
-    async (input: { deviceId: string; workspacePath: string; name: string }) => {
-      setLoading(true)
-      setError(null)
-      try {
-        if (
-          !mobileProjectCreatableDevices(devicesRef.current).some(
-            device => device.device_id === input.deviceId
-          )
-        ) {
-          throw new Error('请在电脑端创建项目')
-        }
-        const result = await api.openWorkspace({
-          deviceId: input.deviceId,
-          workspacePath: input.workspacePath.trim(),
-        })
-        if (!result.accepted) throw new Error(result.error || '项目创建失败')
-        if (input.name.trim()) {
-          await api.renameWorkspace({
-            deviceId: input.deviceId,
-            workspacePath: result.workspacePath,
-            name: input.name.trim(),
-          })
-        }
-        publishSelectedDevice(input.deviceId)
-        const refreshedWork = await reloadWork(input.deviceId)
-        const workspace = allWorkspaces(refreshedWork).find(
-          candidate =>
-            candidate.deviceId === input.deviceId &&
-            candidate.workspacePath === result.workspacePath
-        )
-        if (workspace) startNewConversation(workspace)
-      } catch (cause) {
-        const messageText = messageFrom(cause)
-        setError(messageText)
-        throw cause
-      } finally {
-        setLoading(false)
-      }
-    },
-    [api, publishSelectedDevice, reloadWork, startNewConversation]
-  )
+  const createProject = useMobileProjectCreation({
+    api,
+    devices: devicesRef,
+    publishSelectedDevice,
+    reloadWork,
+    startNewConversation,
+    setLoading,
+    setError,
+  })
 
   const conversations = useMemo(
     () => flattenConversations(work, taskRunningByKey),
@@ -926,6 +916,7 @@ export function useMobileRuntime(config: RuntimeSessionConfig, userId: number): 
     setCurrentTitle,
     clearCurrentConversation: startNewConversation,
     setError,
+    setConnectionError,
   })
   const fileTarget = useMemo(
     () => resolveMobileWorkspaceFileTarget(currentAddress, work, selectedWorkspace),
@@ -959,15 +950,20 @@ export function useMobileRuntime(config: RuntimeSessionConfig, userId: number): 
     running: currentTaskRunning,
     stopping: currentTaskStopping,
     error,
+    connectionError,
     refresh,
     loadMoreMessagesBefore,
     openConversation,
     startNewConversation,
     selectDevice,
     selectAllDevices,
-    selectWorkspace: setSelectedWorkspace,
+    selectWorkspace: workspace => {
+      selectionRevisionRef.current += 1
+      setSelectedWorkspace(workspace)
+    },
     selectModel: deviceModels.selectModel,
     loadModels: deviceModels.loadModels,
+    loadLocalModels,
     modelsLoading: deviceModels.modelsLoading,
     modelsError: deviceModels.modelsError,
     selectPermissionMode,

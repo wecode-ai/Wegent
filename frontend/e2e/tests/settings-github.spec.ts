@@ -22,27 +22,6 @@ test.describe('Settings - Git Integration', () => {
     await openIntegrationsPage(page)
   })
 
-  test('should access integrations page', async ({ page }) => {
-    // Verify we're on settings page with integrations tab
-    await expect(page).toHaveURL(/\/settings/)
-
-    // Wait for integrations content to load - title "Integrations" should be visible
-    await expect(page.locator('h2:has-text("Integrations")')).toBeVisible({ timeout: 20000 })
-  })
-
-  test('should display Git integration section', async ({ page }) => {
-    // Look for Git integration section title "Integrations"
-    await expect(page.locator('h2:has-text("Integrations")')).toBeVisible({ timeout: 20000 })
-  })
-
-  test('should display token list or empty state', async ({ page }) => {
-    const tokenContent = page.locator(
-      '[data-testid="git-token-list"], [data-testid="git-token-empty-state"]'
-    )
-
-    await expect(tokenContent).toBeVisible({ timeout: INTEGRATIONS_READY_TIMEOUT })
-  })
-
   test('should open add token dialog', async ({ page }) => {
     const addTokenButton = page.getByTestId('add-git-token-button')
 

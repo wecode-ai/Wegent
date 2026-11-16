@@ -7,6 +7,7 @@ vi.mock('expo-file-system', () => ({
 }))
 
 import { RuntimeApi, RuntimeApiError } from './runtimeApi'
+import type { LocalRuntimeApi } from './localRuntimeApi'
 
 const config = {
   backendUrl: 'https://wegent.example',
@@ -17,6 +18,60 @@ const config = {
 }
 
 describe('RuntimeApi', () => {
+  it('opens offline without contacting Backend and does not expose cloud models', async () => {
+    const fetcher = vi.fn()
+    vi.stubGlobal('fetch', fetcher)
+    const api = new RuntimeApi(null)
+    expect(await api.listDevices()).toEqual({ items: [] })
+    expect(await api.listModels()).toEqual({ data: [] })
+    expect(fetcher).not.toHaveBeenCalled()
+  })
+
+  it.each([null, { ...config, accessToken: 'account-b' }])(
+    'invalidates old account HTTP responses on session change',
+    async next => {
+      let complete!: (response: Response) => void
+      const fetcher = vi.fn().mockImplementationOnce(
+        () =>
+          new Promise<Response>(resolve => {
+            complete = resolve
+          })
+      )
+      vi.stubGlobal('fetch', fetcher)
+      const api = new RuntimeApi(config)
+      api.updateBackend(config, 1)
+      const pending = api.listModels()
+      const rejected = expect(pending).rejects.toThrow('账号已变化')
+      api.updateBackend(next, 2)
+      expect(fetcher.mock.calls[0][1].signal.aborted).toBe(true)
+      complete(new Response(JSON.stringify({ data: [{ name: 'private-account-a' }] })))
+      await rejected
+    }
+  )
+
+  it('checks account ownership again after asynchronous response decoding', async () => {
+    let complete!: (body: string) => void
+    const body = new Promise<string>(resolve => {
+      complete = resolve
+    })
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue({
+        ok: true,
+        status: 200,
+        headers: new Headers({ 'content-type': 'application/json' }),
+        text: () => body,
+      })
+    )
+    const api = new RuntimeApi(config)
+    api.updateBackend(config, 1)
+    const pending = api.listModels()
+    const rejected = expect(pending).rejects.toThrow('账号已变化')
+    await Promise.resolve()
+    api.updateBackend({ ...config, accessToken: 'account-b' }, 2)
+    complete('{"data":[{"name":"private-account-a"}]}')
+    await rejected
+  })
   afterEach(() => {
     vi.unstubAllGlobals()
     vi.restoreAllMocks()
@@ -415,6 +470,59 @@ describe('RuntimeApi', () => {
       fileSize: 2048,
       mimeType: 'image/jpeg',
     })
+  })
+
+  it.each([false, true])(
+    'never uploads a phone attachment to Backend when the local adapter is missing or mismatched (%s)',
+    async hasLocal => {
+      const uploadFile = vi.fn().mockResolvedValue({
+        status: 200,
+        body: JSON.stringify({
+          id: 41,
+          filename: 'private.txt',
+          file_size: 8,
+          mime_type: 'text/plain',
+        }),
+      })
+      const localUpload = vi.fn()
+      const local = hasLocal
+        ? ({
+            runtime: { ownsDevice: vi.fn().mockReturnValue(false) },
+            uploadAttachment: localUpload,
+          } as unknown as LocalRuntimeApi)
+        : undefined
+      const api = new RuntimeApi(config, uploadFile, undefined, undefined, local)
+      await expect(
+        api.uploadAttachment(
+          { uri: 'file:///private.txt', name: 'private.txt', mimeType: 'text/plain', size: 8 },
+          'mobile-local:installation:previous-environment'
+        )
+      ).rejects.toThrow('本机执行环境尚未就绪')
+      expect(uploadFile).not.toHaveBeenCalled()
+      expect(localUpload).not.toHaveBeenCalled()
+    }
+  )
+
+  it('imports current phone attachments through the owning local adapter', async () => {
+    const asset = {
+      uri: 'file:///private.txt',
+      name: 'private.txt',
+      mimeType: 'text/plain',
+      size: 8,
+    }
+    const result = { id: -1, filename: 'private.txt', fileSize: 8, mimeType: 'text/plain' }
+    const localUpload = vi.fn().mockResolvedValue(result)
+    const local = {
+      runtime: { ownsDevice: vi.fn().mockReturnValue(true) },
+      uploadAttachment: localUpload,
+    } as unknown as LocalRuntimeApi
+    const uploadFile = vi.fn()
+    const api = new RuntimeApi(config, uploadFile, undefined, undefined, local)
+    await expect(api.uploadAttachment(asset, 'mobile-local:installation:current')).resolves.toEqual(
+      result
+    )
+    expect(localUpload).toHaveBeenCalledWith(asset)
+    expect(uploadFile).not.toHaveBeenCalled()
   })
 
   it('preserves a nested backend attachment error', async () => {
