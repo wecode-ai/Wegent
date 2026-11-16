@@ -520,14 +520,7 @@ async fn restores_foreign_history_boundary_after_route_restart() {
                 "type": "context_compaction",
                 "encrypted_content": "foreign-compaction"
             },
-            {
-                "type": "message",
-                "role": "developer",
-                "content": [{
-                    "type": "input_text",
-                    "text": "<model_switch>Persistent historical marker.</model_switch>"
-                }]
-            },
+            provider_switch_boundary_item(),
             {
                 "type": "reasoning",
                 "id": "rs_native",

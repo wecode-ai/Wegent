@@ -2492,6 +2492,20 @@ async fn run_codex_app_server_turn_on_shared_client(
                 )
                 .await?;
         }
+        if request_model_provider_switched(request) {
+            turn_request_context
+                .request(
+                    client,
+                    "thread/inject_items",
+                    provider_switch_boundary_inject_params(&thread_id),
+                    &launch_config,
+                )
+                .await?;
+            log_executor_event(
+                "codex provider switch boundary injected",
+                &[("thread_id", thread_id.clone())],
+            );
+        }
 
         // Thread initialization captures native capabilities; model work must not
         // keep capability publication or other task startups waiting.
@@ -2906,6 +2920,22 @@ async fn run_codex_app_server_turn_with_runtime(
                 ),
             )
             .await?;
+        }
+        if request_model_provider_switched(request) {
+            with_rpc_timeout(
+                "thread/inject_items",
+                timeout_seconds,
+                rpc.request(
+                    "thread/inject_items",
+                    provider_switch_boundary_inject_params(&thread_id),
+                    &mut state,
+                ),
+            )
+            .await?;
+            log_executor_event(
+                "codex provider switch boundary injected",
+                &[("thread_id", thread_id.clone())],
+            );
         }
         drop(capability_lease.take());
         if !request.ephemeral {
@@ -4743,6 +4773,14 @@ fn request_model_switched(request: &ExecutionRequest) -> bool {
     request
         .extra
         .get("wework_model_switched")
+        .and_then(Value::as_bool)
+        .unwrap_or(false)
+}
+
+fn request_model_provider_switched(request: &ExecutionRequest) -> bool {
+    request
+        .extra
+        .get("wework_model_provider_switched")
         .and_then(Value::as_bool)
         .unwrap_or(false)
 }
@@ -6832,6 +6870,13 @@ fn side_boundary_inject_params(thread_id: &str) -> Value {
                 "text": SIDE_BOUNDARY_PROMPT,
             }],
         }],
+    })
+}
+
+fn provider_switch_boundary_inject_params(thread_id: &str) -> Value {
+    json!({
+        "threadId": thread_id,
+        "items": [local_model_proxy::provider_switch_boundary_item()],
     })
 }
 

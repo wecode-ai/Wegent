@@ -55,6 +55,8 @@ pub const ROUTE: &str = "/v1/codex-router/responses";
 pub const TOKEN_ROUTE: &str = "/v1/codex-router/{token}/responses";
 pub const HARNESS_MESSAGES_ROUTE: &str = "/v1/harness-router/{token}/v1/messages";
 pub const OFFICIAL_CHATGPT_CODEX_BASE_URL: &str = "https://chatgpt.com/backend-api/codex";
+pub const PROVIDER_SWITCH_BOUNDARY_TEXT: &str =
+    "<model_switch>Wework provider boundary.</model_switch>";
 const MAX_REQUEST_BODY_BYTES: usize = 64 * 1024 * 1024;
 const NORMALIZED_API_ID_PREFIX_LENGTH: usize = 48;
 const DEFAULT_MAX_OUTPUT_TOKENS: u64 = 96_000;
@@ -86,6 +88,21 @@ const FORWARDED_CODEX_REQUEST_HEADERS: [&str; 16] = [
     "openai-beta",
     "x-responsesapi-include-timing-metrics",
 ];
+
+/// Developer-visible history item that marks a durable provider boundary.
+/// Codex emits its native `<model_switch>` only when the model string changes,
+/// so Wework injects this item when provider identity changes with the same
+/// model ID. The proxy can then recover the boundary after an executor restart.
+pub fn provider_switch_boundary_item() -> Value {
+    json!({
+        "type": "message",
+        "role": "developer",
+        "content": [{
+            "type": "input_text",
+            "text": PROVIDER_SWITCH_BOUNDARY_TEXT,
+        }],
+    })
+}
 
 pub fn route<S>() -> MethodRouter<S>
 where
