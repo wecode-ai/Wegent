@@ -16,6 +16,7 @@ import {
   withProjectRenderer,
 } from './project-create-test-utils.mjs'
 import { verifyModelDialogKeyboard } from './project-create-interaction-checks.mjs'
+import { assertCollaboratorAccessibilityIsolation } from './project-create-accessibility.mjs'
 export {
   waitForProjectCreateViewport,
   assertProjectCreateActionHit,
@@ -602,9 +603,11 @@ export async function verifyProjectCreateDialogUi(control, scoped) {
       )
     }
 
+    await assertCollaboratorAccessibilityIsolation('closed', false)
     await control.command('click', scoped(testId('collaboration-project-create-add-collaborator')))
     await control.command('waitFor', MENU, { visible: true })
     await assertCollaboratorMenuBounds(control)
+    await assertCollaboratorAccessibilityIsolation('open', true)
     for (const [category, emptyText] of [
       ['members', '当前分组暂无其他可添加人员。'],
       ['agents', '暂无其他可添加的智能体。'],
@@ -630,6 +633,12 @@ export async function verifyProjectCreateDialogUi(control, scoped) {
     await control.command('nativePress', SEARCH, { key: 'Escape' })
     await control.command('waitFor', MENU, { visible: false })
     await control.command('waitFor', DIALOG, { visible: true })
+    await assertCollaboratorAccessibilityIsolation('restored', false)
+    assert.equal(
+      await control.command('getActiveElementTestId', 'body'),
+      'collaboration-project-create-add-collaborator',
+      'Closing collaborator search must restore its trigger focus'
+    )
     await assertProjectCreateActionHit(
       control,
       scoped(testId('collaboration-project-create-confirm'))

@@ -97,6 +97,9 @@ export function ProjectCollaboratorPicker({
     </div>
   )
   const [trigger, setTrigger] = useState<HTMLButtonElement | null>(null)
+  const modalContainer = trigger?.closest<HTMLElement>(
+    '[role="dialog"][aria-modal="true"], dialog[open]'
+  )
   return (
     <Popover.Root open={open} onOpenChange={onOpenChange}>
       <Popover.Trigger asChild>
@@ -111,7 +114,7 @@ export function ProjectCollaboratorPicker({
           <span>{labels.addCollaborator}</span>
         </button>
       </Popover.Trigger>
-      <Popover.Portal>
+      <Popover.Portal container={modalContainer}>
         <Popover.Content
           {...theme}
           side="bottom"

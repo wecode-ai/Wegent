@@ -7,6 +7,7 @@ import { ProjectCreateDialog } from './ProjectCreateDialog'
 import { projectCreateLabels } from './labels'
 import type { ProjectCreateResourceSetup } from './types'
 import type { CollaborationProject } from '../types'
+import { CollaborationTheme } from '../theme'
 import { builtinCollaborationTemplates } from '../templates/builtins'
 import { CollaborationTemplateContext } from '../templates/context'
 import { CollaborationTemplateStore } from '../templates/store'
@@ -70,12 +71,81 @@ async function input(value: string) {
   })
 }
 
+it.each(['Escape', 'unmount'])(
+  'keeps its real portal within the owning modal and restores focus after %s',
+  async action => {
+    const opener = document.createElement('button')
+    opener.textContent = 'Background opener'
+    document.body.append(opener)
+    opener.focus()
+    const onClose = vi.fn()
+    try {
+      await act(async () =>
+        root.render(
+          <CollaborationTheme mode="dark">
+            <ProjectCreateDialog
+              targets={[{ location: 'cloud', create: vi.fn() }]}
+              defaultLocation="cloud"
+              labels={labels}
+              allowDingTalkAITable={false}
+              onClose={onClose}
+              onCreated={vi.fn()}
+              resourceSetup={{
+                location: 'cloud',
+                currentUser: { id: 1, name: 'Me' },
+                members: [{ id: 2, user_id: 2, user_name: person.user_name, role: 'Developer' }],
+                agents: [],
+                groups: [],
+                configure: vi.fn(),
+              }}
+            />
+          </CollaborationTheme>
+        )
+      )
+      const dialog = get('collaboration-project-create-dialog')
+      const trigger = get('collaboration-project-create-add-collaborator')
+      await click('collaboration-project-create-add-collaborator')
+      const menu = get('collaboration-project-create-collaborator-menu')
+      expect(menu.closest('[role="dialog"][aria-modal="true"]')).toBe(dialog)
+      expect(menu.closest('.collaboration-project-create-body')).toBeNull()
+      expect(menu.closest('[data-radix-popper-content-wrapper]')?.getAttribute('style')).toContain(
+        'position: fixed'
+      )
+      expect(menu.dataset.theme).toBe('dark')
+      expect(dialog.contains(document.activeElement)).toBe(true)
+      expect(document.activeElement).toBe(get('collaboration-project-create-people-search'))
+      expect(get('collaboration-project-create-member-2')).toBeTruthy()
+      vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+      await act(async () => {
+        if (action === 'Escape')
+          document.activeElement!.dispatchEvent(
+            new KeyboardEvent('keydown', {
+              key: 'Escape',
+              keyCode: 27,
+              bubbles: true,
+              cancelable: true,
+            })
+          )
+        else root.render(null)
+      })
+      await act(async () => vi.runAllTimersAsync())
+      expect(get('collaboration-project-create-collaborator-menu')).toBeNull()
+      expect(menu.isConnected).toBe(false)
+      expect(document.activeElement).toBe(action === 'Escape' ? trigger : opener)
+      expect(onClose).not.toHaveBeenCalled()
+    } finally {
+      vi.useRealTimers()
+      opener.remove()
+    }
+  }
+)
+
 it('does not restore a closing picker into the hidden project form after opening configuration', async () => {
   function Harness() {
     const [open, setOpen] = useState(true)
     const [configuring, setConfiguring] = useState(false)
     return (
-      <>
+      <section role="dialog" aria-modal="true" aria-label="Create project">
         <form hidden={configuring}>
           <ProjectCollaboratorPicker
             labels={labels}
@@ -103,10 +173,14 @@ it('does not restore a closing picker into the hidden project form after opening
           />
         </form>
         {configuring && <input autoFocus data-testid="configuration-input" />}
-      </>
+      </section>
     )
   }
   await act(async () => root.render(<Harness />))
+  const modal = container.querySelector('[role="dialog"][aria-modal="true"]')!
+  const menu = get('collaboration-project-create-collaborator-menu')
+  expect(menu.closest('[role="dialog"][aria-modal="true"]')).toBe(modal)
+  expect(menu.closest('form')).toBeNull()
   await click('collaboration-project-create-collaborator-tab-groups')
   const trigger = get('collaboration-project-create-add-collaborator')
   const restoreTriggerFocus = vi.spyOn(trigger, 'focus')
@@ -118,6 +192,7 @@ it('does not restore a closing picker into the hidden project form after opening
     expect(document.activeElement).toBe(configuration)
     expect(vi.getTimerCount()).toBeGreaterThan(0)
     await act(async () => vi.runAllTimersAsync())
+    expect(menu.isConnected).toBe(false)
     expect(restoreTriggerFocus).not.toHaveBeenCalled()
     expect(document.activeElement).toBe(configuration)
   } finally {
