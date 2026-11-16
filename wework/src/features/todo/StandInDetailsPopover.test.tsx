@@ -339,7 +339,7 @@ it('does not turn subagent children or execution blocks into separate activities
   expect(screen.queryByText('内部分析代理')).not.toBeInTheDocument()
 })
 
-it('opens IM directly from the identity popover and returns there on Escape', async () => {
+it('adds IM from the popover more menu and returns there on Escape', async () => {
   const user = userEvent.setup()
   const props = fixture({
     imConnections: {
@@ -352,8 +352,10 @@ it('opens IM directly from the identity popover and returns there on Escape', as
       deviceId: 'local',
     },
   })
-  const trigger = await screen.findByTestId('stand-in-im-channel-telegram')
+  const trigger = await screen.findByTestId('stand-in-im-add-channels')
   await user.click(trigger)
+  expect(screen.getByTestId('stand-in-details-popover')).toHaveAttribute('inert')
+  await user.click(screen.getByTestId('stand-in-im-channel-telegram'))
   await screen.findByTestId('stand-in-im-dialog')
   expect(screen.getByTestId('stand-in-details-popover')).toHaveAttribute('inert')
   expect(props.onSettings).not.toHaveBeenCalled()
