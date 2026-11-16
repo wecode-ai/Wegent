@@ -62,11 +62,9 @@ try {
     join(directory, "executor"),
   );
   await cp(
-    join(
-      artifact,
-      "codex/x86_64-unknown-linux-gnu/vendor/x86_64-unknown-linux-musl/bin/codex",
-    ),
+    join(artifact, "codex/x86_64-unknown-linux-gnu"),
     join(directory, "codex"),
+    { recursive: true },
   );
   await execute("docker", ["tag", baseImage, localBase]);
   baseTagged = true;
