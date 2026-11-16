@@ -250,4 +250,3 @@ pub(crate) async fn active_accounts<M: Mysql>(mysql: &M) -> MysqlResult<Vec<i64>
 mod mysql_tests;
 #[cfg(test)]
 mod tests;
-

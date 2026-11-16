@@ -19,9 +19,7 @@ mod openai;
 mod status;
 pub mod workday_calendar;
 
-pub use execution::{
-    AgentKind, ExecutionRequest, KnowledgeBaseScope, FULL_KB_TOOL_ACCESS_MODE,
-};
+pub use execution::{AgentKind, ExecutionRequest, KnowledgeBaseScope, FULL_KB_TOOL_ACCESS_MODE};
 pub use openai::{OpenAIResponsesRequest, ProtocolError};
 pub use status::TaskStatus;
 
