@@ -9,9 +9,9 @@
  */
 
 import { APIRequestContext, Page, expect, test, type Route } from '@playwright/test'
-import { execFile } from 'node:child_process'
+import { spawn } from 'node:child_process'
+import { once } from 'node:events'
 import { resolve } from 'node:path'
-import { promisify } from 'node:util'
 import { createAuthenticatedSocketClient } from '../../../../packages/chat-core/src/socket/authenticatedSocketClient'
 import { ADMIN_USER } from '../../config/test-users'
 import { ApiClient, createApiClient } from '../../utils/api-client'
@@ -42,7 +42,6 @@ const RESPONSE_TIMEOUT_MS = 120_000
 // Mock control requests can race with Node closing an idle keep-alive socket.
 // Playwright retries only ECONNRESET here and still surfaces HTTP failures.
 const MOCK_MODEL_CONTROL_REQUEST_OPTIONS = { maxRetries: 3 } as const
-const execFileAsync = promisify(execFile)
 
 type CreatedTeam = {
   name: string
@@ -2806,16 +2805,18 @@ test.describe('Agent conversation regression', () => {
     taskId: number,
     userId: number
   ): Promise<void> {
-    await execFileAsync(
+    const fixture = spawn(
       'uv',
       ['run', '--no-sync', 'python', 'tests/e2e_remove_executor_session.py'],
       {
         cwd: resolve(process.cwd(), '../backend'),
         env: { ...process.env, PYTHONPATH: '.:..' },
-        input: JSON.stringify({ task_id: taskId, user_id: userId }),
-        timeout: 30_000,
+        stdio: ['pipe', 'inherit', 'inherit'],
       }
     )
+    fixture.stdin.end(JSON.stringify({ task_id: taskId, user_id: userId }))
+    const [exitCode] = await once(fixture, 'exit')
+    expect(exitCode, 'The executor-session fixture should update the isolated database').toBe(0)
   }
 
   async function waitForCapturedModelRequest(
