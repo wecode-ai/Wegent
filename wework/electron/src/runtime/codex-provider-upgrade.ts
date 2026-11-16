@@ -32,6 +32,7 @@ export async function migrateCodexProviderState(
           codex_home: home,
           agents_root: agents,
           ...(waitForWriters ? { wait_for_writers: true } : {}),
+          ...(environment.WEWORK_DEVELOPMENT_ISOLATED === '1' ? { admit_current: true } : {}),
         }),
         '--executor-stopped',
         // An older binary must exit without initializing or opening any Home.

@@ -3,13 +3,11 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { templateMessages } from "../templates/messages";
-import { TemplateConfigurationError } from "../templates/apply";
 import { applyWorkspaceTemplate } from "../templates/workspaceConfiguration";
 import {
   readTemplateAgents,
   templateRoutingResolver,
   materializeTemplateAgents,
-  validateTemplateAgentRouting,
 } from "../templates/agents";
 
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
@@ -167,6 +165,11 @@ function createWorkspaceAgentConfigurationApi(
   return {
     ...api,
     agents: {
+      async remove() {
+        throw new Error(
+          "Project Agent deletion is unavailable in workspace scope",
+        );
+      },
       async list() {
         return (await workspaces.listAgents(workspaceId)).map(
           workspaceAgentRecord,
@@ -2173,6 +2176,11 @@ function CollaborationPlatformAppContent({
               : state.resources.execution_environments
           }
           deviceCatalog={rootView === "devices" ? deviceCatalog : undefined}
+          preferences={
+            rootView === "devices"
+              ? host.renderExecutionEnvironmentPreferences?.()
+              : undefined
+          }
           locale={locale}
           currentUserId={host.currentUser?.id}
           onDeleteDevice={
@@ -2958,43 +2966,10 @@ function CollaborationPlatformAppContent({
               : undefined,
             retryExecutionEnvironments: () =>
               setProjectResourceRefreshKey((value) => value + 1),
-            requiresTemplateEnvironmentSelection:
-              host.projectAgentConfiguration
-                ?.requiresTemplateEnvironmentSelection,
             loadCollaborationGroupGenerationModels:
               host.loadProjectCollaborationGroupGenerationModels,
             generateCollaborationGroupDraft:
               host.generateProjectCollaborationGroupDraft,
-            validate: async (selection) => {
-              if (!selection.template) return;
-              const routings = await validateTemplateAgentRouting(
-                selection.template,
-                selection.collaborationGroupDrafts,
-                templateRoutingResolver(
-                  host.projectAgentConfiguration,
-                  projectCreateLocation,
-                  undefined,
-                  locale,
-                ),
-              );
-              if (
-                host.projectAgentConfiguration
-                  ?.requiresTemplateEnvironmentSelection
-              ) {
-                for (const { executionPolicy } of routings.values()) {
-                  if (
-                    executionPolicy.mode === "fixed" &&
-                    !selection.executionEnvironmentDeviceIds.some(
-                      (id) => String(id) === executionPolicy.environment_id,
-                    )
-                  ) {
-                    throw new TemplateConfigurationError(
-                      templateMessages[locale].selectExecutionEnvironment,
-                    );
-                  }
-                }
-              }
-            },
             configure: async (project, selection) => {
               if (selection.template) {
                 await prepareTemplateProject(
@@ -3088,12 +3063,7 @@ function CollaborationPlatformAppContent({
                     selection.collaborationGroupDrafts,
                     templateMessages[locale].partial,
                     undefined,
-                    templateRoutingResolver(
-                      host.projectAgentConfiguration,
-                      projectCreateLocation,
-                      project.id,
-                      locale,
-                    ),
+                    templateRoutingResolver(),
                   )
                 : {
                     drafts: selection.collaborationGroupDrafts,

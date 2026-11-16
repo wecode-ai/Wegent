@@ -110,7 +110,7 @@ async function verifyArchive(control, request, issue, options) {
     assert.deepEqual(baseline.runs, [])
     const eventIds = baseline.events.map(row => row.id).sort()
 
-    await control.command('click', scoped('cloud-todo-more-properties'))
+    await control.command('click', scoped('cloud-todo-issue-actions'))
     await control.command('clickWhenEnabled', '[data-testid="cloud-todo-detail-delete"]')
     await control.command('waitFor', scoped('collaboration-issue-archive-dialog'), {
       text: issue.title,

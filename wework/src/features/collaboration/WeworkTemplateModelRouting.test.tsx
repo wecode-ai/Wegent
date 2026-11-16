@@ -1,5 +1,11 @@
 import { expect, it, vi } from 'vitest'
-import { runnerModelKey, type RunnerModel } from '@wegent/collaboration'
+import {
+  agentDefinitionRouting,
+  resolveRunnerSelection,
+  runnerModelKey,
+  type RunnerEnvironment,
+  type RunnerModel,
+} from '@wegent/collaboration'
 import { createWeworkProjectAgentConfigurationHost } from './WeworkProjectAgentConfigurationHost'
 
 const model: RunnerModel = {
@@ -37,9 +43,7 @@ it('lists non-default models and uses the explicit selection without a device de
   expect(await host.listTemplateAgentModels!('codex')).toEqual({
     models: [model],
   })
-  expect(
-    await host.resolveTemplateAgentRouting!('codex', 'local', 'project', undefined, model)
-  ).toEqual({
+  expect(agentDefinitionRouting('device', model)).toEqual({
     executionPolicy: { mode: 'fixed', environment_id: 'device' },
     modelPolicy: {
       mode: 'fixed',
@@ -53,17 +57,20 @@ it('lists non-default models and uses the explicit selection without a device de
   })
 })
 
-it('rejects a removed model and a selection for another runtime', async () => {
+it('rejects a removed model and incompatible runtime when a task actually runs', async () => {
   const { host, local } = fixture()
   local.listRunnerEnvironments.mockResolvedValue([
     { id: 'device', device_key: 'device', models: [], runtimes: ['codex'] },
   ])
-  await expect(
-    host.resolveTemplateAgentRouting!('codex', 'local', undefined, undefined, model)
-  ).rejects.toThrow('template_model_unavailable')
-  await expect(
-    host.resolveTemplateAgentRouting!('claude_code', 'local', undefined, undefined, model)
-  ).rejects.toThrow('template_model_unavailable')
+  expect(await host.listTemplateAgentModels!('codex')).toEqual({ models: [] })
+  const environments = (await local.listRunnerEnvironments()) as RunnerEnvironment[]
+  const routing = agentDefinitionRouting('device', model)
+  expect(() => resolveRunnerSelection({ environments, runtime: 'codex', ...routing })).toThrow(
+    'RUNNER_MODEL_UNAVAILABLE'
+  )
+  expect(() =>
+    resolveRunnerSelection({ environments, runtime: 'claude_code', ...routing })
+  ).toThrow('RUNNER_RUNTIME_MISMATCH')
 })
 
 it('lists compatible cloud models and rejects a cloud model removed after selection', async () => {
@@ -82,17 +89,22 @@ it('lists compatible cloud models and rejects a cloud model removed after select
   const selected = models.find(item => item.source === 'cloud')
   expect(selected).toBeDefined()
   expect(new Set(models.map(runnerModelKey)).size).toBe(models.length)
-  expect(
-    (await host.resolveTemplateAgentRouting!('codex', 'local', undefined, undefined, selected))
-      .modelPolicy
-  ).toMatchObject({
+  expect(agentDefinitionRouting('device', selected).modelPolicy).toMatchObject({
     mode: 'fixed',
     model: { source: 'cloud', cloud_model: { name: 'cloud', resource_user_id: 7 } },
   })
   local.listModels.mockResolvedValue([])
-  await expect(
-    host.resolveTemplateAgentRouting!('codex', 'local', undefined, undefined, selected)
-  ).rejects.toThrow('template_model_unavailable')
+  expect(await host.listTemplateCloudAgentModels!('codex')).toEqual([])
+  expect(() =>
+    resolveRunnerSelection({
+      environments: [{ id: 'device', models: [model], runtimes: ['codex'] } as RunnerEnvironment],
+      cloudModels: [],
+      runtime: 'codex',
+      executionPolicy: { mode: 'fixed', environment_id: 'device' },
+      modelPolicy: { mode: 'user_select' },
+      selection: { model: selected },
+    })
+  ).toThrow('RUNNER_MODEL_UNAVAILABLE')
 })
 
 it('loads native choices independently and exposes cloud catalog failures', async () => {

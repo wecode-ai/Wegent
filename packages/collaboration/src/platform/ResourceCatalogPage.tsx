@@ -2,7 +2,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
 import {
   Bot,
   Cloud,
@@ -76,8 +76,10 @@ export function ResourceCatalogPage({
   currentUserId,
   locale,
   onManageResource,
+  preferences,
 }: {
   api: SharedWorkspaceApi;
+  preferences?: ReactNode;
   domain: CollaborationDomain;
   kind: ResourceCatalogKind;
   cloudAccess: CollaborationPlatformHostAdapter["cloudAccess"];
@@ -446,6 +448,7 @@ export function ResourceCatalogPage({
     kind === "agents" ? agentRows : kind === "teams" ? teamRows : deviceRows;
   const visibleRows = rows.filter(
     (row) =>
+      (kind !== "devices" || row.statusTone === "online") &&
       (scope === "all" || row.scope === scope) &&
       (!normalizedQuery ||
         `${row.name} ${row.owner} ${row.workspaceNames.join(" ")}`
@@ -454,7 +457,10 @@ export function ResourceCatalogPage({
   );
   const PageIcon =
     kind === "agents" ? Bot : kind === "teams" ? UsersRound : Monitor;
-  const rowsInSource = rows;
+  const rowsInSource =
+    kind === "devices"
+      ? rows.filter((row) => row.statusTone === "online")
+      : rows;
   const scopeCounts = {
     all: rowsInSource.length,
     mine: rowsInSource.filter((row) => row.scope === "mine").length,
@@ -528,6 +534,14 @@ export function ResourceCatalogPage({
         ) : null}
       </header>
 
+      {preferences && (
+        <section
+          className="mb-4 border-b border-border pb-4"
+          data-testid="collaboration-device-preferences"
+        >
+          {preferences}
+        </section>
+      )}
       <div className="collaboration-resource-catalog-toolbar">
         <div className="collaboration-resource-filter-stack">
           <div

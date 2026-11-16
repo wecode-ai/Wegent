@@ -10,7 +10,7 @@ import type { CollaborationTemplate } from './types'
 import { TemplateBindingsDialog, type TemplateParticipant } from './TemplateBindings'
 import { TemplateDialog } from './TemplateDialog'
 import { templateFailureMessage, templateMessages } from './messages'
-import { templateAgentId, templateAgentReferences, templateRoutingResolver } from './agents'
+import { templateRoutingResolver } from './agents'
 import { applyProjectTemplate } from './projectConfiguration'
 import { PartialTemplateApplyError, TemplateConfigurationError } from './apply'
 import { TemplateProjectEnvironment } from './TemplateProjectEnvironment'
@@ -143,15 +143,6 @@ export function ProjectTemplateApplyDialog({
           : undefined
       }
       onApply={async (drafts, configured, resolveRouting) => {
-        if (
-          agentConfiguration?.listTemplateAgentEnvironments &&
-          !environmentId &&
-          configured.spec.resources.collaboration.agents?.some(agent =>
-            templateAgentReferences(drafts).has(templateAgentId(agent.key))
-          )
-        ) {
-          throw new TemplateConfigurationError(m.chooseProjectEnvironment)
-        }
         await applyProjectTemplate(
           api,
           projectId,
@@ -159,14 +150,7 @@ export function ProjectTemplateApplyDialog({
           drafts,
           locale,
           m.partial,
-          resolveRouting ??
-            templateRoutingResolver(
-              agentConfiguration,
-              context.project.project_store === 'local' ? 'local' : 'cloud',
-              projectId,
-              locale,
-              environmentId
-            )
+          resolveRouting ?? templateRoutingResolver(environmentId)
         )
         try {
           onApplied(await api.projects.get(projectId))

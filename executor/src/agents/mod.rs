@@ -14,7 +14,9 @@ use wegent_claude_harness::claude_options;
 mod codex;
 #[cfg(test)]
 pub(crate) use codex::turn_context_for_test;
-pub(crate) use codex::{prepare_provider_migration, redact_diagnostic_text};
+pub(crate) use codex::{
+    prepare_provider_migration, provider_state_is_current, redact_diagnostic_text,
+};
 mod completed_file_changes;
 #[cfg(test)]
 pub(crate) use codex::LaunchEnvironment as CodexLaunchEnvironment;

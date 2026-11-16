@@ -22,6 +22,8 @@ struct Request {
     agents_root: PathBuf,
     #[serde(default)]
     wait_for_writers: bool,
+    #[serde(default)]
+    admit_current: bool,
 }
 
 pub fn run(input: &str) -> Result<Value, String> {
@@ -62,6 +64,23 @@ pub fn run(input: &str) -> Result<Value, String> {
         if !has_codex_history(&home)? {
             continue;
         }
+        // Serialize dev preparations, not active conversations. Only read-only
+        // admission may coexist with their execution and authentication leases.
+        let _preparation = request
+            .admit_current
+            .then(|| {
+                acquire_home_lease(
+                    &home,
+                    ".wework-provider-preparation.lock",
+                    true,
+                    "Codex migration preparation is busy",
+                )
+            })
+            .transpose()?;
+        if request.admit_current && crate::agents::provider_state_is_current(&home)? {
+            checked += 1;
+            continue;
+        }
         let _execution = acquire_execution(&home, request.wait_for_writers)?;
         crate::agents::prepare_provider_migration(&home, request.wait_for_writers)?;
         checked += 1;
@@ -96,7 +115,21 @@ fn has_codex_history(home: &Path) -> Result<bool, String> {
 }
 
 fn acquire_execution(home: &Path, wait_for_writers: bool) -> Result<FileLease, String> {
-    let path = home.join(".execution.lock");
+    acquire_home_lease(
+        home,
+        ".execution.lock",
+        wait_for_writers,
+        "Codex migration is waiting for an active Agent execution",
+    )
+}
+
+fn acquire_home_lease(
+    home: &Path,
+    name: &str,
+    wait: bool,
+    busy: &str,
+) -> Result<FileLease, String> {
+    let path = home.join(name);
     let metadata = match fs::symlink_metadata(&path) {
         Ok(metadata) => Some(metadata),
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => None,
@@ -112,12 +145,12 @@ fn acquire_execution(home: &Path, wait_for_writers: bool) -> Result<FileLease, S
         .truncate(false)
         .open(path)
         .map_err(|e| e.to_string())?;
-    (if wait_for_writers {
+    (if wait {
         FileExt::lock_exclusive(&file)
     } else {
         file.try_lock_exclusive()
     })
-    .map_err(|_| "Codex migration is waiting for an active Agent execution")?;
+    .map_err(|_| busy)?;
     Ok(FileLease(file))
 }
 
