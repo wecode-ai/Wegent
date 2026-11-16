@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import { waitForBoardValue } from './collaboration-board-flows.mjs'
 import { reloadMainWindow } from './workspace-flows.mjs'
 
-async function verifyComposerLayout(control, form, send, sendMenu) {
+export async function verifyComposerLayout(control, form, send, sendMenu) {
   const selectors = [
     form,
     `${form} [data-testid="task-comment-attach"]`,
@@ -10,14 +10,22 @@ async function verifyComposerLayout(control, form, send, sendMenu) {
     send,
     sendMenu,
   ]
-  const metrics = await Promise.all(
-    selectors.map(async selector => {
-      const matches = JSON.parse(await control.command('getElementMetrics', selector))
-      assert.equal(matches.length, 1, `Expected one composer control: ${selector}`)
-      return matches[0]
-    })
+  // A drawer can still be moving; compare every rectangle from the same frame.
+  const metrics = JSON.parse(
+    await control.command('getElementMetrics', selectors.join(', '), { value: 'includeText' })
   )
-  const [frame, ...controls] = metrics
+  const ids = [
+    'task-comment-form',
+    'task-comment-attach',
+    'task-comment-form-assignee',
+    'send-message-button',
+    'task-comment-form-send-actions',
+  ]
+  const [frame, ...controls] = ids.map(id => {
+    const matches = metrics.filter(rect => rect.testId === id)
+    assert.equal(matches.length, 1, `Expected one composer control: ${id}`)
+    return matches[0]
+  })
   assert.ok(
     Math.max(...controls.map(rect => rect.top)) < Math.min(...controls.map(rect => rect.bottom)),
     'Composer tools, staged changes and send actions must share one row'
@@ -28,7 +36,7 @@ async function verifyComposerLayout(control, form, send, sendMenu) {
         rect.right <= frame.right &&
         rect.top >= frame.top &&
         rect.bottom <= frame.bottom,
-      'Every composer action must stay inside the input frame'
+      `Every composer action must stay inside the input frame: ${JSON.stringify({ frame, control: rect })}`
     )
   }
   assert.equal(
