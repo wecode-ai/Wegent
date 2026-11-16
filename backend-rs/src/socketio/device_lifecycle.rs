@@ -25,7 +25,7 @@ use brz_socket_io::{ClientError, Reply};
 use serde::Serialize;
 use serde_json::{Value, json};
 
-use crate::device_identity_lock::IdentityLock;
+use crate::device_identity_lock::{IDENTITY_LOCK_BODY_TIMEOUT, IdentityLock};
 use crate::json_compat::python_json_value;
 use crate::socketio::device::{self, DeviceType, RegisterPayload};
 use crate::socketio::runtime::{DeviceJob, SocketEmitters, SocketRuntime};
@@ -93,7 +93,7 @@ pub async fn register(
 }
 
 /// The source's unavailable ACK when the lock cannot be taken or released.
-fn identity_lock_unavailable() -> Reply<Value> {
+pub(super) fn identity_lock_unavailable() -> Reply<Value> {
     Reply::payload(error_ack(
         "Device identity operation is temporarily unavailable; reconnect to retry",
     ))
@@ -115,17 +115,33 @@ where
     F: FnOnce() -> Fut,
     Fut: std::future::Future<Output = Result<Reply<Value>, ClientError>>,
 {
+    match with_device_identity_lock(redis, user_id, body).await {
+        Ok(reply) => reply,
+        Err(()) => Ok(identity_lock_unavailable()),
+    }
+}
+
+pub(super) async fn with_device_identity_lock<R, F, Fut, T>(
+    redis: &R,
+    user_id: i64,
+    body: F,
+) -> Result<T, ()>
+where
+    R: brz_redis::Redis,
+    F: FnOnce() -> Fut,
+    Fut: std::future::Future<Output = T>,
+{
     let lock = match IdentityLock::acquire(redis, user_id).await {
         Ok(Some(lock)) => lock,
         // `Lock.__aenter__` raises `LockError` (a `RedisError`) when the
         // blocking budget expires; `acquire` propagates a request failure.
         Ok(None) => {
             tracing::warn!(user_id, "device identity lock is held by another worker");
-            return Ok(identity_lock_unavailable());
+            return Err(());
         }
         Err(error) => {
             tracing::error!(%error, user_id, "device identity lock acquisition failed");
-            return Ok(identity_lock_unavailable());
+            return Err(());
         }
     };
     // `async with asyncio.timeout(20):` wraps only the session handler body.
@@ -134,19 +150,16 @@ where
     // failure is a `RedisError` and takes the source's unavailable branch.
     if let Err(error) = lock.release().await {
         tracing::warn!(%error, user_id, "device identity lock release failed");
-        return Ok(identity_lock_unavailable());
+        return Err(());
     }
     match outcome {
-        Ok(reply) => reply,
+        Ok(result) => Ok(result),
         Err(_) => {
-            tracing::warn!(user_id, "device identity registration timed out");
-            Ok(identity_lock_unavailable())
+            tracing::warn!(user_id, "device identity operation timed out");
+            Err(())
         }
     }
 }
-
-/// Bound registration work under the identity lock.
-const IDENTITY_LOCK_BODY_TIMEOUT: Duration = Duration::from_secs(20);
 
 /// `_register_device_session`: the registration body (no identity lock).
 async fn register_session(
@@ -206,7 +219,12 @@ async fn register_session(
             payload.device_type,
             DeviceType::App | DeviceType::Cloud | DeviceType::Remote
         );
-        if persisted_display_name.is_none() || requires_identity_check {
+        if persisted_display_name.is_none()
+            || requires_identity_check
+            || device::get_online(state, user_id, &payload.device_id)
+                .await
+                .is_none()
+        {
             match device::upsert_device(
                 state,
                 user_id,

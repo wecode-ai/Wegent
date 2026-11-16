@@ -17,6 +17,7 @@ vi.mock('@expo/vector-icons/Ionicons', () => ({ default: 'Icon' }))
 vi.mock('@react-navigation/native', async () => {
   const { useEffect } = await import('react')
   return {
+    useIsFocused: () => environment.focused,
     useFocusEffect: (effect: () => void | (() => void)) =>
       useEffect(() => (environment.focused ? effect() : undefined), [effect, environment.focused]),
   }
@@ -28,12 +29,16 @@ vi.mock('react-native', () => ({
   },
   Animated: {
     Value: class {
+      stopAnimation() {}
+      setValue() {}
       interpolate() {
         return 0
       }
     },
+    timing: () => ({ start: () => {}, stop: () => {} }),
     View: 'AnimatedView',
   },
+  Easing: { out: (value: unknown) => value, cubic: 'cubic' },
   BackHandler: {
     addEventListener: (_event: string, handler: () => boolean) => {
       environment.backHandlers.add(handler)
@@ -62,9 +67,9 @@ vi.mock('react-native-safe-area-context', () => ({
 vi.mock('./ChatComposer', async () => {
   const { createElement, useState } = await import('react')
   return {
-    ChatComposer: ({ onSelectModel }: { onSelectModel: () => void }) => {
+    ChatComposer: (props: { onSelectModel: () => void }) => {
       const [draft, setDraft] = useState('')
-      return createElement('Composer', { draft, onChangeText: setDraft, onSelectModel })
+      return createElement('Composer', { ...props, draft, onChangeText: setDraft })
     },
   }
 })
@@ -112,6 +117,7 @@ describe('conversation keyboard layout and model navigation', () => {
 
   const props = (): React.ComponentProps<typeof ConversationScreen> => ({
     api: { getSubagentTranscript: vi.fn() },
+    onComposerFocusHandled: vi.fn(),
     currentAddress: null,
     currentTitle: '',
     devices: [],
@@ -156,6 +162,26 @@ describe('conversation keyboard layout and model navigation', () => {
   })
   const composer = () => renderer.root.findByType('Composer' as never)
   const quick = () => renderer.root.findAllByType('QuickSelector' as never)
+
+  it('permits composer focus only on the active page with no covering selector', async () => {
+    const handlers = props()
+    await act(() => {
+      renderer = create(<ConversationScreen {...handlers} />)
+    })
+    expect(composer().props.active).toBe(true)
+    expect(composer().props.onFocusRequestHandled).toBe(handlers.onComposerFocusHandled)
+    environment.focused = false
+    await act(() => renderer.update(<ConversationScreen {...handlers} />))
+    expect(composer().props.active).toBe(false)
+    environment.focused = true
+    await act(() => renderer.update(<ConversationScreen {...handlers} />))
+    await act(() => composer().props.onSelectModel())
+    expect(composer().props.active).toBe(false)
+    await act(() => renderer.root.findByType('QuickDismiss' as never).props.onDismiss())
+    expect(composer().props.active).toBe(true)
+    await act(() => renderer.root.findByProps({ testID: 'new-chat-device' }).props.onPress())
+    expect(composer().props.active).toBe(false)
+  })
 
   it('consumes back to close only the quick layer and keeps the composer draft mounted', async () => {
     const handlers = props()

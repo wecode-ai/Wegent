@@ -109,7 +109,7 @@ async fn status_assistant_read_is_bounded_only_for_subscriptions() {
         };
         let rows = super::persist_status::read_assistants(
             &mut transaction,
-            tables(),
+            tables().subtasks,
             123,
             is_subscription,
         )

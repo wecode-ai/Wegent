@@ -1123,7 +1123,7 @@ class SubtaskStore(Protocol):
         db: Session,
         *,
         subtask: Subtask,
-        from_status: SubtaskStatus,
+        from_status: SubtaskStatus | tuple[SubtaskStatus, ...],
         **fields: Any,
     ) -> bool: ...
 

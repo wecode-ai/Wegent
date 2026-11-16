@@ -1,12 +1,18 @@
 // Register provider mocks before importing modules that consume them.
-import { context, harness, view } from './runtimeInteractionsProvider.fixtures'
-import { act, waitFor } from '@testing-library/react'
+import { context, harness, probe, view } from './runtimeInteractionsProvider.fixtures'
+import { act, render, waitFor } from '@testing-library/react'
 import { expect, it, vi } from 'vitest'
 import { interactionQuestion, interactionTranscript } from './runtimeInteractions.fixtures'
 import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
+import { issueHumanInteraction, issueQuestionIdentity } from './issueHumanInteractions'
+import { interactionHistoryEntry } from './interactionArchive'
+import { pendingInteractionCache, saveInteractionState } from './interactionStorage'
+import { NotificationTaskContext, type TaskSource } from './NotificationTaskSourceContext'
+import { RuntimeInteractionsProvider } from './RuntimeInteractionsProvider'
 
 it.each([
   'resolved',
+  'cancelled',
   'transferred',
   'revoked',
   'resolved-offline-restart',
@@ -17,8 +23,8 @@ it.each([
   'resolved-late-response-other-store',
   'resolved-late-response-shared-other-issue',
   'resolved-late-response-shared-other-store',
-])('reconciles only an exactly resolved Issue question, not %s removal', async state => {
-  const settled = state.startsWith('resolved')
+])('reconciles only an exactly handled Issue question across %s removal', async state => {
+  const settled = state.startsWith('resolved') || state === 'cancelled'
   const rendered = view()
   await waitFor(() => expect(context!.pending).toHaveLength(1))
   const native = context!.pending[0]
@@ -69,9 +75,9 @@ it.each([
       items: [
         {
           ...question,
-          status: settled ? 'resolved' : 'pending',
+          status: state === 'cancelled' ? 'cancelled' : settled ? 'resolved' : 'pending',
           recipient_user_id: 9,
-          answer_message_id: settled ? 'answer' : undefined,
+          answer_message_id: state.startsWith('resolved') ? 'answer' : undefined,
         },
       ],
     })
@@ -166,3 +172,66 @@ it.each([
     expect(context!.history.some(item => item.id === native.id)).toBe(true)
   }
 })
+
+it.each(['local', 'backend'] as const)(
+  'does not revive a stale cached %s question after its settlement was persisted',
+  async store => {
+    const { interactionTask } = await import('./runtimeInteractions.fixtures')
+    const shared = issueHumanInteraction(
+      {
+        id: 'cached-settled',
+        project_id: 'project',
+        issue_id: 'ISSUE-1',
+        root_comment_id: 'root',
+        runtime_device_id: interactionTask.address.deviceId,
+        runtime_task_id: interactionTask.address.taskId,
+        item_id: interactionQuestion.itemId!,
+        question: 'Already handled',
+        recipient_user_id: 7,
+        recipient_name: 'Me',
+        status: 'pending',
+        version: 1,
+        blocks_progress: false,
+        created_at: '2026-11-10T00:00:00Z',
+        updated_at: '2026-11-10T00:00:00Z',
+      },
+      store
+    )
+    saveInteractionState('wework.interactions:test:1:history', [
+      {
+        ...interactionHistoryEntry(shared, Date.now()),
+        resolvedIssueQuestion: {
+          questionIdentity: issueQuestionIdentity(shared)!,
+          nativeInteractionId: shared.id,
+        },
+      },
+    ])
+    // Pending cache and durable history can come from different flushes before shutdown.
+    saveInteractionState('wework.interactions:test:1:pending', pendingInteractionCache([shared]))
+    const inbox = vi.fn().mockRejectedValue(new Error('Offline'))
+    const api = { inbox, list: vi.fn(), assign: vi.fn() }
+    const taskSource: TaskSource = {
+      items: [],
+      userId: 7,
+      services: {
+        [store === 'local' ? 'localIssueHumanRequestsApi' : 'issueHumanRequestsApi']: api,
+      } as unknown as WorkbenchServices,
+      unreadTaskKeys: new Set(),
+      markRuntimeTaskRead: vi.fn(),
+    }
+    render(
+      <NotificationTaskContext.Provider value={{ taskSource, registerTaskSource: vi.fn() }}>
+        <RuntimeInteractionsProvider accountKey="test:1">{probe}</RuntimeInteractionsProvider>
+      </NotificationTaskContext.Provider>
+    )
+    await waitFor(() => expect(context!.errors[`issue:${store}`]).toBe('Offline'))
+    await act(async () => context!.refresh())
+    expect(context!.pending.some(item => item.sharedRequest?.id === 'cached-settled')).toBe(false)
+    expect(context!.history.some(item => item.id === shared.id)).toBe(true)
+
+    // A newly validated inbox entry remains authoritative over cached history.
+    inbox.mockResolvedValue({ items: [shared.sharedRequest!] })
+    await act(async () => context!.refresh())
+    expect(context!.pending.some(item => item.sharedRequest?.id === 'cached-settled')).toBe(true)
+  }
+)

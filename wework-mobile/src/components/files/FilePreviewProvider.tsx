@@ -1,8 +1,23 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
-import { Alert, Keyboard, Linking } from 'react-native'
+import { showErrorAlert } from '@/services/errorAlerts'
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ReactNode,
+} from 'react'
+import { Keyboard, Linking } from 'react-native'
 import { workspaceParentPath } from '../../../../packages/chat-core/src/workspace-file-paths'
 import type { MobileWorkspaceFileTarget } from '@/domain/mobileFileTarget'
-import { mobileAttachmentRequest, mobileFileKey, resolveMobileFileLink } from '@/domain/mobileFiles'
+import {
+  isPhoneLocalFile,
+  mobileAttachmentRequest,
+  mobileFileKey,
+  resolveMobileFileLink,
+} from '@/domain/mobileFiles'
+import { isPhoneLocalDeviceId } from '@/services/localRuntime'
 import { MobileFileStore } from '@/services/mobileFileStore'
 import { loadMobileWorkspaceChanges } from '@/services/mobileWorkspaceGit'
 import type { RuntimeApi } from '@/services/runtimeApi'
@@ -13,18 +28,54 @@ import { FileBrowserModal, type FileLocation } from './FileBrowserModal'
 export function FilePreviewProvider({
   api,
   apiBaseUrl,
-  target,
+  target: targetSnapshot,
+  backendSession = apiBaseUrl,
   children,
 }: {
   api: RuntimeApi
   apiBaseUrl: string
   target: MobileWorkspaceFileTarget | null
+  backendSession?: string | null
   children: ReactNode
 }) {
+  // Work-list refreshes may create a new object for the same file owner.
+  // Consumers must observe ownership changes, not snapshot object identity.
+  const deviceId = targetSnapshot?.deviceId
+  const path = targetSnapshot?.path
+  const taskId = targetSnapshot?.taskId
+  const workspaceSource = targetSnapshot?.workspaceSource
+  const target = useMemo<MobileWorkspaceFileTarget | null>(
+    () =>
+      deviceId !== undefined && path !== undefined
+        ? {
+            deviceId,
+            path,
+            ...(taskId !== undefined && { taskId }),
+            ...(workspaceSource !== undefined && { workspaceSource }),
+          }
+        : null,
+    [deviceId, path, taskId, workspaceSource]
+  )
   const store = useMemo(() => new MobileFileStore(api), [api])
   const [locations, setLocations] = useState<FileLocation[]>([])
   const [recent, setRecent] = useState<RecentMobileFile[]>([])
   const opening = useRef(0)
+  const currentBackend = useRef(backendSession)
+  currentBackend.current = backendSession
+  const previousBackend = useRef(backendSession)
+  useLayoutEffect(() => {
+    if (previousBackend.current === backendSession) return
+    previousBackend.current = backendSession
+    store.retain(isPhoneLocalFile)
+    setRecent(current => current.filter(item => isPhoneLocalFile(item.request)))
+    setLocations(current =>
+      current.filter(location =>
+        location.kind === 'file'
+          ? isPhoneLocalFile(location.request)
+          : isPhoneLocalDeviceId(location.target.deviceId)
+      )
+    )
+  }, [backendSession, store])
   useEffect(
     () => () => {
       opening.current += 1
@@ -43,7 +94,7 @@ export function FilePreviewProvider({
     setLocations([])
   }, [])
   const showError = useCallback((cause: unknown) => {
-    Alert.alert('无法打开文件', cause instanceof Error ? cause.message : String(cause))
+    showErrorAlert(cause, { title: '无法打开文件' })
   }, [])
   const openFile = useCallback(
     (request: MobileFileRequest) => {
@@ -57,6 +108,8 @@ export function FilePreviewProvider({
   const openLinkWithTarget = useCallback(
     async (href: string, owner: MobileWorkspaceFileTarget | null, withinBrowser = false) => {
       const sequence = ++opening.current
+      const stillOwned = () =>
+        currentBackend.current === backendSession || isPhoneLocalDeviceId(owner?.deviceId)
       try {
         const attachment = mobileAttachmentRequest(href, apiBaseUrl)
         if (attachment) {
@@ -87,14 +140,14 @@ export function FilePreviewProvider({
               location = { kind: 'directory', target: { ...request.target, path: request.path } }
           }
         }
-        if (sequence !== opening.current) return
+        if (sequence !== opening.current || !stillOwned()) return
         Keyboard.dismiss()
         setLocations(previous => [...(withinBrowser ? previous : []), location])
       } catch (cause) {
-        if (sequence === opening.current) showError(cause)
+        if (sequence === opening.current && stillOwned()) showError(cause)
       }
     },
-    [api, apiBaseUrl, showError]
+    [api, apiBaseUrl, backendSession, showError]
   )
   const actions = useMemo<MobileFilePreviewActions>(
     () => ({
@@ -144,27 +197,35 @@ export function FilePreviewProvider({
     [api, target, openFile, openLinkWithTarget, showError]
   )
 
-  const remember = useCallback((request: MobileFileRequest, document: LoadedMobileFile) => {
-    const key = mobileFileKey(request)
-    setRecent(previous =>
-      [
-        {
-          key,
-          request,
-          name: document.name,
-          path: document.path,
-          position: previous.find(item => item.key === key)?.position ?? 0,
-        },
-        ...previous.filter(item => item.key !== key),
-      ].slice(0, 30)
-    )
-  }, [])
-  const position = useCallback((request: MobileFileRequest, value: number) => {
-    const key = mobileFileKey(request)
-    setRecent(previous =>
-      previous.map(item => (item.key === key ? { ...item, position: value } : item))
-    )
-  }, [])
+  const remember = useCallback(
+    (request: MobileFileRequest, document: LoadedMobileFile) => {
+      if (backendSession !== currentBackend.current && !isPhoneLocalFile(request)) return
+      const key = mobileFileKey(request)
+      setRecent(previous =>
+        [
+          {
+            key,
+            request,
+            name: document.name,
+            path: document.path,
+            position: previous.find(item => item.key === key)?.position ?? 0,
+          },
+          ...previous.filter(item => item.key !== key),
+        ].slice(0, 30)
+      )
+    },
+    [backendSession]
+  )
+  const position = useCallback(
+    (request: MobileFileRequest, value: number) => {
+      if (backendSession !== currentBackend.current && !isPhoneLocalFile(request)) return
+      const key = mobileFileKey(request)
+      setRecent(previous =>
+        previous.map(item => (item.key === key ? { ...item, position: value } : item))
+      )
+    },
+    [backendSession]
+  )
 
   return (
     <FilePreviewContext.Provider value={actions}>

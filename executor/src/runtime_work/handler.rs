@@ -197,6 +197,7 @@ mod stand_in_proposal_continuations;
 mod stand_in_read_sources;
 mod stand_in_review;
 mod stand_in_schedules;
+mod stand_in_source_tasks;
 mod stand_in_task_results;
 mod stand_in_tasks;
 mod stand_in_telemetry;

@@ -5,11 +5,14 @@ import { Text, useTheme } from 'react-native-paper'
 import type { MobileWorkspaceChanges } from '@/types/workspaceGit'
 import { WorkspaceNotGitRepositoryError } from '@/services/mobileWorkspaceGit'
 import { LiquidGlassButton } from './LiquidGlass'
-import { useMobileFilePreview } from './files/FilePreviewContext'
+import { useMobileFilePreview, type MobileFilePreviewActions } from './files/FilePreviewContext'
 
-type ChangesState =
-  | { key: string; status: 'ready'; changes: MobileWorkspaceChanges }
-  | { key: string; status: 'loading' | 'error' | 'not-git' }
+type ChangesState = {
+  key: string
+  owner: MobileFilePreviewActions['loadChanges']
+} & (
+  { status: 'ready'; changes: MobileWorkspaceChanges } | { status: 'loading' | 'error' | 'not-git' }
+)
 
 /** Owns only the active conversation's Git summary; opening the sheet reloads its full state. */
 export function ConversationChangesPill({ revision }: { revision: string }) {
@@ -18,7 +21,12 @@ export function ConversationChangesPill({ revision }: { revision: string }) {
   const [state, setState] = useState<ChangesState | null>(null)
   const target = preview?.target
   const loadChanges = preview?.loadChanges
-  const key = JSON.stringify([target?.deviceId, target?.path, revision])
+  const key = JSON.stringify([
+    target?.deviceId,
+    target?.path,
+    target?.taskId,
+    target?.workspaceSource,
+  ])
   useFocusEffect(
     useCallback(() => {
       if (!target || !loadChanges) return
@@ -27,15 +35,23 @@ export function ConversationChangesPill({ revision }: { revision: string }) {
         controller?.abort()
         const current = new AbortController()
         controller = current
-        setState({ key, status: 'loading' })
+        // A refresh does not change the workspace's last resolved visibility.
+        // Resetting it would insert/remove a row and move the entire chat.
+        setState(previous =>
+          previous?.key === key && previous.owner === loadChanges
+            ? previous
+            : { key, owner: loadChanges, status: 'loading' }
+        )
         void loadChanges({ mode: 'branch' }, current.signal).then(
           changes => {
-            if (!current.signal.aborted) setState({ key, status: 'ready', changes })
+            if (!current.signal.aborted)
+              setState({ key, owner: loadChanges, status: 'ready', changes })
           },
           cause => {
             if (!current.signal.aborted)
               setState({
                 key,
+                owner: loadChanges,
                 status: cause instanceof WorkspaceNotGitRepositoryError ? 'not-git' : 'error',
               })
           }
@@ -49,10 +65,10 @@ export function ConversationChangesPill({ revision }: { revision: string }) {
         controller?.abort()
         listener.remove()
       }
-    }, [key, loadChanges, target])
+    }, [key, loadChanges, target, revision])
   )
   if (!target || !preview) return null
-  const current = state?.key === key ? state : null
+  const current = state?.key === key && state.owner === loadChanges ? state : null
   if (
     current?.status === 'not-git' ||
     (current?.status === 'ready' && current.changes.fileCount === 0)

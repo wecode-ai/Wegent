@@ -1,6 +1,7 @@
 """Authorized cloud model metadata for collaboration routing; no credentials."""
 
 from fastapi import HTTPException
+from fastapi.encoders import jsonable_encoder
 from sqlalchemy.orm import Session
 
 from app.models.kind import Kind
@@ -16,7 +17,7 @@ def cloud_model_catalog(db: Session, user_id: int) -> list[dict]:
         return []
     return [
         {
-            **model,
+            **jsonable_encoder(model),
             "config": {
                 key: value
                 for key, value in (model.get("config") or {}).items()

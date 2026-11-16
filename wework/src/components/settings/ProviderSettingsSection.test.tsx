@@ -100,18 +100,84 @@ describe('Provider settings page', () => {
     }
   )
 
+  test('saves a named connection before adding any models', async () => {
+    render(<ProviderSettingsSection />)
+    const user = userEvent.setup()
+    await user.click(await screen.findByTestId('provider-add'))
+    await user.selectOptions(screen.getByTestId('provider-preset'), 'deepseek')
+    await user.clear(screen.getByTestId('provider-name'))
+    await user.type(screen.getByTestId('provider-name'), 'DeepSeek work account')
+    await user.type(screen.getByTestId('provider-api-key'), 'work-key')
+    await user.click(screen.getByTestId('provider-editor-save'))
+    await waitFor(() => expect(savedProviders()).toHaveLength(2))
+    expect(savedProviders()[1]).toMatchObject({ name: 'DeepSeek work account', models: [] })
+  })
+
+  test('search and refresh retain stable model IDs and capability overrides', async () => {
+    snapshot.providers[0].models = [
+      {
+        id: 'stable',
+        model_id: 'upstream-a',
+        display_name: 'My reasoning model',
+        enabled: false,
+        context_window: 128000,
+        catalog_entry: { default_reasoning_level: 'high' },
+      },
+    ]
+    await reloadProviderConfiguration()
+    const user = await openEditor()
+    expect(screen.getByTestId('provider-stage-models')).toHaveAttribute('aria-pressed', 'true')
+    await user.type(screen.getByTestId('provider-model-search'), 'reasoning')
+    expect(screen.getByTestId('provider-model-editor-stable')).toBeVisible()
+    await user.click(screen.getByTestId('provider-discover'))
+    await screen.findByTestId('provider-discovered-models')
+    await user.clear(screen.getByTestId('provider-model-search'))
+    expect(screen.getByTestId('provider-discovered-upstream-a')).toBeChecked()
+    await user.click(screen.getByTestId('provider-editor-save'))
+    await waitFor(() => expect(savedProviders()).toBeDefined())
+    expect(savedProviders()[0].models[0]).toEqual(snapshot.providers[0].models[0])
+    expect(savedProviders()[0].models[0]).toMatchObject({
+      id: 'stable',
+      enabled: false,
+      context_window: 128000,
+    })
+  })
+
+  test('per-model testing resolves only the selected model and does not save', async () => {
+    snapshot.providers[0].models = [
+      { id: 'first', model_id: 'upstream-a' },
+      { id: 'second', model_id: 'upstream-b' },
+    ]
+    await reloadProviderConfiguration()
+    const user = await openEditor()
+    const original = invoke.getMockImplementation()!
+    invoke.mockImplementation(async (method, params) => {
+      if (method === 'modelConfiguration.runtime' && params?.provider) {
+        expect(params.provider.models.map((model: { id: string }) => model.id)).toEqual(['second'])
+        throw new Error('Selected model probe')
+      }
+      return original(method, params)
+    })
+    await user.click(screen.getByTestId('provider-model-expand-second'))
+    await user.click(screen.getByTestId('provider-model-test-second'))
+    await screen.findByTestId('provider-model-test-second-result')
+    expect(savedProviders()).toBeUndefined()
+  })
+
   test('DeepSeek only needs a key and preserves the preset runtime settings', async () => {
     render(<ProviderSettingsSection />)
     const user = userEvent.setup()
     await user.click(await screen.findByTestId('provider-add'))
     await user.selectOptions(screen.getByTestId('provider-preset'), 'deepseek')
-    expect(screen.queryByTestId('provider-base-url')).not.toBeInTheDocument()
-    expect(screen.queryByTestId('provider-protocol')).not.toBeInTheDocument()
+    expect(screen.getByTestId('provider-base-url')).not.toBeVisible()
+    expect(screen.getByTestId('provider-protocol')).not.toBeVisible()
     expect(screen.getByTestId('provider-discover')).toBeDisabled()
     const profile = findLocalModelProviderProfile('deepseek')
     const modelId = profile.allowedModelIds![0]
     discover = async () => [modelId, 'unsupported-model']
+    await user.click(screen.getByTestId('provider-stage-connection'))
     await user.type(screen.getByTestId('provider-api-key'), 'deepseek-test-key')
+    await user.click(screen.getByTestId('provider-stage-models'))
     await user.click(screen.getByTestId('provider-discover'))
     expect(screen.queryByTestId('provider-discovered-unsupported-model')).not.toBeInTheDocument()
     await user.click(await screen.findByTestId(`provider-discovered-${modelId}`))
@@ -142,6 +208,7 @@ describe('Provider settings page', () => {
     await reloadProviderConfiguration()
     const user = await openEditor()
     expect(screen.getByTestId('provider-api-key')).toBeEnabled()
+    await user.click(screen.getByTestId('provider-stage-connection'))
     await user.type(screen.getByTestId('provider-api-key'), 'replacement-key')
     await user.click(screen.getByTestId('provider-editor-save'))
     await waitFor(() => expect(savedProviders()?.[0].api_key).toBe('replacement-key'))
@@ -151,8 +218,10 @@ describe('Provider settings page', () => {
   test('adds models individually without re-entering the stored key', async () => {
     const user = await openEditor()
     expect(screen.getByTestId('provider-api-key')).toHaveValue('')
+    await user.click(screen.getByTestId('provider-stage-models'))
     await user.click(screen.getByTestId('provider-model-add'))
     await user.type(screen.getAllByTestId(/^provider-model-id-/)[0], 'upstream-a')
+    await user.click(screen.getByTestId('provider-stage-models'))
     await user.click(screen.getByTestId('provider-model-add'))
     await user.type(screen.getAllByTestId(/^provider-model-id-/)[1], 'upstream-b')
     await user.click(screen.getByTestId('provider-editor-save'))
@@ -173,11 +242,15 @@ describe('Provider settings page', () => {
     await user.click(await screen.findByTestId('provider-add'))
     await user.selectOptions(screen.getByTestId('provider-preset'), 'custom')
     expect(screen.getByTestId('provider-discover')).toBeDisabled()
+    await user.click(screen.getByTestId('provider-stage-connection'))
     await user.type(screen.getByTestId('provider-base-url'), 'https://new.example/v1')
+    await user.click(screen.getByTestId('provider-stage-connection'))
     await user.type(screen.getByTestId('provider-api-key'), 'draft-key')
     // Unfinished manual model rows are not part of the discovery request.
+    await user.click(screen.getByTestId('provider-stage-models'))
     await user.click(screen.getByTestId('provider-model-add'))
     expect(screen.getByTestId('provider-discover')).toBeEnabled()
+    await user.click(screen.getByTestId('provider-stage-models'))
     await user.click(screen.getByTestId('provider-discover'))
     expect(await screen.findByTestId('provider-discovered-upstream-a')).toBeEnabled()
     expect(invoke).toHaveBeenCalledWith('modelConfiguration.discover', {
@@ -195,9 +268,13 @@ describe('Provider settings page', () => {
 
   test('editing a saved connection fetches the new draft rather than old saved settings', async () => {
     const user = await openEditor()
+    await user.click(screen.getByTestId('provider-stage-connection'))
     await user.clear(screen.getByTestId('provider-base-url'))
+    await user.click(screen.getByTestId('provider-stage-connection'))
     await user.type(screen.getByTestId('provider-base-url'), 'https://changed.example/v1')
+    await user.click(screen.getByTestId('provider-stage-connection'))
     await user.type(screen.getByTestId('provider-api-key'), 'replacement-key')
+    await user.click(screen.getByTestId('provider-stage-models'))
     await user.click(screen.getByTestId('provider-discover'))
     await screen.findByTestId('provider-discovered-upstream-a')
     expect(invoke).toHaveBeenCalledWith(
@@ -216,6 +293,7 @@ describe('Provider settings page', () => {
 
   test('context and common capabilities are visible and saved without opening advanced settings', async () => {
     const user = await openEditor()
+    await user.click(screen.getByTestId('provider-stage-models'))
     await user.click(screen.getByTestId('provider-model-add'))
     const model = within(screen.getByTestId(/^provider-model-editor-/))
     await user.type(model.getByTestId(/^provider-model-id-/), 'upstream-a')
@@ -293,7 +371,9 @@ describe('Provider settings page', () => {
       await user.click(await screen.findByTestId('provider-add'))
       expect(screen.getByTestId('provider-preset')).toHaveValue('')
       await user.selectOptions(screen.getByTestId('provider-preset'), preset)
+      await user.click(screen.getByTestId('provider-stage-connection'))
       await user.type(screen.getByTestId('provider-api-key'), 'test-key')
+      await user.click(screen.getByTestId('provider-stage-models'))
       await user.click(screen.getByTestId('provider-discover'))
       await user.click(await screen.findByTestId(`provider-discovered-${modelId}`))
       await user.click(screen.getByTestId('provider-editor-save'))
@@ -331,8 +411,10 @@ describe('Provider settings page', () => {
       new Promise(resolve => {
         finish = resolve
       })
+    await user.click(screen.getByTestId('provider-stage-models'))
     await user.click(screen.getByTestId('provider-discover'))
     expect(screen.getByTestId('provider-discover')).toBeDisabled()
+    await user.click(screen.getByTestId('provider-stage-connection'))
     await user.type(screen.getByTestId('provider-api-key'), 'new-key')
     expect(screen.getByTestId('provider-discover')).toBeEnabled()
     await act(async () => {
@@ -340,21 +422,25 @@ describe('Provider settings page', () => {
     })
     expect(screen.queryByTestId('provider-discovered-stale-model')).not.toBeInTheDocument()
     discover = async () => ['fresh-model']
+    await user.click(screen.getByTestId('provider-stage-models'))
     await user.click(screen.getByTestId('provider-discover'))
     expect(await screen.findByTestId('provider-discovered-fresh-model')).toBeEnabled()
   })
 
   test('discovery errors allow retry and do not erase the draft', async () => {
     const user = await openEditor()
+    await user.click(screen.getByTestId('provider-stage-connection'))
     await user.type(screen.getByTestId('provider-api-key'), 'draft-key')
     discover = async () => {
       throw new Error('Model discovery returned HTTP 401')
     }
+    await user.click(screen.getByTestId('provider-stage-models'))
     await user.click(screen.getByTestId('provider-discover'))
     expect(await screen.findByTestId('provider-discovery-error')).toHaveTextContent('HTTP 401')
     expect(screen.getByTestId('provider-api-key')).toHaveValue('draft-key')
     expect(screen.getByTestId('provider-model-add')).toBeEnabled()
     discover = async () => []
+    await user.click(screen.getByTestId('provider-stage-models'))
     await user.click(screen.getByTestId('provider-discover'))
     expect(await screen.findByTestId('provider-discovery-empty')).toBeVisible()
     expect(screen.queryByTestId('provider-discovery-error')).not.toBeInTheDocument()
@@ -366,7 +452,9 @@ describe('Provider settings page', () => {
     const user = userEvent.setup()
     await user.click(await screen.findByTestId('provider-add'))
     await user.selectOptions(screen.getByTestId('provider-preset'), 'custom')
+    await user.click(screen.getByTestId('provider-stage-connection'))
     await user.type(screen.getByTestId('provider-base-url'), 'https://new.example/v1')
+    await user.click(screen.getByTestId('provider-stage-models'))
     await user.click(screen.getByTestId('provider-discover'))
     await screen.findByTestId('provider-discovered-upstream-a')
     await user.click(screen.getByTestId('provider-editor-cancel'))

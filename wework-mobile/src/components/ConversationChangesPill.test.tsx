@@ -104,6 +104,29 @@ describe('conversation changes summary', () => {
     })
     expect(renderer.root.findAllByType('GlassButton' as never)).toHaveLength(0)
   })
+  it.each(['empty', 'not-git', 'changes'])(
+    'preserves the resolved %s layout while a turn refresh is pending',
+    async kind => {
+      if (kind === 'not-git')
+        loadChanges.mockRejectedValueOnce(new WorkspaceNotGitRepositoryError())
+      else loadChanges.mockResolvedValueOnce({ ...summary, fileCount: kind === 'empty' ? 0 : 9 })
+      await act(() => {
+        renderer = create(tree())
+      })
+      const before = JSON.stringify(renderer.toJSON())
+      let finish!: (value: unknown) => void
+      loadChanges.mockImplementationOnce(
+        () =>
+          new Promise(resolve => {
+            finish = resolve
+          })
+      )
+      await act(() => renderer.update(tree('task-a:next-turn')))
+      expect(JSON.stringify(renderer.toJSON())).toEqual(before)
+      await act(() => finish({ ...summary, fileCount: 2 }))
+      expect(pill().props.accessibilityLabel).toContain('2 个文件')
+    }
+  )
   it('hides a confirmed non-Git summary and can show real changes after the workspace becomes a repository', async () => {
     loadChanges.mockRejectedValueOnce(new WorkspaceNotGitRepositoryError())
     await act(() => {
@@ -113,5 +136,23 @@ describe('conversation changes summary', () => {
     await act(() => events.active?.('active'))
     expect(pill().props.accessibilityLabel).toContain('9 个文件')
     expect(loadChanges).toHaveBeenCalledTimes(2)
+  })
+  it('does not retain counts when the API owner changes at the same device and path', async () => {
+    await act(() => {
+      renderer = create(tree())
+    })
+    expect(pill().props.accessibilityLabel).toContain('9 个文件')
+    let finish!: (value: unknown) => void
+    const nextLoader = vi.fn(
+      () =>
+        new Promise(resolve => {
+          finish = resolve
+        })
+    )
+    actions = { ...actions, loadChanges: nextLoader } as unknown as MobileFilePreviewActions
+    await act(() => renderer.update(tree()))
+    expect(pill().props.accessibilityLabel).toBe('查看文件更改')
+    await act(() => finish({ ...summary, fileCount: 1 }))
+    expect(pill().props.accessibilityLabel).toContain('1 个文件')
   })
 })

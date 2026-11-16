@@ -106,7 +106,7 @@ export function createDesktopScenario({
   }
   async function recordPendingRows(control, expectedQuestions = 1, phase = 'pending') {
     const rows = []
-    const expectedProjects = phase === 'pending' ? 1 : 2
+    const expectedProjects = 1
     await until(
       async () => ({
         questions: Number(
@@ -664,6 +664,12 @@ export function createDesktopScenario({
           'Accepted questions must disappear from the global pending UI, not only the native inbox'
         )
         await recordPendingRows(control, 0, 'accepted')
+        const handledIssue = `${scoped('interaction-list-item')}[data-interaction-id=${JSON.stringify(`project-issue:local:${project.id}:${issue.id}`)}]`
+        assert.equal(
+          Number(await control.command('getElementCount', handledIssue)),
+          0,
+          'The answered Issue must leave pending work while unrelated ordinary work remains'
+        )
         await reloadMainWindow(control, 'Answered questions remain resolved after reload')
         const inbox = await rpc(control, 'todos.humanRequests.inbox', { user_ids: [0, viewerId] })
         assert.ok(!inbox.items.some(request => request.id === question.id))
@@ -674,6 +680,11 @@ export function createDesktopScenario({
           'Accepted questions must not return to the global pending UI after reload'
         )
         await recordPendingRows(control, 0, 'reloaded')
+        assert.equal(
+          Number(await control.command('getElementCount', handledIssue)),
+          0,
+          'Reload must not recreate the answered Issue as ordinary pending work'
+        )
         await recordSurface(control, 'issue-handoff-05-resolved', [
           scoped('runtime-interactions-page'),
         ])

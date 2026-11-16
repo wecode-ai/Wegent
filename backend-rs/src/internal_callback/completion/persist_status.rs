@@ -20,14 +20,14 @@ use wegent_task_store::task_store_subscription_reads::{
 
 pub(super) async fn read_assistants<T: MysqlTransaction>(
     mysql: &mut T,
-    tables: sql::Tables,
+    subtask_table: &str,
     task_id: i64,
     is_subscription: bool,
 ) -> MysqlResult<Vec<MysqlRow>> {
     let statement = if is_subscription {
-        latest_assistant_statement(tables.subtasks)
+        latest_assistant_statement(subtask_table)
     } else {
-        sql::assistant_subtasks(tables)
+        sql::assistant_subtasks(subtask_table)
     };
     mysql
         .fetch_all(statement, (task_id,))
@@ -45,7 +45,8 @@ pub(crate) async fn update_task_status_on<T: MysqlTransaction>(
         return Ok(None);
     };
     Ok(update_locked_task_status(
-        tables,
+        tables.tasks,
+        tables.subtasks,
         mysql,
         task,
         task_id,
@@ -73,7 +74,8 @@ pub(super) async fn lock_task<T: MysqlTransaction>(
 
 #[allow(clippy::too_many_arguments)]
 pub(super) async fn update_locked_task_status<T: MysqlTransaction>(
-    tables: sql::Tables,
+    task_table: &str,
+    subtask_table: &str,
     mysql: &mut T,
     task: MysqlRow,
     task_id: i64,
@@ -83,7 +85,6 @@ pub(super) async fn update_locked_task_status<T: MysqlTransaction>(
     required_status: Option<&str>,
     terminal_result: Option<&Value>,
 ) -> MysqlResult<Option<CollaborationStatus>> {
-    let task_table = tables.tasks;
     let owner_user_id = task_column::<i64>(&task, "user_id").ok_or(MysqlError::RowNotFound)?;
     let task_json: Option<Value> = task_column::<Json<Value>>(&task, "json").map(|json| json.0);
     let is_subscription = task_column::<i64>(&task, "is_active") == Some(2);
@@ -95,7 +96,7 @@ pub(super) async fn update_locked_task_status<T: MysqlTransaction>(
         )
         .await?;
     let subtasks = crate::task_store_listing::order_assistant_subtasks(
-        read_assistants(mysql, tables, task_id, is_subscription).await?,
+        read_assistants(mysql, subtask_table, task_id, is_subscription).await?,
     )?;
     let Some(last) = subtasks.last() else {
         return Ok(None);
@@ -105,7 +106,7 @@ pub(super) async fn update_locked_task_status<T: MysqlTransaction>(
     if is_subscription && !is_latest {
         is_latest = mysql
             .fetch_optional::<_, _, (i64,)>(
-                assistant_membership_statement(tables.subtasks),
+                assistant_membership_statement(subtask_table),
                 (changed_subtask_id, task_id),
             )
             .await?

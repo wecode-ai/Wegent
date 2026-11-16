@@ -12,7 +12,7 @@ from sqlalchemy.orm import Session
 from app.api.endpoints.workspaces import create_workspace, get_workspace
 from app.models.user import User
 from app.schemas.workspace import WorkspaceCreate
-from app.services.workspaces import workspace_service
+from app.services.workspaces.service import workspace_service
 
 
 def test_creation_response_needs_no_post_create_queries(

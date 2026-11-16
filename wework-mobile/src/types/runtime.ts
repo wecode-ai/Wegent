@@ -47,6 +47,7 @@ export interface DeviceInfo {
 
 export interface DeviceListResponse {
   items: DeviceInfo[]
+  error?: string
 }
 
 export type RuntimeTaskAddress =
@@ -203,6 +204,8 @@ export interface RuntimeAttachment {
   filename: string
   fileSize: number
   mimeType: string
+  localPath?: string
+  workspaceFile?: Attachment['workspace_file']
 }
 
 export interface RuntimeUploadAsset {

@@ -279,6 +279,7 @@ pub(super) fn tools(context: &SpaceMcpRequestContext) -> Vec<Value> {
         .as_ref()
         .is_some_and(|identity| identity.work.is_some())
     {
+        tools.push(super::stand_in_tasks::source_task_tool());
         tools.push(super::git_connections::tool());
         tools.push(super::git_connections::write_tool());
         tools.push(json!({"name":"prepare_git_workspace","description":"Prepare source code locally only when your role/task needs it. Reuses a matching isolated task worktree or clones into a new task-owned subdirectory using the bound gh/glab account. Never overwrites an existing directory or publishes remote changes. No repository is cloned merely because an event arrived.","inputSchema":{"type":"object","properties":{"repository":{"type":"string"}},"required":["repository"]},"annotations":{"readOnlyHint":false,"openWorldHint":true}}));

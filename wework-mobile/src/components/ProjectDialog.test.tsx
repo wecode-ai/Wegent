@@ -6,9 +6,15 @@ import type { DeviceInfo } from '@/types/runtime'
 import { ProjectDialog } from './ProjectDialog'
 
 ;(globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true
+const environment = vi.hoisted(() => ({ platform: 'ios' }))
 
 vi.mock('@expo/vector-icons/Ionicons', () => ({ default: 'Icon' }))
 vi.mock('react-native', () => ({
+  Platform: {
+    get OS() {
+      return environment.platform
+    },
+  },
   Pressable: 'Pressable',
   ScrollView: 'ScrollView',
   StyleSheet: { create: (styles: unknown) => styles },
@@ -52,6 +58,7 @@ describe('project form keyboard layout', () => {
   afterEach(async () => {
     if (renderer) await act(() => renderer!.unmount())
     renderer = undefined
+    environment.platform = 'ios'
   })
 
   async function render(onCreate = vi.fn().mockResolvedValue(undefined)) {
@@ -68,20 +75,25 @@ describe('project form keyboard layout', () => {
     return props
   }
 
-  it('scrolls the whole form including actions with a single keyboard owner', async () => {
-    await render()
-    const scroll = find('project-form-scroll')
-    expect(scroll.type).toBe('KeyboardAwareScrollView')
-    expect(scroll.props.keyboardShouldPersistTaps).toBe('handled')
-    expect(scroll.props.bottomOffset).toBeGreaterThan(0)
-    for (const testID of ['project-name', 'project-workspace-path', 'project-create-submit']) {
-      expect(scroll.findByProps({ testID })).toBeDefined()
+  it.each(['ios', 'android'])(
+    'scrolls the whole form and dismisses its keyboard on %s',
+    async platform => {
+      environment.platform = platform
+      await render()
+      const scroll = find('project-form-scroll')
+      expect(scroll.type).toBe('KeyboardAwareScrollView')
+      expect(scroll.props.keyboardShouldPersistTaps).toBe('handled')
+      expect(scroll.props.keyboardDismissMode).toBe(platform === 'ios' ? 'interactive' : 'on-drag')
+      expect(scroll.props.bottomOffset).toBeGreaterThan(0)
+      for (const testID of ['project-name', 'project-workspace-path', 'project-create-submit']) {
+        expect(scroll.findByProps({ testID })).toBeDefined()
+      }
+      const nestedScrolls = scroll.findAllByType('ScrollView' as never)
+      expect(nestedScrolls).toHaveLength(1)
+      expect(nestedScrolls[0]!.props.horizontal).toBe(true)
+      expect(nestedScrolls[0]!.props.keyboardShouldPersistTaps).toBe('handled')
     }
-    const nestedScrolls = scroll.findAllByType('ScrollView' as never)
-    expect(nestedScrolls).toHaveLength(1)
-    expect(nestedScrolls[0]!.props.horizontal).toBe(true)
-    expect(nestedScrolls[0]!.props.keyboardShouldPersistTaps).toBe('handled')
-  })
+  )
 
   it('submits the selected remote device and edited fields through the scrollable actions', async () => {
     const props = await render()

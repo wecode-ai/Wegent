@@ -10,6 +10,8 @@ mod http_e2e;
 mod llm_proxy_deadlines;
 #[path = "support/llm_proxy_timeouts.rs"]
 mod llm_proxy_timeouts;
+#[path = "support/responses_terminal_storage.rs"]
+mod terminal_storage;
 
 use brz_mysql::{Json, MysqlResult, MysqlRow};
 use std::{path::Path, sync::Arc};
@@ -184,6 +186,14 @@ async fn terminal_callback_rolls_back_retries_and_ignores_a_late_error() {
         .await
         .unwrap();
     http_e2e::assert_terminal_callback_atomic(&fixture.mysql, task_id, subtask_id).await;
+    fixture.close().await;
+}
+
+#[tokio::test]
+#[ignore = "requires disposable MySQL 8 and Redis; run explicitly in the Backend Rust CI job"]
+async fn terminal_callbacks_and_recovery_use_the_migrated_tables() {
+    let fixture = fixture::Fixture::new().await;
+    terminal_storage::verify(&fixture).await;
     fixture.close().await;
 }
 

@@ -35,6 +35,7 @@ from app.schemas.project_chat import (
     LoopItemExecutionHeartbeat,
     LoopItemExecutionListResponse,
     LoopItemExecutionManagerDecision,
+    LoopItemExecutionManagerStatus,
     LoopItemExecutionRuntimeStart,
     LoopItemExecutionView,
 )
@@ -628,18 +629,25 @@ def enqueue_execution_batch(
 @router.post("/{project_id}/executions/assignment-status")
 def report_collaboration_assignment_status(
     project_id: int,
-    values: LoopItemExecutionAssignmentStatus,
+    values: LoopItemExecutionManagerStatus | LoopItemExecutionAssignmentStatus,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user_jwt_apikey_tasktoken),
 ) -> dict[str, object]:
-    """Bind the member session and record progress; Executor owns the round."""
+    """Bind collaboration sessions and record progress; Executor owns the round."""
 
     require_cloud_project_role(db, project_id, current_user.id, BaseRole.Developer)
-    message, changed = project_collaboration_member_activity(
-        db,
-        project_id=project_id,
-        values=values,
-    )
+    if isinstance(values, LoopItemExecutionManagerStatus):
+        from app.services.collaboration_manager_activity import (
+            project_collaboration_manager_activity,
+        )
+
+        message, changed = project_collaboration_manager_activity(
+            db, project_id=project_id, user_id=current_user.id, values=values
+        )
+    else:
+        message, changed = project_collaboration_member_activity(
+            db, project_id=project_id, values=values
+        )
     view = project_chat_service.to_view(message, db=db).model_dump(by_alias=True)
     if changed:
         push_project_chat_message(view)

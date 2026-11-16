@@ -795,7 +795,7 @@ class LoopItemService:
                 automation_context=automation_context,
             )
         elif group_id:
-            from app.services.workspaces import workspace_service
+            from app.services.workspaces.service import workspace_service
 
             collaboration_group = next(
                 (
@@ -1790,7 +1790,7 @@ class LoopItemService:
             updates["metadata_json"] = metadata
         cancelled_runs: list = []
         if group_changed:
-            from app.services.workspaces import workspace_service
+            from app.services.workspaces.service import workspace_service
 
             if values.assignee_group_id:
                 collaboration_group = next(

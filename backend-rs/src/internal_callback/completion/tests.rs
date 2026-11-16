@@ -27,7 +27,7 @@ fn terminal_event_types_map_to_subtask_statuses() {
 #[test]
 fn assistant_subtasks_statement_matches_the_source_shape() {
     assert_eq!(
-        assistant_subtasks(tables()),
+        assistant_subtasks(tables().subtasks),
         "SELECT subtasks_0030.id AS subtasks_0030_id, subtasks_0030.user_id AS subtasks_0030_user_id, \
          subtasks_0030.task_id AS subtasks_0030_task_id, subtasks_0030.team_id AS subtasks_0030_team_id, \
          subtasks_0030.title AS subtasks_0030_title, subtasks_0030.bot_ids AS subtasks_0030_bot_ids, \
@@ -58,12 +58,12 @@ fn subtask_running_update_writes_the_status_only_flush() {
 #[test]
 fn subtask_terminal_update_follows_the_mapper_column_order() {
     assert_eq!(
-        update_subtask_terminal(tables(), true, true, true),
+        update_subtask_terminal(tables().subtasks, true, true, true),
         "UPDATE subtasks_0030 SET executor_namespace=?, executor_name=?, status=?, result=?, \
          error_message=?, updated_at=?, completed_at=? WHERE subtasks_0030.id = ?"
     );
     assert_eq!(
-        update_subtask_terminal(tables(), true, false, false),
+        update_subtask_terminal(tables().subtasks, true, false, false),
         "UPDATE subtasks_0030 SET status=?, result=?, updated_at=?, completed_at=? \
          WHERE subtasks_0030.id = ?"
     );
@@ -76,12 +76,12 @@ fn a_terminal_error_without_a_result_omits_the_result_column() {
     // collected result, which is absent for a fresh subtask, so the recorded
     // UPDATE carries the four columns below.
     assert_eq!(
-        update_subtask_terminal(tables(), false, true, false),
+        update_subtask_terminal(tables().subtasks, false, true, false),
         "UPDATE subtasks_0030 SET status=?, error_message=?, updated_at=?, completed_at=? \
          WHERE subtasks_0030.id = ?"
     );
     assert_eq!(
-        update_subtask_terminal(tables(), false, true, true),
+        update_subtask_terminal(tables().subtasks, false, true, true),
         "UPDATE subtasks_0030 SET executor_namespace=?, executor_name=?, status=?, \
          error_message=?, updated_at=?, completed_at=? WHERE subtasks_0030.id = ?"
     );
@@ -133,7 +133,7 @@ fn task_column_index_tracks_the_projection_order() {
 #[tokio::test]
 async fn task_status_user_id_reads_the_active_task_row() {
     let capture = crate::sql_test_support::KindQueryCapture::default();
-    let _ = super::task_status_user_id(&capture, tables(), 426335633820493).await;
+    let _ = super::task_status_user_id(&capture, tables().tasks, 426335633820493).await;
     let sqls: Vec<String> = capture
         .queries()
         .into_iter()
@@ -153,7 +153,8 @@ async fn task_status_user_id_reads_the_active_task_row() {
 #[tokio::test]
 async fn the_completed_event_owner_read_uses_the_two_state_predicate() {
     let capture = crate::sql_test_support::KindQueryCapture::default();
-    let owner = super::events::resolve_owner_user_id(&capture, tables(), 426335633820493).await;
+    let owner =
+        super::events::resolve_owner_user_id(&capture, tables().tasks, 426335633820493).await;
     assert_eq!(owner, None);
     let sqls: Vec<String> = capture
         .queries()

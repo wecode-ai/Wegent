@@ -257,6 +257,9 @@ export function createDesktopScenario({
       assert.equal(memories.items[0].version, 2)
       await captureScreenshot(control, '09-memory-edited.png')
       await verifyMemoryInChat('UPDATED')
+      await control.command('waitFor', '[data-testid="stand-in-memory-item"]', {
+        text: 'PROFILE_MEMORY_REVIEW_RISKS_FIRST',
+      })
       await control.command('click', '[data-testid="stand-in-memory-delete"]')
       assert.equal((await rpc('runtime.stand_in.memory.list', { userId: USER })).items.length, 1)
       await captureScreenshot(control, '10-memory-forget-confirmation.png')

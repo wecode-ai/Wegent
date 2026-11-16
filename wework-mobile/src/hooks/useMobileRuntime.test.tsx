@@ -29,11 +29,21 @@ const mocks = vi.hoisted(() => ({
   sendMessage: vi.fn(),
   cachedDevices: [] as DeviceInfo[],
   streamInventory: vi.fn(),
+  appListeners: new Set<(state: string) => void>(),
 }))
 const emptyWork = { projects: [], chats: [], totalTasks: 0 }
 vi.mock('expo-crypto', () => ({ randomUUID: () => 'user-message-id' }))
+vi.mock('@/services/phoneLocalProfile', () => ({
+  PHONE_LOCAL_USER: { id: 0, user_name: 'local', email: 'local@wework.local' },
+}))
 vi.mock('react-native', () => ({
-  AppState: { currentState: 'active', addEventListener: () => ({ remove: vi.fn() }) },
+  AppState: {
+    currentState: 'active',
+    addEventListener: (_: string, listener: (state: string) => void) => {
+      mocks.appListeners.add(listener)
+      return { remove: () => mocks.appListeners.delete(listener) }
+    },
+  },
 }))
 vi.mock('@/services/runtimePermissionPreference', () => ({
   DEFAULT_RUNTIME_PERMISSION_MODE: 'full-access',
@@ -56,6 +66,7 @@ vi.mock('@/services/runtimeCache', () => ({
 }))
 vi.mock('@/services/runtimeApi', () => ({
   RuntimeApi: class {
+    updateBackend() {}
     clearPluginCatalogs() {}
     listDevices = mocks.devices
     listModels = mocks.models
@@ -73,7 +84,9 @@ vi.mock('@/services/runtimeStream', () => ({
       mocks.streamCreated()
       mocks.streamInventory(getDevices)
     }
-    updateAccessToken = mocks.updateAccessToken
+    updateBackend(config: RuntimeSessionConfig | null) {
+      mocks.updateAccessToken(config?.accessToken ?? '')
+    }
     listWork = mocks.listWork
     getTranscript = mocks.transcript
     async subscribe(scope: unknown, listener: unknown) {
@@ -144,6 +157,7 @@ describe('creating a conversation on the only computer', () => {
 
   beforeEach(() => {
     mocks.cachedDevices = []
+    mocks.appListeners.clear()
     mocks.order.length = 0
     mocks.devices.mockReset().mockResolvedValue({ items: [computer] })
     mocks.models
@@ -371,7 +385,7 @@ describe('creating a conversation on the only computer', () => {
       await mount()
       if (kind === 'existing') await act(() => state.openConversation(state.conversations[0]!))
       await act(() => state.loadModels())
-      expect(mocks.nativeModels).toHaveBeenCalledExactlyOnceWith(11)
+      expect(mocks.nativeModels).toHaveBeenCalledExactlyOnceWith(11, 'app-record-11')
       await act(() => state.selectModel(state.models[0], { reasoning: 'ultra' }))
       await act(async () => {
         expect(await state.send('本机模型验证')).toBe(true)
@@ -462,19 +476,79 @@ describe('creating a conversation on the only computer', () => {
     await act(() => write.resolve())
   })
 
-  it('recovers an initial expired-token failure after authentication is refreshed', async () => {
+  it('keeps connection failures quiet and waits for manual refresh after token renewal', async () => {
     mocks.devices.mockRejectedValueOnce(new Error('Expired token'))
     mocks.models.mockRejectedValueOnce(new Error('Expired token'))
     await act(() => {
       renderer = create(<Harness />)
     })
-    expect(state.error).toBe('Expired token')
+    expect(state.error).toBeNull()
+    expect(state.connectionError).toBe('Expired token')
     await act(() => renderer.update(<Harness session={{ ...config, accessToken: 'fresh' }} />))
+    expect(mocks.devices).toHaveBeenCalledOnce()
+    expect(mocks.models).toHaveBeenCalledOnce()
+    await act(() => state.refresh())
     expect(state.selectedDeviceId).toBe('app-record-11')
     expect(state.selectedModel?.name).toBe('public-model')
+    expect(state.connectionError).toBeNull()
     expect(mocks.devices).toHaveBeenCalledTimes(2)
-    expect(mocks.models).toHaveBeenCalledTimes(2)
     expect(mocks.streamCreated).toHaveBeenCalledOnce()
+  })
+
+  it('does not reload list snapshots for foreground transitions, realtime events or reconnects', async () => {
+    mocks.listWork.mockResolvedValue(workFor('app-record-11'))
+    await mount()
+    const before = mocks.listWork.mock.calls.length
+    const conversations = state.conversations
+    const [event, reconnect] = mocks.lifecycleSubscribe.mock.lastCall!
+    await act(() => {
+      for (const name of [
+        'response.created',
+        'response.output_text.delta',
+        'runtime.task.title.updated',
+        'response.completed',
+      ])
+        event({ deviceId: 'app-record-11', taskId: 'new-task' }, { name, payload: {} })
+      reconnect()
+      for (const listener of mocks.appListeners) {
+        listener('background')
+        listener('active')
+      }
+    })
+    expect(mocks.listWork).toHaveBeenCalledTimes(before)
+    expect(state.conversations.map(item => item.title)).toEqual(
+      conversations.map(item => item.title)
+    )
+    await act(() => state.refresh())
+    expect(mocks.listWork).toHaveBeenCalledTimes(before + 1)
+  })
+
+  it('retains the list and connection badge during a pending manual retry, then clears on recovery', async () => {
+    mocks.listWork.mockResolvedValue(workFor('app-record-11'))
+    await mount()
+    mocks.listWork.mockRejectedValueOnce(new Error('Peer unavailable'))
+    await act(() => state.refresh())
+    expect(state.error).toBeNull()
+    expect(state.connectionError).toBe('Peer unavailable')
+    const snapshot = state.work
+    const pending = deferred<RuntimeWorkListResponse>()
+    mocks.listWork.mockReturnValueOnce(pending.promise)
+    let retry!: Promise<void>
+    await act(() => {
+      retry = state.refresh()
+    })
+    expect(state.refreshing).toBe(true)
+    expect(state.work).toBe(snapshot)
+    expect(state.connectionError).toBe('Peer unavailable')
+    const before = mocks.devices.mock.calls.length
+    await act(() => state.refresh())
+    expect(mocks.devices).toHaveBeenCalledTimes(before)
+    await act(async () => {
+      pending.resolve(workFor('app-record-11'))
+      await retry
+    })
+    expect(state.connectionError).toBeNull()
+    expect(state.refreshing).toBe(false)
   })
 
   it('shares one causal observation when reads overlap a newer running event', async () => {
@@ -530,7 +604,8 @@ describe('creating a conversation on the only computer', () => {
     mocks.subscribeReady.mockRejectedValueOnce(new Error('Realtime unavailable'))
     await act(() => state.openConversation(state.conversations[0]!))
     expect(state.conversationLoading).toBe(false)
-    expect(state.error).toBe('Realtime unavailable')
+    expect(state.error).toBeNull()
+    expect(state.connectionError).toBe('Realtime unavailable')
     expect(mocks.transcript).not.toHaveBeenCalled()
     await act(() => state.openConversation(state.conversations[0]!))
     expect(state.error).toBeNull()
@@ -613,7 +688,8 @@ describe('creating a conversation on the only computer', () => {
       slow.reject(new Error('peer offline'))
     })
     expect(state.conversations).toHaveLength(1)
-    expect(state.error).toBe('peer offline')
+    expect(state.error).toBeNull()
+    expect(state.connectionError).toBe('peer offline')
   })
 
   it('creates on the record-scoped computer using the existing standalone task intent', async () => {
@@ -693,7 +769,8 @@ describe('creating a conversation on the only computer', () => {
     })
     expect(mocks.create).toHaveBeenCalledOnce()
     expect(state.currentAddress?.taskId).toBe('canonical')
-    expect(state.error).toBe('Realtime unavailable')
+    expect(state.error).toBeNull()
+    expect(state.connectionError).toBe('Realtime unavailable')
     expect(state.messages[0]?.content).toBe('你好')
     expect(state.messages.every(message => message.status !== 'failed')).toBe(true)
   })

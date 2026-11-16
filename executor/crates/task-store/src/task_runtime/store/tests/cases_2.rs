@@ -526,6 +526,19 @@ fn human_assignment_delivery_from_the_issue_settles_the_round() {
             .contains("CPU load confirmed at 42%.")
     );
     accept_and_start(&store, &resumed_manager);
+    let manager_issue = store.get_task(&project.id, &issue.id).unwrap();
+    assert_eq!(
+        manager_issue.assignee_agent_id.as_deref(),
+        Some(leader.id.as_str())
+    );
+    assert_eq!(manager_issue.assignee_user_id, None);
+    assert!(store
+        .assignment_receipts(&project.id, &issue.id)
+        .unwrap()
+        .is_empty());
+    assert!(store
+        .acknowledge_assignment(&project.id, &issue.id, &assignment_id, 42, true)
+        .is_err());
     let second_plan = json!({
         "round_id": "cpu-review-round-2",
         "items": [{
@@ -550,9 +563,13 @@ fn human_assignment_delivery_from_the_issue_settles_the_round() {
         "already_dispatched"
     );
     assert_eq!(
-        store.assignment_receipts(&project.id, &issue.id).unwrap(),
-        read
+        store.get_task(&project.id, &issue.id).unwrap().version,
+        manager_issue.version
     );
+    assert!(store
+        .assignment_receipts(&project.id, &issue.id)
+        .unwrap()
+        .is_empty());
     let second_round = store
         .submit_collaboration_round(resumed_runtime_id, &second_plan)
         .unwrap();

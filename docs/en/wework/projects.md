@@ -427,6 +427,16 @@ Opening a conversation does not enable background project coordination. For work
 
 ## Issue details and execution tasks
 
+In Issue activity, click an attachment link or embedded image to preview it and download the original. Images, Markdown documents and other files share resource resolution and authenticated reads for the current Issue. An attachment ID identifies a file directly; local and relative paths match the link label and full basename exactly. Only a unique match opens. Execution paths are never read as files on the viewer's device.
+
+<a id="issue-resource-preview"></a>
+
+### Attachment and document previews
+
+Open **Collaboration → project board → Issue → a file link or image in activity**. Markdown attachments render as documents, with embedded images and file links resolved from the same Issue's uploaded attachments. Ordinary web links still open the webpage. Text, code and HTML attachments display source; download other formats to obtain the original file.
+
+Image or file loading failures show an error and **Retry**, retaining the current Issue and preview location. Correct missing or ambiguous attachments, or use an explicit attachment link, then retry. Switching Issues resolves resources again instead of displaying a same-named file from the previous Issue.
+
 Opening an issue from a project-space board shows its attachments directly in the detail panel, with actions to download, remove, or upload more files. The attachment section uses the same dividers and spacing as the other detail fields, and the complete row containing the file name and size downloads the file. A download shows progress; if it fails, the attachment remains available, an error is shown, and the row can be selected again to retry. The detail view keeps each file name and size visible instead of showing only an attachment count, so the context can be checked before execution starts.
 
 Selecting **New task** in the issue detail opens the task conversation sidebar on the right. Describe the work in the composer and send it to create and link the execution task. Wework keeps this input step even when the issue is already **Pending** and never starts an empty task directly.

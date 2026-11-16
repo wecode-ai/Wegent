@@ -220,6 +220,10 @@ classify_path() {
       changed[wework]=true
       changed[wework_e2e]=true
       ;;
+    # Phone-local payloads reuse the existing real native lifecycle checkpoint.
+    wework-mobile/src/services/localRuntimeApi*)
+      changed[wework_e2e]=true
+      ;;
     # Mobile subagent views reuse the existing runtime lifecycle/history checkpoint.
     wework-mobile/src/components/ConversationAgentsPill* | \
       wework-mobile/src/domain/mobileSubagents* | \

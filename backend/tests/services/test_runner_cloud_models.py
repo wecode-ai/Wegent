@@ -1,6 +1,8 @@
 """Cloud routing preserves resource identity and triggering-user authorization."""
 
+import json
 from copy import deepcopy
+from datetime import UTC, datetime
 
 import pytest
 from fastapi import HTTPException
@@ -20,6 +22,8 @@ def cloud_model(test_user, monkeypatch):
         "type": "public",
         "namespace": "default",
         "resourceUserId": 0,
+        "created_at": datetime(2026, 1, 1, tzinfo=UTC),
+        "updated_at": datetime(2026, 1, 2, tzinfo=UTC),
         "config": {"protocol": "openai-responses", "api_key": "private-secret"},
     }
     monkeypatch.setattr(
@@ -50,6 +54,43 @@ def test_catalog_contains_protocol_and_identity_without_credentials(
     assert options[0]["config"] == {"protocol": "openai-responses"}
     assert options[0]["resourceUserId"] == 0
     assert "private-secret" not in str(options)
+
+
+@pytest.mark.asyncio
+async def test_runner_selection_error_preserves_serializable_model_catalog(
+    test_db, test_user, cloud_model, monkeypatch
+):
+    from fastapi.exception_handlers import http_exception_handler
+
+    from app.services.runner_routing import resolve_routing
+
+    monkeypatch.setattr(
+        "app.services.runner_routing.default_environment", lambda *_: None
+    )
+    with pytest.raises(HTTPException) as error:
+        resolve_routing(
+            test_db,
+            config={
+                "runtime": "codex",
+                "execution_policy": {"mode": "user_select"},
+                "model_policy": {"mode": "fixed", "model": cloud_model.model_dump()},
+            },
+            project_id="unbound-project",
+            issue_id="unbound-issue",
+            user_id=test_user.id,
+            selection=None,
+        )
+
+    response = await http_exception_handler(None, error.value)
+
+    assert response.status_code == 422
+    detail = json.loads(response.body)["detail"]
+    assert detail["error_code"] == "RUNNER_SELECTION_REQUIRED"
+    model = detail["runner_selection_request"]["cloud_models"][0]
+    assert model["created_at"] == "2026-01-01T00:00:00+00:00"
+    assert model["updated_at"] == "2026-01-02T00:00:00+00:00"
+    assert model["config"] == {"protocol": "openai-responses"}
+    assert "private-secret" not in response.body.decode()
 
 
 def test_cloud_uses_triggering_user_and_does_not_require_native_model(
