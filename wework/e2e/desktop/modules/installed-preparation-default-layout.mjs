@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import { spawn, spawnSync } from 'node:child_process'
 import { lstat, mkdir, readFile, realpath, writeFile } from 'node:fs/promises'
-import { join } from 'node:path'
+import { join, parse } from 'node:path'
 
 import { INSTALLED_PREPARATION_ARGUMENT } from '../../../electron/src/runtime/installed-preparation-contract.mjs'
 import { parseStartupEvents } from './cold-package-startup.mjs'
@@ -24,8 +24,10 @@ export async function verifyDefaultLayoutInstalledPreparation({
   const appData =
     process.platform === 'darwin'
       ? join(home, 'Library', 'Application Support')
-      : join(root, process.platform === 'win32' ? 'app-data' : 'xdg-config')
-  const localAppData = join(root, 'local-app-data')
+      : process.platform === 'win32'
+        ? join(home, 'AppData', 'Roaming')
+        : join(root, 'xdg-config')
+  const localAppData = join(home, 'AppData', 'Local')
   const applicationId = 'io.wecode.wework.e2e.default-layout'
   const namespace = (await readPackagedNamespace(appBinary, appEnvironment)) || 'default'
   const userData = join(home, '.wegent', 'workbench', 'wework', namespace, 'user-data')
@@ -42,6 +44,9 @@ export async function verifyDefaultLayoutInstalledPreparation({
     environment.APPDATA = appData
     environment.LOCALAPPDATA = localAppData
     environment.USERPROFILE = home
+    const homeRoot = parse(home).root
+    environment.HOMEDRIVE = homeRoot.replace(/[\\/]+$/, '')
+    environment.HOMEPATH = home.slice(homeRoot.length - 1)
   }
   if (process.platform === 'linux') environment.XDG_CONFIG_HOME = appData
   for (const key of Object.keys(environment)) {
@@ -61,7 +66,7 @@ export async function verifyDefaultLayoutInstalledPreparation({
   assert.equal(
     preparation.status,
     0,
-    `Default-layout installation preparation failed:\n${preparation.stderr}`
+    `Default-layout installation preparation failed:\n${preparation.stdout}\n${preparation.stderr}`
   )
   assert.equal((await lstat(source)).isSymbolicLink(), true)
   const status = JSON.parse(
