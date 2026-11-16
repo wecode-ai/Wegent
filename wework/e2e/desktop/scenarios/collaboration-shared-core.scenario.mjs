@@ -16,6 +16,7 @@ import { verifyIssueConversationDrawers } from '../modules/issue-conversation-dr
 import { verifyCollaborationIssueHome } from '../modules/collaboration-issue-home.mjs'
 import { verifyCollaborationMemberSettings } from '../modules/collaboration-member-settings.mjs'
 import {
+  handleProjectCreateGroupModel,
   verifyPrivateProjectCreation,
   verifyProjectCreateDialogUi,
 } from '../modules/project-create-dialog-regression.mjs'
@@ -269,6 +270,7 @@ export function createDesktopScenario({
     requiresCloudEnvironment: true,
     async handleHttp(request, response, url) {
       return (
+        (await handleProjectCreateGroupModel(request, response, url)) ||
         (await handlePersonalHomeModel(request, response, url)) ||
         boardReplyModel.handleHttp(request, response, url)
       )

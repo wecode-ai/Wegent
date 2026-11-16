@@ -10,11 +10,90 @@ import {
 import { openProjectBoard } from './collaboration-board-personal-view.mjs'
 import { waitForValue } from './workspace-agent-setup.mjs'
 import { CLOUD_PUBLIC_MODEL_NAME, DEFAULT_STEP_TIMEOUT_MS, resultDir } from './shared.mjs'
+import {
+  assistantMessage,
+  createSse,
+  readRequestBody,
+  responseCompleted,
+  responseCreated,
+} from './response-protocol.mjs'
 
 const testId = value => `[data-testid="${value}"]`
 const DIALOG = testId('collaboration-project-create-dialog')
 const MENU = testId('collaboration-project-create-collaborator-menu')
 const SEARCH = testId('collaboration-project-create-people-search')
+const GROUP_DRAFT_REQUEST = 'PROJECT_CREATE_GROUP_DRAFT_E2E'
+const GENERATED_GROUP_NAME = '真实分工验收小组'
+
+/** Only the upstream model is scripted; prompt construction and draft parsing remain real. */
+export async function handleProjectCreateGroupModel(request, response, url) {
+  if (request.method !== 'POST' || !['/responses', '/v1/responses'].includes(url.pathname))
+    return false
+  const body = await readRequestBody(request)
+  const messages = Array.isArray(body.input) ? body.input : []
+  const prompt = messages
+    .filter(message => message.role === 'user')
+    .map(message =>
+      typeof message.content === 'string'
+        ? message.content
+        : (message.content ?? []).map(part => part.text ?? '').join('\n')
+    )
+    .findLast(
+      text =>
+        text.includes(GROUP_DRAFT_REQUEST) &&
+        text.includes('你是项目协作架构师。') &&
+        /^协作者：\[/m.test(text)
+    )
+  if (!prompt) return false
+  assert.ok(body.model, 'Group generation must reach the model with its selected identity')
+  const participants = JSON.parse(prompt.match(/^协作者：(\[[^\n]+\])/m)[1])
+  assert.ok(participants.length >= 3, 'The real prompt must include its owner and selected agents')
+  assert.equal(
+    new Set(participants.map(participant => `${participant.kind}:${participant.id}`)).size,
+    participants.length
+  )
+  const events = [{ type: 'group', name: GENERATED_GROUP_NAME }]
+  for (const [index, participant] of participants.entries()) {
+    assert.ok(['human', 'agent'].includes(participant.kind) && participant.id && participant.name)
+    events.push({
+      type: 'participant_started',
+      kind: participant.kind,
+      id: String(participant.id),
+      leader: index === 0,
+    })
+    for (const delta of [
+      `${participant.name}负责根据真实需求梳理实施边界、逐项核对验收条件，并把发现的问题和依赖及时反馈给负责人。`.repeat(
+        5
+      ),
+      '执行完成后提交可复现的验证步骤、实际结果、风险说明与交付位置，确保下一位协作者能够独立继续工作。'.repeat(
+        5
+      ),
+    ])
+      events.push({
+        type: 'participant_delta',
+        kind: participant.kind,
+        id: String(participant.id),
+        delta,
+      })
+  }
+  events.push(
+    { type: 'principle', text: '负责人拆解任务并统一验收，成员独立执行并提交证据。' },
+    { type: 'principle', text: '阻塞先反馈影响和需要的决策，未确认前保留已有工作。' },
+    { type: 'stage', id: 'requirements', name: '需求确认' },
+    { type: 'stage', id: 'implementation', name: '实现与验证' },
+    { type: 'stage', id: 'acceptance', name: '验收交付' }
+  )
+  const id = `project-create-group-${Date.now()}`
+  response.writeHead(200, { 'content-type': 'text/event-stream; charset=utf-8' })
+  response.end(
+    createSse([
+      responseCreated(id),
+      assistantMessage(JSON.stringify({ events })),
+      responseCompleted(id),
+    ])
+  )
+  return true
+}
 
 export async function waitForProjectCreateViewport(control, width = 1024, height = 768) {
   return waitForValue(
@@ -339,6 +418,152 @@ async function verifyMobileGroupConfiguration(control, configuration) {
   }
 }
 
+async function assertGeneratedGroupLayout(control, configuration) {
+  const body = `${configuration} .collaboration-project-create-configuration-body`
+  const save = `${configuration} ${testId('collaboration-project-create-apply-group')}`
+  const [roster] = JSON.parse(
+    await control.command(
+      'getElementMetrics',
+      `${configuration} ${testId('collaboration-project-create-group-roster')}`
+    )
+  )
+  const duties = JSON.parse(
+    await control.command(
+      'getElementMetrics',
+      `${configuration} .collaboration-project-create-responsibility`,
+      { value: 'includeText' }
+    )
+  )
+  assert.equal(
+    duties.length,
+    2,
+    'Both real agent members must retain their generated responsibilities'
+  )
+  for (const duty of duties) {
+    assert.ok(duty.text.length > 300, 'The model fixture must exercise long responsibilities')
+    assert.ok(
+      duty.width >= roster.width - 2,
+      `A responsibility was squeezed beside its identity: ${JSON.stringify({ roster, duty })}`
+    )
+    assert.ok(
+      duty.scrollWidth <= duty.clientWidth,
+      `A responsibility overflowed horizontally: ${JSON.stringify(duty)}`
+    )
+  }
+  await control.command(
+    'scrollIntoView',
+    `${configuration} ${testId('collaboration-project-create-group-name')}`
+  )
+  await assertProjectCreateActionHit(control, save)
+  const [before] = JSON.parse(await control.command('getElementMetrics', save))
+  assert.ok(
+    before.height >= 44 && before.width >= 44,
+    'The mobile save action must have a 44px touch target'
+  )
+  const [content] = JSON.parse(await control.command('getElementMetrics', body))
+  assert.ok(
+    content.scrollHeight > content.clientHeight,
+    'Long responsibilities must exercise the actual scrollable draft'
+  )
+  assert.ok(
+    content.scrollWidth <= content.clientWidth,
+    `Generated draft overflowed: ${JSON.stringify(content)}`
+  )
+  assert.ok(Number(await control.command('scrollToBottomAsUser', body)) > 0)
+  await assertProjectCreateActionHit(control, save)
+  const [after] = JSON.parse(await control.command('getElementMetrics', save))
+  assert.ok(
+    Math.abs(after.top - before.top) <= 1 && Math.abs(after.bottom - before.bottom) <= 1,
+    'Scrolling long responsibilities moved the save action out of its fixed footer'
+  )
+}
+
+async function verifyGeneratedGroupDraft(control, scoped, configuration, agents, draftName) {
+  const previousSize = await control.command('setMainWindowSize', 'body', {
+    value: JSON.stringify({ width: 375, height: 812 }),
+  })
+  const original = JSON.parse(previousSize)
+  try {
+    await waitForProjectCreateViewport(control, 375, 812)
+    await control.command('clickWhenEnabled', `${configuration} ${testId('model-selector-button')}`)
+    const menu = testId('model-selector-menu')
+    await control.command('waitFor', menu, { visible: true })
+    if (Number(await control.command('getElementCount', `${menu}[data-panel="simple"]`)) > 0)
+      await control.command('clickWhenEnabled', `${menu} ${testId('model-advanced-toggle')}`)
+    const cloudModel = `${menu} ${testId(`model-option-${CLOUD_PUBLIC_MODEL_NAME}`)}`
+    await control.command('scrollIntoView', cloudModel)
+    await control.command('clickWhenEnabled', cloudModel)
+    await control.command('waitFor', menu, { visible: false })
+    await control.command(
+      'fill',
+      `${configuration} ${testId('collaboration-project-create-generation-instructions')}`,
+      {
+        value: `${GROUP_DRAFT_REQUEST} 请为当前真实协作者生成完整、可验收的分工。`,
+      }
+    )
+    await control.command(
+      'clickWhenEnabled',
+      `${configuration} ${testId('collaboration-project-create-generate-group')}`
+    )
+    const editor = `${configuration} ${testId('collaboration-project-create-group-editor')}`
+    const error = `${configuration} [role="alert"]`
+    // This waits for a real ephemeral Codex turn, including runtime model preparation.
+    await control.command('waitFor', `${editor}, ${error}`, { visible: true, timeoutMs: 30_000 })
+    assert.equal(
+      Number(await control.command('getElementCount', error, { visible: true })),
+      0,
+      `Real group generation failed: ${await control.command('getText', error)}`
+    )
+    await control.command('waitFor', editor, { text: GENERATED_GROUP_NAME })
+    await assertGeneratedGroupLayout(control, configuration)
+    const name = `${editor} ${testId('collaboration-project-create-group-name')}`
+    const nameInput = `${editor} > header input`
+    const editButton = `${editor} > header .collaboration-project-create-hover-editable > button`
+    let editedName
+    for (const key of ['Escape', 'Enter']) {
+      editedName = `分工草稿 ${key} 已编辑`
+      await control.command('nativePress', name, { key: 'Enter' })
+      await control.command('fill', nameInput, { value: editedName })
+      await control.command('nativePress', nameInput, { key })
+      await control.command('waitFor', nameInput, { visible: false })
+      await control.command('waitFor', name, { text: editedName })
+      await control.command('waitFor', configuration, { visible: true })
+      assert.equal(
+        Number(await control.command('getElementCount', `${editButton}:focus`)),
+        1,
+        `${key} must finish editing and restore its edit control, preserving the draft`
+      )
+      await assertProjectCreateActionHit(
+        control,
+        `${configuration} ${testId('collaboration-project-create-apply-group')}`
+      )
+    }
+    await control.command(
+      'clickWhenEnabled',
+      `${configuration} ${testId('collaboration-project-create-apply-group')}`
+    )
+    await control.command('waitFor', configuration, { visible: false })
+    const summary = scoped(testId('collaboration-project-create-group-summary'))
+    await control.command('waitFor', summary, { text: editedName })
+    assert.equal(
+      await control.command('getValue', scoped(testId('collaboration-project-name-input'))),
+      draftName
+    )
+    for (const agent of agents) await control.command('waitFor', summary, { text: agent.name })
+    await control.command('click', `${summary} .collaboration-project-create-group-remove`)
+    await control.command('waitFor', summary, { visible: false })
+    for (const agent of agents)
+      await control.command(
+        'waitFor',
+        scoped('.collaboration-project-create-collaborator-tokens'),
+        { text: agent.name }
+      )
+  } finally {
+    await control.command('setMainWindowSize', 'body', { value: previousSize })
+    await waitForProjectCreateViewport(control, original.width, original.height)
+  }
+}
+
 async function verifyGroupConfigurationDraft(control, scoped, workspace, agents) {
   // API-created fixtures must replace the workspace's previously cached empty catalog.
   await reloadMainWindow(control, 'The group configuration fixtures did not reconnect after reload')
@@ -435,6 +660,9 @@ async function verifyGroupConfigurationDraft(control, scoped, workspace, agents)
     'collaboration-project-create-add-collaborator',
     'Leaving group configuration opened from its removed menu entry must focus Add collaborator'
   )
+  await control.command('nativePress', opener, { key: 'Enter' })
+  await control.command('waitFor', configuration, { visible: true })
+  await verifyGeneratedGroupDraft(control, scoped, configuration, agents, draftName)
   await control.command('nativePress', nameInput, { key: 'Escape' })
   await control.command('waitFor', DIALOG, { visible: false })
 }
