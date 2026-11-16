@@ -207,7 +207,7 @@ bash executor/scripts/dev-cloud-device.sh stop     # 停止
 
 会话启动后仍可在官方 GPT/Codex 模型和第三方模型之间切换。选择不同模型时，Wework 会先显示确认提示；确认后，新模型从下一条消息开始生效。
 
-如果已有上下文包含原 provider 生成的加密推理或压缩状态，executor 会在切换请求中自动移除这些不可移植字段，避免目标模型报 `invalid_encrypted_content`。普通消息、工具结果和其他可移植上下文会继续保留。
+在使用官方 OAuth 的 Codex 任务中，官方 GPT 与第三方模型共用同一兼容层。切换时，executor 会清理原 provider 专属的加密推理或压缩状态；如果第三方历史把可读推理写在 `reasoning.content` 中，请求发送给官方 GPT 前会将其提升为 `summary_text` 并清空受限的 `content` 数组。转换只作用于发送副本，原始线程历史不变。普通消息、工具结果和其他可移植上下文会继续保留，因此无需为了切模型新建对话或引用旧对话。
 
 ## 任务运行中的控制
 
