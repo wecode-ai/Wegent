@@ -543,6 +543,7 @@ test.describe('Agent conversation regression', () => {
     const user = await getCurrentUser(request)
     const before = await inspectExecutorSessionProof({ task_id: taskId, user_id: user.id })
     expect(before.sessions.length).toBeGreaterThan(0)
+    const previousSession = before.sessions[0]
     const removal = await removeExecutorSessionProof({ task_id: taskId, user_id: user.id })
     expect(removal.removed).toBeGreaterThan(0)
 
@@ -553,7 +554,8 @@ test.describe('Agent conversation regression', () => {
     await waitForBackendTerminal(request, taskId)
     const after = await inspectExecutorSessionProof({ task_id: taskId, user_id: user.id })
     expect(after.sessions.length).toBeGreaterThan(0)
-    expect(after.sessions.at(-1)).not.toEqual(before.sessions.at(-1))
+    // The fixture returns completed subtasks newest first.
+    expect(after.sessions[0]).not.toEqual(previousSession)
   })
 
   test('ClaudeCode clarification submits the selected option to the resumed model turn', async ({
