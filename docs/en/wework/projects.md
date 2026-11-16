@@ -84,6 +84,8 @@ With no projects yet, the home starts with **Start with your first issue**. **Ne
 
 **Collaboration project** selects where the Issue is saved; **Code workspace (optional)** in **Create task** selects the code directory used for execution. These selections are independent. Work that does not need a repository can run without a code directory. The recording area stays compact; mode switches retain drafts and attachments.
 
+Selecting, switching or clearing a code workspace on the home updates execution context while retaining the collaboration page and draft. The connection dialog contains keyboard focus and returns it to the original entry when closed. Small viewports keep the input toolbar visible with touch targets of at least 44px.
+
 When disconnected, **New issue** explains cloud storage and sign-in before authorization, then resumes the independent-Issue form on success. Cancelling returns to the current work. The disconnected first-use home omits empty-list filters when there are no projects; existing Issue filtering and recovery stay available. Use arrow keys, Home and End to switch creation modes; the selected tab participates in the Tab order.
 
 Long titles stay compact in sidebar details; **Read full title** expands them. The original content remains in the description. Issue rows avoid repeating the source text used as the title prefix, while narrow details group primary properties compactly. Comments remain in the activity section.

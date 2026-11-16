@@ -239,10 +239,11 @@ function ProjectTaskComposer({
     executionMode: workbench.projectExecutionMode,
     executionModeLocked: false,
     worktreeBranch: workbench.projectWorktreeBranch,
-    onSelectProject: workbench.selectProject,
-    onSelectStandaloneDevice: workbench.selectStandaloneDevice,
-    onSelectProjectWorkspace: workbench.selectProjectWorkspace,
-    onBindProjectWorkspace: workbench.selectProject,
+    onSelectProject: id => workbench.selectProject(id, { navigate: false }),
+    onSelectStandaloneDevice: id => workbench.selectStandaloneDevice(id, { navigate: false }),
+    onSelectProjectWorkspace: (id, workspaceId) =>
+      workbench.selectProjectWorkspace(id, workspaceId, { navigate: false }),
+    onBindProjectWorkspace: id => workbench.selectProject(id, { navigate: false }),
     onExecutionModeChange: workbench.setProjectExecutionMode,
     onWorktreeBranchChange: workbench.setProjectWorktreeBranch,
   }

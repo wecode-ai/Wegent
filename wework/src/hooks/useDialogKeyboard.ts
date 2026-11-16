@@ -17,7 +17,8 @@ function isFocusable(element: HTMLElement) {
 export function useDialogKeyboard<T extends HTMLElement>(
   onClose: () => void,
   open = true,
-  initialFocus?: string
+  initialFocus?: string,
+  options?: { inertBackground?: boolean }
 ) {
   const ref = useRef<T>(null)
   useEscapeKey(onClose, open, ref)
@@ -39,6 +40,17 @@ export function useDialogKeyboard<T extends HTMLElement>(
         dialog
       target.focus()
     }
+    const background = options?.inertBackground
+      ? Array.from(document.body.children)
+          .filter(
+            (element): element is HTMLElement =>
+              element instanceof HTMLElement && !element.contains(dialog)
+          )
+          .map(element => ({ element, inert: element.inert }))
+      : []
+    background.forEach(({ element }) => {
+      element.inert = true
+    })
     const handleTab = (event: KeyboardEvent) => {
       if (event.key !== 'Tab' || event.defaultPrevented) return
       const elements = Array.from(dialog.querySelectorAll<HTMLElement>(focusableSelector)).filter(
@@ -63,6 +75,9 @@ export function useDialogKeyboard<T extends HTMLElement>(
     dialog.addEventListener('keydown', handleTab)
     return () => {
       dialog.removeEventListener('keydown', handleTab)
+      background.forEach(({ element, inert }) => {
+        element.inert = inert
+      })
       if (
         previousFocus instanceof HTMLElement &&
         previousFocus.isConnected &&
@@ -70,7 +85,7 @@ export function useDialogKeyboard<T extends HTMLElement>(
       )
         previousFocus.focus()
     }
-  }, [open, initialFocus])
+  }, [open, initialFocus, options?.inertBackground])
 
   return ref
 }

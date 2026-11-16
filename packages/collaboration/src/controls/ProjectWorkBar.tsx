@@ -509,7 +509,7 @@ export function ProjectWorkBar({
   return (
     <div
       data-testid="project-work-bar"
-      className={cn('flex min-h-[56px] w-full items-center gap-2 px-6', className)}
+      className={cn('project-work-bar flex min-h-[56px] w-full items-center gap-2 px-6', className)}
     >
       {showProjectSelector ? (
         <div

@@ -37,6 +37,23 @@ async function verifyTaskLabels(control, home) {
     /协作项目|Collaboration project/,
     'The Issue storage project must have its own visible label'
   )
+  const taskInput = `${panel} [data-testid="personal-home-task-content"]`
+  const draft = await control.command('getValue', taskInput)
+  await control.command('click', `${panel} [data-testid="project-work-button"]`)
+  await control.command(
+    'click',
+    '[data-testid="project-work-menu"] [data-testid="no-project-option"]',
+    { visible: true }
+  )
+  await control.command(
+    'waitFor',
+    `${home} [data-testid="personal-home-new-issue"][aria-selected="true"]`
+  )
+  assert.equal(
+    await control.command('getValue', taskInput),
+    draft,
+    'Clearing an optional code workspace must retain the collaboration composer and draft'
+  )
   await control.command('nativePress', `${home} [data-testid="personal-home-new-issue"]`, {
     key: 'ArrowLeft',
   })

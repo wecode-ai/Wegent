@@ -232,11 +232,6 @@ const columnDotClasses: Record<string, string> = {
   in_review: "bg-violet-500",
   completed: "bg-emerald-500",
 };
-const memberAvatarClasses = [
-  "bg-gradient-to-br from-indigo-400 to-indigo-500",
-  "bg-gradient-to-br from-emerald-400 to-emerald-500",
-  "bg-gradient-to-br from-amber-400 to-amber-500",
-];
 
 function memberNameById(
   members: CollaborationMember[],
@@ -4002,12 +3997,7 @@ export function TodoEditor(props: TodoEditorProps) {
                               key={collaborator.id}
                               className="flex items-center gap-2.5 rounded-lg px-2.5 py-2 text-sm transition-colors hover:bg-muted/60"
                             >
-                              <span
-                                className={cn(
-                                  "flex h-[22px] w-[22px] shrink-0 items-center justify-center rounded-full text-xs font-semibold text-background",
-                                  memberAvatarClasses[0],
-                                )}
-                              >
+                              <span className="flex h-[22px] w-[22px] shrink-0 items-center justify-center rounded-full bg-muted text-xs font-semibold text-text-secondary">
                                 {collaborator.user_name
                                   .slice(0, 1)
                                   .toUpperCase()}

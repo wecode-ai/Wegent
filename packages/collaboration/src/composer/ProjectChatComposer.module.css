@@ -3,6 +3,15 @@
   overflow-y: auto;
 }
 
+@media (max-width: 767px) {
+  .surface > :global(.project-work-bar) button,
+  .toolbar button,
+  .toolbar [role="combobox"] {
+    min-width: 44px;
+    min-height: 44px;
+  }
+}
+
 .inputViewport[data-composer-scroll-overflow] {
   mask-image: linear-gradient(
     to bottom,

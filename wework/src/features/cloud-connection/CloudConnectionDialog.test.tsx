@@ -8,6 +8,7 @@ import {
 } from './CloudConnectionContext'
 import { CloudConnectionDialog } from './CloudConnectionDialog'
 import i18n from '@/i18n'
+import { useState } from 'react'
 
 function cloudConnection(backendUrl?: string): CloudConnectionContextValue {
   return {
@@ -37,6 +38,42 @@ function renderDialog(connection: CloudConnectionContextValue, onClose = vi.fn()
 describe('CloudConnectionDialog', () => {
   afterEach(() => {
     vi.unstubAllEnvs()
+  })
+
+  it('names the dialog, contains keyboard focus and restores its trigger and background', async () => {
+    function Harness() {
+      const [open, setOpen] = useState(false)
+      return (
+        <CloudConnectionContext.Provider value={cloudConnection('https://saved.example.com')}>
+          <button data-testid="open-issue-login" onClick={() => setOpen(true)}>
+            New issue
+          </button>
+          <CloudConnectionDialog
+            open={open}
+            onlineCloudDeviceCount={0}
+            intent="independent-issue"
+            onClose={() => setOpen(false)}
+            onOpenSettings={vi.fn()}
+          />
+        </CloudConnectionContext.Provider>
+      )
+    }
+    const { container } = render(<Harness />)
+    const trigger = screen.getByTestId('open-issue-login')
+    await userEvent.click(trigger)
+    const dialog = screen.getByRole('dialog')
+    expect(dialog).toHaveAccessibleName()
+    expect(screen.getByTestId('cloud-backend-url-input')).toHaveFocus()
+    expect(container.inert).toBe(true)
+    screen.getByTestId('cloud-authorization-submit-button').focus()
+    await userEvent.tab()
+    expect(screen.getByTestId('cloud-connection-close-button')).toHaveFocus()
+    await userEvent.tab({ shift: true })
+    expect(screen.getByTestId('cloud-authorization-submit-button')).toHaveFocus()
+    await userEvent.keyboard('{Escape}')
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+    expect(container.inert).not.toBe(true)
+    expect(trigger).toHaveFocus()
   })
 
   it('prefills the Backend URL from build-time config', () => {

@@ -9,11 +9,11 @@ import {
   Settings,
   X,
 } from 'lucide-react'
-import { useState } from 'react'
+import { useId, useState } from 'react'
 import type { FormEvent } from 'react'
 import { createPortal } from 'react-dom'
 import { getRuntimeConfig } from '@/config/runtime'
-import { useEscapeKey } from '@/hooks/useEscapeKey'
+import { useDialogKeyboard } from '@/hooks/useDialogKeyboard'
 import { useEmbeddedBrowserOcclusion } from '@/hooks/useEmbeddedBrowserOcclusion'
 import { useTranslation } from '@/hooks/useTranslation'
 import { openCloudAuthorizationWindow } from '@/lib/cloud-authorization-window'
@@ -58,7 +58,14 @@ export function CloudConnectionDialog({
   const [error, setError] = useState<string | null>(null)
   const [submitting, setSubmitting] = useState(false)
 
-  useEscapeKey(onClose, open)
+  const titleId = useId()
+  const descriptionId = useId()
+  const dialogRef = useDialogKeyboard<HTMLDivElement>(
+    onClose,
+    open,
+    '[data-testid="cloud-backend-url-input"]',
+    { inertBackground: true }
+  )
 
   if (!open) return null
 
@@ -99,9 +106,13 @@ export function CloudConnectionDialog({
     >
       <div
         role="dialog"
+        ref={dialogRef}
         aria-modal="true"
+        tabIndex={-1}
+        aria-labelledby={titleId}
+        aria-describedby={descriptionId}
         data-testid="cloud-connection-dialog"
-        className="w-full max-w-[460px] rounded-lg border border-border bg-popover p-5 shadow-[0_18px_50px_rgba(0,0,0,0.28)]"
+        className="max-h-[calc(100dvh-2rem)] w-full max-w-[460px] overflow-y-auto rounded-lg border border-border bg-popover p-5 shadow-[0_18px_50px_rgba(0,0,0,0.28)]"
         onClick={event => event.stopPropagation()}
       >
         <div className="flex items-start gap-3">
@@ -109,14 +120,14 @@ export function CloudConnectionDialog({
             <Cloud className="h-4 w-4" />
           </div>
           <div className="min-w-0 flex-1">
-            <h2 className="text-base font-semibold text-text-primary">
+            <h2 id={titleId} className="text-base font-semibold text-text-primary">
               {t(
                 intent === 'independent-issue'
                   ? 'personalHome.connectForIssueTitle'
                   : 'workbench.cloud_connection_title'
               )}
             </h2>
-            <p className="mt-1 text-sm leading-5 text-text-secondary">
+            <p id={descriptionId} className="mt-1 text-sm leading-5 text-text-secondary">
               {intent === 'independent-issue'
                 ? t('personalHome.connectForIssueHint')
                 : t(
@@ -130,7 +141,7 @@ export function CloudConnectionDialog({
             data-testid="cloud-connection-close-button"
             onClick={onClose}
             disabled={submitting}
-            className="-mr-1 -mt-1 flex h-9 w-9 shrink-0 items-center justify-center rounded-md text-text-muted hover:bg-muted hover:text-text-primary disabled:opacity-50"
+            className="-mr-1 -mt-1 flex h-9 w-9 shrink-0 items-center justify-center rounded-md text-text-muted hover:bg-muted hover:text-text-primary disabled:opacity-50 max-md:h-11 max-md:w-11"
             aria-label={t('workbench.close_dialog', '关闭')}
           >
             <X className="h-4 w-4" />
@@ -163,7 +174,7 @@ export function CloudConnectionDialog({
                   onClose()
                   onAddDevice?.()
                 }}
-                className="inline-flex h-10 items-center gap-2 rounded-md border border-border bg-background px-3 text-sm font-medium text-text-primary hover:bg-muted"
+                className="inline-flex h-10 max-md:min-h-11 items-center gap-2 rounded-md border border-border bg-background px-3 text-sm font-medium text-text-primary hover:bg-muted"
               >
                 <Plus className="h-4 w-4" />
                 {t('workbench.cloud_connection_add_device', '添加设备')}
@@ -176,7 +187,7 @@ export function CloudConnectionDialog({
                     cloud.disconnect()
                     onClose()
                   }}
-                  className="inline-flex h-10 items-center gap-2 rounded-md border border-border bg-background px-3 text-sm font-medium text-text-primary hover:bg-muted"
+                  className="inline-flex h-10 max-md:min-h-11 items-center gap-2 rounded-md border border-border bg-background px-3 text-sm font-medium text-text-primary hover:bg-muted"
                 >
                   <LogOut className="h-4 w-4" />
                   {t('workbench.cloud_connection_disconnect', '断开')}
@@ -188,7 +199,7 @@ export function CloudConnectionDialog({
                     onClose()
                     onOpenSettings()
                   }}
-                  className="inline-flex h-10 items-center gap-2 rounded-md bg-text-primary px-3 text-sm font-medium text-background hover:bg-text-primary/90"
+                  className="inline-flex h-10 max-md:min-h-11 items-center gap-2 rounded-md bg-text-primary px-3 text-sm font-medium text-background hover:bg-text-primary/90"
                 >
                   <Settings className="h-4 w-4" />
                   {t('workbench.cloud_connection_settings', '云端设置')}
@@ -229,7 +240,7 @@ export function CloudConnectionDialog({
             <details className="group rounded-lg border border-border bg-background">
               <summary
                 data-testid="cloud-connection-advanced-toggle"
-                className="flex h-10 cursor-pointer list-none items-center gap-2 px-3 text-sm font-medium text-text-secondary hover:text-text-primary"
+                className="flex h-10 max-md:min-h-11 cursor-pointer list-none items-center gap-2 px-3 text-sm font-medium text-text-secondary hover:text-text-primary"
               >
                 <ChevronRight className="h-4 w-4 transition-transform group-open:rotate-90" />
                 {t('workbench.cloud_connection_advanced', '高级配置')}
@@ -286,7 +297,7 @@ export function CloudConnectionDialog({
                     cloud.disconnect()
                     onClose()
                   }}
-                  className="inline-flex h-10 items-center gap-2 rounded-md border border-border bg-background px-3 text-sm font-medium text-text-primary hover:bg-muted disabled:cursor-not-allowed disabled:opacity-50"
+                  className="inline-flex h-10 max-md:min-h-11 items-center gap-2 rounded-md border border-border bg-background px-3 text-sm font-medium text-text-primary hover:bg-muted disabled:cursor-not-allowed disabled:opacity-50"
                 >
                   <LogOut className="h-4 w-4" />
                   {t('workbench.cloud_connection_disconnect', '断开连接')}
@@ -297,7 +308,7 @@ export function CloudConnectionDialog({
                   type="submit"
                   data-testid="cloud-authorization-submit-button"
                   disabled={submitting}
-                  className="inline-flex h-10 w-full items-center justify-center gap-2 rounded-md bg-text-primary px-4 text-sm font-medium text-background hover:bg-text-primary/90 disabled:cursor-not-allowed disabled:opacity-50"
+                  className="inline-flex h-10 max-md:min-h-11 w-full items-center justify-center gap-2 rounded-md bg-text-primary px-4 text-sm font-medium text-background hover:bg-text-primary/90 disabled:cursor-not-allowed disabled:opacity-50"
                 >
                   {submitting ? (
                     <>

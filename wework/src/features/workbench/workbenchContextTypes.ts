@@ -80,6 +80,10 @@ export type ProjectMutationOptions = {
   refreshWorkLists?: boolean
 }
 
+export interface WorkbenchSelectionOptions {
+  navigate?: boolean
+}
+
 export type ArchiveRuntimeTaskOptions = {
   force?: boolean
 }
@@ -298,9 +302,13 @@ export interface WorkbenchContextValue {
   setWorkbenchError: (error: string | null) => void
   projectWorktreeBranch: string | null
   setProjectWorktreeBranch: (branchName: string | null) => void
-  selectProject: (projectId: number | null) => void
-  selectProjectWorkspace: (projectId: number, deviceWorkspaceId: number | null) => void
-  selectStandaloneDevice: (deviceId: string | null) => void
+  selectProject: (projectId: number | null, options?: WorkbenchSelectionOptions) => void
+  selectProjectWorkspace: (
+    projectId: number,
+    deviceWorkspaceId: number | null,
+    options?: WorkbenchSelectionOptions
+  ) => void
+  selectStandaloneDevice: (deviceId: string | null, options?: WorkbenchSelectionOptions) => void
   openStandaloneWorkspace: (
     deviceId: string,
     workspacePath: string,

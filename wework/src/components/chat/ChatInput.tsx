@@ -17,6 +17,7 @@ import {
 import { createPortal } from 'react-dom'
 import { Button } from '@/components/ui/button'
 import { useTranslation } from '@/hooks/useTranslation'
+import { useIsMobile } from '@/hooks/useIsMobile'
 import { visibleRuntimeGoal } from '@/lib/runtime-goal'
 import type {
   Attachment,
@@ -389,6 +390,7 @@ const ChatInputBody = forwardRef<ChatInputHandle, ChatInputProps>(function ChatI
   ref
 ) {
   const { t } = useTranslation('common')
+  const isMobile = useIsMobile()
   const { t: tChat } = useTranslation('chat')
   const workbench = useContext(WorkbenchContext)
   const sendKey = workbench?.state?.user?.preferences?.send_key ?? 'enter'
@@ -786,7 +788,7 @@ const ChatInputBody = forwardRef<ChatInputHandle, ChatInputProps>(function ChatI
             onPause={onPause}
             showWorkspaceMenu={showWorkspaceMenu}
             collapseWhenIdle={collapseWhenIdle}
-            alwaysShowComposerToolbar={alwaysShowComposerToolbar}
+            alwaysShowComposerToolbar={alwaysShowComposerToolbar || isMobile}
             contextHeader={
               (contextHeader || (displayedGoal && !goalDraftActive)) && (
                 <div
