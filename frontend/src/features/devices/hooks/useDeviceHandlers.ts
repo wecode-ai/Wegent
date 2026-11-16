@@ -175,10 +175,7 @@ export function useDeviceHandlers(): DeviceHandlers {
       try {
         await deviceApis.restartCloudDevice(device.device_id)
       } catch (error) {
-        if (
-          error instanceof ApiError &&
-          (error.status === 501 || (error.status === 404 && error.message === 'Not Found'))
-        ) {
+        if (error instanceof ApiError && error.status === 501) {
           throw new Error(t('restart.unavailable'))
         }
         throw error

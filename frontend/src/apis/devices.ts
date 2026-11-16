@@ -182,7 +182,10 @@ export const deviceApis = {
   },
 
   async restartCloudDevice(deviceId: string): Promise<{ message: string }> {
-    return apiClient.post(`/cloud-devices/${encodeURIComponent(deviceId)}/restart`)
+    // The registered device action delegates to the deployment's restart provider.
+    return apiClient.post(`/devices/${encodeURIComponent(deviceId)}/upgrade`, {
+      force_stop_tasks: true,
+    })
   },
 
   /**

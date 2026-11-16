@@ -8,13 +8,10 @@ import { CloudDeviceRestartNotice } from './CloudDeviceRestartNotice'
 import { useDeviceOfflineLifecycleAction } from './useDeviceOfflineLifecycleAction'
 import {
   CloudDeviceRestartContext,
+  cloudDeviceRestartKey,
   useWorkbenchCloudDeviceRestarts,
   type DeviceRestartProgress,
 } from './useWorkbenchCloudDeviceRestarts'
-
-function sandboxKey(device: DeviceInfo) {
-  return device.cloud_config?.sandboxId ?? device.device_id
-}
 
 function RestartRequest({
   target,
@@ -40,7 +37,7 @@ function RestartRequest({
   })
   const started = useRef(false)
   const submitted = useRef(false)
-  const key = sandboxKey(target)
+  const key = cloudDeviceRestartKey(target)
 
   useEffect(() => {
     if (started.current) return
@@ -80,17 +77,19 @@ export function WorkbenchCloudDeviceRestarts({
   const requestRestart = useCallback((targets: DeviceInfo[]) => {
     const bySandbox = new Map<string, DeviceInfo>()
     for (const target of targets) {
-      const key = sandboxKey(target)
+      const key = cloudDeviceRestartKey(target)
       if (!locks.current.has(key) && !bySandbox.has(key)) bySandbox.set(key, target)
     }
     setConfirmation([...bySandbox.values()])
   }, [])
 
   const confirmRestart = () => {
-    const confirmed = confirmation.filter(target => !locks.current.has(sandboxKey(target)))
+    const confirmed = confirmation.filter(
+      target => !locks.current.has(cloudDeviceRestartKey(target))
+    )
     const next = Object.fromEntries(
       confirmed.map(target => {
-        const key = sandboxKey(target)
+        const key = cloudDeviceRestartKey(target)
         locks.current.add(key)
         return [key, { target, attempt: nextAttempt.current++ }]
       })
@@ -126,7 +125,7 @@ export function WorkbenchCloudDeviceRestarts({
       progress,
       isRestarting: (device: DeviceInfo) =>
         ['submitting', 'waiting-offline', 'waiting-online'].includes(
-          progress[sandboxKey(device)]?.phase ?? 'idle'
+          progress[cloudDeviceRestartKey(device)]?.phase ?? 'idle'
         ),
     }),
     [requestRestart, progress]
@@ -162,7 +161,7 @@ export function CloudDeviceRestartProgress({
   compact?: boolean
 }) {
   const actions = useWorkbenchCloudDeviceRestarts()
-  const progress = actions?.progress[sandboxKey(device)]
+  const progress = actions?.progress[cloudDeviceRestartKey(device)]
   if (!progress) return null
 
   return (

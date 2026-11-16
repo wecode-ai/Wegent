@@ -58,7 +58,7 @@ describe('DeviceStatusPrompt', () => {
     expect(onUpgradeDevice).toHaveBeenCalledWith('old-device')
   })
 
-  test('confirms a cloud restart and reports recovery even when the version is still old', async () => {
+  test('shows shared sandbox restart progress for a sibling and reports recovery with an old version', async () => {
     const oldDevice: DeviceInfo = {
       id: 1,
       device_id: 'old-device',
@@ -69,6 +69,7 @@ describe('DeviceStatusPrompt', () => {
       bind_shell: 'claudecode',
       executor_version: '1.8.4',
       runtime_instance_id: 'before',
+      cloud_config: { sandboxId: 'shared-sandbox' },
       update_available: true,
     }
     const restartCloudDevice = vi.fn().mockResolvedValue({ message: 'accepted' })
@@ -77,11 +78,17 @@ describe('DeviceStatusPrompt', () => {
     } as ReturnType<typeof createSettingsDeviceApi>)
     const onUpgradeDevice = vi.fn().mockResolvedValue(undefined)
     const refreshDevices = vi.fn().mockResolvedValue(undefined)
-    const view = (device: DeviceInfo) => (
-      <WorkbenchCloudDeviceRestarts devices={[device]} refreshDevices={refreshDevices}>
+    const sibling = {
+      ...oldDevice,
+      id: 2,
+      device_id: 'sibling-device',
+      runtime_instance_id: 'sibling-runtime',
+    }
+    const view = (device: DeviceInfo, activeDeviceId = device.device_id) => (
+      <WorkbenchCloudDeviceRestarts devices={[device, sibling]} refreshDevices={refreshDevices}>
         <DeviceStatusPrompt
-          devices={[device]}
-          activeDeviceId={device.device_id}
+          devices={[device, sibling]}
+          activeDeviceId={activeDeviceId}
           upgradingDevices={{}}
           onUpgradeDevice={onUpgradeDevice}
           onOpenCloudDeviceSettings={vi.fn()}
@@ -98,7 +105,10 @@ describe('DeviceStatusPrompt', () => {
     expect(
       await screen.findByTestId('connection-device-restart-status-old-device')
     ).toHaveTextContent('设备将短暂离线')
-    rerender(view({ ...oldDevice, runtime_instance_id: 'after' }))
+    rerender(view(oldDevice, sibling.device_id))
+    expect(screen.getByTestId('device-status-restart-progress')).toHaveTextContent('设备将短暂离线')
+    expect(screen.queryByTestId('device-status-restart-button')).not.toBeInTheDocument()
+    rerender(view({ ...oldDevice, runtime_instance_id: 'after' }, sibling.device_id))
     expect(await screen.findByText('设备已重新在线。')).toBeVisible()
   })
 

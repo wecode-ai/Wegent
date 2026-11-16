@@ -15,6 +15,10 @@ interface RestartActions {
   isRestarting: (device: DeviceInfo) => boolean
 }
 
+export function cloudDeviceRestartKey(device: DeviceInfo) {
+  return device.cloud_config?.sandboxId || device.device_id
+}
+
 export const CloudDeviceRestartContext = createContext<RestartActions | null>(null)
 
 export function useWorkbenchCloudDeviceRestarts() {

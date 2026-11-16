@@ -63,27 +63,31 @@ async def restart_cloud_device_for_upgrade(
     db: Session, device: Kind, force_stop_tasks: bool
 ) -> CloudDeviceRestartResult:
     """Apply the legacy upgrade task guard to the entire sandbox."""
-    sandbox_id = (device.json["spec"].get("cloudConfig") or {}).get("sandboxId")
-    if _restart_handler and sandbox_id and not force_stop_tasks:
-        devices = (
-            db.query(Kind)
-            .filter(
-                Kind.user_id == device.user_id,
-                Kind.kind == "Device",
-                Kind.namespace == device.namespace,
-                Kind.is_active.is_(True),
-                Kind.json["spec"]["deviceType"].as_string() == DeviceType.CLOUD.value,
-                Kind.json["spec"]["cloudConfig"]["sandboxId"].as_string() == sandbox_id,
+    if _restart_handler and not force_stop_tasks:
+        sandbox_id = (device.json["spec"].get("cloudConfig") or {}).get("sandboxId")
+        devices = [device]
+        if sandbox_id:
+            devices.extend(
+                db.query(Kind)
+                .filter(
+                    Kind.user_id == device.user_id,
+                    Kind.kind == "Device",
+                    Kind.namespace == device.namespace,
+                    Kind.is_active.is_(True),
+                    Kind.json["spec"]["deviceType"].as_string()
+                    == DeviceType.CLOUD.value,
+                    Kind.json["spec"]["cloudConfig"]["sandboxId"].as_string()
+                    == sandbox_id,
+                )
+                .all()
             )
-            .all()
-        )
-        keys = [
+        keys = {
             LocalDeviceProvider.generate_online_key(
                 device.user_id, device_connection_route_id(sibling)
             )
             for sibling in devices
-        ]
-        online = await cache_manager.mget_or_raise(keys)
+        }
+        online = await cache_manager.mget_or_raise(sorted(keys))
         if any(
             info
             and (info.get("running_task_ids") or runtime_capacity_slot_values(info)[0])

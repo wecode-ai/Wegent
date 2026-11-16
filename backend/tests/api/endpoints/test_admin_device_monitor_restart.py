@@ -41,6 +41,8 @@ def test_cloud_device_restart_defaults_to_unimplemented(monkeypatch):
     """The open-source endpoint should stay generic unless an extension registers."""
     db = SimpleNamespace()
     device_kind = SimpleNamespace(
+        user_id=7,
+        name="device-1",
         json={"spec": {"deviceType": DeviceType.CLOUD.value}},
     )
 
@@ -48,12 +50,12 @@ def test_cloud_device_restart_defaults_to_unimplemented(monkeypatch):
     monkeypatch.setattr(
         device_monitor.device_service,
         "get_device_by_device_id",
-        lambda _db, user_id, device_id: device_kind,
+        staticmethod(lambda _db, user_id, device_id: device_kind),
     )
 
-    response = _build_client(db).post(
-        "/admin/device-monitor/devices/device-1/restart",
-        json={"user_id": 7},
+    client = _build_client(db)
+    response = client.post(
+        "/admin/device-monitor/devices/device-1/restart", json={"user_id": 7}
     )
 
     assert response.status_code == 200
@@ -61,6 +63,12 @@ def test_cloud_device_restart_defaults_to_unimplemented(monkeypatch):
         "success": False,
         "message": "Device restart is not configured in this deployment",
     }
+
+    user_response = client.post(
+        "/devices/device-1/upgrade", json={"force_stop_tasks": True}
+    )
+    assert user_response.status_code == 501
+    assert user_response.json()["detail"] == response.json()["message"]
 
 
 @pytest.mark.parametrize(
@@ -70,8 +78,9 @@ def test_cloud_device_restart_defaults_to_unimplemented(monkeypatch):
         ("/admin/device-monitor/devices/claude/upgrade", {"user_id": 7}),
     ],
 )
+@pytest.mark.parametrize("with_sandbox", [True, False])
 def test_cloud_upgrade_checks_sandbox_tasks_and_uses_restart(
-    test_db, monkeypatch, path, payload
+    test_db, monkeypatch, path, payload, with_sandbox
 ):
     for owner, name, sandbox in (
         (7, "claude", "shared"),
@@ -90,7 +99,7 @@ def test_cloud_upgrade_checks_sandbox_tasks_and_uses_restart(
                     "spec": {
                         "deviceId": "openclaw-runtime" if name == "openclaw" else name,
                         "deviceType": DeviceType.CLOUD.value,
-                        "cloudConfig": {"sandboxId": sandbox},
+                        "cloudConfig": {"sandboxId": sandbox} if with_sandbox else {},
                     }
                 },
             )
@@ -98,7 +107,9 @@ def test_cloud_upgrade_checks_sandbox_tasks_and_uses_restart(
     test_db.flush()
     claude_key = LocalDeviceProvider.generate_online_key(7, "claude")
     claw_key = LocalDeviceProvider.generate_online_key(7, "openclaw-runtime")
-    get_online = AsyncMock(return_value={claw_key: {"running_task_ids": [42]}})
+    busy_key = claw_key if with_sandbox else claude_key
+    expected_keys = {claude_key, claw_key} if with_sandbox else {claude_key}
+    get_online = AsyncMock(return_value={busy_key: {"running_task_ids": [42]}})
     restart = AsyncMock(
         return_value=cloud_device_restart.CloudDeviceRestartResult(
             success=True, message="Restart requested"
@@ -111,11 +122,11 @@ def test_cloud_upgrade_checks_sandbox_tasks_and_uses_restart(
         blocked = client.post(path, json=payload)
         assert blocked.status_code == 400
         assert "running tasks" in blocked.json()["detail"]
-        assert set(get_online.call_args.args[0]) == {claude_key, claw_key}
+        assert set(get_online.call_args.args[0]) == expected_keys
         restart.assert_not_awaited()
 
         get_online.return_value = {
-            claw_key: {
+            busy_key: {
                 "runtime_capacity": {
                     "active": 1,
                     "limit": 3,

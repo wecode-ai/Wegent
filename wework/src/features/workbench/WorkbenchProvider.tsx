@@ -69,15 +69,7 @@ import type {
   User,
   UserPreferences,
 } from '@/types/api'
-import {
-  useCallback,
-  useEffect,
-  useLayoutEffect,
-  useMemo,
-  useReducer,
-  useRef,
-  useState,
-} from 'react'
+import { useEffect, useLayoutEffect, useMemo, useReducer, useRef, useState } from 'react'
 import {
   getProjectWorkPreferenceKey,
   readProjectWorkPreference,
@@ -934,9 +926,8 @@ function OwnedWorkbenchProvider({
     services: resolvedServices,
     refreshDevices,
   })
-  const refreshDevicesAfterRestart = useCallback(
-    () => refreshDevices({ useCacheFallback: false }),
-    [refreshDevices]
+  const refreshDevicesAfterRestart = useStableEvent(() =>
+    refreshDevices({ useCacheFallback: false })
   )
 
   const selectProject = useSelectProject({

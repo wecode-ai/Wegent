@@ -474,7 +474,7 @@ function ProjectCreateDialogContent({
                       ? cloudRestarts?.requestRestart([activeDevice])
                       : void onUpgradeDevice?.(activeDevice.device_id)
                   }
-                  className="inline-flex h-8 shrink-0 items-center gap-1.5 rounded-md border border-warning/30 bg-background px-2 text-xs font-medium text-warning hover:bg-warning/10 disabled:opacity-50 wework:border-amber-500/30 wework:text-amber-700 wework:hover:bg-amber-500/10 wework:dark:text-amber-300"
+                  className={`inline-flex h-8 shrink-0 items-center gap-1.5 rounded-md border border-warning/30 bg-background px-2 text-xs font-medium text-warning hover:bg-warning/10 disabled:opacity-50 wework:border-amber-500/30 wework:text-amber-700 wework:hover:bg-amber-500/10 wework:dark:text-amber-300${isCloud ? ' min-h-11 min-w-11 md:min-h-0 md:min-w-0' : ''}`}
                 >
                   {repairing ? (
                     <Loader2 className="h-3.5 w-3.5 animate-spin" />

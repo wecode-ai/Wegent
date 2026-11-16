@@ -2,7 +2,10 @@ import { AlertCircle, ArrowUpCircle, Loader2, PlusCircle, RotateCcw } from 'luci
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { CloudDeviceRestartProgress } from '@/features/cloud-devices/WorkbenchCloudDeviceRestarts'
-import { useWorkbenchCloudDeviceRestarts } from '@/features/cloud-devices/useWorkbenchCloudDeviceRestarts'
+import {
+  cloudDeviceRestartKey,
+  useWorkbenchCloudDeviceRestarts,
+} from '@/features/cloud-devices/useWorkbenchCloudDeviceRestarts'
 import { useTranslation } from '@/hooks/useTranslation'
 import {
   WEWORK_MIN_EXECUTOR_VERSION,
@@ -104,17 +107,16 @@ function isUpgradeActive(upgradeState: DeviceUpgradeState | undefined): boolean 
 
 export function DeviceStatusPrompt(props: DeviceStatusPromptProps) {
   const cloudRestarts = useWorkbenchCloudDeviceRestarts()
-  const activeId =
-    findWorkbenchDevice(props.devices, props.activeDeviceId)?.device_id ?? props.activeDeviceId
-  const restartProgress = Object.values(cloudRestarts?.progress ?? {}).filter(
-    ({ device }) => !activeId || device.device_id === activeId
-  )
+  const activeDevice = findWorkbenchDevice(props.devices, props.activeDeviceId)
+  const activeKey = activeDevice ? cloudDeviceRestartKey(activeDevice) : props.activeDeviceId
+  const progress = cloudRestarts?.progress ?? {}
+  const restartProgress = Object.entries(progress)
+    .filter(([key]) => !activeKey || key === activeKey)
+    .map(([, entry]) => entry)
   const showOtherDevices =
-    !activeId &&
+    !activeKey &&
     props.devices.some(
-      device =>
-        isClaudeCodeDevice(device) &&
-        !restartProgress.some(progress => progress.device.device_id === device.device_id)
+      device => isClaudeCodeDevice(device) && !progress[cloudDeviceRestartKey(device)]
     )
 
   return (
@@ -256,6 +258,7 @@ function DeviceStatusPromptContent({
         onClick={run}
         className={cn(
           'inline-flex h-7 shrink-0 items-center gap-1 rounded-md px-2 font-medium disabled:cursor-not-allowed disabled:opacity-60',
+          name === 'restart' && 'min-h-11 min-w-11 md:min-h-0 md:min-w-0',
           buttonClass
         )}
       >
@@ -366,9 +369,10 @@ function DeviceStatusPromptContent({
               }
               disabled={manualPending || loading || deviceIds.length === 0}
               onClick={run}
-              aria-label={message}
+              aria-label={`${label}. ${message}`}
               className={cn(
                 'inline-flex h-7 items-center gap-1.5 rounded-md px-2 text-xs font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-60',
+                name === 'restart' && 'min-h-11 min-w-11 md:min-h-0 md:min-w-0',
                 toneClass
               )}
             >
