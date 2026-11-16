@@ -5,11 +5,12 @@
 import '@testing-library/jest-dom'
 import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import type { ReactNode } from 'react'
-import type { DeviceInfo } from '@/apis/devices'
+import { deviceApis, type DeviceInfo } from '@/apis/devices'
+import { TooltipProvider } from '@/components/ui/tooltip'
 
 import DeviceChatPage from '@/app/(tasks)/devices/chat/page'
 
-const devices: DeviceInfo[] = [
+const baseDevices: DeviceInfo[] = [
   {
     id: 1,
     device_id: 'executor-device',
@@ -27,6 +28,8 @@ const devices: DeviceInfo[] = [
     bind_shell: 'claudecode',
   },
 ]
+let devices = baseDevices
+let selectedDeviceId = 'executor-device'
 
 /** Controls what ChatArea reports back through onShareButtonRender. */
 let renderShareButton = true
@@ -125,8 +128,9 @@ jest.mock('@/features/tasks/session/TaskSession', () => ({
 jest.mock('@/contexts/DeviceContext', () => ({
   useDevices: () => ({
     devices,
-    selectedDeviceId: 'executor-device',
+    selectedDeviceId,
     setSelectedDeviceId: jest.fn(),
+    isDeviceUpgrading: () => false,
   }),
 }))
 jest.mock('@/contexts/TeamContext', () => ({
@@ -141,11 +145,15 @@ jest.mock('@/contexts/TeamContext', () => ({
 describe('DeviceChatPage navigation', () => {
   beforeEach(() => {
     localStorage.clear()
+    devices = baseDevices
+    selectedDeviceId = 'executor-device'
     renderShareButton = true
     isMobile = false
     searchParams = new URLSearchParams()
     jest.clearAllMocks()
   })
+
+  afterEach(() => jest.restoreAllMocks())
 
   it('renders the share and export actions reported by ChatArea in the top navigation', async () => {
     render(<DeviceChatPage />)
@@ -189,5 +197,49 @@ describe('DeviceChatPage navigation', () => {
     expect(screen.getByTestId('device-chat-area')).toBe(chat)
     expect(replace).not.toHaveBeenCalled()
     expect(push).not.toHaveBeenCalled()
+  })
+
+  it('opens the saved task device after the task matches the route', async () => {
+    devices = [
+      { ...baseDevices[0], device_type: 'remote' },
+      { ...baseDevices[0], id: 2, device_id: 'other-device', device_type: 'remote' },
+    ]
+    selectedDeviceId = 'other-device'
+    searchParams.set('taskId', '41')
+    const { rerender } = render(
+      <TooltipProvider>
+        <DeviceChatPage />
+      </TooltipProvider>
+    )
+    expect(screen.queryByRole('button', { name: 'ide.open' })).not.toBeInTheDocument()
+
+    searchParams = new URLSearchParams({ taskId: '42', deviceId: 'other-device' })
+    rerender(
+      <TooltipProvider>
+        <DeviceChatPage />
+      </TooltipProvider>
+    )
+    const url = 'https://ide.example.test/s/code-42/'
+    const tab = { opener: window, location: { replace: jest.fn() } }
+    jest.spyOn(window, 'open').mockReturnValue(tab as unknown as Window)
+    const start = jest.spyOn(deviceApis, 'startCodeServer').mockResolvedValue({ url })
+    const button = screen.getByRole('button', { name: 'ide.open' })
+    const selector = screen.getByRole('combobox', { name: 'select_device' })
+
+    expect(button.compareDocumentPosition(selector) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+    expect(selector).toHaveValue('executor-device')
+    fireEvent.click(button)
+
+    expect(start).toHaveBeenCalledWith('executor-device')
+    await waitFor(() => expect(tab.location.replace).toHaveBeenCalledWith(url))
+  })
+
+  it('waits for a new conversation link to select its device before offering IDE', () => {
+    devices = [{ ...baseDevices[0], device_type: 'remote' }]
+    searchParams.set('deviceId', 'another-device')
+
+    render(<DeviceChatPage />)
+
+    expect(screen.queryByRole('button', { name: 'ide.open' })).not.toBeInTheDocument()
   })
 })
