@@ -327,7 +327,7 @@ export function StandInDetailsPopover({
               )}
             </div>
             {!activity.length && !schedules.loading && !schedules.error && (
-              <p className="py-2 text-sm text-text-muted">
+              <p className="py-2 text-sm text-text-secondary">
                 {t('standIn.workspace.details_activity_empty')}
               </p>
             )}
@@ -379,7 +379,7 @@ export function StandInDetailsPopover({
                   >
                     <span className="min-w-0 flex-1">
                       <span className="block truncate leading-5">{item.task.title}</span>
-                      <span className="block truncate text-xs leading-4 text-text-muted">
+                      <span className="block truncate text-xs leading-4 text-text-secondary">
                         {[
                           item.projectName !== item.task.title &&
                           item.projectName !== item.task.taskId
@@ -397,7 +397,7 @@ export function StandInDetailsPopover({
               )
             })}
             {schedules.loading && (
-              <p role="status" className="py-2 text-sm text-text-muted">
+              <p role="status" className="py-2 text-sm text-text-secondary">
                 {t('standIn.loading')}
               </p>
             )}
