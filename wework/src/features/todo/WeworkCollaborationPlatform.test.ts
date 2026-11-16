@@ -431,24 +431,32 @@ afterEach(() => {
 })
 
 function createLocalDeliveryApi() {
+  const projects = [
+    {
+      id: DEFAULT_WORK_ITEM_PROJECT_ID,
+      project_key: 'WORK',
+      name: 'My Tasks',
+      project_store: 'local',
+      version: 1,
+      metadata: { system_kind: 'default_work_items' },
+      collaboration_groups: [],
+    },
+    {
+      id: 'local-project',
+      name: 'Local project',
+      project_store: 'local',
+      version: 1,
+      metadata: { code_project_key: 'runtime-project' },
+    },
+  ]
   return {
     listCloudProjects: vi.fn().mockResolvedValue({
-      items: [
-        {
-          id: DEFAULT_WORK_ITEM_PROJECT_ID,
-          project_key: 'WORK',
-          name: 'My Tasks',
-          project_store: 'local',
-          metadata: { system_kind: 'default_work_items' },
-          collaboration_groups: [],
-        },
-        {
-          id: 'local-project',
-          name: 'Local project',
-          project_store: 'local',
-          metadata: { code_project_key: 'runtime-project' },
-        },
-      ],
+      items: projects.map(project => ({ ...project, version: 0 })),
+    }),
+    getCloudProject: vi.fn(async (projectId: string) => {
+      const project = projects.find(project => project.id === projectId)
+      if (!project) throw new Error(`Local project ${projectId} not found`)
+      return project
     }),
     getBoardSnapshot: vi.fn().mockResolvedValue({
       items: [],
@@ -651,6 +659,21 @@ describe('Wework collaboration workspace API', () => {
               version: 1,
             },
           ],
+        },
+      ],
+    } as never)
+    vi.mocked(localDeliveryApi.getCloudProject).mockResolvedValue({
+      id: 'local-project',
+      name: 'Local project',
+      project_store: 'local',
+      version: 1,
+      automatic_processing_rules: [
+        {
+          id: 'local-automation',
+          projectId: 'local-project',
+          name: 'Local automation',
+          enabled: true,
+          version: 1,
         },
       ],
     } as never)
@@ -1925,10 +1948,16 @@ describe('Wework collaboration workspace API', () => {
             id: 'local-project',
             name: 'Local project',
             project_store: 'local',
-            version: 2,
-            execution_environment: executionEnvironment,
+            version: 1,
           },
         ],
+      }),
+      getCloudProject: vi.fn().mockResolvedValue({
+        id: 'local-project',
+        name: 'Local project',
+        project_store: 'local',
+        version: 2,
+        execution_environment: executionEnvironment,
       }),
       updateCloudProject,
     } as unknown as DeliveryApi
@@ -1972,6 +2001,8 @@ describe('Wework collaboration workspace API', () => {
         }),
       })
     )
+    expect(delivery.getCloudProject).toHaveBeenCalledExactlyOnceWith('local-project')
+    expect(delivery.listCloudProjects).not.toHaveBeenCalled()
   })
 
   it('persists local workspace execution configuration through its backing project', async () => {
@@ -2044,6 +2075,7 @@ describe('Wework collaboration workspace API', () => {
     }
     const deliveryApi = {
       listCloudProjects: vi.fn(async () => ({ items: [project] })),
+      getCloudProject: vi.fn(async () => project),
       updateCloudProject: vi.fn(async (_projectId: string, input: Record<string, unknown>) => {
         project = {
           ...project,
@@ -2319,6 +2351,11 @@ describe('Wework collaboration workspace API', () => {
       createLocalWorkspaceApi(
         {
           listCloudProjects: vi.fn(async () => ({ items: records })),
+          getCloudProject: vi.fn(async (id: string) => {
+            const project = records.find(record => record.id === id)
+            if (!project) throw new Error(`Local project ${id} not found`)
+            return project
+          }),
           updateCloudProject: update,
         } as unknown as DeliveryApi,
         1,

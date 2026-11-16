@@ -1977,6 +1977,11 @@ async fn handle_task_runtime_request(method: &str, params: Value) -> Result<Valu
                 .list_collaboration_projects()
                 .map_err(task_runtime_error)?,
         ),
+        "projects.get" => serialize_task_value(
+            runtime
+                .get_project(required_task_string(&params, "project_id")?)
+                .map_err(task_runtime_error)?,
+        ),
         "projects.create" => {
             let input = serde_json::from_value::<ProjectCreate>(params)
                 .map_err(|error| AppIpcError::new("bad_request", error.to_string()))?;

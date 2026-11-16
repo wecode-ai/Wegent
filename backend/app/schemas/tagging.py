@@ -6,7 +6,7 @@
 
 from typing import Annotated
 
-from pydantic import AfterValidator, Field
+from pydantic import AfterValidator, BeforeValidator, Field
 
 MAX_TAGS_PER_ITEM = 20
 MAX_TAG_LENGTH = 32
@@ -36,3 +36,10 @@ def normalize_tags(value: object) -> list[str]:
         if tag and tag not in tags:
             tags.append(tag)
     return tags
+
+
+NormalizedTags = Annotated[
+    list[TagName],
+    BeforeValidator(normalize_tags),
+    Field(max_length=MAX_TAGS_PER_ITEM),
+]

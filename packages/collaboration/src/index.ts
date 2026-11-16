@@ -27,6 +27,7 @@ export * from "./project-board";
 export * from "./project-agent-config";
 export * from "./project-create";
 export * from "./project-manage";
+export * from "./projectAdmin";
 export * from "./project-shell";
 export * from "./SharedIssueDetailEditor";
 export type {

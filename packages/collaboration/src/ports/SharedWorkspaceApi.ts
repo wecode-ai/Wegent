@@ -50,7 +50,13 @@ export interface WorkspaceProjectCreateInput {
 
 export interface WorkspaceProjectUpdateInput {
   version: number;
-  tagChange?: { source: string; target: string | null };
+  operationId?: string;
+  idempotencyKey?: string;
+  dryRun?: boolean;
+  tagChange?: import("../projectAdmin").ProjectTagChange;
+  collaborationPolicy?: import("../projectAdmin").ProjectCollaborationPolicy;
+  memberChanges?: import("../projectAdmin").ProjectMemberChange[];
+  assistantRosterChanges?: import("../projectAdmin").ProjectAssistantRosterChange[];
   name?: string;
   description?: string;
   tags?: string[];
@@ -62,6 +68,7 @@ export interface WorkspaceProjectUpdateInput {
   boardConfig?: CollaborationProject["board_config"];
   boardViews?: CollaborationProject["board_views"];
   cardDisplay?: CollaborationProject["card_display"];
+  aiAutomation?: { auto_retry_on_failure: boolean; max_retry_count: number };
   pullRequestAutomation?: Record<string, unknown>;
   workflowDefinition?: Record<string, unknown>;
   collaborationGroups?: import("../types").CollaborationGroup[];
@@ -445,7 +452,9 @@ export interface SharedWorkspaceAutomationExecutionCatalogApi {
 export interface WorkspaceProjectAgent extends CollaborationAgent {
   status?: string;
   systemPrompt?: string;
-  executionPolicy?: import("../agent-form/runnerRouting").AgentExecutionPolicy | null;
+  executionPolicy?:
+    | import("../agent-form/runnerRouting").AgentExecutionPolicy
+    | null;
   modelPolicy?: import("../agent-form/runnerRouting").AgentModelPolicy | null;
   [key: string]: unknown;
 }

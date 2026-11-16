@@ -130,20 +130,28 @@ async function parseError(response: Response): Promise<ApiError> {
       if (typeof json.detail.message === 'string') {
         message = json.detail.message
       }
-      if (json.detail.error_code || json.detail.code) {
-        errorCode = json.detail.error_code ?? json.detail.code
+      if (json.detail.reason_code || json.detail.error_code || json.detail.code) {
+        errorCode = json.detail.reason_code ?? json.detail.error_code ?? json.detail.code
       }
     }
     if (json.error_code) {
       errorCode = json.error_code
+    }
+    if (typeof json.reason_code === 'string') {
+      errorCode = json.reason_code
+      detail = {
+        reason_code: json.reason_code,
+        message,
+        fields: json.fields ?? json.errors ?? [],
+      }
     }
     if (json.error && typeof json.error === 'object') {
       detail = json.error
       if (typeof json.error.message === 'string') {
         message = json.error.message
       }
-      if (json.error.code || json.error.error_code) {
-        errorCode = json.error.code ?? json.error.error_code
+      if (json.error.reason_code || json.error.code || json.error.error_code) {
+        errorCode = json.error.reason_code ?? json.error.code ?? json.error.error_code
       }
     }
   } catch {

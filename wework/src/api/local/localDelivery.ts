@@ -1044,6 +1044,13 @@ export function createLocalDeliveryApi(
     throw new Error('Local task not found')
   }
 
+  const getCloudProject: LocalProjectSpaceApi['getCloudProject'] = async projectId => {
+    const record = await request<LocalLoopItemRecord>('projects.get', {
+      project_id: String(projectId),
+    })
+    return localProject(record)
+  }
+
   const api = {
     async listCloudProjects() {
       const records = await loadProjectRecords(true)
@@ -1053,6 +1060,7 @@ export function createLocalDeliveryApi(
           .map(localProject),
       }
     },
+    getCloudProject,
     async createCloudProject(data: {
       project_key?: string
       name: string

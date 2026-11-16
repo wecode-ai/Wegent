@@ -77,6 +77,56 @@ const taskRecord = {
 }
 
 describe('local delivery API', () => {
+  test('reads fresh project details by ID independently of the project catalog cache', async () => {
+    const boardViews = {
+      schema_version: 1,
+      default_view_id: 'configured',
+      views: [{ id: 'configured', columns: [{ id: 'second' }, { id: 'first' }] }],
+    }
+    let current = {
+      ...projectRecord,
+      version: 2,
+      metadata: { ...projectRecord.metadata, board_views: boardViews },
+    }
+    const request = vi.fn(async (method: string, params?: Record<string, unknown>) => {
+      if (method === 'projects.list') return [projectRecord]
+      if (method === 'projects.get') {
+        expect(params).toEqual({ project_id: projectRecord.id })
+        return current
+      }
+      throw new Error(`Unexpected method: ${method}`)
+    })
+    const api = createLocalDeliveryApi(request)
+    expect((await api.listCloudProjects()).items[0].version).toBe(1)
+
+    await expect(api.getCloudProject(projectRecord.id)).resolves.toMatchObject({
+      id: projectRecord.id,
+      project_store: 'local',
+      version: 2,
+      board_views: boardViews,
+    })
+    current = { ...current, version: 3 }
+    await expect(api.getCloudProject(projectRecord.id)).resolves.toMatchObject({ version: 3 })
+
+    expect(request.mock.calls.map(([method]) => method)).toEqual([
+      'projects.list',
+      'projects.get',
+      'projects.get',
+    ])
+  })
+  test.each(['not_found', 'store_unavailable'])(
+    'preserves a project detail %s rejection without reading the project list',
+    async code => {
+      const error = Object.assign(new Error('Project detail unavailable'), { code })
+      const request = vi.fn().mockRejectedValue(error)
+
+      await expect(createLocalDeliveryApi(request).getCloudProject('missing')).rejects.toBe(error)
+
+      expect(request).toHaveBeenCalledExactlyOnceWith('projects.get', {
+        project_id: 'missing',
+      })
+    }
+  )
   test('reads native My Work and task context in one bounded IPC request', async () => {
     const request = vi.fn().mockResolvedValue({
       items: [

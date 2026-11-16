@@ -23,7 +23,8 @@ it('saves native-model automation without requesting an unavailable cloud catalo
     collaboration_groups: [],
   }
   const delivery = {
-    listCloudProjects: vi.fn(async () => ({ items: [project] })),
+    listCloudProjects: vi.fn(async () => ({ items: [{ id: project.id, name: project.name }] })),
+    getCloudProject: vi.fn(async () => project),
     updateCloudProject: vi.fn(async () => ({ ...project, version: 2 })),
   } as unknown as DeliveryApi
   const listModels = vi.fn(async () => {
@@ -72,5 +73,7 @@ it('saves native-model automation without requesting an unavailable cloud catalo
     })
   ).resolves.toMatchObject({ enabled: true, targetId: agent.id })
   expect(listModels).not.toHaveBeenCalled()
+  expect(delivery.getCloudProject).toHaveBeenCalledWith(project.id)
+  expect(delivery.listCloudProjects).not.toHaveBeenCalled()
   expect(delivery.updateCloudProject).toHaveBeenCalledTimes(1)
 })

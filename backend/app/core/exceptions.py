@@ -98,13 +98,43 @@ async def http_exception_handler(request, exc: HTTPException):
 
 async def validation_exception_handler(request, exc: RequestValidationError):
     """Request validation exception handler"""
+    from re import fullmatch
+
+    project_config = (
+        request is not None
+        and request.method == "PATCH"
+        and fullmatch(r"/api/v1/(?:cloud-projects|projects)/[^/]+", request.url.path)
+    )
+    configuration_error = {}
+    if project_config:
+        configuration_error = {
+            "reason_code": (
+                "unsupported_field"
+                if any(error["type"] == "extra_forbidden" for error in exc.errors())
+                else "invalid_config"
+            ),
+            "fields": [
+                {"path": list(error["loc"]), "message": error["msg"]}
+                for error in exc.errors()
+            ],
+        }
     return JSONResponse(
         status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
         content={
+            **configuration_error,
             "error_code": status.HTTP_422_UNPROCESSABLE_ENTITY,
             "detail": "Request parameter validation failed",
             "errors": _make_json_serializable(
-                _sanitize_validation_errors(exc.errors())
+                [
+                    {
+                        key: value
+                        for key, value in error.items()
+                        if key in {"loc", "msg", "type"}
+                    }
+                    for error in exc.errors()
+                ]
+                if project_config
+                else _sanitize_validation_errors(exc.errors())
             ),
         },
     )

@@ -7,25 +7,22 @@
 from datetime import datetime
 from typing import Literal
 
-from pydantic import (
-    BaseModel,
-    ConfigDict,
-    Field,
-    field_validator,
-    model_validator,
-)
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from app.core.provider_credentials import mask_provider_config
 from app.schemas.base_role import BaseRole
 from app.schemas.board_views import BoardViews
 from app.schemas.issue_workflow import ProjectWorkflowDefinition
-from app.schemas.tagging import (
-    MAX_TAG_LENGTH,
-    MAX_TAGS_PER_ITEM,
-    TagName,
-    normalize_tags,
-    require_canonical_tag,
+from app.schemas.project_admin import (
+    ProjectAdminReadResult,
+    ProjectAdminWriteResult,
+    ProjectAssistantRosterChange,
+    ProjectCollaborationPolicy,
+    ProjectMemberChange,
+    ProjectTagChange,
+    validate_unique_roster_changes,
 )
+from app.schemas.tagging import NormalizedTags, normalize_tags
 from app.schemas.types import SnowflakeId
 from app.schemas.workspace import (
     ExecutionEnvironmentConfig,
@@ -130,6 +127,8 @@ class CloudProjectCreate(BaseModel):
 
 
 class CloudProjectCardDisplay(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     show_assignee: bool = True
     show_priority: bool = True
     show_tags: bool = True
@@ -137,6 +136,8 @@ class CloudProjectCardDisplay(BaseModel):
 
 
 class CloudProjectBoardStatus(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     id: str = Field(min_length=1, max_length=32, pattern=r"^[A-Za-z0-9_-]+$")
     name: str = Field(min_length=1, max_length=40)
     color: Literal["gray", "blue", "orange", "purple", "green", "red"] = "gray"
@@ -153,6 +154,8 @@ def default_board_statuses() -> list[CloudProjectBoardStatus]:
 
 
 class CloudProjectScheduleViewConfig(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     status_filter: str | None = Field(default=None, max_length=32)
     assignee_filter: str | None = Field(default=None, max_length=128)
     tag_filter: str | None = Field(default=None, max_length=80)
@@ -163,6 +166,8 @@ class CloudProjectScheduleViewConfig(BaseModel):
 
 
 class CloudProjectBoardConfig(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     group_by: Literal["status", "priority", "assignee", "tag"] = "status"
     statuses: list[CloudProjectBoardStatus] = Field(
         default_factory=default_board_statuses
@@ -193,6 +198,8 @@ class CloudProjectBoardConfig(BaseModel):
 
 
 class CloudProjectAiAutomation(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     auto_retry_on_failure: bool = False
     max_retry_count: int = Field(default=1, ge=1, le=10)
 
@@ -207,6 +214,8 @@ PullRequestAutoRepairStatus = Literal[
 
 
 class CloudProjectPullRequestAutomation(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     enabled: bool = False
     statuses: list[PullRequestAutoRepairStatus] = Field(
         default_factory=lambda: [
@@ -228,24 +237,14 @@ class CloudProjectPullRequestAutomation(BaseModel):
         return list(dict.fromkeys(value))
 
 
-class ProjectTagChange(BaseModel):
-    """Rename or remove a project tag and all of its references atomically."""
-
-    source: str = Field(min_length=1, max_length=MAX_TAG_LENGTH)
-    target: str | None = Field(max_length=MAX_TAG_LENGTH)
-
-    @field_validator("source", "target")
-    @classmethod
-    def validate_tag(cls, value: str | None) -> str | None:
-        return None if value is None else require_canonical_tag(value)
-
-
 class CloudProjectUpdate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     tag_change: ProjectTagChange | None = None
     membership_mode: Literal["inherit", "restricted"] | None = None
     name: str | None = Field(default=None, min_length=1, max_length=100)
     description: str | None = None
-    tags: list[TagName] | None = Field(default=None, max_length=MAX_TAGS_PER_ITEM)
+    tags: NormalizedTags | None = None
     provider_config: dict[str, object] | None = None
     visibility: ProjectVisibility | None = None
     public_access: PublicAccessGrant | None = None
@@ -253,26 +252,66 @@ class CloudProjectUpdate(BaseModel):
     card_display: CloudProjectCardDisplay | None = None
     board_config: CloudProjectBoardConfig | None = None
     board_views: BoardViews | None = None
+    collaboration_policy: ProjectCollaborationPolicy | None = None
     ai_automation: CloudProjectAiAutomation | None = None
     pull_request_automation: CloudProjectPullRequestAutomation | None = None
     workflow_definition: ProjectWorkflowDefinition | None = None
     execution_environment: ExecutionEnvironmentDefinition | None = None
+    member_changes: list[ProjectMemberChange] | None = Field(
+        default=None, min_length=1, max_length=50
+    )
+    assistant_roster_changes: list[ProjectAssistantRosterChange] | None = Field(
+        default=None, min_length=1, max_length=50
+    )
     version: int = Field(ge=1)
+    operation_id: str | None = Field(default=None, min_length=1, max_length=128)
+    idempotency_key: str | None = Field(default=None, min_length=1, max_length=128)
+    dry_run: bool = False
 
-    @field_validator("tags", mode="before")
+    @field_validator("member_changes")
     @classmethod
-    def normalize_tag_list(cls, value: object) -> object:
-        return None if value is None else normalize_tags(value)
+    def validate_member_changes(
+        cls, values: list[ProjectMemberChange] | None
+    ) -> list[ProjectMemberChange] | None:
+        return (
+            None
+            if values is None
+            else validate_unique_roster_changes(values, "user_id")
+        )
+
+    @field_validator("assistant_roster_changes")
+    @classmethod
+    def validate_assistant_changes(
+        cls, values: list[ProjectAssistantRosterChange] | None
+    ) -> list[ProjectAssistantRosterChange] | None:
+        return (
+            None
+            if values is None
+            else validate_unique_roster_changes(values, "agent_id")
+        )
+
+    @field_validator("operation_id", "idempotency_key")
+    @classmethod
+    def validate_operation_identifier(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        value = value.strip()
+        if not value:
+            raise ValueError("operation identifier cannot be empty")
+        return value
 
     @model_validator(mode="after")
     def validate_provider(self) -> "CloudProjectUpdate":
-        if self.tag_change is not None and self.model_fields_set - {
-            "version",
-            "tag_change",
-        }:
+        if (
+            self.operation_id is not None
+            and self.idempotency_key is not None
+            and self.operation_id != self.idempotency_key
+        ):
             raise ValueError(
-                "Tag changes cannot be combined with other project updates"
+                "operation_id and idempotency_key must match when both are supplied"
             )
+        if self.tags is not None and self.tag_change is not None:
+            raise ValueError("tags and tag_change cannot be supplied together")
         if self.visibility == "private" and self.public_access is not None:
             raise ValueError("Private projects cannot grant public access")
         if self.provider_config is not None:
@@ -314,6 +353,12 @@ class CloudProjectResponse(BaseModel):
         default_factory=CloudProjectBoardConfig
     )
     board_views: dict[str, object] | None = None
+    collaboration_policy: ProjectCollaborationPolicy = Field(
+        default_factory=ProjectCollaborationPolicy
+    )
+    project_admin_result: ProjectAdminWriteResult | None = None
+    project_admin_config: ProjectAdminReadResult | None = None
+    project_admin_capabilities: dict[str, object] | None = None
     ai_automation: CloudProjectAiAutomation = Field(
         default_factory=CloudProjectAiAutomation
     )
@@ -333,7 +378,7 @@ class CloudProjectResponse(BaseModel):
     created_by_user_id: int
     current_user_id: int = 0
     current_user_name: str = ""
-    access_role: BaseRole = BaseRole.Viewer
+    access_role: BaseRole | None = BaseRole.Viewer
     status: str
     tags: list[str] = []
     version: int
@@ -357,6 +402,17 @@ class CloudProjectResponse(BaseModel):
                 "card_display": metadata.get("card_display", {}),
                 "board_config": metadata.get("board_config", {}),
                 "board_views": metadata.get("board_views"),
+                "collaboration_policy": metadata.get("collaboration_policy", {}),
+                "project_admin_result": value.get(
+                    "_project_admin_result", value.get("project_admin_result")
+                ),
+                "project_admin_config": value.get(
+                    "_project_admin_config", value.get("project_admin_config")
+                ),
+                "project_admin_capabilities": value.get(
+                    "_project_admin_capabilities",
+                    value.get("project_admin_capabilities"),
+                ),
                 "ai_automation": metadata.get("ai_automation", {}),
                 "pull_request_automation": metadata.get("pull_request_automation", {}),
                 "workflow_definition": metadata.get("workflow_definition", {}),

@@ -780,25 +780,28 @@ describe('ProjectExecutionEnvironments', () => {
     expect(container?.querySelector(`[data-testid="${prefix}-picker"]`)).toBeNull()
   })
 
-  it('lets read-only members filter assigned devices without management controls', async () => {
-    await render({
-      role: 'Viewer',
-      assigned: [
-        environment(21, 'Assigned online', 'online'),
-        environment(22, 'Assigned offline', 'offline'),
-        environment(24, 'Assigned error', 'error'),
-      ],
-    })
-    expect(element('-24').textContent).toContain('异常')
-    expect(container?.querySelector(`[data-testid="${prefix}-add"]`)).toBeNull()
-    expect(container?.querySelector(`[data-testid^="${prefix}-remove-"]`)).toBeNull()
-    await change('-status-filter', 'online')
-    expect(element('-21').textContent).toContain('Assigned online')
-    expect(container?.querySelector(`[data-testid="${prefix}-22"]`)).toBeNull()
+  it.each(['Viewer', null] as const)(
+    'lets read-only members with role %s filter devices without management controls',
+    async role => {
+      await render({
+        role,
+        assigned: [
+          environment(21, 'Assigned online', 'online'),
+          environment(22, 'Assigned offline', 'offline'),
+          environment(24, 'Assigned error', 'error'),
+        ],
+      })
+      expect(element('-24').textContent).toContain('异常')
+      expect(container?.querySelector(`[data-testid="${prefix}-add"]`)).toBeNull()
+      expect(container?.querySelector(`[data-testid^="${prefix}-remove-"]`)).toBeNull()
+      await change('-status-filter', 'online')
+      expect(element('-21').textContent).toContain('Assigned online')
+      expect(container?.querySelector(`[data-testid="${prefix}-22"]`)).toBeNull()
 
-    await change('-status-filter', 'all')
-    expect(element('-22').textContent).toContain('Assigned offline')
-  })
+      await change('-status-filter', 'all')
+      expect(element('-22').textContent).toContain('Assigned offline')
+    }
+  )
 
   it('marks only the Wework installation that prepared the environment', async () => {
     // Every Wework desktop registers under the logical id "local-device", so

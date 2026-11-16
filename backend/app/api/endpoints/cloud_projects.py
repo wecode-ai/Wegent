@@ -20,10 +20,7 @@ from sqlalchemy.orm import Session
 
 from app.api.dependencies import get_db
 from app.api.endpoints.adapter.attachments import _build_content_disposition
-from app.core.security import (
-    get_current_user,
-    get_current_user_jwt_apikey_tasktoken,
-)
+from app.core.security import get_current_user, get_current_user_jwt_apikey_tasktoken
 from app.models.user import User
 from app.schemas.cloud_file import (
     CloudFileAccessResponse,
@@ -68,6 +65,7 @@ from app.schemas.workspace import (
 )
 from app.services.cloud_files import cloud_file_service
 from app.services.cloud_projects.responses import project_response as _project_response
+from app.services.cloud_projects.responses import project_write_response
 from app.services.cloud_projects.service import cloud_project_service
 from app.services.loop_item_events import publish_loop_item_changed
 from app.services.loop_items.external_provider import external_loop_item_provider
@@ -210,7 +208,7 @@ def create_cloud_project(
 def get_cloud_project(
     project_id: int,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(get_current_user_jwt_apikey_tasktoken),
 ) -> CloudProjectResponse:
     project = cloud_project_service.get(db, project_id, current_user.id)
     return _project_response(db, project, current_user)
@@ -224,7 +222,7 @@ def update_cloud_project(
     current_user: User = Depends(get_current_user_jwt_apikey_tasktoken),
 ) -> CloudProjectResponse:
     project = cloud_project_service.update(db, project_id, current_user.id, values)
-    return _project_response(db, project, current_user)
+    return project_write_response(db, project, current_user)
 
 
 @router.post(

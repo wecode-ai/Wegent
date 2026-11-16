@@ -30,7 +30,6 @@ export function useProjectMembers<
   api,
   host,
   projectId,
-  currentUserId,
   onProjectUpdated,
   projectScopeRef,
   canManage,
@@ -42,7 +41,6 @@ export function useProjectMembers<
   api: MemberApi<Project, Member, User>
   host: ProjectManageHost
   projectId: string
-  currentUserId?: number
   onProjectUpdated?(project: Project): void
   projectScopeRef: RefObject<{ projectId: string }>
   canManage: boolean
@@ -154,15 +152,13 @@ export function useProjectMembers<
 
   async function refreshMemberState(
     scope: { projectId: string },
-    options: { refreshProject?: boolean; reloadMembers?: boolean }
+    options: { reloadMembers?: boolean } = {}
   ) {
     try {
-      if (options.refreshProject) {
-        const project = await api.getProject(scope.projectId)
-        if (projectScopeRef.current !== scope) return
-        onProjectUpdated?.(project)
-        if (project.access_role !== 'Owner' && project.access_role !== 'Maintainer') return
-      }
+      const project = await api.getProject(scope.projectId)
+      if (projectScopeRef.current !== scope) return
+      onProjectUpdated?.(project)
+      if (project.access_role !== 'Owner' && project.access_role !== 'Maintainer') return
       if (options.reloadMembers) {
         const next = await api.listMembers(scope.projectId)
         if (projectScopeRef.current === scope) {
@@ -212,9 +208,7 @@ export function useProjectMembers<
       if (projectScopeRef.current !== scope) return
       setMembers(current => current.map(row => (row.user_id === next.user_id ? next : row)))
       if (values.role) host.trackCompleted('member_role_change')
-      if (values.role && member.user_id === currentUserId) {
-        await refreshMemberState(scope, { refreshProject: true })
-      }
+      await refreshMemberState(scope)
     } catch (cause) {
       if (projectScopeRef.current !== scope) return
       host.trackFailed()
@@ -253,7 +247,6 @@ export function useProjectMembers<
       if (projectScopeRef.current !== scope) return
       host.trackCompleted('member_remove')
       await refreshMemberState(scope, {
-        refreshProject: member.user_id === currentUserId,
         reloadMembers: true,
       })
     } catch (cause) {

@@ -1660,6 +1660,160 @@ describe("collaboration workspace controller", () => {
     expect(state.issues).toEqual(state.projectItems[project.id]);
   });
 
+  it("refreshes the project version with agents before the next configuration save", async () => {
+    state = { ...state, projects: [project], project };
+    const api = createApi();
+    const latest = { ...project, version: 2 };
+    const agents = [{ id: "agent-1", name: "Updated assistant" }];
+    vi.mocked(api.projects.get).mockResolvedValue(latest);
+    vi.mocked(api.agents.list).mockResolvedValue(agents);
+    const { commands } = createController(api);
+
+    await commands.refreshProjectAgents(project.id);
+
+    expect(state.project).toEqual(latest);
+    expect(state.projects).toEqual([latest]);
+    expect(state.agents).toEqual(agents);
+    await commands.loadProject(project.id, false);
+    expect(state.project).toEqual(latest);
+    expect(api.projects.get).toHaveBeenCalledOnce();
+    await commands.updateProject(project.id, {
+      version: state.project!.version,
+      boardConfig: {
+        group_by: "tag",
+        processing_start_status_id: null,
+        statuses: [],
+      },
+    });
+    expect(api.projects.update).toHaveBeenCalledWith(project.id, {
+      version: 2,
+      boardConfig: expect.objectContaining({ group_by: "tag" }),
+    });
+  });
+
+  it("keeps refreshed project metadata when an earlier catalog request finishes", async () => {
+    state = { ...state, projects: [project], project };
+    const pendingCatalog = deferred<CollaborationProject[]>();
+    const latest = { ...project, version: 2 };
+    const api = createApi();
+    vi.mocked(api.projects.list).mockReturnValue(pendingCatalog.promise);
+    vi.mocked(api.projects.get).mockResolvedValue(latest);
+    const { commands } = createController(api);
+
+    const catalogLoad = commands.loadProjectCatalog();
+    await commands.refreshProjectAgents(project.id);
+    pendingCatalog.resolve([project]);
+    await catalogLoad;
+
+    expect(state.projects).toEqual([latest]);
+    await commands.loadProject(project.id, false);
+    expect(state.project).toEqual(latest);
+    expect(api.projects.get).toHaveBeenCalledOnce();
+  });
+
+  it("ignores an older agent refresh after a newer refresh finishes", async () => {
+    state = { ...state, projects: [project], project };
+    const oldProject = deferred<CollaborationProject>();
+    const oldAgents =
+      deferred<Awaited<ReturnType<SharedWorkspaceApi["agents"]["list"]>>>();
+    const latest = { ...project, version: 3 };
+    const agents = [{ id: "agent-1", name: "Newest assistant" }];
+    const api = createApi();
+    vi.mocked(api.projects.get)
+      .mockReturnValueOnce(oldProject.promise)
+      .mockResolvedValue(latest);
+    vi.mocked(api.agents.list)
+      .mockReturnValueOnce(oldAgents.promise)
+      .mockResolvedValue(agents);
+    const { commands } = createController(api);
+
+    const previousRefresh = commands.refreshProjectAgents(project.id);
+    await commands.refreshProjectAgents(project.id);
+    oldProject.resolve({ ...project, version: 2 });
+    oldAgents.resolve([{ id: "agent-1", name: "Old assistant" }]);
+    await previousRefresh;
+
+    expect(state.project).toEqual(latest);
+    expect(state.agents).toEqual(agents);
+    expect(state.projectAgents[project.id]).toEqual(agents);
+  });
+
+  it("preserves newer configuration while an agent refresh is pending", async () => {
+    const existingAgents = [{ id: "agent-1", name: "Current assistant" }];
+    state = { ...state, projects: [project], project, agents: existingAgents };
+    const pendingProject = deferred<CollaborationProject>();
+    const latest = { ...project, version: 3, tags: ["new"] };
+    const api = createApi();
+    vi.mocked(api.projects.get).mockReturnValue(pendingProject.promise);
+    vi.mocked(api.agents.list).mockResolvedValue([
+      { id: "agent-1", name: "Old assistant" },
+    ]);
+    const { commands } = createController(api);
+
+    const refresh = commands.refreshProjectAgents(project.id);
+    commands.replaceProject(latest);
+    pendingProject.resolve({ ...project, version: 2 });
+    await refresh;
+
+    expect(state.project).toEqual(latest);
+    expect(state.projects).toEqual([latest]);
+    expect(state.agents).toEqual(existingAgents);
+  });
+
+  it("refreshes agents in their own project cache after switching projects", async () => {
+    state = { ...state, projects: [project], project };
+    const otherProject = { ...project, id: "project-2" };
+    const pendingProject = deferred<CollaborationProject>();
+    const agents = [{ id: "agent-1", name: "Updated assistant" }];
+    const otherAgents = [{ id: "agent-2", name: "Other assistant" }];
+    const api = createApi();
+    vi.mocked(api.projects.get).mockImplementation((projectId) =>
+      projectId === project.id
+        ? pendingProject.promise
+        : Promise.resolve(otherProject),
+    );
+    vi.mocked(api.agents.list).mockResolvedValue(agents);
+    vi.mocked(api.issues.getBoardSnapshot).mockResolvedValue({
+      items: [],
+      members: [],
+      agents: otherAgents,
+      taskBindings: [],
+    });
+    const { commands } = createController(api);
+
+    const refresh = commands.refreshProjectAgents(project.id);
+    await commands.loadProject(otherProject.id);
+    pendingProject.resolve({ ...project, version: 2 });
+    await refresh;
+
+    expect(state.project).toEqual(otherProject);
+    expect(state.agents).toEqual(otherAgents);
+    expect(state.projectAgents[project.id]).toEqual(agents);
+    expect(
+      state.projects.find((candidate) => candidate.id === project.id)?.version,
+    ).toBe(2);
+  });
+
+  it("reports an agent refresh failure without applying a partial roster", async () => {
+    const existingAgents = [{ id: "agent-1", name: "Current assistant" }];
+    state = { ...state, projects: [project], project, agents: existingAgents };
+    const api = createApi();
+    vi.mocked(api.projects.get).mockRejectedValue(
+      new Error("Project read failed"),
+    );
+    vi.mocked(api.agents.list).mockResolvedValue([
+      { id: "agent-2", name: "New assistant" },
+    ]);
+    const { commands, notify } = createController(api);
+
+    await commands.refreshProjectAgents(project.id);
+
+    expect(state.project).toEqual(project);
+    expect(state.agents).toEqual(existingAgents);
+    expect(state.errorSource).toBe("load");
+    expect(notify).toHaveBeenCalledWith("load failed", "error");
+  });
+
   it("keeps the mutated project in the catalog used by background refreshes", async () => {
     const statusProject = {
       ...project,

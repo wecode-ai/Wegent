@@ -18,6 +18,9 @@ use wegent_executor::local::{
 };
 use wegent_executor::task_runtime::LocalTaskStore;
 
+#[path = "local_app_ipc_contract/projects.rs"]
+mod project_reads;
+
 const LOCAL_GIT_ENV_VARS: &[&str] = &[
     "GIT_ALTERNATE_OBJECT_DIRECTORIES",
     "GIT_CONFIG",
@@ -38,7 +41,12 @@ const LOCAL_GIT_ENV_VARS: &[&str] = &[
 
 struct EnvLockGuard {
     _codex_home: EnvGuard,
+    _wework_codex_home: EnvGuard,
     _codex_home_directory: tempfile::TempDir,
+    _workbench_home: EnvGuard,
+    _workbench_home_directory: tempfile::TempDir,
+    _capabilities_home: EnvGuard,
+    _bundled_plugin_marketplace: EnvGuard,
     _guard: MutexGuard<'static, ()>,
 }
 
@@ -52,9 +60,25 @@ async fn env_lock() -> EnvLockGuard {
     // executor home. Keep personal projects out of every IPC fixture.
     let codex_home_directory = tempfile::tempdir().unwrap();
     let codex_home = EnvGuard::set("CODEX_HOME", codex_home_directory.path().to_str().unwrap());
+    let wework_codex_home = EnvGuard::set(
+        "WEGENT_CODEX_HOME",
+        codex_home_directory.path().to_str().unwrap(),
+    );
+    let workbench_home_directory = tempfile::tempdir().unwrap();
+    let workbench_home = EnvGuard::set(
+        "WEGENT_WORKBENCH_HOME",
+        workbench_home_directory.path().to_str().unwrap(),
+    );
+    let capabilities_home = EnvGuard::remove("WEGENT_CAPABILITIES_HOME");
+    let bundled_plugin_marketplace = EnvGuard::remove("WEGENT_BUNDLED_PLUGIN_MARKETPLACE_DIR");
     EnvLockGuard {
         _codex_home: codex_home,
+        _wework_codex_home: wework_codex_home,
         _codex_home_directory: codex_home_directory,
+        _workbench_home: workbench_home,
+        _workbench_home_directory: workbench_home_directory,
+        _capabilities_home: capabilities_home,
+        _bundled_plugin_marketplace: bundled_plugin_marketplace,
         _guard: guard,
     }
 }
@@ -68,6 +92,12 @@ impl EnvGuard {
     fn set(key: &'static str, value: &str) -> Self {
         let previous = std::env::var(key).ok();
         std::env::set_var(key, value);
+        Self { key, previous }
+    }
+
+    fn remove(key: &'static str) -> Self {
+        let previous = std::env::var(key).ok();
+        std::env::remove_var(key);
         Self { key, previous }
     }
 }

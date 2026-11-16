@@ -66,6 +66,15 @@ describe('createDeliveryApi queue and assignment routes', () => {
     }
   })
 
+  it('reads project configuration from the uncached authoritative detail route', async () => {
+    const client = { get: vi.fn(async () => ({ id: 'project/1' })) } as unknown as HttpClient
+    const api = createDeliveryApi(client)
+
+    await api.getCloudProject('project/1')
+
+    expect(client.get).toHaveBeenCalledWith('/v1/projects/project%2F1', { cache: 'no-store' })
+  })
+
   it('recognizes only the canonical default work-item project', () => {
     const canonical = {
       id: DEFAULT_WORK_ITEM_PROJECT_ID,

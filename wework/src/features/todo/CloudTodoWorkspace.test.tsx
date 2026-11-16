@@ -562,6 +562,12 @@ function services(overrides: Partial<WorkbenchServices> = {}): WorkbenchServices
     ...overrides,
   } as WorkbenchServices
   const deliveryApi = workbenchServices.deliveryApi!
+  deliveryApi.getCloudProject = vi.fn(async projectId => {
+    const projects = await deliveryApi.listCloudProjects()
+    const found = projects.items.find(candidate => String(candidate.id) === String(projectId))
+    if (!found) throw new Error(`Project ${projectId} was not found`)
+    return found
+  })
   deliveryApi.getBoardSnapshot = vi.fn(async projectId => {
     const [{ items }, members, agents] = await Promise.all([
       deliveryApi.listLoopItems(projectId),
@@ -2347,6 +2353,113 @@ describe('CloudTodoWorkspace', () => {
     await waitFor(() => expect(screen.queryByTestId('board-view-editor')).not.toBeInTheDocument())
     expect(screen.queryByText('hongyu9')).not.toBeInTheDocument()
     expect(screen.getAllByText('发布').length).toBeGreaterThan(0)
+  })
+
+  it('renders MCP-configured views and reflects a refreshed default and column order', async () => {
+    const workbenchServices = services()
+    const boardViews: NonNullable<import('@/api/deliveries').CloudProject['board_views']> = {
+      schema_version: 1,
+      default_view_id: 'mcp-stages',
+      views: [
+        {
+          id: 'mcp-stages',
+          name: 'MCP stages',
+          columns: [
+            { id: 'working', type: 'status', value: 'in_progress' },
+            { id: 'backend', type: 'tag', value: 'backend' },
+            { id: 'unmatched', type: 'unmatched', value: 'Unplanned' },
+          ],
+          filter: { tags: ['backend'], match: 'all' },
+          sorts: { working: ['created-asc'] },
+        },
+      ],
+    }
+    const configuredProject = {
+      ...project,
+      version: 2,
+      tags: ['backend'],
+      board_views: boardViews,
+    }
+    vi.mocked(workbenchServices.deliveryApi!.listCloudProjects).mockResolvedValue({
+      items: [configuredProject],
+    })
+    vi.mocked(workbenchServices.deliveryApi!.listLoopItems).mockResolvedValue({
+      items: [
+        { ...item, tags: ['backend'] },
+        { ...item, id: 'WEG-2', title: 'Excluded frontend issue', tags: ['frontend'] },
+      ],
+    })
+    const props = {
+      user: { id: 1, user_name: 'local', email: 'local@example.com' } as User,
+      localProjects: [],
+      services: workbenchServices,
+    }
+    const columnIds = () =>
+      Array.from(document.querySelectorAll('section[data-testid^="cloud-todo-column-"]'), column =>
+        column.getAttribute('data-testid')
+      )
+    const mounted = render(<CloudTodoWorkspace {...props} />)
+    await userEvent.click((await screen.findAllByText('Wegent V4'))[0])
+
+    expect(await screen.findByTestId('cloud-todo-column-working')).toHaveTextContent(item.title)
+    expect(screen.getByTestId('board-view-picker')).toHaveTextContent('MCP stages')
+    expect(columnIds()).toEqual([
+      'cloud-todo-column-working',
+      'cloud-todo-column-backend',
+      'cloud-todo-column-unmatched',
+    ])
+    expect(screen.queryByText('Excluded frontend issue')).not.toBeInTheDocument()
+    await userEvent.click(screen.getByTestId('board-view-picker'))
+    await userEvent.click(screen.getByTestId('board-view-default'))
+    expect(await screen.findByTestId('cloud-todo-column-in_progress')).toBeInTheDocument()
+    expect(screen.queryByTestId('cloud-todo-column-working')).not.toBeInTheDocument()
+    expect(workbenchServices.deliveryApi!.updateCloudProject).not.toHaveBeenCalled()
+
+    mounted.unmount()
+    vi.mocked(workbenchServices.deliveryApi!.listCloudProjects).mockResolvedValue({
+      items: [
+        {
+          ...project,
+          version: 3,
+          tags: ['backend'],
+          board_views: {
+            ...boardViews,
+            views: [
+              { ...boardViews.views[0], columns: [...boardViews.views[0].columns].reverse() },
+            ],
+          },
+        },
+      ],
+    })
+    render(<CloudTodoWorkspace {...props} />)
+    await userEvent.click((await screen.findAllByText('Wegent V4'))[0])
+    expect(await screen.findByTestId('cloud-todo-column-working')).toHaveTextContent(item.title)
+    expect(screen.getByTestId('board-view-picker')).toHaveTextContent('MCP stages')
+    expect(columnIds()).toEqual([
+      'cloud-todo-column-unmatched',
+      'cloud-todo-column-backend',
+      'cloud-todo-column-working',
+    ])
+  })
+
+  it('does not grant global grouping writes for an explicit null permission', async () => {
+    const workbenchServices = services()
+    vi.mocked(workbenchServices.deliveryApi!.listCloudProjects).mockResolvedValue({
+      items: [{ ...project, access_role: null }],
+    })
+    localStorage.setItem('wework-board-group:1:11', 'priority')
+    render(
+      <CloudTodoWorkspace
+        user={{ id: 1, user_name: 'local', email: 'local@example.com' } as User}
+        localProjects={[]}
+        services={workbenchServices}
+      />
+    )
+    await userEvent.click((await screen.findAllByText('Wegent V4'))[0])
+    expect(await screen.findByTestId('cloud-board-save-global')).toBeDisabled()
+    await userEvent.click(screen.getByTestId('board-view-picker'))
+    expect(screen.queryByTestId('board-view-edit')).not.toBeInTheDocument()
+    expect(workbenchServices.deliveryApi!.updateCloudProject).not.toHaveBeenCalled()
   })
 
   it('opens the current mixed lanes from board settings and keeps default workflow settings separate', async () => {

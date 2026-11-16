@@ -402,11 +402,7 @@ export function createWeworkDeliverySharedWorkspaceApi(
         return (await deliveryApi.listCloudProjects()).items.map(toProject)
       },
       async get(projectId) {
-        const project = (await deliveryApi.listCloudProjects()).items.find(
-          candidate => String(candidate.id) === String(projectId)
-        )
-        if (!project) throw new Error(`Project ${projectId} was not found`)
-        return toProject(project)
+        return toProject(await deliveryApi.getCloudProject(projectId))
       },
       create(input) {
         return deliveryApi
@@ -433,6 +429,13 @@ export function createWeworkDeliverySharedWorkspaceApi(
             projectId,
             withoutUndefined({
               version: input.version,
+              operation_id: input.operationId,
+              idempotency_key: input.idempotencyKey,
+              dry_run: input.dryRun,
+              tag_change: input.tagChange,
+              collaboration_policy: input.collaborationPolicy,
+              member_changes: input.memberChanges,
+              assistant_roster_changes: input.assistantRosterChanges,
               name: input.name,
               description: input.description,
               tags: input.tags,
@@ -445,8 +448,8 @@ export function createWeworkDeliverySharedWorkspaceApi(
               >[1]['provider_config'],
               board_config: input.boardConfig,
               board_views: input.boardViews,
-              tag_change: input.tagChange,
               card_display: input.cardDisplay,
+              ai_automation: input.aiAutomation,
               pull_request_automation: input.pullRequestAutomation as Parameters<
                 DeliveryApi['updateCloudProject']
               >[1]['pull_request_automation'],

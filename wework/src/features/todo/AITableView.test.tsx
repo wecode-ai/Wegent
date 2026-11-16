@@ -148,6 +148,25 @@ describe('AITableView', () => {
     expect(screen.queryByTestId('aitable-record-delete-rec1')).not.toBeInTheDocument()
   })
 
+  it.each([null, undefined])(
+    'distinguishes permission %s from a legacy missing role',
+    async access_role => {
+      const api = apiWith([field({ id: 'title', name: 'Title' })], [])
+      render(<AITableView api={api} project={{ ...project, access_role }} />)
+      await screen.findByText('Title')
+      if (access_role === null) {
+        expect(screen.queryByTestId('aitable-add-field')).not.toBeInTheDocument()
+        expect(screen.queryByTestId('aitable-add-record')).not.toBeInTheDocument()
+      } else {
+        fireEvent.change(screen.getByTestId('aitable-field-name'), {
+          target: { value: 'New field' },
+        })
+        expect(screen.getByTestId('aitable-add-field')).toBeEnabled()
+        expect(screen.getByTestId('aitable-add-record')).toBeEnabled()
+      }
+    }
+  )
+
   it('shows record mutation failures without removing local data', async () => {
     vi.spyOn(window, 'confirm').mockReturnValueOnce(true)
     const api = apiWith(

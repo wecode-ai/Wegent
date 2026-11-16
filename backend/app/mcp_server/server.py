@@ -52,6 +52,7 @@ from app.mcp_server.context import (
     reset_mcp_context,
     set_mcp_context,
 )
+from app.mcp_server.project_admin_server import ProjectAdminMCP
 
 logger = logging.getLogger(__name__)
 
@@ -561,7 +562,7 @@ def ensure_subscription_tools_registered() -> None:
     _register_subscription_tools()
 
 
-wework_space_mcp_server = FastMCP(
+wework_space_mcp_server = ProjectAdminMCP(
     "wegent-wework-space-mcp",
     stateless_http=True,
     json_response=True,
@@ -579,7 +580,7 @@ def ensure_wework_space_tools_registered() -> None:
     if _wework_space_tools_registered:
         return
     from app.mcp_server.tool_registry import register_tools_to_server
-    from app.mcp_server.tools import wework_space  # noqa: F401
+    from app.mcp_server.tools import wework_project_admin, wework_space  # noqa: F401
 
     count = register_tools_to_server(wework_space_mcp_server, "wework_space")
     logger.info("[MCP:WeworkSpace] Registered %s tools", count)

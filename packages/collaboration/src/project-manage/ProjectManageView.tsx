@@ -15,10 +15,7 @@ import { BoardLayoutEditor } from './BoardLayoutEditor'
 import { ProjectProviderSection, ProjectTagsSection } from './ProjectManageSections'
 import { ProjectMembersSection } from './ProjectMembersSection'
 import { useProjectMembers } from './useProjectMembers'
-import {
-  createVersionMutationQueue,
-  type VersionMutationQueue,
-} from '../versionMutationQueue'
+import { createVersionMutationQueue, type VersionMutationQueue } from '../versionMutationQueue'
 import { repositoryAddress, repositoryProviderConfig } from './provider'
 import { collectProjectTags, updateBoardViewTag } from '../project-board/projectTags'
 import { hasTooManyTags, isTagNameTooLong } from '../tagging'
@@ -258,7 +255,6 @@ export function ProjectManageView<
     api,
     host,
     projectId: project.id,
-    currentUserId: project.current_user_id,
     onProjectUpdated,
     projectScopeRef,
     canManage: canManageMembers,

@@ -96,8 +96,9 @@ describe('local workspace catalog diagnostics', () => {
     async catalog => {
       const error = new Error('Private catalog failure')
       const listCloudProjects = vi.fn().mockRejectedValue(error)
+      const getCloudProject = vi.fn().mockRejectedValue(error)
       const api = createLocalWorkspaceApi(
-        { listCloudProjects } as unknown as LocalProjectSpaceApi,
+        { listCloudProjects, getCloudProject } as unknown as LocalProjectSpaceApi,
         1,
         'private-user',
         'private@example.com'
@@ -119,7 +120,12 @@ describe('local workspace catalog diagnostics', () => {
           expect.arrayContaining(['projects', 'workspace-settings'])
         )
       }
-      expect(listCloudProjects).toHaveBeenCalledTimes(catalog === 'projects' ? 1 : 2)
+      expect(listCloudProjects).toHaveBeenCalledOnce()
+      if (catalog === 'workspaces') {
+        expect(getCloudProject).toHaveBeenCalledExactlyOnceWith(DEFAULT_WORK_ITEM_PROJECT_ID)
+      } else {
+        expect(getCloudProject).not.toHaveBeenCalled()
+      }
       expect(JSON.stringify(vi.mocked(console.error).mock.calls)).not.toMatch(/private/i)
     }
   )
@@ -145,7 +151,12 @@ describe('local workspace catalog diagnostics', () => {
       const api = createLocalWorkspaceApi(
         {
           listCloudProjects: vi.fn().mockResolvedValue({
-            items: [{ id: DEFAULT_WORK_ITEM_PROJECT_ID, name: 'private-workspace', version: 1 }],
+            items: [{ id: DEFAULT_WORK_ITEM_PROJECT_ID, name: 'private-workspace' }],
+          }),
+          getCloudProject: vi.fn().mockResolvedValue({
+            id: DEFAULT_WORK_ITEM_PROJECT_ID,
+            name: 'private-workspace',
+            version: 2,
           }),
         } as unknown as LocalProjectSpaceApi,
         1,
@@ -158,7 +169,7 @@ describe('local workspace catalog diagnostics', () => {
       )!
 
       await expect(api.workspaces!.list()).resolves.toMatchObject([
-        { agent_count: scenario.agentCount },
+        { agent_count: scenario.agentCount, version: 2 },
       ])
 
       expect(list).toHaveBeenCalledOnce()

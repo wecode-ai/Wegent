@@ -124,7 +124,7 @@ type ExecutionEnvironmentScope =
       >
     }
 
-function canManageEnvironment(role: string | undefined, workspaceScope: boolean) {
+function canManageEnvironment(role: string | null | undefined, workspaceScope: boolean) {
   return role === 'Owner' || role === 'Maintainer' || (workspaceScope && role === 'Developer')
 }
 

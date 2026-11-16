@@ -91,6 +91,10 @@ export interface CollaborationProject {
     statuses: CollaborationStatus[];
     schedule_view?: CollaborationScheduleViewConfig;
   };
+  collaboration_policy?: import("./projectAdmin").ProjectCollaborationPolicy;
+  project_admin_result?:
+    | import("./projectAdmin").ProjectAdminWriteResult
+    | null;
   card_display?: {
     show_assignee: boolean;
     show_priority: boolean;
@@ -102,7 +106,7 @@ export interface CollaborationProject {
   created_by_user_id: number;
   current_user_id?: number;
   current_user_name?: string;
-  access_role?: CollaborationRole;
+  access_role?: CollaborationRole | null;
   public_access?: { role: "Viewer" } | null;
   default_issue_security?: "open" | "related";
   visibility?: CollaborationProjectVisibility;

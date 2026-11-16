@@ -2,112 +2,165 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
-"""Transactional project tag changes across the catalog, Issues and saved views."""
+"""Plan atomic tag cleanup across the registry, Issues and saved projections."""
 
 from copy import deepcopy
 
-from fastapi import HTTPException
+from pydantic import ValidationError
 from sqlalchemy.orm import Session
 
-from app.models.cloud_project import CloudProject
-from app.models.delivery import LoopItem, loop_datetime_is_unset
+from app.models.delivery import CloudProject, LoopItem
 from app.schemas.board_views import BoardViews
-from app.schemas.cloud_project import ProjectTagChange
-from app.schemas.delivery import LoopItemUpdate
+from app.schemas.cloud_project import CloudProjectUpdate
 from app.schemas.tagging import normalize_tags
-from shared.telemetry.decorators import trace_sync
+from app.services.cloud_projects.admin_errors import config_error
+
+REMOVED_TAGS_KEY = "project_removed_tags"
 
 
-def replace_tag(tags: list[str], change: ProjectTagChange) -> list[str]:
-    """Replace one tag without losing unrelated tags or introducing duplicates."""
+def validate_issue_tags(project: CloudProject, tags: list[str]) -> None:
+    removed = set((project.metadata_json or {}).get(REMOVED_TAGS_KEY, []))
+    if removed.intersection(tags):
+        raise config_error(
+            "invalid_config",
+            "A removed tag must be recreated in project settings before reuse",
+            field="tags",
+        )
+
+
+def _replace(tags: list[str], changes: dict[str, str | None]) -> list[str]:
     return list(
         dict.fromkeys(
-            change.target if tag == change.source else tag
-            for tag in tags
-            if tag != change.source or change.target is not None
+            target for tag in tags if (target := changes.get(tag, tag)) is not None
         )
     )
 
 
-def change_view_tags(metadata: dict, change: ProjectTagChange) -> None:
-    """Validate the complete new projection before writing any Issue."""
+def require_writable_views(metadata: dict) -> None:
     config = metadata.get("board_views")
-    if config is None:
-        return
-    if config.get("schema_version") != 1:
-        raise HTTPException(409, "Upgrade before changing tags in newer board views")
-    try:
-        BoardViews.model_validate(config)
-    except ValueError as exc:
-        raise HTTPException(422, "Project has invalid board views") from exc
-    for view in config.get("views", []):
-        removed = set()
-        for column in view["columns"]:
-            if column["type"] == "tag" and column["value"] == change.source:
-                if change.target is None:
-                    removed.add(column["id"])
-                else:
-                    column["value"] = change.target
-        view["columns"] = [c for c in view["columns"] if c["id"] not in removed]
-        if not view["columns"]:
-            raise HTTPException(422, "Edit the view before removing its only lane")
-        if "filter" in view:
-            view["filter"]["tags"] = replace_tag(view["filter"].get("tags", []), change)
-        if "sorts" in view:
-            view["sorts"] = {k: v for k, v in view["sorts"].items() if k not in removed}
-    try:
-        BoardViews.model_validate(config)
-    except ValueError as exc:
-        raise HTTPException(422, "Tag change would create invalid board views") from exc
-
-
-@trace_sync("cloud_projects.change_tag", tracer_name="backend")
-def change_project_tag(
-    db: Session, project_id: int, user_id: int, version: int, change: ProjectTagChange
-) -> CloudProject:
-    """Commit all references together, or roll back every write on any failure."""
-    from app.services.cloud_projects.service import CloudProjectService
-    from app.services.loop_items.service import loop_item_service
-
-    try:
-        project = CloudProjectService._lock_project(db, project_id)
-        if project.version != version:
-            raise HTTPException(409, "Cloud project changed")
-        if project.task_provider != "local":
-            raise HTTPException(
-                422, "Project tag changes require locally stored Issues"
-            )
-        metadata = deepcopy(project.metadata_json or {})
-        metadata["tags"] = replace_tag(normalize_tags(metadata.get("tags")), change)
-        change_view_tags(metadata, change)
-        items = (
-            db.query(LoopItem)
-            .filter(
-                LoopItem.cloud_project_id == project.id,
-                loop_datetime_is_unset(LoopItem.deleted_at),
-            )
-            .order_by(LoopItem.id)
-            .populate_existing()
-            .with_for_update()
-            .all()
+    if config is not None and (
+        not isinstance(config, dict) or config.get("schema_version", 1) != 1
+    ):
+        raise config_error(
+            "version_conflict",
+            "Upgrade before changing board views saved by a newer version",
+            field="board_views",
+            status_code=409,
         )
-        for item in items:
-            tags = normalize_tags((item.metadata_json or {}).get("tags"))
-            if change.source in tags:
-                loop_item_service.update(
-                    db,
-                    item.id,
-                    user_id,
-                    LoopItemUpdate(
-                        version=item.version, tags=replace_tag(tags, change)
-                    ),
-                    commit=False,
-                )
-        project.metadata_json = metadata
-        project.version += 1
-        db.commit()
-        db.refresh(project)
-        return project
-    except Exception:
-        db.rollback()
-        raise
+
+
+def _view_references(metadata: dict, changes: dict[str, str | None]) -> None:
+    config = metadata.get("board_views")
+    if config is not None:
+        require_writable_views(metadata)
+        try:
+            BoardViews.model_validate(config)
+            for index, view in enumerate(config.get("views", [])):
+                removed = set()
+                for column in view["columns"]:
+                    if column["type"] == "tag" and column["value"] in changes:
+                        target = changes[column["value"]]
+                        if target is None:
+                            removed.add(column["id"])
+                        else:
+                            column["value"] = target
+                view["columns"] = [
+                    column for column in view["columns"] if column["id"] not in removed
+                ]
+                if not view["columns"]:
+                    raise config_error(
+                        "partial_reference_conflict",
+                        "Removing this tag would leave a saved view without columns",
+                        field=f"board_views.views.{index}.columns",
+                    )
+                if "filter" in view:
+                    view["filter"]["tags"] = _replace(
+                        view["filter"].get("tags", []), changes
+                    )
+                if "sorts" in view:
+                    view["sorts"] = {
+                        key: rules
+                        for key, rules in view["sorts"].items()
+                        if key not in removed
+                    }
+            BoardViews.model_validate(config)
+        except (ValidationError, AttributeError, KeyError, TypeError) as exc:
+            raise config_error(
+                "partial_reference_conflict",
+                "A saved view has unsupported tag references",
+                field="board_views",
+            ) from exc
+    schedule = metadata.get("board_config", {}).get("schedule_view", {})
+    if schedule.get("tag_filter") in changes:
+        schedule["tag_filter"] = changes[schedule["tag_filter"]]
+
+
+def plan_tag_update(
+    db: Session, project: CloudProject, values: CloudProjectUpdate
+) -> tuple[dict, list[tuple[LoopItem, dict]], list[str] | None]:
+    """Validate every reference before mutating mapped objects, including archives."""
+    metadata = deepcopy(project.metadata_json or {})
+    current = list(project.tags)
+    target = values.tags
+    changes: dict[str, str | None] = {}
+    if values.tag_change is not None:
+        old, new = values.tag_change.source, values.tag_change.target
+        if old not in current:
+            raise config_error(
+                "invalid_config", "Tag does not exist", field="tag_change.source"
+            )
+        changes[old] = new
+        target = _replace(current, changes)
+    elif target is not None:
+        changes = {tag: None for tag in current if tag not in target}
+    if target is not None:
+        removed = set(metadata.get(REMOVED_TAGS_KEY, []))
+        removed.update(
+            tag for tag, replacement in changes.items() if tag != replacement
+        )
+        metadata[REMOVED_TAGS_KEY] = sorted(removed - set(target))
+    if not changes:
+        return metadata, [], target
+    if project.task_provider != "local":
+        raise config_error(
+            "partial_reference_conflict",
+            "External provider references cannot be changed atomically",
+            field="tags",
+        )
+    require_writable_views(metadata)
+    # A replacement is checked as part of the complete submitted configuration.
+    previous_views = metadata.pop("board_views", None) if values.board_views else None
+    _view_references(metadata, changes)
+    if previous_views is not None:
+        metadata["board_views"] = previous_views
+    items = (
+        db.query(LoopItem)
+        .filter(LoopItem.cloud_project_id == project.id)
+        .order_by(LoopItem.id)
+        .populate_existing()
+        .with_for_update()
+        .all()
+    )
+    planned = []
+    for item in items:
+        if item.metadata_json is not None and not isinstance(item.metadata_json, dict):
+            raise config_error(
+                "partial_reference_conflict",
+                "An Issue has unsupported tag references",
+                field=f"issues.{item.id}.tags",
+            )
+        item_metadata = deepcopy(item.metadata_json or {})
+        if item_metadata.get("tags") is not None and not isinstance(
+            item_metadata["tags"], list
+        ):
+            raise config_error(
+                "partial_reference_conflict",
+                "An Issue has unsupported tag references",
+                field=f"issues.{item.id}.tags",
+            )
+        original = normalize_tags(item_metadata.get("tags"))
+        tags = _replace(original, changes)
+        if tags != original:
+            item_metadata["tags"] = tags
+            planned.append((item, item_metadata))
+    return metadata, planned, target

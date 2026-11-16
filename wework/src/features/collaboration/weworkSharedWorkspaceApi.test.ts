@@ -152,6 +152,7 @@ const deliveryFile: ProjectDeliveryFile = {
 function createMockDeliveryApi() {
   return {
     listCloudProjects: vi.fn().mockResolvedValue({ items: [project] }),
+    getCloudProject: vi.fn().mockResolvedValue(project),
     createCloudProject: vi.fn().mockResolvedValue(project),
     updateCloudProject: vi.fn().mockResolvedValue(project),
     archiveCloudProject: vi.fn().mockResolvedValue(undefined),
@@ -304,6 +305,7 @@ describe('createWeworkDeliverySharedWorkspaceApi', () => {
       capability_description: 'Reviewer',
     }
     vi.mocked(deliveryApi.listCloudProjects).mockResolvedValue({ items: [authoritative] })
+    vi.mocked(deliveryApi.getCloudProject).mockResolvedValue(authoritative)
     vi.mocked(deliveryApi.listCloudProjectMembers).mockResolvedValue([member])
     vi.mocked(deliveryApi.updateCloudProjectMember).mockResolvedValue(member)
     const api = createWeworkDeliverySharedWorkspaceApi(deliveryApi)
@@ -324,6 +326,10 @@ describe('createWeworkDeliverySharedWorkspaceApi', () => {
 
     await expect(api.projects.list()).resolves.toEqual([project])
     await expect(api.projects.get('project-1')).resolves.toEqual(project)
+    expect(deliveryApi.getCloudProject).toHaveBeenCalledWith('project-1')
+    vi.mocked(deliveryApi.getCloudProject).mockRejectedValueOnce(
+      new Error('Project missing-project was not found')
+    )
     await expect(api.projects.get('missing-project')).rejects.toThrow(
       'Project missing-project was not found'
     )
@@ -491,6 +497,85 @@ describe('createWeworkDeliverySharedWorkspaceApi', () => {
       item_ids: ['issue-1'],
     })
     await api.issues.markRead('issue-1')
+  })
+
+  it('uses the common project update route for typed administration and preserves audit results', async () => {
+    const deliveryApi = createMockDeliveryApi()
+    const adminResult = {
+      projectVersion: 5,
+      revision: 5,
+      before: { tags: ['old'] },
+      after: { tags: ['new'] },
+      diff: [{ path: 'tags', before: ['old'], after: ['new'] }],
+      actor: { userId: 8 },
+      operationId: 'rename-tag-1',
+      appliedAt: null,
+      auditId: null,
+      dryRun: true,
+    }
+    vi.mocked(deliveryApi.updateCloudProject).mockResolvedValue({
+      ...project,
+      access_role: null,
+      permission_sources: [],
+      project_admin_result: adminResult,
+    })
+    const api = createWeworkDeliverySharedWorkspaceApi(deliveryApi)
+    const boardViews = {
+      schema_version: 1,
+      default_view_id: 'work',
+      views: [
+        {
+          id: 'work',
+          name: 'Work',
+          columns: [{ id: 'new', type: 'tag' as const, value: 'new' }],
+        },
+      ],
+    }
+
+    const result = await api.projects.update('project-1', {
+      version: 5,
+      operationId: 'rename-tag-1',
+      idempotencyKey: 'rename-tag-1',
+      dryRun: true,
+      tagChange: { source: 'old', target: 'new' },
+      boardViews,
+      collaborationPolicy: { content: 'Require review.' },
+      memberChanges: [{ operation: 'update', user_id: 8, capability_description: 'QA' }],
+      assistantRosterChanges: [
+        {
+          agent_id: 'assistant-1',
+          agent_version: 2,
+          status: 'archived',
+          wegent_team_id: 22,
+          execution_device_id: 'device-1',
+          default_runtime_profile_id: null,
+        },
+      ],
+    })
+
+    expect(deliveryApi.updateCloudProject).toHaveBeenCalledWith('project-1', {
+      version: 5,
+      operation_id: 'rename-tag-1',
+      idempotency_key: 'rename-tag-1',
+      dry_run: true,
+      tag_change: { source: 'old', target: 'new' },
+      board_views: boardViews,
+      collaboration_policy: { content: 'Require review.' },
+      member_changes: [{ operation: 'update', user_id: 8, capability_description: 'QA' }],
+      assistant_roster_changes: [
+        {
+          agent_id: 'assistant-1',
+          agent_version: 2,
+          status: 'archived',
+          wegent_team_id: 22,
+          execution_device_id: 'device-1',
+          default_runtime_profile_id: null,
+        },
+      ],
+    })
+    expect(result.project_admin_result).toEqual(adminResult)
+    expect(result.access_role).toBeNull()
+    expect(result.permission_sources).toEqual([])
   })
 
   it('omits absent project and issue fields while preserving explicit null values', async () => {

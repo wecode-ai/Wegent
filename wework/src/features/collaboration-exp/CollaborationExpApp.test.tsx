@@ -317,8 +317,10 @@ describe('CollaborationExpApp integration', () => {
         metadata: { system_kind: 'default_work_items' },
       })
       const listLocalProjects = vi.fn(async () => ({ items: [localProject] }))
+      const getLocalProject = vi.fn(async () => ({ ...localProject, version: 2 }))
       const local = {
         listCloudProjects: listLocalProjects,
+        getCloudProject: getLocalProject,
         listMyWork: vi.fn(async () => ({ items: [], next_cursor: null })),
       } as unknown as ProjectSpaceApis['local']
       vi.mocked(api.projects.get).mockImplementation(async id => {
@@ -350,7 +352,8 @@ describe('CollaborationExpApp integration', () => {
         expect(within(dialog).getByTestId('collaboration-exp-create-submit')).toBeEnabled()
       )
       expect(within(dialog).queryByRole('alert')).not.toBeInTheDocument()
-      expect(listLocalProjects).toHaveBeenCalledTimes(localReads + 1)
+      expect(listLocalProjects).toHaveBeenCalledTimes(localReads)
+      expect(getLocalProject).toHaveBeenCalledExactlyOnceWith('default-work-items')
       expect(api.projects.get).not.toHaveBeenCalledWith('default-work-items')
       expect(api.members.list).not.toHaveBeenCalled()
     }

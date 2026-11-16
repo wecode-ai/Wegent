@@ -39,6 +39,7 @@ mod context;
 pub(crate) mod git_connections;
 mod human_requests;
 mod parent_issue;
+mod project_admin;
 mod stand_in;
 mod stand_in_questions;
 pub(crate) mod stand_in_tasks;
@@ -482,8 +483,16 @@ pub(crate) async fn handle_request_with_context(
                 None => error_response(id, -32602, "Unknown Wework control resource"),
             }
         }),
-        "tools/list" => id.map(|id| {
-            let tools = visible_tools(runtime, context);
+        "tools/list" => {
+            let id = id?;
+            let mut tools = visible_tools(runtime, context);
+            if let Err(error) =
+                project_admin::extend_visible_tools(runtime, context, &mut tools).await
+            {
+                write_space_mcp_log(&format!(
+                    "[wework-space-mcp] stage=project_admin_discovery_unavailable error={error}"
+                ));
+            }
             let names = tools
                 .iter()
                 .filter_map(|tool| tool.get("name").and_then(Value::as_str))
@@ -505,8 +514,8 @@ pub(crate) async fn handle_request_with_context(
                     stand_in::tool_contract_diagnostics(&tools),
                 ));
             }
-            result_response(id, json!({"tools": tools}))
-        }),
+            Some(result_response(id, json!({"tools": tools})))
+        }
         "tools/call" => {
             let id = id?;
             let name = request.pointer("/params/name").and_then(Value::as_str)?;
@@ -908,6 +917,11 @@ async fn call_tool_with_runtime_context(
     }
     if let Some(category) = board_tool_category(name) {
         if !grant_allows(grant, category) {
+            if project_admin::is_admin_tool(name) {
+                return project_admin::permission_denied(&format!(
+                    "The current dispatch role cannot call wework_space tool: {name}"
+                ));
+            }
             return text_result(
                 format!("The current dispatch role cannot call wework_space tool: {name}"),
                 true,
@@ -925,7 +939,13 @@ async fn call_tool_with_runtime_context(
     {
         match parent_issue::authorize_read(runtime, name, &arguments, context).await {
             Ok(true) => {}
+            Ok(false) if project_admin::is_admin_tool(name) => {
+                return project_admin::permission_denied(&error);
+            }
             Ok(false) => return text_result(error, true),
+            Err(error) if project_admin::is_admin_tool(name) => {
+                return project_admin::permission_denied(&error);
+            }
             Err(error) => return text_result(error, true),
         }
     }
@@ -1013,8 +1033,19 @@ async fn call_tool_with_runtime_context(
             collaboration_dispatcher: context.cloud_collaboration_dispatcher.as_ref(),
         };
         return match call_backend_tool(&backend_context, name, &arguments).await {
-            Ok(value) => text_result(value.to_string(), false),
-            Err(error) => text_result(error, true),
+            Ok(value) => {
+                let mut result = text_result(value.to_string(), false);
+                if project_admin::is_admin_tool(name) {
+                    result["structuredContent"] = value;
+                }
+                result
+            }
+            Err(error) => {
+                if project_admin::is_admin_tool(name) {
+                    return project_admin::tool_error(error);
+                }
+                text_result(error, true)
+            }
         };
     }
     if name == "send_notification" {
@@ -1024,11 +1055,17 @@ async fn call_tool_with_runtime_context(
         );
     }
     if requested_project_id.is_some() && !is_locally_routed {
+        if project_admin::is_admin_tool(name) {
+            return project_admin::disconnected();
+        }
         return text_result(
             "The current project space requires the WeWork Backend connection. Retry through wework_space after the connection is restored; do not use git or provider APIs."
                 .to_owned(),
             true,
         );
+    }
+    if project_admin::is_admin_tool(name) && name != "update_space" {
+        return project_admin::tool_error(project_admin::unavailable());
     }
     let result = match name {
         "list_spaces" => unreachable!("list_spaces is handled before tool routing"),
@@ -1954,6 +1991,9 @@ async fn call_backend_tool(
     name: &str,
     arguments: &Value,
 ) -> Result<Value, String> {
+    if project_admin::is_admin_tool(name) {
+        return project_admin::call(context, name, arguments).await;
+    }
     let client = reqwest::Client::new();
     let base = format!("{}/api/v1", context.backend_url.trim_end_matches('/'));
     let project_id = context.project_id;
@@ -2546,9 +2586,6 @@ async fn call_backend_tool(
         "create_space" => client
             .post(format!("{base}/cloud-projects"))
             .json(arguments),
-        "update_space" => client
-            .patch(format!("{base}/cloud-projects/{project_id}"))
-            .json(arguments.get("project").unwrap_or(arguments)),
         "describe_space_table" => {
             client.get(format!("{base}/cloud-projects/{project_id}/aitable/table"))
         }
@@ -2972,7 +3009,7 @@ fn delivery_fulfillments_schema() -> Value {
 }
 
 fn tools() -> Vec<Value> {
-    vec![
+    let mut tools = vec![
         human_requests::list_tool(),
         human_requests::assign_tool(),
         human_requests::blocking_tool(),
@@ -3550,7 +3587,9 @@ fn tools() -> Vec<Value> {
                 "required": ["space_id", "field_id"]
             }),
         ),
-    ]
+    ];
+    tools.extend(project_admin::discovery_tools());
+    tools
 }
 
 fn visible_tools(runtime: &TaskRuntime, context: &SpaceMcpRequestContext) -> Vec<Value> {
@@ -3620,6 +3659,8 @@ fn board_tool_category(name: &str) -> Option<BoardToolCategory> {
         return Some(BoardToolCategory::Execution);
     }
     match name {
+        _ if project_admin::is_write_tool(name) => Some(BoardToolCategory::Management),
+        _ if project_admin::is_read_tool(name) => Some(BoardToolCategory::Execution),
         "create_space"
         | "update_space"
         | "create_board_item"

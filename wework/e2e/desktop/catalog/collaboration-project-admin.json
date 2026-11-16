@@ -1,0 +1,18 @@
+{
+  "order": 73010,
+  "scenario": "./scenarios/collaboration-project-admin.scenario.mjs",
+  "scenarioOnly": true,
+  "paths": [
+    "backend/app/mcp_server/project_admin_server.py",
+    "backend/app/mcp_server/tools/wework_project_admin.py",
+    "backend/app/services/cloud_projects/admin*.py",
+    "packages/collaboration/src/projectAdmin.ts"
+  ],
+  "ci": {
+    "core": {
+      "order": 18010,
+      "shard": 8,
+      "position": 18010
+    }
+  }
+}

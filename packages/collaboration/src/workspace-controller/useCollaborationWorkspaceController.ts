@@ -1073,11 +1073,23 @@ export function createCollaborationWorkspaceControllerCommands({
   return {
     async loadProjectCatalog(options) {
       const isCurrent = options?.isCurrent ?? (() => true);
+      const mutationGenerations = new Map(projectMutationGenerations);
       dispatch({ type: "loading", value: true });
       try {
         const projects = await api.projects.list();
         if (!isCurrent()) return;
-        catalogProjects = projects;
+        const currentProjects = new Map(
+          catalogProjects.map((item) => [item.id, item]),
+        );
+        catalogProjects = projects.map((project) => {
+          const current = currentProjects.get(project.id);
+          const changed =
+            (mutationGenerations.get(project.id) ?? 0) !==
+            projectMutationGeneration(project.id);
+          return changed && current && current.version >= project.version
+            ? current
+            : project;
+        });
         dispatch({ type: "project-catalog-loaded", projects: catalogProjects });
       } catch {
         if (!isCurrent()) return;
@@ -1481,13 +1493,27 @@ export function createCollaborationWorkspaceControllerCommands({
       }
     },
     async refreshProjectAgents(projectId) {
+      markProjectMutated(projectId);
+      const mutationGeneration = projectMutationGeneration(projectId);
       try {
+        const [project, agents] = await Promise.all([
+          api.projects.get(projectId),
+          api.agents.list(projectId),
+        ]);
+        if (mutationGeneration !== projectMutationGeneration(projectId)) return;
+        catalogProjects = catalogProjects.some((item) => item.id === projectId)
+          ? catalogProjects.map((item) =>
+              item.id === projectId ? project : item,
+            )
+          : [project, ...catalogProjects];
+        dispatch({ type: "replace-project", project });
         dispatch({
           type: "replace-project-agents",
           projectId,
-          agents: await api.agents.list(projectId),
+          agents,
         });
       } catch {
+        if (mutationGeneration !== projectMutationGeneration(projectId)) return;
         reportError(messages.loadFailed, "load");
       }
     },

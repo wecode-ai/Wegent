@@ -238,17 +238,37 @@ class CloudProjectService(CloudProjectMemberService):
         user_id: int,
         values: CloudProjectUpdate,
     ) -> CloudProject:
-        project = require_cloud_project_role(
-            db, project_id, user_id, BaseRole.Maintainer
-        ).project
-        if values.tag_change is not None:
-            from app.services.cloud_projects.tags import change_project_tag
+        from app.services.cloud_projects.admin import update_project
 
-            return change_project_tag(
-                db, project_id, user_id, values.version, values.tag_change
-            )
+        return update_project(self, db, project_id, user_id, values)
+
+    @staticmethod
+    def admin_result(project: CloudProject) -> dict:
+        return project._project_admin_result
+
+    def admin_config(self, db: Session, project_id: int, user_id: int) -> dict:
+        from app.services.cloud_projects.admin import project_admin_config
+
+        return project_admin_config(self.get(db, project_id, user_id), db, user_id)
+
+    def _apply_update(
+        self,
+        db: Session,
+        project: CloudProject,
+        user_id: int,
+        values: CloudProjectUpdate,
+    ) -> CloudProject:
         updates = values.model_dump(
-            exclude={"version", "tag_change"}, exclude_none=True
+            exclude={
+                "version",
+                "operation_id",
+                "idempotency_key",
+                "dry_run",
+                "tag_change",
+                "member_changes",
+                "assistant_roster_changes",
+            },
+            exclude_none=True,
         )
         if (
             "membership_mode" in values.model_fields_set
@@ -257,6 +277,7 @@ class CloudProjectService(CloudProjectMemberService):
             or "card_display" in values.model_fields_set
             or "board_config" in values.model_fields_set
             or "board_views" in values.model_fields_set
+            or "collaboration_policy" in values.model_fields_set
             or "ai_automation" in values.model_fields_set
             or "pull_request_automation" in values.model_fields_set
             or "workflow_definition" in values.model_fields_set
@@ -267,17 +288,10 @@ class CloudProjectService(CloudProjectMemberService):
         ):
             metadata = dict(project.metadata_json or {})
             if values.board_views is not None:
-                previous_views = metadata.get("board_views")
-                if (
-                    isinstance(previous_views, dict)
-                    and previous_views.get("schema_version") != 1
-                ):
-                    raise HTTPException(
-                        status_code=409,
-                        detail="Board views were saved by a newer version. Upgrade before editing.",
-                    )
                 metadata["board_views"] = values.board_views.model_dump()
                 updates.pop("board_views", None)
+            if "collaboration_policy" in updates:
+                metadata["collaboration_policy"] = updates.pop("collaboration_policy")
             if values.membership_mode is not None:
                 metadata["membership_mode"] = updates.pop("membership_mode")
             if "tags" in values.model_fields_set and values.tags is not None:
@@ -466,17 +480,7 @@ class CloudProjectService(CloudProjectMemberService):
         if updated != 1:
             db.rollback()
             raise HTTPException(status.HTTP_409_CONFLICT, "Cloud project changed")
-        from app.services.collaboration_revocation import (
-            revoke_unauthorized_project_work,
-        )
-        from app.services.loop_item_executions.cancellation import (
-            request_execution_cancellations,
-        )
-
         db.flush()
-        pending = revoke_unauthorized_project_work(db, project.id)
-        db.commit()
-        request_execution_cancellations(pending)
         db.refresh(project)
         return project
 

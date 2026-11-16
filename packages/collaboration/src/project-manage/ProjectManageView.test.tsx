@@ -141,7 +141,7 @@ function project(id: string, visibility: 'private' | 'public', version = 1): Pro
 
 function createApi() {
   return {
-    getProject: vi.fn(),
+    getProject: vi.fn().mockImplementation(async id => project(id, 'private')),
     listMembers: vi.fn().mockResolvedValue([]),
     listItems: vi.fn().mockResolvedValue({ items: [] }),
     searchUsers: vi.fn().mockResolvedValue({ users: [] }),
@@ -269,7 +269,11 @@ describe('project tag view integration', () => {
       const api = createApi()
       const host = createHost()
       host.renderActionMenu = vi.fn(() => null)
-      let current = { ...project('project-a', 'private'), tags: ['bug'], board_views: boardViews }
+      let current = {
+        ...project('project-a', 'private'),
+        tags: ['bug'],
+        board_views: boardViews,
+      }
       const onUpdated = vi.fn(updated => {
         current = updated
       })
@@ -314,7 +318,10 @@ describe('project tag view integration', () => {
       await vi.waitFor(() => expect(onUpdated).toHaveBeenCalledOnce())
       expect(api.updateProject).toHaveBeenCalledWith('project-a', {
         version: 1,
-        tag_change: { source: '测试', target: action === 'rename' ? '验证' : null },
+        tag_change: {
+          source: '测试',
+          target: action === 'rename' ? '验证' : null,
+        },
       })
       tree = renderView(api, host, current, onUpdated)
       expect(findByTestId(tree, 'cloud-project-tag-测试')).toBeNull()
@@ -370,7 +377,10 @@ describe('project tag change failures', () => {
       expect(onUpdated).not.toHaveBeenCalled()
       expect(api.updateProject).toHaveBeenCalledWith('project-a', {
         version: 1,
-        tag_change: { source: 'old', target: action === 'rename' ? 'new' : null },
+        tag_change: {
+          source: 'old',
+          target: action === 'rename' ? 'new' : null,
+        },
       })
     }
   )
@@ -396,7 +406,7 @@ describe('ProjectManageView project scope', () => {
     expect(findByTestId(tree, 'cloud-member-search')).toBeTruthy()
   })
 
-  it.each([false, true])('reloads members after adding, with initial failure: %s', async failed => {
+  it.each([false, true])('refreshes members and version after adding: %s', async failed => {
     vi.useFakeTimers()
     vi.stubGlobal('window', globalThis)
     const api = createApi()
@@ -430,42 +440,107 @@ describe('ProjectManageView project scope', () => {
       .mockResolvedValueOnce([owner, addedMember])
     vi.mocked(api.searchUsers).mockResolvedValue({ users: [user] })
     vi.mocked(api.addMember).mockResolvedValue(addedMember)
-    const currentProject = project('project-a', 'private')
+    let currentProject = project('project-a', 'private')
+    const authoritative = project('project-a', 'private', 2)
+    vi.mocked(api.getProject).mockResolvedValue(authoritative)
+    vi.mocked(api.updateProject).mockResolvedValue(project('project-a', 'public', 3))
+    const onProjectUpdated = vi.fn((next: ProjectManageProject) => {
+      currentProject = next
+    })
 
     try {
-      let tree = renderView(api, host, currentProject, vi.fn())
+      let tree = renderView(api, host, currentProject, onProjectUpdated)
       await flushPromises()
-      tree = renderView(api, host, currentProject, vi.fn())
+      tree = renderView(api, host, currentProject, onProjectUpdated)
 
       expect(Boolean(findByTestId(tree, 'cloud-project-members-error'))).toBe(failed)
 
       findByTestId(tree, 'cloud-project-members-toggle').props.onClick()
-      tree = renderView(api, host, currentProject, vi.fn())
+      tree = renderView(api, host, currentProject, onProjectUpdated)
       findByTestId(tree, 'cloud-member-search').props.onChange({
         target: { value: 'member' },
       })
-      renderView(api, host, currentProject, vi.fn())
+      renderView(api, host, currentProject, onProjectUpdated)
       await vi.advanceTimersByTimeAsync(250)
       await flushPromises()
-      tree = renderView(api, host, currentProject, vi.fn())
+      tree = renderView(api, host, currentProject, onProjectUpdated)
 
       findByTestId(tree, 'cloud-member-role').props.onChange({
         target: { value: 'Viewer' },
       })
-      tree = renderView(api, host, currentProject, vi.fn())
+      tree = renderView(api, host, currentProject, onProjectUpdated)
       findByTestId(tree, 'cloud-member-result-2').props.onClick()
       await flushPromises()
-      tree = renderView(api, host, currentProject, vi.fn())
+      await flushPromises()
+      tree = renderView(api, host, currentProject, onProjectUpdated)
 
       expect(api.addMember).toHaveBeenCalledWith('project-a', 2, 'Viewer')
       expect(api.listMembers).toHaveBeenCalledTimes(2)
       expect(findByTestId(tree, 'cloud-project-member-2')).toBeTruthy()
       expect(findByTestId(tree, 'cloud-project-members-error')).toBeNull()
+      findByTestId(tree, 'cloud-project-manage-visibility-public').props.onClick()
+      await flushPromises()
+      expect(api.updateProject).toHaveBeenCalledWith('project-a', {
+        version: 2,
+        visibility: 'public',
+      })
+      expect(onProjectUpdated).toHaveBeenCalledWith(authoritative)
     } finally {
       vi.unstubAllGlobals()
       vi.useRealTimers()
     }
   })
+
+  it.each(['role', 'capability', 'remove'] as const)(
+    'uses the refreshed project version for the next config save after a member %s change',
+    async mutation => {
+      const api = createApi()
+      const host = createHost()
+      const member: ProjectManageMember = {
+        user_id: 2,
+        user_name: 'Member',
+        email: null,
+        role: 'Developer',
+        direct_role: 'Developer',
+        capability_description: '',
+      }
+      vi.mocked(api.listMembers).mockResolvedValue([member])
+      vi.mocked(api.updateMember).mockResolvedValue(member)
+      vi.mocked(api.removeMember).mockResolvedValue(undefined)
+      const authoritative = project('project-a', 'private', 2)
+      vi.mocked(api.getProject).mockResolvedValue(authoritative)
+      vi.mocked(api.updateProject).mockResolvedValue(project('project-a', 'public', 3))
+      let current = project('project-a', 'private')
+      const onProjectUpdated = vi.fn((next: ProjectManageProject) => {
+        current = next
+      })
+      renderView(api, host, current, onProjectUpdated)
+      await flushPromises()
+      let tree = renderView(api, host, current, onProjectUpdated)
+      if (mutation === 'role') {
+        findByTestId(tree, 'cloud-project-member-role-2').props.onChange({
+          target: { value: 'Maintainer' },
+        })
+      } else if (mutation === 'capability') {
+        findByTestId(tree, 'cloud-project-member-capability-2').props.onBlur({
+          target: { value: 'Review changes' },
+        })
+      } else {
+        findByTestId(tree, 'cloud-project-member-remove-2').props.onClick()
+      }
+      await flushPromises()
+      await flushPromises()
+      tree = renderView(api, host, current, onProjectUpdated)
+      findByTestId(tree, 'cloud-project-manage-visibility-public').props.onClick()
+      await flushPromises()
+
+      expect(api.updateProject).toHaveBeenCalledWith('project-a', {
+        version: 2,
+        visibility: 'public',
+      })
+      expect(onProjectUpdated).toHaveBeenCalledWith(authoritative)
+    }
+  )
 
   it('explains and saves project member capabilities', async () => {
     const api = createApi()

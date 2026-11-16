@@ -668,6 +668,9 @@ class LoopItemService:
         milestone_id = payload.pop("milestone_id", None)
         require_milestone(db, project.id, milestone_id)
         tags = payload.pop("tags")
+        from app.services.cloud_projects.tags import validate_issue_tags
+
+        validate_issue_tags(project, tags)
         explicit_workflow = values.workflow
         explicit_execution_config = values.execution_config
         payload.pop("workflow", None)
@@ -886,6 +889,13 @@ class LoopItemService:
             task_metadata, "issue", f"{values.title}\n{values.description}"
         )
         task_metadata = initialize_content_revision(task_metadata, user_id)
+        policy = (project.metadata_json or {}).get("collaboration_policy")
+        if isinstance(policy, dict):
+            from app.schemas.project_admin import ProjectCollaborationPolicy
+
+            task_metadata["collaboration_policy_snapshot"] = (
+                ProjectCollaborationPolicy.model_validate(policy).model_dump()
+            )
         item = LoopItem(
             id=f"{project.project_key}-{sequence}",
             cloud_project_id=project.id,
@@ -1620,6 +1630,14 @@ class LoopItemService:
         automation_context: dict[str, Any] | None = None,
     ) -> LoopItem:
         item = self.get(db, item_id, user_id)
+        if "tags" in values.model_fields_set:
+            from app.services.cloud_projects.service import cloud_project_service
+            from app.services.cloud_projects.tags import validate_issue_tags
+
+            project = cloud_project_service._lock_project(
+                db, int(item.cloud_project_id)
+            )
+            validate_issue_tags(project, values.tags or [])
         position_order = None
         if values.position is not None:
             self._require_internal_task_project(
