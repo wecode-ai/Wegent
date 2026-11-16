@@ -95,6 +95,8 @@ async function fixture(
   const cloud = {
     backendUrl: 'http://backend',
     authToken: 'isolated-test-token',
+    remoteExecutorLogPath: '/isolated/cloud-executor.log',
+    waitForDevice: vi.fn(async () => {}),
     runtimeWorkspaceRoot: root,
     waitForRuntimeTask: vi.fn(async address => {
       assert.equal(state.disconnected, true, 'Completion must be observed while disconnected')
@@ -173,6 +175,30 @@ test('accepts the completed runtime-work list projection without native executio
   assert.equal(cloud.waitForRuntimeTask.mock.calls.length, 1)
   assert.ok(control.command.mock.calls.some(([command]) => command === 'getWorkbenchDebugSnapshot'))
   assert.equal(state.disconnected, false)
+})
+
+test('waits for the selected cloud executor after the base recovery restarts Backend', async () => {
+  const { scenario, control, cloud } = await fixture({ status: 'done', running: false })
+  const ready = Promise.withResolvers()
+  cloud.waitForDevice.mockImplementation(() => ready.promise)
+  const verifying = scenario.verify(control)
+  await vi.waitFor(() => assert.equal(cloud.waitForDevice.mock.calls.length, 1))
+  assert.deepEqual(cloud.waitForDevice.mock.calls[0], [
+    'wework-e2e-cloud-device',
+    cloud.remoteExecutorLogPath,
+  ])
+  assert.equal(
+    state.fetchJson.mock.calls.filter(([url]) => url.endsWith('/api/runtime-work/create')).length,
+    0,
+    'Task creation must not race the selected executor reconnection'
+  )
+  ready.resolve()
+  await verifying
+  assert.equal(
+    state.fetchJson.mock.calls.filter(([url]) => url.endsWith('/api/runtime-work/create')).length,
+    1,
+    'Recovery must submit once after the target is online'
+  )
 })
 
 test.each([{ assistantCount: 2 }, { completedCopies: 2 }])(
