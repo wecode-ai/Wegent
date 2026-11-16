@@ -43,6 +43,9 @@ if (!response.ok) process.exit(1);
           ? `${process.arch === 'arm64' ? 'aarch64' : 'x86_64'}-apple-darwin`
           : 'x86_64-unknown-linux-gnu'
       appEnvironment.DWS_BINARY_PATH = join(weworkRoot, 'resources/binaries', `dws-${target}`)
+      appEnvironment.DWS_CLIENT_ID = ''
+      appEnvironment.DWS_CLIENT_SECRET = ''
+      appEnvironment.DWS_CHANNEL = ''
       appEnvironment.PATH = `${browserDirectory}${delimiter}${appEnvironment.PATH}`
       appEnvironment.WEWORK_E2E_DINGTALK_BROWSER = `${serverUrl}${prefix}/browser`
       environment = appEnvironment
