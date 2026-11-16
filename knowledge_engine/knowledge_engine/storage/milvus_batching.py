@@ -10,52 +10,14 @@ from typing import Any, Iterator
 from pymilvus import MilvusClient
 from pymilvus.exceptions import DataNotMatchException, MilvusException
 
-DEFAULT_MAX_BATCH_BYTES = 1024 * 1024
-DEFAULT_BATCH_HEADROOM_BYTES = 64 * 1024
+from knowledge_engine.storage.errors import MilvusRowTooLargeError
+from knowledge_engine.storage.milvus_limits import (
+    DEFAULT_BATCH_HEADROOM_BYTES,
+    DEFAULT_MAX_BATCH_BYTES,
+    validate_batch_limits,
+)
+
 logger = logging.getLogger(__name__)
-
-
-def validate_batch_limits(max_bytes: int, headroom: int, max_rows: int) -> None:
-    for name, value, minimum in (
-        ("max_batch_bytes", max_bytes, 1),
-        ("batch_headroom_bytes", headroom, 0),
-        ("batch_size", max_rows, 1),
-    ):
-        if type(value) is not int or value < minimum:
-            raise ValueError(f"Milvus {name} must be an integer >= {minimum}")
-    if headroom >= max_bytes:
-        raise ValueError(
-            "Milvus batch_headroom_bytes must be less than max_batch_bytes"
-        )
-
-
-class MilvusRowTooLargeError(ValueError):
-    """One complete row cannot fit; its original content is never truncated."""
-
-    code = "milvus_row_too_large"
-    retryable = False
-
-    def __init__(
-        self,
-        row: dict,
-        size: int,
-        budget: int,
-        *,
-        broker_rejected: bool = False,
-    ) -> None:
-        reason = "broker message-size limit" if broker_rejected else "message budget"
-        node_id = row.get("id", row.get("parent_node_id", "unknown"))
-        self.details = {
-            "node_id": node_id,
-            "serialized_bytes": size,
-            "effective_budget_bytes": budget,
-            "broker_rejected": broker_rejected,
-        }
-        super().__init__(
-            f"Milvus row exceeds {reason}: node_id={node_id} "
-            f"serialized_bytes={size} effective_budget_bytes={budget}; "
-            "content was not truncated"
-        )
 
 
 class MilvusWriteClient:

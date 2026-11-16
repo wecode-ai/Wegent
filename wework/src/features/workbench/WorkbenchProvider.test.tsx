@@ -88,6 +88,7 @@ import { act, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import {
   createContext,
+  memo,
   StrictMode,
   useContext,
   useEffect,
@@ -2359,6 +2360,37 @@ function RuntimeOpenProbe() {
   )
 }
 
+const BackgroundTaskModeProbe = memo(function BackgroundTaskModeProbe() {
+  const workbench = useWorkbench()
+  const address = {
+    deviceId: 'device-1',
+    workspacePath: '/workspace/project-alpha',
+    taskId: 'runtime-a',
+  }
+  const selection = workbench.projectChat.resolveRuntimeTaskModelSelection(address)
+
+  return (
+    <div>
+      <span data-testid="background-task-selected-mode">
+        {selection.selectedModelOptions.collaborationMode ?? 'default'}
+      </span>
+      <button
+        type="button"
+        data-testid="set-background-task-mode"
+        onClick={() =>
+          workbench.projectChat.setRuntimeTaskSelectedModelOption(
+            address,
+            'collaborationMode',
+            'read-only'
+          )
+        }
+      >
+        set background task mode
+      </button>
+    </div>
+  )
+})
+
 function RuntimeGoalStatusProbe({ address }: { address: RuntimeTaskAddress }) {
   const lifecycle = useRuntimeTaskLifecycle(address)
   return <span data-testid="runtime-lifecycle-goal-status">{lifecycle?.goalStatus ?? 'none'}</span>
@@ -2388,6 +2420,26 @@ function RuntimeModelSelectionProbe() {
       <span data-testid="background-task-active-model">
         {backgroundTaskModel.activeModel?.name ?? ''}
       </span>
+      <span data-testid="background-task-selected-mode">
+        {backgroundTaskModel.selectedModelOptions.collaborationMode ?? 'default'}
+      </span>
+      <button
+        type="button"
+        data-testid="set-background-task-mode"
+        onClick={() =>
+          workbench.projectChat.setRuntimeTaskSelectedModelOption(
+            {
+              deviceId: 'device-1',
+              workspacePath: '/workspace/project-alpha',
+              taskId: 'runtime-a',
+            },
+            'collaborationMode',
+            'read-only'
+          )
+        }
+      >
+        set background task mode
+      </button>
       <span data-testid="selected-mode">
         {workbench.projectChat.selectedModelOptions.collaborationMode ?? 'default'}
       </span>
@@ -6228,6 +6280,74 @@ describe('WorkbenchProvider runtime tasks', () => {
       expect(screen.getByTestId('runtime-model-draft')).not.toHaveTextContent('[$Runtime A]')
       expect(screen.getByTestId('runtime-model-draft')).toHaveTextContent('继续排查失败原因')
     })
+  })
+
+  test('republishes the context when a background task model option changes', async () => {
+    const models: UnifiedModel[] = [
+      {
+        name: 'gpt-5.6-sol',
+        type: 'runtime',
+        provider: 'local',
+        config: {
+          weworkModelKind: 'codex-official',
+          codexAuthConfigured: true,
+          ui: { family: 'codex-official' },
+        },
+      },
+    ]
+    const runtimeWorkApi = createRuntimeWorkApiMock({
+      listRuntimeWork: vi.fn().mockResolvedValue(
+        createRuntimeWork({
+          projects: [
+            {
+              project: { id: 7, name: 'Wegent' },
+              deviceWorkspaces: [
+                {
+                  id: 22,
+                  projectId: 7,
+                  deviceId: 'device-1',
+                  deviceName: 'Project Device',
+                  deviceStatus: 'online',
+                  workspacePath: '/workspace/project-alpha',
+                  mapped: true,
+                  available: true,
+                  tasks: [
+                    {
+                      taskId: 'runtime-a',
+                      workspacePath: '/workspace/project-alpha',
+                      title: 'Runtime A',
+                      runtime: 'codex',
+                      modelSelection: {
+                        modelName: 'gpt-5.6-sol',
+                        modelType: 'runtime',
+                        options: {},
+                      },
+                    },
+                  ],
+                },
+              ],
+            },
+          ],
+          totalTasks: 1,
+        })
+      ),
+    })
+    const services = createWorkbenchServices({
+      modelApi: {
+        listModels: vi.fn().mockResolvedValue({ data: models }),
+      },
+      runtimeWorkApi: runtimeWorkApi as WorkbenchServices['runtimeWorkApi'],
+    } as Partial<WorkbenchServices>)
+
+    renderWorkbench(<BackgroundTaskModeProbe />, services)
+
+    await waitFor(() =>
+      expect(screen.getByTestId('background-task-selected-mode')).toHaveTextContent('default')
+    )
+    await userEvent.click(screen.getByTestId('set-background-task-mode'))
+    await waitFor(() =>
+      expect(screen.getByTestId('background-task-selected-mode')).toHaveTextContent('read-only')
+    )
   })
 
   test('persists blank new chat model selection as the next default', async () => {

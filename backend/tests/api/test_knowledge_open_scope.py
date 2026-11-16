@@ -561,12 +561,25 @@ def test_open_batch_delete_documents_returns_403_when_all_fail(
     )
 
     def fake_batch_delete_documents(**kwargs):
+        from app.schemas.knowledge import (
+            BatchDeletionResult,
+            BatchDocumentDeletionOutcome,
+        )
+
         return SimpleNamespace(
-            result=BatchOperationResult(
+            result=BatchDeletionResult(
                 success_count=0,
                 failed_count=2,
                 failed_ids=[999998, 999999],
                 message="Only Owner or Maintainer can delete documents from this knowledge base",
+                items=[
+                    BatchDocumentDeletionOutcome(
+                        document_id=doc_id,
+                        index_cleanup="unconfirmed",
+                        error_code="permission_denied",
+                    )
+                    for doc_id in [999998, 999999]
+                ],
             ),
             kb_ids=[],
         )

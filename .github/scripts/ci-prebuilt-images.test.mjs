@@ -327,6 +327,23 @@ if (args[0] === 'create') {
   }
 });
 
+test("Fork Executor consumers do not require a registry login for public images", () => {
+  const consumer = workflow("e2e-tests").jobs["executor-e2e-tests"];
+  const login = consumer.steps.find((step) => step.name === "Log in to GHCR");
+  const enabled = (eventName, headRepository) =>
+    login.if === undefined || runInNewContext(login.if, {
+      github: {
+        event_name: eventName,
+        repository: "wecode-ai/Wegent",
+        event: { pull_request: { head: { repo: { full_name: headRepository } } } },
+      },
+    });
+  assert.equal(enabled("pull_request", "fork-owner/Wegent"), false);
+  assert.equal(enabled("pull_request", "wecode-ai/Wegent"), true);
+  assert.equal(enabled("workflow_dispatch"), true);
+  assert.equal(enabled("merge_group"), true);
+});
+
 test("Executor consumers pull public pins anonymously and propagate either image pull failure", () => {
   const consumer = workflow("e2e-tests").jobs["executor-e2e-tests"];
   const pull = consumer.steps.find((step) => step.name === "Pull E2E images");

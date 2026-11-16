@@ -18,6 +18,7 @@ const mockRefreshDocuments = jest.fn()
 const mockGetDocumentProtection = jest.fn()
 const mockSynchronizeExternalDocument = jest.fn()
 const mockToast = jest.fn()
+const mockBatchDelete = jest.fn()
 
 jest.mock('@/hooks/use-toast', () => ({
   toast: (...args: unknown[]) => mockToast(...args),
@@ -60,7 +61,7 @@ jest.mock('@/features/knowledge/document/hooks/useDocuments', () => ({
     create: jest.fn(),
     update: jest.fn(),
     remove: jest.fn(),
-    batchDelete: jest.fn(),
+    batchDelete: mockBatchDelete,
     transfer: jest.fn(),
     refresh: mockRefreshDocuments,
     fetchWithFolder: jest.fn(),
@@ -314,6 +315,36 @@ describe('DocumentList summary header', () => {
     mockGetDocumentProtection.mockReturnValue(new Promise(() => {}))
     mockSynchronizeExternalDocument.mockReset()
     mockToast.mockReset()
+    mockBatchDelete.mockReset()
+  })
+
+  it('deletes the checked management selection and removes only acknowledged successes', async () => {
+    mockDocuments = [createDocument()]
+    mockBatchDelete.mockResolvedValue({
+      success_count: 1,
+      failed_count: 0,
+      failed_ids: [],
+      message: 'Deleted',
+      unconfirmed_count: 0,
+      items: [
+        {
+          document_id: 10,
+          content_deleted: true,
+          index_cleanup: 'confirmed',
+          error_code: null,
+          can_continue: false,
+        },
+      ],
+    })
+    render(<DocumentList knowledgeBase={createKnowledgeBase()} canManageAllDocuments />)
+    act(() => mockKnowledgeDocumentTreeGrid.mock.lastCall?.[0].onSelect(mockDocuments[0], true))
+    fireEvent.click(screen.getByTestId('batch-delete-documents'))
+    await waitFor(() => expect(mockBatchDelete).toHaveBeenCalledWith([10], false))
+    await waitFor(() =>
+      expect(mockKnowledgeDocumentTreeGrid.mock.lastCall?.[0].selectedDocumentIds.has(10)).toBe(
+        false
+      )
+    )
   })
 
   it('refreshes added web documents without closing the source dialog from the parent', async () => {
