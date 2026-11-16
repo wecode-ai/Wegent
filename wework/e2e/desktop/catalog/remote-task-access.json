@@ -3,6 +3,7 @@
   "scenario": "./scenarios/remote-worktree-access.scenario.mjs",
   "scenarioOnly": true,
   "paths": [
+    "wework/e2e/desktop/scenarios/remote-task-access.scenario.mjs",
     "wework/e2e/desktop/scenarios/remote-worktree-access.scenario.mjs",
     "backend/app/services/device/remote_control_policy.py",
     "backend-rs/src/socketio/runtime_rpc_policy.rs",
