@@ -115,7 +115,9 @@ export async function verifyCollaborationMemberSettings(
   await control.command('waitFor', scoped('[data-testid="cloud-project-members-inheritance-note"]'))
   await assertCreatedMembers(control, { scoped, members, owner, request, project })
   await reloadMainWindow(control, 'The created project members did not reconnect after reload')
-  await control.command('click', '[data-testid="workspace-tab-select-fixed-board"]')
+  await control.command('clickWhenEnabled', '[data-testid="workspace-tab-select-fixed-board"]', {
+    visible: true,
+  })
   await waitForProjectIdentity(control, scoped('').trim(), project.name)
   await selectCollaborationProjectView(control, scoped('').trim(), 'manage')
   await control.command('click', scoped('[data-testid="collaboration-project-settings-members"]'))

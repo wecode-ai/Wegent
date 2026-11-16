@@ -421,52 +421,67 @@ export function useWorkbenchModels({
     [api, configuredModelFingerprint, fallbackWhenConfiguredModelUnavailable, scopeKey, traceId]
   )
 
-  const reconcileSelectedModels = useCallback((nextModels: UnifiedModel[]) => {
-    const selectedModelPatch: Record<string, UnifiedModel> = {}
-    const selectedOptionsPatch: Record<string, ModelOptions> = {}
+  const reconcileSelectedModels = useCallback(
+    (nextModels: UnifiedModel[], selectionsBeforeLoad: Record<string, UnifiedModel | null>) => {
+      const selectedModelPatch: Record<string, UnifiedModel | null> = {}
+      const selectedOptionsPatch: Record<string, ModelOptions> = {}
 
-    for (const [selectedScopeKey, currentModel] of Object.entries(selectedModelRef.current)) {
-      if (!currentModel) continue
-      const refreshedModel = nextModels.find(model => isSameModelSelection(model, currentModel))
-      if (!refreshedModel) continue
+      for (const [selectedScopeKey, currentModel] of Object.entries(selectedModelRef.current)) {
+        if (!currentModel) continue
+        const refreshedModel = nextModels.find(model => isSameModelSelection(model, currentModel))
+        if (!refreshedModel) {
+          // Local discovery is authoritative. Cloud models may be hidden from
+          // discovery and are validated separately through their saved identity.
+          // A choice made after this request started must survive its stale list.
+          if (
+            currentModel.type === 'runtime' &&
+            selectionsBeforeLoad[selectedScopeKey] === currentModel
+          ) {
+            selectedModelPatch[selectedScopeKey] = null
+          }
+          continue
+        }
 
-      if (refreshedModel !== currentModel) {
-        selectedModelPatch[selectedScopeKey] = refreshedModel
+        if (refreshedModel !== currentModel) {
+          selectedModelPatch[selectedScopeKey] = refreshedModel
+        }
+
+        const currentOptions = selectedModelOptionsRef.current[selectedScopeKey] ?? {}
+        const normalizedOptions = normalizeModelOptions(refreshedModel, currentOptions)
+        if (!areModelOptionsEqual(currentOptions, normalizedOptions)) {
+          selectedOptionsPatch[selectedScopeKey] = normalizedOptions
+        }
       }
 
-      const currentOptions = selectedModelOptionsRef.current[selectedScopeKey] ?? {}
-      const normalizedOptions = normalizeModelOptions(refreshedModel, currentOptions)
-      if (!areModelOptionsEqual(currentOptions, normalizedOptions)) {
-        selectedOptionsPatch[selectedScopeKey] = normalizedOptions
+      if (Object.keys(selectedModelPatch).length > 0) {
+        selectedModelRef.current = {
+          ...selectedModelRef.current,
+          ...selectedModelPatch,
+        }
+        setSelectedModelByScope(current => ({ ...current, ...selectedModelPatch }))
       }
-    }
 
-    if (Object.keys(selectedModelPatch).length > 0) {
-      selectedModelRef.current = {
-        ...selectedModelRef.current,
-        ...selectedModelPatch,
+      if (Object.keys(selectedOptionsPatch).length > 0) {
+        selectedModelOptionsRef.current = {
+          ...selectedModelOptionsRef.current,
+          ...selectedOptionsPatch,
+        }
+        setSelectedModelOptionsByScope(current => ({ ...current, ...selectedOptionsPatch }))
       }
-      setSelectedModelByScope(current => ({ ...current, ...selectedModelPatch }))
-    }
-
-    if (Object.keys(selectedOptionsPatch).length > 0) {
-      selectedModelOptionsRef.current = {
-        ...selectedModelOptionsRef.current,
-        ...selectedOptionsPatch,
+      if (
+        Object.keys(selectedModelPatch).length > 0 ||
+        Object.keys(selectedOptionsPatch).length > 0
+      ) {
+        setSelectionRevision(revision => revision + 1)
       }
-      setSelectedModelOptionsByScope(current => ({ ...current, ...selectedOptionsPatch }))
-    }
-    if (
-      Object.keys(selectedModelPatch).length > 0 ||
-      Object.keys(selectedOptionsPatch).length > 0
-    ) {
-      setSelectionRevision(revision => revision + 1)
-    }
-  }, [])
+    },
+    []
+  )
 
   const loadModels = useCallback(async () => {
     if (!enabled) return
     const revision = ++modelLoadRevisionRef.current
+    const selectionsBeforeLoad = { ...selectedModelRef.current }
     const loadTraceId = `${traceId}-${revision}`
     setIsLoading(true)
     setError(null)
@@ -480,7 +495,10 @@ export function useWorkbenchModels({
       })
       if (revision === modelLoadRevisionRef.current) {
         const filtered = response.data.filter(isSupportedModelFamily)
-        reconcileSelectedModels(filterModel ? filtered.filter(filterModel) : filtered)
+        reconcileSelectedModels(
+          filterModel ? filtered.filter(filterModel) : filtered,
+          selectionsBeforeLoad
+        )
         setAvailableModels(filtered)
       }
     } catch (nextError) {

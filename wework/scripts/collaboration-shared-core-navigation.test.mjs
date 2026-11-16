@@ -28,7 +28,15 @@ const scoped = selector => `${content} ${selector}`
 const owner = { id: 7, user_name: 'reader' }
 
 function controlFixture(compact, memberSettings = false) {
+  let fixedBoardMounted = true
   const command = vi.fn(async (action, selector, input) => {
+    if (action === 'reloadMainWindow') fixedBoardMounted = false
+    if (selector === '[data-testid="workspace-tab-select-fixed-board"]') {
+      // A reconnected renderer can precede the restored shell tab's mount.
+      if (action === 'waitFor' || action === 'clickWhenEnabled') fixedBoardMounted = true
+      if (action === 'click')
+        assert.ok(fixedBoardMounted, 'The restored Collaboration tab has not mounted')
+    }
     if (action === 'getStartupSplashSnapshot') return JSON.stringify({ state: 'closed' })
     if (action === 'getElementCount') {
       if (selector.includes('collaboration-project-view-select')) return compact ? '1' : '0'
@@ -168,6 +176,11 @@ test.each([false, true])(
     expect(control.command).toHaveBeenCalledWith('getStartupSplashSnapshot', 'body')
     expect(control.command).toHaveBeenCalledWith('reloadMainWindow', 'body')
     expect(control.awaitReadyAfter).toHaveBeenCalledWith(1)
+    expect(control.command).toHaveBeenCalledWith(
+      'clickWhenEnabled',
+      '[data-testid="workspace-tab-select-fixed-board"]',
+      { visible: true }
+    )
     expect(control.command).toHaveBeenCalledWith(
       'waitFor',
       scoped('[data-testid="cloud-project-header-title"]'),

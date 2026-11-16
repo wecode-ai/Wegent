@@ -60,6 +60,10 @@ pnpm --filter wework test src/features/todo/CloudTodoWorkspace.test.tsx src/feat
 
 第二轮 CI（63ba3178）：单元测试、lint 和完整 Platform E2E 均通过，包含此前失败的两个 Web 分片。桌面 Core shard 10 再次确认首次打开成员菜单后搜索框 y=722.7，位于视口外，尚未进入成员选择断言。真实 Radix、ProjectPeoplePicker 与 base.css 的最小浏览器诊断稳定复现：891×741 视口、触发器 bottom=729 时，禁用碰撞检测使菜单 y=735、搜索框 y=778.25；恢复默认碰撞检测并设置 8px 边距后，菜单自动上翻到 y=570.5，搜索框 y=613.75，命中 INPUT 且实际选择成员成功。修复保留同一组件和交互断言，未增加等待时间或跳过场景；现有 Dialog 4 项测试通过。
 
+第三轮 CI（c8030529）：完整 Platform E2E 再次通过。桌面协作流程已通过创建、两名成员 Developer 及 direct_role 回读，随后在 renderer 刚重连、固定协作标签尚未挂载时立即点击而失败。导航夹具稳定复现两个布局失败；改用现有 clickWhenEnabled 并要求 visible，等待真实标签就绪后再激活，默认等待时限及全部成员断言保持不变，4 项测试通过。
+
+同轮 Cloud shard 5 的既有 task-model-deletion 场景发现独立缺陷：删除本地模型并刷新目录后，store 已判为不可用，但任务缓存仍使 selectionReady 为 true。真实 model store 与任务选择 hook 集成测试稳定复现；现在成功刷新目录时清除已删除的本地模型缓存，当前和后台任务均停止发送，保留改选入口。请求开始后新选的模型和单独验证的隐藏云模型继续有效。4 个相关文件的 48 项模型测试通过，未修改该 E2E 的断言、等待时限或场景。
+
 # Verification and rollback
 
 The unit plan covers cloud member creation, partial failures, search recovery, authoritative server-roster checks, the existing template pipeline, local-source hiding and the disabled flag. The existing CI-covered `collaboration-shared-core` scenario now includes real-account member persistence and reload checks. Local E2E and real Electron verification were not run, as instructed. The initial test results above were recorded before integration with the latest main branch. Set `VITE_COLLAB_PROJECT_CREATE_MEMBERS_V1=false` in the Wework build environment and rebuild to disable ordinary-entry member creation without deleting existing memberships.
