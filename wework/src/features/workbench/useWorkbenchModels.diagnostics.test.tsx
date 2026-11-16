@@ -468,6 +468,114 @@ test('does not clear a newer selection when a cancelled lookup fails', async () 
   expect(hook.result.current.isConfiguredModelUnavailable).toBe(false)
 })
 
+test('does not let a pending hidden lookup restore over a newer manual selection', async () => {
+  let resolveLookup: (model: UnifiedModel) => void = () => undefined
+  const pending = new Promise<UnifiedModel>(resolve => {
+    resolveLookup = resolve
+  })
+  const hiddenModel: UnifiedModel = {
+    name: 'hidden-model',
+    type: 'public',
+    namespace: 'default',
+    resourceUserId: 0,
+  }
+  const api = {
+    listModels: vi.fn().mockResolvedValue({ data: models }),
+    getModel: vi.fn(() => pending),
+  }
+  const hook = renderHook(() =>
+    useWorkbenchModels({
+      api,
+      locked: false,
+      scopeKey: scopeA,
+      selectionConfig: selection('hidden-model'),
+      persistSelection: false,
+      fallbackWhenConfiguredModelUnavailable: false,
+    })
+  )
+  await waitFor(() => expect(api.getModel).toHaveBeenCalled())
+
+  act(() => hook.result.current.setSelectedModel(models[1]!))
+  await waitFor(() => expect(hook.result.current.selectedModel?.name).toBe('model-b'))
+
+  await act(async () => {
+    resolveLookup(hiddenModel)
+    await pending
+  })
+
+  expect(hook.result.current.selectedModel?.name).toBe('model-b')
+  expect(hook.result.current.isSelectionReady).toBe(true)
+  expect(hook.result.current.isConfiguredModelUnavailable).toBe(false)
+})
+
+test('does not let a stale 404 clear a newer manual selection', async () => {
+  let rejectLookup: (error: unknown) => void = () => undefined
+  const pending = new Promise<UnifiedModel>((_, reject) => {
+    rejectLookup = reject
+  })
+  const api = {
+    listModels: vi.fn().mockResolvedValue({ data: models }),
+    getModel: vi.fn(() => pending),
+  }
+  const hook = renderHook(() =>
+    useWorkbenchModels({
+      api,
+      locked: false,
+      scopeKey: scopeA,
+      selectionConfig: selection('hidden-model'),
+      persistSelection: false,
+      fallbackWhenConfiguredModelUnavailable: false,
+    })
+  )
+  await waitFor(() => expect(api.getModel).toHaveBeenCalled())
+
+  act(() => hook.result.current.setSelectedModel(models[1]!))
+  await waitFor(() => expect(hook.result.current.selectedModel?.name).toBe('model-b'))
+
+  await act(async () => {
+    rejectLookup(new ApiError('removed', 404))
+    await pending.catch(() => undefined)
+  })
+
+  expect(hook.result.current.selectedModel?.name).toBe('model-b')
+  expect(hook.result.current.isSelectionReady).toBe(true)
+  expect(hook.result.current.isConfiguredModelUnavailable).toBe(false)
+})
+
+test('does not let a stale transient failure clear a newer manual selection', async () => {
+  let rejectLookup: (error: unknown) => void = () => undefined
+  const pending = new Promise<UnifiedModel>((_, reject) => {
+    rejectLookup = reject
+  })
+  const api = {
+    listModels: vi.fn().mockResolvedValue({ data: models }),
+    getModel: vi.fn(() => pending),
+  }
+  const hook = renderHook(() =>
+    useWorkbenchModels({
+      api,
+      locked: false,
+      scopeKey: scopeA,
+      selectionConfig: selection('hidden-model'),
+      persistSelection: false,
+      fallbackWhenConfiguredModelUnavailable: false,
+    })
+  )
+  await waitFor(() => expect(api.getModel).toHaveBeenCalled())
+
+  act(() => hook.result.current.setSelectedModel(models[1]!))
+  await waitFor(() => expect(hook.result.current.selectedModel?.name).toBe('model-b'))
+
+  await act(async () => {
+    rejectLookup(new ApiError('offline', 503))
+    await pending.catch(() => undefined)
+  })
+
+  expect(hook.result.current.selectedModel?.name).toBe('model-b')
+  expect(hook.result.current.isSelectionReady).toBe(true)
+  expect(hook.result.current.isConfiguredModelUnavailable).toBe(false)
+})
+
 test('rejects a same-named model from another group identity', async () => {
   const configuredTask: ModelSelectionConfig = {
     modelName: 'hidden-group-model',

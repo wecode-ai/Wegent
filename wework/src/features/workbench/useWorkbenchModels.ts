@@ -170,6 +170,7 @@ export function useWorkbenchModels({
   const selectedModelRef = useRef<Record<string, UnifiedModel | null>>({})
   const selectedModelOptionsRef = useRef<Record<string, ModelOptions>>({})
   const modelLoadRevisionRef = useRef(0)
+  const selectionRevisionByScopeRef = useRef<Record<string, number>>({})
   const validatedSelectionRef = useRef<{
     scopeKey: string
     selectionKey: string
@@ -287,12 +288,20 @@ export function useWorkbenchModels({
     })
   }, [traceId, isSelectionReady, selectedModelAvailable, models.length])
 
+  const invalidateSelectionQueries = useCallback((targetScopeKey: string) => {
+    selectionRevisionByScopeRef.current[targetScopeKey] =
+      (selectionRevisionByScopeRef.current[targetScopeKey] ?? 0) + 1
+  }, [])
+
   const restoreSelection = useCallback(
     async (
       availableModels: UnifiedModel[],
       nextSelectionConfig?: ModelSelectionConfig | null,
       isCancelled?: () => boolean
     ): Promise<boolean> => {
+      const selectionRevision = selectionRevisionByScopeRef.current[scopeKey] ?? 0
+      const selectionQuerySuperseded = () =>
+        (selectionRevisionByScopeRef.current[scopeKey] ?? 0) !== selectionRevision
       let model = findModelForSelection(availableModels, nextSelectionConfig)
       let transientFailure = false
       let validated = Boolean(model)
@@ -314,6 +323,7 @@ export function useWorkbenchModels({
             'wework',
             'llm'
           )
+          if (isCancelled?.() || selectionQuerySuperseded()) return false
           validated = true
           if (
             !model ||
@@ -323,7 +333,7 @@ export function useWorkbenchModels({
             model = null
           }
         } catch (error) {
-          if (isCancelled?.()) return false
+          if (isCancelled?.() || selectionQuerySuperseded()) return false
           if (isDefinitiveModelLookupError(error)) {
             model = null
             validated = true
@@ -351,7 +361,7 @@ export function useWorkbenchModels({
             transientFailure = !model
           }
         }
-        if (isCancelled?.()) return false
+        if (isCancelled?.() || selectionQuerySuperseded()) return false
       }
       if (transientFailure) {
         setTransientLookupFailureByScope(current =>
@@ -519,6 +529,11 @@ export function useWorkbenchModels({
           findModelForSelection(models, effectiveSelectionConfig)
         )
         const currentSelection = selectedModelRef.current[scopeKey] ?? null
+        const manualSelectionActive = Boolean(
+          locallySelectedReplacementByScope[scopeKey] &&
+          currentSelection &&
+          models.some(model => isSameModelSelection(model, currentSelection))
+        )
         const persistedSelectionNeedsValidation = Boolean(
           currentSelection &&
           !fallbackWhenConfiguredModelUnavailable &&
@@ -533,28 +548,34 @@ export function useWorkbenchModels({
           lastValidated.models === models
         )
         if (
-          !hasScopeSelection ||
-          !scopeSelectionAlreadyRestored ||
-          (configuredModelAvailable && !selectedModelRef.current[scopeKey]) ||
-          (persistedSelectionNeedsValidation && !selectionValidatedForCatalog)
+          !manualSelectionActive &&
+          (!hasScopeSelection ||
+            !scopeSelectionAlreadyRestored ||
+            (configuredModelAvailable && !selectedModelRef.current[scopeKey]) ||
+            (persistedSelectionNeedsValidation && !selectionValidatedForCatalog))
         ) {
           const restored = await restoreSelection(models, effectiveSelectionConfig, () => cancelled)
           if (cancelled || !restored) return
         }
-        setRestoredSelectionKeyByScope(current =>
-          current[scopeKey] === selectionKey ? current : { ...current, [scopeKey]: selectionKey }
-        )
+        if (!manualSelectionActive) {
+          setRestoredSelectionKeyByScope(current =>
+            current[scopeKey] === selectionKey ? current : { ...current, [scopeKey]: selectionKey }
+          )
+        }
       }
     }
 
     syncSelection()
     return () => {
       cancelled = true
+      invalidateSelectionQueries(scopeKey)
     }
   }, [
     effectiveSelectionConfig,
     enabled,
     fallbackWhenConfiguredModelUnavailable,
+    invalidateSelectionQueries,
+    locallySelectedReplacementByScope,
     models,
     restoreSelection,
     restoredSelectionKeyByScope,
@@ -607,6 +628,9 @@ export function useWorkbenchModels({
       } else {
         delete nextOptions.runnerModelProvider
       }
+      // A manual choice must win over any restore lookup that is still in
+      // flight; its late result or a 404 must not overwrite this selection.
+      invalidateSelectionQueries(targetScopeKey)
       selectedModelRef.current[targetScopeKey] = model
       selectedModelOptionsRef.current[targetScopeKey] = nextOptions
       setSelectedModelByScope(current => ({ ...current, [targetScopeKey]: model }))
@@ -619,7 +643,7 @@ export function useWorkbenchModels({
         onSelectionChange?.(toSelectionConfig(model, nextOptions))
       }
     },
-    [locked, onSelectionBlocked, onSelectionChange, traceId]
+    [invalidateSelectionQueries, locked, onSelectionBlocked, onSelectionChange, traceId]
   )
 
   const setSelectedModelForScope = useCallback(
@@ -681,6 +705,7 @@ export function useWorkbenchModels({
           persist,
         })
       }
+      invalidateSelectionQueries(targetScopeKey)
       selectedModelOptionsRef.current[targetScopeKey] = nextOptions
       setSelectedModelOptionsByScope(current => ({ ...current, [targetScopeKey]: nextOptions }))
       if (!persist) return
@@ -690,7 +715,7 @@ export function useWorkbenchModels({
         onSelectionChange?.(toDefaultModelSelectionConfig(nextOptions))
       }
     },
-    [locked, onSelectionChange, traceId]
+    [invalidateSelectionQueries, locked, onSelectionChange, traceId]
   )
 
   const setSelectedModelOption = useCallback(
@@ -717,6 +742,7 @@ export function useWorkbenchModels({
             ?.fingerprint ?? 0,
         persist,
       })
+      invalidateSelectionQueries(targetScopeKey)
       selectedModelRef.current[targetScopeKey] = model
       selectedModelOptionsRef.current[targetScopeKey] = nextOptions
       setSelectedModelByScope(current => ({ ...current, [targetScopeKey]: model }))
@@ -735,7 +761,7 @@ export function useWorkbenchModels({
         onSelectionChange?.(persistedSelection)
       }
     },
-    [onSelectionChange, selectionKey, traceId]
+    [invalidateSelectionQueries, onSelectionChange, selectionKey, traceId]
   )
 
   const getSelectedModel = useCallback(() => selectedModelRef.current[scopeKey] ?? null, [scopeKey])
