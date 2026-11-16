@@ -345,11 +345,11 @@ pub(super) fn enrich_comment_actor(
         .transpose()?
         .flatten();
     if let Some((id, name)) = &trigger {
-        if comment
-            .actor_user_id
-            .as_deref()
-            .is_none_or(|actor| actor == id)
-        {
+        let actor_matches_trigger = match comment.actor_user_id.as_deref() {
+            None => true,
+            Some(actor) => actor == id,
+        };
+        if actor_matches_trigger {
             comment.actor_user_id = Some(id.clone());
             comment.actor_display_name = Some(name.clone());
             return Ok(());
