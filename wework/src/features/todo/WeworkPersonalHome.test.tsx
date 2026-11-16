@@ -62,7 +62,7 @@ it.each([false, true])(
         {...props}
         createIssue={
           <>
-              <button role="tab" data-testid="personal-home-new-issue" aria-selected={taskMode}>
+            <button role="tab" data-testid="personal-home-new-issue" aria-selected={taskMode}>
               Create task
             </button>
             <textarea data-testid="collaboration-home-issue-content" hidden={taskMode} />
