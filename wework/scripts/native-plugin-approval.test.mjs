@@ -31,8 +31,11 @@ test.each([true, false])(
       }
       if (args[0] === 'getwindowname')
         return { stdout: args[1] === '99' ? 'Core 插件安装确认\n' : 'WeWork\n' }
-      expect(args.slice(0, 3)).toEqual(['windowfocus', '--sync', '99'])
-      expect(args.slice(5)).toEqual(allow ? ['Tab', 'Return'] : ['Escape'])
+      if (args[0] === 'windowfocus') {
+        expect(args).toEqual(['windowfocus', '--sync', '99'])
+        return { stdout: '' }
+      }
+      expect(args).toEqual(['key', '--clearmodifiers', ...(allow ? ['Tab', 'Return'] : ['Escape'])])
       decide()
       return { stdout: '' }
     })
@@ -64,6 +67,90 @@ test.each([true, false])(
   }
 )
 
+test.each([true, false])(
+  'finishes the admitted native key release before an operation rejection escapes; allow=%s',
+  async allow => {
+    Object.defineProperty(process, 'platform', { value: 'linux' })
+    let keyDown
+    const pressed = new Promise(resolve => {
+      keyDown = resolve
+    })
+    const events = []
+    let keyHeld = false
+    native.execute.mockImplementation(async (_command, args, options) => {
+      if (args[0] === 'search') return { stdout: '99\n' }
+      if (args[0] === 'getwindowname') return { stdout: 'Confirm Core plugin installation\n' }
+      if (!args.includes('key')) return { stdout: '' }
+      expect(args.slice(args.indexOf('key') + 1)).toEqual([
+        '--clearmodifiers',
+        ...(allow ? ['Tab', 'Return'] : ['Escape']),
+      ])
+      keyHeld = true
+      events.push('key-down')
+      return new Promise((resolve, reject) => {
+        let terminated = false
+        options.signal?.addEventListener(
+          'abort',
+          () => {
+            terminated = true
+            events.push('input-aborted')
+            reject(new Error('Native input was terminated before key-up'))
+          },
+          { once: true }
+        )
+        keyDown()
+        // Model the native process's separate key-up after the dialog reacts to key-down.
+        setImmediate(() => {
+          if (terminated) return
+          keyHeld = false
+          events.push('key-up')
+          resolve({ stdout: '' })
+        })
+      })
+    })
+    const original = new Error('The operation rejected after native key-down')
+    const verification = withNativePluginDecision(
+      { applicationProcessId: 123, command: vi.fn() },
+      async () => {
+        await pressed
+        events.push('operation-rejected')
+        throw original
+      },
+      { allow }
+    )
+    await expect(verification).rejects.toBe(original)
+    events.push('caller-rejected')
+    expect(keyHeld).toBe(false)
+    expect(events).toEqual(['key-down', 'operation-rejected', 'key-up', 'caller-rejected'])
+  }
+)
+
+test('aborts a pending modal search when the operation fails before native input', async () => {
+  Object.defineProperty(process, 'platform', { value: 'linux' })
+  let startSearch
+  const searching = new Promise(resolve => {
+    startSearch = resolve
+  })
+  let searchSignal
+  native.execute.mockImplementation(async (_command, args, options) => {
+    expect(args[0]).toBe('search')
+    searchSignal = options.signal
+    return new Promise((_resolve, reject) => {
+      options.signal.addEventListener('abort', () => reject(new Error('Search aborted')))
+      startSearch()
+    })
+  })
+  const original = new Error('The operation failed before displaying a dialog')
+  await expect(
+    withNativePluginDecision({ applicationProcessId: 123, command: vi.fn() }, async () => {
+      await searching
+      throw original
+    })
+  ).rejects.toBe(original)
+  expect(searchSignal.aborted).toBe(true)
+  expect(native.execute).toHaveBeenCalledOnce()
+})
+
 test('rejects an ambiguous native confirmation before sending any key', async () => {
   Object.defineProperty(process, 'platform', { value: 'linux' })
   native.execute.mockImplementation(async (_command, args) => ({
@@ -90,6 +177,7 @@ test('captures only the owned modal before input and preserves the native reject
     if (args[0] === 'getwindowname')
       return { stdout: args[1] === '99' ? 'Confirm Core plugin update\n' : 'WeWork\n' }
     if (args[0] === 'getwindowfocus') return { stdout: '1\n' }
+    if (args[0] === 'windowfocus') return { stdout: '' }
     finishDecision()
     return { stdout: '' }
   })
@@ -151,7 +239,12 @@ test('waits for the actual modal instead of using the already visible owned main
   await decision
   expect(native.execute).toHaveBeenCalledWith(
     'xdotool',
-    ['windowfocus', '--sync', '99', 'key', '--clearmodifiers', 'Tab', 'Return'],
+    ['windowfocus', '--sync', '99'],
+    expect.anything()
+  )
+  expect(native.execute).toHaveBeenCalledWith(
+    'xdotool',
+    ['key', '--clearmodifiers', 'Tab', 'Return'],
     expect.anything()
   )
 })

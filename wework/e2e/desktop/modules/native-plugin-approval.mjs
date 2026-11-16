@@ -119,17 +119,16 @@ throw 'The isolated app did not display its native Core plugin decision'
   })
   const timeout = deadline - Date.now()
   assert.ok(timeout > 0, 'The isolated app did not display its native Core plugin decision')
+  await execute('xdotool', ['windowfocus', '--sync', window], { ...options, timeout })
+  signal.throwIfAborted()
+  const inputTimeout = deadline - Date.now()
+  assert.ok(inputTimeout > 0, 'The isolated app did not display its native Core plugin decision')
+  // The operation can reject on keydown. Finish keyup before finally aborts the
+  // search, or a held Escape/Return can act on the next native dialog.
   await execute(
     'xdotool',
-    [
-      'windowfocus',
-      '--sync',
-      window,
-      'key',
-      '--clearmodifiers',
-      ...(allow ? ['Tab', 'Return'] : ['Escape']),
-    ],
-    { ...options, timeout }
+    ['key', '--clearmodifiers', ...(allow ? ['Tab', 'Return'] : ['Escape'])],
+    { encoding: 'utf8', timeout: inputTimeout }
   )
 }
 

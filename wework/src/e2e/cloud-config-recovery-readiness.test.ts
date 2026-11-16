@@ -48,7 +48,12 @@ test('does not inject the cloud failure while a completed task still owns a pred
     release = resolve
   })
   let attempts = 0
-  const command = vi.fn(async (action: string) => {
+  const command = vi.fn(async (action: string, selector: string, options?: { value?: string }) => {
+    if (action === 'setAppPreferences') {
+      expect(selector).toBe('body')
+      expect(options).toEqual({ value: JSON.stringify({ replyPredictionsEnabled: false }) })
+      return JSON.stringify({ replyPredictionsEnabled: false })
+    }
     if (action === 'ensureLocalModelCatalogReady') return null
     expect(action).toBe('restartLocalCodexAppServerIfIdle')
     if (++attempts === 1)
@@ -69,6 +74,9 @@ test('does not inject the cloud failure while a completed task still owns a pred
   const prematureFaults = fixture.failBundle.mock.calls.length
   release()
   expect(await verification).toBe(reachedFault)
+  expect(command).toHaveBeenNthCalledWith(1, 'setAppPreferences', 'body', {
+    value: JSON.stringify({ replyPredictionsEnabled: false }),
+  })
   expect(prematureFaults).toBe(0)
   expect(attempts).toBe(2)
   expect(fixture.failBundle).toHaveBeenCalledOnce()
