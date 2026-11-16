@@ -141,8 +141,16 @@ export function StandInComposer({
         current.workspace ? { ...current, workspace: { ...current.workspace, branch } } : current
       ),
     onListBranches:
-      services?.deviceApi && project
-        ? () => listProjectBranches(services.deviceApi!, project)
+      services?.deviceApi && services.runtimeWorkApi && project
+        ? () =>
+            listProjectBranches(
+              {
+                executeCommand: (deviceId, data) =>
+                  services.deviceApi!.executeCommand(deviceId, data),
+                preflightWorktree: data => services.runtimeWorkApi!.preflightWorktree(data),
+              },
+              project
+            )
         : undefined,
   }
   const environment = draft.workspace

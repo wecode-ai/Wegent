@@ -12037,7 +12037,7 @@ describe('WorkbenchProvider runtime tasks', () => {
     )
   })
 
-  test('archives a worktree task without prompting and preserves a snapshot', async () => {
+  test('archives a worktree task with executor-owned snapshot cleanup', async () => {
     const runtimeWorkApi = createRuntimeWorkApiMock({
       listRuntimeWork: vi.fn().mockResolvedValue(
         createRuntimeWork({
@@ -12102,11 +12102,13 @@ describe('WorkbenchProvider runtime tasks', () => {
     expect(screen.getByTestId('workbench-error')).toHaveTextContent('')
     expect(runtimeWorkApi.archiveConversation).toHaveBeenCalledTimes(1)
     expect(getRuntimeConversationMessages(archivedAddress)).toEqual([])
-    expect(runtimeWorkApi.deleteWorktree).toHaveBeenCalledWith({
+    expect(runtimeWorkApi.archiveConversation).toHaveBeenCalledWith({
       deviceId: 'device-1',
-      path: '/workspace/worktrees/9/project-alpha',
-      preserveSnapshot: true,
+      taskId: 'runtime-worktree',
+      workspacePath: '/workspace/worktrees/9/project-alpha',
+      cleanupWorktree: true,
     })
+    expect(runtimeWorkApi.deleteWorktree).not.toHaveBeenCalled()
   })
 
   test('keeps a newly opened task selected when a different task finishes archiving', async () => {
@@ -12190,8 +12192,13 @@ describe('WorkbenchProvider runtime tasks', () => {
     expect(window.location.pathname).toBe('/settings/archived-conversations')
   })
 
-  test('archives a task before snapshotting and removing its worktree', async () => {
+  test('retains accepted archive state and reports executor cleanup failure', async () => {
     const runtimeWorkApi = createRuntimeWorkApiMock({
+      archiveConversation: vi.fn().mockResolvedValue({
+        accepted: true,
+        taskId: 'runtime-worktree',
+        cleanupError: 'Snapshot storage unavailable',
+      }),
       listRuntimeWork: vi.fn().mockResolvedValue(
         createRuntimeWork({
           projects: [
@@ -12237,17 +12244,15 @@ describe('WorkbenchProvider runtime tasks', () => {
     await userEvent.click(screen.getByText('archive worktree task'))
 
     await waitFor(() => expect(runtimeWorkApi.archiveConversation).toHaveBeenCalledTimes(1))
-    await waitFor(() =>
-      expect(runtimeWorkApi.deleteWorktree).toHaveBeenCalledWith({
-        deviceId: 'device-1',
-        path: '/workspace/worktrees/9/project-alpha',
-        preserveSnapshot: true,
-      })
-    )
-    const removeCallOrder = runtimeWorkApi.deleteWorktree.mock.invocationCallOrder.at(-1)
-    expect(runtimeWorkApi.archiveConversation.mock.invocationCallOrder[0]).toBeLessThan(
-      removeCallOrder ?? 0
-    )
+    await waitFor(() => expect(screen.getByTestId('archive-result')).toHaveTextContent('archived'))
+    expect(screen.getByTestId('workbench-error')).toHaveTextContent('Snapshot storage unavailable')
+    expect(runtimeWorkApi.archiveConversation).toHaveBeenCalledWith({
+      deviceId: 'device-1',
+      taskId: 'runtime-worktree',
+      workspacePath: '/workspace/worktrees/9/project-alpha',
+      cleanupWorktree: true,
+    })
+    expect(runtimeWorkApi.deleteWorktree).not.toHaveBeenCalled()
   })
 
   test('archives project conversations without a dirty-worktree prompt', async () => {
@@ -12324,18 +12329,16 @@ describe('WorkbenchProvider runtime tasks', () => {
       deviceId: 'device-1',
       workspacePath: '/workspace/worktrees/9/project-alpha',
       taskId: 'runtime-worktree',
+      cleanupWorktree: true,
     })
     expect(runtimeWorkApi.archiveConversation).toHaveBeenCalledWith({
       deviceId: 'remote-device',
       workspacePath: '/srv/remote-project',
       taskId: 'remote-project-task',
+      cleanupWorktree: true,
     })
     expect(runtimeWorkApi.archiveProjectConversations).not.toHaveBeenCalled()
-    expect(runtimeWorkApi.deleteWorktree).toHaveBeenCalledWith({
-      deviceId: 'device-1',
-      path: '/workspace/worktrees/9/project-alpha',
-      preserveSnapshot: true,
-    })
+    expect(runtimeWorkApi.deleteWorktree).not.toHaveBeenCalled()
     await waitFor(() => expect(screen.getByTestId('archive-result')).toHaveTextContent('archived'))
   })
 
