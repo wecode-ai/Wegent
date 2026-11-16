@@ -24,8 +24,8 @@ test('reports an upstream HTTP failure before attempting to decode its plain-tex
 })
 
 test('publishes the new Issue identity before its tag starts a model request', async () => {
-  const popoverPending = Promise.withResolvers()
-  const popoverClosed = Promise.withResolvers()
+  const tagEntered = Promise.withResolvers()
+  const tagCompleted = Promise.withResolvers()
   let title
   let expectedIssue = { id: 'previous-issue' }
   let completed = false
@@ -41,10 +41,8 @@ test('publishes the new Issue identity before its tag starts a model request', a
       if (action === 'getValue') return title
       if (action === 'press') {
         assert.equal(expectedIssue.id, issue.id, 'The immediate model call must see the new Issue')
-      }
-      if (action === 'waitFor' && selector.includes('more-properties-popover')) {
-        popoverPending.resolve()
-        await popoverClosed.promise
+        tagEntered.resolve()
+        await tagCompleted.promise
       }
       return ''
     }),
@@ -64,13 +62,13 @@ test('publishes the new Issue identity before its tag starts a model request', a
   })
 
   try {
-    await Promise.race([popoverPending.promise, creation])
+    await Promise.race([tagEntered.promise, creation])
     assert.equal(expectedIssue.id, issue.id)
     assert.equal(completed, false, 'The model can run before the UI helper returns')
-    popoverClosed.resolve()
+    tagCompleted.resolve()
     assert.deepEqual(await creation, { issue: { ...issue, title }, rule })
   } finally {
-    popoverClosed.resolve()
+    tagCompleted.resolve()
     await creation
   }
 })

@@ -60,6 +60,9 @@ export interface SharedWorkspaceHttpApi {
     | "saveAssistantRosterEntry"
     | "createAssistantDispatch"
     | "backfillAssistantParticipations"
+    | "listExecutionEnvironments"
+    | "addExecutionEnvironment"
+    | "removeExecutionEnvironment"
   >;
   comments: SharedWorkspaceCommentsApi;
   assignments: SharedWorkspaceAssignmentsApi;
@@ -237,6 +240,8 @@ export function createSharedWorkspaceHttpApi(
   transport: SharedWorkspaceHttpTransport,
 ): SharedWorkspaceHttpApi {
   const cache = getClientRequestCache(transport);
+  const invalidateExecutionEnvironments = () =>
+    cache.invalidate("/v1/resources/execution-environments");
   const get = <T>(endpoint: string, maxAgeMs?: number) => {
     // A save-time revalidation must not join an older in-flight catalog read.
     if (maxAgeMs === 0) cache.invalidate(endpoint);
@@ -396,17 +401,18 @@ export function createSharedWorkspaceHttpApi(
         );
       },
       async addExecutionEnvironment(workspaceId, input) {
-        return mapCollaborationExecutionEnvironmentDto(
-          await transport.post(
-            `/v1/workspaces/${encoded(workspaceId)}/execution-environments`,
-            workspaceHttpRequestBody({ deviceId: input.deviceId }),
-          ),
+        const saved = await transport.post(
+          `/v1/workspaces/${encoded(workspaceId)}/execution-environments`,
+          workspaceHttpRequestBody({ deviceId: input.deviceId }),
         );
+        invalidateExecutionEnvironments();
+        return mapCollaborationExecutionEnvironmentDto(record(saved));
       },
       async removeExecutionEnvironment(workspaceId, deviceId) {
         await transport.delete(
           `/v1/workspaces/${encoded(workspaceId)}/execution-environments/${encoded(deviceId)}`,
         );
+        invalidateExecutionEnvironments();
       },
       async initializeExecutionEnvironment(workspaceId, input) {
         return mapCollaborationWorkspaceDto(
@@ -504,6 +510,28 @@ export function createSharedWorkspaceHttpApi(
       },
     },
     projects: {
+      async listExecutionEnvironments(projectId) {
+        const response = await transport.get<{ items: unknown[] }>(
+          `/v1/cloud-projects/${encoded(projectId)}/execution-environments`,
+        );
+        return response.items.map((item) =>
+          mapCollaborationExecutionEnvironmentDto(record(item)),
+        );
+      },
+      async addExecutionEnvironment(projectId, deviceId) {
+        const saved = await transport.post(
+          `/v1/cloud-projects/${encoded(projectId)}/execution-environments`,
+          { device_id: deviceId },
+        );
+        invalidateExecutionEnvironments();
+        return mapCollaborationExecutionEnvironmentDto(record(saved));
+      },
+      async removeExecutionEnvironment(projectId, deviceId) {
+        await transport.delete(
+          `/v1/cloud-projects/${encoded(projectId)}/execution-environments/${encoded(deviceId)}`,
+        );
+        invalidateExecutionEnvironments();
+      },
       listAssistantRoster(projectId) {
         return transport.get<ProjectAssistantRosterEntry[]>(
           `/v1/cloud-projects/${encoded(projectId)}/assistant-roster`,
@@ -645,6 +673,13 @@ export function createSharedWorkspaceHttpApi(
       },
     },
     agents: {
+      async remove(projectId, agentId, version) {
+        await transport.delete(
+          `/v1/cloud-projects/${encoded(projectId)}/chat-agents/${encoded(agentId)}`,
+          { version },
+        );
+        invalidateAgents(projectId);
+      },
       async list(projectId, options) {
         const response = await get<unknown[]>(
           `/v1/cloud-projects/${encoded(projectId)}/chat-agents${options?.includeArchived ? "?include_archived=true" : ""}`,

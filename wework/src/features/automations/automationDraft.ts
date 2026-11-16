@@ -32,6 +32,7 @@ export interface AutomationDraft {
   scheduleType: ScheduleType
   cronPreset: CronPreset
   cronExpression: string
+  workdayOnly: boolean
   cronTime: string
   weeklyDay: string
   customFrequency: CustomFrequency
@@ -227,6 +228,7 @@ export function emptyAutomationDraft(
     scheduleType: 'cron',
     cronPreset: 'weekdays',
     cronExpression: '0 9 * * 1-5',
+    workdayOnly: false,
     cronTime: '09:00',
     weeklyDay: '1',
     customFrequency: 'weekly',
@@ -292,12 +294,12 @@ export function scheduleFromAutomationDraft(draft: AutomationDraft): AutomationS
   }
   if (draft.cronPreset === 'custom') {
     if (draft.customFrequency === 'cron') {
-      return { type: 'cron', expression: draft.cronExpression }
+      return cronSchedule(draft, draft.cronExpression)
     }
     const value = Math.max(1, Number.parseInt(draft.customInterval, 10) || 1)
     if (draft.customFrequency === 'hourly') {
       if (draft.originalSchedule?.schedule.type === 'cron') {
-        return { type: 'cron', expression: cronExpressionFromDraft(draft) }
+        return cronSchedule(draft, cronExpressionFromDraft(draft))
       }
       return { type: 'interval', value, unit: 'hours' }
     }
@@ -305,7 +307,11 @@ export function scheduleFromAutomationDraft(draft: AutomationDraft): AutomationS
       return { type: 'interval', value, unit: 'days' }
     }
   }
-  return { type: 'cron', expression: cronExpressionFromDraft(draft) }
+  return cronSchedule(draft, cronExpressionFromDraft(draft))
+}
+
+function cronSchedule(draft: AutomationDraft, expression: string): AutomationSchedule {
+  return { type: 'cron', expression, ...(draft.workdayOnly ? { workdayOnly: true } : {}) }
 }
 
 export function automationDraftFromAutomation(
@@ -339,6 +345,7 @@ export function automationDraftFromAutomation(
   draft.modelType = String(payload.modelType ?? '')
   draft.modelOptions = { ...modelOptions }
   if (automation.schedule.type === 'cron') {
+    draft.workdayOnly = automation.schedule.workdayOnly ?? false
     const cron = parseCronExpression(automation.schedule.expression)
     draft.cronExpression = automation.schedule.expression
     draft.cronPreset = cron.preset
@@ -366,6 +373,7 @@ function scheduleFields(draft: AutomationDraft): string {
     draft.scheduleType,
     draft.cronPreset,
     draft.cronExpression,
+    draft.workdayOnly,
     draft.cronTime,
     draft.weeklyDay,
     draft.customFrequency,

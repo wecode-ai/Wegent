@@ -213,36 +213,40 @@ where
             continue;
         }
         let model_name = info.name.clone().unwrap_or_default();
-        let model = UnifiedModel {
-            name: model_name.clone(),
-            model_type: MODEL_TYPE_PUBLIC,
-            display_name: info.display_name,
-            provider: info.provider,
-            model_id: info.model_id,
-            config: info.config,
-            is_active: info.is_active,
-            namespace: "default".to_string(),
-            model_category_type: info.model_category_type,
-            is_advanced: info.is_advanced,
-            model_group: info.model_group,
-            model_sub_group: info.model_sub_group,
-            context_window: info.context_window,
-            max_output_tokens: info.max_output_tokens,
-            cost_index: info.cost_index,
-            capability: info.capability,
-            model_capabilities: info.model_capabilities.map(Into::into),
-            resource_id: None,
-            resource_user_id: Some(0),
-            created_at: info.created_at,
-            updated_at: info.updated_at,
-            is_reference: false,
-        };
+        let model = public_unified_model(&model_dict, info);
         result.push((model, model_dict));
         seen_names.entry(model_name).or_insert(MODEL_TYPE_PUBLIC);
     }
 
     result.sort_by(|(a, _), (b, _)| a.name.cmp(&b.name));
     Ok(result)
+}
+
+fn public_unified_model(resource: &KindRow, info: PublicModelInfo) -> UnifiedModel {
+    UnifiedModel {
+        name: resource.name.clone(),
+        model_type: MODEL_TYPE_PUBLIC,
+        display_name: info.display_name,
+        provider: info.provider,
+        model_id: info.model_id,
+        config: info.config,
+        is_active: info.is_active,
+        namespace: "default".to_string(),
+        model_category_type: info.model_category_type,
+        is_advanced: info.is_advanced,
+        model_group: info.model_group,
+        model_sub_group: info.model_sub_group,
+        context_window: info.context_window,
+        max_output_tokens: info.max_output_tokens,
+        cost_index: info.cost_index,
+        capability: info.capability,
+        model_capabilities: info.model_capabilities.map(Into::into),
+        resource_id: Some(resource.id as i64),
+        resource_user_id: Some(0),
+        created_at: info.created_at,
+        updated_at: info.updated_at,
+        is_reference: false,
+    }
 }
 
 struct PublicModelInfo {

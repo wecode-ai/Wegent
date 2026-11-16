@@ -13,6 +13,7 @@ You can mention yourself: eligible stand-ins receive the event without a human s
 The same stand-in reuses its conversation for the same Issue. Reassignment retains history but still requires fresh authorization.
 Reassignment, unassignment, deletion of the original mention or pausing automatic intake still allows continuing and retrying the conversation, including synchronizing public replies.
 Manually starting a stand-in does not require assigning the Issue to yourself and never changes its assignee. Automatic intake settings select new work without restricting explicit user actions. Current project and Issue access and execution permissions still apply.
+If the initial startup fails, retry from the original Issue without deleting its conversation or reassigning it. Recovery resumes an existing native session or starts one within the original task. The latest startup failure's code, redacted message and timestamp remain available after retries and restarts in the conversation query's `startup_failure` field.
 Substantial assigned work runs in native subagents without requiring an extra delegation request. The primary stand-in coordinates, verifies and replies concisely; simple questions are answered directly. Normally only a brief acknowledgment and the verified result appear as comments, with material blockers, questions or native approvals surfaced when needed. Routine tool and subagent progress stays internal. You can keep writing and sending while subagents work; follow-up wakeups are handled in order.
 Reply directly to a stand-in comment without another mention to continue with that role. Private chats, reasoning and tool activity are not published.
 
@@ -225,7 +226,7 @@ Reading a notification, dismissing a reminder, or marking it read does not resol
 
 Use **Stop stand-in** at the bottom left of settings and confirm to stop. Source and startup failures remain visible for retry after fixing authentication, model selection, or connection settings. Message cursors, deduplication records, and associations persist across executor restarts.
 
-Executor read timeouts during source collection retry automatically with backoff, without saving the connection again. Sources previously stopped by this timeout also resume from their original cursor. Automatic recovery applies only to reads, never replaying sends or other actions. Expired authentication, permission denials, and invalid responses still require correction before retrying.
+Source collection failures never permanently stop intake or require saving the connection again. The Executor retains the error and original cursor, then tries again on the next polling cycle; timeouts or transport failures with an explicit backoff resume after that delay. Sources previously stopped by database locks, configuration changes, invalid responses, or other collection errors also resume. Every attempt still checks the current account and permissions: unresolved authentication, permission, or response errors remain visible and never grant unauthorized reads. Success clears the error and advances the cursor, while existing message records prevent duplicates. Automatic recovery applies only to collection, never replaying sends or other actions.
 
 ## Issue human handoffs
 

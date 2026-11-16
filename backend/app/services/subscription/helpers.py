@@ -359,7 +359,7 @@ def calculate_next_execution_time(
     if trigger_type_enum == SubscriptionTriggerType.CRON:
         # Use croniter to calculate next run with timezone support
         try:
-            from croniter import croniter
+            from app.utils.schedule_time import next_cron_datetime
 
             cron_expr = trigger_config.get("expression", "0 9 * * *")
             timezone_str = trigger_config.get("timezone", "UTC")
@@ -377,23 +377,9 @@ def calculate_next_execution_time(
             now_user_tz = now_utc.astimezone(user_tz)
 
             # Calculate next execution in user's timezone
-            iter = croniter(cron_expr, now_user_tz)
-            next_user_tz = iter.get_next(datetime)
-
-            if trigger_config.get("workday_only", False):
-                from app.services.subscription.workday import is_china_workday
-
-                while not is_china_workday(next_user_tz):
-                    # Skip the rest of this China calendar day in one step.
-                    china_next = next_user_tz.astimezone(ZoneInfo("Asia/Shanghai"))
-                    next_day = (china_next + timedelta(days=1)).replace(
-                        hour=0, minute=0, second=0, microsecond=0
-                    )
-                    iter = croniter(
-                        cron_expr,
-                        (next_day - timedelta(microseconds=1)).astimezone(user_tz),
-                    )
-                    next_user_tz = iter.get_next(datetime)
+            next_user_tz = next_cron_datetime(
+                cron_expr, now_user_tz, trigger_config.get("workday_only", False)
+            )
 
             # Ensure the result has timezone info
             if next_user_tz.tzinfo is None:
@@ -411,7 +397,7 @@ def calculate_next_execution_time(
             # Return naive UTC datetime for database storage
             return next_utc.replace(tzinfo=None)
         except Exception as e:
-            from app.services.subscription.workday import WorkdayCalendarError
+            from shared.utils.workday import WorkdayCalendarError
 
             if isinstance(e, WorkdayCalendarError):
                 raise
