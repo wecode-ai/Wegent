@@ -4,6 +4,7 @@ import { Readable } from 'node:stream'
 import { expect, test, vi } from 'vitest'
 import { createWeeklyUserStory } from '../../e2e/desktop/modules/stand-in-weekly-user-story.mjs'
 import { requestExecutor } from '../../e2e/desktop/modules/executor-rpc.mjs'
+import { bindDesktopOwner } from '../../e2e/desktop/modules/desktop-owner-fixture.mjs'
 
 vi.mock('../../e2e/desktop/modules/executor-rpc.mjs', () => ({
   requestExecutor: vi.fn(),
@@ -27,6 +28,7 @@ vi.mock('../../e2e/desktop/modules/response-protocol.mjs', async importOriginal 
 test.each([false, true])(
   'weekly cancellation waits for primary settings readiness (saving=%s)',
   async saving => {
+    bindDesktopOwner({ id: 9001, user_name: 'unit-test-owner' })
     const pickerReached = new Error('Reached connection picker after settings became ready')
     const primaryEntry = '[data-testid="stand-in-primary-connections-open"]'
     let releaseSave!: () => void
