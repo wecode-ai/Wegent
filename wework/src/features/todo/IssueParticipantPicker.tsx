@@ -274,7 +274,7 @@ export function IssueParticipantPicker({
                   type="button"
                   data-testid="issue-participant-retry"
                   onClick={() => setRevision(v => v + 1)}
-                  className="ml-2 underline"
+                  className="ml-2 inline-flex min-h-11 min-w-11 items-center justify-center rounded-md underline md:min-h-8"
                 >
                   {t('independentIssues.retry')}
                 </button>

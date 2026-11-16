@@ -22,6 +22,8 @@ export function IssueProjectEnvironmentPicker({
 }) {
   const { t, i18n } = useTranslation('common')
   const [open, setOpen] = useState(false)
+  const [side, setSide] = useState<'top' | 'bottom'>('top')
+  const triggerRef = useRef<HTMLButtonElement>(null)
   const popoverRef = useRef<HTMLDivElement>(null)
   useEscapeKey(() => setOpen(false), open, popoverRef)
   const load = useCallback(() => api.projects.get(projectId), [api, projectId])
@@ -29,9 +31,21 @@ export function IssueProjectEnvironmentPicker({
   const error = cause instanceof Error ? cause.message : cause ? String(cause) : ''
   const translate = createCollaborationTranslator(i18n?.language === 'en' ? 'en' : 'zh-CN')
   return (
-    <Popover.Root modal open={open} onOpenChange={setOpen}>
+    <Popover.Root
+      modal
+      open={open}
+      onOpenChange={next => {
+        if (next && triggerRef.current) {
+          const bounds = triggerRef.current.getBoundingClientRect()
+          // Loading content must not lock the growing device list into the smaller side.
+          setSide(bounds.top >= window.innerHeight - bounds.bottom ? 'top' : 'bottom')
+        }
+        setOpen(next)
+      }}
+    >
       <Popover.Trigger asChild>
         <button
+          ref={triggerRef}
           type="button"
           disabled={disabled}
           data-testid="issue-environment-picker-trigger"
@@ -52,6 +66,7 @@ export function IssueProjectEnvironmentPicker({
             setOpen(false)
           }}
           align="start"
+          side={side}
           sideOffset={6}
           collisionPadding={8}
           data-testid="issue-environment-picker"
@@ -63,7 +78,7 @@ export function IssueProjectEnvironmentPicker({
               <button
                 type="button"
                 data-testid="issue-environment-retry"
-                className="ml-2 underline"
+                className="ml-2 inline-flex min-h-11 min-w-11 items-center justify-center rounded-md underline md:min-h-8"
                 onClick={() => void refresh()}
               >
                 {t('independentIssues.retry')}

@@ -119,11 +119,64 @@ it('retains the saved Issue on association failure so retry cannot create a seco
   fireEvent.change(screen.getByTestId('independent-issue-project'), { target: { value: 'p1' } })
   fireEvent.click(screen.getByTestId('independent-issue-save'))
   await screen.findByText('Project changed')
+  expect(screen.getByText('issue_creation.association_pending')).toBeVisible()
   expect(screen.getByTestId('independent-issue-project')).toHaveValue('p1')
   expect(close).not.toHaveBeenCalled()
   fireEvent.click(screen.getByTestId('independent-issue-save'))
   await waitFor(() => expect(open).toHaveBeenCalledWith('p1', 'i1'))
   expect(create).toHaveBeenCalledOnce()
   expect(update).toHaveBeenCalledOnce()
+  expect(update).toHaveBeenCalledWith('i1', expect.objectContaining({ version: 1 }))
   expect(associate).toHaveBeenLastCalledWith('i1', 'p1', 2, '')
 })
+
+it.each(['independent-issue-close', 'independent-issue-editor-cancel'])(
+  'explains that an Issue survives a failed project association and refreshes it via %s',
+  async dismissal => {
+    const row = {
+      id: 'saved',
+      title: 'Saved work',
+      description: '',
+      status: 'pending',
+      priority: 'medium',
+      creator_id: 7,
+      assignee_id: 7,
+      version: 1,
+      people: {},
+      metadata: { standalone: true, participants: [], archived: false, due_at: null },
+    }
+    const api = {
+      create: vi.fn().mockResolvedValue(row),
+      associate: vi.fn().mockRejectedValue(new Error('Project unavailable')),
+      projects: vi.fn().mockResolvedValue({
+        items: [
+          {
+            id: 'p',
+            name: 'Project',
+            task_provider: 'backend',
+            access_role: 'Owner',
+            board_config: { statuses: [] },
+          },
+        ],
+      }),
+    } as unknown as PersonalIssuesApi
+    const close = vi.fn()
+    const saved = vi.fn()
+    render(
+      <IndependentIssueDialog api={api} userId={7} issueId={null} onClose={close} onSaved={saved} />
+    )
+    fireEvent.change(screen.getByTestId('independent-issue-title'), {
+      target: { value: row.title },
+    })
+    await screen.findByRole('option', { name: 'Project' })
+    fireEvent.change(screen.getByTestId('independent-issue-project'), { target: { value: 'p' } })
+    fireEvent.click(screen.getByTestId('independent-issue-save'))
+    await screen.findByText('issue_creation.association_pending')
+    fireEvent.click(screen.getByTestId(dismissal))
+    expect(screen.getByText('issue_creation.saved_issue_discard_hint')).toBeVisible()
+    fireEvent.click(screen.getByTestId('independent-issue-discard-confirm'))
+    expect(saved).toHaveBeenCalledWith(row)
+    expect(close).toHaveBeenCalledTimes(dismissal === 'independent-issue-close' ? 1 : 0)
+    expect(api.create).toHaveBeenCalledOnce()
+  }
+)

@@ -86,7 +86,7 @@ export function PluginPythonRuntimeNotice() {
           data-testid="plugin-python-runtime-dismiss"
           aria-label={t('workbench.plugin_python_dismiss', '关闭提示')}
           onClick={() => setDismissed(true)}
-          className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-text-secondary hover:bg-muted"
+          className="flex h-11 w-11 shrink-0 items-center justify-center rounded-md text-text-secondary hover:bg-muted md:h-7 md:w-7"
         >
           <X className="h-4 w-4" />
         </button>
@@ -109,7 +109,7 @@ export function PluginPythonRuntimeNotice() {
       </p>
       {failed ? (
         <Button
-          className="mt-3"
+          className="mt-3 min-h-11 md:min-h-0"
           variant="outline"
           size="sm"
           disabled={retrying}
@@ -131,8 +131,8 @@ export function PluginPythonRuntimeNotice() {
             <div
               className={
                 determinate
-                  ? 'h-full bg-text-primary transition-[width]'
-                  : 'h-full w-1/3 animate-pulse bg-text-primary'
+                  ? 'h-full bg-text-primary transition-[width] motion-reduce:transition-none'
+                  : 'h-full w-1/3 animate-pulse bg-text-primary motion-reduce:animate-none'
               }
               style={determinate ? { width: `${progress}%` } : undefined}
             />

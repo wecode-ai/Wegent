@@ -20,7 +20,7 @@ export interface IssueCreationInput extends IndependentIssueInput {
   project_status?: string
 }
 const control =
-  'min-h-11 min-w-0 w-full rounded-md border-0 bg-muted/40 px-2 py-1 text-sm text-text-primary keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-ring md:min-h-8'
+  'wework-native-select min-h-11 min-w-0 w-full rounded-md border-0 bg-muted/40 px-2 py-1 text-sm text-text-primary keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-ring md:min-h-8'
 
 export function IndependentIssueEditor({
   api,
@@ -206,7 +206,7 @@ export function IndependentIssueEditor({
             {canSelectProject && (
               <div className="grid gap-1">
                 <label className="flex items-center gap-2 text-sm">
-                  <Folder className="h-4 w-4 shrink-0 text-text-muted" />
+                  <Folder className="h-4 w-4 shrink-0 text-text-muted" aria-hidden="true" />
                   <span className="shrink-0 text-text-secondary">
                     {t('issue_creation.project_label')}
                   </span>
@@ -230,20 +230,18 @@ export function IndependentIssueEditor({
                     ))}
                   </select>
                 </label>
-                <p className="text-sm text-text-secondary">
-                  {t(
-                    projectId
-                      ? 'issue_creation.project_scope_hint'
-                      : 'issue_creation.independent_scope_hint'
-                  )}
-                </p>
+                {projectId && (
+                  <p className="text-sm text-text-secondary">
+                    {t('issue_creation.project_scope_hint')}
+                  </p>
+                )}
                 {projectError && (
                   <p role="alert" className="text-sm text-error">
                     {projectError}
                     <button
                       type="button"
                       data-testid="issue-project-retry"
-                      className="ml-2 underline"
+                      className="ml-2 inline-flex min-h-11 min-w-11 items-center justify-center rounded-md underline md:min-h-8"
                       onClick={() => {
                         setLoadingProjects(true)
                         setRevision(v => v + 1)
@@ -393,12 +391,8 @@ export function IndependentIssueEditor({
       </div>
       <div
         data-testid="independent-issue-editor-actions"
-        className="flex shrink-0 flex-wrap items-center justify-between gap-3 border-t border-border bg-popover px-5 py-4"
+        className="flex shrink-0 items-center justify-end gap-3 border-t border-border bg-popover px-5 py-4"
       >
-        <span className="text-sm text-text-secondary">
-          {project?.name ?? t('issue_creation.independent_short')} ·{' '}
-          {t('issue_creation.participant_count', { count: people.length })}
-        </span>
         <div className="flex gap-2">
           <button
             type="button"

@@ -72,7 +72,10 @@ export function ProjectEnvironmentDevices({
   createEnvironmentOnDevice,
 }: Props) {
   return (
-    <div className="space-y-3" data-testid={`${testIdPrefix}-environments`}>
+    <div
+      className="collaboration-environment-devices space-y-3"
+      data-testid={`${testIdPrefix}-environments`}
+    >
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
           <div className="flex flex-wrap items-center gap-2">
@@ -158,7 +161,7 @@ export function ProjectEnvironmentDevices({
                 '尚未添加运行设备'
               )}
             </p>
-            <p className="mt-0.5 text-xs text-text-muted">
+            <p className="mt-0.5 text-xs text-text-secondary">
               {translate(
                 'todo.execution_environment_empty_hint',
                 '通过「添加设备」选择可以运行任务的设备。'
@@ -181,7 +184,7 @@ export function ProjectEnvironmentDevices({
             ) : null}
           </div>
         ) : visibleAssignedItems.length === 0 ? (
-          <p className="text-sm text-text-muted" role="status">
+          <p className="text-sm text-text-secondary" role="status">
             {translate('todo.execution_environment_no_matches', '没有符合当前状态的执行环境')}
           </p>
         ) : (
@@ -208,7 +211,7 @@ export function ProjectEnvironmentDevices({
                 >
                   <span className="min-w-40 flex-1">
                     <span className="block truncate text-sm font-medium">{environment.name}</span>
-                    <span className="block text-xs text-text-muted">
+                    <span className="block text-xs text-text-secondary">
                       {environment.kind === 'cloud_host'
                         ? translate('todo.cloud_host', '云主机')
                         : translate('todo.local_device', '本地设备')}
@@ -292,7 +295,7 @@ export function ProjectEnvironmentDevices({
                 <h3 className="text-sm font-medium">
                   {translate('todo.select_execution_device', '选择在线设备')}
                 </h3>
-                <p className="mt-0.5 text-xs text-text-muted">
+                <p className="mt-0.5 text-xs text-text-secondary">
                   {isWorkspaceScope
                     ? translate(
                         'todo.select_workspace_environment',
@@ -328,7 +331,7 @@ export function ProjectEnvironmentDevices({
                 />
               ) : candidates.length === 0 && pickerError ? null : candidates.length === 0 ? (
                 <div className="px-4 py-5">
-                  <p className="text-sm text-text-muted" role="status">
+                  <p className="text-sm text-text-secondary" role="status">
                     {translate(
                       'todo.no_available_execution_environments',
                       '没有可添加的在线执行环境'
@@ -360,7 +363,7 @@ export function ProjectEnvironmentDevices({
                           <span className="block truncate text-sm font-medium">
                             {environment.name}
                           </span>
-                          <span className="block text-xs text-text-muted">
+                          <span className="block text-xs text-text-secondary">
                             {environment.kind === 'cloud_host'
                               ? translate('todo.cloud_host', '云主机')
                               : translate('todo.local_device', '本地设备')}
@@ -373,7 +376,7 @@ export function ProjectEnvironmentDevices({
                           </span>
                           {needsSharing ? (
                             <span
-                              className="mt-1 block text-xs text-text-muted"
+                              className="mt-1 block text-xs text-text-secondary"
                               id={sharingHintId}
                               data-testid={sharingHintId}
                             >

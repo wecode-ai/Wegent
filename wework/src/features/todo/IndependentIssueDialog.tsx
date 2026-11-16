@@ -58,10 +58,17 @@ export function IndependentIssueDialog({
   const [retry, setRetry] = useState(0)
   const [dirty, setDirty] = useState(false)
   const [discarding, setDiscarding] = useState<'close' | 'edit' | null>(null)
+  const [associationPending, setAssociationPending] = useState(false)
+  const refreshSavedIssue = () => {
+    if (associationPending && issue) onSaved(issue)
+  }
   const requestClose = () => {
     if (busy) return
     if (editing && dirty) setDiscarding('close')
-    else onClose()
+    else {
+      refreshSavedIssue()
+      onClose()
+    }
   }
   const ref = useDialogKeyboard<HTMLDivElement>(
     requestClose,
@@ -124,10 +131,14 @@ export function IndependentIssueDialog({
   }
   const save = ({ project_id, project_status, ...input }: IssueCreationInput) =>
     run(async () => {
-      const row = issue ? await api.update(issue.id, input) : await api.create(input)
+      const row = issue
+        ? await api.update(issue.id, { ...input, version: issue.version })
+        : await api.create(input)
       setIssue(row)
+      setAssociationPending(Boolean(project_id))
       if (project_id) {
         const target = await api.associate(row.id, project_id, row.version, project_status ?? '')
+        setAssociationPending(false)
         onSaved(null)
         onOpenProjectIssue?.(target.project_id, target.issue_id)
         onClose()
@@ -232,6 +243,11 @@ export function IndependentIssueDialog({
                 role="alert"
                 className={`mb-4 flex shrink-0 flex-wrap items-center gap-3 text-sm text-error ${editing ? 'mx-5 mt-4' : ''}`}
               >
+                {associationPending && (
+                  <p data-testid="independent-issue-association-pending" className="w-full">
+                    {t('issue_creation.association_pending')}
+                  </p>
+                )}
                 <span>{error}</span>
                 {!editing ? (
                   <button
@@ -259,8 +275,10 @@ export function IndependentIssueDialog({
                 onSave={save}
                 onCancel={() => {
                   if (dirty) setDiscarding(issue ? 'edit' : 'close')
-                  else if (issue) setEditing(false)
-                  else onClose()
+                  else if (issue) {
+                    refreshSavedIssue()
+                    setEditing(false)
+                  } else onClose()
                 }}
               />
             ) : issue ? (
@@ -446,7 +464,11 @@ export function IndependentIssueDialog({
       <ConfirmDialog
         open={Boolean(discarding)}
         title={t('issue_creation.discard_title')}
-        description={t('issue_creation.discard_hint')}
+        description={t(
+          associationPending
+            ? 'issue_creation.saved_issue_discard_hint'
+            : 'issue_creation.discard_hint'
+        )}
         cancelLabel={t('issue_creation.keep_editing')}
         confirmLabel={t('issue_creation.discard')}
         confirmTestId="independent-issue-discard-confirm"
@@ -456,8 +478,11 @@ export function IndependentIssueDialog({
         onConfirm={() => {
           const action = discarding
           setDiscarding(null)
+          refreshSavedIssue()
           if (action === 'edit') setEditing(false)
-          else onClose()
+          else {
+            onClose()
+          }
         }}
       />
       <ConfirmDialog

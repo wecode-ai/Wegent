@@ -1,5 +1,9 @@
 import { verifyLocalProjectMigration } from '../modules/local-project-migration.mjs'
-import { verifyIndependentIssueDraft } from '../modules/independent-issue-draft.mjs'
+import {
+  verifyIndependentIssueDraft,
+  verifyIssueDeviceLayout,
+  verifyIssueAssociationRecovery,
+} from '../modules/independent-issue-draft.mjs'
 import assert from 'node:assert/strict'
 import { waitForBoardValue } from '../modules/collaboration-board-flows.mjs'
 import { ensureExperimentalFeaturesEnabled } from '../modules/preferences-automation-flows.mjs'
@@ -156,6 +160,11 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
       const before = await request('/api/v1/cloud-projects')
       await navigate(control, 'collaboration-primary-create-issue')
       await wait(control, '[data-testid="independent-issue-dialog"]')
+      await click(control, 'independent-issue-close')
+      await verifyIssueAssociationRecovery(control, {
+        request,
+        reopen: () => navigate(control, 'collaboration-primary-create-issue'),
+      })
       await verifyIndependentIssueDraft(control, {
         request,
         reopen: () => navigate(control, 'collaboration-primary-create-issue'),
@@ -421,6 +430,7 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
         'Adding a device from the Issue draft must persist its project authorization',
         uiTimeoutMs
       )
+      await verifyIssueDeviceLayout(control, appDevice.id)
       await captureScreenshot(control, 'new-issue-project-devices.png')
       await click(control, 'issue-environment-picker-trigger')
       assert.equal(

@@ -147,6 +147,13 @@
   cursor: pointer;
 }
 
+@media (max-width: 767px) {
+  .collaboration-environment-devices :is(button, select, summary) {
+    min-width: 44px;
+    min-height: 44px;
+  }
+}
+
 .collaboration-alert {
   border: 1px solid rgb(var(--color-error));
   border-radius: 8px;
