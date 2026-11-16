@@ -411,6 +411,7 @@ export function ProjectCreateDialog(props: ProjectCreateDialogProps) {
     },
     [],
   );
+  const collaboratorsLocked = state.saving || Boolean(state.createdProject);
   const people = [...(resourceSetup?.members ?? []), ...addedPeople].filter(
     (member, index, all) =>
       all.findIndex((candidate) => candidate.user_id === member.user_id) ===
@@ -453,24 +454,28 @@ export function ProjectCreateDialog(props: ProjectCreateDialogProps) {
     return resourceSetup?.agents.find((agent) => agent.id === id)?.name ?? id;
   };
   const removeMember = (userId: number) => {
+    if (collaboratorsLocked) return;
     commands.setMemberUserIds(
       state.memberUserIds.filter((candidate) => candidate !== userId),
     );
     commands.setCollaborationGroupDraft(null);
   };
   const removeAgent = (resourceId: string) => {
+    if (collaboratorsLocked) return;
     commands.setAgentResourceIds(
       state.agentResourceIds.filter((candidate) => candidate !== resourceId),
     );
     commands.setCollaborationGroupDraft(null);
   };
   const addAgent = (resourceId: string) => {
+    if (collaboratorsLocked) return;
     commands.setAgentResourceIds([...state.agentResourceIds, resourceId]);
     commands.setCollaborationGroupDraft(null);
     setGroupRecommendationDismissed(false);
     setCollaboratorPickerOpen(false);
   };
   const importGroup = (groupId: string) => {
+    if (collaboratorsLocked) return;
     const group = resourceSetup?.groups.find(
       (candidate) => candidate.id === groupId,
     );
@@ -1170,7 +1175,11 @@ export function ProjectCreateDialog(props: ProjectCreateDialogProps) {
           )}
 
           {resourceSetup && !templateSelected ? (
-            <section className="collaboration-project-create-collaborators">
+            <fieldset
+              className="collaboration-project-create-collaborators min-w-0 border-0 p-0"
+              aria-label={labels.collaborators}
+              disabled={collaboratorsLocked}
+            >
               <h3>{labels.collaborators}</h3>
               {state.collaborationGroupDraft ? (
                 <div
@@ -1278,7 +1287,7 @@ export function ProjectCreateDialog(props: ProjectCreateDialogProps) {
                 </div>
               )}
               <Popover.Root
-                open={collaboratorPickerOpen}
+                open={collaboratorPickerOpen && !collaboratorsLocked}
                 onOpenChange={setCollaboratorPickerOpen}
               >
                 <Popover.Trigger asChild>
@@ -1320,6 +1329,7 @@ export function ProjectCreateDialog(props: ProjectCreateDialogProps) {
                         ]}
                         searchUsers={resourceSetup.searchUsers}
                         onSelect={(user) => {
+                          if (collaboratorsLocked) return;
                           setAddedPeople((current) => [
                             ...current.filter(
                               (member) => member.user_id !== user.id,
@@ -1461,7 +1471,7 @@ export function ProjectCreateDialog(props: ProjectCreateDialogProps) {
                   {groupGenerationError}
                 </p>
               ) : null}
-            </section>
+            </fieldset>
           ) : null}
 
           {groupModelPickerOpen && typeof document !== "undefined"
