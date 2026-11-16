@@ -2,7 +2,8 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-import type { ReactNode } from "react";
+import type { ComponentType, ReactNode } from "react";
+import type { ProjectSettingsPagesProps } from "../project-manage/ProjectSettingsPages";
 
 import type {
   CollaborationDefaultAssistant,
@@ -58,6 +59,7 @@ export interface CollaborationPlatformLocation {
 }
 
 export interface CollaborationPlatformHostAdapter {
+  settingsPages?: ComponentType<ProjectSettingsPagesProps>;
   /** Stable authentication and backend identity, independent of optional data readiness. */
   accountScope: string;
   projectTemplateRequest?: {

@@ -4,7 +4,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-import { act } from "react";
+import { Activity, act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -17,6 +17,14 @@ import type {
 } from "../types";
 import { WorkspaceMembersConfiguration } from "./WorkspaceMembersConfiguration";
 import { ProjectSettingsShell } from "../project-manage/ProjectSettingsShell";
+import {
+  RetainedProjectSettingsPages,
+  type ProjectSettingsPagesProps,
+} from "../project-manage/ProjectSettingsPages";
+
+const RetainedPages = (props: ProjectSettingsPagesProps) => (
+  <RetainedProjectSettingsPages {...props} boundary={Activity} />
+);
 import {
   WorkspaceCollaborationGroupsConfiguration,
   type WorkspaceResourceCommands,
@@ -120,6 +128,7 @@ describe("WorkspaceCollaborationGroupsConfiguration", () => {
       act(async () =>
         root.render(
           <ProjectSettingsShell
+            pageRenderer={RetainedPages}
             ariaLabel="Settings"
             selectedSectionId={selectedSectionId}
             sections={[
@@ -219,10 +228,26 @@ describe("WorkspaceCollaborationGroupsConfiguration", () => {
   });
 
   it("keeps collaboration group membership read-only without management access", async () => {
-    await act(async () => root.render(<WorkspaceCollaborationGroupsConfiguration groups={[group]} members={[humanMember]} agents={[codexAgent, claudeAgent]} locale="en" commands={commands} canManage={false} initialSelectedGroupId={group.id} />));
+    await act(async () =>
+      root.render(
+        <WorkspaceCollaborationGroupsConfiguration
+          groups={[group]}
+          members={[humanMember]}
+          agents={[codexAgent, claudeAgent]}
+          locale="en"
+          commands={commands}
+          canManage={false}
+          initialSelectedGroupId={group.id}
+        />,
+      ),
+    );
     expect(byTestId("collaboration-group-detail-save")).toBeNull();
     expect(byTestId("collaboration-group-create-add-members")).toBeNull();
-    expect(byTestId<HTMLInputElement>("collaboration-group-create-responsibility-agent-2").disabled).toBe(true);
+    expect(
+      byTestId<HTMLInputElement>(
+        "collaboration-group-create-responsibility-agent-2",
+      ).disabled,
+    ).toBe(true);
     expect(byTestId("collaboration-group-remove-member-agent-2")).toBeNull();
     expect(commands.updateCollaborationGroup).not.toHaveBeenCalled();
   });

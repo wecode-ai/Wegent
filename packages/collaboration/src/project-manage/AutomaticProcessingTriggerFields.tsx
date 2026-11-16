@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { CalendarClock, ChevronDown } from 'lucide-react'
+import { useEffect, useRef } from 'react'
 import { WorkdayOnlyField } from './WorkdayOnlyField'
 
 import type { AutomationEventType } from '../automation/types'
@@ -25,6 +26,7 @@ import type {
 } from './automaticProcessing'
 
 interface AutomaticProcessingTriggerFieldsProps {
+  cronError?: string
   draft: AutomaticProcessingDraft
   updateDraft(patch: Partial<AutomaticProcessingDraft>): void
   selectTrigger(trigger: TriggerKind): void
@@ -37,6 +39,7 @@ interface AutomaticProcessingTriggerFieldsProps {
 }
 
 export function AutomaticProcessingTriggerFields({
+  cronError,
   draft,
   updateDraft,
   selectTrigger,
@@ -47,6 +50,13 @@ export function AutomaticProcessingTriggerFields({
   hasIncomingHooks,
   statuses,
 }: AutomaticProcessingTriggerFieldsProps) {
+  const cronInput = useRef<HTMLInputElement>(null)
+  const cronDetails = useRef<HTMLDetailsElement>(null)
+  useEffect(() => {
+    if (!cronError) return
+    if (cronDetails.current) cronDetails.current.open = true
+    cronInput.current?.focus()
+  }, [cronError])
   const schedule = parseSchedule(draft.cronExpression)
   const selectedHook = hooks.find(hook => hook.id === draft.hookId)
   const externalEventTypes = selectedHook ? eventTypesForHook(selectedHook) : []
@@ -285,6 +295,7 @@ export function AutomaticProcessingTriggerFields({
               </div>
 
               <details
+                ref={cronDetails}
                 className="group rounded-lg border border-border bg-background"
                 data-testid="automatic-processing-cron-advanced"
               >
@@ -303,6 +314,9 @@ export function AutomaticProcessingTriggerFields({
                     {translate('todo.schedule_expression', 'Cron 表达式')}
                   </label>
                   <input
+                    ref={cronInput}
+                    aria-invalid={cronError ? true : undefined}
+                    aria-describedby={cronError ? 'automatic-processing-cron-error' : undefined}
                     className="h-9 w-full rounded-lg border border-border bg-surface px-3 font-mono text-sm outline-none keyboard:focus:border-focus"
                     data-testid="automatic-processing-cron"
                     id="automatic-processing-cron"
@@ -314,6 +328,15 @@ export function AutomaticProcessingTriggerFields({
                       })
                     }
                   />
+                  {cronError ? (
+                    <p
+                      id="automatic-processing-cron-error"
+                      className="collaboration-alert"
+                      role="alert"
+                    >
+                      {cronError}
+                    </p>
+                  ) : null}
                   <p className="text-xs text-text-muted">
                     {translate(
                       'todo.schedule_cron_help',

@@ -1113,6 +1113,7 @@ export function CollaborationApp({
                 ),
                 manage: (
                   <ProjectSettingsShell
+                    pageRenderer={host.settingsPages}
                     key={project.id}
                     ariaLabel={messages.settings}
                     onSectionChange={(sectionId) => {

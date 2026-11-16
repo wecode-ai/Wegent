@@ -91,6 +91,7 @@ import {
   type CollaborationProjectView,
 } from '@wegent/collaboration'
 import { ProjectSettingsShell } from '@wegent/collaboration/project-manage'
+import { DesktopProjectSettingsPages } from './DesktopProjectSettingsPages'
 import {
   createStandardCloudBoardColumns,
   createProjectBoardSortLabels,
@@ -4504,6 +4505,7 @@ export function CloudTodoWorkspace({
                     selectedProject.location === 'cloud' ? cloudWorkspaceApi : selectedProjectApi
                   ) ? (
                     <ProjectSettingsShell
+                      pageRenderer={DesktopProjectSettingsPages}
                       ariaLabel={t('todo.project_settings', '项目设置')}
                       selectedSectionId={projectSettingsSectionId}
                       onSectionChange={setProjectSettingsSectionId}

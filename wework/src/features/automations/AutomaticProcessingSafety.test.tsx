@@ -32,7 +32,7 @@ const rule: WorkspaceAutomationRule = {
   createdAt: '',
   updatedAt: '',
 }
-function setup(accessRole = 'Owner') {
+function setup(accessRole = 'Owner', locale: 'en' | 'zh-CN' = 'en') {
   let rules = [rule]
   const remove = vi
     .fn()
@@ -60,8 +60,8 @@ function setup(accessRole = 'Owner') {
       }
       agents={[]}
       members={[]}
-      locale="en"
-      translate={createCollaborationTranslator('en')}
+      locale={locale}
+      translate={createCollaborationTranslator(locale)}
     />
   )
   return { remove, update }
@@ -96,4 +96,31 @@ it('lets viewers inspect a rule without exposing editing or deletion', async () 
   expect(screen.queryByTestId('automatic-processing-delete-rule')).not.toBeInTheDocument()
   expect(remove).not.toHaveBeenCalled()
   expect(update).not.toHaveBeenCalled()
+})
+
+it('explains rejected Cron input in the current language, focuses it and preserves a disabled draft', async () => {
+  const user = userEvent.setup()
+  const { update } = setup('Owner', 'zh-CN')
+  update.mockRejectedValueOnce(new Error('invalid task data: invalid cron expression'))
+  update.mockResolvedValueOnce(undefined)
+  await user.click(await screen.findByTestId('automatic-processing-edit-rule'))
+  await user.click(screen.getByTestId('automatic-processing-cron-advanced-toggle'))
+  const input = screen.getByTestId('automatic-processing-cron')
+  await user.clear(input)
+  await user.type(input, 'invalid')
+  await user.click(screen.getByTestId('automatic-processing-cron-advanced-toggle'))
+  await user.click(screen.getByTestId('automatic-processing-save'))
+  expect(await screen.findByRole('alert')).toHaveTextContent('Cron 表达式无效')
+  expect(input).toHaveAttribute('aria-invalid', 'true')
+  expect(input).toHaveAttribute('aria-describedby', 'automatic-processing-cron-error')
+  expect(input).toHaveFocus()
+  expect(input).toHaveValue('invalid')
+  await user.clear(input)
+  expect(input.closest('details')).toHaveAttribute('open')
+  await user.type(input, '0 10 * * *')
+  expect(input).not.toHaveAttribute('aria-invalid')
+  await user.click(screen.getByTestId('automatic-processing-save'))
+  await waitFor(() => expect(screen.queryByTestId('automatic-processing-form')).toBeNull())
+  expect(update).toHaveBeenCalledTimes(2)
+  expect(update.mock.calls[1][2]).toMatchObject({ cronExpression: '0 10 * * *', enabled: false })
 })

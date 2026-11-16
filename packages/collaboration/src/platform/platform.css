@@ -5229,9 +5229,17 @@ button.collaboration-project-offline:hover {
     button:not([role="switch"]):not([role="checkbox"]) {
     min-height: 44px;
   }
+  .collaboration-project-settings summary {
+    min-height: 44px;
+    min-width: 44px;
+  }
   .collaboration-group-people-editor:is(.is-compact, .is-inline)
     .collaboration-group-people-action {
     min-height: 44px;
     min-width: 44px;
   }
+}
+
+.collaboration-project-settings .collaboration-alert {
+  color: rgb(var(--color-text-primary));
 }

@@ -166,6 +166,13 @@ it('retains manually added collaborators while changing template roles and creat
   await click('collaboration-project-create-add-collaborator')
   await click('collaboration-project-create-collaborator-tab-agents')
   await click('collaboration-project-create-agent-qa-agent')
+  const customize = container
+    .querySelector<HTMLDetailsElement>('[data-testid^="template-customize-"]')!
+    .closest('details')!
+  await act(async () => {
+    customize.open = true
+    customize.dispatchEvent(new Event('toggle'))
+  })
   const role = document.querySelector<HTMLSelectElement>('[data-testid^="template-role-"]')!
   await act(async () => {
     role.value = 'human:2'

@@ -325,8 +325,20 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
               scoped('[data-testid="project-settings-shell-group-ai-team"] + nav button')
             )
           ),
-          3,
-          'AI team navigation must expose agents, members, and collaboration teams'
+          2,
+          'AI team navigation must expose agents and collaboration groups'
+        )
+        assert.equal(
+          Number(
+            await control.command(
+              'getElementCount',
+              scoped(
+                '[data-testid="project-settings-shell-group-settings"] + nav [data-testid="collaboration-project-settings-members"]'
+              )
+            )
+          ),
+          1,
+          'Human project members must remain reachable in project settings'
         )
 
         await control.command(

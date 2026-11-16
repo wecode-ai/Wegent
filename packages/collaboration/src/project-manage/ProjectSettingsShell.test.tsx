@@ -2,10 +2,18 @@
 // SPDX-FileCopyrightText: 2026 Weibo, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-import { act, useEffect, useState } from 'react'
+import { Activity, act, useEffect, useState } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import { ProjectSettingsShell } from './ProjectSettingsShell'
+import {
+  RetainedProjectSettingsPages,
+  type ProjectSettingsPagesProps,
+} from './ProjectSettingsPages'
+
+const RetainedPages = (props: ProjectSettingsPagesProps) => (
+  <RetainedProjectSettingsPages {...props} boundary={Activity} />
+)
 
 let container: HTMLDivElement
 let root: Root
@@ -43,6 +51,7 @@ it('retains drafts while pausing hidden-page effects and never mounts unvisited 
     act(async () => {
       root.render(
         <ProjectSettingsShell
+          pageRenderer={RetainedPages}
           key={scope}
           ariaLabel="Settings"
           selectedSectionId={selected}

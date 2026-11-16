@@ -1019,6 +1019,9 @@ component-level validation outlines to override the native-outline reset.
   unrelated settings or keep their requests active. Project changes reset
   drafts. Explanatory settings text uses the secondary foreground so small
   text remains readable, including on neutral surfaces.
+- The desktop host supplies its retained-page lifecycle through the collaboration
+  host adapter. The shared settings shell owns layout and navigation; Web uses
+  active-page rendering with its framework-owned React runtime.
 - Keep group identity compact above independently expandable configuration
   rows for members, rules, environment and sharing. Collapsed rows summarize
   their current draft values. Keep save status and discard/save actions together.

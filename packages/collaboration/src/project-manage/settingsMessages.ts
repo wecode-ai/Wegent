@@ -4,6 +4,8 @@
 
 export const settingsMessages: Record<'en' | 'zh-CN', Record<string, string>> = {
   en: {
+    'todo.invalid_cron_expression':
+      'Invalid Cron expression. Check its fields, value ranges and format, then try again.',
     'todo.enable_rule': 'Enable rule',
     'todo.enable_after_creation': 'Enable after creation',
     'common.saving': 'Saving…',
@@ -91,6 +93,7 @@ export const settingsMessages: Record<'en' | 'zh-CN', Record<string, string>> = 
     'todo.no_project_agents': 'No project Agents yet',
   },
   'zh-CN': {
+    'todo.invalid_cron_expression': 'Cron 表达式无效。请检查字段、取值范围和格式后重试。',
     'todo.enable_rule': '启用规则',
     'todo.enable_after_creation': '创建后立即启用',
     'common.saving': '保存中…',
@@ -163,8 +166,8 @@ export const settingsMessages: Record<'en' | 'zh-CN', Record<string, string>> = 
     'todo.search_processing_target': '搜索处理对象',
     'todo.workspace_execution_environments': '执行环境',
     'todo.project_execution_environments': '执行环境',
-    'todo.no_workspace_execution_environments': '暂无共享执行环境',
-    'todo.no_project_execution_environments': '暂无执行环境',
+    'todo.no_workspace_execution_environments': '尚未添加运行设备',
+    'todo.no_project_execution_environments': '尚未添加运行设备',
     'todo.search_members_failed': '搜索成员失败',
     'todo.codex_agent': 'Codex 智能体',
     'todo.no_workspace_agents': '暂无分组智能体',

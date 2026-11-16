@@ -2,18 +2,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-import {
-  Bot,
-  Check,
-  ChevronDown,
-  Pencil,
-  Plus,
-  Search,
-  Trash2,
-  UserRound,
-  UsersRound,
-  X,
-} from 'lucide-react'
+import { Bot, Pencil, Plus, Trash2, UserRound, UsersRound, X } from 'lucide-react'
 import { useEffect, useMemo, useRef, useState } from 'react'
 
 import { collaborationMessages, type CollaborationTranslate } from '../i18n'
@@ -40,10 +29,12 @@ import {
   useProjectSettingsRefresh,
   ProjectSettingsRefreshFeedback,
 } from './useProjectSettingsRefresh'
+import { AutomaticProcessingTargetPicker } from './AutomaticProcessingTargetPicker'
 import { AutomaticProcessingDialogFooter } from './AutomaticProcessingDialogFooter'
 import { AutomaticProcessingTriggerFields } from './AutomaticProcessingTriggerFields'
 import {
   EMPTY_DRAFT,
+  automaticProcessingSaveError,
   draftFromRule,
   eventLabel,
   eventTypesForHook,
@@ -123,11 +114,10 @@ export function ProjectAutomaticProcessing({
   const [draft, setDraft] = useState<AutomaticProcessingDraft>(EMPTY_DRAFT)
   const [editing, setEditing] = useState(false)
   const [pendingRemoval, setPendingRemoval] = useState<WorkspaceAutomationRule | null>(null)
-  const [targetPickerOpen, setTargetPickerOpen] = useState(false)
-  const [targetQuery, setTargetQuery] = useState('')
   const [hooksLoading, setHooksLoading] = useState(false)
   const [saving, setSaving] = useState(false)
   const [actionError, setError] = useState('')
+  const [cronError, setCronError] = useState('')
   const [optionsError, setOptionsError] = useState('')
   const [hooksError, setHooksError] = useState('')
   const translateRef = useRef(translate)
@@ -150,8 +140,7 @@ export function ProjectAutomaticProcessing({
   const canManage = project.access_role === 'Owner' || project.access_role === 'Maintainer'
   const closeEditor = () => {
     if (saving) return
-    setTargetPickerOpen(false)
-    setTargetQuery('')
+    setCronError('')
     setEditing(false)
     setDraft(EMPTY_DRAFT)
   }
@@ -278,10 +267,6 @@ export function ProjectAutomaticProcessing({
   const selectedTargetName =
     targetOptions[draft.targetKind].find(option => option.id === draft.targetId)?.name ??
     translate('common.select', '请选择')
-  const normalizedTargetQuery = targetQuery.trim().toLocaleLowerCase()
-  const filteredTargets = targetOptions[draft.targetKind].filter(option =>
-    option.name.toLocaleLowerCase().includes(normalizedTargetQuery)
-  )
   const targetKinds = [
     {
       kind: 'human',
@@ -341,6 +326,7 @@ export function ProjectAutomaticProcessing({
   )
 
   function updateDraft(patch: Partial<AutomaticProcessingDraft>) {
+    if (patch.cronExpression !== undefined || patch.trigger !== undefined) setCronError('')
     setDraft(current => ({
       ...current,
       ...patch,
@@ -366,8 +352,6 @@ export function ProjectAutomaticProcessing({
       targetKind,
       targetId: target.id,
     })
-    setTargetPickerOpen(false)
-    setTargetQuery('')
     setEditing(true)
     setError('')
   }
@@ -469,11 +453,11 @@ export function ProjectAutomaticProcessing({
       setDraft(EMPTY_DRAFT)
     } catch (saveError) {
       if (activeSaveScope.current !== saveScope) return
-      setError(
-        saveError instanceof Error
-          ? saveError.message
-          : translate('todo.automatic_processing_save_failed', '保存自动处理失败')
-      )
+      const failure = automaticProcessingSaveError(saveError, translate)
+      if (draft.trigger === 'schedule' && failure.cronInvalid) {
+        setCronError(failure.message)
+        setError('')
+      } else setError(failure.message)
     } finally {
       setSaving(false)
     }
@@ -675,14 +659,6 @@ export function ProjectAutomaticProcessing({
             aria-modal="true"
             className="collaboration-dialog flex max-h-[calc(100vh-48px)] w-full max-w-[600px] flex-col overflow-hidden !rounded-2xl !p-0 !shadow-lg"
             data-testid="automatic-processing-form"
-            onKeyDown={event => {
-              if (event.key === 'Escape' && targetPickerOpen && !saving) {
-                event.preventDefault()
-                event.stopPropagation()
-                setTargetPickerOpen(false)
-                setTargetQuery('')
-              }
-            }}
             onSubmit={event => {
               event.preventDefault()
               void save()
@@ -740,6 +716,7 @@ export function ProjectAutomaticProcessing({
                 </div>
 
                 <AutomaticProcessingTriggerFields
+                  cronError={cronError}
                   draft={draft}
                   updateDraft={updateDraft}
                   selectTrigger={selectTrigger}
@@ -782,8 +759,6 @@ export function ProjectAutomaticProcessing({
                               targetKind: targetKind.kind,
                               targetId: firstTarget?.id ?? '',
                             })
-                            setTargetPickerOpen(false)
-                            setTargetQuery('')
                           }}
                           type="button"
                         >
@@ -819,112 +794,16 @@ export function ProjectAutomaticProcessing({
                       )
                     })}
                   </div>
-                  <div className="relative">
-                    <button
-                      aria-expanded={targetPickerOpen}
-                      aria-haspopup="listbox"
-                      className={`automatic-processing-selected flex min-h-[68px] w-full items-center gap-3 rounded-xl border px-4 py-3 text-left transition-shadow ${
-                        targetPickerOpen ? 'automatic-processing-picker-open' : ''
-                      }`}
-                      data-testid="automatic-processing-target"
-                      onClick={() => {
-                        setTargetPickerOpen(open => !open)
-                        setTargetQuery('')
-                      }}
-                      type="button"
-                    >
-                      <span className="automatic-processing-selected-avatar flex h-9 w-9 shrink-0 items-center justify-center rounded-lg">
-                        <SelectedTargetIcon aria-hidden="true" className="h-4 w-4" />
-                      </span>
-                      <span className="min-w-0 flex-1">
-                        <strong className="block truncate text-sm font-medium text-text-primary">
-                          {selectedTargetName}
-                        </strong>
-                        <span className="mt-0.5 block text-xs text-text-secondary">
-                          {targetKindLabel[draft.targetKind]}
-                        </span>
-                      </span>
-                      <ChevronDown
-                        aria-hidden="true"
-                        className={`h-4 w-4 shrink-0 text-text-muted transition-transform ${
-                          targetPickerOpen ? 'rotate-180' : ''
-                        }`}
-                      />
-                    </button>
-
-                    {targetPickerOpen ? (
-                      <div
-                        className="absolute inset-x-0 bottom-full z-20 mb-2 overflow-hidden rounded-xl border border-border bg-surface shadow-lg"
-                        data-testid="automatic-processing-target-picker"
-                      >
-                        <div className="border-b border-border p-2">
-                          <label className="!flex h-8 items-center gap-2 rounded-lg border border-border bg-background px-3 keyboard:focus-within:border-focus">
-                            <Search
-                              aria-hidden="true"
-                              className="h-4 w-4 shrink-0 text-text-muted"
-                            />
-                            <input
-                              autoFocus
-                              className="!h-auto !min-h-0 min-w-0 flex-1 !border-0 !bg-transparent !p-0 text-sm text-text-primary outline-none placeholder:text-text-muted"
-                              data-testid="automatic-processing-target-search"
-                              onChange={event => setTargetQuery(event.target.value)}
-                              placeholder={translate(
-                                'todo.search_processing_target',
-                                `搜索${targetKindLabel[draft.targetKind]}`
-                              )}
-                              value={targetQuery}
-                            />
-                          </label>
-                        </div>
-                        <div
-                          aria-label={translate('todo.processing_target', '处理对象')}
-                          className="max-h-52 overflow-y-auto p-2"
-                          role="listbox"
-                        >
-                          {filteredTargets.map(option => {
-                            const selected = draft.targetId === option.id
-                            return (
-                              <button
-                                aria-selected={selected}
-                                className="flex w-full items-center gap-3 rounded-lg px-2 py-2 text-left hover:bg-muted"
-                                data-testid={`automatic-processing-target-option-${draft.targetKind}-${option.id}`}
-                                key={option.id}
-                                onClick={() => {
-                                  updateDraft({ targetId: option.id })
-                                  setTargetPickerOpen(false)
-                                  setTargetQuery('')
-                                }}
-                                role="option"
-                                type="button"
-                              >
-                                <SelectedTargetIcon
-                                  aria-hidden="true"
-                                  className="h-4 w-4 shrink-0 text-text-secondary"
-                                />
-                                <span className="min-w-0 flex-1 truncate text-sm text-text-primary">
-                                  {option.name}
-                                </span>
-                                {selected ? (
-                                  <Check
-                                    aria-hidden="true"
-                                    className="automatic-processing-selected-icon h-4 w-4 shrink-0"
-                                  />
-                                ) : null}
-                              </button>
-                            )
-                          })}
-                          {!filteredTargets.length ? (
-                            <p className="px-3 py-6 text-center text-sm text-text-secondary">
-                              {translate(
-                                'todo.no_matching_processing_target',
-                                '没有匹配的处理对象'
-                              )}
-                            </p>
-                          ) : null}
-                        </div>
-                      </div>
-                    ) : null}
-                  </div>
+                  <AutomaticProcessingTargetPicker
+                    key={draft.targetKind}
+                    kind={draft.targetKind}
+                    kindLabel={targetKindLabel[draft.targetKind]}
+                    icon={SelectedTargetIcon}
+                    options={targetOptions[draft.targetKind]}
+                    selectedId={draft.targetId}
+                    onSelect={targetId => updateDraft({ targetId })}
+                    translate={translate}
+                  />
                 </section>
 
                 <div className="space-y-2">

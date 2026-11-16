@@ -157,12 +157,15 @@ export function createDesktopScenario({
       await control.command('waitFor', selector('template-agents-summary'), {
         text: '将创建 6 个智能体',
       })
+      await control.command('clickWhenEnabled', selector('template-customize-main'))
+      await control.command('waitFor', selector('template-role-main-role-0'))
       for (let i = 0; i < 6; i++) {
         assert.equal(
           await control.command('getValue', selector(`template-role-main-role-${i}`)),
           `agent:template-agent:main-role-${i}`
         )
       }
+      await control.command('click', selector('template-customize-main'))
       await captureScreenshot(control, 'template-agents-02-ready-without-selection.png', CONTENT)
       const originalWindowSize = await control.command('setMainWindowSize', 'body', {
         value: JSON.stringify({ width: 1024, height: 720 }),

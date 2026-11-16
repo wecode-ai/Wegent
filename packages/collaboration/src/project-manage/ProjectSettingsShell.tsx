@@ -2,7 +2,8 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-import { Activity, useState, type ReactNode } from 'react'
+import { useState, type ComponentType, type ReactNode } from 'react'
+import { ActiveProjectSettingsPages, type ProjectSettingsPagesProps } from './ProjectSettingsPages'
 
 export interface ProjectSettingsSection {
   content: ReactNode
@@ -18,20 +19,20 @@ export function ProjectSettingsShell({
   selectedSectionId,
   sections,
   testId = 'project-settings-shell',
+  pageRenderer: Pages = ActiveProjectSettingsPages,
 }: {
   ariaLabel: string
   onSectionChange?(sectionId: string): void
   selectedSectionId?: string
   sections: ProjectSettingsSection[]
   testId?: string
+  pageRenderer?: ComponentType<ProjectSettingsPagesProps>
 }) {
   const [internalSelectedId, setInternalSelectedId] = useState(sections[0]?.id ?? '')
   const selectedId = selectedSectionId ?? internalSelectedId
   const selected = sections.find(section => section.id === selectedId) ?? sections[0]
-  const [visited, setVisited] = useState(() => new Set([selectedId]))
 
   if (!selected) return null
-  if (!visited.has(selected.id)) setVisited(new Set([...visited, selected.id]))
 
   const groups = new Map<string, { label: string; sections: ProjectSettingsSection[] }>()
   for (const section of sections) {
@@ -86,15 +87,7 @@ export function ProjectSettingsShell({
         className="h-full min-h-0 min-w-0 flex-1 overflow-y-auto overscroll-y-contain [scrollbar-gutter:stable]"
         data-testid={`${testId}-content`}
       >
-        {sections
-          .filter(section => section.id === selected.id || visited.has(section.id))
-          .map(section => (
-            <Activity key={section.id} mode={section.id === selected.id ? 'visible' : 'hidden'}>
-              <div className="min-h-0" data-testid={`${testId}-page-${section.id}`}>
-                {section.content}
-              </div>
-            </Activity>
-          ))}
+        <Pages sections={sections} selectedSectionId={selected.id} testId={testId} />
       </main>
     </div>
   )

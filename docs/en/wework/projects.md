@@ -439,6 +439,8 @@ Reference stages have a **Stage description** and an **Executor**. Choosing **Ba
 
 Agent, group-creation and automatic-rule dialogs keep Tab / Shift+Tab inside the active dialog. Escape closes the topmost layer and focus returns to its trigger. Deleting an automatic rule requires confirmation; canceling preserves it. Users without project management access can inspect rules through a read-only editor.
 
+In the processing-target list, use arrow keys or Home / End to move focus and Enter to confirm. Escape closes the list and returns focus to its trigger. When the server rejects a Cron expression, the editor preserves the draft, opens advanced settings and focuses the invalid field. Correct the expression and save again.
+
 Each setup step has **Setup command** and **Working directory (optional)** fields. An incomplete repository associates the validation error with its empty fields and focuses the error message. Complete or remove the repository and save again. Editing or saving configuration in settings does not execute setup commands. Initialize starts environment preparation.
 
 **Project members** manages human access. **AI team → Agents / Collaboration groups** manages execution and coordination. **Basic information → Tags → New tag** provides a persistent **Tag name** label; enter the name and submit **New tag**.

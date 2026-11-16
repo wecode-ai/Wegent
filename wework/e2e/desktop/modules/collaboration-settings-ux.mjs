@@ -21,7 +21,7 @@ export async function verifyCollaborationSettingsUx(control, { scoped, request, 
     )
   }
   await control.command('click', `${find('cloud-project-manage-tags')} > summary`)
-  await control.command('click', find('cloud-project-tag-create-toggle'))
+  await control.command('clickWhenEnabled', find('cloud-project-tag-create-toggle'))
   await control.command(
     'waitFor',
     scoped('label:has([data-testid="cloud-project-tag-create-input"])'),
@@ -41,6 +41,20 @@ export async function verifyCollaborationSettingsUx(control, { scoped, request, 
   await control.command('click', find('collaboration-project-settings-members'))
   await control.command('waitFor', find('cloud-project-members-panel'), { visible: true })
   await control.command('click', find('collaboration-project-settings-environments'))
+  await waitForBoardValue(
+    async () => {
+      const metrics = JSON.parse(
+        await control.command('getElementMetrics', find(`${environment}-setup-command-0`), {
+          value: JSON.stringify({ attributeNames: ['data-testid'] }),
+        })
+      )
+      return metrics[0]?.rendered ?? false
+    },
+    true,
+    'Returning to settings must render the retained environment draft',
+    DEFAULT_STEP_TIMEOUT_MS
+  )
+  await control.command('scrollIntoView', find(`${environment}-setup-command-0`))
   await control.command('waitFor', find(`${environment}-setup-command-0`), { visible: true })
   assert.equal(
     await control.command('getValue', find(`${environment}-repository-url-0`)),
@@ -84,7 +98,7 @@ async function addProjectTag(control, scoped, tag) {
     ) === 0
   )
     await control.command('click', `${find('cloud-project-manage-tags')} > summary`)
-  await control.command('click', find('cloud-project-tag-create-toggle'))
+  await control.command('clickWhenEnabled', find('cloud-project-tag-create-toggle'))
   await control.command('fill', find('cloud-project-tag-create-input'), { value: tag })
   await control.command('clickWhenEnabled', find('cloud-project-tag-create-confirm'))
   await control.command('waitFor', find(`cloud-project-tag-${tag}`), { visible: true })
@@ -130,6 +144,45 @@ async function createDisabledSchedule(control, scoped) {
     ) > 0
   )
     await control.command('click', find('automatic-processing-enabled'))
+  await control.command('click', find('automatic-processing-target'))
+  await control.command('waitFor', find('automatic-processing-target-search'), { visible: true })
+  const options = find('automatic-processing-target-picker') + ' [role="option"]'
+  assert.ok(
+    Number(await control.command('getElementCount', options)) >= 2,
+    'The local fixture must provide multiple Agent targets'
+  )
+  const first = await control.command('getAttribute', options + ':first-child', {
+    value: 'data-testid',
+  })
+  const last = await control.command('getAttribute', options + ':last-child', {
+    value: 'data-testid',
+  })
+  await control.command('nativePress', find('automatic-processing-target-search'), {
+    key: 'ArrowDown',
+  })
+  await assertKeyboardFocus(control, first)
+  await control.command('nativePress', find(first), { key: 'End' })
+  await assertKeyboardFocus(control, last)
+  await control.command('nativePress', find(last), { key: 'Home' })
+  await assertKeyboardFocus(control, first)
+  await control.command('nativePress', find(first), { key: 'Escape' })
+  await assertKeyboardFocus(control, 'automatic-processing-target')
+  await control.command('click', find('automatic-processing-cron-advanced-toggle'))
+  const validCron = await control.command('getValue', find('automatic-processing-cron'))
+  await control.command('fill', find('automatic-processing-cron'), { value: 'invalid' })
+  await control.command('clickWhenEnabled', find('automatic-processing-save'))
+  await control.command('waitFor', scoped('#automatic-processing-cron-error'), {
+    text: 'Cron 表达式无效',
+  })
+  await assertKeyboardFocus(control, 'automatic-processing-cron')
+  assert.equal(
+    await control.command('getAttribute', find('automatic-processing-cron'), {
+      value: 'aria-invalid',
+    }),
+    'true'
+  )
+  assert.equal(await control.command('getValue', find('automatic-processing-cron')), 'invalid')
+  await control.command('fill', find('automatic-processing-cron'), { value: validCron })
   await control.command('waitFor', find('automatic-processing-save') + ':not(:disabled)', {
     visible: true,
   })
