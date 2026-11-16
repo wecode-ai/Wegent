@@ -6,6 +6,7 @@ import {
   type VirtualizerOptions,
 } from '@tanstack/react-virtual'
 import { useEffect, useLayoutEffect, useRef, useState, type RefObject } from 'react'
+import { flushSync } from 'react-dom'
 import {
   CONVERSATION_SCROLL_WRITE_SOURCE,
   observeConversationScrollWrites,
@@ -50,13 +51,21 @@ export function useConversationVirtualizer({
   // eslint-disable-next-line react-hooks/incompatible-library
   const virtualizer = useVirtualizer<HTMLDivElement, HTMLElement>({
     ...options,
+    // Normal-flow rows already move with DOM size changes. Keep native scroll
+    // compensation synchronous without flushing unrelated React updates inside RO.
+    useFlushSync: false,
     enabled,
     scrollMargin: prefix,
     paddingEnd: (options.paddingEnd ?? 0) + scrollTailHeight,
     getScrollElement: () => scrollElementRef?.current ?? null,
     observeElementOffset: (instance, callback) => {
       readOffsetRef.current = callback
-      const dispose = observeElementOffset(instance, callback)
+      const dispose = observeElementOffset(instance, (offset, scrolling) => {
+        // Native scroll events need their visible range committed before paint.
+        // Size-compensation acknowledgements below stay in the current DOM flow.
+        if (scrolling) flushSync(() => callback(offset, scrolling))
+        else callback(offset, scrolling)
+      })
       const element = instance.scrollElement
       const stopObservingWrites = element
         ? observeConversationScrollWrites(element, offset => callback(offset, false))
