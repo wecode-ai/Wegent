@@ -18,6 +18,7 @@ from app.api.dependencies import get_db
 from app.core.config import settings
 from app.core.shutdown import shutdown_manager
 from app.core.socketio import socketio_ack_ready
+from app.services.auth.internal_service_token import verify_internal_service_token
 
 router = APIRouter()
 probe_router = APIRouter()
@@ -104,7 +105,9 @@ def readiness_check(response: Response, db: Session = Depends(get_db)):
         }
 
 
-@router.post("/shutdown/initiate")
+@router.post(
+    "/shutdown/initiate", dependencies=[Depends(verify_internal_service_token)]
+)
 async def initiate_shutdown():
     """
     Manually initiate graceful shutdown.
@@ -156,7 +159,7 @@ def shutdown_status(response: Response):
     return {"is_shutting_down": False}
 
 
-@router.post("/shutdown/wait")
+@router.post("/shutdown/wait", dependencies=[Depends(verify_internal_service_token)])
 async def wait_for_shutdown():
     """
     Wait for all active streams to complete during graceful shutdown.
@@ -173,7 +176,10 @@ async def wait_for_shutdown():
         command:
           - /bin/sh
           - -c
-          - curl -X POST http://localhost:8080/api/shutdown/wait || true
+          - >-
+            curl -X POST
+            -H "Authorization: Bearer ${INTERNAL_SERVICE_TOKEN}"
+            http://localhost:8080/api/shutdown/wait || true
     ```
 
     Returns:
@@ -220,7 +226,7 @@ async def wait_for_shutdown():
         }
 
 
-@router.post("/shutdown/reset")
+@router.post("/shutdown/reset", dependencies=[Depends(verify_internal_service_token)])
 def reset_shutdown():
     """
     Reset shutdown state to restore normal operation.

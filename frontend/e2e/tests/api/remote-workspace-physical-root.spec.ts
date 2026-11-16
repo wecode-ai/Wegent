@@ -21,6 +21,7 @@ type WorkspaceStatus = {
 }
 
 const managerUrl = process.env.E2E_EXECUTOR_MANAGER_URL || 'http://localhost:8001'
+const backendUrl = process.env.E2E_API_URL || 'http://localhost:8000'
 const executorImage =
   process.env.E2E_REMOTE_WORKSPACE_EXECUTOR_IMAGE || 'wegent/e2e-workspace-executor:latest'
 const deepContent = 'physical workspace second-level file\n'
@@ -93,8 +94,14 @@ test('Rust workspace API browses a real Executor repository using returned physi
     expect(assistant!.status).toBe('PENDING')
 
     // Provision the production Docker executor without invoking an agent or a model.
+    const internalServiceToken =
+      process.env.E2E_INTERNAL_SERVICE_TOKEN || process.env.INTERNAL_SERVICE_TOKEN
+    expect(internalServiceToken, 'The internal service token is required').toBeTruthy()
     const prepared = await request.post(`${managerUrl}/executor-manager/executors/prepare`, {
-      headers: createBackendRequestHeaders(),
+      headers: {
+        ...createBackendRequestHeaders(),
+        Authorization: `Bearer ${internalServiceToken}`,
+      },
       data: {
         task_id: taskId,
         subtask_id: assistant!.id,
@@ -164,9 +171,12 @@ test('Rust workspace API browses a real Executor repository using returned physi
       event: { end: { exitCode: 0, exited: true, status: 'success', error: '' } },
     })
 
-    // Bind the prepared runtime through the real Manager-to-Backend callback path.
-    const binding = await request.post(`${managerUrl}/executor-manager/callback`, {
-      headers: createBackendRequestHeaders(),
+    // Persist the binding through the real authenticated Backend callback path.
+    const binding = await request.post(`${backendUrl}/api/internal/callback`, {
+      headers: {
+        ...createBackendRequestHeaders(),
+        Authorization: `Bearer ${internalServiceToken}`,
+      },
       data: {
         event_type: 'response.completed',
         task_id: taskId,

@@ -42,6 +42,7 @@ pub async fn verify(fixture: &Fixture) {
         let response = client
             .post(&url)
             .unwrap()
+            .header("authorization", "Bearer responses-fixture-internal-token")
             .json(&json!({
                 "task_id": task_id, "subtask_id": subtask_id,
                 "event_type": event_type, "data": data,

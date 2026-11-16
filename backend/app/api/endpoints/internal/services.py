@@ -19,6 +19,7 @@ from sqlalchemy.orm import Session
 
 from app.api.dependencies import get_db
 from app.models.task import TaskResource
+from app.services.auth.internal_service_token import verify_internal_service_token
 from app.services.chat.webpage_ws_chat_emitter import (
     get_extended_emitter,
     get_main_event_loop,
@@ -27,7 +28,11 @@ from app.stores.tasks import task_store
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter(prefix="/services", tags=["internal-services"])
+router = APIRouter(
+    prefix="/services",
+    tags=["internal-services"],
+    dependencies=[Depends(verify_internal_service_token)],
+)
 
 
 # ==================== Request/Response Schemas ====================

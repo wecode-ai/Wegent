@@ -144,8 +144,11 @@ async fn shutdown_status(
 /// shutdown if needed, then waits for active streams. The migrated origin
 /// tracks no active streams in this process, so the source's
 /// `active_streams == 0` branch applies and the wait returns immediately.
-#[brz_http_server::post("/api/shutdown/wait", access = public)]
-async fn wait_for_shutdown(#[inject(state)] state: &AppState) -> ShutdownWaitCompleted {
+#[brz_http_server::post("/api/shutdown/wait")]
+async fn wait_for_shutdown(
+    #[inject(state)] state: &AppState,
+    #[auth] _service: crate::internal_auth::InternalService,
+) -> ShutdownWaitCompleted {
     // `initiate_shutdown` publishes the cross-worker marker and flips the
     // process-local flag; `_notify_shutdown_via_redis` swallows every Redis
     // failure, so a missing cache never changes the response.
@@ -298,7 +301,7 @@ mod tests {
     }
 
     #[test]
-    fn wait_for_shutdown_is_registered_in_the_public_group() {
+    fn wait_for_shutdown_is_registered_in_the_authenticated_group() {
         use brz_http_server::__private::inventory;
         let paths: Vec<_> = inventory::iter::<crate::__http_registry_http_apis::Entry>()
             .flat_map(|entry| (entry.0.routes)().iter().map(|route| route.path))

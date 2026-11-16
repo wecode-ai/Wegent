@@ -677,6 +677,18 @@ class SandboxRepository(metaclass=SingletonMeta):
         binding = self.load_executor_binding_full(task_id)
         return binding.get("executor_name") if binding else None
 
+    def load_executor_callback_token(self, task_id: int) -> Optional[str]:
+        """Load the callback credential issued for one task runtime.
+
+        Args:
+            task_id: Task ID
+
+        Returns:
+            Callback credential if found, None otherwise
+        """
+        binding = self.load_executor_binding_full(task_id)
+        return binding.get("callback_token") if binding else None
+
     def load_executor_binding_full(self, task_id: int) -> Optional[Dict[str, Any]]:
         """Load full executor binding info for task continuity.
 

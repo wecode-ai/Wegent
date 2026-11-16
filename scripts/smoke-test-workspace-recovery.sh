@@ -228,7 +228,11 @@ docker exec \
   sh -lc 'printf "%s\n" "$SENTINEL_CONTENT" > "$WORKSPACE_DIR/$SENTINEL_FILE" && ls -l "$WORKSPACE_DIR/$SENTINEL_FILE" && cat "$WORKSPACE_DIR/$SENTINEL_FILE"'
 
 echo "==> Triggering backend archive endpoint"
-archive_response="$(curl -sS -X POST "http://localhost:8000/api/internal/workspace-archives/${TASK_ID}/archive")"
+archive_response="$(
+  curl -sS -X POST \
+    -H "Authorization: Bearer ${INTERNAL_SERVICE_TOKEN:?INTERNAL_SERVICE_TOKEN must be set in ${ENV_FILE}}" \
+    "http://localhost:8000/api/internal/workspace-archives/${TASK_ID}/archive"
+)"
 echo "${archive_response}"
 
 echo "==> Reloading task state to capture archive metadata"

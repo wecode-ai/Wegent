@@ -52,6 +52,11 @@ class CallbackClient:
         self.timeout = timeout
         self._callback_url: Optional[str] = None
 
+    @staticmethod
+    def _service_token() -> str:
+        """Return the configured Backend internal-service token."""
+        return os.getenv("INTERNAL_SERVICE_TOKEN", "").strip()
+
     @property
     def callback_url(self) -> str:
         """Get the backend callback URL."""
@@ -109,10 +114,13 @@ class CallbackClient:
         """
         task_id = event_data.get("task_id", 0)
         event_type = event_data.get("event_type", "")
+        headers = {"Authorization": f"Bearer {self._service_token()}"}
 
         try:
             async with traced_async_client(timeout=self.timeout) as client:
-                response = await client.post(self.callback_url, json=event_data)
+                response = await client.post(
+                    self.callback_url, json=event_data, headers=headers
+                )
                 if response.status_code == 200:
                     logger.info(
                         f"[CallbackClient] Sent {event_type} callback for task {task_id}"
