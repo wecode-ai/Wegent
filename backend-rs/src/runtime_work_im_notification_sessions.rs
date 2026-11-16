@@ -383,8 +383,10 @@ mod tests {
     }
 
     fn shared_cache() -> RecordingCache {
-        let mut cache = RecordingCache::default();
-        cache.user_sessions = vec!["telegram".into(), "dingtalk".into()];
+        let mut cache = RecordingCache {
+            user_sessions: vec!["telegram".into(), "dingtalk".into()],
+            ..RecordingCache::default()
+        };
         for key in ["telegram", "dingtalk"] {
             cache.values.insert(
                 format!("channel:private_session:{key}"),

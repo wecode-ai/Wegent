@@ -18,6 +18,24 @@ pytestmark = pytest.mark.asyncio
 
 @pytest.fixture
 def setup(monkeypatch, fake_im_session_cache):
+    from app.services.im import question_context
+
+    def actor_route(_db, *, user_id, submitted_device_id):
+        if user_id == 7 and submitted_device_id in {
+            "actor",
+            "actor-socket",
+            "native-actor",
+        }:
+            return SimpleNamespace(
+                logical_device_id="actor", runtime_device_id="actor-socket"
+            )
+        if user_id == 7 and submitted_device_id == "other-owned-native":
+            return SimpleNamespace(
+                logical_device_id="other-actor", runtime_device_id="other-socket"
+            )
+        return None
+
+    monkeypatch.setattr(question_context, "resolve_runtime_route_identity", actor_route)
     session = IMPrivateSession("session", 7, "telegram", 3, "chat", "sender")
     db = Mock()
 
@@ -488,10 +506,12 @@ def interpreted_request(context, answer="2"):
 
 
 @pytest.mark.parametrize("async_input", [False, True])
+@pytest.mark.parametrize("actor_device", ["actor", "native-actor"])
 async def test_stand_in_can_interpret_a_reply_and_submit_once_to_original_task(
     setup,
     monkeypatch,
     async_input,
+    actor_device,
 ):
     from app.services.im.question_context import submit_interpreted_answer
 
@@ -503,6 +523,7 @@ async def test_stand_in_can_interpret_a_reply_and_submit_once_to_original_task(
     assert context["questions"][0]["question"] == "Question 0?"
     s.send.assert_not_awaited()
     request = interpreted_request(context)
+    request.address.device_id = actor_device
     for _ in range(2):
         result = await submit_interpreted_answer(s.db, 7, request)
         assert result.accepted and result.local_task_id == "task"
@@ -519,6 +540,7 @@ async def test_stand_in_can_interpret_a_reply_and_submit_once_to_original_task(
     [
         "user",
         "device",
+        "other_device_alias",
         "actor",
         "token",
         "question",
@@ -546,6 +568,8 @@ async def test_interpreted_answers_cannot_expand_the_private_message_scope(
         user = 8
     elif invalid == "device":
         request.address.device_id = "foreign"
+    elif invalid == "other_device_alias":
+        request.address.device_id = "other-owned-native"
     elif invalid == "actor":
         request.address.local_task_id = "different-role"
     elif invalid == "token":
@@ -604,8 +628,9 @@ async def test_pending_context_hides_other_private_conversations_and_settled_que
     s.send.assert_not_awaited()
 
 
+@pytest.mark.parametrize("question_device_status", [None, 502, 504])
 async def test_pending_questions_reach_the_real_stand_in_dispatch_context(
-    setup, monkeypatch
+    setup, monkeypatch, question_device_status
 ):
     import json
 
@@ -613,6 +638,12 @@ async def test_pending_questions_reach_the_real_stand_in_dispatch_context(
 
     s = setup
     await deliver(s, event(async_input=True))
+    if question_device_status is not None:
+        from fastapi import HTTPException
+
+        s.read.side_effect = HTTPException(
+            question_device_status, "Question device unavailable"
+        )
     s.context.extra_data = {"message_id": "ordinary-message"}
     target = {
         "taskId": "stand-in-chat-7-primary",
@@ -634,9 +665,13 @@ async def test_pending_questions_reach_the_real_stand_in_dispatch_context(
     )
     payload = rpc.await_args.kwargs["payload"]
     assert payload["message"] == "2"
-    pending = payload["options"]["additionalContext"]["wework.im.pending-questions"]
-    assert pending["kind"] == "untrusted"
-    assert json.loads(pending["value"])["questions"][0]["question"] == "Question 0?"
+    additional_context = payload["options"]["additionalContext"]
+    if question_device_status is None:
+        pending = additional_context["wework.im.pending-questions"]
+        assert pending["kind"] == "untrusted"
+        assert json.loads(pending["value"])["questions"][0]["question"] == "Question 0?"
+    else:
+        assert "wework.im.pending-questions" not in additional_context
     s.send.assert_not_awaited()
 
 
@@ -703,11 +738,12 @@ async def test_failed_next_question_delivery_preserves_an_already_recorded_answe
     s.send.assert_awaited_once()
 
 
-@pytest.mark.parametrize("status", [403, 404])
+@pytest.mark.parametrize("status", [403, 404, 500, 502, 503, 504])
 async def test_unreadable_questions_are_not_exposed_and_do_not_block_ordinary_chat(
     setup, status
 ):
     from fastapi import HTTPException
+
     from app.services.im.question_context import pending_question_context
 
     s = setup
@@ -724,4 +760,58 @@ async def test_unreadable_questions_are_not_exposed_and_do_not_block_ordinary_ch
         },
     )
     assert result == {}
+    s.send.assert_not_awaited()
+
+
+async def test_lock_expiry_cannot_overwrite_a_new_owners_question_state(setup):
+    s = setup
+    await deliver(s, event())
+    key = service._state_key(7)
+    replacement = {
+        "new-owner": {"status": "answered", "created_at": service.time.time()}
+    }
+    with pytest.raises(RuntimeError, match="lock ownership was lost"):
+        async with service._locked(7) as state:
+            state.clear()
+            s.cache.locks[f"{key}:lock"].owner_token = b"new-owner"
+            await s.cache.set(key, replacement)
+    assert await s.cache.get(key) == replacement
+
+
+async def test_locked_operations_time_out_and_release_without_losing_state(
+    setup, monkeypatch
+):
+    s = setup
+    await deliver(s, event())
+    before = await s.cache.get(service._state_key(7))
+    monkeypatch.setattr(service, "LOCK_OPERATION_SECONDS", 0.01)
+    with pytest.raises(TimeoutError):
+        async with service._locked(7):
+            await asyncio.Event().wait()
+    assert await s.cache.get(service._state_key(7)) == before
+    async with service._locked(7):
+        pass
+
+
+async def test_transcript_timeout_does_not_grant_an_answer_or_block_context_lookup(
+    setup,
+):
+    from app.services.im.question_context import pending_question_context
+
+    s = setup
+    await deliver(s, event())
+    s.read.side_effect = TimeoutError()
+    assert (
+        await pending_question_context(
+            s.db,
+            s.session,
+            s.context,
+            {
+                "taskId": "actor",
+                "deviceId": "actor",
+                "runtimeDeviceId": "socket",
+            },
+        )
+        == {}
+    )
     s.send.assert_not_awaited()

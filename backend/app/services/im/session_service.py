@@ -187,7 +187,7 @@ class IMSessionService:
     async def get_global_notification_settings(
         self, user_id: int
     ) -> "IMGlobalNotificationSettings":
-        data = await cache_manager.get(self._global_notification_key(user_id))
+        data = await cache_manager.get_or_raise(self._global_notification_key(user_id))
         if not isinstance(data, dict):
             return IMGlobalNotificationSettings()
         session_key = data.get("session_key")

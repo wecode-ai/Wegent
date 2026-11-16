@@ -34,6 +34,7 @@ export function createRuntimeImQuestions({ workspacePath, uiTimeoutMs, modelResp
   let nativeControl
   let standInTaskId
   let finishBusyResponse
+  let transientSendFailed = false
   const delivered = []
   const requested = new Set()
   const fixture = async payload => {
@@ -153,6 +154,11 @@ export function createRuntimeImQuestions({ workspacePath, uiTimeoutMs, modelResp
             assert.equal(req.url, '/v1.0/robot/oToMessages/batchSend')
             assert.deepEqual(body.userIds, ['question-ci-staff'])
             assert.equal(body.msgKey, 'sampleText')
+            if (!transientSendFailed) {
+              transientSendFailed = true
+              res.writeHead(503).end(JSON.stringify({ message: 'Temporary provider failure' }))
+              return
+            }
             const id = `question-ci-${delivered.length + 1}`
             delivered.push({ id, text: JSON.parse(body.msgParam).content })
             res.end(JSON.stringify({ processQueryKey: id }))
@@ -287,6 +293,11 @@ export function createRuntimeImQuestions({ workspacePath, uiTimeoutMs, modelResp
             Boolean,
             `The ${mode} question was not delivered to IM`,
             modelResponseTimeoutMs
+          )
+          assert.equal(
+            transientSendFailed,
+            true,
+            'The real delivery path must recover from a provider failure'
           )
           if (mode === 'busy-async')
             await until(

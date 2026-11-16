@@ -11,6 +11,7 @@ import tempfile
 import uuid
 from contextlib import asynccontextmanager, contextmanager
 from datetime import datetime, timedelta, timezone
+from types import SimpleNamespace
 from typing import Any, Generator, Tuple
 
 import pytest
@@ -68,21 +69,28 @@ class FakeIMSessionRedisClient:
     class _Lock:
         def __init__(self) -> None:
             self._lock = asyncio.Lock()
+            self.local = SimpleNamespace(token=None)
+            self.owner_token = None
 
         async def __aenter__(self) -> "FakeIMSessionRedisClient._Lock":
-            await self._lock.acquire()
+            await self.acquire()
             return self
 
         async def __aexit__(self, *_args) -> None:
-            self._lock.release()
+            await self.release()
 
         async def acquire(self) -> bool:
-            return await self._lock.acquire()
+            await self._lock.acquire()
+            self.local.token = uuid.uuid4().hex.encode()
+            self.owner_token = self.local.token
+            return True
 
         async def owned(self) -> bool:
-            return self._lock.locked()
+            return self._lock.locked() and self.owner_token == self.local.token
 
         async def release(self) -> None:
+            self.local.token = None
+            self.owner_token = None
             self._lock.release()
 
     def __init__(self, cache: "FakeIMSessionCache") -> None:
@@ -91,11 +99,20 @@ class FakeIMSessionRedisClient:
     def lock(self, _name: str, **_options) -> "FakeIMSessionRedisClient._Lock":
         return self._cache.locks.setdefault(_name, self._Lock())
 
-    async def eval(self, script: str, numkeys: int, key: str) -> bytes | None:
-        assert script == "return redis.call('get', KEYS[1])"
-        assert numkeys == 1
-        value = await self._cache.get(key)
-        return json.dumps(value).encode() if value is not None else None
+    async def eval(self, script: str, numkeys: int, *args: Any) -> bytes | int | None:
+        if numkeys == 1:
+            assert script == "return redis.call('get', KEYS[1])"
+            value = await self._cache.get(args[0])
+            return json.dumps(value).encode() if value is not None else None
+        from app.services.im.runtime_questions import STATE_COMMIT
+
+        assert script == STATE_COMMIT
+        assert numkeys == 2
+        lock_key, key, token, document, ttl = args
+        if self._cache.locks[lock_key].owner_token != token:
+            return 0
+        await self._cache.set(key, json.loads(document), expire=ttl or None)
+        return 1
 
     async def zadd(self, key: str, mapping: dict[str, float]) -> int:
         zset = self._cache.zsets.setdefault(key, {})

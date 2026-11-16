@@ -5,6 +5,33 @@
 use super::*;
 
 #[tokio::test]
+async fn unknown_question_ids_cannot_consume_an_empty_native_request_map() {
+    let (handler, _root) = isolated_runtime_work_handler("im-unknown-answer");
+    handler.begin_active_codex_transcript("task", "thread", "turn");
+    let execution_id = start_test_execution(&handler, "task");
+    handler.record_active_codex_turn("task", execution_id, "thread".into(), "turn".into());
+    let (sender, mut receiver) = mpsc::channel(1);
+    handler.active_request_user_inputs.lock().unwrap().insert(
+        "task".into(),
+        ActiveRequestUserInput {
+            execution_id,
+            sender,
+        },
+    );
+    let result = handler
+        .send_request_user_input_response(
+            "task",
+            json!({
+                "requestId":42,"interactionScope":"turn","answers":{"q":{"answers":["Yes"]}}
+            }),
+        )
+        .await
+        .unwrap();
+    assert_eq!(result["code"], "stale_request_user_input");
+    assert!(receiver.try_recv().is_err());
+}
+
+#[tokio::test]
 async fn synchronous_question_answers_reject_duplicates_and_wrong_request_ids() {
     let (handler, _root) = isolated_runtime_work_handler("im-sync-answer");
     handler.begin_active_codex_transcript("task", "thread", "turn");

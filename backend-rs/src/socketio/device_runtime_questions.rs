@@ -13,11 +13,20 @@ use sha2::{Digest, Sha256};
 use crate::background_jobs::project::notifications::send_text;
 use crate::runtime_work_im_notification_sessions::runtime_question_sessions;
 use crate::runtime_work_im_notifications::{
-    PrivateSession, cache_get, parse_private_session, private_session_key, unix_seconds,
+    PrivateSession, decode_json, parse_private_session, private_session_key, unix_seconds,
 };
 use crate::state::AppState;
 
 const RETENTION_SECONDS: u64 = 7 * 24 * 60 * 60;
+const STATE_COMMIT: &str = "if redis.call('get', KEYS[1]) ~= ARGV[1] then return 0 end \
+if tonumber(ARGV[3]) > 0 then redis.call('set', KEYS[2], ARGV[2], 'EX', ARGV[3]) \
+else redis.call('set', KEYS[2], ARGV[2]) end return 1";
+
+struct QuestionStateLease<'a> {
+    key: &'a str,
+    lock: &'a str,
+    token: &'a str,
+}
 
 pub(super) fn question(payload: &Map<String, Value>) -> Option<&Value> {
     if payload.get("event_type")?.as_str()? != "response.block.created"
@@ -85,6 +94,33 @@ pub(super) async fn deliver(
     device_id: &str,
     payload: &Map<String, Value>,
 ) -> Result<()> {
+    retry_delivery(|| deliver_once(state, user_id, device_id, payload)).await
+}
+
+async fn retry_delivery<F, Fut>(mut attempt: F) -> Result<()>
+where
+    F: FnMut() -> Fut,
+    Fut: std::future::Future<Output = Result<()>>,
+{
+    for number in 0..3 {
+        match attempt().await {
+            Ok(()) => return Ok(()),
+            Err(error) if number == 2 => return Err(error),
+            Err(error) => {
+                tracing::warn!(%error, attempt=number + 1, "Retrying IM question delivery")
+            }
+        }
+        tokio::time::sleep(Duration::from_millis(250 << number)).await;
+    }
+    unreachable!("The last failed attempt returns its error")
+}
+
+async fn deliver_once(
+    state: &AppState,
+    user_id: i64,
+    device_id: &str,
+    payload: &Map<String, Value>,
+) -> Result<()> {
     let Some(question) = question(payload) else {
         return Ok(());
     };
@@ -116,9 +152,14 @@ pub(super) async fn deliver(
         }
         tokio::time::sleep(Duration::from_millis(100)).await;
     }
+    let lease = QuestionStateLease {
+        key: &key,
+        lock: &lock,
+        token: &token,
+    };
     let result = tokio::time::timeout(
         Duration::from_secs(240),
-        deliver_locked(state, redis, &key, &address, payload, question, &sessions),
+        deliver_locked(state, redis, &lease, &address, payload, question, &sessions),
     )
     .await
     .context("IM question delivery timed out")
@@ -151,7 +192,11 @@ async fn recipients(
     if key.is_empty() {
         return Ok(runtime_question_sessions(state, user_id, address).await?);
     }
-    let cached = cache_get(state.redis.as_ref(), &private_session_key(key)).await;
+    let redis = state.redis.as_ref().context("Redis is unavailable")?;
+    let cached: Option<String> = redis.get(private_session_key(key)).await?;
+    let cached = cached
+        .map(|value| decode_json(value.as_bytes()).context("Invalid private IM session cache"))
+        .transpose()?;
     let Some(session) = parse_private_session(cached.as_ref())
         .filter(|session| owns_source(session, user_id, source))
     else {
@@ -224,7 +269,7 @@ fn question_text(title: &str, question: &Value, asynchronous: bool) -> String {
 async fn deliver_locked(
     state: &AppState,
     redis: &impl Redis,
-    key: &str,
+    lease: &QuestionStateLease<'_>,
     address: &Value,
     payload: &Map<String, Value>,
     question: &Value,
@@ -232,7 +277,11 @@ async fn deliver_locked(
 ) -> Result<()> {
     // Read on the writer: Python may have just accepted an answer under this lock.
     let cached: Option<String> = redis
-        .eval("return redis.call('get', KEYS[1])", [key], [] as [&str; 0])
+        .eval(
+            "return redis.call('get', KEYS[1])",
+            [lease.key],
+            [] as [&str; 0],
+        )
         .await?;
     let mut document: Map<String, Value> = cached
         .map(|v| serde_json::from_str(&v))
@@ -254,7 +303,7 @@ async fn deliver_locked(
         .or_insert_with(|| new_entry(address, payload, question));
     // A reply can arrive as soon as the provider accepts the message. Publish
     // the pending document first so Python waits on this same delivery lock.
-    save_document(redis, key, &document).await?;
+    save_document(redis, lease, &document).await?;
     let entry = &document[&id];
     if entry["status"] != "pending" {
         return Ok(());
@@ -270,6 +319,7 @@ async fn deliver_locked(
         return Ok(());
     };
     let text = entry["texts"][&qid].as_str().unwrap().to_owned();
+    let mut failure = None;
     for session in sessions {
         if document[&id]["deliveries"][&session.session_key]
             .get(&qid)
@@ -285,34 +335,69 @@ async fn deliver_locked(
                 }
                 entry["deliveries"][&session.session_key][&qid] =
                     json!(super::runtime_im_notification::reply_reference(&sent));
-                save_document(redis, key, &document).await?;
+                save_document(redis, lease, &document).await?;
             }
             Err(error) => {
-                tracing::warn!(%error, user_id=session.user_id, "IM question delivery failed")
+                tracing::warn!(%error, user_id=session.user_id, "IM question delivery failed");
+                failure = Some(error);
             }
         }
     }
-    Ok(())
+    failure.map_or(Ok(()), Err)
 }
 
-async fn save_document(redis: &impl Redis, key: &str, document: &Map<String, Value>) -> Result<()> {
-    if document.values().any(|entry| entry["status"] == "pending") {
-        redis.set(key, serde_json::to_string(document)?).await?;
-        return Ok(());
+async fn save_document(
+    redis: &impl Redis,
+    lease: &QuestionStateLease<'_>,
+    document: &Map<String, Value>,
+) -> Result<()> {
+    let document_json = serde_json::to_string(document)?;
+    let ttl = if document.values().any(|entry| entry["status"] == "pending") {
+        0
+    } else {
+        RETENTION_SECONDS
     }
-    redis
-        .set_with(
-            key,
-            serde_json::to_string(document)?,
-            SetOptions::default().with_expiration(SetExpiration::Seconds(RETENTION_SECONDS)),
+    .to_string();
+    let committed: i64 = redis
+        .eval(
+            STATE_COMMIT,
+            [lease.lock, lease.key],
+            [lease.token, document_json.as_str(), ttl.as_str()],
         )
         .await?;
+    if committed != 1 {
+        bail!("IM question lock ownership was lost");
+    }
     Ok(())
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn transient_failures_retry_and_exhausted_failures_are_reported() {
+        let attempts = std::sync::atomic::AtomicUsize::new(0);
+        retry_delivery(|| async {
+            let number = attempts.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            if number == 0 {
+                bail!("provider temporarily unavailable");
+            }
+            Ok(())
+        })
+        .await
+        .unwrap();
+        assert_eq!(attempts.load(std::sync::atomic::Ordering::SeqCst), 2);
+        attempts.store(0, std::sync::atomic::Ordering::SeqCst);
+        let error = retry_delivery(|| async {
+            attempts.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            bail!("provider still unavailable")
+        })
+        .await
+        .unwrap_err();
+        assert!(error.to_string().contains("provider still unavailable"));
+        assert_eq!(attempts.load(std::sync::atomic::Ordering::SeqCst), 3);
+    }
 
     fn event() -> Value {
         json!({"taskId":"task","event_type":"response.block.created","data":{"block":{

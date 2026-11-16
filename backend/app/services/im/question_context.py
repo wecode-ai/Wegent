@@ -5,6 +5,7 @@
 
 import hashlib
 import json
+import logging
 import secrets
 from typing import Any
 
@@ -13,8 +14,11 @@ from sqlalchemy.orm import Session
 
 from app.models.im_session import IMPrivateSession
 from app.schemas.runtime_work import RuntimeSendRequest, RuntimeSendResponse
+from app.services.device.runtime_route import resolve_runtime_route_identity
 from app.services.im import runtime_questions as questions
 from shared.telemetry.decorators import trace_async
+
+logger = logging.getLogger(__name__)
 
 
 def _reply_key(user_id: int, token: str) -> str:
@@ -40,7 +44,20 @@ async def _pending_questions(
             except HTTPException as error:
                 if error.status_code in {403, 404}:
                     continue
-                raise
+                logger.warning(
+                    "IM question context unavailable: user_id=%s task_id=%s status=%s",
+                    session.user_id,
+                    entry["address"]["taskId"],
+                    error.status_code,
+                )
+                continue
+            except TimeoutError:
+                logger.warning(
+                    "IM question context timed out: user_id=%s task_id=%s",
+                    session.user_id,
+                    entry["address"]["taskId"],
+                )
+                continue
             if not live:
                 continue
             question = questions._pending_question(entry)
@@ -67,13 +84,23 @@ async def pending_question_context(
     context: Any,
     target: dict[str, Any],
 ) -> dict[str, Any]:
+    if getattr(context, "sender_id", None) != session.sender_id:
+        raise HTTPException(403, "IM sender does not match the conversation")
+    try:
+        return await _question_context(db, session, target)
+    except Exception:
+        logger.exception("IM question context unavailable: user_id=%s", session.user_id)
+        return {}
+
+
+async def _question_context(
+    db: Session, session: IMPrivateSession, target: dict[str, Any]
+) -> dict[str, Any]:
     async with questions.cache_manager._client_context() as client:
         if not await questions._read_state(
             client, questions._state_key(session.user_id)
         ):
             return {}
-    if getattr(context, "sender_id", None) != session.sender_id:
-        raise HTTPException(403, "IM sender does not match the conversation")
     items, permitted = await _pending_questions(db, session)
     if not items:
         return {}
@@ -100,7 +127,7 @@ async def pending_question_context(
 
 
 async def _reply_grant(
-    user_id: int, request: RuntimeSendRequest
+    db: Session, user_id: int, request: RuntimeSendRequest
 ) -> tuple[IMPrivateSession, dict[str, str]]:
     answer = request.im_question_answer
     if answer is None:
@@ -108,12 +135,28 @@ async def _reply_grant(
     grant = await questions.cache_manager.get_or_raise(
         _reply_key(user_id, answer.reply_token)
     )
-    if (
-        not isinstance(grant, dict)
-        or request.address.device_id not in grant["actorDevices"]
-        or request.address.local_task_id != grant["actorTaskId"]
-        or answer.question_id not in grant["questions"]
-    ):
+    if not isinstance(grant, dict):
+        logger.warning(
+            "IM question answer rejected: user_id=%s reason=missing_grant", user_id
+        )
+        raise HTTPException(403, "This IM message cannot answer that question")
+    identity = resolve_runtime_route_identity(
+        db, user_id=user_id, submitted_device_id=request.address.device_id
+    )
+    actor_devices = (
+        {identity.logical_device_id, identity.runtime_device_id} if identity else set()
+    )
+    reason = None
+    if actor_devices.isdisjoint(grant["actorDevices"]):
+        reason = "actor_device"
+    elif request.address.local_task_id != grant["actorTaskId"]:
+        reason = "actor_task"
+    elif answer.question_id not in grant["questions"]:
+        reason = "question_scope"
+    if reason:
+        logger.warning(
+            "IM question answer rejected: user_id=%s reason=%s", user_id, reason
+        )
         raise HTTPException(403, "This IM message cannot answer that question")
     session = await questions.im_session_service.get_session(grant["sessionKey"])
     if (
@@ -130,7 +173,7 @@ async def _reply_grant(
 async def submit_interpreted_answer(
     db: Session, user_id: int, request: RuntimeSendRequest
 ) -> RuntimeSendResponse:
-    session, reference = await _reply_grant(user_id, request)
+    session, reference = await _reply_grant(db, user_id, request)
     async with questions._locked(user_id) as state:
         entry = state.get(reference["entry"])
         if (

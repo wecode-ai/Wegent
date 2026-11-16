@@ -7,6 +7,9 @@ import { StandInImConnections } from './StandInImConnections'
 async function openTelegram() {
   if (screen.queryByTestId('stand-in-im-dialog')) return
   await waitFor(() => expect(screen.getByTestId('stand-in-im-channels')).toBeVisible())
+  await waitFor(() =>
+    expect(screen.queryByTestId('stand-in-im-discovery-loading')).not.toBeInTheDocument()
+  )
   if (!screen.queryByTestId('stand-in-im-channel-telegram'))
     fireEvent.click(screen.getByTestId('stand-in-im-add-channels'))
   fireEvent.click(await screen.findByTestId('stand-in-im-channel-telegram'))
@@ -92,9 +95,8 @@ it('offers refresh when listing fails and does not show a task picker', async ()
   const f = fixture()
   f.listPrivateSessions.mockRejectedValueOnce(new Error('network'))
   render(<StandInImConnections name="评审分身" services={f.services} deviceId="mac" />)
-  await openTelegram()
-  await screen.findByRole('alert')
-  fireEvent.click(screen.getByTestId('stand-in-im-refresh'))
+  await screen.findByTestId('stand-in-im-discovery-error')
+  fireEvent.click(screen.getByTestId('stand-in-im-discovery-retry'))
   await openTelegram()
   await screen.findByTestId('stand-in-im-connect-session')
   expect(screen.queryByTestId('continue-in-im-button')).not.toBeInTheDocument()
@@ -107,7 +109,7 @@ it('retains loaded conversations on refresh failure without claiming the list is
   await screen.findByTestId('stand-in-im-connect-session')
   f.listPrivateSessions.mockRejectedValueOnce(new Error('network'))
   fireEvent.click(screen.getByTestId('stand-in-im-refresh'))
-  await screen.findByRole('alert')
+  await screen.findByTestId('stand-in-im-discovery-error')
   expect(screen.getByTestId('stand-in-im-connect-session')).toBeInTheDocument()
   expect(screen.queryByTestId('stand-in-im-empty')).not.toBeInTheDocument()
 })
@@ -306,6 +308,32 @@ it('shows existing connections and keeps unavailable channels in the add menu', 
   fireEvent.click(screen.getByTestId('stand-in-im-add-channels'))
   expect(screen.getByRole('menuitem', { name: '添加 钉钉' })).toBeVisible()
   expect(screen.queryByRole('menuitem', { name: '添加 Telegram' })).not.toBeInTheDocument()
+})
+
+it('shows discovery errors beside the channels and retries without presenting an empty catalog', async () => {
+  const f = fixture()
+  f.listPrivateSessions.mockRejectedValueOnce(new Error('offline'))
+  render(<StandInImConnections name="评审分身" services={f.services} deviceId="mac" />)
+  expect(screen.getByTestId('stand-in-im-discovery-loading')).toBeVisible()
+  expect(screen.queryByTestId('stand-in-im-add-channels')).not.toBeInTheDocument()
+  expect(await screen.findByTestId('stand-in-im-discovery-error')).toBeVisible()
+  expect(screen.queryByTestId('stand-in-im-add-channels')).not.toBeInTheDocument()
+  fireEvent.click(screen.getByTestId('stand-in-im-discovery-retry'))
+  expect(await screen.findByTestId('stand-in-im-channel-telegram')).toBeVisible()
+  expect(screen.queryByTestId('stand-in-im-discovery-error')).not.toBeInTheDocument()
+})
+
+it('preserves registered channels and exposes retry when a refresh fails', async () => {
+  const f = fixture()
+  render(<StandInImConnections name="评审分身" services={f.services} deviceId="mac" />)
+  await openTelegram()
+  f.listPrivateSessions.mockRejectedValueOnce(new Error('offline'))
+  fireEvent.click(screen.getByTestId('stand-in-im-refresh'))
+  await screen.findByTestId('stand-in-im-discovery-error')
+  fireEvent.click(screen.getByTestId('stand-in-im-dialog-close'))
+  expect(screen.getByTestId('stand-in-im-channel-telegram')).toBeVisible()
+  expect(screen.getByTestId('stand-in-im-discovery-retry')).toBeVisible()
+  expect(screen.queryByTestId('stand-in-im-add-channels')).not.toBeInTheDocument()
 })
 
 it('restores focus to the more trigger after adding an unavailable channel', async () => {

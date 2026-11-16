@@ -30,6 +30,16 @@ from shared.telemetry.decorators import trace_async
 
 logger = logging.getLogger(__name__)
 RETENTION_SECONDS = 7 * 24 * 60 * 60
+LOCK_OPERATION_SECONDS = 120
+STATE_COMMIT = """
+if redis.call('get', KEYS[1]) ~= ARGV[1] then return 0 end
+if tonumber(ARGV[3]) > 0 then
+    redis.call('set', KEYS[2], ARGV[2], 'EX', ARGV[3])
+else
+    redis.call('set', KEYS[2], ARGV[2])
+end
+return 1
+"""
 STALE_REPLY = "这个问题已回答、已取消或已过期，请查看任务中的最新问题。"
 
 
@@ -85,22 +95,40 @@ async def _read_state(client: Any, key: str) -> dict[str, Any]:
 async def _locked(user_id: int) -> AsyncIterator[dict[str, Any]]:
     key = _state_key(user_id)
     async with cache_manager._client_context() as client:
-        async with client.lock(f"{key}:lock", timeout=300, blocking_timeout=30):
-            state = await _read_state(client, key)
-            cutoff = time.time() - RETENTION_SECONDS
-            state = {
-                k: v
-                for k, v in state.items()
-                if v["status"] == "pending"
-                or v.get("settled_at", v["created_at"]) > cutoff
-            }
+        lock_key = f"{key}:lock"
+        async with client.lock(lock_key, timeout=300, blocking_timeout=30) as lock:
+            token = lock.local.token
+            state: dict[str, Any] | None = None
             try:
-                yield state
+                async with asyncio.timeout(LOCK_OPERATION_SECONDS):
+                    state = await _read_state(client, key)
+                    cutoff = time.time() - RETENTION_SECONDS
+                    state = {
+                        k: v
+                        for k, v in state.items()
+                        if v["status"] == "pending"
+                        or v.get("settled_at", v["created_at"]) > cutoff
+                    }
+                    yield state
             finally:
-                pending = any(entry["status"] == "pending" for entry in state.values())
-                await cache_manager.set_or_raise(
-                    key, state, expire=None if pending else RETENTION_SECONDS
-                )
+                if state is not None:
+                    pending = any(
+                        entry["status"] == "pending" for entry in state.values()
+                    )
+                    saved = await asyncio.wait_for(
+                        client.eval(
+                            STATE_COMMIT,
+                            2,
+                            lock_key,
+                            key,
+                            token,
+                            json.dumps(state),
+                            0 if pending else RETENTION_SECONDS,
+                        ),
+                        timeout=5,
+                    )
+                    if not saved:
+                        raise RuntimeError("IM question lock ownership was lost")
 
 
 def _pending_question(entry: dict[str, Any]) -> dict[str, Any] | None:
@@ -378,14 +406,12 @@ async def answer_runtime_question(
     async with cache_manager._client_context() as client:
         if not await _read_state(client, _state_key(user_id)):
             return False
-    async with _locked(user_id) as state:
-        try:
-            handled, reply = await asyncio.wait_for(
-                _route_answer(db, session, context, state), timeout=240
-            )
-        except Exception:
-            logger.exception("IM question lookup failed: user_id=%s", user_id)
-            handled, reply = True, "暂时无法读取待答问题，请稍后重试。"
+    try:
+        async with _locked(user_id) as state:
+            handled, reply = await _route_answer(db, session, context, state)
+    except Exception:
+        logger.exception("IM question lookup failed: user_id=%s", user_id)
+        handled, reply = True, "暂时无法读取待答问题，请稍后重试。"
     # Persist acceptance before an IM acknowledgment, which can itself fail.
     if reply:
         await port.send_text_reply(context, reply)

@@ -124,6 +124,33 @@ export function StandInImConnections({
   const device = devices.find(row => sameDevice(row.device_id))
   return (
     <section ref={section} aria-label={t('standIn.im.title')} data-testid="stand-in-im-channels">
+      {loading && (
+        <p
+          role="status"
+          data-testid="stand-in-im-discovery-loading"
+          className="text-sm text-text-secondary"
+        >
+          {t('standIn.im.loading')}
+        </p>
+      )}
+      {error === 'load' && (
+        <div
+          role="alert"
+          data-testid="stand-in-im-discovery-error"
+          className="flex flex-wrap items-center gap-2 text-sm"
+        >
+          <span className="text-error">{t('standIn.im.load_failed')}</span>
+          <Button
+            variant="ghost"
+            size="sm"
+            className="min-h-11 md:min-h-9"
+            data-testid="stand-in-im-discovery-retry"
+            onClick={refresh}
+          >
+            {t('standIn.im.refresh')}
+          </Button>
+        </div>
+      )}
       <div className="flex flex-wrap gap-2">
         {channels.map(type => {
           const isConnected = sessions.some(row => row.channel_type === type && connected(row))
@@ -150,7 +177,7 @@ export function StandInImConnections({
             </Button>
           )
         })}
-        {(availableToAdd.length > 0 || menuOpen) && (
+        {!loading && error !== 'load' && (availableToAdd.length > 0 || menuOpen) && (
           <ActionMenu
             ariaLabel={t('standIn.im.add_channels')}
             testId="stand-in-im-add-channels"

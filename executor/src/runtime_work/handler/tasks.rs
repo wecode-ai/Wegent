@@ -2330,12 +2330,11 @@ impl RuntimeWorkRpcHandler {
                                     .as_str()
                                     .map(str::to_owned)
                                     .unwrap_or_else(|| id.to_string());
-                                return !active.user_input_requests.is_empty()
-                                    && !active
-                                        .user_input_requests
-                                        .get(&key)
-                                        .copied()
-                                        .unwrap_or(false);
+                                return !active
+                                    .user_input_requests
+                                    .get(&key)
+                                    .copied()
+                                    .unwrap_or(false);
                             }
                             super::super::mcp_elicitation::response_id(&response).is_none()
                                 && active.items.iter().any(|item| {
