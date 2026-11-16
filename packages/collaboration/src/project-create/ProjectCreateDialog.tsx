@@ -293,9 +293,6 @@ export function ProjectCreateDialog(props: ProjectCreateDialogProps) {
     CollaborationWorkspaceMember[]
   >([]);
   const [advancedSettingsOpen, setAdvancedSettingsOpen] = useState(false);
-  const [templateSelected, setTemplateSelected] = useState(
-    Boolean(props.initialTemplate),
-  );
   const [groupRecommendationDismissed, setGroupRecommendationDismissed] =
     useState(false);
   const [groupEditorDraft, setGroupEditorDraft] =
@@ -974,7 +971,6 @@ export function ProjectCreateDialog(props: ProjectCreateDialogProps) {
                   commands.setTemplateDocument(null);
                   commands.setTemplatePending(false);
                   commands.clearError();
-                  setTemplateSelected(false);
                   setCollaboratorPickerOpen(false);
                   setGroupEditorDraft(null);
                   props.workspaceSelection?.onChange(event.target.value);
@@ -998,7 +994,6 @@ export function ProjectCreateDialog(props: ProjectCreateDialogProps) {
               onSelect={(document) => {
                 commands.clearError();
                 commands.setTemplateDocument(document);
-                setTemplateSelected(Boolean(document));
                 if (document) {
                   if (!state.name.trim())
                     commands.setName(
@@ -1011,7 +1006,6 @@ export function ProjectCreateDialog(props: ProjectCreateDialogProps) {
               }}
               onChange={(drafts, selected, document) => {
                 if (document) commands.setTemplateDocument(document);
-                setTemplateSelected(selected);
                 commands.setTemplatePending(selected && drafts === null);
                 commands.setTemplateGroupDrafts(drafts ?? []);
               }}

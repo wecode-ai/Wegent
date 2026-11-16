@@ -432,9 +432,9 @@ Each device shows:
 
 <a id="offline-device-cleanup"></a>
 
-In **Collaboration → Devices**, use **Last online** to identify historical registrations. Online devices show **Online now**; offline devices show a relative time with the full timestamp on hover. Legacy devices without an observation show **No record**. Registration numbers distinguish devices with identical names.
+In **Collaboration → Devices**, only online devices are listed. Registration numbers distinguish devices with identical names. Distinct online application instances are retained.
 
-You can delete an owned, offline registration with no running tasks. The current device and registrations that could belong to it while its local identity is unavailable have no delete action. The confirmation shows the registration number and affected spaces. Deleting the record removes it from workspace device selectors while retaining files on the device and existing execution history. A reconnecting device may register again. If it comes online during confirmation, the server rejects deletion and prompts a status refresh.
+Offline registrations with no queued or running work are deactivated automatically after seven days. Tasks, execution history and files on the device are retained. A reconnecting device may register again. Provider-managed cloud records remain available for cloud-resource management.
 
 When a device goes offline:
 
