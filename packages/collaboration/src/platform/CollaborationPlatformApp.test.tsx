@@ -4554,7 +4554,8 @@ describe("CollaborationPlatformApp real component flow", () => {
       />,
     );
 
-    expect(container.textContent).toContain("导入第一个本地项目");
+    expect(container.textContent).toContain("创建第一个协作项目");
+    expect(container.textContent).not.toContain("选择当前设备上的项目文件夹");
     expect(
       byTestId("collaboration-workspace-starter-create-project").textContent,
     ).toContain("新建项目");

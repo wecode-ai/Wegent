@@ -86,7 +86,23 @@ async function verifyTaskLabels(control, home) {
   )
   const goal = `${panel} [data-testid="goal-draft-pill"]`
   const existingGoal = JSON.parse(await control.command('getElementMetrics', goal)).length > 0
-  if (!existingGoal) await setGoalDraftForTabTransfer(control, panel)
+  if (!existingGoal) {
+    await control.command('click', `${panel} [data-testid="add-context-button"]`)
+    const [row, description] = JSON.parse(
+      await control.command(
+        'getElementMetrics',
+        '[data-testid="set-goal-button"], [data-testid="goal-mode-description"]'
+      )
+    )
+    assert.ok(
+      description.left >= row.left &&
+        description.right <= row.right &&
+        description.bottom <= row.bottom,
+      'The complete goal description must fit inside its menu item'
+    )
+    await control.command('nativePress', '[data-testid="set-goal-button"]', { key: 'Escape' })
+    await setGoalDraftForTabTransfer(control, panel)
+  }
   const goalText = 'Keep pursuing this goal after opening global settings.'
   await control.command('fill', taskInput, { value: goalText })
   await control.command('click', '[data-testid="settings-button"]')
@@ -320,6 +336,31 @@ async function verifyCompactNavigation(control, home, timeoutMs) {
   assert.equal(await control.command('getActiveElementTestId', 'body'), current)
 }
 
+async function verifyDiscussionReply(control, home) {
+  const panel = `${home} [data-testid="personal-home-stand-in"] > [role="tabpanel"]:not([inert])`
+  const activity = `${panel} [data-testid="cloud-task-activity-list"]`
+  const editor = `${panel} [data-testid="cloud-task-activity-composer"]`
+  const text = 'A local discussion about the release checklist.'
+  await control.command('fill', editor, { value: text })
+  const submit = `${panel} [data-testid="task-comment-form"] [data-testid="send-message-button"]:enabled`
+  await control.command('waitFor', submit)
+  await control.command('click', submit)
+  await control.command('waitFor', activity, { text })
+  await control.command('click', `${activity} [data-testid^="cloud-task-activity-reply-toggle-"]`)
+  const reply = `${panel} [data-testid="issue-reply-composer"]`
+  await control.command('waitFor', reply)
+  const label = await control.command('getText', reply)
+  assert.match(label, /继续此讨论|Continues this discussion/)
+  assert.doesNotMatch(label, /原执行任务|existing execution/)
+  assert.match(
+    await control.command('getAttribute', `${reply} [data-testid="cloud-task-activity-composer"]`, {
+      value: 'aria-label',
+    }),
+    /回复此讨论|Reply in this thread/
+  )
+  await control.command('click', `${reply} [data-testid="issue-reply-cancel"]`)
+}
+
 /** Reuse the checkpoint's real services; no additional model turn. */
 export async function verifyCollaborationHomeUsability(
   control,
@@ -455,6 +496,7 @@ export async function verifyCollaborationHomeUsability(
     )
     await control.command('click', descriptionToggle)
     await control.command('waitFor', `${descriptionToggle}[aria-expanded="false"]`)
+    await verifyDiscussionReply(control, home)
     await control.command('click', `${home} [data-testid="personal-home-back-to-issues"]`)
     await control.command('fill', record, { value: savedRecord })
 

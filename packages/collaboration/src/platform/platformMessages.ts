@@ -213,13 +213,9 @@ export const platformMessages = {
     navigationLoadFailed: "部分分组或项目加载失败，列表可能不完整。",
     retryNavigation: "重试",
     searchSpaces: "搜索分组",
-    firstUseProgress: "开始协作",
-    firstProjectTitle: "创建第一个项目",
+    firstProjectTitle: "创建第一个协作项目",
     firstProjectHint:
       "项目负责组织 Issue、成员和分配方式；智能体与执行环境可以稍后配置。",
-    firstLocalProjectTitle: "导入第一个本地项目",
-    firstLocalProjectHint:
-      "选择当前设备上的项目文件夹，在个人分组中组织 Issue 和智能体协作。",
     configureAgents: "配置智能体",
     createCollaborationGroup: "创建协作小组",
     inviteMembers: "邀请成员",
@@ -482,13 +478,9 @@ export const platformMessages = {
       "Some groups or projects could not load. The list may be incomplete.",
     retryNavigation: "Retry",
     searchSpaces: "Search groups",
-    firstUseProgress: "Getting started",
-    firstProjectTitle: "Create your first project",
+    firstProjectTitle: "Create your first collaboration project",
     firstProjectHint:
       "Projects organize issues, members, and assignments. Agents and execution environments can be configured later.",
-    firstLocalProjectTitle: "Import your first local project",
-    firstLocalProjectHint:
-      "Choose a project folder on this device to organize issues and agent collaboration in your personal group.",
     configureAgents: "Configure agents",
     createCollaborationGroup: "Create collaboration group",
     inviteMembers: "Invite members",

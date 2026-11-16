@@ -616,6 +616,8 @@
     "task_activity_replying_to_human": "正在回复 {{name}} · 打开新的个人任务",
     "task_activity_reply_action": "回复并继续此任务",
     "task_activity_replying_to": "正在回复 {{name}} · 将继续原执行任务",
+    "task_activity_replying_to_discussion": "正在回复 {{name}} · 继续此讨论",
+    "task_activity_discussion_reply_placeholder": "回复此讨论…",
     "task_activity_replying_to_stand_in": "正在回复 {{name}} · 继续此 Issue 对话",
     "task_activity_stand_in_reply_placeholder": "继续与助理讨论此 Issue…",
     "task_activity_cancel_reply": "取消回复",

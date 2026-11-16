@@ -2672,17 +2672,8 @@ function CollaborationPlatformAppContent({
                 className="collaboration-workspace-starter"
                 data-testid="collaboration-workspace-starter"
               >
-                <small>{messages.firstUseProgress}</small>
-                <h2>
-                  {usesProjectImporter
-                    ? messages.firstLocalProjectTitle
-                    : messages.firstProjectTitle}
-                </h2>
-                <p>
-                  {usesProjectImporter
-                    ? messages.firstLocalProjectHint
-                    : messages.firstProjectHint}
-                </p>
+                <h2>{messages.firstProjectTitle}</h2>
+                <p>{messages.firstProjectHint}</p>
                 <div>
                   <ProjectCreationAction
                     className="collaboration-primary-button"

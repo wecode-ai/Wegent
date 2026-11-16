@@ -241,6 +241,39 @@ const agentMessage: ProjectChatMessage = {
 }
 
 describe('TaskActivityView', () => {
+  it('labels a discussion reply without promising an unbound execution', async () => {
+    const user = userEvent.setup()
+    const comment = { ...userMessage, content: 'A local discussion', metadata: {} }
+    const client = {
+      subscribe: vi.fn(async () => ({
+        snapshot: { messages: [comment], latestSequence: 1, currentUserId: '1' },
+        unsubscribe: vi.fn(),
+      })),
+      send: vi.fn(async () => comment),
+      dispose: vi.fn(),
+    } satisfies ProjectChatClient
+    render(
+      <TaskActivityView
+        client={client}
+        currentUserId={1}
+        project={{ id: '11', name: 'Local', project_store: 'local' } as never}
+        task={{ id: 'WEG-1', title: 'Discuss', status: 'inbox', version: 1 } as never}
+        issueTimeline
+        linear
+      />
+    )
+    await user.click(await screen.findByTestId('cloud-task-activity-reply-toggle-message-1'))
+    const composer = screen.getByTestId('issue-reply-composer')
+    expect(composer).toHaveTextContent('正在回复 Ada · 继续此讨论')
+    expect(within(composer).getByText('回复此讨论…')).toBeInTheDocument()
+    expect(composer).not.toHaveTextContent('原执行任务')
+    expect(screen.getByTestId('issue-reply-cancel')).toHaveAccessibleName('取消回复')
+    await user.click(screen.getByTestId('issue-reply-cancel'))
+    expect(screen.queryByTestId('issue-reply-composer')).not.toBeInTheDocument()
+    expect(client.send).not.toHaveBeenCalled()
+    expect(createProjectRuntimeTask).not.toHaveBeenCalled()
+  })
+
   it('opens a notification at its own AI message without focusing the reply composer', async () => {
     vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockReturnValue(
       new DOMRect(0, 100, 800, 100)

@@ -118,6 +118,8 @@ Issue rows show title, status, assignee, tags, date and a content excerpt. When 
 
 Discussions exceeding 20 activity entries preserve the first two and latest ten, with an expandable middle. Comment links and reply targets remain visible.
 
+The reply composer names its recipient. Ordinary discussions show **Continues this discussion**; **Continues the existing execution** appears only when an execution session is bound. Replies to human assignments explicitly indicate a new personal task and name the work to start. Cancel the reply to return to the new-discussion composer.
+
 Notifications remain in the title-bar bell. Reading them does not resolve pending work. Failed list requests show an error and retry action. Reopening the home or focusing the app refreshes the list.
 
 Type **#** and select a matching Issue from this project. After switching projects, recheck/reselect references rather than retaining invalid old-project links. This creates an Issue, not a runtime task, so do not assume task plan-mode/plugin/Skill-slash controls are available. Review project, assignee and references before submitting, then continue in details.
