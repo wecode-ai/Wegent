@@ -37,6 +37,9 @@ use serde_json::Value;
 
 use crate::executor_manager::ExecutorManager;
 
+pub(crate) mod lease_receipt;
+pub(crate) use lease_receipt::LeaseReceipt;
+
 pub(crate) use collect::collect_completed_result;
 pub(crate) use delivery::{
     Delivery, acknowledge_delivery, delivery_lock_key, notification_key, publish_once,

@@ -61,6 +61,14 @@ async fn with_fixture(run: impl AsyncFnOnce(&Fixture)) {
     session::cleanup_streaming_state(&fixture.redis, fixture.subtask_id, Some(fixture.task_id))
         .await
         .expect("remove fixture keys");
+    fixture
+        .redis
+        .del(crate::internal_callback::pipeline::execution_lease_key(
+            fixture.task_id,
+            fixture.subtask_id,
+        ))
+        .await
+        .expect("remove fixture lease");
     if let Err(panic) = outcome {
         std::panic::resume_unwind(panic);
     }
@@ -353,6 +361,179 @@ async fn activity_cas_never_overwrites_a_start_after_its_get() {
             );
             assert_eq!(fixture.marker().await["subtask_id"], fixture.subtask_id + 1);
         }
+    })
+    .await;
+}
+
+async fn lease_ttl(redis: &RedisService, key: &str) -> i64 {
+    let mut command = brz_redis::cmd("PTTL");
+    command.arg(key);
+    redis.command(command).await.expect("lease TTL")
+}
+
+#[tokio::test]
+#[ignore = "requires explicit disposable WEGENT_TEST_REDIS_ADDRESS; CI runs this group"]
+async fn pipeline_receipt_is_fenced_and_preserves_the_live_owner_ttl() {
+    use crate::internal_callback::completion::lease_receipt::{LeaseReceipt, accepted_owner};
+    use brz_redis::{SetExpiration, SetOptions};
+    with_fixture(async |fixture| {
+        let key = crate::internal_callback::pipeline::execution_lease_key(
+            fixture.task_id,
+            fixture.subtask_id,
+        );
+        let owner = LeaseReceipt::new(&key, "owner".into());
+        let old_owner = LeaseReceipt::new(&key, "old-owner".into());
+        assert!(
+            !owner.accept(&fixture.redis).await.unwrap(),
+            "missing owner"
+        );
+        assert!(!accepted_owner(&fixture.redis, &key).await.unwrap());
+        fixture
+            .redis
+            .set_with(
+                &key,
+                "owner",
+                SetOptions::default().with_expiration(SetExpiration::Milliseconds(10_000)),
+            )
+            .await
+            .unwrap();
+        assert!(
+            owner.renew(&fixture.redis, 10_000).await.unwrap(),
+            "raw owner renews before first event"
+        );
+        let before = lease_ttl(&fixture.redis, &key).await;
+        assert!(!old_owner.accept(&fixture.redis).await.unwrap());
+        assert!(!old_owner.renew(&fixture.redis, 30_000).await.unwrap());
+        assert!(!old_owner.release(&fixture.redis).await.unwrap());
+        assert!(owner.accept(&fixture.redis).await.unwrap());
+        assert!(
+            owner.accept(&fixture.redis).await.unwrap(),
+            "idempotent owner acceptance"
+        );
+        assert!(accepted_owner(&fixture.redis, &key).await.unwrap());
+        let after = lease_ttl(&fixture.redis, &key).await;
+        assert!(
+            after > 0 && after <= before,
+            "acceptance must not extend TTL"
+        );
+        assert_eq!(
+            fixture
+                .redis
+                .get::<_, String>(&key)
+                .await
+                .unwrap()
+                .as_deref(),
+            Some("accepted:owner")
+        );
+        assert!(owner.renew(&fixture.redis, 30_000).await.unwrap());
+        assert!(lease_ttl(&fixture.redis, &key).await > after);
+        assert!(!old_owner.release(&fixture.redis).await.unwrap());
+        assert!(owner.release(&fixture.redis).await.unwrap());
+        assert!(!accepted_owner(&fixture.redis, &key).await.unwrap());
+
+        fixture.redis.set(&key, "owner").await.unwrap();
+        assert!(
+            !owner.accept(&fixture.redis).await.unwrap(),
+            "a non-expiring value is not a live lease"
+        );
+        let mut expire = brz_redis::cmd("PEXPIREAT");
+        expire.arg(&key).arg(1);
+        fixture.redis.command::<i64>(expire).await.unwrap();
+        assert!(
+            !owner.accept(&fixture.redis).await.unwrap(),
+            "expired owner cannot be resurrected"
+        );
+        fixture
+            .redis
+            .set_with(
+                &key,
+                "new-owner",
+                SetOptions::default().with_expiration(SetExpiration::Milliseconds(10_000)),
+            )
+            .await
+            .unwrap();
+        assert!(!owner.accept(&fixture.redis).await.unwrap());
+        assert!(!owner.renew(&fixture.redis, 30_000).await.unwrap());
+        assert!(!owner.release(&fixture.redis).await.unwrap());
+        assert_eq!(
+            fixture
+                .redis
+                .get::<_, String>(&key)
+                .await
+                .unwrap()
+                .as_deref(),
+            Some("new-owner")
+        );
+        fixture.redis.del(&key).await.unwrap();
+    })
+    .await;
+}
+
+#[tokio::test]
+#[ignore = "requires explicit disposable WEGENT_TEST_REDIS_ADDRESS; CI runs this group"]
+async fn pipeline_receipt_observers_never_execute_or_release_the_owner() {
+    use crate::internal_callback::completion::{LeaseReceipt, with_owned_lease};
+    use brz_redis::{SetExpiration, SetOptions};
+    with_fixture(async |fixture| {
+        let key = crate::internal_callback::pipeline::execution_lease_key(
+            fixture.task_id,
+            fixture.subtask_id,
+        );
+        fixture
+            .redis
+            .set_with(
+                &key,
+                "fixture",
+                SetOptions::default().with_expiration(SetExpiration::Milliseconds(20_000)),
+            )
+            .await
+            .unwrap();
+        let started = tokio::time::Instant::now();
+        let phantom = with_owned_lease(
+            &fixture.redis,
+            &key,
+            || "unaccepted",
+            Some(|| ()),
+            |_| async {
+                panic!("a busy observer must not run consumer work or its cleanup");
+                #[allow(unreachable_code)]
+                Ok::<(), &str>(())
+            },
+        )
+        .await;
+        assert_eq!(phantom, Err("unaccepted"));
+        assert!(started.elapsed() >= std::time::Duration::from_secs(5));
+        let owner = LeaseReceipt::new(&key, "fixture".into());
+        assert!(owner.accept(&fixture.redis).await.unwrap());
+        let before = lease_ttl(&fixture.redis, &key).await;
+        let observed = with_owned_lease(
+            &fixture.redis,
+            &key,
+            || "unavailable",
+            Some(|| ()),
+            |_| async {
+                panic!("an accepted observer must not run consumer work or its cleanup");
+                #[allow(unreachable_code)]
+                Ok::<(), &str>(())
+            },
+        )
+        .await;
+        assert_eq!(observed, Ok(()));
+        let after = lease_ttl(&fixture.redis, &key).await;
+        assert!(
+            after > 0 && after <= before,
+            "observer does not renew or release"
+        );
+        assert_eq!(
+            fixture
+                .redis
+                .get::<_, String>(&key)
+                .await
+                .unwrap()
+                .as_deref(),
+            Some("accepted:fixture")
+        );
+        owner.release(&fixture.redis).await.unwrap();
     })
     .await;
 }
