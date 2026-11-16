@@ -194,14 +194,11 @@ export function createDesktopScenario({
       }),
     })
     assert.equal(task.accepted, true, `Remote interaction fixture was rejected: ${task.error}`)
-    const address = {
-      deviceId: task.deviceId,
-      taskId: task.taskId,
-      workspacePath: task.workspacePath,
-    }
-    assert.equal(address.deviceId, deviceId)
+    assert.equal(task.deviceId, remoteDevice.app_device_id)
+    assert.ok(task.taskId, 'The peer App did not return the created task identity')
+    assert.equal(task.workspacePath, remoteWorkspace)
     await releaseHeldQuestion(prompt)
-    await waitForValue(
+    const address = await waitForValue(
       async () => {
         const work = await fetchJson(
           `${cloud.backendUrl}/api/runtime-work?pending_only=true&device_id=${encodeURIComponent(deviceId)}`,
@@ -211,14 +208,24 @@ export function createDesktopScenario({
           ...(work.projects ?? []).flatMap(project => project.deviceWorkspaces ?? []),
           ...(work.chats ?? []),
         ]
-        return workspaces
-          .flatMap(workspace => workspace.tasks ?? [])
-          .find(candidate => candidate.taskId === address.taskId)
+        for (const workspace of workspaces) {
+          const pendingTask = workspace.tasks?.find(candidate => candidate.taskId === task.taskId)
+          if (pendingTask) {
+            return {
+              deviceId: workspace.deviceId,
+              taskId: pendingTask.taskId,
+              workspacePath: workspace.workspacePath,
+            }
+          }
+        }
+        return null
       },
       Boolean,
-      `Remote question task ${address.taskId} never appeared in pending inventory`,
+      `Remote question task ${task.taskId} never appeared in pending inventory`,
       uiTimeoutMs * 3
     )
+    assert.equal(address.deviceId, deviceId)
+    assert.equal(address.workspacePath, task.workspacePath)
     return address
   }
 
