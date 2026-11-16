@@ -38,7 +38,7 @@ async function verifyTaskLabels(control, home) {
     'The Issue storage project must have its own visible label'
   )
   await control.command('nativePress', `${home} [data-testid="personal-home-new-issue"]`, {
-    key: 'Home',
+    key: 'ArrowLeft',
   })
   await control.command(
     'waitFor',
