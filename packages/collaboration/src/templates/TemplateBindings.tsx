@@ -311,7 +311,7 @@ export function TemplateBindingsDialog({
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [failed, setFailed] = useState(false)
-  const [configurationOpen, setConfigurationOpen] = useState(false)
+  const [configurationMounted, setConfigurationMounted] = useState(false)
   const [modelState, setModelState] = useState<{
     configuration: TemplateModelConfiguration
     models: Partial<Record<RunnerModelIdentity['runtime'], RunnerModelIdentity>>
@@ -417,14 +417,16 @@ export function TemplateBindingsDialog({
         <details
           className="collaboration-runtime-disclosure"
           data-testid="template-runtime-configuration"
-          onToggle={event => setConfigurationOpen(event.currentTarget.open)}
+          onToggle={event => {
+            if (event.currentTarget.open) setConfigurationMounted(true)
+          }}
         >
           <summary>
             <ChevronRight aria-hidden="true" />
             <span>{m.optionalRuntimeConfiguration}</span>
           </summary>
           <p className="collaboration-runtime-hint">{m.deferredRuntimeHint}</p>
-          {configurationOpen && (
+          {configurationMounted && (
             <>
               {renderConfiguration?.(busy || failed)}
               {runtimes.map(runtime => (

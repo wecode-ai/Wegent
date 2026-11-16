@@ -87,3 +87,31 @@ fn delete_chat_agent_checks_version_project_and_managed_agents() {
         .contains("PROJECT_AGENT_MANAGED"));
     assert_eq!(store.list_chat_agents(&project.id).unwrap().len(), 2);
 }
+
+#[test]
+fn stale_group_draft_cannot_reference_an_agent_deleted_after_the_project_was_read() {
+    let (_directory, store, project) = chat_agent_store();
+    let agent = make_local_agent(&store, &project.id, "auto");
+    LocalTaskStore::open(store.path()).unwrap()
+        .delete_chat_agent(&project.id, &agent.id, agent.version)
+        .unwrap();
+    let error = store
+        .update_project(
+            &project.id,
+            ProjectUpdate {
+                version: project.version,
+                collaboration_groups: Some(
+                    json!([{"leader":{"kind":"agent","id":agent.id},"members":[],"stages":[]}]),
+                ),
+                ..Default::default()
+            },
+        )
+        .unwrap_err();
+    assert!(error.to_string().contains("not active"));
+    let persisted = store.get_project(&project.id).unwrap();
+    assert_eq!(persisted.version, project.version);
+    assert_eq!(
+        persisted.metadata["collaboration_groups"],
+        project.metadata["collaboration_groups"]
+    );
+}

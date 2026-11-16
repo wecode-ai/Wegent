@@ -68,11 +68,13 @@ function fixture(host?: ProjectAgentConfigurationHost) {
     projects: {
       get: vi.fn(async () => project),
       listCollaborationGroups: vi.fn(async () => []),
-      createCollaborationGroup: vi.fn(async (_projectId: string, input: Record<string, unknown>) => ({
-        ...input,
-        id: 'group',
-        name: group.name,
-      })),
+      createCollaborationGroup: vi.fn(
+        async (_projectId: string, input: Record<string, unknown>) => ({
+          ...input,
+          id: 'group',
+          name: group.name,
+        })
+      ),
       update: vi.fn(async () => project),
     },
     members: { list: vi.fn(async () => [{ user_id: 7, user_name: 'Owner' }]) },
@@ -547,4 +549,45 @@ it('keeps template edits while recovering from device loading failure and missin
     expect.objectContaining({ name: 'My custom group' })
   )
   expect(applied).toHaveBeenCalledOnce()
+})
+
+it('keeps an explicit non-default model when runtime configuration is collapsed and reopened', async () => {
+  const other = {
+    ...selectableModel,
+    model_id: 'other',
+    label: 'Other',
+    is_default: true,
+  }
+  const { api, render } = fixture({
+    renderDialog: () => null,
+    listTemplateAgentModels: async () => ({ models: [other, selectableModel] }),
+  })
+  await render()
+  const select = container.querySelector<HTMLSelectElement>('[data-testid="template-model-codex"]')!
+  await act(async () => {
+    select.value = runnerModelKey(selectableModel)
+    select.dispatchEvent(new Event('change', { bubbles: true }))
+  })
+  const disclosure = container.querySelector<HTMLDetailsElement>(
+    '[data-testid="template-runtime-configuration"]'
+  )!
+  for (const open of [false, true])
+    await act(async () => {
+      disclosure.open = open
+      disclosure.dispatchEvent(new Event('toggle', { bubbles: true }))
+    })
+  expect(container.querySelector('[data-testid="template-model-codex"]')).toBe(select)
+  expect(select.value).toBe(runnerModelKey(selectableModel))
+  await act(async () =>
+    container.querySelector<HTMLButtonElement>('[data-testid="template-bindings-apply"]')!.click()
+  )
+  for (const [, input] of api.agents.create.mock.calls as unknown as [
+    string,
+    Record<string, unknown>,
+  ][]) {
+    expect(input.modelPolicy).toEqual({
+      mode: 'fixed',
+      model: runnerModelIdentity(selectableModel),
+    })
+  }
 })

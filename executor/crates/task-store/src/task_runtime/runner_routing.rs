@@ -240,7 +240,8 @@ pub fn resolve_pending(
     if let Some(config) = payload.get("runnerPolicy") {
         let model = &payload["runnerRouting"]["model"];
         if model["source"] == "native"
-            && payload["runnerRouting"]["execution_policy"]["mode"] != "fixed"
+            && (payload["runnerRouting"]["execution_policy"]["mode"] != "fixed"
+                || config["execution_policy"]["mode"] == "project_pool")
         {
             return Err(invalid(
                 "RUNNER_MODEL_UNAVAILABLE: local models require a fixed environment",
@@ -451,6 +452,9 @@ mod tests {
             "fixed"
         );
         assert!(resolve_pending(&mut payload.clone(), Some(&catalog), "runner-b").is_err());
+        let mut reused = payload.clone();
+        reused["runnerPolicy"]["execution_policy"] = json!({"mode":"project_pool"});
+        assert!(resolve_pending(&mut reused, Some(&catalog), "runner-a").is_err());
         let mut pooled = payload;
         pooled["runnerRouting"]["execution_policy"] = json!({"mode":"project_pool"});
         assert!(resolve_pending(&mut pooled, Some(&catalog), "runner-a").is_err());

@@ -2552,6 +2552,7 @@ export function TodoEditor(props: TodoEditorProps) {
   );
   const tagControls = (
     <TagEditor
+      key={item ? `issue:${item.id}` : "create"}
       testIdPrefix={
         isCreate ? "cloud-todo-create-tag" : "cloud-todo-detail-tag"
       }

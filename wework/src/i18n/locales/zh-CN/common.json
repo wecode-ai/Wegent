@@ -4366,6 +4366,8 @@
     "runner_selection_confirm": "确认执行配置",
     "runner_selection_cancelled": "已取消执行配置选择",
     "runner_status_unknown": "状态待确认",
+    "runner_default_unavailable": "默认设备当前不可用。",
+    "runner_clear_default": "清除默认设备",
     "runner_personal_default": "个人默认执行环境",
     "runner_project_pool_hint": "选择云端模型，运行时从项目已授权且支持该模型的环境中自动分配。",
     "runner_model_at_runtime_hint": "使用时选择有权使用的云端模型。",

@@ -43,7 +43,7 @@ async function openEditor(
   } as never
   const onUpdated = vi.fn()
   const onClose = vi.fn()
-  render(
+  const view = render(
     <TodoEditor
       mode="edit"
       presentation="workspace-panel"
@@ -56,7 +56,7 @@ async function openEditor(
       onClose={onClose}
     />
   )
-  return { updateLoopItem, onUpdated, onClose }
+  return { updateLoopItem, onUpdated, onClose, view, api, current }
 }
 
 describe('workspace Issue tag editing', () => {
@@ -176,4 +176,26 @@ describe('workspace Issue tag editing', () => {
     expect(screen.queryByTestId('cloud-todo-detail-tag-input')).not.toBeInTheDocument()
     expect(updateLoopItem).not.toHaveBeenCalled()
   })
+})
+
+it('discards an unfinished tag draft when the host switches Issues without remounting', async () => {
+  const { view, api, onUpdated, onClose, updateLoopItem } = await openEditor()
+  await userEvent.type(screen.getByRole('textbox', { name: '添加标签' }), 'Previous Issue draft')
+  const next = { ...item, id: 'TAG-2', title: 'Other Issue', tags: ['Other'] }
+  view.rerender(
+    <TodoEditor
+      mode="edit"
+      presentation="workspace-panel"
+      item={next}
+      project={project}
+      allItems={[next]}
+      api={api}
+      onUpdated={onUpdated}
+      onClose={onClose}
+    />
+  )
+  const field = screen.getByRole('textbox', { name: '添加标签' })
+  expect(field).toHaveValue('')
+  fireEvent.keyDown(field, { key: 'Enter' })
+  expect(updateLoopItem).not.toHaveBeenCalled()
 })

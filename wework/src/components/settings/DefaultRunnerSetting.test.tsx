@@ -43,3 +43,24 @@ it('renders a usable default-device control, saves the shared preference and res
   )
   expect(screen.getByTestId('settings-default-runner')).toHaveValue('cloud')
 })
+
+it('lets the user clear an unavailable default without listing the offline device', async () => {
+  const updateUserPreferences = vi.fn(async () => {})
+  const value = {
+    state: {
+      devices: [{ device_id: 'old', name: 'Offline Mac', status: 'offline' }],
+      user: { preferences: { default_execution_target: 'old' } },
+    },
+    updateUserPreferences,
+  } as unknown as WorkbenchContextValue
+  render(
+    <WorkbenchContext.Provider value={value}>
+      <DefaultRunnerSetting compact />
+    </WorkbenchContext.Provider>
+  )
+  expect(screen.queryByRole('option', { name: /Offline Mac/ })).not.toBeInTheDocument()
+  fireEvent.click(screen.getByTestId('settings-default-runner-clear'))
+  await waitFor(() =>
+    expect(updateUserPreferences).toHaveBeenCalledWith({ default_execution_target: null })
+  )
+})

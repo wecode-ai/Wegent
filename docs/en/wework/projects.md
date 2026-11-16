@@ -45,7 +45,7 @@ Global catalogs, group settings, and project settings remain separate levels. Co
 
 <a id="offline-device-cleanup"></a>
 
-**Collaboration → Collaboration management → Execution devices** shows online devices only. Registrations offline for more than seven days, with no queued or running work, are automatically deactivated while preserving tasks and execution history. Unavailable online state prevents cleanup. Legacy records with no known last-online time start the retention period when first observed offline.
+**Collaboration → Collaboration management → Execution devices** shows online devices only. Registrations offline for more than seven days, with no queued or running work, are automatically deactivated while preserving tasks and execution history. Unavailable online state prevents cleanup. Legacy records with no known last-online time start the retention period when first observed offline. Managed cloud host records are retained so their management and destruction controls remain available.
 
 ### Register a group Runner
 

@@ -11,6 +11,7 @@ export function DefaultRunnerSetting({ compact = false }: { compact?: boolean })
   if (!workbench?.updateUserPreferences) return null
   const devices = (workbench.state.devices ?? []).filter(device => device.status === 'online')
   const selected = workbench.state.user?.preferences?.default_execution_target ?? ''
+  const unavailable = Boolean(selected) && !devices.some(device => device.device_id === selected)
   const save = async (deviceId: string) => {
     setSaving(true)
     setError(null)
@@ -26,7 +27,7 @@ export function DefaultRunnerSetting({ compact = false }: { compact?: boolean })
     <div className="space-y-1">
       <select
         aria-label={t('workbench.runner_personal_default')}
-        className="wework-native-select h-9 max-w-64 rounded-md border border-border bg-background px-2 text-sm"
+        className="wework-native-select h-9 min-h-11 md:min-h-9 max-w-64 rounded-md border border-border bg-background px-2 text-sm"
         value={devices.some(device => device.device_id === selected) ? selected : ''}
         disabled={saving}
         onChange={event => void save(event.target.value)}
@@ -40,6 +41,20 @@ export function DefaultRunnerSetting({ compact = false }: { compact?: boolean })
           </option>
         ))}
       </select>
+      {unavailable && (
+        <div className="flex items-center gap-2 text-xs text-text-muted">
+          <span>{t('workbench.runner_default_unavailable')}</span>
+          <button
+            type="button"
+            disabled={saving}
+            data-testid="settings-default-runner-clear"
+            className="min-h-11 min-w-11 text-link underline md:min-h-8"
+            onClick={() => void save('')}
+          >
+            {t('workbench.runner_clear_default')}
+          </button>
+        </div>
+      )}
       {error && (
         <p className="text-xs text-destructive" role="alert">
           {error}

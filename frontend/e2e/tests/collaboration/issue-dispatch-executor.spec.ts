@@ -135,12 +135,8 @@ test.describe('Collaboration group Executor coordination', () => {
           'href',
           `${fixture.projectPath}?view=manage&section=environments`
         )
-        const modelField = page.getByTestId('template-model-codex')
-        const availableModel = modelField.locator('option:not([value=""])').first()
-        await expect(availableModel).toBeAttached()
-        const modelValue = await availableModel.getAttribute('value')
-        expect(modelValue).toBeTruthy()
-        await modelField.selectOption(modelValue!)
+        // Web imports retain user-selected model routing until actual execution.
+        await expect(page.getByTestId('template-model-codex')).toHaveCount(0)
         await page.getByTestId('template-bindings-apply').click()
         await expect(page).toHaveURL(new RegExp(`${fixture.projectPath}$`))
         await page.reload()
@@ -161,7 +157,7 @@ test.describe('Collaboration group Executor coordination', () => {
             mode: 'fixed',
             environment_id: String(appDevice.id),
           })
-          expect(agent.modelPolicy.mode).toBe('fixed')
+          expect(agent.modelPolicy.mode).toBe('user_select')
         }
         const groups = await apiRequest<{ items: Array<{ name: string }> }>(
           request,

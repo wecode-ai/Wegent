@@ -51,8 +51,15 @@ export function createDesktopScenario({ uiTimeoutMs, captureScreenshot }) {
       )
       const value = JSON.stringify([model.runtime, model.provider, model.model_id])
       await control.command('fill', modelSelector, { value })
+      // Folding optional settings must not discard an explicit model choice.
+      await control.command('click', `${selector('template-runtime-configuration')} > summary`)
+      await control.command('click', `${selector('template-runtime-configuration')} > summary`)
+      await control.command('waitFor', `${modelSelector}:enabled`)
       assert.equal(await control.command('getValue', modelSelector), value)
-      const selectedEnvironmentId = await control.command('getValue', selector('template-project-environment-select'))
+      const selectedEnvironmentId = await control.command(
+        'getValue',
+        selector('template-project-environment-select')
+      )
       await captureScreenshot(control, 'template-model-selection-ready.png', CONTENT)
       await control.command('clickWhenEnabled', selector('template-bindings-apply'))
       await control.command('waitFor', selector('template-bindings-apply'), { visible: false })

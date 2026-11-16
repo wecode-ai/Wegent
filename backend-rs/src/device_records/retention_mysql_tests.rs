@@ -17,15 +17,14 @@ async fn verify(mysql: &MysqlService, redis: &RedisService, user: i64) {
     mysql.execute("CREATE TABLE subtasks(id BIGINT PRIMARY KEY,user_id BIGINT,executor_name TEXT,status TEXT)",()).await.unwrap();
     mysql.execute("CREATE TABLE loop_item_executions(id BIGINT PRIMARY KEY,executor_owner_user_id BIGINT,runtime_device_id TEXT,runtime_instance_id TEXT,status TEXT)",()).await.unwrap();
     let now = Utc::now();
-    for id in 1..=8_i64 {
+    for id in 1..=9_i64 {
         let name = format!("retention-{user}-{id}");
         let status = match id {
             3 => json!({"lastSeenAt": now.to_rfc3339()}),
             4 => json!({}),
             _ => json!({"lastSeenAt": (now-TimeDelta::days(8)).to_rfc3339()}),
         };
-        let document =
-            json!({"spec":{"deviceType":"app","runtimeInstanceId":"fixture"},"status":status});
+        let document = json!({"spec":{"deviceType":if id == 9 {"cloud"} else {"app"},"runtimeInstanceId":"fixture","cloudConfig":{"sandboxId":"managed-fixture"}},"status":status});
         mysql
             .execute(
                 "INSERT INTO kinds VALUES (?,?,'Device',?,'default',?,true,NOW(),NOW())",
@@ -64,7 +63,7 @@ async fn verify(mysql: &MysqlService, redis: &RedisService, user: i64) {
         .await
         .unwrap();
     let tables = vec!["subtasks".to_owned()];
-    for id in 1..=8_i64 {
+    for id in 1..=9_i64 {
         let removed = mysql
             .with_transaction(async |tx| prune_record(tx, redis, user, id, &tables, now).await)
             .await
@@ -79,7 +78,7 @@ async fn verify(mysql: &MysqlService, redis: &RedisService, user: i64) {
         .fetch_all("SELECT id FROM kinds WHERE is_active=true ORDER BY id", ())
         .await
         .unwrap();
-    assert_eq!(active, (2..=8).map(|id| (id,)).collect::<Vec<_>>());
+    assert_eq!(active, (2..=9).map(|id| (id,)).collect::<Vec<_>>());
     let unknown: (Json<Value>,) = mysql
         .fetch_one("SELECT json FROM kinds WHERE id=4", ())
         .await

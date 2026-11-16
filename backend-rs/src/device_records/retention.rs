@@ -86,6 +86,10 @@ async fn prune_record<T: MysqlTransaction, R: Redis>(
     else {
         return Ok(false);
     };
+    // Cloud records own provider-managed sandboxes and must retain their management path.
+    if device.json["spec"]["deviceType"].as_str() == Some(CLOUD_DEVICE_TYPE) {
+        return Ok(false);
+    }
     if !matches!(
         require_offline_and_idle(tx, redis, user_id, &device, tables).await?,
         GuardDecision::Offline

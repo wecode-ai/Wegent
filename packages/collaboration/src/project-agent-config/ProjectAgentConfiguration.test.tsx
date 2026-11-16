@@ -285,6 +285,32 @@ describe("ProjectAgentConfiguration", () => {
     ).toBeNull();
   });
 
+  it("reports a refresh failure separately after successful deletion and retries only the list", async () => {
+    const { api, remove, list } = createApi();
+    await render(api);
+    list.mockRejectedValueOnce(new Error("Refresh unavailable"));
+    await click("project-agent-delete-project-agent-1");
+    await click("project-agent-delete-confirm");
+    expect(remove).toHaveBeenCalledTimes(1);
+    expect(
+      container.querySelector('[data-testid="project-agent-delete-dialog"]'),
+    ).toBeNull();
+    expect(
+      container.querySelector('[data-testid="project-agent-config-error"]')
+        ?.textContent,
+    ).toContain("Refresh unavailable");
+    await click("project-agent-config-retry");
+    expect(remove).toHaveBeenCalledTimes(1);
+    expect(
+      container.querySelector('[data-testid="project-agent-config-error"]'),
+    ).toBeNull();
+    expect(
+      container.querySelector(
+        '[data-testid="project-agent-delete-project-agent-1"]',
+      ),
+    ).toBeNull();
+  });
+
   it("shows a retryable list failure without claiming the catalog is empty", async () => {
     const { api, list } = createApi();
     list.mockRejectedValueOnce(new Error("Agent service unavailable"));

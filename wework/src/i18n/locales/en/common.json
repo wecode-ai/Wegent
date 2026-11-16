@@ -4371,6 +4371,8 @@
     "runner_selection_confirm": "Confirm execution settings",
     "runner_selection_cancelled": "Execution configuration cancelled",
     "runner_status_unknown": "Status unknown",
+    "runner_default_unavailable": "The default device is unavailable.",
+    "runner_clear_default": "Clear default device",
     "runner_personal_default": "Personal default environment",
     "runner_project_pool_hint": "Choose a cloud model. Allocate an authorized project environment that supports it at run time.",
     "runner_model_at_runtime_hint": "Choose an authorized cloud model when running.",

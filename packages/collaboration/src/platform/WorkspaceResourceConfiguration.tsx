@@ -676,21 +676,22 @@ export function WorkspaceCollaborationGroupsConfiguration({
     <>
       {pendingRemoval && (
         <ConfirmationDialog
+          key={`${pendingRemoval.prefix}:${pendingRemoval.group.id}`}
           title={
-            !workspace && pendingRemoval.group.owner_type === "project"
+            workspace || pendingRemoval.group.owner_type === "project"
               ? messages.deleteGroup
               : messages.removeFromProject
           }
           subject={pendingRemoval.group.name}
           description={
-            !workspace && pendingRemoval.group.owner_type === "project"
+            workspace || pendingRemoval.group.owner_type === "project"
               ? messages.deleteGroupConfirm
               : messages.removeGroupConfirm
           }
           labels={{
             cancel: messages.cancel,
             confirm:
-              !workspace && pendingRemoval.group.owner_type === "project"
+              workspace || pendingRemoval.group.owner_type === "project"
                 ? messages.deleteProjectGroup
                 : messages.remove,
             pending: messages.deleting,

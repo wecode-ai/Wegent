@@ -479,7 +479,7 @@ export function ProjectAgentConfiguration({
     }
   }
 
-  async function finishAgentEdit() {
+  async function finishAgentChange() {
     if (activeAgentScope.current !== agentScope) return;
     setEditingAgentId(null);
     onAgentsChange?.();
@@ -510,7 +510,7 @@ export function ProjectAgentConfiguration({
           ...(saved.name ? { name: saved.name } : {}),
         });
       }
-      await finishAgentEdit();
+      await finishAgentChange();
     } catch (cause) {
       setError(
         errorMessage(
@@ -866,6 +866,7 @@ export function ProjectAgentConfiguration({
 
           {pendingRemoval && (
             <ConfirmationDialog
+              key={pendingRemoval.id}
               title={translate(
                 "todo.delete_project_agent_title",
                 "删除项目智能体？",
@@ -893,8 +894,12 @@ export function ProjectAgentConfiguration({
                     pendingRemoval.id,
                     pendingRemoval.version,
                   );
-                  await reloadAgents();
-                  onAgentsChange?.();
+                  if (activeAgentScope.current === agentScope) {
+                    setAgents((current) =>
+                      current.filter((agent) => agent.id !== pendingRemoval.id),
+                    );
+                  }
+                  await finishAgentChange();
                 } catch (cause) {
                   const message = errorMessage(cause, "");
                   if (message.includes("PROJECT_AGENT_IN_USE"))
@@ -954,7 +959,7 @@ export function ProjectAgentConfiguration({
                 projectId: agentProjectId,
                 resourceId: editingAgent.id,
                 onClose: () => setEditingAgentId(null),
-                onSaved: finishAgentEdit,
+                onSaved: finishAgentChange,
               })
             : editingAgent &&
                 editingAgent.definitionSource === "shared_agent" &&

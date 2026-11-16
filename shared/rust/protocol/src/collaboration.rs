@@ -3,19 +3,22 @@ use serde_json::Value;
 /// Group references include its working lead, members and stage assignees.
 pub fn group_references_agent(group: &Value, agent_id: &str, source_team_id: Option<i64>) -> bool {
     let source_id = source_team_id.filter(|id| *id > 0).map(|id| id.to_string());
-    let references = |member: &Value| {
-        member["kind"].as_str() == Some("agent")
-            && member["id"]
-                .as_str()
-                .is_some_and(|id| id == agent_id || source_id.as_deref() == Some(id))
-    };
-    references(&group["leader"])
-        || group["members"]
-            .as_array()
-            .is_some_and(|members| members.iter().any(references))
-        || group["stages"]
-            .as_array()
-            .is_some_and(|stages| stages.iter().any(|stage| references(&stage["assignee"])))
+    group_agent_ids(group).any(|id| id == agent_id || source_id.as_deref() == Some(id))
+}
+
+/// Canonical Agent references used by group validation and deletion guards.
+pub fn group_agent_ids(group: &Value) -> impl Iterator<Item = &str> {
+    std::iter::once(&group["leader"])
+        .chain(group["members"].as_array().into_iter().flatten())
+        .chain(
+            group["stages"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .map(|stage| &stage["assignee"]),
+        )
+        .filter(|member| member["kind"] == "agent")
+        .filter_map(|member| member["id"].as_str())
 }
 
 pub fn is_managed_project_agent(name: &str) -> bool {

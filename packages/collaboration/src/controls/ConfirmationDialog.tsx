@@ -19,28 +19,38 @@ export function ConfirmationDialog({
 }) {
   const dialog = useRef<HTMLDivElement>(null)
   const lock = useRef(false)
+  const mounted = useRef(false)
   const [pending, setPending] = useState(false)
   const [error, setError] = useState<string | null>(null)
   useEffect(() => {
+    mounted.current = true
     const previous = document.activeElement
     dialog.current?.querySelector<HTMLButtonElement>('button')?.focus()
     return () => {
+      mounted.current = false
       if (previous instanceof HTMLElement && previous.isConnected) previous.focus()
     }
   }, [])
+  useEffect(() => {
+    if (!pending && error)
+      dialog.current
+        ?.querySelector<HTMLButtonElement>(`[data-testid="${testIdPrefix}-confirm"]`)
+        ?.focus()
+  }, [pending, error, testIdPrefix])
   const confirm = async () => {
     if (lock.current) return
     lock.current = true
+    dialog.current?.focus()
     setPending(true)
     setError(null)
     try {
       await onConfirm()
-      onClose()
+      if (mounted.current) onClose()
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : labels.failed)
+      if (mounted.current) setError(cause instanceof Error ? cause.message : labels.failed)
     } finally {
       lock.current = false
-      setPending(false)
+      if (mounted.current) setPending(false)
     }
   }
   return (

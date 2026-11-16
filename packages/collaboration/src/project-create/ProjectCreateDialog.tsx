@@ -454,19 +454,16 @@ export function ProjectCreateDialog(props: ProjectCreateDialogProps) {
     commands.setMemberUserIds(
       state.memberUserIds.filter((candidate) => candidate !== userId),
     );
-    if (!templateSelected) commands.setCollaborationGroupDraft(null);
   };
   const removeAgent = (resourceId: string) => {
     if (collaboratorsLocked) return;
     commands.setAgentResourceIds(
       state.agentResourceIds.filter((candidate) => candidate !== resourceId),
     );
-    if (!templateSelected) commands.setCollaborationGroupDraft(null);
   };
   const addAgent = (resourceId: string) => {
     if (collaboratorsLocked) return;
     commands.setAgentResourceIds([...state.agentResourceIds, resourceId]);
-    if (!templateSelected) commands.setCollaborationGroupDraft(null);
     setGroupRecommendationDismissed(false);
     setCollaboratorPickerOpen(false);
   };
@@ -832,6 +829,16 @@ export function ProjectCreateDialog(props: ProjectCreateDialogProps) {
           ) === index,
       )
     : [];
+  const inGroup = (kind: "human" | "agent", id: string) =>
+    groupedParticipants.some(
+      (participant) => participant.kind === kind && participant.id === id,
+    );
+  const directMembers = selectedMembers.filter(
+    (member) => !inGroup("human", String(member.user_id)),
+  );
+  const directAgents = selectedAgents.filter(
+    (agent) => !inGroup("agent", agent.id),
+  );
   const assignedAgentIds = new Set(revealedGenerationAgentIds);
   const draftParticipants = groupEditorDraft
     ? [groupEditorDraft.leader, ...groupEditorDraft.members]
@@ -1221,32 +1228,33 @@ export function ProjectCreateDialog(props: ProjectCreateDialogProps) {
                     {labels.removeGroup}
                   </button>
                 </div>
-              ) : (
-                <div className="collaboration-project-create-collaborator-tokens">
+              ) : null}
+              <div className="collaboration-project-create-collaborator-tokens">
+                {!inGroup("human", String(resourceSetup.currentUser.id)) && (
                   <CollaboratorToken
                     icon={<UserRound aria-hidden="true" />}
                     label={labels.currentUser}
                   />
-                  {selectedMembers.map((member) => (
-                    <CollaboratorToken
-                      key={`member:${member.user_id}`}
-                      icon={<UserRound aria-hidden="true" />}
-                      label={member.user_name}
-                      removeLabel={`${labels.cancel} ${member.user_name}`}
-                      onRemove={() => removeMember(member.user_id)}
-                    />
-                  ))}
-                  {selectedAgents.map((agent) => (
-                    <CollaboratorToken
-                      key={`agent:${agent.id}`}
-                      icon={<Bot aria-hidden="true" />}
-                      label={agent.name}
-                      removeLabel={`${labels.cancel} ${agent.name}`}
-                      onRemove={() => removeAgent(agent.id)}
-                    />
-                  ))}
-                </div>
-              )}
+                )}
+                {directMembers.map((member) => (
+                  <CollaboratorToken
+                    key={`member:${member.user_id}`}
+                    icon={<UserRound aria-hidden="true" />}
+                    label={member.user_name}
+                    removeLabel={`${labels.cancel} ${member.user_name}`}
+                    onRemove={() => removeMember(member.user_id)}
+                  />
+                ))}
+                {directAgents.map((agent) => (
+                  <CollaboratorToken
+                    key={`agent:${agent.id}`}
+                    icon={<Bot aria-hidden="true" />}
+                    label={agent.name}
+                    removeLabel={`${labels.cancel} ${agent.name}`}
+                    onRemove={() => removeAgent(agent.id)}
+                  />
+                ))}
+              </div>
               <ProjectCollaboratorPicker
                 labels={labels}
                 open={collaboratorPickerOpen && !collaboratorsLocked}
@@ -1276,8 +1284,6 @@ export function ProjectCreateDialog(props: ProjectCreateDialogProps) {
                     },
                   ]);
                   commands.setMemberUserIds([...state.memberUserIds, user.id]);
-                  if (!templateSelected)
-                    commands.setCollaborationGroupDraft(null);
                   setCollaboratorPickerOpen(false);
                 }}
                 onSelectAgent={addAgent}

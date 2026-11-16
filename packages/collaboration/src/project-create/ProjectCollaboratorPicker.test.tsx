@@ -183,3 +183,72 @@ it('retains manually added collaborators while changing template roles and creat
     id: '2',
   })
 })
+
+it('keeps direct collaborators visible and removable after importing a group', async () => {
+  const configure = vi.fn(async () => {})
+  const create = vi.fn(async () => ({ id: 'created' }) as CollaborationProject)
+  const manual = { ...agent, id: 'manual', name: 'Manual Agent' }
+  const store = new CollaborationTemplateStore({
+    scope: 'local:retained',
+    ownerId: 1,
+    persistence: { read: async () => [], write: async () => {} },
+  })
+  await act(async () =>
+    root.render(
+      <CollaborationTemplateContext value={store}>
+        <ProjectCreateDialog
+          targets={[{ location: 'cloud', create }]}
+          defaultLocation="cloud"
+          allowDingTalkAITable={false}
+          labels={labels}
+          onClose={vi.fn()}
+          onCreated={vi.fn()}
+          resourceSetup={{
+            location: 'cloud',
+            currentUser: { id: 1, name: 'Me' },
+            members: [
+              {
+                id: 2,
+                user_id: 2,
+                user_name: person.user_name,
+                email: person.email,
+                role: 'Developer',
+              },
+            ],
+            agents: [agent, manual],
+            groups: [group],
+            configure,
+          }}
+        />
+      </CollaborationTemplateContext>
+    )
+  )
+  await click('collaboration-project-create-add-collaborator')
+  await click('collaboration-project-create-member-2')
+  await click('collaboration-project-create-add-collaborator')
+  await click('collaboration-project-create-collaborator-tab-agents')
+  await click('collaboration-project-create-agent-manual')
+  await click('collaboration-project-create-add-collaborator')
+  await click('collaboration-project-create-collaborator-tab-groups')
+  await click('collaboration-project-create-group-qa-group')
+  const tokens = container.querySelector('.collaboration-project-create-collaborator-tokens')!
+  expect(tokens.textContent).toContain('QA Person')
+  expect(tokens.textContent).toContain('Manual Agent')
+  for (const name of ['QA Person', 'Manual Agent'])
+    await act(async () => {
+      container.querySelector<HTMLButtonElement>(`button[aria-label="取消 ${name}"]`)!.click()
+    })
+  expect(get('collaboration-project-create-group-summary').textContent).toContain('QA Group')
+  await act(async () => {
+    const field = get('cloud-project-name') as HTMLInputElement
+    Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!.call(
+      field,
+      'Retained participants'
+    )
+    field.dispatchEvent(new Event('input', { bubbles: true }))
+  })
+  await click('cloud-project-create-confirm')
+  const selection = configure.mock.calls[0][1]
+  expect(selection.memberUserIds).not.toContain(2)
+  expect(selection.agentResourceIds).not.toContain(manual.id)
+})
