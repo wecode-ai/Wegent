@@ -4,6 +4,7 @@
 
 """Exercise the embedded transaction on the native filesystem without API deps."""
 
+import csv
 import importlib.util
 import json
 import os
@@ -54,6 +55,18 @@ class NativeGitCredentialsTest(unittest.TestCase):
             GIT_TERMINAL_PROMPT="0",
             XDG_CONFIG_HOME=str(self.home / ".config"),
         )
+        if os.name == "nt":
+            identity = subprocess.run(
+                ["whoami.exe", "/user", "/fo", "csv", "/nh"],
+                capture_output=True,
+                text=True,
+                check=True,
+            )
+            self.user_sid = next(
+                row[1]
+                for row in csv.reader(identity.stdout.splitlines())
+                if len(row) == 2
+            )
         self.native = {}
         exec(
             paths.GIT_CREDENTIAL_PATHS_SCRIPT
@@ -227,27 +240,76 @@ class NativeGitCredentialsTest(unittest.TestCase):
         read(str(path), 4, None, 0, ctypes.byref(needed))
         data = ctypes.create_string_buffer(needed.value)
         self.assertTrue(read(str(path), 4, data, needed.value, ctypes.byref(needed)))
-        convert = function(
+        control = wintypes.WORD()
+        revision = wintypes.DWORD()
+        get_control = function(
             security,
-            "ConvertSecurityDescriptorToStringSecurityDescriptorW",
+            "GetSecurityDescriptorControl",
             [
                 ctypes.c_void_p,
-                wintypes.DWORD,
-                wintypes.DWORD,
-                ctypes.POINTER(wintypes.LPWSTR),
+                ctypes.POINTER(wintypes.WORD),
                 ctypes.POINTER(wintypes.DWORD),
             ],
         )
-        text = wintypes.LPWSTR()
-        self.assertTrue(convert(data, 1, 4, ctypes.byref(text), None))
-        try:
-            sddl = text.value
-            self.assertTrue(sddl.startswith("D:P"), sddl)
-            self.assertEqual(sddl.count("(A;"), 2, sddl)
-            self.assertIn(";;;SY)", sddl)
-            self.assertIn(";;;" + self.native["_win_owner_sid"]() + ")", sddl)
-        finally:
-            self.native["_local_free"](ctypes.cast(text, ctypes.c_void_p))
+        self.assertTrue(
+            get_control(data, ctypes.byref(control), ctypes.byref(revision))
+        )
+        self.assertTrue(
+            control.value & 0x1000, "DACL must be protected from inheritance"
+        )
+        present = wintypes.BOOL()
+        defaulted = wintypes.BOOL()
+        acl = ctypes.c_void_p()
+        get_dacl = function(
+            security,
+            "GetSecurityDescriptorDacl",
+            [
+                ctypes.c_void_p,
+                ctypes.POINTER(wintypes.BOOL),
+                ctypes.POINTER(ctypes.c_void_p),
+                ctypes.POINTER(wintypes.BOOL),
+            ],
+        )
+        self.assertTrue(
+            get_dacl(
+                data, ctypes.byref(present), ctypes.byref(acl), ctypes.byref(defaulted)
+            )
+        )
+        self.assertTrue(present.value)
+        self.assertIsNotNone(acl.value, "A NULL DACL would grant access to everyone")
+        self.assertFalse(defaulted.value)
+        self.assertEqual(ctypes.c_ushort.from_address(acl.value + 4).value, 2)
+        get_ace = function(
+            security,
+            "GetAce",
+            [ctypes.c_void_p, wintypes.DWORD, ctypes.POINTER(ctypes.c_void_p)],
+        )
+        convert = function(
+            security,
+            "ConvertSidToStringSidW",
+            [ctypes.c_void_p, ctypes.POINTER(wintypes.LPWSTR)],
+        )
+        principals = set()
+        for index in range(2):
+            ace = ctypes.c_void_p()
+            self.assertTrue(get_ace(acl, index, ctypes.byref(ace)))
+            self.assertEqual(
+                ctypes.c_ubyte.from_address(ace.value).value,
+                0,
+                "Only allow ACEs are expected",
+            )
+            self.assertEqual(
+                ctypes.c_uint32.from_address(ace.value + 4).value, 0x1F01FF
+            )
+            text = wintypes.LPWSTR()
+            self.assertTrue(convert(ctypes.c_void_p(ace.value + 8), ctypes.byref(text)))
+            try:
+                principals.add(text.value)
+            finally:
+                self.native["_local_free"](ctypes.cast(text, ctypes.c_void_p))
+        # Compare actual ACE principals, not SDDL aliases such as LA for -500.
+        # whoami supplies an independent expected identity for this process.
+        self.assertEqual(principals, {"S-1-5-18", self.user_sid})
 
     def test_native_command_length(self):
         arguments = shlex.split(commands.SYNC_GIT_CREDENTIALS_COMMAND)
