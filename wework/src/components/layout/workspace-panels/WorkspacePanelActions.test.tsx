@@ -134,6 +134,38 @@ describe('WorkspacePanelActions', () => {
     expect(baseProps.onToggleRightPanel).toHaveBeenCalledOnce()
   })
 
+  test('records failed opener discovery and recovers through the existing picker', async () => {
+    isLocalTerminalAvailableMock.mockReturnValue(true)
+    const failure = new Error('Host is restarting')
+    listLocalWorkspaceOpenersMock.mockRejectedValueOnce(failure)
+    const log = vi.spyOn(console, 'error').mockImplementation(() => {})
+    try {
+      render(
+        <WorkspacePanelActions
+          {...baseProps}
+          currentProject={{
+            id: 7,
+            name: 'local',
+            tasks: [],
+            config: {
+              execution: { targetType: 'local', deviceId: 'device-1' },
+              workspace: { source: 'local_path', localPath: '/workspace/project' },
+            },
+          }}
+        />
+      )
+      await waitFor(() =>
+        expect(log).toHaveBeenCalledWith('[Wework] Failed to discover workspace openers:', failure)
+      )
+      expect(screen.getByTestId('toggle-right-workspace-panel-button')).toBeEnabled()
+      await userEvent.click(screen.getByTestId('open-local-workspace-picker-button'))
+      await waitFor(() => expect(listLocalWorkspaceOpenersMock).toHaveBeenCalledTimes(2))
+      expect(await screen.findByTestId('open-local-workspace-option-vscode')).toBeEnabled()
+    } finally {
+      log.mockRestore()
+    }
+  })
+
   test('remembers and prioritizes the last successful titlebar IDE selection', async () => {
     isLocalTerminalAvailableMock.mockReturnValue(true)
     const actions = (

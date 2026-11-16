@@ -207,7 +207,9 @@ export const WorkspacePanelActions = memo(function WorkspacePanelActions({
         setOpenerAvailability(buildAvailabilityMap(availability))
         setOpenerLabels(buildLabelMap(availability))
       }
-    })()
+    })().catch(error => {
+      console.error('[Wework] Failed to discover workspace openers:', error)
+    })
     return () => {
       cancelled = true
     }
