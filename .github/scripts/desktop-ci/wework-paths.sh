@@ -161,6 +161,7 @@ classify_wework_path() {
       return
       ;;
     wework/e2e/desktop/modules/dingtalk-release-auth.mjs | \
+      wework/e2e/desktop/modules/local-snapshot-auth-fixture-contract.mjs | \
       wework/e2e/desktop/modules/dingtalk-oauth-protocol.mjs | \
       wework/e2e/desktop/fixtures/dingtalk-releases.py)
       select_target "cloud:plugin-account-auth-password"

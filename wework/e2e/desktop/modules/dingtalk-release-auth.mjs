@@ -9,6 +9,7 @@ import { managedRoot } from './managed-plugin-root.mjs'
 import { CLOUD_DEVICE_ID, REMOTE_DOCKER_DEVICE_ID } from './shared.mjs'
 import { createDingtalkOAuthProtocol } from './dingtalk-oauth-protocol.mjs'
 import { openPlugin } from './plugin-regression-fixture.mjs'
+import { verifySnapshotFixtureContract } from './local-snapshot-auth-fixture-contract.mjs'
 
 const run = promisify(execFile)
 const fixture = fileURLToPath(new URL('../fixtures/dingtalk-releases.py', import.meta.url))
@@ -22,6 +23,7 @@ export function createDingtalkReleaseChecks({ checkpoint, resultDir, sourceRoot 
   let directory
   return {
     async prepareApp(context) {
+      if (!upgrade) await verifySnapshotFixtureContract(resultDir)
       directory = await prepareDingtalkReleases(resultDir, upgrade)
       await protocol.prepareApp(context)
     },
