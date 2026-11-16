@@ -3,6 +3,12 @@ import { act, create, type ReactTestRenderer } from 'react-test-renderer'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import { ConversationScreen } from './ConversationScreen'
+import {
+  worktreeCapability,
+  worktreeDevice,
+  worktreePreflight,
+  worktreeWorkspace,
+} from '@/testing/worktreeFixtures'
 
 ;(globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true
 
@@ -35,10 +41,13 @@ vi.mock('react-native', () => ({
         return 0
       }
     },
-    timing: () => ({ start: () => {}, stop: () => {} }),
+    timing: () => ({
+      start: (complete?: (result: { finished: boolean }) => void) => complete?.({ finished: true }),
+      stop: () => {},
+    }),
     View: 'AnimatedView',
   },
-  Easing: { out: (value: unknown) => value, cubic: 'cubic' },
+  Easing: { in: (value: unknown) => value, out: (value: unknown) => value, cubic: 'cubic' },
   BackHandler: {
     addEventListener: (_event: string, handler: () => boolean) => {
       environment.backHandlers.add(handler)
@@ -47,6 +56,8 @@ vi.mock('react-native', () => ({
   },
   Keyboard: { dismiss: vi.fn() },
   Modal: 'Modal',
+  KeyboardAvoidingView: 'KeyboardAvoidingView',
+  TextInput: 'TextInput',
   Platform: {
     get OS() {
       return environment.platform
@@ -58,9 +69,11 @@ vi.mock('react-native', () => ({
   View: 'View',
 }))
 vi.mock('react-native-paper', () => ({
+  ActivityIndicator: 'ActivityIndicator',
   Text: 'Text',
   useTheme: () => ({ dark: false, colors: {} }),
 }))
+vi.mock('./errors/ErrorNotice', () => ({ ErrorNotice: 'ErrorNotice' }))
 vi.mock('react-native-safe-area-context', () => ({
   useSafeAreaInsets: () => ({ top: 24, bottom: 16 }),
 }))
@@ -116,14 +129,23 @@ describe('conversation keyboard layout and model navigation', () => {
   })
 
   const props = (): React.ComponentProps<typeof ConversationScreen> => ({
-    api: { getSubagentTranscript: vi.fn() },
+    api: {
+      getSubagentTranscript: vi.fn(),
+      getWorktreeCapabilities: vi.fn(async ({ deviceId }) => ({
+        success: true,
+        deviceId,
+        runtimeWorktrees: worktreeCapability,
+      })),
+      preflightWorkspace: vi.fn(async ({ deviceId }) => worktreePreflight({ deviceId })),
+      listWorkspaceGitBranches: vi.fn(async () => ['main', 'feature/mobile']),
+    },
     onComposerFocusHandled: vi.fn(),
     currentAddress: null,
     currentTitle: '',
     devices: [],
     entryRevision: 0,
-    gitRef: null,
     hasMoreMessagesBefore: false,
+    historyLoaded: false,
     isNew: true,
     loading: false,
     loadingMoreMessagesBefore: false,
@@ -162,6 +184,228 @@ describe('conversation keyboard layout and model navigation', () => {
   })
   const composer = () => renderer.root.findByType('Composer' as never)
   const quick = () => renderer.root.findAllByType('QuickSelector' as never)
+
+  const projectProps = () => ({
+    ...props(),
+    devices: [worktreeDevice],
+    selectedDeviceId: 'cloud',
+    selectedWorkspace: worktreeWorkspace,
+    selectedProjectName: 'Repository',
+  })
+
+  it('shows the original failed worktree check in its selector and permits an explicit retry', async () => {
+    const handlers = projectProps()
+    const failure = new Error('Remote control is disabled for this app device')
+    const log = vi.spyOn(console, 'error').mockImplementation(() => {})
+    vi.mocked(handlers.api.getWorktreeCapabilities).mockRejectedValueOnce(failure)
+    await act(() => {
+      renderer = create(<ConversationScreen {...handlers} />)
+    })
+    await press('new-chat-work-mode')
+    const notice = renderer.root.findByProps({ testID: 'work-mode-worktree-error' })
+    expect(notice.props.error).toBe(failure)
+    await act(() => notice.props.onRetry())
+    expect(handlers.api.getWorktreeCapabilities).toHaveBeenCalledTimes(2)
+    expect(renderer.root.findAllByProps({ testID: 'work-mode-worktree-error' })).toHaveLength(0)
+    expect(renderer.root.findByProps({ testID: 'new-chat-choice-worktree' }).props.disabled).toBe(
+      false
+    )
+    log.mockRestore()
+  })
+  const press = async (testID: string) => {
+    await act(() => renderer.root.findByProps({ testID }).props.onPress())
+  }
+
+  it('creates a worktree from a searched starting branch and resets configuration when the workspace changes', async () => {
+    const handlers = projectProps()
+    await act(() => {
+      renderer = create(<ConversationScreen {...handlers} />)
+    })
+    await press('new-chat-work-mode')
+    await press('new-chat-choice-worktree')
+    await press('new-chat-branch')
+    expect(handlers.api.listWorkspaceGitBranches).toHaveBeenCalledExactlyOnceWith(
+      'cloud',
+      '/workspace/repo'
+    )
+    await act(() =>
+      renderer.root.findByProps({ testID: 'new-chat-branch-search' }).props.onChangeText('ftmb')
+    )
+    expect(renderer.root.findAllByProps({ testID: 'new-chat-branch-choice-main' })).toHaveLength(0)
+    await press('new-chat-branch-choice-feature/mobile')
+    expect(handlers.api.preflightWorkspace).toHaveBeenLastCalledWith({
+      deviceId: 'cloud',
+      sourcePath: '/workspace/repo',
+      ref: 'feature/mobile',
+    })
+    const options = { attachmentIds: [], attachments: [], pursueGoal: false }
+    await act(() => composer().props.onSend('Inspect changes', options))
+    expect(handlers.onSend).toHaveBeenLastCalledWith('Inspect changes', {
+      ...options,
+      executionMode: 'git_worktree',
+      worktreeBranch: 'feature/mobile',
+    })
+    await act(() =>
+      renderer.update(
+        <ConversationScreen
+          {...handlers}
+          selectedWorkspace={{ ...worktreeWorkspace, workspacePath: '/workspace/other' }}
+        />
+      )
+    )
+    expect(renderer.root.findByProps({ testID: 'new-chat-work-mode' }).props.label).toBe(
+      '在本地工作'
+    )
+    await act(() => composer().props.onSend('Use other repository', options))
+    expect(handlers.onSend).toHaveBeenLastCalledWith('Use other repository', {
+      ...options,
+      executionMode: 'current_workspace',
+    })
+  })
+
+  it('keeps worktree mode separate from an optional current-branch override', async () => {
+    const handlers = projectProps()
+    await act(() => {
+      renderer = create(<ConversationScreen {...handlers} />)
+    })
+    await press('new-chat-work-mode')
+    await press('new-chat-choice-worktree')
+    await press('new-chat-branch')
+    await press('new-chat-branch-choice-main')
+    const options = { attachmentIds: [], attachments: [], pursueGoal: false }
+    await act(() => composer().props.onSend('Use HEAD', options))
+    expect(handlers.onSend).toHaveBeenCalledExactlyOnceWith('Use HEAD', {
+      ...options,
+      executionMode: 'git_worktree',
+    })
+    await act(() => renderer.update(<ConversationScreen {...handlers} entryRevision={1} />))
+    expect(renderer.root.findByProps({ testID: 'new-chat-work-mode' }).props.label).toBe(
+      '在本地工作'
+    )
+  })
+
+  it('allows selecting another branch after a previously listed starting ref becomes invalid', async () => {
+    const handlers = projectProps()
+    vi.mocked(handlers.api.preflightWorkspace).mockImplementation(async input =>
+      worktreePreflight(
+        input.ref === 'feature/mobile'
+          ? {
+              errorCode: 'worktree_ref_not_found',
+              error: 'Git ref was not found',
+              refValid: false,
+              writable: false,
+            }
+          : {}
+      )
+    )
+    await act(() => {
+      renderer = create(<ConversationScreen {...handlers} />)
+    })
+    await press('new-chat-work-mode')
+    await press('new-chat-choice-worktree')
+    await press('new-chat-branch')
+    await press('new-chat-branch-choice-feature/mobile')
+    expect(renderer.root.findByProps({ testID: 'new-chat-branch' }).props.disabled).toBe(false)
+    expect(
+      renderer.root.findByProps({ testID: 'new-chat-worktree-error' }).props.error.errorCode
+    ).toBe('worktree_ref_not_found')
+    await act(() =>
+      composer().props.onSend('Use removed ref', {
+        attachmentIds: [],
+        attachments: [],
+        pursueGoal: false,
+      })
+    )
+    expect(handlers.onSend).not.toHaveBeenCalled()
+    await press('new-chat-branch')
+    await press('new-chat-branch-choice-main')
+    await act(() =>
+      composer().props.onSend('Use current ref', {
+        attachmentIds: [],
+        attachments: [],
+        pursueGoal: false,
+      })
+    )
+    expect(handlers.onSend).toHaveBeenCalledWith(
+      'Use current ref',
+      expect.objectContaining({ executionMode: 'git_worktree' })
+    )
+  })
+
+  it('offers worktree mode when preflight succeeds without a named current branch', async () => {
+    const handlers = projectProps()
+    vi.mocked(handlers.api.preflightWorkspace).mockResolvedValue(
+      worktreePreflight({ currentBranch: null })
+    )
+    await act(() => {
+      renderer = create(<ConversationScreen {...handlers} />)
+    })
+    await press('new-chat-work-mode')
+    expect(renderer.root.findByProps({ testID: 'new-chat-choice-worktree' }).props.disabled).toBe(
+      false
+    )
+    await press('new-chat-choice-worktree')
+    expect(renderer.root.findByProps({ testID: 'new-chat-branch' }).props.label).toBe('选择分支')
+    await act(() =>
+      composer().props.onSend('Use HEAD', { attachmentIds: [], attachments: [], pursueGoal: false })
+    )
+    expect(handlers.onSend).toHaveBeenCalledWith(
+      'Use HEAD',
+      expect.objectContaining({ executionMode: 'git_worktree' })
+    )
+  })
+
+  it('keeps branch failures in the selector and permits explicit retry and an empty search', async () => {
+    const handlers = projectProps()
+    const failure = new Error('Branch read failed')
+    vi.mocked(handlers.api.listWorkspaceGitBranches).mockRejectedValueOnce(failure)
+    await act(() => {
+      renderer = create(<ConversationScreen {...handlers} />)
+    })
+    await press('new-chat-work-mode')
+    await press('new-chat-choice-worktree')
+    await press('new-chat-branch')
+    const notice = renderer.root.findByProps({ testID: 'new-chat-branches-error' })
+    expect(notice.props.error).toBe(failure)
+    expect(handlers.onSend).not.toHaveBeenCalled()
+    await act(() => notice.props.onRetry())
+    expect(renderer.root.findAllByProps({ testID: 'new-chat-branches-error' })).toHaveLength(0)
+    await act(() =>
+      renderer.root
+        .findByProps({ testID: 'new-chat-branch-search' })
+        .props.onChangeText('no-matching-branch')
+    )
+    expect(renderer.root.findByProps({ testID: 'new-chat-branches-empty' })).toBeDefined()
+  })
+
+  it('shows the preflight reason while leaving current-workspace execution available', async () => {
+    const handlers = projectProps()
+    vi.mocked(handlers.api.preflightWorkspace).mockResolvedValue(
+      worktreePreflight({ gitRepository: false })
+    )
+    await act(() => {
+      renderer = create(<ConversationScreen {...handlers} />)
+    })
+    await press('new-chat-work-mode')
+    const worktree = renderer.root.findByProps({ testID: 'new-chat-choice-worktree' })
+    expect(worktree.props.disabled).toBe(true)
+    expect(
+      worktree
+        .findAllByType('Text' as never)
+        .some(node => node.props.children === '当前工作区不是 Git 仓库。')
+    ).toBe(true)
+    await act(() =>
+      composer().props.onSend('Use workspace', {
+        attachmentIds: [],
+        attachments: [],
+        pursueGoal: false,
+      })
+    )
+    expect(handlers.onSend).toHaveBeenCalledWith(
+      'Use workspace',
+      expect.objectContaining({ executionMode: 'current_workspace' })
+    )
+  })
 
   it('permits composer focus only on the active page with no covering selector', async () => {
     const handlers = props()
@@ -330,7 +574,6 @@ describe('conversation keyboard layout and model navigation', () => {
       workspacePath: '/workspace/project',
       tasks: [],
     }
-    screenProps.gitRef = 'refs/heads/main'
     await act(() => {
       renderer = create(<ConversationScreen {...screenProps} />)
     })

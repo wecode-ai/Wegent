@@ -1,6 +1,7 @@
 import { requireOptionalNativeModule } from 'expo'
 import { useCallback, useEffect, useState } from 'react'
 import { AppState } from 'react-native'
+import { beginMobileDiagnostic } from '@/services/mobileDiagnostics'
 import {
   LocalRuntime,
   UNAVAILABLE_LOCAL_RUNTIME,
@@ -58,6 +59,7 @@ export function useLocalRuntime() {
   )
 
   useEffect(() => {
+    const diagnostic = beginMobileDiagnostic('phone-bootstrap', 'phone')
     let active = true
     let instance: LocalRuntime | null = null
     let unsubscribe: (() => void) | undefined
@@ -67,6 +69,7 @@ export function useLocalRuntime() {
         await operation
         if (active) setError(null)
       } catch (cause) {
+        diagnostic.fail(cause)
         if (active) {
           setError(cause)
           if (cause instanceof LocalProfileSelectionRequired) setProfiles(cause.profiles)
@@ -75,6 +78,7 @@ export function useLocalRuntime() {
     }
     void observe(
       (async () => {
+        diagnostic.step('read-phone-profile')
         const scope = await loadPhoneLocalProfile(native)
         if (!active) return
         instance = new LocalRuntime(native, scope)
@@ -83,16 +87,25 @@ export function useLocalRuntime() {
           if (active) setStatus(instance!.status)
         })
         foreground = AppState.addEventListener('change', state => {
-          if (state === 'active' && instance) void observe(instance.recover())
+          if (state === 'active' && instance) void observe(instance.resume())
         })
+        diagnostic.step('initialize-native-bridge')
         await instance.initialize()
         if (!active) return
         setStatus(instance.status)
-        if (instance.status.supported) await instance.start()
-        if (native && active) setProfiles(await native.listProfilesAsync())
+        if (instance.status.supported) {
+          diagnostic.step('start-phone-runtime')
+          await instance.start()
+        }
+        if (native && active) {
+          diagnostic.step('list-phone-profiles')
+          setProfiles(await native.listProfilesAsync())
+        }
+        diagnostic.complete()
       })()
     )
     return () => {
+      diagnostic.cancel()
       active = false
       unsubscribe?.()
       foreground?.remove()

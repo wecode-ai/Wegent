@@ -1,9 +1,17 @@
 import type { LegendListRef } from '@legendapp/list/react-native'
-import { useCallback, useEffect, useMemo, useRef, type RefObject } from 'react'
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useSyncExternalStore,
+  type RefObject,
+} from 'react'
 import type { LayoutChangeEvent, NativeScrollEvent, NativeSyntheticEvent } from 'react-native'
 import type { SharedValue } from 'react-native-reanimated'
 
 import { recordChatLayoutDiagnostic } from '@/services/chatLayoutDiagnostics'
+import { diagnosticsEnabled, subscribeDiagnostics } from '@/services/mobileDiagnostics'
 import type { ChatMessage } from '@/types/runtime'
 
 interface MessageListDiagnosticsOptions {
@@ -21,7 +29,7 @@ type NumericDetails = () => Record<string, number>
 const ignoreDiagnostic = () => {}
 
 export function useMessageListDiagnostics(options: MessageListDiagnosticsOptions) {
-  const enabled = process.env.EXPO_PUBLIC_CHAT_LAYOUT_DIAGNOSTICS === '1'
+  const enabled = useSyncExternalStore(subscribeDiagnostics, diagnosticsEnabled)
   const latest = useRef(options)
   latest.current = options
   const session = useRef<{ dataKey: string; epoch: number; lastScrollReportedAt?: number }>({
@@ -31,7 +39,7 @@ export function useMessageListDiagnostics(options: MessageListDiagnosticsOptions
 
   const report = useCallback(
     (event: DiagnosticEvent, details?: NumericDetails) => {
-      if (!enabled) return
+      if (!diagnosticsEnabled()) return
       const current = latest.current
       if (session.current.dataKey !== current.dataKey) {
         session.current = {
@@ -76,7 +84,6 @@ export function useMessageListDiagnostics(options: MessageListDiagnosticsOptions
           : null,
         ...details?.(),
       })
-      console.info('[ChatLayout]', record)
       recordChatLayoutDiagnostic(record)
     },
     [enabled]
