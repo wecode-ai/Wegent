@@ -13,6 +13,7 @@ const independent = new Set([
   'tasks/executor-workspace-recovery.spec.ts',
   'tasks/pipeline-session-archive.spec.ts',
   'tasks/claude-background-lifecycle.spec.ts',
+  'tasks/device-ide.spec.ts',
   'tasks/provider-native-claudecode.spec.ts',
   'tasks/shell-reference-cancel.spec.ts',
 ])
@@ -21,6 +22,7 @@ const expectedCounts: Record<string, number> = {
   'global-teardown.ts': 1,
   'tasks/agent-conversation-regression.spec.ts': 22,
   'tasks/device-artifact-declaration.spec.ts': 3,
+  'tasks/device-ide.spec.ts': 1,
   'tasks/claudecode-compaction.spec.ts': 4,
   'tasks/executor-workspace-recovery.spec.ts': 1,
   'tasks/pipeline-session-archive.spec.ts': 5,
