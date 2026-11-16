@@ -144,6 +144,7 @@ export interface DingTalkAITableLink {
 
 export interface ProjectCreateModalProps {
   title: string;
+  closeLabel: string;
   children: ReactNode;
   onClose(): void;
 }
@@ -169,11 +170,7 @@ export interface ProjectCreateLabels {
   visibility: string;
   privateVisibility: string;
   privateVisibilityDescription: string;
-  publicAccessRole: string;
-  viewerRole: string;
-  developerRole: string;
-  viewerRoleDescription: string;
-  developerRoleDescription: string;
+  publicReadOnlyDescription: string;
   defaultIssueSecurity: string;
   openIssueSecurity: string;
   relatedIssueSecurity: string;
@@ -184,6 +181,7 @@ export interface ProjectCreateLabels {
   publicVisibilityNotice: string;
   taskProvider: string;
   advancedSettings: string;
+  advancedSettingsSummary: string;
   builtInProvider: string;
   builtInLocalDescription: string;
   builtInCloudDescription: string;
@@ -215,7 +213,13 @@ export interface ProjectCreateLabels {
   importGroupDescription: string;
   availableAgents: string;
   availableGroups: string;
-  noAvailableCollaborators: string;
+  noAvailablePeople: string;
+  searchPeopleHint: string;
+  noAvailableAgents: string;
+  noAvailableGroups: string;
+  noMatchingCollaborators: string;
+  collaboratorsOptionalHint: string;
+  close: string;
   groupRecommendationTitle: string;
   groupRecommendationDescription: string;
   keepDirectCollaboration: string;

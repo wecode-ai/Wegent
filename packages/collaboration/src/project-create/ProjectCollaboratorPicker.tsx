@@ -86,7 +86,16 @@ export function ProjectCollaboratorPicker({
   )
   const availableAgents = agents.filter(agent => matches(agent.name))
   const availableGroups = groups.filter(group => matches(group.name, group.description))
-  const empty = <p>{labels.noAvailableCollaborators}</p>
+  const empty = (message: string) => (
+    <div className="collaboration-project-create-collaborator-empty">
+      <p>{query.trim() ? labels.noMatchingCollaborators : message}</p>
+      <p>
+        {activeTab === 'members' && !query.trim() && searchUsers
+          ? labels.searchPeopleHint
+          : labels.collaboratorsOptionalHint}
+      </p>
+    </div>
+  )
   return (
     <Popover.Root open={open} onOpenChange={onOpenChange}>
       <Popover.Trigger asChild>
@@ -148,7 +157,7 @@ export function ProjectCollaboratorPicker({
                       </span>
                     </button>
                   ))}
-                  {!users.length && !loading && !failed && empty}
+                  {!users.length && !loading && !failed && empty(labels.noAvailablePeople)}
                 </>
               }
               agentsContent={
@@ -166,7 +175,7 @@ export function ProjectCollaboratorPicker({
                       </span>
                     </button>
                   ))}
-                  {!availableAgents.length && empty}
+                  {!availableAgents.length && empty(labels.noAvailableAgents)}
                 </>
               }
               groupsContent={
@@ -185,7 +194,7 @@ export function ProjectCollaboratorPicker({
                       </span>
                     </button>
                   ))}
-                  {!availableGroups.length && empty}
+                  {!availableGroups.length && empty(labels.noAvailableGroups)}
                   {groupAction}
                 </>
               }

@@ -250,7 +250,7 @@
 .collaboration-project-create-field small,
 .collaboration-project-create-hint {
   margin: 0;
-  color: rgb(var(--color-text-muted));
+  color: rgb(var(--color-text-secondary));
   font-size: 12px;
   font-weight: 400;
 }
@@ -270,7 +270,7 @@
 }
 
 .collaboration-project-create-providers {
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(100px, 1fr));
 }
 
 .collaboration-project-create-choice {
@@ -290,6 +290,17 @@
 
 .collaboration-project-create-choice:hover {
   background: rgb(var(--color-bg-hover));
+}
+
+.collaboration-project-create-choice.is-compact {
+  min-height: 44px;
+  gap: 8px;
+  border-radius: 8px;
+  padding: 8px;
+}
+
+.collaboration-project-create-choice.is-compact small {
+  color: rgb(var(--color-text-secondary));
 }
 
 .collaboration-project-create-choice.is-selected {
@@ -391,6 +402,18 @@
   width: 16px;
   height: 16px;
   transition: transform 120ms ease;
+}
+
+.collaboration-project-create-advanced-summary {
+  flex: 1;
+  color: rgb(var(--color-text-secondary));
+}
+
+.collaboration-project-create-collaborator-empty {
+  display: grid;
+  gap: 4px;
+  padding: 8px;
+  color: rgb(var(--color-text-secondary));
 }
 
 .collaboration-project-create-advanced-trigger[aria-expanded='true'] > svg {
@@ -611,6 +634,10 @@
 
 .collaboration-project-create-collaborator-menu > p {
   padding: 8px;
+}
+
+.collaboration-project-create-collaborator-empty p {
+  color: rgb(var(--color-text-secondary));
 }
 
 .collaboration-project-create-group-recommendation {

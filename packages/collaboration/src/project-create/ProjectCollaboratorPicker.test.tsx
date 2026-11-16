@@ -119,6 +119,60 @@ it('uses one search query across people, Agents and groups with keyboard navigat
   expect(selectGroup).toHaveBeenCalledWith(group.id)
 })
 
+it('explains empty categories separately from a search with no matches', async () => {
+  await act(async () =>
+    root.render(
+      <ProjectCollaboratorPicker
+        labels={labels}
+        open
+        onOpenChange={vi.fn()}
+        people={[]}
+        excludedIds={[]}
+        agents={[]}
+        groups={[]}
+        onSelectPerson={vi.fn()}
+        onSelectAgent={vi.fn()}
+        onSelectGroup={vi.fn()}
+      />
+    )
+  )
+  const menu = () => get('collaboration-project-create-collaborator-menu').textContent
+  expect(menu()).toContain(labels.noAvailablePeople)
+  expect(menu()).toContain(labels.collaboratorsOptionalHint)
+  await click('collaboration-project-create-collaborator-tab-agents')
+  expect(menu()).toContain(labels.noAvailableAgents)
+  await click('collaboration-project-create-collaborator-tab-groups')
+  expect(menu()).toContain(labels.noAvailableGroups)
+  await input('missing')
+  expect(menu()).toContain(labels.noMatchingCollaborators)
+  expect(menu()).not.toContain(labels.noAvailableGroups)
+})
+
+it('offers a directory search when no other space members are listed', async () => {
+  const searchUsers = vi.fn()
+  await act(async () =>
+    root.render(
+      <ProjectCollaboratorPicker
+        labels={labels}
+        open
+        onOpenChange={vi.fn()}
+        people={[]}
+        excludedIds={[]}
+        agents={[]}
+        groups={[]}
+        searchUsers={searchUsers}
+        onSelectPerson={vi.fn()}
+        onSelectAgent={vi.fn()}
+        onSelectGroup={vi.fn()}
+      />
+    )
+  )
+  expect(get('collaboration-project-create-collaborator-menu').textContent).toContain(
+    labels.searchPeopleHint
+  )
+  expect(searchUsers).not.toHaveBeenCalled()
+})
+
 it('retains manually added collaborators while changing template roles and creates without an environment', async () => {
   const template = builtinCollaborationTemplates()[0].document
   const configure = vi.fn(async () => {})

@@ -91,7 +91,6 @@ export function useProjectCreateController({
   const [taskProvider, setTaskProvider] =
     useState<ProjectCreateProvider>("local");
   const [visibility, setVisibility] = useState<ProjectVisibility>("private");
-  const [publicAccessRole, setPublicAccessRole] = useState<"Viewer">("Viewer");
   const [defaultIssueSecurity, setDefaultIssueSecurity] = useState<
     "open" | "related"
   >("open");
@@ -215,7 +214,7 @@ export function useProjectCreateController({
           ? {
               visibility,
               ...(visibility === "public"
-                ? { publicAccess: { role: publicAccessRole } }
+                ? { publicAccess: { role: "Viewer" } }
                 : {}),
               ...(!isAITableProvider ? { defaultIssueSecurity } : {}),
             }
@@ -273,7 +272,6 @@ export function useProjectCreateController({
       location,
       taskProvider,
       visibility,
-      publicAccessRole,
       defaultIssueSecurity,
       repositoryAddress,
       token,
@@ -298,7 +296,6 @@ export function useProjectCreateController({
       setLocation,
       setTaskProvider,
       setVisibility,
-      setPublicAccessRole,
       setDefaultIssueSecurity,
       setRepositoryAddress,
       setToken,

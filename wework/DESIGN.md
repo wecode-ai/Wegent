@@ -1006,6 +1006,10 @@ component-level validation outlines to override the native-outline reset.
 - Use optimistic updates only when failure is clearly reversible.
 - Put status next to the affected object whenever possible; use a toast for a
   completed non-blocking result and a dialog only for a blocking decision.
+- Background runtime notices use the popover layer below modal dialogs. Their
+  progress, failure and recovery controls remain available after the dialog
+  closes; unrelated preparation failures must not cover the active dialog's
+  fields, keyboard focus or primary action.
 - Secondary controls may reveal progressively, but current status, errors, and
   required decisions remain visible.
 

@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { DialogForm } from "../controls/DialogForm";
+import { useDialogKeyboard } from "../controls/useDialogKeyboard";
 import { TemplateCreateSection } from "../templates/TemplateCreateSection";
 import { TemplateEnvironmentSelection } from "../templates/TemplateEnvironmentSelection";
 
@@ -26,6 +27,7 @@ import {
 } from "lucide-react";
 import {
   useEffect,
+  useId,
   useRef,
   useState,
   type ChangeEvent,
@@ -56,18 +58,33 @@ import { useProjectCreateController } from "./useProjectCreateController";
 import { ProjectCollaboratorPicker } from "./ProjectCollaboratorPicker";
 import type { CollaborationWorkspaceMember } from "../types";
 
-function DefaultModal({ title, children, onClose }: ProjectCreateModalProps) {
+function DefaultModal({
+  title,
+  closeLabel,
+  children,
+  onClose,
+}: ProjectCreateModalProps) {
+  const titleId = useId();
+  const dialogRef = useDialogKeyboard<HTMLElement>(onClose);
   return (
     <div className="collaboration-dialog-backdrop">
       <section
+        ref={dialogRef}
         className="collaboration-dialog collaboration-project-create-dialog"
         role="dialog"
         aria-modal="true"
+        aria-labelledby={titleId}
+        tabIndex={-1}
         data-testid="collaboration-project-create-dialog"
       >
         <header className="collaboration-project-create-header">
-          <h2>{title}</h2>
-          <button type="button" onClick={onClose} aria-label="Close">
+          <h2 id={titleId}>{title}</h2>
+          <button
+            type="button"
+            onClick={onClose}
+            aria-label={closeLabel}
+            data-testid="collaboration-project-create-close"
+          >
             <X aria-hidden="true" />
           </button>
         </header>
@@ -84,6 +101,7 @@ function ChoiceButton({
   label,
   description,
   onClick,
+  compact = false,
 }: {
   testId: string;
   selected: boolean;
@@ -91,6 +109,7 @@ function ChoiceButton({
   label: string;
   description: string;
   onClick(): void;
+  compact?: boolean;
 }) {
   return (
     <button
@@ -98,7 +117,7 @@ function ChoiceButton({
       data-testid={testId}
       aria-pressed={selected}
       onClick={onClick}
-      className={`collaboration-project-create-choice${selected ? " is-selected" : ""}`}
+      className={`collaboration-project-create-choice${compact ? " is-compact" : ""}${selected ? " is-selected" : ""}`}
     >
       {icon}
       <span>
@@ -930,6 +949,7 @@ export function ProjectCreateDialog(props: ProjectCreateDialogProps) {
 
   return renderModal({
     title: labels.title,
+    closeLabel: labels.close,
     onClose: () => {
       if (!state.saving) onClose();
     },
@@ -1013,7 +1033,6 @@ export function ProjectCreateDialog(props: ProjectCreateDialogProps) {
                 commands.clearError();
               }}
               placeholder={labels.namePlaceholder}
-              autoFocus
             />
           </label>
 
@@ -1065,6 +1084,7 @@ export function ProjectCreateDialog(props: ProjectCreateDialogProps) {
               <div className="collaboration-project-create-grid columns-2">
                 <ChoiceButton
                   testId="cloud-project-visibility-private"
+                  compact
                   selected={state.visibility === "private"}
                   icon={<LockKeyhole aria-hidden="true" />}
                   label={labels.privateVisibility}
@@ -1073,6 +1093,7 @@ export function ProjectCreateDialog(props: ProjectCreateDialogProps) {
                 />
                 <ChoiceButton
                   testId="cloud-project-visibility-public"
+                  compact
                   selected={state.visibility === "public"}
                   icon={<Cloud aria-hidden="true" />}
                   label={labels.publicVisibility}
@@ -1086,19 +1107,12 @@ export function ProjectCreateDialog(props: ProjectCreateDialogProps) {
                 </p>
               )}
               {state.visibility === "public" && (
-                <div>
-                  <h3>{labels.publicAccessRole}</h3>
-                  <div className="collaboration-project-create-grid columns-2">
-                    <ChoiceButton
-                      testId="cloud-project-public-access-viewer"
-                      selected={state.publicAccessRole === "Viewer"}
-                      icon={<LockKeyhole aria-hidden="true" />}
-                      label={labels.viewerRole}
-                      description={labels.viewerRoleDescription}
-                      onClick={() => commands.setPublicAccessRole("Viewer")}
-                    />
-                  </div>
-                </div>
+                <p
+                  className="collaboration-project-create-hint"
+                  data-testid="cloud-project-public-access-viewer"
+                >
+                  {labels.publicReadOnlyDescription}
+                </p>
               )}
               {!state.isAITableProvider && (
                 <div>
@@ -1106,6 +1120,7 @@ export function ProjectCreateDialog(props: ProjectCreateDialogProps) {
                   <div className="collaboration-project-create-grid columns-2">
                     <ChoiceButton
                       testId="cloud-project-default-issue-security-open"
+                      compact
                       selected={state.defaultIssueSecurity === "open"}
                       icon={<Cloud aria-hidden="true" />}
                       label={labels.openIssueSecurity}
@@ -1114,6 +1129,7 @@ export function ProjectCreateDialog(props: ProjectCreateDialogProps) {
                     />
                     <ChoiceButton
                       testId="cloud-project-default-issue-security-related"
+                      compact
                       selected={state.defaultIssueSecurity === "related"}
                       icon={<LockKeyhole aria-hidden="true" />}
                       label={labels.relatedIssueSecurity}
@@ -1807,6 +1823,11 @@ export function ProjectCreateDialog(props: ProjectCreateDialogProps) {
               onClick={() => setAdvancedSettingsOpen((current) => !current)}
             >
               <span>{labels.advancedSettings}</span>
+              {!advancedSettingsOpen && (
+                <small className="collaboration-project-create-advanced-summary">
+                  {labels.advancedSettingsSummary}
+                </small>
+              )}
               <ChevronDown aria-hidden="true" />
             </button>
             {advancedSettingsOpen ? (

@@ -1,0 +1,107 @@
+import assert from 'node:assert/strict'
+import {
+  assertProjectCreateActionHit,
+  waitForProjectCreateViewport,
+} from './project-create-dialog-regression.mjs'
+import { ensureExperimentalFeaturesEnabled } from './preferences-automation-flows.mjs'
+import {
+  openDirectProjectCreation,
+  revealCollaborationSidebarElement,
+  selectCollaborationDomain,
+} from './workspace-flows.mjs'
+
+const ACTIVE = '[data-workspace-tab-content][aria-hidden="false"]'
+const DIALOG = '[data-testid="collaboration-project-create-dialog"]'
+const NOTICE = '[data-testid="plugin-python-runtime-notice"]'
+
+export function createProjectPythonNoticeRegression() {
+  let cloud
+  let workspace
+
+  async function request(path, options = {}) {
+    const response = await fetch(`${cloud.backendUrl}${path}`, {
+      ...options,
+      headers: {
+        Authorization: `Bearer ${cloud.authToken}`,
+        'Content-Type': 'application/json',
+      },
+    })
+    assert.ok(response.ok, `Python notice project fixture ${path}: HTTP ${response.status}`)
+    return response.status === 204 ? null : response.json()
+  }
+
+  return {
+    async prepare(environment) {
+      cloud = environment
+      workspace = await request('/api/v1/workspaces', {
+        method: 'POST',
+        body: JSON.stringify({ name: `Python notice project ${process.pid}` }),
+      })
+    },
+    async verify(control) {
+      const previousSize = await control.command('setMainWindowSize', 'body', {
+        value: JSON.stringify({ width: 1024, height: 768 }),
+      })
+      try {
+        await waitForProjectCreateViewport(control)
+        await ensureExperimentalFeaturesEnabled(control)
+        await control.command('click', '[data-testid="workspace-tab-select-fixed-board"]')
+        await selectCollaborationDomain(control, ACTIVE, 'cloud')
+        const home = `${ACTIVE} [data-testid="collaboration-workspace-home-${workspace.id}"]`
+        await revealCollaborationSidebarElement(control, home)
+        await control.command('click', home)
+        await openDirectProjectCreation(control, ACTIVE)
+        await control.command('waitFor', NOTICE, { text: '准备失败' })
+        const noticeZ = Number(
+          await control.command('getComputedStyleValue', NOTICE, { value: 'z-index' })
+        )
+        const modalZ = Number(
+          await control.command('getComputedStyleValue', '.collaboration-dialog-backdrop', {
+            value: 'z-index',
+          })
+        )
+        assert.ok(
+          noticeZ < modalZ,
+          `Python failure notice ${noticeZ} covers project modal ${modalZ}`
+        )
+        await assertProjectCreateActionHit(
+          control,
+          `${DIALOG} [data-testid="collaboration-project-create-close"]`
+        )
+        await control.command(
+          'fill',
+          `${DIALOG} [data-testid="collaboration-project-name-input"]`,
+          {
+            value: 'Project remains usable during Python failure',
+          }
+        )
+        await assertProjectCreateActionHit(
+          control,
+          `${DIALOG} [data-testid="collaboration-project-create-confirm"]`
+        )
+        await control.command(
+          'click',
+          `${DIALOG} [data-testid="collaboration-project-create-close"]`
+        )
+        await control.command('waitFor', DIALOG, { visible: false })
+        await control.command('waitFor', NOTICE, { text: '准备失败' })
+        await control.command('navigate', 'body', { value: '/settings/execution-environments' })
+        await control.command('waitFor', '[data-testid="execution-environment-python"]', {
+          text: '安装失败',
+        })
+      } finally {
+        await control.command('setMainWindowSize', 'body', { value: previousSize })
+      }
+    },
+    async cleanup() {
+      if (!workspace) return
+      const latest = await request(`/api/v1/workspaces/${workspace.id}`)
+      if (latest.status !== 'archived') {
+        await request(`/api/v1/workspaces/${workspace.id}?version=${latest.version}`, {
+          method: 'DELETE',
+        })
+      }
+      workspace = null
+    },
+  }
+}
