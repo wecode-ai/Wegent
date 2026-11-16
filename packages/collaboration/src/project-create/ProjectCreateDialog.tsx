@@ -41,6 +41,7 @@ export function ProjectCreateDialog(props: ProjectCreateDialogProps) {
   } = props;
   const { state, commands } = useProjectCreateController(props);
   const nameInput = useRef<HTMLInputElement>(null);
+  const repositoryInput = useRef<HTMLInputElement>(null);
   const nameLabelId = useId();
   const nameErrorId = useId();
   const [discardTarget, setDiscardTarget] = useState<
@@ -56,6 +57,13 @@ export function ProjectCreateDialog(props: ProjectCreateDialogProps) {
     CollaborationWorkspaceMember[]
   >([]);
   const [advancedSettingsOpen, setAdvancedSettingsOpen] = useState(false);
+  useEffect(() => {
+    if (state.submitErrorField === "repository") setAdvancedSettingsOpen(true);
+  }, [state.submitErrorField]);
+  useEffect(() => {
+    if (state.submitErrorField === "repository" && advancedSettingsOpen)
+      repositoryInput.current?.focus();
+  }, [state.submitErrorField, advancedSettingsOpen]);
   const [groupRecommendationDismissed, setGroupRecommendationDismissed] =
     useState(false);
   const [groupEditorDraft, setGroupEditorDraft] =
@@ -666,11 +674,12 @@ export function ProjectCreateDialog(props: ProjectCreateDialogProps) {
           labels.advancedSettingsSummary,
           providers.find((provider) => provider.id === state.taskProvider)
             ?.label,
-          state.repositoryProvider && !state.repositoryAddress.trim()
-            ? labels.repositoryRequired
-            : state.isAITableProvider && !state.aitableLink
-              ? labels.aitableInvalid
-              : null,
+          state.repositoryError ??
+            (state.repositoryProvider && !state.repositoryAddress.trim()
+              ? labels.repositoryRequired
+              : state.isAITableProvider && !state.aitableLink
+                ? labels.aitableInvalid
+                : null),
         ]
           .filter(Boolean)
           .join(" · ");
@@ -775,6 +784,7 @@ export function ProjectCreateDialog(props: ProjectCreateDialogProps) {
           nameLabelId={nameLabelId}
           labels={labels}
           nameInput={nameInput}
+          repositoryInput={repositoryInput}
           state={state}
           nameErrorId={nameErrorId}
           testIds={testIds}

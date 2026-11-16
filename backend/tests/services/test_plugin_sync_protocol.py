@@ -15,6 +15,7 @@ from sqlalchemy.orm import sessionmaker
 from app.models.kind import Kind
 from app.models.plugin_marketplace import PluginDeviceInstallation
 from app.models.user import User
+from app.services.device import plugin_sync_protocol as protocol
 from app.services.device.capability_sync_service import DeviceCapabilitySyncService
 from app.services.device.plugin_sync_protocol import (
     advance_plugin_snapshot_watermark,
@@ -47,6 +48,43 @@ def snapshot_sessions(tmp_path):
 
 def _load_empty(_db):
     return {"mode": "merge", "scope": "plugin_delta", "plugins": []}
+
+
+def test_slow_snapshot_payload_identifies_lease_holder(
+    snapshot_sessions, monkeypatch, caplog
+):
+    clock = [0.0]
+    monkeypatch.setattr(protocol.time, "monotonic", lambda: clock[0])
+
+    def load(db):
+        assert db.info["plugin_write_operation"] == "plugin_sync.snapshot"
+        clock[0] = 2.831
+        return _load_empty(db)
+
+    result = load_versioned_plugin_payload(
+        snapshot_sessions, user_id=1, load_payload=load, complete=False
+    )
+
+    assert result["plugin_sync"]["generation"] == 1
+    assert "operation=plugin_sync.snapshot stage=payload elapsed_ms=2831" in caplog.text
+    assert "session_id=" in caplog.text
+    assert "stage=commit" not in caplog.text
+
+
+def test_failed_snapshot_identifies_phase_and_rolls_back(snapshot_sessions, caplog):
+    def load(_db):
+        raise RuntimeError("snapshot loading failed")
+
+    with pytest.raises(RuntimeError, match="snapshot loading failed"):
+        load_versioned_plugin_payload(
+            snapshot_sessions, user_id=1, load_payload=load, complete=False
+        )
+
+    assert "operation=plugin_sync.snapshot stage=payload" in caplog.text
+    result = load_versioned_plugin_payload(
+        snapshot_sessions, user_id=1, load_payload=_load_empty, complete=False
+    )
+    assert result["plugin_sync"]["generation"] == 1
 
 
 @pytest.mark.parametrize(

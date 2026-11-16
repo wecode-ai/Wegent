@@ -33,13 +33,50 @@ const get = <T extends HTMLElement>(id: string) =>
 const click = async (id: string) => {
   await act(async () => get(id).click())
 }
-const changeName = async (value: string) => {
-  const input = get<HTMLInputElement>('cloud-project-name')
+const changeInput = async (id: string, value: string) => {
+  const input = get<HTMLInputElement>(id)
   await act(async () => {
     Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!.call(input, value)
     input.dispatchEvent(new Event('input', { bubbles: true }))
   })
 }
+const changeName = (value: string) => changeInput('cloud-project-name', value)
+
+it('locates an invalid repository even when advanced settings were collapsed', async () => {
+  const create = vi.fn()
+  await act(async () =>
+    root.render(
+      <ProjectCreateDialog
+        targets={[{ location: 'cloud', create }]}
+        defaultLocation="cloud"
+        labels={projectCreateLabels.en}
+        allowDingTalkAITable={false}
+        onClose={vi.fn()}
+        onCreated={vi.fn()}
+      />
+    )
+  )
+  await changeName('Keep the project draft')
+  await click('collaboration-project-create-advanced')
+  await click('cloud-project-task-provider-github')
+  await changeInput('cloud-project-provider-repository', 'invalid-repository')
+  await click('collaboration-project-create-advanced')
+  await click('cloud-project-create-confirm')
+  const input = get<HTMLInputElement>('cloud-project-provider-repository')
+  expect(get('collaboration-project-create-advanced').getAttribute('aria-expanded')).toBe('true')
+  expect(document.activeElement).toBe(input)
+  expect(input.getAttribute('aria-invalid')).toBe('true')
+  const errorId = input.getAttribute('aria-describedby')!.split(' ').at(-1)!
+  expect(document.getElementById(errorId)?.textContent).toBe(
+    projectCreateLabels.en.repositoryInvalid
+  )
+  expect(get<HTMLButtonElement>('cloud-project-create-confirm').disabled).toBe(true)
+  expect(create).not.toHaveBeenCalled()
+  await changeInput('cloud-project-provider-repository', 'https://github.com/owner/repository')
+  expect(input.getAttribute('aria-invalid')).toBeNull()
+  expect(get<HTMLButtonElement>('cloud-project-create-confirm').disabled).toBe(false)
+  expect(get<HTMLInputElement>('cloud-project-name').value).toBe('Keep the project draft')
+})
 
 it.each(['zh-CN', 'en'] as const)(
   'associates %s name validation with its field and respects storage limits',
@@ -171,79 +208,106 @@ it('explains an incomplete task source while advanced settings are collapsed', a
   expect(get<HTMLInputElement>('cloud-project-provider-repository').value).toBe('')
 })
 
-it('returns from group configuration without closing creation or losing its participants', async () => {
-  vi.stubGlobal(
-    'ResizeObserver',
-    class {
-      observe() {}
-      unobserve() {}
-      disconnect() {}
+it.each([false, true])(
+  'returns from group configuration with model menu open=%s without losing participants',
+  async modelMenuOpen => {
+    vi.stubGlobal(
+      'ResizeObserver',
+      class {
+        observe() {}
+        unobserve() {}
+        disconnect() {}
+      }
+    )
+    const onClose = vi.fn()
+    const agents: ProjectCreateResourceSetup['agents'] = ['one', 'two'].map(id => ({
+      id,
+      name: id,
+      owner_type: 'user',
+      owner_id: '1',
+      owner_name: 'Me',
+      status: 'available',
+    }))
+    await act(async () =>
+      root.render(
+        <ProjectCreateDialog
+          targets={[{ location: 'cloud', create: vi.fn() }]}
+          defaultLocation="cloud"
+          labels={projectCreateLabels['zh-CN']}
+          allowDingTalkAITable={false}
+          onClose={onClose}
+          onCreated={vi.fn()}
+          resourceSetup={{
+            location: 'cloud',
+            currentUser: { id: 1, name: 'Me' },
+            members: [],
+            agents,
+            groups: [],
+            configure: vi.fn(),
+            generateCollaborationGroupDraft: vi.fn(),
+          }}
+        />
+      )
+    )
+    for (const agent of agents) {
+      await click('collaboration-project-create-add-collaborator')
+      await click('collaboration-project-create-collaborator-tab-agents')
+      await click(`collaboration-project-create-agent-${agent.id}`)
     }
-  )
-  const onClose = vi.fn()
-  const agents: ProjectCreateResourceSetup['agents'] = ['one', 'two'].map(id => ({
-    id,
-    name: id,
-    owner_type: 'user',
-    owner_id: '1',
-    owner_name: 'Me',
-    status: 'available',
-  }))
-  await act(async () =>
-    root.render(
-      <ProjectCreateDialog
-        targets={[{ location: 'cloud', create: vi.fn() }]}
-        defaultLocation="cloud"
-        labels={projectCreateLabels['zh-CN']}
-        allowDingTalkAITable={false}
-        onClose={onClose}
-        onCreated={vi.fn()}
-        resourceSetup={{
-          location: 'cloud',
-          currentUser: { id: 1, name: 'Me' },
-          members: [],
-          agents,
-          groups: [],
-          configure: vi.fn(),
-          generateCollaborationGroupDraft: vi.fn(),
-        }}
-      />
+    const opener = get('collaboration-project-create-organize-group')
+    opener.focus()
+    await click('collaboration-project-create-organize-group')
+    const configuration = get('collaboration-project-create-model-picker')
+    expect(configuration.contains(document.activeElement), document.activeElement?.outerHTML).toBe(
+      true
     )
-  )
-  for (const agent of agents) {
-    await click('collaboration-project-create-add-collaborator')
-    await click('collaboration-project-create-collaborator-tab-agents')
-    await click(`collaboration-project-create-agent-${agent.id}`)
-  }
-  const opener = get('collaboration-project-create-organize-group')
-  opener.focus()
-  await click('collaboration-project-create-organize-group')
-  const configuration = get('collaboration-project-create-model-picker')
-  expect(configuration.contains(document.activeElement), document.activeElement?.outerHTML).toBe(
-    true
-  )
-  expect(document.activeElement).toBe(get('collaboration-project-create-generation-instructions'))
-  await act(async () => document.dispatchEvent(new Event('selectionchange')))
-  expect(document.querySelectorAll('[role="dialog"][aria-modal="true"]')).toHaveLength(1)
-  expect(get('cloud-project-name').closest('form')?.hidden).toBe(true)
-  await act(async () =>
-    document.activeElement!.dispatchEvent(
-      new KeyboardEvent('keydown', {
-        key: 'Escape',
-        bubbles: true,
-        cancelable: true,
+    expect(document.activeElement).toBe(get('collaboration-project-create-generation-instructions'))
+    await act(async () => document.dispatchEvent(new Event('selectionchange')))
+    expect(document.querySelectorAll('[role="dialog"][aria-modal="true"]')).toHaveLength(1)
+    expect(get('cloud-project-name').closest('form')?.hidden).toBe(true)
+    if (modelMenuOpen) {
+      const editor = get('collaboration-project-create-generation-instructions')
+      await click('model-selector-button')
+      expect(
+        get('model-selector-menu').closest('[role="dialog"]')?.contains(document.activeElement)
+      ).toBe(true)
+      await act(async () => {
+        editor.focus()
+        editor.dispatchEvent(
+          new KeyboardEvent('keydown', {
+            key: 'Escape',
+            code: 'Escape',
+            keyCode: 27,
+            bubbles: true,
+            cancelable: true,
+          })
+        )
       })
+      expect(document.querySelector('[data-testid="model-selector-menu"]')).toBeNull()
+      expect(get('collaboration-project-create-model-picker')).toBe(configuration)
+      expect(document.activeElement).toBe(editor)
+      expect(onClose).not.toHaveBeenCalled()
+    }
+    await act(async () =>
+      document.activeElement!.dispatchEvent(
+        new KeyboardEvent('keydown', {
+          key: 'Escape',
+          keyCode: 27,
+          bubbles: true,
+          cancelable: true,
+        })
+      )
     )
-  )
-  expect(onClose).not.toHaveBeenCalled()
-  expect(
-    document.querySelector('[data-testid="collaboration-project-create-model-picker"]')
-  ).toBeNull()
-  expect(get('cloud-project-name').closest('form')?.hidden).toBe(false)
-  expect(document.activeElement).toBe(opener)
-  expect(document.querySelector('button[aria-label="取消 one"]')).toBeTruthy()
-  expect(document.querySelector('button[aria-label="取消 two"]')).toBeTruthy()
-})
+    expect(onClose).not.toHaveBeenCalled()
+    expect(
+      document.querySelector('[data-testid="collaboration-project-create-model-picker"]')
+    ).toBeNull()
+    expect(get('cloud-project-name').closest('form')?.hidden).toBe(false)
+    expect(document.activeElement).toBe(opener)
+    expect(document.querySelector('button[aria-label="取消 one"]')).toBeTruthy()
+    expect(document.querySelector('button[aria-label="取消 two"]')).toBeTruthy()
+  }
+)
 
 it('contains keyboard focus, respects a child dialog and restores the opener on Escape', async () => {
   const opener = document.createElement('button')

@@ -223,3 +223,78 @@ describe('collaborationGroupDraftGeneration', () => {
     })
   })
 })
+
+const responsibilityFragments = [
+  ' Confirm acceptance criteria.',
+  ' Decide release readiness. ',
+  '\n\tReport blockers.\u00a0',
+]
+
+function englishResponse() {
+  return JSON.stringify({
+    events: [
+      { type: 'group', name: ' English group ' },
+      { type: 'participant_started', kind: 'agent', id: ' device-agent ', leader: true },
+      { type: 'participant_started', kind: 'human', id: ' 7 ', leader: false },
+      ...responsibilityFragments.map(delta => ({
+        type: 'participant_delta',
+        kind: 'human',
+        id: ' 7 ',
+        delta,
+      })),
+      { type: 'stage', id: ' review ', name: ' Review ' },
+    ],
+  })
+}
+
+it('preserves responsibility fragment whitespace in the final JSON draft while normalizing identities and names', () => {
+  const draft = parseCollaborationGroupDraft(englishResponse(), input)
+  expect(draft.name).toBe('English group')
+  expect(draft.members.find(member => member.id === '7')?.responsibility).toBe(
+    responsibilityFragments.join('')
+  )
+  expect(draft.stages[0]).toMatchObject({ id: 'review', name: 'Review' })
+})
+
+it.each([true, false])(
+  'preserves responsibility bytes through preview and final merge (streamed=%s)',
+  async streamed => {
+    const onEvent = vi.fn()
+    const content = englishResponse()
+    const generateText = vi.fn(async options => {
+      if (streamed) {
+        for (let index = 0; index < content.length; index += 7) {
+          options.onDelta?.(content.slice(index, index + 7))
+        }
+        expect(
+          onEvent.mock.calls
+            .map(([event]) => event)
+            .filter(event => event.type === 'participant_delta')
+            .map(event => event.delta)
+        ).toEqual(responsibilityFragments)
+      }
+      return content
+    })
+    const draft = await generateCollaborationGroupDraft({
+      input,
+      textGenerationApi: { generateText },
+      onEvent,
+    })
+    const deltas = onEvent.mock.calls
+      .map(([event]) => event)
+      .filter(event => event.type === 'participant_delta')
+      .map(event => event.delta)
+    expect(deltas).toEqual(responsibilityFragments)
+    expect(draft.members.find(member => member.id === '7')?.responsibility).toBe(deltas.join(''))
+  }
+)
+
+it.each(['', ' \n\t ', null, 42])(
+  'rejects an empty or invalid responsibility fragment %j',
+  delta => {
+    const response = JSON.stringify({
+      events: [{ type: 'participant_delta', kind: 'human', id: '7', delta }],
+    })
+    expect(() => parseCollaborationGroupDraft(response, input)).toThrow('缺少职责增量')
+  }
+)

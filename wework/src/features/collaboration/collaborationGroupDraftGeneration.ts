@@ -33,11 +33,15 @@ function record(value: unknown): Record<string, unknown> {
   return value as Record<string, unknown>
 }
 
-function requiredString(value: unknown, field: string): string {
+function requiredText(value: unknown, field: string): string {
   if (typeof value !== 'string' || !value.trim()) {
     throw new Error(`AI 返回的协作小组方案缺少${field}`)
   }
-  return value.trim()
+  return value
+}
+
+function requiredString(value: unknown, field: string): string {
+  return requiredText(value, field).trim()
 }
 
 function participantKey(kind: unknown, id: string, allowed: Set<string>): 'human' | 'agent' {
@@ -71,7 +75,7 @@ function parseGenerationEvent(
       type,
       kind: participantKey(event.kind, id, allowed),
       id,
-      delta: requiredString(event.delta, '职责增量'),
+      delta: requiredText(event.delta, '职责增量'),
     }
   }
   if (type === 'principle') {

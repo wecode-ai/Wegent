@@ -329,6 +329,16 @@
   line-height: 16px;
 }
 
+.collaboration-project-create-field,
+.collaboration-project-collaborator-search,
+.collaboration-project-create-group-editor,
+.collaboration-template-page,
+.collaboration-template-dialog,
+.collaboration-template-field,
+.collaboration-template-toolbar {
+  --collaboration-input-border: rgb(var(--color-text-secondary) / 0.72);
+}
+
 .collaboration-project-create-field {
   display: grid;
   gap: 8px;
@@ -344,6 +354,7 @@
   box-sizing: border-box;
   font-size: 13px;
   font-weight: 400;
+  border-color: var(--collaboration-input-border);
 }
 
 .collaboration-project-create-dialog input::placeholder,
@@ -354,7 +365,7 @@
 
 .collaboration-project-create-field select {
   height: 40px;
-  border: 1px solid rgb(var(--color-border));
+  border: 1px solid var(--collaboration-input-border);
   border-radius: 8px;
   padding: 0 12px;
   color: rgb(var(--color-text-primary));
@@ -542,7 +553,7 @@
   flex: none;
   align-items: center;
   gap: 8px;
-  border: 1px solid rgb(var(--color-border));
+  border: 1px solid var(--collaboration-input-border);
   border-radius: 8px;
   padding: 0 8px;
 }
@@ -1256,12 +1267,12 @@
   opacity: 1;
 }
 
-.collaboration-project-create-hover-editable > input,
-.collaboration-project-create-hover-editable > textarea {
+.collaboration-project-create-inline-input,
+.collaboration-project-create-inline-textarea {
   width: 100%;
   min-width: 0;
   box-sizing: border-box;
-  border: 1px solid rgb(var(--color-accent, 59 130 246));
+  border: 1px solid rgb(var(--color-focus, var(--color-primary)));
   border-radius: 7px;
   padding: 6px 8px;
   color: rgb(var(--color-text-primary));
@@ -1730,6 +1741,13 @@
   .collaboration-project-create-field select,
   .collaboration-project-create-field textarea {
     min-height: 44px;
+  }
+
+  .collaboration-project-create-inline-input,
+  .collaboration-project-create-inline-textarea,
+  .collaboration-project-create-responsibility .collaboration-project-create-inline-textarea {
+    min-height: 44px;
+    min-width: 44px;
   }
 
   .collaboration-project-create-generation-toolbar {

@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Weibo, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-import type { Dispatch, ReactNode, RefObject, SetStateAction } from 'react'
+import { useId, type Dispatch, type ReactNode, type RefObject, type SetStateAction } from 'react'
 import type {
   CollaborationGroupMember,
   CollaborationOwnedAgent,
@@ -44,6 +44,7 @@ interface ProjectCreateFormViewProps {
   nameLabelId: string
   labels: ProjectCreateLabels
   nameInput: RefObject<HTMLInputElement | null>
+  repositoryInput: RefObject<HTMLInputElement | null>
   state: Controller['state']
   nameErrorId: string
   testIds: { name?: string; description?: string; confirm?: string } | undefined
@@ -101,6 +102,7 @@ export function ProjectCreateFormView({
   nameLabelId,
   labels,
   nameInput,
+  repositoryInput,
   state,
   nameErrorId,
   testIds,
@@ -144,6 +146,9 @@ export function ProjectCreateFormView({
   groupEditorDraft,
   requestProjectClose,
 }: ProjectCreateFormViewProps) {
+  const repositoryLabelId = useId()
+  const repositoryHintId = useId()
+  const repositoryErrorId = useId()
   return (
     <DialogForm
       hidden={groupModelPickerOpen || Boolean(templateConfiguration) || Boolean(discardTarget)}
@@ -592,8 +597,17 @@ export function ProjectCreateFormView({
               {state.repositoryProvider ? (
                 <section className="collaboration-project-create-provider-config">
                   <label className="collaboration-project-create-field">
-                    <span>{labels.repository}</span>
+                    <span id={repositoryLabelId}>{labels.repository}</span>
                     <input
+                      ref={repositoryInput}
+                      required
+                      aria-labelledby={repositoryLabelId}
+                      aria-invalid={state.repositoryError ? true : undefined}
+                      aria-describedby={
+                        state.repositoryError
+                          ? `${repositoryHintId} ${repositoryErrorId}`
+                          : repositoryHintId
+                      }
                       data-testid="cloud-project-provider-repository"
                       value={state.repositoryAddress}
                       onChange={event => {
@@ -606,7 +620,16 @@ export function ProjectCreateFormView({
                           : 'https://gitlab.com/group/project'
                       }
                     />
-                    <small>{labels.repositoryHint}</small>
+                    <small id={repositoryHintId}>{labels.repositoryHint}</small>
+                    {state.repositoryError && (
+                      <p
+                        id={repositoryErrorId}
+                        className="collaboration-project-create-error"
+                        role="alert"
+                      >
+                        {state.repositoryError}
+                      </p>
+                    )}
                   </label>
                   <label className="collaboration-project-create-field">
                     <span>

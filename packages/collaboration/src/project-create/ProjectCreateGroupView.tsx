@@ -140,6 +140,19 @@ export function ProjectCreateGroupView({
       }
     >
       <div className="collaboration-project-create-group-editor is-generator">
+        <p
+          className="sr-only"
+          role="status"
+          aria-live="polite"
+          aria-atomic="true"
+          data-testid="collaboration-project-create-generation-status"
+        >
+          {groupGenerating
+            ? generationPhaseLabel
+            : groupEditorDraft
+              ? labels.generationCompleted
+              : ''}
+        </p>
         {generationModelsLoading ? (
           <p role="status" className="text-sm text-text-secondary">
             {labels.loadingGenerationModels}
@@ -417,7 +430,7 @@ export function ProjectCreateGroupView({
                   renderResponsibility={participant =>
                     !participant.leader &&
                     (participant.draftParticipant || participant.responsibility) ? (
-                      <span className="collaboration-project-create-responsibility" role="status">
+                      <span className="collaboration-project-create-responsibility">
                         {participant.draftParticipant ? (
                           <HoverEditableText
                             value={participant.draftParticipant.responsibility}

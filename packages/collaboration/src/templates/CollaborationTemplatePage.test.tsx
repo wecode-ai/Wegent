@@ -648,3 +648,130 @@ it('keeps embedded deletion open while its write is in progress', async () => {
   expect(container.querySelector('[data-testid="template-delete-confirm"]')).toBeNull()
   expect(document.activeElement).toBe(container.querySelector('[data-testid="template-search"]'))
 })
+
+it('uses localized builtin content and keeps raw records when switching the detail language', async () => {
+  const write = vi.fn(async () => undefined)
+  const store = new CollaborationTemplateStore({
+    scope: 'local:translation',
+    ownerId: 7,
+    persistence: { read: async () => [], write },
+  })
+  const onUse = vi.fn()
+  await act(async () =>
+    root.render(<CollaborationTemplatePage store={store} locale="en" onUse={onUse} />)
+  )
+  await click('template-details-product-lifecycle')
+  expect(container.textContent).toContain('Product lifecycle')
+  await act(async () =>
+    root.render(<CollaborationTemplatePage store={store} locale="zh-CN" onUse={onUse} />)
+  )
+  expect(container.textContent).toContain('产品全流程')
+  await act(async () =>
+    root.render(<CollaborationTemplatePage store={store} locale="en" onUse={onUse} />)
+  )
+  await click('template-use')
+  const document = onUse.mock.calls[0][0].document
+  expect(document.spec.resources.collaboration.project.name).toBe('Product lifecycle collaboration')
+  expect(document.spec.resources.collaboration.groups[0].roles[0].name).toBe('Project lead')
+  expect(store.getSnapshot().records[0].document.spec.displayName).toBe('产品全流程')
+  expect(write).not.toHaveBeenCalled()
+})
+
+it.each([0, 8])(
+  'only associates publisher %s with the first-party cached listing',
+  async publisher => {
+    vi.useFakeTimers()
+    try {
+      const backend = remote()
+      vi.mocked(backend.discover).mockResolvedValue({
+        items: [
+          {
+            id: 42,
+            resource_type: 'template',
+            name: 'product-lifecycle',
+            display_name: 'Server title',
+            description: 'Server description',
+            publisher_user_id: publisher,
+            publisher_namespace: 'system',
+            is_installed: false,
+            current_version: { version: '1.2.0' },
+          },
+        ],
+        hasMore: false,
+        nextCursor: null,
+      })
+      const store = new CollaborationTemplateStore({
+        scope: 'backend:translation',
+        ownerId: 7,
+        remote: backend,
+        persistence: { read: async () => [], write: async () => {} },
+      })
+      await act(async () => root.render(<CollaborationTemplatePage store={store} locale="en" />))
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(200)
+      })
+      const firstParty = container.querySelector('[data-testid="template-card-product-lifecycle"]')!
+      expect(firstParty.textContent).toContain('Product lifecycle')
+      expect(firstParty.textContent).not.toContain('Server title')
+      expect(
+        container.querySelector('[data-testid="template-card-42"]')?.textContent ?? ''
+      ).toEqual(publisher === 8 ? expect.stringContaining('Server title') : '')
+    } finally {
+      vi.useRealTimers()
+    }
+  }
+)
+
+it('localizes raw remote detail and download without persisting translated content', async () => {
+  vi.useFakeTimers()
+  try {
+    const backend = remote()
+    const record = { ...builtinCollaborationTemplates()[0], id: 42 }
+    const old = structuredClone(record)
+    old.document.spec.version = '9.0.0'
+    vi.mocked(backend.get).mockResolvedValue(record)
+    vi.mocked(backend.discover).mockResolvedValue({
+      items: [
+        {
+          id: 42,
+          resource_type: 'template',
+          name: 'product-lifecycle',
+          display_name: 'Server title',
+          publisher_user_id: 0,
+          publisher_namespace: 'system',
+          is_installed: true,
+          current_version: { version: '1.2.0' },
+        },
+      ],
+      hasMore: false,
+      nextCursor: null,
+    })
+    const write = vi.fn(async (_records: TemplateRecord[]) => undefined)
+    const store = new CollaborationTemplateStore({
+      scope: 'backend:remote-translation',
+      ownerId: 7,
+      remote: backend,
+      persistence: { read: async () => [old], write },
+    })
+    const onUse = vi.fn()
+    await act(async () =>
+      root.render(<CollaborationTemplatePage store={store} locale="en" onUse={onUse} />)
+    )
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(200)
+    })
+    await click('template-details-42')
+    expect(container.textContent).toContain('Product lifecycle')
+    await click('template-use')
+    expect(backend.get).toHaveBeenCalledTimes(2)
+    expect(onUse.mock.calls[0][0].document.spec.resources.collaboration.project.name).toBe(
+      'Product lifecycle collaboration'
+    )
+    expect(store.getSnapshot().records.find(item => item.id === 42)?.document).toEqual(
+      record.document
+    )
+    expect(write.mock.calls[0][0][0].document).toEqual(record.document)
+  } finally {
+    vi.useRealTimers()
+  }
+})

@@ -166,6 +166,7 @@ export function useProjectCreateController({
   const createdProjectLocation = useRef(location);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [repositoryError, setRepositoryError] = useState<string | null>(null);
   const [serverNameError, setServerNameError] = useState<{
     name: string;
     location: ProjectCreateLocation;
@@ -184,7 +185,11 @@ export function useProjectCreateController({
           .replace("{max}", String(nameMaxLength))
           .replace("{count}", String(nameLength))
       : currentServerNameError;
-  const submitErrorField = currentServerNameError ? ("name" as const) : null;
+  const submitErrorField = currentServerNameError
+    ? ("name" as const)
+    : repositoryError
+      ? ("repository" as const)
+      : null;
   const defaultEnvironmentIds = new Set(
     defaultExecutionEnvironmentDeviceIds(
       resourceSetup?.executionEnvironments ?? [],
@@ -231,6 +236,7 @@ export function useProjectCreateController({
       createdProject ||
       (name.trim() &&
         !nameError &&
+        !repositoryError &&
         !templatePending &&
         (!repositoryProvider || repositoryAddress.trim()) &&
         (!isAITableProvider || aitableLink) &&
@@ -245,6 +251,7 @@ export function useProjectCreateController({
     }
     setSaving(true);
     setError(null);
+    setRepositoryError(null);
     setServerNameError(null);
     try {
       const target = targets.find(
@@ -353,7 +360,10 @@ export function useProjectCreateController({
         labels,
         nameLength,
       );
-      if (fieldError) {
+      if (cause instanceof RepositoryProviderError) {
+        setRepositoryError(projectCreateErrorMessage(cause, labels, host));
+        setError(null);
+      } else if (fieldError) {
         setServerNameError({
           name: name.trim(),
           location,
@@ -382,6 +392,7 @@ export function useProjectCreateController({
       visibility,
       defaultIssueSecurity,
       repositoryAddress,
+      repositoryError,
       token,
       aitableUrl,
       aitableLink,
@@ -408,10 +419,16 @@ export function useProjectCreateController({
         setLocation(value);
         setServerNameError(null);
       },
-      setTaskProvider,
+      setTaskProvider: (value: SetStateAction<ProjectCreateProvider>) => {
+        setTaskProvider(value);
+        setRepositoryError(null);
+      },
       setVisibility,
       setDefaultIssueSecurity,
-      setRepositoryAddress,
+      setRepositoryAddress: (value: SetStateAction<string>) => {
+        setRepositoryAddress(value);
+        setRepositoryError(null);
+      },
       setToken,
       setAitableUrl,
       setMemberUserIds,

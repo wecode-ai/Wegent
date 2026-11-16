@@ -143,7 +143,7 @@
 .collaboration-template-field textarea,
 .collaboration-template-field select {
   min-width: 0;
-  border: 1px solid rgb(var(--color-border));
+  border: 1px solid var(--collaboration-input-border);
   border-radius: 8px;
   padding: 8px 12px;
   color: inherit;

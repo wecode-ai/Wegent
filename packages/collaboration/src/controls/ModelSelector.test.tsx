@@ -6,6 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createCollaborationTranslator } from "../i18n";
 import { CollaborationTheme } from "../theme";
 import { ModelSelector } from "./ModelSelector";
+import { useDialogKeyboard } from "./useDialogKeyboard";
 import { PermissionModeSelector } from "./PermissionModeSelector";
 import { codexRuntimeModels } from "@wegent/chat-core/runtime-model-catalog";
 import type { CodexOfficialModel } from "@wegent/chat-core/codex-official-models";
@@ -814,3 +815,98 @@ it.each([false, true])(
     expect(reload).toHaveBeenCalledOnce();
   },
 );
+
+
+it.each(['editor', 'trigger'] as const)(
+  'owns portaled keyboard focus and restores its %s opener',
+  opener => {
+    const onClose = vi.fn()
+    const otherModel = {
+      ...cloudDeepseekModel,
+      name: 'other-cloud',
+      displayName: 'Other cloud model',
+    }
+    function Host() {
+      const ref = useDialogKeyboard<HTMLDivElement>(onClose)
+      const [selected, setSelected] = useState(cloudDeepseekModel)
+      return (
+        <div ref={ref} role="dialog" aria-label="Parent" tabIndex={-1}>
+          <input data-testid="host-editor" />
+          <ModelSelector
+            translate={translate}
+            isMobile={false}
+            models={[cloudDeepseekModel, otherModel]}
+            selectedModel={selected}
+            selectedModelOptions={{}}
+            onSelectModel={setSelected}
+            onSelectModelOption={vi.fn()}
+            onOpenModelSettings={vi.fn()}
+          />
+          <button data-testid="host-last">Last parent control</button>
+        </div>
+      )
+    }
+    act(() => root.render(<Host />))
+    const previous = element(opener === 'editor' ? 'host-editor' : 'model-selector-button')
+    act(() => previous.focus())
+    act(() => element('model-selector-button').click())
+    const picker = element('model-selector-menu').closest<HTMLElement>('[role="dialog"]')!
+    expect(picker.getAttribute('aria-modal')).toBe('true')
+    expect(element('model-selector-button').getAttribute('aria-controls')).toBe(picker.id)
+    expect(picker.getAttribute('aria-label')).toBe('选择模型')
+    expect(element('model-selector-button').getAttribute('aria-haspopup')).toBe('dialog')
+    expect(picker.contains(document.activeElement)).toBe(true)
+    const radios = [...picker.querySelectorAll<HTMLElement>('[role="radio"]')]
+    expect(radios).toHaveLength(2)
+    expect(radios.every(radio => radio.closest('[role="radiogroup"]'))).toBe(true)
+    expect(picker.querySelector('[role="menuitemradio"]')).toBeNull()
+    expect(radios.filter(radio => radio.tabIndex === 0)).toHaveLength(1)
+    const press = (target: HTMLElement, key: string, shiftKey = false) =>
+      act(() => {
+        target.dispatchEvent(
+          new KeyboardEvent('keydown', {
+            key,
+            keyCode: key === 'Escape' ? 27 : 0,
+            bubbles: true,
+            cancelable: true,
+            shiftKey,
+          })
+        )
+      })
+    act(() => radios[0].focus())
+    act(() =>
+      radios[0].dispatchEvent(
+        new KeyboardEvent('keydown', {
+          key: 'ArrowDown',
+          keyCode: 229,
+          isComposing: true,
+          bubbles: true,
+          cancelable: true,
+        })
+      )
+    )
+    expect(radios[0].getAttribute('aria-checked')).toBe('true')
+    press(radios[0], 'ArrowDown')
+    expect(radios[1].getAttribute('aria-checked')).toBe('true')
+    expect(picker.contains(document.activeElement)).toBe(true)
+    // Selecting a model can reveal its configuration panel. Focus follows the visible view.
+    expect(document.activeElement?.closest('[inert], [aria-hidden="true"]')).toBeNull()
+    const controls = [
+      ...picker.querySelectorAll<HTMLElement>('button:not([disabled]), input:not([disabled])'),
+    ].filter(control => control.tabIndex >= 0 && !control.closest('[inert], [aria-hidden="true"]'))
+    expect(controls.length).toBeGreaterThan(0)
+    const first = controls[0]
+    const last = controls.at(-1)!
+    act(() => last.focus())
+    press(last, 'Tab')
+    expect(document.activeElement).toBe(first)
+    press(first, 'Tab', true)
+    expect(document.activeElement).toBe(last)
+    press(last, 'Escape')
+    expect(document.querySelector('[data-testid="model-selector-menu"]')).toBeNull()
+    expect(document.activeElement).toBe(previous)
+    expect(onClose).not.toHaveBeenCalled()
+    press(previous, 'Escape')
+    expect(onClose).toHaveBeenCalledOnce()
+  }
+)

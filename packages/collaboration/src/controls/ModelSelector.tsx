@@ -1,7 +1,9 @@
+import { ModelSelectorMobileControl } from "./ModelSelectorMobileControl";
 import { ModelSelectorEmptyState } from "./ModelSelectorEmptyState";
 import { Check, Cloud } from "lucide-react";
 import {
   useCallback,
+  useId,
   useEffect,
   useLayoutEffect,
   useMemo,
@@ -53,10 +55,9 @@ import {
   isVisibleModelSelectorControl,
   modelCompatibilityDisabledMessage,
   modelPowerOptions,
-  selectedControlOption,
 } from "./model-selector-utils";
 import styles from "./ModelSelector.module.css";
-import { useEscapeKey } from "../markdown/useEscapeKey";
+import { useModelSelectorKeyboard } from "./useModelSelectorKeyboard";
 
 const MAIN_MENU_WIDTH = 320;
 const MAIN_MENU_TRIGGER_GAP = 8;
@@ -105,9 +106,9 @@ export function ModelSelector({
   maxClosedWidth,
 }: ModelSelectorProps & ModelSelectorHostProps) {
   const portalTheme = useCollaborationPortalTheme();
+  const desktopMenuId = useId();
   const containerRef = useRef<HTMLDivElement>(null);
   const buttonRef = useRef<HTMLButtonElement>(null);
-  const desktopMenuWrapperRef = useRef<HTMLDivElement>(null);
   const menuPanelRef = useRef<HTMLDivElement>(null);
   const simplePanelRef = useRef<HTMLDivElement>(null);
   const advancedPanelRef = useRef<HTMLDivElement>(null);
@@ -297,6 +298,9 @@ export function ModelSelector({
     [setActiveFamilyId],
   );
 
+  const { ref: desktopMenuWrapperRef, onKeyDown: handleMenuKeyDown } =
+    useModelSelectorKeyboard(closeMenu, open && !isMobile);
+
   useEffect(() => {
     if (!open || isMobile) return;
 
@@ -317,9 +321,7 @@ export function ModelSelector({
 
     document.addEventListener("pointerdown", handlePointerDown);
     return () => document.removeEventListener("pointerdown", handlePointerDown);
-  }, [closeMenu, isMobile, open]);
-
-  useEscapeKey(closeMenu, open && !isMobile, desktopMenuWrapperRef);
+  }, [closeMenu, desktopMenuWrapperRef, isMobile, open]);
 
   const emptyModelLabel = t("workbench.no_models", "No models available");
   const selectedModelLabel = selectedModel
@@ -529,7 +531,7 @@ export function ModelSelector({
           type="button"
           data-testid={`model-option-${getModelOptionId?.(model) ?? model.name}`}
           data-model-provider-id={codexProviderId(model)}
-          role="menuitemradio"
+          role="radio"
           aria-checked={selected}
           aria-disabled={modelDisabled}
           title={disabledMessage}
@@ -601,7 +603,7 @@ export function ModelSelector({
                 : `model-option-preset-${preset.name}`
             }
             data-model-preset={preset.name}
-            role="menuitemradio"
+            role="radio"
             aria-checked={selected}
             onClick={() => selectPowerPreset(preset)}
             className={`${styles.defaultItem} transition-colors hover:bg-muted focus-visible:bg-muted`}
@@ -655,46 +657,13 @@ export function ModelSelector({
 
   function renderMobileControlSection(control: ModelControlConfig) {
     return (
-      <section key={control.id} className="space-y-2">
-        <h3 className="px-1 text-xs font-semibold text-text-muted">
-          {control.labelKey
-            ? t(control.labelKey, control.label)
-            : control.label}
-        </h3>
-        <div className="scrollbar-none flex gap-2 overflow-x-auto pb-1">
-          {control.options
-            .slice()
-            .sort((a, b) => a.order - b.order)
-            .map((option) => {
-              const selected =
-                selectedControlOption(control, selectedModelOptions)?.value ===
-                option.value;
-              return (
-                <button
-                  key={option.value}
-                  type="button"
-                  data-testid={`model-control-${control.id}-${option.value}`}
-                  onClick={() =>
-                    handleSelectModelOption(control.id, option.value)
-                  }
-                  className={[
-                    "flex h-11 min-w-[44px] shrink-0 items-center gap-2 rounded-full border px-4 text-sm font-medium",
-                    selected
-                      ? "border-text-primary bg-text-primary text-background"
-                      : "border-border bg-surface text-text-secondary",
-                  ].join(" ")}
-                >
-                  <span>
-                    {option.labelKey
-                      ? t(option.labelKey, option.label)
-                      : option.label}
-                  </span>
-                  {selected && <Check className="h-4 w-4" />}
-                </button>
-              );
-            })}
-        </div>
-      </section>
+      <ModelSelectorMobileControl
+        key={control.id}
+        control={control}
+        options={selectedModelOptions}
+        translate={t}
+        onSelectOption={handleSelectModelOption}
+      />
     );
   }
 
@@ -815,6 +784,12 @@ export function ModelSelector({
           <div
             {...portalTheme}
             ref={desktopMenuWrapperRef}
+            id={desktopMenuId}
+            role="dialog"
+            aria-modal="true"
+            aria-label={t("workbench.model_picker_title", "选择模型")}
+            tabIndex={-1}
+            onKeyDown={handleMenuKeyDown}
             style={{
               ...portalTheme.style,
               left: desktopMenuLeft,
@@ -917,7 +892,10 @@ export function ModelSelector({
                       <div className={styles.sectionLabel}>
                         {t("workbench.model_picker_title", "选择模型")}
                       </div>
-                      <div>
+                      <div
+                        role="radiogroup"
+                        aria-label={t("workbench.model_picker_title", "选择模型")}
+                      >
                         {renderAdvancedModelSource(
                           "model-source-local-chatgpt",
                           t(
@@ -950,6 +928,7 @@ export function ModelSelector({
         )}
       <ModelSelectorTrigger
         buttonRef={buttonRef}
+        popupId={isMobile ? undefined : desktopMenuId}
         open={open}
         disabled={disabled}
         isMobile={isMobile}

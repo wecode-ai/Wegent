@@ -264,6 +264,7 @@ export interface ProjectCreateLabels {
   preparingGenerationModel: string;
   generatingResponsibilities: string;
   generationElapsed: string;
+  generationCompleted: string;
   waitingForAssignment: string;
   automaticAssignmentHint: string;
   formingGroup: string;

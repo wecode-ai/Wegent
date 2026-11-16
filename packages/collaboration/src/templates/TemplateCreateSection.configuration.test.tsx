@@ -6,6 +6,7 @@ import { TemplateCreateSection } from './TemplateCreateSection'
 import { CollaborationTemplateContext } from './context'
 import { CollaborationTemplateStore } from './store'
 import { builtinCollaborationTemplates } from './builtins'
+import type { CollaborationTemplate } from './types'
 
 let root: Root
 let container: HTMLDivElement
@@ -33,7 +34,13 @@ const click = async (testId: string) => {
   })
 }
 
-function Harness({ initial = false }: { initial?: boolean }) {
+function Harness({
+  initial = false,
+  onSelect = vi.fn(),
+}: {
+  initial?: boolean
+  onSelect?(document: CollaborationTemplate | null): void
+}) {
   const [navigation, setNavigation] = useState<{ title: string; onBack: (() => void) | null }>({
     title: 'Create project',
     onBack: null,
@@ -65,7 +72,7 @@ function Harness({ initial = false }: { initial?: boolean }) {
             target,
             navigate: (title, onBack) => setNavigation({ title, onBack }),
           }}
-          onSelect={vi.fn()}
+          onSelect={onSelect}
           onChange={vi.fn()}
         />
       </div>
@@ -172,3 +179,24 @@ it('keeps import actions in the same fixed footer and uses its single return con
   expect(target.querySelector('[data-testid="template-import-file"]')).toBeNull()
   expect(document.activeElement).toBe(button('template-import-open'))
 })
+
+it.each(builtinCollaborationTemplates())(
+  'passes English project and role defaults from $document.metadata.name into creation',
+  async record => {
+    const onSelect = vi.fn()
+    await act(async () => root.render(<Harness onSelect={onSelect} />))
+    await click('project-create-choose-template')
+    await click(`template-details-${record.document.metadata.name}`)
+    await click('template-use')
+    const selected = onSelect.mock.calls[0][0] as CollaborationTemplate
+    const resources = selected.spec.resources.collaboration
+    expect(JSON.stringify(resources)).not.toMatch(/[\u3400-\u9fff]/)
+    expect(resources.project.name).not.toBe(
+      record.document.spec.resources.collaboration.project.name
+    )
+    expect(
+      target.querySelector<HTMLInputElement>('[data-testid="template-group-name-main"]')!.value
+    ).toBe(resources.groups[0].name)
+    expect(target.textContent).toContain(resources.groups[0].roles[0].name)
+  }
+)

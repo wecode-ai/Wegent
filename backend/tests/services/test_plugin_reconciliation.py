@@ -339,6 +339,96 @@ def installed_reconciliation(
     return test_user.id, installed.id, release.id, sessions
 
 
+def test_pending_removal_diagnostics_explain_target_filter(
+    installed_reconciliation, caplog
+):
+    user_id, installed_id, _, sessions = installed_reconciliation
+    with sessions() as db:
+        uninstall_account_plugin(db=db, user_id=user_id, installed_id=installed_id)
+
+    caplog.set_level("INFO", logger=plugin_removal_sync.__name__)
+    assert plugin_removal_sync.pending_removal_devices(user_id, "different") == set()
+    assert "canonical_target=different" in caplog.text
+    assert "eligible_devices=['desktop'] selected_devices=[]" in caplog.text
+    assert "'state': 'uninstalling'" in caplog.text
+    assert "'retry_due': True" in caplog.text
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("wakeups", [0, 1, 3])
+@pytest.mark.parametrize("first_outcome", ["busy", "rejected", "removed"])
+async def test_removal_retains_heartbeat_received_before_snapshot_failure(
+    installed_reconciliation, monkeypatch, wakeups, first_outcome
+):
+    from app.services.device.plugin_change_sync import build_plugin_delta
+    from app.services.device.plugin_sync_protocol import load_versioned_plugin_payload
+
+    user_id, installed_id, _, sessions = installed_reconciliation
+    with sessions() as db:
+        uninstall_account_plugin(db=db, user_id=user_id, installed_id=installed_id)
+    service = plugin_removal_sync.device_capability_sync_service
+    monkeypatch.setattr(service, "supports_plugin_delta", AsyncMock(return_value=True))
+    started, release = asyncio.Event(), asyncio.Event()
+
+    async def synchronize(**kwargs):
+        if dispatch.await_count == 1:
+            started.set()
+            await release.wait()
+            if first_outcome == "busy":
+                raise PluginWriteError("plugin_write_busy")
+        payload = await asyncio.to_thread(
+            load_versioned_plugin_payload,
+            sessions,
+            user_id=user_id,
+            complete=False,
+            load_payload=lambda db: build_plugin_delta(service, db, **kwargs),
+        )
+        success = dispatch.await_count > 1 or first_outcome != "rejected"
+        return DeviceCapabilitySyncResult(
+            device_id="desktop",
+            success=success,
+            acknowledged=True,
+            scope="plugin_delta",
+            desired_plugin_snapshot=payload,
+            plugin_sync=payload["plugin_sync"],
+            plugins=[
+                {"id": installed_id, "status": "removed" if success else "failed"}
+            ],
+        )
+
+    dispatch = AsyncMock(side_effect=synchronize)
+    monkeypatch.setattr(service, "sync_plugin_change", dispatch)
+    task = asyncio.create_task(
+        plugin_removal_sync.sync_pending_plugin_removals(user_id)
+    )
+    try:
+        await asyncio.wait_for(started.wait(), timeout=5)
+        for _ in range(wakeups):
+            await plugin_removal_sync.sync_pending_plugin_removals(user_id, "desktop")
+        assert dispatch.await_count == 1
+        with sessions() as db:
+            row = db.query(PluginDeviceInstallation).one()
+            assert row.state == "uninstalling"
+    finally:
+        release.set()
+        await task
+
+    assert dispatch.await_count == (2 if wakeups and first_outcome == "busy" else 1)
+    with sessions() as db:
+        row = db.query(PluginDeviceInstallation).one_or_none()
+        if first_outcome == "removed" or (wakeups and first_outcome == "busy"):
+            assert row is None
+        else:
+            assert row.state == (
+                "failed" if first_outcome == "rejected" else "uninstalling"
+            )
+            if first_outcome == "rejected":
+                assert row.attempt_count == 1
+                assert not plugin_removal_sync.removal_retry_due(row, datetime.now())
+    assert not plugin_removal_sync._inflight
+    assert not plugin_removal_sync._wakeups
+
+
 @pytest.mark.asyncio
 @pytest.mark.parametrize("resend_outcome", ["success", "failed", "offline"])
 async def test_uninstall_committed_before_ack_lease_replaces_stale_snapshot(

@@ -3177,6 +3177,13 @@ describe("CollaborationPlatformApp real component flow", () => {
       portalByTestId("collaboration-project-create-generation-progress")
         .textContent,
     ).toContain("AI 正在分析项目并生成分工");
+    const generationStatus = portalByTestId(
+      "collaboration-project-create-generation-status",
+    );
+    expect(generationStatus.getAttribute("role")).toBe("status");
+    expect(generationStatus.getAttribute("aria-live")).toBe("polite");
+    expect(generationStatus.getAttribute("aria-atomic")).toBe("true");
+    expect(generationStatus.textContent).toBe("AI 正在分析项目并生成分工");
     expect(
       portalByTestId("collaboration-project-create-assignment-queue")
         .textContent,
@@ -3213,6 +3220,7 @@ describe("CollaborationPlatformApp real component flow", () => {
     expect(
       portalByTestId("collaboration-project-create-group-editor").textContent,
     ).toContain("AI 分工建议");
+    expect(generationStatus.textContent).toBe("分工已生成，可编辑并保存。");
     expect(
       document.body.querySelector(
         '[data-testid="collaboration-project-create-generation-progress"]',
@@ -5331,21 +5339,6 @@ describe("CollaborationPlatformApp real component flow", () => {
       ownerId: 7,
       persistence: { read: async () => [], write: async () => {} },
     });
-    const resolveTemplateAgentRouting = vi.fn(async () => ({
-      executionPolicy: {
-        mode: "fixed" as const,
-        environment_id: environment.id,
-      },
-      modelPolicy: {
-        mode: "fixed" as const,
-        model: {
-          runtime: "codex" as const,
-          provider: "openai",
-          model_id: "default",
-          source: "native" as const,
-        },
-      },
-    }));
     await render(
       <PlatformHarness
         api={api}

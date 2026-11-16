@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Weibo, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-import { useCallback, useEffect, useRef, useState, type ComponentProps } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, type ComponentProps } from 'react'
 import { Layers3, RefreshCw } from 'lucide-react'
 import type { CollaborationLocale } from '../i18n'
 import {
@@ -12,6 +12,7 @@ import {
 } from './types'
 import type { CollaborationTemplateStore } from './store'
 import { useTemplateRecords } from './context'
+import { localizeBuiltinTemplateRecord } from './builtins'
 import { templateMessages } from './messages'
 import { TemplatePanel } from './TemplatePanel'
 import { TemplateImportDialog } from './TemplateImportDialog'
@@ -61,7 +62,15 @@ function ScopedCollaborationTemplatePage({
   const [nextCursor, setNextCursor] = useState<string | null>(null)
   const [remoteError, setRemoteError] = useState<string | null>(null)
   const [remoteLoading, setRemoteLoading] = useState(false)
-  const [selected, setSelected] = useState<TemplateRecord | null>(null)
+  const [rawSelected, setSelected] = useState<TemplateRecord | null>(null)
+  const selected = useMemo(
+    () => rawSelected && localizeBuiltinTemplateRecord(rawSelected, locale),
+    [rawSelected, locale]
+  )
+  const localizedRecords = useMemo(
+    () => local.records.map(record => localizeBuiltinTemplateRecord(record, locale)),
+    [local.records, locale]
+  )
   const [selectedInstalled, setSelectedInstalled] = useState(false)
   const [status, setStatus] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
@@ -150,11 +159,11 @@ function ScopedCollaborationTemplatePage({
   }, [refresh])
 
   const cards = new Map<string, Card>()
-  for (const record of local.records) {
+  for (const [index, record] of localizedRecords.entries()) {
     if (tab === 'mine' && record.source !== 'personal') continue
     cards.set(templateIdentity(record), {
       key: templateIdentity(record),
-      record,
+      record: local.records[index],
       id: record.id,
       ownerId: record.ownerId,
       namespace: record.document.metadata.namespace,
@@ -171,10 +180,16 @@ function ScopedCollaborationTemplatePage({
           (record.ownerId === 0 &&
             record.document.metadata.namespace === 'system' &&
             listing.publisher_namespace === 'system' &&
+            listing.publisher_user_id === 0 &&
             record.document.metadata.name === listing.name)
       )
       const key = cached ? templateIdentity(cached) : `listing:${listing.id}`
       const version = listing.current_version?.version ?? '1.0.0'
+      const localizedCached =
+        cached?.document.spec.version === version
+          ? localizeBuiltinTemplateRecord(cached, locale)
+          : undefined
+      const localizedBuiltin = localizedCached && localizedCached !== cached
       cards.set(key, {
         key,
         record:
@@ -182,8 +197,10 @@ function ScopedCollaborationTemplatePage({
         id: listing.id,
         ownerId: cached?.ownerId ?? listing.publisher_user_id,
         namespace: cached?.document.metadata.namespace ?? listing.publisher_namespace,
-        name: listing.display_name,
-        description: listing.description ?? '',
+        name: localizedBuiltin ? localizedCached.document.spec.displayName : listing.display_name,
+        description: localizedBuiltin
+          ? localizedCached.document.spec.description
+          : (listing.description ?? ''),
         version,
         installed: listing.is_installed,
       })
@@ -496,7 +513,7 @@ function ScopedCollaborationTemplatePage({
                       const record = cached ?? (await store.download(selected.id!))
                       if (onUse) {
                         setSelected(null)
-                        onUse(record)
+                        onUse(localizeBuiltinTemplateRecord(record, locale))
                       } else {
                         setStatus(m.added)
                       }

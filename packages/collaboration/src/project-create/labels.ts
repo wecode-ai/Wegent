@@ -126,6 +126,7 @@ export const projectCreateLabels: Record<
     preparingGenerationModel: "正在准备模型",
     generatingResponsibilities: "AI 正在分析项目并生成分工",
     generationElapsed: "已等待 {{seconds}} 秒",
+    generationCompleted: "分工已生成，可编辑并保存。",
     waitingForAssignment: "AI 正在自动安排",
     automaticAssignmentHint: "AI 正在逐个生成职责，完成后会加入下方小组。",
     formingGroup: "协作小组",
@@ -250,7 +251,7 @@ export const projectCreateLabels: Record<
     supplementResponsibility: "Add a responsibility",
     supplementAllocationPrinciples: "Add allocation principles",
     removeGroup: "Return to direct collaboration",
-    applyGroup: "Save division",
+    applyGroup: "Save responsibilities",
     groupGenerationUnavailable:
       "Select a model for new chats before asking AI to generate responsibilities",
     generationModel: "Generation model",
@@ -275,6 +276,7 @@ export const projectCreateLabels: Record<
     generatingResponsibilities:
       "AI is analyzing the project and generating responsibilities",
     generationElapsed: "Waiting for {{seconds}} seconds",
+    generationCompleted: "Responsibilities generated. Review and save them.",
     waitingForAssignment: "AI is arranging the group",
     automaticAssignmentHint:
       "AI is generating responsibilities one by one. Agents join the group after their responsibilities are ready.",
