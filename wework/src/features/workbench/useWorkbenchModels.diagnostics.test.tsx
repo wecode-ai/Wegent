@@ -576,6 +576,40 @@ test('does not let a stale transient failure clear a newer manual selection', as
   expect(hook.result.current.isConfiguredModelUnavailable).toBe(false)
 })
 
+test('stays ready when a manual replacement follows a task model update', async () => {
+  const api = {
+    listModels: vi.fn().mockResolvedValue({ data: models }),
+    getModel: vi.fn().mockRejectedValue(new ApiError('removed', 404)),
+  }
+  const hook = renderHook(
+    ({ selectionConfig }: { selectionConfig: ModelSelectionConfig }) =>
+      useWorkbenchModels({
+        api,
+        locked: false,
+        scopeKey: scopeA,
+        selectionConfig,
+        persistSelection: false,
+        fallbackWhenConfiguredModelUnavailable: false,
+      }),
+    { initialProps: { selectionConfig: selection('deleted-model') } }
+  )
+  await waitFor(() => expect(hook.result.current.isSelectionReady).toBe(false))
+
+  // The replacement is sent and becomes the task's recorded model.
+  act(() => hook.result.current.setSelectedModel(models[0]!))
+  await waitFor(() => expect(hook.result.current.isSelectionReady).toBe(true))
+  hook.rerender({ selectionConfig: selection('model-a') })
+  await act(async () => undefined)
+
+  // Choosing another available model must not leave readiness stuck on the
+  // task model change that happened while the replacement was active.
+  act(() => hook.result.current.setSelectedModel(models[1]!))
+
+  await waitFor(() => expect(hook.result.current.selectedModel?.name).toBe('model-b'))
+  expect(hook.result.current.isSelectionReady).toBe(true)
+  expect(hook.result.current.isConfiguredModelUnavailable).toBe(false)
+})
+
 test('rejects a same-named model from another group identity', async () => {
   const configuredTask: ModelSelectionConfig = {
     modelName: 'hidden-group-model',

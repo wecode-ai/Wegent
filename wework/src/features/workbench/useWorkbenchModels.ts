@@ -557,11 +557,9 @@ export function useWorkbenchModels({
           const restored = await restoreSelection(models, effectiveSelectionConfig, () => cancelled)
           if (cancelled || !restored) return
         }
-        if (!manualSelectionActive) {
-          setRestoredSelectionKeyByScope(current =>
-            current[scopeKey] === selectionKey ? current : { ...current, [scopeKey]: selectionKey }
-          )
-        }
+        setRestoredSelectionKeyByScope(current =>
+          current[scopeKey] === selectionKey ? current : { ...current, [scopeKey]: selectionKey }
+        )
       }
     }
 
