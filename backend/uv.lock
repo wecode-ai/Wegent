@@ -842,6 +842,15 @@ wheels = [
 ]
 
 [[package]]
+name = "chinesecalendar"
+version = "1.12.1"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/71/e6/978dff193c59923dc246142f9b9a92ff58dfbfa6d782cf7b22df71dadc8c/chinesecalendar-1.12.1.tar.gz", hash = "sha256:cf36d710c89a183b2050cc7b0cddc28a4c270e5a17ccfdfae626dba6c21fef95", size = 18133, upload-time = "2026-11-05T10:32:34.117Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/78/61/00ae63bc892f56e6c65f04fc29dd1708d71cd8bec9fd1c48618cd7fc5418/chinesecalendar-1.12.1-py3-none-any.whl", hash = "sha256:abad3683598f6de9bcd49f45438b6d88a2a409bb7819bfd9a271d0ff7ae42e1c", size = 12403, upload-time = "2026-11-05T10:32:31.755Z" },
+]
+
+[[package]]
 name = "click"
 version = "8.3.1"
 source = { registry = "https://pypi.org/simple" }
@@ -5525,6 +5534,7 @@ dependencies = [
     { name = "boto3" },
     { name = "celery", extra = ["redis"] },
     { name = "chardet" },
+    { name = "chinesecalendar" },
     { name = "crawl4ai" },
     { name = "croniter" },
     { name = "cryptography" },
@@ -5630,6 +5640,7 @@ requires-dist = [
     { name = "boto3", specifier = ">=1.42.97" },
     { name = "celery", extras = ["redis"], specifier = ">=5.3.0" },
     { name = "chardet", specifier = ">=5.0.0" },
+    { name = "chinesecalendar", specifier = ">=1.12.1,<2" },
     { name = "crawl4ai", specifier = ">=0.4.0" },
     { name = "croniter", specifier = ">=2.0.0" },
     { name = "cryptography", specifier = ">=42.0.4" },

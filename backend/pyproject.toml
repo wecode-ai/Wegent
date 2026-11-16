@@ -102,6 +102,7 @@ dependencies = [
     "prometheus-client>=0.19.0",
     # Cron expression parsing
     "croniter>=2.0.0",
+    "chinesecalendar>=1.12.1,<2",
     # Web scraping with JavaScript rendering support
     "crawl4ai>=0.4.0",
     # Pin litellm to safe version (crawl4ai dependency) - versions after 1.82.6 contain supply chain attack

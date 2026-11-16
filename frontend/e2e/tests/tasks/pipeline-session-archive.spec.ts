@@ -291,12 +291,17 @@ test.describe('Pipeline native session archive and continuation', () => {
               .sort((a, b) => a.id - b.id)
             expect(stages.length).toBeGreaterThanOrEqual(2)
             sandboxCreated = true
-            const sandbox = await postJson(request, `${MANAGER}/sandboxes`, {
-              shell_type: engine,
-              user_id: user.id,
-              user_name: user.user_name,
-              metadata: { task_id: taskId, subtask_id: stages[stages.length - 1].id },
-            })
+            const sandbox = await postJson(
+              request,
+              `${MANAGER}/sandboxes`,
+              {
+                shell_type: engine,
+                user_id: user.id,
+                user_name: user.user_name,
+                metadata: { task_id: taskId, subtask_id: stages[stages.length - 1].id },
+              },
+              createBackendRequestHeaders()
+            )
             // Tool sandboxes and task executors have distinct heartbeat bindings.
             expect(sandbox.container_name).not.toBe(runtime.container_name)
             const sandboxRuntime = await resolveRuntime(
@@ -409,12 +414,15 @@ test.describe('Pipeline native session archive and continuation', () => {
           // Delete only resources created by this scenario, even after assertion failures.
           const failures: string[] = []
           if (sandboxCreated) {
-            const deleted = await request.delete(`${MANAGER}/sandboxes/${taskId}`)
+            const deleted = await request.delete(`${MANAGER}/sandboxes/${taskId}`, {
+              headers: createBackendRequestHeaders(),
+            })
             if (![200, 404].includes(deleted.status()))
               failures.push(`sandbox: ${await deleted.text()}`)
           }
           if (runtime) {
             const deleted = await request.post(`${MANAGER}/executor/delete`, {
+              headers: createBackendRequestHeaders(),
               data: {
                 executor_name: runtime.container_name,
                 executor_namespace: runtime.executor_namespace,

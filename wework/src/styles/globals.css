@@ -546,6 +546,15 @@ body[data-wework-panel-resizing] [data-testid='workspace-browser-frame'] {
   background-color: rgb(var(--color-scrollbar-thumb-hover));
 }
 
+.sidebar-worklists-scrollbar:hover .sidebar-worklists-scrollbar-thumb,
+.sidebar-worklists-scrollbar:active .sidebar-worklists-scrollbar-thumb {
+  background-color: color-mix(
+    in srgb,
+    rgb(var(--color-scrollbar-thumb-hover)) 80%,
+    rgb(var(--color-text-primary))
+  );
+}
+
 @media (prefers-reduced-motion: reduce) {
   .runtime-task-title-shimmer {
     animation: none;

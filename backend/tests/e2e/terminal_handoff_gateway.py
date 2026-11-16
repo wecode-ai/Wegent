@@ -322,8 +322,8 @@ class TerminalHandoffGateway(unittest.TestCase):
         self.assertEqual(result["status"], "partial" if fail else "ok", result)
         return result
 
-    def _wait_for(self, check: Callable[[], T | None]) -> T:
-        deadline = time.monotonic() + 15
+    def _wait_for(self, check: Callable[[], T | None], timeout: float = 15) -> T:
+        deadline = time.monotonic() + timeout
         while True:
             if value := check():
                 return value
@@ -512,7 +512,9 @@ class TerminalHandoffGateway(unittest.TestCase):
             self.assertEqual(release["released"], 1)
             # The original worker saw the terminal frame but its write failed.
             # Recovery must take ownership after the acknowledged worker exits.
-            self._wait_for(lambda: not self.redis.exists(lease_key))
+            # The execution lease is a 30s Redis lock, so allow more than its TTL
+            # before calling a slow handoff a failure.
+            self._wait_for(lambda: not self.redis.exists(lease_key), timeout=40)
             interrupted, rows = self._snapshot(task_id)
             self.assertIn(intent, interrupted["metadata"]["labels"])
             self.assertEqual(rows[-1]["status"], "RUNNING")
@@ -526,7 +528,7 @@ class TerminalHandoffGateway(unittest.TestCase):
             )
 
         after, rows = self._wait_for(completed)
-        self._wait_for(lambda: not self.redis.exists(lease_key))
+        self._wait_for(lambda: not self.redis.exists(lease_key), timeout=40)
         duplicate = self._callback(
             task_id, subtask_id, "duplicate callback payload", rust=rust
         )

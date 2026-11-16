@@ -54,6 +54,14 @@ Example: Execute at minute 30 every 2 hours → `30 */2 * * *`
 
 Example: Execute daily at 09:30 → `30 9 * * *`
 
+#### Mainland China statutory workdays
+
+When creating, editing, or renting a subscription, open **Subscription Options → Cron Schedule** and enable **Run only on mainland China working days**. The calendar evaluates dates in Beijing time (`Asia/Shanghai`): public holidays and ordinary weekends are skipped, while adjusted weekend workdays are included. Execution times still follow the configured Cron timezone.
+
+To run on every statutory workday, select **Daily**, choose a time, and enable this option. It filters the existing schedule without changing its weekly, monthly, or custom restrictions; a `1-5` expression still excludes weekend makeup days. When enabled, the server calculates the next execution after saving, and the unfiltered Cron preview is hidden. Restarting the service on a non-working day does not dispatch overdue workday schedules. Manual execution remains available.
+
+Calendar data comes from published [chinesecalendar](https://pypi.org/project/chinesecalendar/) releases. Maintainers must update the dependency after the State Council announces the next year's schedule. Dates outside the calendar's coverage produce an error instead of guessing or falling back to Monday through Friday.
+
 #### Weekly Configuration
 
 - **Select Days**: Multi-select Monday through Sunday

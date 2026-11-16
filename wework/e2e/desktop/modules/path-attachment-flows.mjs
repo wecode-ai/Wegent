@@ -466,6 +466,9 @@ async function verifyPastedWorkspacePaths({ composerSelector, control, workspace
         !snapshot.testIds.includes('uploading-attachment-badge') &&
         !snapshot.testIds.includes('attachment-error-badge'),
       'A generated local attachment above 100 MiB did not recover after its finish response was dropped',
+      // The host negotiates 2 MiB chunks, so this file stages in 51
+      // renderer-to-host round trips. Four parallel checkpoints can starve the
+      // renderer; the measured worst case is ~26s, so keep a wide margin.
       120_000,
       ACTIVE_WORKBENCH_SELECTOR
     )
