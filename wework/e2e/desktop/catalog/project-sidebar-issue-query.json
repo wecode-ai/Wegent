@@ -1,0 +1,6 @@
+{
+  "order": 125110,
+  "ciHost": "project-ai-settings",
+  "scenario": "./scenarios/project-sidebar-issue-query.scenario.mjs",
+  "scenarioOnly": true
+}
