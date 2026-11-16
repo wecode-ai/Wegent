@@ -1,11 +1,10 @@
 import assert from 'node:assert/strict'
-import { execFile } from 'node:child_process'
 import { mkdir, readFile, unlink, writeFile } from 'node:fs/promises'
 import { createRequire } from 'node:module'
 import { join } from 'node:path'
-import { promisify } from 'node:util'
 
 import { resolveElectronLaunchArguments } from './electron-launch-arguments.mjs'
+import { runJsonResultProcess } from './json-result-process.mjs'
 
 // Called by the CI-covered workbench-mode checkpoint on Windows, using real Electron locks.
 export async function verifyWindowsDesktopDataStartup({ resources, executor, environment, root }) {
@@ -39,7 +38,8 @@ export async function verifyWindowsDesktopDataStartup({ resources, executor, env
     });
     if (input.secondary) {
       assert.equal(result, null, 'Secondary launch must notify the primary before opening stores');
-      process.stdout.write(JSON.stringify({ primary: false }), () => app.exit(0));
+      fs.writeFileSync(input.resultFile, JSON.stringify({ primary: false }));
+      app.exit(0);
     } else {
       assert.ok(result, 'Primary launch must finish migration');
       assert.equal(app.isReady(), false, 'Migration must finish before Electron ready');
@@ -60,12 +60,17 @@ export async function verifyWindowsDesktopDataStartup({ resources, executor, env
       });
       // Electron waits for top-level await before ready; schedule the ready-phase probe.
       app.whenReady().then(async () => {
-        const { stdout } = await promisify(execFile)(process.execPath, [
-          input.scriptPath, JSON.stringify({ ...input, secondary: true }), ...input.launchArguments,
+        fs.rmSync(input.secondaryResultFile, { force: true });
+        await promisify(execFile)(process.execPath, [
+          input.scriptPath,
+          JSON.stringify({ ...input, secondary: true, resultFile: input.secondaryResultFile }),
+          ...input.launchArguments,
         ], { env: process.env, timeout: 15000 });
-        assert.equal(JSON.parse(stdout).primary, false);
+        const secondary = JSON.parse(fs.readFileSync(input.secondaryResultFile, 'utf8'));
+        assert.equal(secondary.primary, false);
         assert.equal(notified, true, 'Secondary launch must reach the primary using the legacy singleton identity');
-        process.stdout.write(JSON.stringify({ migratedBeforeReady: true, secondaryNotified: true }), () => app.exit(0));
+        fs.writeFileSync(input.resultFile, JSON.stringify({ migratedBeforeReady: true, secondaryNotified: true }));
+        app.exit(0);
       }).catch(error => { console.error(error.stack); app.exit(1); });
     }
     } catch (error) { console.error(error.stack); app.exit(1); }
@@ -86,13 +91,21 @@ export async function verifyWindowsDesktopDataStartup({ resources, executor, env
       await writeFile(join(source, 'Partitions', 'browser', 'Cookies'), 'original-cookies')
     }
     const input = { resources, executor, root: fixtureRoot, seeded, scriptPath, launchArguments }
+    let runIndex = 0
     const run = async () => {
-      const { stdout } = await promisify(execFile)(
-        require('electron'),
-        [scriptPath, JSON.stringify(input), ...launchArguments],
-        { env: childEnvironment, timeout: 30_000, maxBuffer: 1024 * 1024 }
-      )
-      return JSON.parse(stdout)
+      const attempt = runIndex++
+      return runJsonResultProcess({
+        executable: require('electron'),
+        scriptPath,
+        input: {
+          ...input,
+          secondaryResultFile: join(fixtureRoot, `secondary-${attempt}.json`),
+        },
+        launchArguments,
+        environment: childEnvironment,
+        timeout: 30_000,
+        resultFile: join(fixtureRoot, `primary-${attempt}.json`),
+      })
     }
     const first = await run()
     assert.equal(first.migratedBeforeReady, true)
