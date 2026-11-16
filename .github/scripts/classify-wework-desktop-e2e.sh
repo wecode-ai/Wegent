@@ -193,6 +193,7 @@ select_all_desktop_suites() {
   select_target "plugins:all"
   select_target "cloud:all"
   macos_inspector_e2e=true
+  windows_installer_e2e=true
 }
 
 # Keep path precedence explicit; feature rules live outside the shared runner.
@@ -290,7 +291,6 @@ build_matrix() {
 
 if [[ "${1:-}" == "--all" ]]; then
   select_all_desktop_suites
-  windows_installer_e2e=true
 elif (($# > 0)); then
   for path in "$@"; do
     classify_path "$path"
