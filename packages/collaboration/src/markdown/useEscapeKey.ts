@@ -41,6 +41,7 @@ export function useEscapeKey(
       const boundary = target?.closest('[role="dialog"], dialog[open]');
       if (
         scope?.current &&
+        scope.current.closest('[role="dialog"], dialog[open]') &&
         boundary &&
         boundary !== scope.current &&
         !boundary.contains(scope.current)

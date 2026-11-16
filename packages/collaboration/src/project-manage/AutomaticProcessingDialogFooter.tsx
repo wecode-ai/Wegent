@@ -23,7 +23,7 @@ export function AutomaticProcessingDialogFooter({
   valid: boolean
 }) {
   return (
-    <footer className="flex flex-wrap min-h-14 shrink-0 items-center !justify-between gap-4 border-t border-border px-5 py-3">
+    <footer className="flex flex-wrap min-h-14 shrink-0 items-center !justify-between gap-4 border-t border-border bg-surface px-5 py-3">
       <label className="!flex min-h-11 md:min-h-0 min-w-0 cursor-pointer items-center gap-2 text-sm text-text-secondary">
         <input
           checked={draft.enabled}

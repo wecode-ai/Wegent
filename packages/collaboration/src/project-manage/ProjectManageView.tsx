@@ -753,85 +753,81 @@ export function ProjectManageView<
           </section>
         )}
 
-        <ProjectMembersSection
-          project={project}
-          host={host}
-          controller={memberController}
-          canManage={canManageMembers}
-          membershipModeBusy={visibilityBusy}
-          onMembershipModeChange={mode => void saveAccessSettings({ membership_mode: mode })}
-          className={
-            section === 'all' || section === 'members'
-              ? embedded
-                ? ''
-                : 'border-t border-border py-6'
-              : 'hidden'
-          }
-        />
+        {(section === 'all' || section === 'members') && (
+          <ProjectMembersSection
+            project={project}
+            host={host}
+            controller={memberController}
+            canManage={canManageMembers}
+            membershipModeBusy={visibilityBusy}
+            onMembershipModeChange={mode => void saveAccessSettings({ membership_mode: mode })}
+            className={embedded ? '' : 'border-t border-border py-6'}
+          />
+        )}
 
-        <details
-          key={project.id}
-          className={
-            section === 'all' || section === 'overview' ? 'border-t border-border py-6' : 'hidden'
-          }
-          data-testid="cloud-project-manage-tags"
-          onToggle={event => {
-            if (event.currentTarget.open) setTagCatalogProjectId(project.id)
-          }}
-        >
-          <summary
-            className="cursor-pointer text-heading-md font-semibold"
-            data-testid="cloud-project-manage-tags-toggle"
+        {(section === 'all' || section === 'overview') && (
+          <details
+            key={project.id}
+            className="border-t border-border py-6"
+            data-testid="cloud-project-manage-tags"
+            onToggle={event => {
+              if (event.currentTarget.open) setTagCatalogProjectId(project.id)
+            }}
           >
-            <h2 className="inline text-heading-md font-semibold">
-              {host.translate('todo.project_tags', '标签')}
-            </h2>
-          </summary>
-          {tagCatalogProjectId === project.id &&
-            (tagLoadState?.projectId !== project.id || tagLoadState.loading ? (
-              <p
-                role="status"
-                data-testid="cloud-project-manage-tags-loading"
-                className="mt-3 text-sm text-text-muted"
-              >
-                {host.translate('common.loading', '正在加载…')}
-              </p>
-            ) : tagLoadState.error ? (
-              <div
-                role="alert"
-                data-testid="cloud-project-manage-tags-error"
-                className="mt-3 text-sm text-text-primary"
-              >
-                {tagLoadState.error}
-                <button
-                  type="button"
-                  className="ml-2 underline"
-                  data-testid="cloud-project-manage-tags-retry"
-                  onClick={() => setTagLoadRevision(revision => revision + 1)}
+            <summary
+              className="cursor-pointer text-heading-md font-semibold"
+              data-testid="cloud-project-manage-tags-toggle"
+            >
+              <h2 className="inline text-heading-md font-semibold">
+                {host.translate('todo.project_tags', '标签')}
+              </h2>
+            </summary>
+            {tagCatalogProjectId === project.id &&
+              (tagLoadState?.projectId !== project.id || tagLoadState.loading ? (
+                <p
+                  role="status"
+                  data-testid="cloud-project-manage-tags-loading"
+                  className="mt-3 text-sm text-text-muted"
                 >
-                  {host.translate('common.retry', '重试')}
-                </button>
-              </div>
-            ) : (
-              <ProjectTagsSection
-                host={host}
-                className="mt-3"
-                allTags={allTags}
-                renamingTag={renamingTag}
-                renameValue={renameValue}
-                tagComposerOpen={tagComposerOpen}
-                newTag={newTag}
-                tagBusy={tagBusy}
-                setTagComposerOpen={setTagComposerOpen}
-                setNewTag={setNewTag}
-                setRenamingTag={setRenamingTag}
-                setRenameValue={setRenameValue}
-                createTag={createTag}
-                renameTag={renameTag}
-                deleteTag={deleteTag}
-              />
-            ))}
-        </details>
+                  {host.translate('common.loading', '正在加载…')}
+                </p>
+              ) : tagLoadState.error ? (
+                <div
+                  role="alert"
+                  data-testid="cloud-project-manage-tags-error"
+                  className="mt-3 text-sm text-text-primary"
+                >
+                  {tagLoadState.error}
+                  <button
+                    type="button"
+                    className="ml-2 underline"
+                    data-testid="cloud-project-manage-tags-retry"
+                    onClick={() => setTagLoadRevision(revision => revision + 1)}
+                  >
+                    {host.translate('common.retry', '重试')}
+                  </button>
+                </div>
+              ) : (
+                <ProjectTagsSection
+                  host={host}
+                  className="mt-3"
+                  allTags={allTags}
+                  renamingTag={renamingTag}
+                  renameValue={renameValue}
+                  tagComposerOpen={tagComposerOpen}
+                  newTag={newTag}
+                  tagBusy={tagBusy}
+                  setTagComposerOpen={setTagComposerOpen}
+                  setNewTag={setNewTag}
+                  setRenamingTag={setRenamingTag}
+                  setRenameValue={setRenameValue}
+                  createTag={createTag}
+                  renameTag={renameTag}
+                  deleteTag={deleteTag}
+                />
+              ))}
+          </details>
+        )}
 
         {(section === 'all' || section === providerSettingsSection) && (
           <ProjectProviderSection

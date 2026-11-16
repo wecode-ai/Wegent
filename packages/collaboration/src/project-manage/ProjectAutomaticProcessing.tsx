@@ -709,256 +709,266 @@ export function ProjectAutomaticProcessing({
               </button>
             </header>
 
-            <fieldset
-              disabled={!canManage}
-              className="m-0 min-h-0 min-w-0 flex-1 space-y-5 overflow-y-auto border-0 px-5 py-5"
+            <div
+              className="min-h-0 min-w-0 flex-1 overflow-y-auto"
+              data-testid="automatic-processing-body"
             >
-              {!canManage ? (
-                <p className="text-sm text-text-secondary">
-                  {translate(
-                    'todo.automatic_rule_read_only',
-                    '只读：你可以查看规则，只有项目管理者可以修改。'
-                  )}
-                </p>
-              ) : null}
-              <div
-                className="rounded-xl border border-border bg-muted/40 px-4 py-3"
-                data-testid="automatic-processing-preview"
-              >
-                <p className="text-xs font-medium text-text-secondary">
-                  {translate('todo.rule_preview', '规则预览')}
-                </p>
-                <p className="mt-1 text-sm font-medium text-text-primary">
-                  {triggerPreview}
-                  <span className="mx-2 text-text-muted">→</span>
-                  {selectedTargetName}
-                  <span className="ml-1 font-normal text-text-secondary">
-                    · {targetKindLabel[draft.targetKind]}
-                  </span>
-                </p>
-              </div>
-
-              <AutomaticProcessingTriggerFields
-                draft={draft}
-                updateDraft={updateDraft}
-                selectTrigger={selectTrigger}
-                locale={locale}
-                translate={translate}
-                hooks={hooks}
-                hooksLoading={hooksLoading}
-                hasIncomingHooks={Boolean(api.incomingHooks)}
-                statuses={statuses}
-              />
-
-              <section className="space-y-2">
-                <h3 className="text-sm font-medium text-text-primary">
-                  {translate('todo.assign_to', '交给')}
-                </h3>
+              <fieldset disabled={!canManage} className="m-0 min-w-0 space-y-5 border-0 px-5 py-5">
+                {!canManage ? (
+                  <p className="text-sm text-text-secondary">
+                    {translate(
+                      'todo.automatic_rule_read_only',
+                      '只读：你可以查看规则，只有项目管理者可以修改。'
+                    )}
+                  </p>
+                ) : null}
                 <div
-                  className="grid grid-cols-3 gap-2"
-                  data-testid="automatic-processing-target-kinds"
+                  className="rounded-xl border border-border bg-muted/40 px-4 py-3"
+                  data-testid="automatic-processing-preview"
                 >
-                  {targetKinds.map(targetKind => {
-                    const selected = draft.targetKind === targetKind.kind
-                    const available = targetKind.options.length > 0
-                    const Icon = targetKind.icon
-                    return (
-                      <button
-                        aria-pressed={selected}
-                        className={`flex min-w-0 items-center gap-2 rounded-xl border px-3 py-2.5 text-left transition-colors ${
-                          selected
-                            ? 'automatic-processing-selected-soft'
-                            : available
-                              ? 'border-border hover:bg-muted/60'
-                              : 'cursor-not-allowed border-border/60'
-                        }`}
-                        data-testid={`automatic-processing-target-kind-${targetKind.kind}`}
-                        disabled={!available}
-                        key={targetKind.kind}
-                        onClick={() => {
-                          const firstTarget = targetKind.options[0]
-                          updateDraft({
-                            targetKind: targetKind.kind,
-                            targetId: firstTarget?.id ?? '',
-                          })
-                          setTargetPickerOpen(false)
-                          setTargetQuery('')
-                        }}
-                        type="button"
-                      >
-                        <Icon
-                          aria-hidden="true"
-                          className={`h-4 w-4 shrink-0 ${
-                            selected ? 'automatic-processing-selected-icon' : 'text-text-secondary'
-                          }`}
-                        />
-                        <span className="min-w-0">
-                          <strong
-                            className={`block truncate text-sm font-medium ${
-                              available ? 'text-text-primary' : 'text-text-muted'
-                            }`}
-                          >
-                            {targetKind.label}
-                          </strong>
-                          <span
-                            className={`block text-xs ${
-                              available ? 'text-text-secondary' : 'text-text-muted'
-                            }`}
-                          >
-                            {available
-                              ? locale === 'zh-CN'
-                                ? `${targetKind.options.length} 个可用`
-                                : `${targetKind.options.length} available`
-                              : translate('common.not_configured', '未配置')}
-                          </span>
-                        </span>
-                      </button>
-                    )
-                  })}
-                </div>
-                <div className="relative">
-                  <button
-                    aria-expanded={targetPickerOpen}
-                    aria-haspopup="listbox"
-                    className={`automatic-processing-selected flex min-h-[68px] w-full items-center gap-3 rounded-xl border px-4 py-3 text-left transition-shadow ${
-                      targetPickerOpen ? 'automatic-processing-picker-open' : ''
-                    }`}
-                    data-testid="automatic-processing-target"
-                    onClick={() => {
-                      setTargetPickerOpen(open => !open)
-                      setTargetQuery('')
-                    }}
-                    type="button"
-                  >
-                    <span className="automatic-processing-selected-avatar flex h-9 w-9 shrink-0 items-center justify-center rounded-lg">
-                      <SelectedTargetIcon aria-hidden="true" className="h-4 w-4" />
+                  <p className="text-xs font-medium text-text-secondary">
+                    {translate('todo.rule_preview', '规则预览')}
+                  </p>
+                  <p className="mt-1 text-sm font-medium text-text-primary">
+                    {triggerPreview}
+                    <span className="mx-2 text-text-muted">→</span>
+                    {selectedTargetName}
+                    <span className="ml-1 font-normal text-text-secondary">
+                      · {targetKindLabel[draft.targetKind]}
                     </span>
-                    <span className="min-w-0 flex-1">
-                      <strong className="block truncate text-sm font-medium text-text-primary">
-                        {selectedTargetName}
-                      </strong>
-                      <span className="mt-0.5 block text-xs text-text-secondary">
-                        {targetKindLabel[draft.targetKind]}
-                      </span>
-                    </span>
-                    <ChevronDown
-                      aria-hidden="true"
-                      className={`h-4 w-4 shrink-0 text-text-muted transition-transform ${
-                        targetPickerOpen ? 'rotate-180' : ''
-                      }`}
-                    />
-                  </button>
-
-                  {targetPickerOpen ? (
-                    <div
-                      className="absolute inset-x-0 bottom-full z-20 mb-2 overflow-hidden rounded-xl border border-border bg-surface shadow-lg"
-                      data-testid="automatic-processing-target-picker"
-                    >
-                      <div className="border-b border-border p-2">
-                        <label className="!flex h-8 items-center gap-2 rounded-lg border border-border bg-background px-3 keyboard:focus-within:border-focus">
-                          <Search aria-hidden="true" className="h-4 w-4 shrink-0 text-text-muted" />
-                          <input
-                            autoFocus
-                            className="!h-auto !min-h-0 min-w-0 flex-1 !border-0 !bg-transparent !p-0 text-sm text-text-primary outline-none placeholder:text-text-muted"
-                            data-testid="automatic-processing-target-search"
-                            onChange={event => setTargetQuery(event.target.value)}
-                            placeholder={translate(
-                              'todo.search_processing_target',
-                              `搜索${targetKindLabel[draft.targetKind]}`
-                            )}
-                            value={targetQuery}
-                          />
-                        </label>
-                      </div>
-                      <div
-                        aria-label={translate('todo.processing_target', '处理对象')}
-                        className="max-h-52 overflow-y-auto p-2"
-                        role="listbox"
-                      >
-                        {filteredTargets.map(option => {
-                          const selected = draft.targetId === option.id
-                          return (
-                            <button
-                              aria-selected={selected}
-                              className="flex w-full items-center gap-3 rounded-lg px-2 py-2 text-left hover:bg-muted"
-                              data-testid={`automatic-processing-target-option-${draft.targetKind}-${option.id}`}
-                              key={option.id}
-                              onClick={() => {
-                                updateDraft({ targetId: option.id })
-                                setTargetPickerOpen(false)
-                                setTargetQuery('')
-                              }}
-                              role="option"
-                              type="button"
-                            >
-                              <SelectedTargetIcon
-                                aria-hidden="true"
-                                className="h-4 w-4 shrink-0 text-text-secondary"
-                              />
-                              <span className="min-w-0 flex-1 truncate text-sm text-text-primary">
-                                {option.name}
-                              </span>
-                              {selected ? (
-                                <Check
-                                  aria-hidden="true"
-                                  className="automatic-processing-selected-icon h-4 w-4 shrink-0"
-                                />
-                              ) : null}
-                            </button>
-                          )
-                        })}
-                        {!filteredTargets.length ? (
-                          <p className="px-3 py-6 text-center text-sm text-text-secondary">
-                            {translate('todo.no_matching_processing_target', '没有匹配的处理对象')}
-                          </p>
-                        ) : null}
-                      </div>
-                    </div>
-                  ) : null}
+                  </p>
                 </div>
-              </section>
 
-              <div className="space-y-2">
-                <label
-                  className="block text-sm font-medium text-text-primary"
-                  htmlFor="automatic-processing-prompt"
-                >
-                  {translate('todo.automatic_processing_prompt', '提示词（可选）')}
-                </label>
-                <Textarea
-                  aria-describedby="automatic-processing-prompt-hint"
-                  data-testid="automatic-processing-prompt"
-                  disabled={saving}
-                  id="automatic-processing-prompt"
-                  maxLength={100000}
-                  onChange={event => updateDraft({ prompt: event.target.value })}
-                  rows={4}
-                  value={draft.prompt}
+                <AutomaticProcessingTriggerFields
+                  draft={draft}
+                  updateDraft={updateDraft}
+                  selectTrigger={selectTrigger}
+                  locale={locale}
+                  translate={translate}
+                  hooks={hooks}
+                  hooksLoading={hooksLoading}
+                  hasIncomingHooks={Boolean(api.incomingHooks)}
+                  statuses={statuses}
                 />
-                <p
-                  className="text-xs leading-5 text-text-secondary"
-                  id="automatic-processing-prompt-hint"
-                >
+
+                <section className="space-y-2">
+                  <h3 className="text-sm font-medium text-text-primary">
+                    {translate('todo.assign_to', '交给')}
+                  </h3>
+                  <div
+                    className="grid grid-cols-3 gap-2"
+                    data-testid="automatic-processing-target-kinds"
+                  >
+                    {targetKinds.map(targetKind => {
+                      const selected = draft.targetKind === targetKind.kind
+                      const available = targetKind.options.length > 0
+                      const Icon = targetKind.icon
+                      return (
+                        <button
+                          aria-pressed={selected}
+                          className={`flex min-w-0 items-center gap-2 rounded-xl border px-3 py-2.5 text-left transition-colors ${
+                            selected
+                              ? 'automatic-processing-selected-soft'
+                              : available
+                                ? 'border-border hover:bg-muted/60'
+                                : 'cursor-not-allowed border-border/60'
+                          }`}
+                          data-testid={`automatic-processing-target-kind-${targetKind.kind}`}
+                          disabled={!available}
+                          key={targetKind.kind}
+                          onClick={() => {
+                            const firstTarget = targetKind.options[0]
+                            updateDraft({
+                              targetKind: targetKind.kind,
+                              targetId: firstTarget?.id ?? '',
+                            })
+                            setTargetPickerOpen(false)
+                            setTargetQuery('')
+                          }}
+                          type="button"
+                        >
+                          <Icon
+                            aria-hidden="true"
+                            className={`h-4 w-4 shrink-0 ${
+                              selected
+                                ? 'automatic-processing-selected-icon'
+                                : 'text-text-secondary'
+                            }`}
+                          />
+                          <span className="min-w-0">
+                            <strong
+                              className={`block truncate text-sm font-medium ${
+                                available ? 'text-text-primary' : 'text-text-muted'
+                              }`}
+                            >
+                              {targetKind.label}
+                            </strong>
+                            <span
+                              className={`block text-xs ${
+                                available ? 'text-text-secondary' : 'text-text-muted'
+                              }`}
+                            >
+                              {available
+                                ? locale === 'zh-CN'
+                                  ? `${targetKind.options.length} 个可用`
+                                  : `${targetKind.options.length} available`
+                                : translate('common.not_configured', '未配置')}
+                            </span>
+                          </span>
+                        </button>
+                      )
+                    })}
+                  </div>
+                  <div className="relative">
+                    <button
+                      aria-expanded={targetPickerOpen}
+                      aria-haspopup="listbox"
+                      className={`automatic-processing-selected flex min-h-[68px] w-full items-center gap-3 rounded-xl border px-4 py-3 text-left transition-shadow ${
+                        targetPickerOpen ? 'automatic-processing-picker-open' : ''
+                      }`}
+                      data-testid="automatic-processing-target"
+                      onClick={() => {
+                        setTargetPickerOpen(open => !open)
+                        setTargetQuery('')
+                      }}
+                      type="button"
+                    >
+                      <span className="automatic-processing-selected-avatar flex h-9 w-9 shrink-0 items-center justify-center rounded-lg">
+                        <SelectedTargetIcon aria-hidden="true" className="h-4 w-4" />
+                      </span>
+                      <span className="min-w-0 flex-1">
+                        <strong className="block truncate text-sm font-medium text-text-primary">
+                          {selectedTargetName}
+                        </strong>
+                        <span className="mt-0.5 block text-xs text-text-secondary">
+                          {targetKindLabel[draft.targetKind]}
+                        </span>
+                      </span>
+                      <ChevronDown
+                        aria-hidden="true"
+                        className={`h-4 w-4 shrink-0 text-text-muted transition-transform ${
+                          targetPickerOpen ? 'rotate-180' : ''
+                        }`}
+                      />
+                    </button>
+
+                    {targetPickerOpen ? (
+                      <div
+                        className="absolute inset-x-0 bottom-full z-20 mb-2 overflow-hidden rounded-xl border border-border bg-surface shadow-lg"
+                        data-testid="automatic-processing-target-picker"
+                      >
+                        <div className="border-b border-border p-2">
+                          <label className="!flex h-8 items-center gap-2 rounded-lg border border-border bg-background px-3 keyboard:focus-within:border-focus">
+                            <Search
+                              aria-hidden="true"
+                              className="h-4 w-4 shrink-0 text-text-muted"
+                            />
+                            <input
+                              autoFocus
+                              className="!h-auto !min-h-0 min-w-0 flex-1 !border-0 !bg-transparent !p-0 text-sm text-text-primary outline-none placeholder:text-text-muted"
+                              data-testid="automatic-processing-target-search"
+                              onChange={event => setTargetQuery(event.target.value)}
+                              placeholder={translate(
+                                'todo.search_processing_target',
+                                `搜索${targetKindLabel[draft.targetKind]}`
+                              )}
+                              value={targetQuery}
+                            />
+                          </label>
+                        </div>
+                        <div
+                          aria-label={translate('todo.processing_target', '处理对象')}
+                          className="max-h-52 overflow-y-auto p-2"
+                          role="listbox"
+                        >
+                          {filteredTargets.map(option => {
+                            const selected = draft.targetId === option.id
+                            return (
+                              <button
+                                aria-selected={selected}
+                                className="flex w-full items-center gap-3 rounded-lg px-2 py-2 text-left hover:bg-muted"
+                                data-testid={`automatic-processing-target-option-${draft.targetKind}-${option.id}`}
+                                key={option.id}
+                                onClick={() => {
+                                  updateDraft({ targetId: option.id })
+                                  setTargetPickerOpen(false)
+                                  setTargetQuery('')
+                                }}
+                                role="option"
+                                type="button"
+                              >
+                                <SelectedTargetIcon
+                                  aria-hidden="true"
+                                  className="h-4 w-4 shrink-0 text-text-secondary"
+                                />
+                                <span className="min-w-0 flex-1 truncate text-sm text-text-primary">
+                                  {option.name}
+                                </span>
+                                {selected ? (
+                                  <Check
+                                    aria-hidden="true"
+                                    className="automatic-processing-selected-icon h-4 w-4 shrink-0"
+                                  />
+                                ) : null}
+                              </button>
+                            )
+                          })}
+                          {!filteredTargets.length ? (
+                            <p className="px-3 py-6 text-center text-sm text-text-secondary">
+                              {translate(
+                                'todo.no_matching_processing_target',
+                                '没有匹配的处理对象'
+                              )}
+                            </p>
+                          ) : null}
+                        </div>
+                      </div>
+                    ) : null}
+                  </div>
+                </section>
+
+                <div className="space-y-2">
+                  <label
+                    className="block text-sm font-medium text-text-primary"
+                    htmlFor="automatic-processing-prompt"
+                  >
+                    {translate('todo.automatic_processing_prompt', '提示词（可选）')}
+                  </label>
+                  <Textarea
+                    aria-describedby="automatic-processing-prompt-hint"
+                    data-testid="automatic-processing-prompt"
+                    disabled={saving}
+                    id="automatic-processing-prompt"
+                    maxLength={100000}
+                    onChange={event => updateDraft({ prompt: event.target.value })}
+                    rows={4}
+                    value={draft.prompt}
+                  />
+                  <p
+                    className="text-xs leading-5 text-text-secondary"
+                    id="automatic-processing-prompt-hint"
+                  >
+                    {translate(
+                      'todo.automatic_processing_prompt_hint',
+                      '触发时发送给 AI，用于处理当前 Issue；留空按目标职责处理。'
+                    )}
+                  </p>
+                </div>
+
+                <p className="text-xs leading-5 text-text-secondary">
                   {translate(
-                    'todo.automatic_processing_prompt_hint',
-                    '触发时发送给 AI，用于处理当前 Issue；留空按目标职责处理。'
+                    'todo.automatic_processing_runner_hint',
+                    '执行时从项目的可用设备池中自动选择设备；同一 Issue 后续执行会优先继续使用原设备。'
                   )}
                 </p>
-              </div>
 
-              <p className="text-xs leading-5 text-text-secondary">
-                {translate(
-                  'todo.automatic_processing_runner_hint',
-                  '执行时从项目的可用设备池中自动选择设备；同一 Issue 后续执行会优先继续使用原设备。'
-                )}
-              </p>
-
-              {error ? (
-                <div className="collaboration-alert" role="alert">
-                  {error}
-                </div>
-              ) : null}
-            </fieldset>
+                {error ? (
+                  <div className="collaboration-alert" role="alert">
+                    {error}
+                  </div>
+                ) : null}
+              </fieldset>
+            </div>
 
             <AutomaticProcessingDialogFooter
               draft={draft}

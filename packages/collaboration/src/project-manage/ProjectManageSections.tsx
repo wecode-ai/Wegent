@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type { Dispatch, ReactNode, SetStateAction } from 'react'
+import { isImeComposingEvent } from '@wegent/chat-core/ime'
 import { isTagNameTooLong } from '../tagging'
 import type {
   ProjectManageExtensionContext,
@@ -73,7 +74,9 @@ export function ProjectTagsSection({
               value={newTag}
               aria-invalid={tooLong}
               onChange={event => setNewTag(event.target.value)}
-              onKeyDown={event => event.key === 'Enter' && void createTag()}
+              onKeyDown={event => {
+                if (event.key === 'Enter' && !isImeComposingEvent(event)) void createTag()
+              }}
               placeholder={host.translate('todo.tag_name_placeholder', '输入标签名称')}
               className="h-9 w-full rounded-lg border border-border bg-background px-3 text-sm text-text-primary outline-none keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-focus/70"
             />
@@ -83,7 +86,7 @@ export function ProjectTagsSection({
             data-testid="cloud-project-tag-create-confirm"
             disabled={!newTag.trim() || tooLong || tagBusy}
             onClick={() => void createTag()}
-            className="h-9 self-end rounded-lg bg-text-primary px-3.5 text-sm text-background outline-none keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-focus/70 disabled:opacity-40"
+            className="h-9 self-end rounded-lg bg-text-primary px-3.5 text-sm text-background outline-none keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-focus/70 disabled:bg-text-primary disabled:text-background disabled:opacity-40"
           >
             {host.translate('todo.create_tag', '新建标签')}
           </button>
@@ -110,7 +113,9 @@ export function ProjectTagsSection({
                 aria-label={host.translate('todo.tag_name', '标签名称')}
                 aria-invalid={renameTooLong}
                 onChange={event => setRenameValue(event.target.value)}
-                onKeyDown={event => event.key === 'Enter' && void renameTag(tag)}
+                onKeyDown={event => {
+                  if (event.key === 'Enter' && !isImeComposingEvent(event)) void renameTag(tag)
+                }}
                 className="h-6 w-28 rounded bg-transparent px-1 text-sm outline-none keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-focus/70"
               />
               {host.renderTooltip({
