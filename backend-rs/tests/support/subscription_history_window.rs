@@ -110,7 +110,7 @@ pub(super) async fn assert_store_windows(
                 );
                 store
                     .create_subtasks_with_executor(
-                        &mut tx,
+                        tx,
                         &CreateSubtasksRequest {
                             user_subtask,
                             assistant_subtask,

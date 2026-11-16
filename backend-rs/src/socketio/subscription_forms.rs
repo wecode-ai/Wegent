@@ -46,7 +46,7 @@ pub(super) async fn pending_form_on(
             })
             .collect::<brz_mysql::MysqlResult<Vec<_>>>()?;
         // The outer join deliberately avoids sorting large blocks in MySQL.
-        candidates.sort_by(|left, right| (right.0, right.1).cmp(&(left.0, left.1)));
+        candidates.sort_by_key(|candidate| std::cmp::Reverse((candidate.0, candidate.1)));
         let last = candidates.last().expect("nonempty candidate page");
         after = Some((last.0, last.1));
         for (_, _, blocks) in candidates {
