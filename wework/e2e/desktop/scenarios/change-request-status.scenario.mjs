@@ -4,7 +4,7 @@ import { chmod, mkdir, readFile, writeFile } from 'node:fs/promises'
 import { delimiter, join } from 'node:path'
 import { promisify } from 'node:util'
 import { waitForAttribute } from '../modules/workspace-flows.mjs'
-import { selectE2EModel } from '../modules/shared.mjs'
+import { selectE2EModel, waitForLogPattern } from '../modules/shared.mjs'
 import { requestExecutor } from '../modules/executor-rpc.mjs'
 
 const execFileAsync = promisify(execFile)
@@ -263,6 +263,7 @@ async function refreshEnvironment(control) {
 export async function createDesktopScenario({
   captureScreenshot,
   homePath,
+  resultDir,
   uiTimeoutMs,
   workspacePath,
 }) {
@@ -381,6 +382,8 @@ export async function createDesktopScenario({
     async verify(control) {
       await createLocalProject(control, workspacePath, uiTimeoutMs)
       await selectE2EModel(control, undefined, undefined, ACTIVE_WORKBENCH_SELECTOR)
+      const executorLogPath = join(resultDir, 'executor.log')
+      const observerLogOffset = (await readFile(executorLogPath, 'utf8')).length
       const monitorRegistrationWindowStartedAt = Date.now()
       await control.command('fill', '[data-testid="chat-message-input"]', {
         value: TASK_PROMPT,
@@ -438,8 +441,30 @@ export async function createDesktopScenario({
       )
       await capture(control, 'change-request-status-02-pending.png')
 
+      // Branch discovery can render before the first shared observer has finished collecting.
+      // Establish the baseline only after that original activation has completed.
+      const observerLog = await waitForLogPattern(
+        executorLogPath,
+        /app IPC request finished .*command_key=connection_observer_start .*ok=true/,
+        { fromOffset: observerLogOffset, timeoutMs: uiTimeoutMs }
+      )
+      const countObserverStarts = log =>
+        [
+          ...log
+            .slice(observerLogOffset)
+            .matchAll(/app IPC request started .*command_key=connection_observer_start/g),
+        ].length
+      assert.equal(
+        countObserverStarts(observerLog),
+        1,
+        'The first visible PR/MR resource started more than one shared observer'
+      )
       const scheduledRefreshCutoff =
         monitorRegistrationWindowStartedAt + CHANGE_REQUEST_REFRESH_INTERVAL_MS
+      assert.ok(
+        Date.now() < scheduledRefreshCutoff,
+        'The first shared observation did not settle before the scheduled refresh'
+      )
       const initialQueries = (await queryTimestamps(queryLogPath)).filter(
         timestamp => timestamp < scheduledRefreshCutoff
       )
@@ -456,12 +481,21 @@ export async function createDesktopScenario({
         timeoutMs: uiTimeoutMs,
       })
       await new Promise(resolve => setTimeout(resolve, 500))
+      assert.ok(
+        Date.now() < scheduledRefreshCutoff,
+        'The equivalent refresh was not observed before the scheduled refresh'
+      )
       assert.equal(
         (await queryTimestamps(queryLogPath)).filter(
           timestamp => timestamp < scheduledRefreshCutoff
         ).length,
         initialQueries.length,
         'An equivalent runtime task refresh repeated the PR/MR lookup'
+      )
+      assert.equal(
+        countObserverStarts(await readFile(executorLogPath, 'utf8')),
+        1,
+        'An equivalent runtime task refresh restarted the shared PR/MR observer'
       )
       await control.command('click', ENVIRONMENT_BUTTON)
       await control.command('waitFor', '[data-testid="environment-info-popover"]')

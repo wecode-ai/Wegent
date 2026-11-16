@@ -39,6 +39,7 @@ export function createDesktopScenario(options) {
     electronUserDataDirectory,
     workspacePath,
     uiTimeoutMs,
+    modelResponseTimeoutMs,
     workbenchReadyTimeoutMs,
     captureScreenshot,
     restartDesktopApp,
@@ -146,10 +147,24 @@ export function createDesktopScenario(options) {
           })
           await control.command('waitFor', ACTIVE_SEND_BUTTON_SELECTOR, { enabled: true })
           await control.command('press', ACTIVE_COMPOSER_SELECTOR, { key: 'Enter' })
+          if (phase === 'human') {
+            assert.ok(originalAddress)
+            await waitForValue(
+              () => rpc(control, 'runtime.tasks.get', { address: originalAddress }),
+              result => result.task.interactionStatus === 'awaitingUserReply',
+              'The real native question must be pending before the human-wait story proceeds',
+              modelResponseTimeoutMs
+            )
+            await control.command(
+              'waitFor',
+              `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="request-user-input-card"]`,
+              { timeoutMs: modelResponseTimeoutMs }
+            )
+          }
           await control.command(
             'waitFor',
             `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="message-assistant"]`,
-            { text: `${MARKER}_${phase}_WAITING` }
+            { text: `${MARKER}_${phase}_WAITING`, timeoutMs: modelResponseTimeoutMs }
           )
           await control.command('waitFor', '[data-testid="connection-event-status"]', {
             text: '发布文档',
@@ -165,7 +180,7 @@ export function createDesktopScenario(options) {
             getTask,
             result => !result.task.running,
             'Subscription setup must finish its model turn',
-            uiTimeoutMs
+            modelResponseTimeoutMs
           )
           if (phase === 'human') await human.prepare(control, getTask)
           const requestsBefore = modelRequests
