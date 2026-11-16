@@ -4,7 +4,7 @@
 
 import '@testing-library/jest-dom'
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
-import type { ReactNode } from 'react'
+import { cloneElement, type ReactNode } from 'react'
 
 import BotEdit from '@/features/settings/components/BotEdit'
 import { botApis } from '@/apis/bots'
@@ -258,26 +258,35 @@ async function renderBotEdit(
   const onClose = jest.fn()
   const toast = jest.fn()
 
+  const form = (
+    <BotEdit
+      bots={[bot]}
+      setBots={setBots}
+      editingBotId={!props.mode || props.mode === 'edit' ? 7 : 0}
+      cloningBot={props.mode === 'clone' ? bot : null}
+      onClose={onClose}
+      toast={toast}
+      scope={props.scope || 'personal'}
+      groupName={props.groupName}
+      teamId={props.teamId}
+      targetGroupNames={props.targetGroupNames}
+      modelCategoryType={props.modelCategoryType}
+      allowGenerationPrimaryModel={props.allowGenerationPrimaryModel}
+    />
+  )
+  let view: ReturnType<typeof render>
   await act(async () => {
-    render(
-      <BotEdit
-        bots={[bot]}
-        setBots={setBots}
-        editingBotId={!props.mode || props.mode === 'edit' ? 7 : 0}
-        cloningBot={props.mode === 'clone' ? bot : null}
-        onClose={onClose}
-        toast={toast}
-        scope={props.scope || 'personal'}
-        groupName={props.groupName}
-        teamId={props.teamId}
-        targetGroupNames={props.targetGroupNames}
-        modelCategoryType={props.modelCategoryType}
-        allowGenerationPrimaryModel={props.allowGenerationPrimaryModel}
-      />
-    )
+    view = render(form)
   })
 
-  return { setBots, onClose, toast }
+  return {
+    setBots,
+    onClose,
+    toast,
+    changeGroupName: async (groupName: string) => {
+      await act(async () => view.rerender(cloneElement(form, { groupName })))
+    },
+  }
 }
 
 describe('BotEdit default knowledge bases', () => {
@@ -972,6 +981,10 @@ describe('BotEdit default knowledge bases', () => {
       }
     )
 
+    const modelSelect = await screen.findByTestId('bot-default-model-select')
+    await waitFor(() => expect(modelSelect).toBeEnabled())
+    fireEvent.click(modelSelect)
+    fireEvent.click(await screen.findByTestId('model-option-gpt-4-1'))
     fireEvent.click(screen.getByTestId('save-button'))
 
     await waitFor(() => {
@@ -1037,12 +1050,126 @@ describe('BotEdit default knowledge bases', () => {
         7,
         expect.objectContaining({
           team_id: 77,
-          model_id: 78,
+          model_id: null,
           secondary_model_id: 79,
         })
       )
     })
   })
+
+  test.each([false, true])(
+    'distinguishes restored private secondary bindings from explicit same-name selections (%s)',
+    async selectPublicModel => {
+      mockedGetUnifiedModels.mockResolvedValue({
+        data: [
+          {
+            id: 78,
+            name: 'seedance-video',
+            type: 'public',
+            namespace: 'default',
+            modelCategoryType: 'video',
+          },
+          {
+            id: 79,
+            name: 'owner-private-llm',
+            type: 'public',
+            namespace: 'default',
+            modelCategoryType: 'llm',
+          },
+        ],
+      })
+      const editor = await renderBotEdit(
+        {
+          shell_name: 'Chat',
+          shell_type: 'Chat',
+          agent_config: {
+            bind_model: 'seedance-video',
+            bind_model_type: 'public',
+            bind_model_namespace: 'default',
+          },
+          secondary_model_name: 'owner-private-llm',
+          secondary_model_namespace: 'default',
+        },
+        {
+          scope: 'group',
+          groupName: 'engineering',
+          teamId: 77,
+          targetGroupNames: ['engineering'],
+          modelCategoryType: 'video',
+        }
+      )
+      const secondarySelect = await screen.findByTestId('bot-secondary-model-select')
+      await waitFor(() => expect(secondarySelect).toBeEnabled())
+      if (selectPublicModel) {
+        fireEvent.click(secondarySelect)
+        fireEvent.click(await screen.findByTestId('model-option-owner-private-llm'))
+        await editor.changeGroupName('engineering-refresh')
+        await waitFor(() => expect(secondarySelect).toBeEnabled())
+      }
+      fireEvent.change(screen.getByPlaceholderText('common:bot.prompt_placeholder'), {
+        target: { value: 'Updated prompt without changing the saved binding.' },
+      })
+      fireEvent.click(screen.getByTestId('save-button'))
+      await waitFor(() => {
+        expect(mockedUpdateBot).toHaveBeenCalledWith(
+          7,
+          expect.objectContaining({
+            model_id: null,
+            secondary_model_name: 'owner-private-llm',
+            secondary_model_namespace: 'default',
+            secondary_model_id: selectPublicModel ? 79 : null,
+            system_prompt: 'Updated prompt without changing the saved binding.',
+          })
+        )
+      })
+    }
+  )
+
+  test.each([false, true])(
+    'distinguishes restored private primary bindings from explicit same-name selections (%s)',
+    async selectPublicModel => {
+      mockedGetUnifiedModels.mockResolvedValue({
+        data: [
+          {
+            id: 79,
+            name: 'same-name',
+            type: 'public',
+            namespace: 'default',
+            modelCategoryType: 'llm',
+          },
+        ],
+      })
+      await renderBotEdit(
+        {
+          agent_config: {
+            bind_model: 'same-name',
+            bind_model_type: 'user',
+            bind_model_namespace: 'default',
+          },
+        },
+        { scope: 'group', groupName: 'engineering', teamId: 77 }
+      )
+      const modelSelect = await screen.findByTestId('bot-default-model-select')
+      await waitFor(() => expect(modelSelect).toBeEnabled())
+      if (selectPublicModel) {
+        fireEvent.click(modelSelect)
+        fireEvent.click(await screen.findByTestId('model-option-same-name'))
+      }
+      fireEvent.click(screen.getByTestId('save-button'))
+      await waitFor(() => {
+        expect(mockedUpdateBot).toHaveBeenCalledWith(
+          7,
+          expect.objectContaining({
+            model_id: selectPublicModel ? 79 : null,
+            agent_config: expect.objectContaining({
+              bind_model: 'same-name',
+              bind_model_type: selectPublicModel ? 'public' : 'user',
+            }),
+          })
+        )
+      })
+    }
+  )
 
   test('preserves an existing model binding when the model is hidden from selection', async () => {
     mockedGetUnifiedModels.mockResolvedValue({

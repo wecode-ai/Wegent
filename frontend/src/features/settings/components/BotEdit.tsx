@@ -176,6 +176,7 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
     string | undefined
   >(undefined)
   const [selectedSecondaryModelId, setSelectedSecondaryModelId] = useState<number | null>(null)
+  const modelSelectionChanged = useRef({ primary: false, secondary: false })
   const [selectedProtocol, setSelectedProtocol] = useState('')
   // Whether to restrict available models (allowed_models whitelist)
   const [restrictModels, setRestrictModels] = useState(false)
@@ -322,6 +323,9 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
   const updateAgentName = useCallback(
     (value: string) => {
       if (value !== agentName) {
+        modelSelectionChanged.current = { primary: true, secondary: true }
+        setSelectedModelId(null)
+        setSelectedSecondaryModelId(null)
         resetAgentDependentConfig()
 
         // Adapt MCP config when switching agent type.
@@ -513,7 +517,7 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
         const agentMatches = baseBotShellName === agentName
         const isPredefined = hasConfig && isPredefinedModel(baseBot.agent_config)
 
-        if (hasConfig && agentMatches && isPredefined) {
+        if (hasConfig && agentMatches && isPredefined && !modelSelectionChanged.current.primary) {
           const savedModelName = getModelFromConfig(baseBot.agent_config)
           const savedModelType = getModelTypeFromConfig(baseBot.agent_config)
           const savedModelNamespace = getModelNamespaceFromConfig(baseBot.agent_config)
@@ -527,7 +531,8 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
             setSelectedModel(savedModelName)
             setSelectedModelType(foundModel?.type ?? savedModelType)
             setSelectedModelNamespace(foundModel?.namespace || savedModelNamespace || 'default')
-            setSelectedModelId(foundModel?.id ?? null)
+            // Restoring a saved reference is not an explicit catalog selection.
+            setSelectedModelId(null)
           } else {
             setSelectedModel('')
             setSelectedModelType(undefined)
@@ -542,13 +547,12 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
             model.name === baseBot?.secondary_model_name &&
             (model.namespace || 'default') === (baseBot?.secondary_model_namespace || 'default')
         )
-        if (baseBot?.secondary_model_name) {
+        if (baseBot?.secondary_model_name && !modelSelectionChanged.current.secondary) {
           setSelectedSecondaryModel(baseBot.secondary_model_name)
           setSelectedSecondaryModelType(secondaryModel?.type)
-          setSelectedSecondaryModelNamespace(
-            secondaryModel?.namespace || baseBot.secondary_model_namespace || 'default'
-          )
-          setSelectedSecondaryModelId(secondaryModel?.id ?? null)
+          setSelectedSecondaryModelNamespace(baseBot.secondary_model_namespace || 'default')
+          // Catalog metadata is for display; it cannot identify the owner's saved binding.
+          setSelectedSecondaryModelId(null)
         }
         // Note: Don't clear selectedModel here if agent changed,
         // as it's already cleared in the agent select onChange handler
@@ -592,6 +596,8 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
 
   // Reset base form when switching editing object
   useEffect(() => {
+    modelSelectionChanged.current = { primary: false, secondary: false }
+    setSelectedModelId(null)
     setBotName(baseBot?.name || '')
     // Use shell_name for the selected shell, fallback to shell_type for backward compatibility
     setAgentName(baseBot?.shell_name || baseBot?.shell_type || '')
@@ -1371,11 +1377,13 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
                       specialOptions={videoPrimaryRequired ? [] : noModelOption}
                       labels={modelCascadeLabels}
                       onSelectModel={model => {
+                        modelSelectionChanged.current.primary = true
                         setSelectedModel(model.name)
                         setSelectedModelType(model.type)
                         setSelectedModelNamespace(model.namespace || 'default')
                         setSelectedModelId(model.id ?? null)
                         if (model.modelCategoryType !== 'video') {
+                          modelSelectionChanged.current.secondary = true
                           setSelectedSecondaryModel('')
                           setSelectedSecondaryModelType(undefined)
                           setSelectedSecondaryModelNamespace(undefined)
@@ -1383,6 +1391,7 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
                         }
                       }}
                       onSelectSpecialOption={() => {
+                        modelSelectionChanged.current = { primary: true, secondary: true }
                         setSelectedModel('')
                         setSelectedModelType(undefined)
                         setSelectedModelNamespace(undefined)
@@ -1531,12 +1540,14 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
                     specialOptions={[]}
                     labels={modelCascadeLabels}
                     onSelectModel={model => {
+                      modelSelectionChanged.current.secondary = true
                       setSelectedSecondaryModel(model.name)
                       setSelectedSecondaryModelType(model.type)
                       setSelectedSecondaryModelNamespace(model.namespace || 'default')
                       setSelectedSecondaryModelId(model.id ?? null)
                     }}
                     onSelectSpecialOption={() => {
+                      modelSelectionChanged.current.secondary = true
                       setSelectedSecondaryModel('')
                       setSelectedSecondaryModelType(undefined)
                       setSelectedSecondaryModelNamespace(undefined)

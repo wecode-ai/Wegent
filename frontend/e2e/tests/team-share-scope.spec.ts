@@ -10,7 +10,11 @@ import { buildStorageState, getJwtExpiryMs } from '../utils/auth-state'
 import { ApiClient, createApiClient } from '../utils/api-client'
 import { deleteDedicatedBotModel } from '../utils/cleanup-dedicated-bot-model'
 import { assertShellRecoveryPermission } from '../utils/shell-recovery-permission'
-import { assertLeaderReloadOnReopen, readTeamDetail } from '../utils/group-agent-editor'
+import {
+  assertCatalogSelectionIds,
+  assertLeaderReloadOnReopen,
+  readTeamDetail,
+} from '../utils/group-agent-editor'
 import { DataBuilders } from '../fixtures/data-builders'
 import type { User } from '../../src/types/api'
 import type { Group } from '../../src/types/group'
@@ -833,6 +837,24 @@ test.describe('Agent share scope', () => {
       })
       expect(browserSaved.system_prompt).toBe('Browser retains the private model.')
       expect(browserSaved.secondary_model_name).toBe(ownerModelName)
+
+      await assertCatalogSelectionIds(
+        page,
+        fixture.groupTeamId,
+        fixture.groupTeamBotId,
+        { name: ownerModelName, id: publicModelIds[0] },
+        { name: publicModelName, id: publicModelIds[1] },
+        readSelection
+      )
+      expect((await readSelection()).agent_config).toMatchObject({
+        bind_model: publicModelName,
+        bind_model_type: 'public',
+      })
+      const restored = await fixture.ownerApi.put(botPath, {
+        agent_config: { bind_model: ownerModelName, bind_model_type: 'user' },
+        secondary_model_name: ownerModelName,
+      })
+      expect(restored.status, JSON.stringify(restored.data)).toBe(200)
 
       const retained = await fixture.developerApi.put(botPath, {
         team_id: fixture.groupTeamId,
