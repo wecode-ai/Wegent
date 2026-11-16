@@ -211,7 +211,7 @@ export async function verifyCloudDeviceLifecycleFlow(control, cloud) {
       /短暂离线|briefly go offline/i,
       'The forced request did not show the temporary offline reminder'
     )
-    assert.equal(await restart.accepted, MANAGED_CLOUD_SANDBOX_ID)
+    assert.equal((await cloud.waitForSandboxRestartRequest()).sandboxId, MANAGED_CLOUD_SANDBOX_ID)
     assert.equal(cloud.sandboxRestartRequestCount(), 1)
     console.log('[cloud-device-lifecycle] Version badge confirmed a forced sandbox restart')
     await assert.rejects(control.command('click', terminalButton), /disabled/)

@@ -309,13 +309,13 @@ class LocalNevisSandboxService {
   async handle(request, response) {
     const url = new URL(request.url ?? '/', this.endpoint)
     const nevisRestart = url.pathname.match(
-      /^\/apis\/sandboxes\/v1\/managers\/[^/]+\/sandboxes\/([^/]+)\/restart$/
+      /^\/apis\/sandboxes\/v1\/managers\/([^/]+)\/sandboxes\/([^/]+)\/restart$/
     )
     const publicRestart = url.pathname.match(/^\/e2e\/sandboxes\/([^/]+)\/restart$/)
     const match = nevisRestart ?? publicRestart
     if (request.method === 'POST' && match) {
       request.resume()
-      const sandboxId = decodeURIComponent(match[1])
+      const sandboxId = decodeURIComponent(nevisRestart ? nevisRestart[2] : match[1])
       if (this.onRestart) {
         this.onRestart(sandboxId)
       } else if (publicRestart) {
@@ -323,7 +323,10 @@ class LocalNevisSandboxService {
         response.end()
         return
       }
-      this.restartRequests.push(sandboxId)
+      this.restartRequests.push({
+        managerId: nevisRestart ? decodeURIComponent(nevisRestart[1]) : null,
+        sandboxId,
+      })
       this.sendJson(response, { id: sandboxId, status: 'restarting' })
       return
     }
@@ -334,6 +337,17 @@ class LocalNevisSandboxService {
     }
     response.writeHead(404)
     response.end()
+  }
+
+  async waitForRestartRequest(afterCount) {
+    const startedAt = Date.now()
+    while (Date.now() - startedAt < DEFAULT_STEP_TIMEOUT_MS) {
+      if (this.restartRequests.length > afterCount) {
+        return this.restartRequests[afterCount]
+      }
+      await new Promise(resolvePromise => setTimeout(resolvePromise, 50))
+    }
+    throw new Error('The local Nevis service did not receive a restart request')
   }
 
   async stop() {
@@ -1403,16 +1417,13 @@ class RealCloudEnvironment {
   armSandboxRestart() {
     const start = Promise.withResolvers()
     const proceed = Promise.withResolvers()
-    const accepted = Promise.withResolvers()
     const pending = {
       start,
       proceed,
-      accepted,
       complete: null,
     }
     this.pendingSandboxRestart = pending
     return {
-      accepted: accepted.promise,
       allowShutdown: start.resolve,
       allowStartup: proceed.resolve,
       async finish() {
@@ -1430,7 +1441,6 @@ class RealCloudEnvironment {
     pending.complete = this.cycleSandboxExecutors(pending)
     // The flow awaits the process transition after observing the UI.
     void pending.complete.catch(() => {})
-    pending.accepted.resolve(sandboxId)
   }
 
   async cycleSandboxExecutors({ start, proceed }) {
@@ -1450,6 +1460,10 @@ class RealCloudEnvironment {
 
   sandboxRestartRequestCount() {
     return this.nevisSandboxService.restartRequests.length
+  }
+
+  async waitForSandboxRestartRequest() {
+    return this.nevisSandboxService.waitForRestartRequest(0)
   }
 
   async startGeneratedRemoteDevice({
