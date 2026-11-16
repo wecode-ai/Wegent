@@ -2621,11 +2621,11 @@ source = ${JSON.stringify(staleBundledMarketplacePath)}`
     )
     await control.command('waitFor', secondaryProjectRowSelector, {
       text: 'secondary-project',
-      timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+      timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
     })
     await control.command('waitFor', '[data-testid="project-work-button"]', {
       text: 'secondary-project',
-      timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+      timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
     })
 
     phase = 'composer-project-folder-select'
