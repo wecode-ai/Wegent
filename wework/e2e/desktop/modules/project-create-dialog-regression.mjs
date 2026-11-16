@@ -26,6 +26,31 @@ export async function assertProjectCreateActionHit(control, selector) {
   assert.ok(metrics.left >= 0 && metrics.right <= metrics.viewportWidth)
 }
 
+async function verifyProjectCreateFocusRestoration(control, scoped) {
+  const nameInput = scoped(testId('collaboration-project-name-input'))
+  const opener = scoped(testId('collaboration-workspace-project-create'))
+  const draftName = await control.command('getValue', nameInput)
+  await control.command('nativePress', nameInput, { key: 'Escape' })
+  await control.command('waitFor', DIALOG, { visible: false })
+  await control.command('nativePress', opener, { key: 'Enter' })
+  await control.command('waitFor', DIALOG, { visible: true })
+  assert.equal(
+    await control.command('getActiveElementTestId', 'body'),
+    'collaboration-project-name-input',
+    'Opening project creation with the keyboard must initially focus the name'
+  )
+  await control.command('nativePress', nameInput, { key: 'Escape' })
+  await control.command('waitFor', DIALOG, { visible: false })
+  assert.equal(
+    await control.command('getActiveElementTestId', 'body'),
+    'collaboration-workspace-project-create',
+    'Closing project creation with Escape must restore focus to its opener'
+  )
+  await control.command('nativePress', opener, { key: 'Enter' })
+  await control.command('waitFor', DIALOG, { visible: true })
+  await control.command('fill', nameInput, { value: draftName })
+}
+
 export async function verifyProjectCreateDialogUi(control, scoped) {
   const previousSize = await control.command('setMainWindowSize', 'body', {
     value: JSON.stringify({ width: 1024, height: 768 }),
@@ -156,6 +181,7 @@ export async function verifyProjectCreateDialogUi(control, scoped) {
       control,
       scoped(testId('collaboration-project-create-confirm'))
     )
+    await verifyProjectCreateFocusRestoration(control, scoped)
   } finally {
     await control.command('setMainWindowSize', 'body', { value: previousSize })
   }

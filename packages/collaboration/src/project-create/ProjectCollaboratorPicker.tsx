@@ -118,6 +118,7 @@ export function ProjectCollaboratorPicker({
           collisionPadding={8}
           className={`${theme.className ?? ''} collaboration-project-create-collaborator-menu`}
           data-testid="collaboration-project-create-collaborator-menu"
+          aria-label={labels.addCollaborator}
         >
           <div className="collaboration-project-collaborator-picker">
             <label className="collaboration-project-collaborator-search">

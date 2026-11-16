@@ -137,6 +137,9 @@ it('explains empty categories separately from a search with no matches', async (
     )
   )
   const menu = () => get('collaboration-project-create-collaborator-menu').textContent
+  expect(get('collaboration-project-create-collaborator-menu').getAttribute('aria-label')).toBe(
+    labels.addCollaborator
+  )
   expect(menu()).toContain(labels.noAvailablePeople)
   expect(menu()).toContain(labels.collaboratorsOptionalHint)
   await click('collaboration-project-create-collaborator-tab-agents')
