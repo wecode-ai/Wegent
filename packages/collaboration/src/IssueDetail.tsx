@@ -51,6 +51,7 @@ type Messages =
   | (typeof collaborationMessages)["en"];
 
 interface IssueDetailProps {
+  commentBoard?: import("./issue-detail/issueCommentActions").IssueCommentBoardContext;
   api: Pick<
     SharedWorkspaceApi,
     | "activity"
@@ -199,6 +200,7 @@ export function IssueDetail(props: IssueDetailProps) {
 }
 
 function BrowserIssueDetail({
+  commentBoard,
   api,
   project,
   issue,
@@ -283,6 +285,7 @@ function BrowserIssueDetail({
           <SharedIssueDetailEditor
             port={port}
             mode="edit"
+            commentBoard={commentBoard}
             item={issue as SharedEditorIssue}
             editable={permissions.canEdit}
             project={project as SharedEditorProject}
@@ -323,8 +326,13 @@ function BrowserIssueDetail({
                   filename,
                 });
               },
-              renderActivity: ({ tasks, commentAssignment }) => (
+              renderActivity: ({
+                tasks,
+                commentAssignment,
+                commentActions,
+              }) => (
                 <IssueActivityPanel
+                  commentActions={commentActions}
                   commentAssignment={commentAssignment}
                   api={api}
                   issue={issue}
