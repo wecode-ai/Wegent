@@ -30,95 +30,128 @@ export async function seedInstalledRelease({ data, appBinary, version, id = 'ins
 }
 
 /** Exercise the delivered bootstrap, real IPC/preload, and recovery window. */
-export async function verifyStartupFaultIsolation({ appBinary, environment, resultDir, version }) {
-  for (const fault of ['invalid-release', 'mismatched-host', 'missing-profile']) {
-    const root = join(resultDir, 'startup-fault-isolation', fault)
-    const data = join(root, 'user-data')
-    const {
-      releases,
-      descriptor,
-      descriptorPath,
-      original: validDescriptor,
-    } = await seedInstalledRelease({
-      data,
-      appBinary,
-      version: fault === 'mismatched-host' ? '0.0.0' : version,
-    })
-    const credentials = join(data, 'cloud-credentials.json')
-    const saved = 'synthetic-credential-must-remain-unchanged'
-    await writeFile(credentials, saved)
-    const original = fault === 'invalid-release' ? '{broken-release' : validDescriptor
-    await writeFile(descriptorPath, original)
-    const evidencePath = join(resultDir, `startup-fault-${fault}.json`)
-    const child = spawn(
-      appBinary,
-      resolveElectronLaunchArguments({
-        extraArguments: ['--inspect-brk=127.0.0.1:0'],
-      }),
-      {
-        env: {
-          ...environment,
-          WEWORK_USER_DATA_DIR: data,
-          WEWORK_RELEASE_ROOT: releases,
-          WEWORK_RELEASE_SUPERVISED: descriptor.id,
-          WEWORK_RELEASE_RECOVERY: '',
-          WEWORK_E2E_RELEASE_FAILURE_VERSION: '',
-          WEWORK_E2E_CONTROL_URL: '',
-          WEWORK_E2E_BACKGROUND_WINDOW: '0',
-        },
-        detached: process.platform !== 'win32',
-        stdio: ['ignore', 'pipe', 'pipe'],
-      }
-    )
-    let output = ''
-    child.stdout.on('data', chunk => {
-      output += chunk
-    })
-    child.stderr.on('data', chunk => {
-      output += chunk
-    })
-    const ended = new Promise((accept, reject) => {
-      child.once('error', reject)
-      // Chromium descendants can retain output pipes after the host has exited.
-      child.once('exit', (code, signal) => {
-        output += `\n[recovery-probe] exit ${JSON.stringify({ code, signal, at: Date.now() })}\n`
-        accept({ code, signal })
-      })
-    })
-    try {
-      await inspectBeforeStart(child, recoveryWindowAssertion(evidencePath))
-      const exit = await Promise.race([
-        ended,
-        new Promise((_, reject) => {
-          const timer = setTimeout(
-            () =>
-              reject(
-                new Error(
-                  `Recovery window verification timed out (exitCode=${child.exitCode}, signalCode=${child.signalCode})`
-                )
-              ),
-            15_000
-          )
-          timer.unref()
-        }),
-      ])
-      assert.deepEqual(exit, { code: 0, signal: null }, output)
-      const result = JSON.parse(await readFile(evidencePath, 'utf8'))
-      assert.equal(result.error, undefined, result.error)
-      assert.equal(result.visible, true)
-      assert.equal(result.retryEnabled, true)
-      assert.equal(result.reopened, true)
-      assert.equal(result.state.ready, false, 'Recovery must not certify a healthy release')
-      assert.ok(result.state.error)
-      assert.equal(await readFile(credentials, 'utf8'), saved)
-      assert.equal(await readFile(descriptorPath, 'utf8'), original)
-    } catch (error) {
-      await captureStartupNativeStack(child)
-      throw error
-    } finally {
-      await stopProcessGroup(child)
-      await writeFile(join(resultDir, `startup-fault-${fault}.log`), output)
+export async function verifyStartupFaultIsolation(input) {
+  // Temporary Linux stress diagnosis: stop on the first failing native shutdown.
+  const iterations = process.platform === 'linux' ? 10 : 1
+  const ptraceScope =
+    process.platform === 'linux'
+      ? await readFile('/proc/sys/kernel/yama/ptrace_scope', 'utf8').then(
+          value => value.trim(),
+          error => ({ unavailable: error.code })
+        )
+      : null
+  for (let iteration = 1; iteration <= iterations; iteration += 1) {
+    for (const fault of ['invalid-release', 'mismatched-host', 'missing-profile']) {
+      await verifyStartupFault({ ...input, fault, iteration, iterations, ptraceScope })
     }
+  }
+}
+
+async function verifyStartupFault({
+  appBinary,
+  environment,
+  resultDir,
+  version,
+  fault,
+  iteration,
+  iterations,
+  ptraceScope,
+}) {
+  const name = iteration === 1 ? fault : `${fault}-iteration-${iteration}`
+  const root = join(resultDir, 'startup-fault-isolation', name)
+  const data = join(root, 'user-data')
+  const {
+    releases,
+    descriptor,
+    descriptorPath,
+    original: validDescriptor,
+  } = await seedInstalledRelease({
+    data,
+    appBinary,
+    version: fault === 'mismatched-host' ? '0.0.0' : version,
+  })
+  const credentials = join(data, 'cloud-credentials.json')
+  const saved = 'synthetic-credential-must-remain-unchanged'
+  await writeFile(credentials, saved)
+  const original = fault === 'invalid-release' ? '{broken-release' : validDescriptor
+  await writeFile(descriptorPath, original)
+  const evidencePath = join(resultDir, `startup-fault-${name}.json`)
+  const startedAt = Date.now()
+  const child = spawn(
+    appBinary,
+    resolveElectronLaunchArguments({
+      extraArguments: ['--inspect-brk=127.0.0.1:0'],
+    }),
+    {
+      env: {
+        ...environment,
+        WEWORK_USER_DATA_DIR: data,
+        WEWORK_RELEASE_ROOT: releases,
+        WEWORK_RELEASE_SUPERVISED: descriptor.id,
+        WEWORK_RELEASE_RECOVERY: '',
+        WEWORK_E2E_RELEASE_FAILURE_VERSION: '',
+        WEWORK_E2E_CONTROL_URL: '',
+        WEWORK_E2E_BACKGROUND_WINDOW: '0',
+      },
+      detached: process.platform !== 'win32',
+      stdio: ['ignore', 'pipe', 'pipe'],
+    }
+  )
+  const identity = { fault, iteration, iterations, pid: child.pid, startedAt, ptraceScope }
+  let output = `[recovery-probe] case-start ${JSON.stringify(identity)}\n`
+  child.stdout.on('data', chunk => {
+    output += chunk
+  })
+  child.stderr.on('data', chunk => {
+    output += chunk
+  })
+  const ended = new Promise((accept, reject) => {
+    child.once('error', reject)
+    // Chromium descendants can retain output pipes after the host has exited.
+    child.once('exit', (code, signal) => {
+      output += `\n[recovery-probe] exit ${JSON.stringify({ code, signal, at: Date.now() })}\n`
+      accept({ code, signal })
+    })
+  })
+  try {
+    console.info('[recovery-probe] case-start', JSON.stringify(identity))
+    await inspectBeforeStart(child, recoveryWindowAssertion(evidencePath))
+    const exit = await Promise.race([
+      ended,
+      new Promise((_, reject) => {
+        const timer = setTimeout(
+          () =>
+            reject(
+              new Error(
+                `Recovery window verification timed out (exitCode=${child.exitCode}, signalCode=${child.signalCode})`
+              )
+            ),
+          15_000
+        )
+        timer.unref()
+      }),
+    ])
+    assert.deepEqual(exit, { code: 0, signal: null }, output)
+    const result = JSON.parse(await readFile(evidencePath, 'utf8'))
+    assert.equal(result.error, undefined, result.error)
+    assert.equal(result.visible, true)
+    assert.equal(result.retryEnabled, true)
+    assert.equal(result.reopened, true)
+    assert.equal(result.state.ready, false, 'Recovery must not certify a healthy release')
+    assert.ok(result.state.error)
+    assert.equal(await readFile(credentials, 'utf8'), saved)
+    assert.equal(await readFile(descriptorPath, 'utf8'), original)
+    console.info(
+      '[recovery-probe] case-pass',
+      JSON.stringify({ ...identity, elapsedMs: Date.now() - startedAt })
+    )
+  } catch (error) {
+    console.error('[recovery-probe] case-failed', JSON.stringify(identity))
+    await captureStartupNativeStack(child)
+    throw error
+  } finally {
+    await stopProcessGroup(child)
+    await writeFile(join(resultDir, `startup-fault-${name}.log`), output)
   }
 }
 
@@ -140,6 +173,7 @@ function recoveryWindowAssertion(evidencePath) {
     })
     app.on('child-process-gone', (_event, details) => record('child-process-gone', details))
     const deadline = Date.now() + 10_000
+    let pathsRecorded = false
     let checking = false
     let reopenRequested = false
     let companion = null
@@ -152,6 +186,19 @@ function recoveryWindowAssertion(evidencePath) {
         if (!window || window.webContents.isLoading()) {
           if (Date.now() > deadline) throw new Error('The production bootstrap did not open recovery')
           return
+        }
+        if (!pathsRecorded) {
+          pathsRecorded = true
+          try {
+            record('profile-paths', {
+              userData:app.getPath('userData'),sessionData:app.getPath('sessionData'),
+              configuredUserData:process.env.WEWORK_USER_DATA_DIR ?? null,
+              userDataArgument:app.commandLine.getSwitchValue('user-data-dir') || null,
+              home:process.env.HOME ?? null,
+              xdgConfigHome:process.env.XDG_CONFIG_HOME ?? null,
+              xdgCacheHome:process.env.XDG_CACHE_HOME ?? null
+            })
+          } catch (error) { record('profile-paths-unavailable', {error:error.name}) }
         }
         const state = await window.webContents.executeJavaScript('window.weworkElectron.getRuntimeState()')
         const retryEnabled = await window.webContents.executeJavaScript(
