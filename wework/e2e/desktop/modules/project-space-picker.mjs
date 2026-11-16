@@ -25,7 +25,7 @@ function isTransientPickerError(error) {
   return /Unable to find selector|Timed out waiting for selector/.test(String(error))
 }
 
-function createPickerSession(control, timeoutMs) {
+export function createPickerSession(control, timeoutMs) {
   const state = {
     groupByWorkspace: false,
     groupSelector: groupSelector('all'),
@@ -46,7 +46,6 @@ function createPickerSession(control, timeoutMs) {
     const groupingPressed = await raw('getAttribute', GROUPING, { value: 'aria-pressed' })
     if (groupingPressed !== String(state.groupByWorkspace)) {
       await raw('clickWhenEnabled', GROUPING, { visible: true, timeoutMs })
-      state.groupSelector = groupSelector('all')
     }
     const groupPressed = await raw('getAttribute', state.groupSelector, {
       value: 'aria-pressed',
