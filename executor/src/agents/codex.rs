@@ -129,6 +129,8 @@ use text_generation::configure_text_generation;
 mod auth_mode;
 #[path = "codex/diagnostics.rs"]
 mod diagnostics;
+mod rpc_response;
+use rpc_response::response_result;
 #[path = "codex/home.rs"]
 mod home;
 mod memory_review;
@@ -2041,7 +2043,7 @@ async fn read_persistent_codex_app_server_stdout(
         if is_json_rpc_response(&message) {
             if let Some(request_id) = response_id(&message) {
                 if let Some(request) = pending.lock().await.remove(&request_id) {
-                    let result = response_result(message);
+                    let result = response_result(message, &request.method);
                     if let (Some(context), Ok(response)) = (&request.native_request, &result) {
                         notifications.update_native_activity(|activity| {
                             activity.observe_response(context, response)
@@ -3002,6 +3004,7 @@ async fn run_codex_app_server_turn_with_runtime(
             .await?;
             rpc.read_turn(
                 turn_request_id,
+                turn_method,
                 &mut state,
                 json_rpc::TurnReadOptions {
                     recover_usage_limits: recover_usage_limits
@@ -7329,17 +7332,6 @@ fn normalize_skill_path(path: &str) -> String {
 
 fn response_id(message: &Value) -> Option<u64> {
     message.get("id").and_then(Value::as_u64)
-}
-
-fn response_result(message: Value) -> Result<Value, String> {
-    if let Some(error) = message.get("error") {
-        return Err(error
-            .get("message")
-            .and_then(Value::as_str)
-            .map(str::to_owned)
-            .unwrap_or_else(|| error.to_string()));
-    }
-    Ok(message.get("result").cloned().unwrap_or_else(|| json!({})))
 }
 
 fn request_user_input_result(response: Value) -> Value {

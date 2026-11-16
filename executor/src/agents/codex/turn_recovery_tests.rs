@@ -481,6 +481,7 @@ printf '%s\n' '{{"method":"turn/completed","params":{{"threadId":"root-thread","
         Duration::from_secs(20),
         rpc.read_turn(
             1,
+            "turn/start",
             &mut state,
             super::super::json_rpc::TurnReadOptions {
                 recover_usage_limits: false,
@@ -594,6 +595,7 @@ printf '%s\n' '{{"method":"turn/completed","params":{{"threadId":"root-thread","
         Duration::from_secs(20),
         rpc.read_turn(
             1,
+            "turn/start",
             &mut state,
             super::super::json_rpc::TurnReadOptions {
                 recover_usage_limits: false,
@@ -672,6 +674,7 @@ printf '%s\n' '{{"id":2,"result":{{"goal":{paused}}}}}'
         Duration::from_secs(20),
         rpc.read_turn(
             1,
+            "turn/start",
             &mut state,
             super::super::json_rpc::TurnReadOptions {
                 recover_usage_limits: false,

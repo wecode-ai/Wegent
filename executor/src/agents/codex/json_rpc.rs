@@ -95,7 +95,7 @@ impl JsonRpcConnection {
         loop {
             let message = self.read_message().await?;
             if response_id(&message) == Some(request_id) {
-                return response_result(message);
+                return response_result(message, method);
             }
             if let Some(outcome) = state.handle_message(&message) {
                 return Err(format!(
@@ -114,7 +114,7 @@ impl JsonRpcConnection {
         loop {
             let message = self.read_message().await?;
             if response_id(&message) == Some(request_id) {
-                return response_result(message);
+                return response_result(message, method);
             }
             if message.get("method").and_then(Value::as_str) == Some("error") {
                 return Err(codex_error_message(message_params(&message)));
@@ -149,6 +149,7 @@ impl JsonRpcConnection {
     pub(super) async fn read_turn(
         &mut self,
         mut turn_request_id: u64,
+        mut turn_request_method: &str,
         state: &mut CodexRunState,
         options: TurnReadOptions,
     ) -> Result<ExecutionOutcome, String> {
@@ -192,7 +193,7 @@ impl JsonRpcConnection {
                 self.read_message().await?
             };
             if response_id(&message) == Some(turn_request_id) {
-                let response = response_result(message)?;
+                let response = response_result(message, turn_request_method)?;
                 notify_active_turn(
                     &active_turn_started,
                     &mut active_turn_id,
@@ -301,6 +302,7 @@ impl JsonRpcConnection {
                         self.send_request(method, params),
                     )
                     .await?;
+                    turn_request_method = method;
                     waiting_for_initial_progress = true;
                     saw_turn_response = false;
                     continue;
@@ -403,7 +405,7 @@ impl JsonRpcConnection {
         loop {
             let message = self.read_message().await?;
             if response_id(&message) == Some(request_id) {
-                response_result(message)?;
+                response_result(message, "turn/interrupt")?;
                 continue;
             }
             if message["method"] == "turn/completed"
