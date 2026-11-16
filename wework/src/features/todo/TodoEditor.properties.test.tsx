@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { useState } from 'react'
 import { describe, expect, it, vi } from 'vitest'
@@ -91,6 +91,25 @@ function setup(assignmentError?: Error) {
 }
 
 describe('immediate Issue properties', () => {
+  it('announces unsaved, pending, failed and retried title saves without losing the draft', async () => {
+    const { updateLoopItem } = setup()
+    expect(screen.queryByTestId('issue-save-status')).toBeNull()
+    const pending = Promise.withResolvers<CloudLoopItem>()
+    updateLoopItem.mockImplementationOnce(() => pending.promise)
+    const title = screen.getByTestId('cloud-todo-detail-title')
+    fireEvent.change(title, { target: { value: 'Edited title' } })
+    expect(screen.getByTestId('issue-save-status')).toHaveTextContent('有未保存的修改')
+    fireEvent.blur(title)
+    expect(screen.getByTestId('issue-save-status')).toHaveTextContent('保存中')
+    await act(async () => pending.reject(new Error('Offline')))
+    expect(await screen.findByTestId('cloud-todo-save-error')).toHaveTextContent('Offline')
+    expect(screen.getByTestId('issue-save-status')).toHaveTextContent('保存失败')
+    expect(title).toHaveValue('Edited title')
+    await userEvent.click(screen.getByTestId('cloud-todo-field-retry'))
+    await waitFor(() => expect(screen.getByTestId('issue-save-status')).toHaveTextContent('已保存'))
+    expect(title).toHaveValue('Edited title')
+  })
+
   it('saves title and priority independently while description requires explicit save', async () => {
     const user = userEvent.setup()
     const { updateLoopItem, read } = setup()

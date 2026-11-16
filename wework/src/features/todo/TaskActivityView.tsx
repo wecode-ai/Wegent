@@ -212,7 +212,7 @@ function TimelineReply({
 }) {
   return (
     <div className="task-detail-thread-actions">
-      <time dateTime={createdAt} className="text-xs text-text-muted">
+      <time dateTime={createdAt} className="text-xs text-text-secondary">
         {formatIssueTimestamp(createdAt)}
       </time>
       <button
@@ -476,12 +476,15 @@ export function TaskActivityView({
       ? assignment
       : null
   }
+  function cardHasExecution(card: TaskReplyCard) {
+    return [card.root, ...card.replies].some(
+      message => message.sender.type === 'agent' && !isPublicStandInMessage(message)
+    )
+  }
   function cardReplyLabel(card: TaskReplyCard) {
     if (humanDispatchForCard(card)) return t('workbench.task_activity_reply_start_new_task')
     return t(
-      [card.root, ...card.replies].some(
-        message => message.sender.type === 'agent' && !isPublicStandInMessage(message)
-      )
+      cardHasExecution(card)
         ? 'workbench.task_activity_reply_action'
         : 'workbench.task_activity_reply_discussion'
     )
@@ -1324,7 +1327,9 @@ export function TaskActivityView({
                           ? 'workbench.task_activity_replying_to_human'
                           : isPublicStandInMessage(replyTarget.root)
                             ? 'workbench.task_activity_replying_to_stand_in'
-                            : 'workbench.task_activity_replying_to',
+                            : cardHasExecution(replyTarget)
+                              ? 'workbench.task_activity_replying_to'
+                              : 'workbench.task_activity_replying_to_discussion',
                         {
                           name: replyTarget.root.sender.name,
                         }
@@ -1385,7 +1390,9 @@ export function TaskActivityView({
                     ? t(
                         isPublicStandInMessage(replyTarget.root)
                           ? 'workbench.task_activity_stand_in_reply_placeholder'
-                          : 'workbench.task_activity_inline_placeholder'
+                          : cardHasExecution(replyTarget) && !replyHumanDispatch
+                            ? 'workbench.task_activity_inline_placeholder'
+                            : 'workbench.task_activity_discussion_reply_placeholder'
                       )
                     : undefined
                 }
@@ -1477,7 +1484,7 @@ export function TaskActivityView({
                           t('todo.status_history_system')}
                       </span>{' '}
                       {t('todo.status_action_create')} Issue
-                      <time dateTime={activity.at} className="ml-2 text-text-muted">
+                      <time dateTime={activity.at} className="ml-2 text-text-secondary">
                         {formatIssueTimestamp(activity.at)}
                       </time>
                     </div>

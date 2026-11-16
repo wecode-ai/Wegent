@@ -1192,16 +1192,9 @@
   position: relative;
 }
 
-.task-detail-workspace-description .task-detail-desc.is-collapsed .bn-editor {
-  max-height: calc(var(--task-detail-body-font-size) * 1.75 * 2 + 6px);
-  overflow: hidden;
-  color: rgb(var(--color-text-muted));
-}
-
 .task-detail-workspace-description .task-detail-desc.is-collapsed textarea {
-  color: rgb(var(--color-text-muted));
   min-height: calc(var(--task-detail-body-font-size) * 1.75);
-  max-height: calc(var(--task-detail-body-font-size) * 1.75 * 2 + 4px);
+  max-height: 240px;
   overflow: hidden;
   resize: none;
   field-sizing: content;
@@ -2157,12 +2150,8 @@
 }
 
 .task-detail-desc.is-collapsed .bn-editor {
-  max-height: calc(var(--task-detail-body-font-size) * 1.75 * 3);
+  max-height: 240px;
   overflow: hidden;
-}
-
-.task-detail-workspace-panel .task-detail-desc.is-collapsed {
-  display: block;
 }
 
 .task-detail-desc-toggle {
@@ -2522,7 +2511,7 @@
 }
 
 .task-detail-thread-message-time {
-  color: rgb(var(--color-text-muted));
+  color: rgb(var(--color-text-secondary));
   font-size: var(--text-xs);
   white-space: nowrap;
 }
@@ -2636,7 +2625,7 @@
 
 .task-detail-run-event-time {
   margin-left: auto;
-  color: rgb(var(--color-text-muted));
+  color: rgb(var(--color-text-secondary));
   font-size: var(--text-xs);
 }
 

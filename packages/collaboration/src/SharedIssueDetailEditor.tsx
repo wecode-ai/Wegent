@@ -4,6 +4,7 @@ import { IssueDeliveryContent } from "./issue-detail/IssueDeliveryContent";
 import { IssueDeliveryEditor } from "./issue-detail/IssueDeliveryEditor";
 import { collaborationIssueCardPriorityClasses as priorityBadgeClasses } from "./issue-card/priorityBadgeClasses";
 import { useIssueFieldSaves } from "./issue-detail/useIssueFieldSaves";
+import { IssueHeaderContext } from "./issue-detail/IssueHeaderContext";
 import { persistIssueDetailFields } from "./issue-detail/persistIssueDetailFields";
 import {
   createIssueCommentActions,
@@ -1007,6 +1008,7 @@ export function TodoEditor(props: TodoEditorProps) {
         item.description ?? "",
       ),
   );
+  const titleDirty = Boolean(item && title.trim() !== item.title);
   async function saveTitle() {
     if (!item || !editable || !title.trim()) return;
     const next = title.trim();
@@ -2899,18 +2901,27 @@ export function TodoEditor(props: TodoEditorProps) {
                 : "px-4 pt-3",
           )}
         >
-          <span className="inline-flex min-w-0 items-center gap-1.5 text-xs text-text-muted">
-            <Folder className="h-3.5 w-3.5" />
-            <span className="truncate">
-              {item
-                ? `${editProps?.project?.name ?? t("todo.project_space", "项目空间")} / ${item.id}`
-                : `${createProps?.project.name} · ${
-                    createProps?.initialParent
-                      ? t("todo.new_sub_issue", "新建子任务")
-                      : t("todo.new_issue", "新建任务")
-                  }`}
+          <IssueHeaderContext
+            enabled={workspacePanel && Boolean(item)}
+            issueId={item?.id ?? ""}
+            title={title}
+            status={statusValue}
+            scrollRef={detailScrollRef}
+            titleRef={titleRef}
+          >
+            <span className="inline-flex max-w-full min-w-0 items-center gap-1.5 text-xs text-text-secondary">
+              <Folder className="h-3.5 w-3.5" />
+              <span className="truncate">
+                {item
+                  ? `${editProps?.project?.name ?? t("todo.project_space", "项目空间")} / ${item.id}`
+                  : `${createProps?.project.name} · ${
+                      createProps?.initialParent
+                        ? t("todo.new_sub_issue", "新建子任务")
+                        : t("todo.new_issue", "新建任务")
+                    }`}
+              </span>
             </span>
-          </span>
+          </IssueHeaderContext>
           {item && (
             <button
               type="button"
@@ -2922,7 +2933,26 @@ export function TodoEditor(props: TodoEditorProps) {
               <Copy className="h-3.5 w-3.5" />
             </button>
           )}
-          <span className="flex-1" />
+          {!isCreate &&
+          (titleDirty ||
+            descriptionDirty ||
+            fieldSaves.pending ||
+            fieldSaves.saved ||
+            fieldSaves.error) ? (
+            <span
+              role="status"
+              data-testid="issue-save-status"
+              className="shrink-0 text-xs text-text-secondary"
+            >
+              {fieldSaves.pending
+                ? t("todo.saving")
+                : fieldSaves.error
+                  ? t("todo.save_failed")
+                  : titleDirty || descriptionDirty
+                    ? t("todo.unsaved_changes")
+                    : t("todo.saved")}
+            </span>
+          ) : null}
           {props.headerActions}
           {workspacePanel && item && editable && props.onDelete ? (
             <IssuePropertiesPopover
@@ -3510,6 +3540,8 @@ export function TodoEditor(props: TodoEditorProps) {
                       (descriptionOverflowing || descriptionExpanded) ? (
                         <button
                           type="button"
+                          data-testid="issue-description-toggle"
+                          aria-expanded={descriptionExpanded}
                           onClick={() =>
                             setDescriptionExpanded((current) => !current)
                           }

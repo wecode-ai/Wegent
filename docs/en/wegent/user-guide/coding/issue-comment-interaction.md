@@ -9,6 +9,12 @@ This contract covers the main composer in issue activity. Inline reply composers
 
 ## Collaboration Issue activity and execution
 
+Descriptions initially preview up to `240px`, preserving goal text and acceptance context, with expansion for longer content.
+When the editable title scrolls out of view while reading activity, the header retains a compact Issue title and current status.
+Titles and properties save immediately; description edits use Save. A shared header indicator reports unsaved changes, saving, saved, or failure. Failed changes remain available for retry.
+Replies to ordinary human discussions say they continue the discussion. Only discussions with execution records promise execution continuation; stand-in conversations and human work assignments retain their own reply explanations.
+Comment editors expose accessible names, and timestamps use the readable secondary text color.
+
 Opening an Issue from the Collaboration board shows creation, status changes, and comments in time order in the right detail drawer. An execution belongs to the comment that started it: the comment shows its run status, and its task entry opens the linked transcript, workspace, Terminal, and files. The execution page is read-only and does not expose a second reply composer. Return to the source Issue and reply in the corresponding discussion to add instructions.
 
 A comment initially shows a body preview, with expansion for long content. The author, run status, time, and Reply action remain visible when the body is collapsed. Reply opens that comment's inline composer on demand. Replies remain available while an execution is active: later instructions enter the same execution's message queue, do not start a concurrent run, and do not expose a low-level "task is already running" error. Completed runs display their persisted terminal status instead of an unverified status.

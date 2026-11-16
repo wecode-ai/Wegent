@@ -1430,6 +1430,38 @@ describe('TaskActivityView', () => {
     expect(screen.queryByTestId('issue-reply-composer')).toBeNull()
   })
 
+  it('describes a reply to an unbound human discussion without promising execution', async () => {
+    const root = { ...userMessage, rootMessageId: null }
+    const client = {
+      subscribe: vi.fn(async () => ({
+        snapshot: { messages: [root], latestSequence: 1, currentUserId: '1' },
+        unsubscribe: vi.fn(),
+      })),
+      send: vi.fn(async () => root),
+      startAgentResponse: vi.fn(async () => agentMessage),
+      failAgentResponse: vi.fn(async () => agentMessage),
+      dispose: vi.fn(),
+    } satisfies ProjectChatClient
+    render(
+      <TaskActivityView
+        client={client}
+        currentUserId={1}
+        project={{ id: '11', name: 'Wework' } as never}
+        task={{ id: 'WEG-1', title: '讨论', status: 'inbox', version: 1 } as never}
+        issueTimeline
+        linear
+      />
+    )
+    await userEvent.click(
+      await screen.findByTestId(`cloud-task-activity-reply-toggle-${root.messageId}`)
+    )
+    const composer = screen.getByTestId('issue-reply-composer')
+    expect(composer).toHaveTextContent('继续此讨论')
+    expect(composer).not.toHaveTextContent('继续原执行任务')
+    expect(within(composer).getByRole('textbox', { name: '回复此讨论…' })).toBeVisible()
+    expect(client.startAgentResponse).not.toHaveBeenCalled()
+  })
+
   function humanAssignmentMessages(humanUserId: number): ProjectChatMessage[] {
     const comment: ProjectChatMessage = {
       ...userMessage,

@@ -34,6 +34,7 @@ describe('Issue field save queue', () => {
       two = result.current.save('status', later)
     })
     expect(result.current.pending).toBe(true)
+    expect(result.current.saved).toBe(false)
     expect(later).not.toHaveBeenCalled()
     await act(async () => {
       first.resolve({ ...initial, title: 'Changed', version: 2 })
@@ -47,6 +48,7 @@ describe('Issue field save queue', () => {
       version: 3,
     })
     expect(result.current.pending).toBe(false)
+    expect(result.current.saved).toBe(true)
   })
 
   it('reports a failed save to the current host callback only', async () => {
@@ -70,6 +72,7 @@ describe('Issue field save queue', () => {
     expect(original).not.toHaveBeenCalled()
     expect(latest).toHaveBeenCalledExactlyOnceWith(error)
     expect(result.current.error).toBe(error)
+    expect(result.current.saved).toBe(false)
   })
 
   it('retains failed operations for explicit retry without blocking unrelated fields', async () => {

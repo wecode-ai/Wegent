@@ -14,9 +14,11 @@ function createFieldSaves<T extends VersionedIssue>(initial: T | null) {
   let reportError: ((error: unknown) => void) | undefined
   let active = false
   let pending = 0
-  let snapshot: { pending: boolean; error: unknown } = {
+  let saved = false
+  let snapshot: { pending: boolean; error: unknown; saved: boolean } = {
     pending: false,
     error: null,
+    saved: false,
   }
   const queue = createVersionMutationQueue<T>(initial?.version ?? 0)
   const failures = new Map<string, { operation: Operation<T>; error: unknown }>()
@@ -25,8 +27,9 @@ function createFieldSaves<T extends VersionedIssue>(initial: T | null) {
     snapshot = {
       pending: pending > 0,
       error: [...failures.values()].at(-1)?.error ?? null,
+      saved,
     }
-    if (active) listeners.forEach(listener => listener())
+    if (active) listeners.forEach((listener) => listener())
   }
   async function save(key: string, operation: Operation<T>): Promise<T | undefined> {
     pending += 1
@@ -34,7 +37,7 @@ function createFieldSaves<T extends VersionedIssue>(initial: T | null) {
     publish()
     try {
       return await queue.enqueue(
-        async version => {
+        async (version) => {
           if (!source) throw new Error('Issue unavailable')
           const updated = await operation({ ...source, version })
           failures.delete(key)
@@ -42,9 +45,10 @@ function createFieldSaves<T extends VersionedIssue>(initial: T | null) {
             source = updated
             if (active) accept?.(updated)
           }
+          saved = true
           return source
         },
-        issue => issue.version
+        (issue) => issue.version,
       )
     } catch (error) {
       failures.set(key, { operation, error })
@@ -82,7 +86,7 @@ function createFieldSaves<T extends VersionedIssue>(initial: T | null) {
 export function useIssueFieldSaves<T extends VersionedIssue>(
   source: T | null,
   accept: (issue: T) => void,
-  onError?: (error: unknown) => void
+  onError?: (error: unknown) => void,
 ) {
   const [scope, setScope] = useState(() => ({
     id: source?.id,
