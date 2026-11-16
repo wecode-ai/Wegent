@@ -40,7 +40,11 @@ export function createDesktopScenario({ uiTimeoutMs, captureScreenshot }) {
         visible: true,
       })
       await captureScreenshot(control, 'stand-in-onboarding-skipped.png')
-      await control.command('press', selector('stand-in-details-popover'), { key: 'Escape' })
+      await control.command('clickWhenEnabled', selector('stand-in-details-work-sources'))
+      await control.command('waitFor', selector('stand-in-primary-profile'), { visible: true })
+      await control.command('press', selector('stand-in-preferences'), { key: 'Escape' })
+      await control.command('waitFor', selector('stand-in-profile-panel'), { visible: false })
+      assert.equal(await control.command('getActiveElementTestId', 'body'), 'stand-in-details-open')
     },
   }
 }

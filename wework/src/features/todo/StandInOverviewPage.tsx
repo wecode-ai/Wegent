@@ -121,6 +121,12 @@ export function StandInOverviewPage({
           : null
   )
   const [proposal, setProposal] = useState<StandInProposal | null>(null)
+  const previousProfile = useRef(profile)
+  useEffect(() => {
+    if (active && previousProfile.current !== null && profile === null)
+      detailsTrigger.current?.focus()
+    previousProfile.current = profile
+  }, [active, profile])
   const [resolvedProposal, setResolvedProposal] = useState<{
     proposal: StandInProposal
     previous: PersonalStandInSettings
