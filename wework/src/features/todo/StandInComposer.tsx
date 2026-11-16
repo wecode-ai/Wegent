@@ -155,7 +155,7 @@ export function StandInComposer({
   return (
     <div className="space-y-3">
       <div
-        className="grid grid-cols-[5rem_minmax(0,1fr)] items-center gap-x-3 gap-y-1 text-sm"
+        className="grid grid-cols-[5rem_minmax(0,1fr)] items-center gap-x-3 gap-y-1 text-sm max-md:[&_button]:min-h-11 max-md:[&_button]:min-w-11"
         data-testid="stand-in-workspace-bar"
       >
         {deviceControl && (
@@ -168,7 +168,7 @@ export function StandInComposer({
         <div className="min-w-0" inert={disabled || !draft.executionDeviceId}>
           <ProjectWorkBar
             {...projectWork}
-            className="min-h-8 px-0"
+            className="min-h-11 px-0 md:min-h-8"
             menuClassName="z-critical"
             showWorkSection={false}
           />
