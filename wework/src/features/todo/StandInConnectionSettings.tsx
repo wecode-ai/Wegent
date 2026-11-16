@@ -1,6 +1,6 @@
 import { dequal } from 'dequal'
 import { getStandInErrorMessage } from '@/lib/stand-in-error-message'
-import { useCallback, useEffect, useImperativeHandle, useRef, useState, type Ref } from 'react'
+import { useEffect, useImperativeHandle, useRef, useState, type Ref } from 'react'
 import { MessageSquare } from 'lucide-react'
 import type { CollaborationProject } from '@wegent/collaboration'
 import type { StandInRole } from '@/api/personalStandIn'
@@ -8,7 +8,7 @@ import type { ConnectionProviderDescriptor, StandInExecutorApi } from '@/api/sta
 import { useTranslation } from '@/hooks/useTranslation'
 import { StandInProcessingSettings } from './StandInProcessingSettings'
 import { StandInConnectionHeader } from './StandInConnectionHeader'
-import { StandInConnections } from './StandInConnections'
+import { StandInConnections, type StandInProjectNavigationHandle } from './StandInConnections'
 import { StandInSourceConnections } from './StandInSourceConnections'
 import { StandInGitConnections, GIT_CONNECTION_PREFIX } from './StandInGitConnections'
 import { StandInEmailConnections, EMAIL_PROVIDER } from './StandInEmailConnections'
@@ -75,22 +75,14 @@ export function StandInConnectionSettings({
   )
   const [scheduleDirty, setScheduleDirty] = useState(false)
   const [emailDirty, setEmailDirty] = useState(false)
-  const [projectDraftDirty, setProjectDraftDirty] = useState(false)
-  const projectDraftChanged = useCallback(
-    (dirty: boolean) => {
-      setProjectDraftDirty(dirty)
-      onDraftDirtyChange?.(dirty)
-    },
-    [onDraftDirtyChange]
-  )
   const [view, setView] = useState<string | null>(initialCalendar ? 'time' : null)
   const calendarRef = useRef<AutomationNavigationHandle>(null)
   const emailRef = useRef<AutomationNavigationHandle>(null)
-  const projectRef = useRef<AutomationNavigationHandle>(null)
+  const projectRef = useRef<StandInProjectNavigationHandle>(null)
   const requestLeave = (action: (discarded?: boolean) => void) => {
-    const editor = calendarRef.current ?? emailRef.current ?? projectRef.current
-    const projectDiscard = editor === projectRef.current && projectDraftDirty
-    if (editor) editor.requestLeave(() => action(projectDiscard))
+    const editor = calendarRef.current ?? emailRef.current
+    if (projectRef.current) projectRef.current.requestLeave(action)
+    else if (editor) editor.requestLeave(() => action(false))
     else action(false)
   }
   useImperativeHandle(ref, () => ({
@@ -246,7 +238,7 @@ export function StandInConnectionSettings({
           ) : view === 'projects' ? (
             <StandInConnections
               ref={projectRef}
-              onDraftDirtyChange={projectDraftChanged}
+              onDraftDirtyChange={onDraftDirtyChange}
               role={role}
               projects={projects}
               allowLocalProjects={deviceId === localDeviceId}

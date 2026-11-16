@@ -12,6 +12,10 @@ import { ConfirmDialog } from '@/components/common/ConfirmDialog'
 import type { AutomationNavigationHandle } from '@/features/automations/AutomationsPage'
 import { useStandInPanelNavigation } from './useStandInPanelNavigation'
 
+export interface StandInProjectNavigationHandle extends AutomationNavigationHandle {
+  requestLeave(action: (discarded?: boolean) => void): void
+}
+
 /** Edit project intake scope, exclusions and handling policies for an independent stand-in. */
 export function StandInConnections({
   role,
@@ -29,7 +33,7 @@ export function StandInConnections({
   onChange(role: StandInRole): void
   disabled: boolean
   focusedProjectId?: string
-  ref?: Ref<AutomationNavigationHandle>
+  ref?: Ref<StandInProjectNavigationHandle>
   onDraftDirtyChange?(dirty: boolean): void
 }) {
   const { t } = useTranslation('common')
@@ -37,7 +41,11 @@ export function StandInConnections({
   const [discard, setDiscard] = useState(false)
   const [draftVersion, setDraftVersion] = useState(0)
   const navigation = useStandInPanelNavigation(tagDraftDirty, disabled, () => setDiscard(true))
-  useImperativeHandle(navigationRef, () => ({ requestLeave: navigation.requestLeave }))
+  useImperativeHandle(navigationRef, () => ({
+    requestLeave(action) {
+      navigation.requestLeave(() => action(tagDraftDirty))
+    },
+  }))
   useEffect(() => {
     onDraftDirtyChange?.(tagDraftDirty)
     return () => onDraftDirtyChange?.(false)
