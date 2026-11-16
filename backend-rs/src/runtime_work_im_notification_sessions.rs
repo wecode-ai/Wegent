@@ -2,41 +2,20 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-//! `IMNotificationDispatcher._runtime_notification_sessions`: resolve the IM
-//! sessions that should receive one terminal native Runtime event.
-//!
-//! Source: `app/services/im/notification_dispatcher.py::_runtime_notification_sessions`
-//! plus the `IMSessionService` reads it performs
-//! (`app/services/im/session_service.py`):
-//!
-//! 1. `get_global_notification_settings(user_id)` — one
-//!    `channel:user_global_notification:<user_id>` read. A disabled switch
-//!    returns no sessions and issues no further query.
-//! 2. `list_active_runtime_task_sessions` — the user's private-session index
-//!    (`ZREVRANGE channel:user_private_sessions:<user_id>`) and one
-//!    `channel:private_session:<key>` read per indexed key, keeping the
-//!    sessions whose `active_runtime_task` names this device and task. Stale
-//!    index members are removed with `ZREM`.
-//! 3. `list_runtime_task_notification_sessions` — the runtime-task
-//!    subscription document plus one session read per subscribed key.
-//! 4. The user's default private session, only when a key is configured, the
-//!    user is away, and the session belongs to that user.
-//!
-//! Every returning branch deduplicates by `session_key`, keeping the first
-//! occurrence (`_dedupe_sessions`). Delivery to those sessions is a separate
-//! concern; this module stops at the resolution the source performs first.
+//! Tasks and stand-ins share the account's registered private IM connections.
+//! Task subscriptions control foreground delivery, never the recipient list.
 
 use std::collections::HashSet;
 use std::fmt;
 
 use async_trait::async_trait;
 use brz_json::OpaqueJson;
-use brz_redis::{Redis as _, RedisError, RedisService};
+use brz_redis::{Redis as _, RedisBytes, RedisError, RedisService};
 use serde_json::{Map, Value};
 
 use crate::json_compat::{python_str, python_strip, python_truthy};
 use crate::runtime_work_im_notifications::{
-    GlobalNotification, PrivateSession, cache_get, global_notification_key, missing_redis_error,
+    GlobalNotification, PrivateSession, decode_json, global_notification_key, missing_redis_error,
     normalize_subscriptions, parse_private_session, presence_key, presence_members_are_away,
     private_session_key, runtime_task_subscriptions_key, unix_seconds,
 };
@@ -82,9 +61,9 @@ impl From<RedisError> for NotificationSessionError {
 /// live server.
 #[async_trait]
 pub(crate) trait NotificationSessionCache: Send + Sync {
-    /// `cache_manager.get`: a missing key, a swallowed read error, or an
-    /// undecodable value is `None`.
-    async fn get_json(&self, key: &str) -> Option<OpaqueJson>;
+    /// Missing keys are distinct from read failures so an unreadable off switch
+    /// cannot enable delivery through the default-on setting.
+    async fn get_json(&self, key: &str) -> Result<Option<OpaqueJson>, RedisError>;
 
     /// `_list_user_session_keys`: `ZREVRANGE key 0 -1`.
     async fn user_session_keys(&self, key: &str) -> Result<Vec<String>, RedisError>;
@@ -110,8 +89,18 @@ impl RedisNotificationSessionCache<'_> {
 
 #[async_trait]
 impl NotificationSessionCache for RedisNotificationSessionCache<'_> {
-    async fn get_json(&self, key: &str) -> Option<OpaqueJson> {
-        cache_get(self.redis, key).await
+    async fn get_json(&self, key: &str) -> Result<Option<OpaqueJson>, RedisError> {
+        let bytes: Option<RedisBytes> = self.redis()?.get(key).await?;
+        bytes
+            .map(|bytes| {
+                decode_json(bytes.as_ref()).ok_or_else(|| {
+                    RedisError::new(
+                        brz_redis::ErrorKind::ClientError,
+                        "Invalid private IM cache document",
+                    )
+                })
+            })
+            .transpose()
     }
 
     async fn user_session_keys(&self, key: &str) -> Result<Vec<String>, RedisError> {
@@ -144,52 +133,53 @@ pub(crate) async fn runtime_notification_sessions(
     resolve(&cache, user_id, address).await
 }
 
+/// Questions reach existing connections even while the desktop is active.
+pub(crate) async fn runtime_question_sessions(
+    state: &AppState,
+    user_id: i64,
+    address: &Value,
+) -> Result<Vec<PrivateSession>, NotificationSessionError> {
+    let cache = RedisNotificationSessionCache {
+        redis: state.redis.as_ref(),
+    };
+    resolve_with_presence(&cache, user_id, address, false).await
+}
+
 /// `_runtime_notification_sessions`: the ordered session resolution.
 async fn resolve<C: NotificationSessionCache + ?Sized>(
     cache: &C,
     user_id: i64,
     address: &Value,
 ) -> Result<Vec<PrivateSession>, NotificationSessionError> {
-    let settings_value = cache.get_json(&global_notification_key(user_id)).await;
+    resolve_with_presence(cache, user_id, address, true).await
+}
+
+async fn resolve_with_presence<C: NotificationSessionCache + ?Sized>(
+    cache: &C,
+    user_id: i64,
+    address: &Value,
+    require_away: bool,
+) -> Result<Vec<PrivateSession>, NotificationSessionError> {
+    let settings_value = cache.get_json(&global_notification_key(user_id)).await?;
     let settings = GlobalNotification::from_value(settings_value.as_ref());
     if !settings.enabled {
         return Ok(Vec::new());
     }
 
-    // `runtime_task_notification_key` runs first in
-    // `list_active_runtime_task_sessions`; an incomplete identity raises
-    // `ValueError`, which `_notify_runtime_event` swallows.
     let Some(task_key) = runtime_task_notification_key(address) else {
         return Err(NotificationSessionError::InvalidTaskAddress);
     };
 
-    let active = list_active_runtime_task_sessions(cache, user_id, &task_key).await?;
-    if !active.is_empty() {
-        return Ok(dedupe_sessions(active));
-    }
-
-    let subscribed = list_runtime_task_notification_sessions(cache, user_id, &task_key).await?;
-    if !subscribed.is_empty() {
-        return Ok(dedupe_sessions(subscribed));
-    }
-
-    let Some(session_key) = settings
-        .session_key
-        .as_deref()
-        .filter(|key| !key.is_empty())
-    else {
-        return Ok(Vec::new());
-    };
-    if !is_user_away(cache, user_id).await? {
+    let subscriptions = cache
+        .get_json(&runtime_task_subscriptions_key(user_id))
+        .await?;
+    let foreground = normalize_subscriptions(subscriptions.as_ref())
+        .iter()
+        .any(|(key, sessions)| key == &task_key && !sessions.is_empty());
+    if require_away && !foreground && !is_user_away(cache, user_id).await? {
         return Ok(Vec::new());
     }
-    let Some(session) = get_session(cache, session_key).await else {
-        return Ok(Vec::new());
-    };
-    if session.user_id != user_id {
-        return Ok(Vec::new());
-    }
-    Ok(vec![session])
+    Ok(dedupe_sessions(list_user_sessions(cache, user_id).await?))
 }
 
 /// `runtime_task_notification_key`: `deviceId`/`device_id` and
@@ -222,26 +212,6 @@ fn first_truthy_field(task: &Map<String, Value>, keys: &[&str]) -> String {
     String::new()
 }
 
-/// `list_active_runtime_task_sessions`: sessions whose stored
-/// `active_runtime_task` names the same device and local task.
-async fn list_active_runtime_task_sessions<C: NotificationSessionCache + ?Sized>(
-    cache: &C,
-    user_id: i64,
-    task_key: &str,
-) -> Result<Vec<PrivateSession>, RedisError> {
-    let sessions = list_user_sessions(cache, user_id).await?;
-    Ok(sessions
-        .into_iter()
-        .filter(|session| {
-            session
-                .active_runtime_task_object()
-                .and_then(notification_key_from_map)
-                .as_deref()
-                == Some(task_key)
-        })
-        .collect())
-}
-
 /// `list_user_sessions`: the user's private-session index and one session read
 /// per member, dropping (and un-indexing) members whose session is gone.
 async fn list_user_sessions<C: NotificationSessionCache + ?Sized>(
@@ -253,39 +223,13 @@ async fn list_user_sessions<C: NotificationSessionCache + ?Sized>(
     let mut sessions = Vec::with_capacity(session_keys.len());
     let mut missing = Vec::new();
     for session_key in session_keys {
-        match get_session(cache, &session_key).await {
-            Some(session) => sessions.push(session),
-            None => missing.push(session_key),
+        match get_session(cache, &session_key).await? {
+            Some(session) if session.user_id == user_id => sessions.push(session),
+            _ => missing.push(session_key),
         }
     }
     if !missing.is_empty() {
         cache.remove_user_sessions(&key, &missing).await?;
-    }
-    Ok(sessions)
-}
-
-/// `list_runtime_task_notification_sessions`: the sessions subscribed to the
-/// runtime task, filtered to this user.
-async fn list_runtime_task_notification_sessions<C: NotificationSessionCache + ?Sized>(
-    cache: &C,
-    user_id: i64,
-    task_key: &str,
-) -> Result<Vec<PrivateSession>, RedisError> {
-    let subscriptions_value = cache
-        .get_json(&runtime_task_subscriptions_key(user_id))
-        .await;
-    let subscriptions = normalize_subscriptions(subscriptions_value.as_ref());
-    let Some((_, session_keys)) = subscriptions.into_iter().find(|(key, _)| key == task_key) else {
-        return Ok(Vec::new());
-    };
-
-    let mut sessions = Vec::with_capacity(session_keys.len());
-    for session_key in session_keys {
-        if let Some(session) = get_session(cache, &session_key).await
-            && session.user_id == user_id
-        {
-            sessions.push(session);
-        }
     }
     Ok(sessions)
 }
@@ -305,9 +249,9 @@ async fn is_user_away<C: NotificationSessionCache + ?Sized>(
 async fn get_session<C: NotificationSessionCache + ?Sized>(
     cache: &C,
     session_key: &str,
-) -> Option<PrivateSession> {
-    let value = cache.get_json(&private_session_key(session_key)).await;
-    parse_private_session(value.as_ref())
+) -> Result<Option<PrivateSession>, RedisError> {
+    let value = cache.get_json(&private_session_key(session_key)).await?;
+    Ok(parse_private_session(value.as_ref()))
 }
 
 /// `_dedupe_sessions`: keep the first session per `session_key`.
@@ -337,6 +281,7 @@ mod tests {
     #[derive(Default)]
     struct RecordingCache {
         values: HashMap<String, Value>,
+        failed_key: Option<String>,
         user_sessions: Vec<String>,
         presence: Vec<String>,
         calls: Mutex<Vec<String>>,
@@ -354,11 +299,15 @@ mod tests {
 
     #[async_trait]
     impl NotificationSessionCache for RecordingCache {
-        async fn get_json(&self, key: &str) -> Option<OpaqueJson> {
+        async fn get_json(&self, key: &str) -> Result<Option<OpaqueJson>, RedisError> {
             self.record(format!("get {key}"));
-            self.values
+            if self.failed_key.as_deref() == Some(key) {
+                return Err(missing_redis_error());
+            }
+            Ok(self
+                .values
                 .get(key)
-                .map(|value| OpaqueJson::from(value.clone()))
+                .map(|value| OpaqueJson::from(value.clone())))
         }
 
         async fn user_session_keys(&self, key: &str) -> Result<Vec<String>, RedisError> {
@@ -433,194 +382,134 @@ mod tests {
         );
     }
 
+    fn shared_cache() -> RecordingCache {
+        let mut cache = RecordingCache::default();
+        cache.user_sessions = vec!["telegram".into(), "dingtalk".into()];
+        for key in ["telegram", "dingtalk"] {
+            cache.values.insert(
+                format!("channel:private_session:{key}"),
+                session(key, 273, None),
+            );
+        }
+        cache
+    }
+
     #[tokio::test]
-    async fn a_missing_switch_document_is_disabled() {
-        let cache = RecordingCache::default();
-
-        let sessions = resolve(&cache, 273, &address()).await.unwrap();
-
-        assert!(sessions.is_empty());
+    async fn existing_connections_work_without_settings_or_target_selection() {
+        let cache = shared_cache();
         assert_eq!(
-            cache.calls(),
-            vec!["get channel:user_global_notification:273".to_owned()]
+            session_key(&resolve(&cache, 273, &address()).await.unwrap()),
+            vec!["telegram", "dingtalk"]
         );
     }
 
     #[tokio::test]
-    async fn an_active_runtime_task_session_short_circuits_later_branches() {
-        let mut cache = RecordingCache::default();
-        cache.values.insert(
-            "channel:user_global_notification:273".into(),
-            json!({"enabled": true, "session_key": "default"}),
+    async fn unreadable_settings_do_not_enable_default_delivery() {
+        let mut cache = shared_cache();
+        cache.failed_key = Some("channel:user_global_notification:273".into());
+        assert!(
+            resolve_with_presence(&cache, 273, &address(), false)
+                .await
+                .is_err()
         );
-        cache.user_sessions = vec!["sess-1".into(), "sess-2".into()];
-        cache.values.insert(
-            "channel:private_session:sess-1".into(),
-            session(
-                "sess-1",
-                273,
-                Some(json!({"deviceId": "app-record-267161", "localTaskId": "runtime-151001115"})),
-            ),
-        );
-        cache.values.insert(
-            "channel:private_session:sess-2".into(),
-            session(
-                "sess-2",
-                273,
-                Some(json!({"deviceId": "app-record-267161", "localTaskId": "runtime-other"})),
-            ),
-        );
-
-        let sessions = resolve(&cache, 273, &address()).await.unwrap();
-
-        assert_eq!(session_key(&sessions), vec!["sess-1"]);
-        // Active sessions win, so the subscription document, presence, and the
-        // default session are never read.
         assert_eq!(
             cache.calls(),
-            vec![
-                "get channel:user_global_notification:273".to_owned(),
-                "zrevrange channel:user_private_sessions:273".to_owned(),
-                "get channel:private_session:sess-1".to_owned(),
-                "get channel:private_session:sess-2".to_owned(),
-            ]
+            vec!["get channel:user_global_notification:273"]
         );
     }
 
     #[tokio::test]
-    async fn a_stale_session_index_member_is_removed() {
-        let mut cache = RecordingCache::default();
+    async fn legacy_target_and_active_task_do_not_limit_shared_connections() {
+        let mut cache = shared_cache();
         cache.values.insert(
             "channel:user_global_notification:273".into(),
-            json!({"enabled": true}),
+            json!({"enabled":true,"session_key":"telegram"}),
         );
-        cache.user_sessions = vec!["gone".into()];
+        cache.values.insert(
+            "channel:private_session:telegram".into(),
+            session("telegram", 273, Some(address())),
+        );
+        assert_eq!(
+            session_key(&resolve(&cache, 273, &address()).await.unwrap()),
+            vec!["telegram", "dingtalk"]
+        );
+    }
+
+    #[tokio::test]
+    async fn foreground_notifications_require_subscription_but_not_a_selected_recipient() {
+        let mut cache = shared_cache();
+        cache.presence = vec!["client-a\u{0}active".into()];
+        assert!(resolve(&cache, 273, &address()).await.unwrap().is_empty());
         cache.values.insert(
             "channel:user_runtime_task_subscriptions:273".into(),
-            json!({}),
+            json!({"app-record-267161\u{0}runtime-151001115":["telegram"]}),
         );
-
-        let sessions = resolve(&cache, 273, &address()).await.unwrap();
-
-        assert!(sessions.is_empty());
         assert_eq!(
-            cache.calls(),
-            vec![
-                "get channel:user_global_notification:273".to_owned(),
-                "zrevrange channel:user_private_sessions:273".to_owned(),
-                "get channel:private_session:gone".to_owned(),
-                "zrem channel:user_private_sessions:273 gone".to_owned(),
-                "get channel:user_runtime_task_subscriptions:273".to_owned(),
-            ]
+            session_key(&resolve(&cache, 273, &address()).await.unwrap()),
+            vec!["telegram", "dingtalk"]
         );
     }
 
     #[tokio::test]
-    async fn subscribed_sessions_win_over_the_default_session() {
-        let mut cache = RecordingCache::default();
-        cache.values.insert(
-            "channel:user_global_notification:273".into(),
-            json!({"enabled": true, "session_key": "default"}),
+    async fn questions_reach_all_existing_connections_while_desktop_is_active() {
+        let mut cache = shared_cache();
+        cache.presence = vec!["client-a\u{0}active".into()];
+        assert_eq!(
+            session_key(
+                &resolve_with_presence(&cache, 273, &address(), false)
+                    .await
+                    .unwrap()
+            ),
+            vec!["telegram", "dingtalk"]
         );
-        cache.values.insert(
-            "channel:user_runtime_task_subscriptions:273".into(),
-            json!({
-                "app-record-267161\u{0}runtime-151001115": ["sess-1", "sess-1", "foreign"],
-                "app-record-267161\u{0}runtime-other": ["sess-9"],
-            }),
+        assert!(
+            !cache
+                .calls()
+                .iter()
+                .any(|call| call.starts_with("presence "))
         );
-        cache.values.insert(
-            "channel:private_session:sess-1".into(),
-            session("sess-1", 273, None),
-        );
+    }
+
+    #[tokio::test]
+    async fn stale_and_foreign_connections_are_removed_and_duplicates_deliver_once() {
+        let mut cache = shared_cache();
+        cache.user_sessions = vec![
+            "telegram".into(),
+            "foreign".into(),
+            "gone".into(),
+            "telegram".into(),
+        ];
         cache.values.insert(
             "channel:private_session:foreign".into(),
             session("foreign", 999, None),
         );
-
-        let sessions = resolve(&cache, 273, &address()).await.unwrap();
-
-        // The duplicate subscription key is read twice, then deduplicated; the
-        // foreign session is dropped by its owner check.
-        assert_eq!(session_key(&sessions), vec!["sess-1"]);
         assert_eq!(
-            cache.calls(),
-            vec![
-                "get channel:user_global_notification:273".to_owned(),
-                "zrevrange channel:user_private_sessions:273".to_owned(),
-                "get channel:user_runtime_task_subscriptions:273".to_owned(),
-                "get channel:private_session:sess-1".to_owned(),
-                "get channel:private_session:sess-1".to_owned(),
-                "get channel:private_session:foreign".to_owned(),
-            ]
+            session_key(&resolve(&cache, 273, &address()).await.unwrap()),
+            vec!["telegram"]
+        );
+        assert!(
+            cache
+                .calls()
+                .contains(&"zrem channel:user_private_sessions:273 foreign,gone".to_owned())
         );
     }
 
     #[tokio::test]
-    async fn the_default_session_requires_an_away_user() {
-        let mut cache = RecordingCache::default();
+    async fn questions_respect_an_explicitly_disabled_switch() {
+        let mut cache = shared_cache();
         cache.values.insert(
             "channel:user_global_notification:273".into(),
-            json!({"enabled": true, "session_key": "default"}),
+            json!({"enabled":false}),
         );
-        cache.presence = vec!["client-a\u{0}away".into()];
-        cache.values.insert(
-            "channel:private_session:default".into(),
-            session("default", 273, None),
+        assert!(
+            resolve_with_presence(&cache, 273, &address(), false)
+                .await
+                .unwrap()
+                .is_empty()
         );
-
-        let sessions = resolve(&cache, 273, &address()).await.unwrap();
-
-        assert_eq!(session_key(&sessions), vec!["default"]);
         assert_eq!(
             cache.calls(),
-            vec![
-                "get channel:user_global_notification:273".to_owned(),
-                "zrevrange channel:user_private_sessions:273".to_owned(),
-                "get channel:user_runtime_task_subscriptions:273".to_owned(),
-                "presence channel:user_im_notification_presence:273".to_owned(),
-                "get channel:private_session:default".to_owned(),
-            ]
-        );
-    }
-
-    #[tokio::test]
-    async fn a_foregrounded_user_gets_no_default_session() {
-        let mut cache = RecordingCache::default();
-        cache.values.insert(
-            "channel:user_global_notification:273".into(),
-            json!({"enabled": true, "session_key": "default"}),
-        );
-        cache.presence = vec!["client-a\u{0}active".into()];
-
-        let sessions = resolve(&cache, 273, &address()).await.unwrap();
-
-        assert!(sessions.is_empty());
-        // The presence check is the last read: the default session is skipped.
-        assert_eq!(
-            cache.calls().last().map(String::as_str),
-            Some("presence channel:user_im_notification_presence:273")
-        );
-    }
-
-    #[tokio::test]
-    async fn a_missing_default_session_key_stops_before_presence() {
-        let mut cache = RecordingCache::default();
-        cache.values.insert(
-            "channel:user_global_notification:273".into(),
-            json!({"enabled": true, "session_key": ""}),
-        );
-
-        let sessions = resolve(&cache, 273, &address()).await.unwrap();
-
-        assert!(sessions.is_empty());
-        assert_eq!(
-            cache.calls(),
-            vec![
-                "get channel:user_global_notification:273".to_owned(),
-                "zrevrange channel:user_private_sessions:273".to_owned(),
-                "get channel:user_runtime_task_subscriptions:273".to_owned(),
-            ]
+            vec!["get channel:user_global_notification:273"]
         );
     }
 
@@ -704,7 +593,6 @@ mod tests {
                 sender_id: "s".into(),
                 display_name: String::new(),
                 proactive_recipient_id: None,
-                active_runtime_task: None,
             },
             PrivateSession {
                 session_key: "a".into(),
@@ -715,7 +603,6 @@ mod tests {
                 sender_id: "s".into(),
                 display_name: String::new(),
                 proactive_recipient_id: None,
-                active_runtime_task: None,
             },
             PrivateSession {
                 session_key: "b".into(),
@@ -726,7 +613,6 @@ mod tests {
                 sender_id: "s".into(),
                 display_name: String::new(),
                 proactive_recipient_id: None,
-                active_runtime_task: None,
             },
         ];
 

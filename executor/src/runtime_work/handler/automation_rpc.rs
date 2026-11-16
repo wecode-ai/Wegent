@@ -251,7 +251,7 @@ impl RuntimeWorkRpcHandler {
     }
 
     async fn refresh_automation_model(&self, payload: &mut Value) -> Result<(), AppIpcError> {
-        self.refresh_automation_payload_model(payload).await?;
+        self.refresh_persisted_model_credentials(payload).await?;
         for path in [
             "/runtimeHandle/collaborationMemberRuntimeProfiles",
             "/runtime_handle/collaborationMemberRuntimeProfiles",
@@ -261,7 +261,7 @@ impl RuntimeWorkRpcHandler {
             };
             for profile in profiles {
                 if let Some(member) = profile.get_mut("runtimePayload") {
-                    self.refresh_automation_payload_model(member).await?;
+                    self.refresh_persisted_model_credentials(member).await?;
                 }
                 if let Some(variants) = profile
                     .get_mut("modelRuntimeProfiles")
@@ -269,47 +269,9 @@ impl RuntimeWorkRpcHandler {
                 {
                     for variant in variants {
                         if let Some(member) = variant.get_mut("runtimePayload") {
-                            self.refresh_automation_payload_model(member).await?;
+                            self.refresh_persisted_model_credentials(member).await?;
                         }
                     }
-                }
-            }
-        }
-        Ok(())
-    }
-
-    async fn refresh_automation_payload_model(
-        &self,
-        payload: &mut Value,
-    ) -> Result<(), AppIpcError> {
-        let Some(selection) = creation::normalized_selection(payload)? else {
-            return Ok(());
-        };
-        if !matches!(
-            selection["modelType"].as_str(),
-            Some("public" | "user" | "group")
-        ) {
-            return Ok(());
-        }
-        let runtime = payload["runtime"].as_str().unwrap_or("codex");
-        // A persisted model identity is reusable; its access token is not.
-        let current = self
-            .creation_model_config(runtime, &selection, &Value::Null)
-            .await?;
-        for key in ["modelConfig", "executionRequest", "execution_request"] {
-            if !payload[key].is_object() {
-                continue;
-            }
-            let config = if key == "modelConfig" {
-                &mut payload[key]
-            } else {
-                &mut payload[key]["model_config"]
-            };
-            if !config.is_object() {
-                *config = current.clone();
-            } else {
-                for field in ["api_key", "base_url", "default_headers"] {
-                    config[field] = current[field].clone();
                 }
             }
         }

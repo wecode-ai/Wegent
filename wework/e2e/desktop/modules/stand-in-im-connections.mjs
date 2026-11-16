@@ -65,6 +65,12 @@ export function createStandInImConnectionsStory({ uiTimeoutMs, captureScreenshot
         '0',
         'IM channels must open directly from the identity popover'
       )
+      assert.equal(
+        await control.command('getElementCount', '[data-testid="stand-in-im-channel-telegram"]'),
+        '0',
+        'Unavailable channels belong in the add menu'
+      )
+      await control.command('clickWhenEnabled', '[data-testid="stand-in-im-add-channels"]')
       await control.command('clickWhenEnabled', '[data-testid="stand-in-im-channel-telegram"]')
       const closeConnections = async () => {
         await control.command('focusMainWindow')

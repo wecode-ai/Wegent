@@ -5,6 +5,7 @@
 import asyncio
 import copy
 import hashlib
+import json
 import os
 import tempfile
 import uuid
@@ -89,6 +90,12 @@ class FakeIMSessionRedisClient:
 
     def lock(self, _name: str, **_options) -> "FakeIMSessionRedisClient._Lock":
         return self._cache.locks.setdefault(_name, self._Lock())
+
+    async def eval(self, script: str, numkeys: int, key: str) -> bytes | None:
+        assert script == "return redis.call('get', KEYS[1])"
+        assert numkeys == 1
+        value = await self._cache.get(key)
+        return json.dumps(value).encode() if value is not None else None
 
     async def zadd(self, key: str, mapping: dict[str, float]) -> int:
         zset = self._cache.zsets.setdefault(key, {})
@@ -186,6 +193,7 @@ class FakeIMSessionCache:
 def fake_im_session_cache(monkeypatch: pytest.MonkeyPatch) -> FakeIMSessionCache:
     cache = FakeIMSessionCache()
     monkeypatch.setattr("app.services.im.session_service.cache_manager", cache)
+    monkeypatch.setattr("app.services.im.runtime_questions.cache_manager", cache)
     return cache
 
 

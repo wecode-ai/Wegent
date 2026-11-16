@@ -5,8 +5,11 @@ import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
 import { StandInImConnections } from './StandInImConnections'
 
 async function openTelegram() {
-  if (!screen.queryByTestId('stand-in-im-dialog'))
-    fireEvent.click(screen.getByTestId('stand-in-im-channel-telegram'))
+  if (screen.queryByTestId('stand-in-im-dialog')) return
+  await waitFor(() => expect(screen.getByTestId('stand-in-im-channels')).toBeVisible())
+  if (!screen.queryByTestId('stand-in-im-channel-telegram'))
+    fireEvent.click(screen.getByTestId('stand-in-im-add-channels'))
+  fireEvent.click(await screen.findByTestId('stand-in-im-channel-telegram'))
 }
 
 function fixture() {
@@ -196,7 +199,7 @@ it('labels the chat-mode action as connecting to the stand-in', async () => {
 it('opens from channel controls without exposing sessions or mode instructions in the popover', async () => {
   const f = fixture()
   render(<StandInImConnections name="评审分身" services={f.services} deviceId="mac" />)
-  expect(screen.getByTestId('stand-in-im-channel-telegram')).toBeVisible()
+  expect(await screen.findByTestId('stand-in-im-channel-telegram')).toBeVisible()
   expect(screen.queryByTestId('stand-in-im-connect-session')).not.toBeInTheDocument()
   expect(screen.queryByText(/发送 \/chat/)).not.toBeInTheDocument()
   await openTelegram()
@@ -249,7 +252,7 @@ it('restores keyboard focus to the exact channel trigger on Escape', async () =>
       onOpenChange={onOpenChange}
     />
   )
-  const trigger = screen.getByTestId('stand-in-im-channel-telegram')
+  const trigger = await screen.findByTestId('stand-in-im-channel-telegram')
   await user.click(trigger)
   await screen.findByTestId('stand-in-im-connect-session')
   expect(onOpenChange).toHaveBeenLastCalledWith(true)
@@ -274,6 +277,7 @@ it('does not carry a Telegram save failure into another channel', async () => {
   fireEvent.click(await screen.findByTestId('stand-in-im-submit'))
   await screen.findByRole('alert')
   fireEvent.click(screen.getByTestId('stand-in-im-dialog-close'))
+  fireEvent.click(screen.getByTestId('stand-in-im-add-channels'))
   fireEvent.click(screen.getByTestId('stand-in-im-channel-dingtalk'))
   expect(screen.queryByRole('alert')).not.toBeInTheDocument()
   expect(screen.getByTestId('stand-in-im-empty')).toHaveTextContent('钉钉')
@@ -292,4 +296,37 @@ it('keeps keyboard focus inside the dialog after its last disclosure control', a
   expect(screen.getByTestId('stand-in-im-dialog-close')).toHaveFocus()
   await user.tab({ shift: true })
   expect(screen.getByTestId('stand-in-im-mode-help')).toHaveFocus()
+})
+
+it('shows existing connections and keeps unavailable channels in the add menu', async () => {
+  const f = fixture()
+  render(<StandInImConnections name="评审分身" services={f.services} deviceId="mac" />)
+  expect(await screen.findByTestId('stand-in-im-channel-telegram')).toBeVisible()
+  expect(screen.queryByTestId('stand-in-im-channel-dingtalk')).not.toBeInTheDocument()
+  fireEvent.click(screen.getByTestId('stand-in-im-add-channels'))
+  expect(screen.getByRole('menuitem', { name: '添加 钉钉' })).toBeVisible()
+  expect(screen.queryByRole('menuitem', { name: '添加 Telegram' })).not.toBeInTheDocument()
+})
+
+it('restores focus to the more trigger after adding an unavailable channel', async () => {
+  const user = (await import('@testing-library/user-event')).default.setup()
+  render(<StandInImConnections name="评审分身" services={{} as WorkbenchServices} deviceId="mac" />)
+  const trigger = screen.getByTestId('stand-in-im-add-channels')
+  await user.click(trigger)
+  await user.click(screen.getByTestId('stand-in-im-channel-telegram'))
+  expect(screen.getByTestId('stand-in-im-dialog')).toBeVisible()
+  await user.keyboard('{Escape}')
+  await waitFor(() => expect(trigger).toHaveFocus())
+})
+
+it('focuses the newly available channel after registering a conversation from the add menu', async () => {
+  const f = fixture()
+  f.listPrivateSessions.mockResolvedValueOnce({ items: [] })
+  render(<StandInImConnections name="评审分身" services={f.services} deviceId="mac" />)
+  await openTelegram()
+  await screen.findByTestId('stand-in-im-empty')
+  fireEvent.click(screen.getByTestId('stand-in-im-refresh'))
+  await screen.findByTestId('stand-in-im-connect-session')
+  fireEvent.click(screen.getByTestId('stand-in-im-dialog-close'))
+  await waitFor(() => expect(screen.getByTestId('stand-in-im-channel-telegram')).toHaveFocus())
 })

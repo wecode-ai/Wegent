@@ -5,6 +5,54 @@ use std::sync::OnceLock;
 static ISSUE_QUESTION_PUBLICATIONS: OnceLock<Mutex<HashSet<String>>> = OnceLock::new();
 
 impl RuntimeWorkRpcHandler {
+    pub(super) async fn prepare_async_question_reply(
+        &self,
+        task_id: &str,
+        response: &Value,
+        payload: &mut Value,
+    ) -> Result<(), AppIpcError> {
+        let transcript = self
+            .transcript(json!({"taskId":task_id,"limit":1,"includeFullContent":true}))
+            .await?;
+        if !pending_async_question(&transcript, response) {
+            return Err(AppIpcError::new(
+                "stale_request_user_input",
+                "This question is answered, expired, or belongs to another turn",
+            ));
+        }
+        let link = self
+            .local_task_link(task_id)
+            .ok_or_else(|| AppIpcError::new("not_found", "Task no longer exists"))?;
+        let saved = link
+            .runtime_handle
+            .get("executionRequest")
+            .or_else(|| link.runtime_handle.get("execution_request"))
+            .filter(|request| request.is_object())
+            .ok_or_else(|| AppIpcError::new("bad_request", "Task execution request is missing"))?;
+        // Answering continues the native task's model, tools and identity snapshot.
+        payload["executionRequest"] = saved.clone();
+        payload["executionRequest"]["prompt"] = payload["message"].clone();
+        payload["executionRequest"]["history"] = json!([]);
+        payload["executionRequest"]["message_id"] = Value::Null;
+        if let Some(selection) = link
+            .runtime_handle
+            .get("modelSelection")
+            .or_else(|| link.runtime_handle.get("model_selection"))
+        {
+            payload["modelSelection"] = selection.clone();
+        }
+        let object = payload
+            .as_object_mut()
+            .expect("Runtime send payload is an object");
+        object.remove("requestUserInputResponse");
+        object.remove("request_user_input_response");
+        object.insert("queueIfBusy".into(), json!(true));
+        if let Some(id) = object.get("clientUserMessageId").cloned() {
+            object.insert("clientGuidanceId".into(), id);
+        }
+        Ok(())
+    }
+
     pub(super) fn persist_async_question_interaction(
         &self,
         task_id: &str,
@@ -135,6 +183,49 @@ impl RuntimeWorkRpcHandler {
     }
 }
 
+fn pending_async_question(transcript: &Value, response: &Value) -> bool {
+    let mut pending = false;
+    for (turn, item) in transcript["turns"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .flat_map(|turn| {
+            turn["items"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .map(move |item| (turn, item))
+        })
+    {
+        if item["type"] == "user_message" {
+            pending = false;
+        }
+        let block = &item["block"];
+        let Some(question) = block
+            .get("render_payload")
+            .or_else(|| block.get("renderPayload"))
+        else {
+            continue;
+        };
+        if question["delivery"] != "async"
+            || question["itemId"] != response["itemId"]
+            || question["interactionScope"] != response["interactionScope"]
+        {
+            continue;
+        }
+        pending = !matches!(turn["status"].as_str(), Some("error" | "cancelled"))
+            && question["response"].is_null()
+            && question["expiresAtUnixMs"]
+                .as_i64()
+                .is_none_or(|deadline| deadline > now_ms())
+            && !matches!(
+                question["interactionStatus"].as_str(),
+                Some("answered" | "cancelled" | "expired")
+            );
+    }
+    pending
+}
+
 pub(super) fn is_permanent_question_rejection(status: reqwest::StatusCode) -> bool {
     matches!(status.as_u16(), 400 | 404 | 409 | 422)
 }
@@ -170,4 +261,46 @@ fn question_belongs_to_current_turn(
         .and_then(|state| state.turn_id.as_deref().or(state.latest_turn_id.as_deref()))
         .or_else(|| link.runtime_handle["lastTurnId"].as_str());
     !turn.is_some_and(|turn| current_turn.is_some_and(|current| turn != current))
+}
+
+#[cfg(test)]
+mod reply_tests {
+    use super::*;
+
+    fn transcript() -> Value {
+        json!({"turns":[{"items":[{"type":"block","block":{"render_payload":{
+            "delivery":"async","itemId":"question","interactionScope":"turn"
+        }}}]}]})
+    }
+
+    #[test]
+    fn async_replies_require_the_exact_pending_question_and_turn() {
+        let response = json!({"itemId":"question","interactionScope":"turn"});
+        assert!(pending_async_question(&transcript(), &response));
+        for wrong in [
+            json!({"itemId":"other","interactionScope":"turn"}),
+            json!({"itemId":"question","interactionScope":"other"}),
+        ] {
+            assert!(!pending_async_question(&transcript(), &wrong));
+        }
+        let mut answered = transcript();
+        answered["turns"][0]["items"]
+            .as_array_mut()
+            .unwrap()
+            .push(json!({"type":"user_message"}));
+        assert!(!pending_async_question(&answered, &response));
+        for status in ["answered", "cancelled", "expired"] {
+            let mut settled = transcript();
+            settled["turns"][0]["items"][0]["block"]["render_payload"]["interactionStatus"] =
+                json!(status);
+            assert!(!pending_async_question(&settled, &response));
+        }
+        let mut expired = transcript();
+        expired["turns"][0]["items"][0]["block"]["render_payload"]["expiresAtUnixMs"] =
+            json!(now_ms() - 1);
+        assert!(!pending_async_question(&expired, &response));
+        expired["turns"][0]["items"][0]["block"]["render_payload"]["expiresAtUnixMs"] =
+            json!(now_ms() + 60_000);
+        assert!(pending_async_question(&expired, &response));
+    }
 }

@@ -358,6 +358,12 @@ async fn notify_runtime_event(state: &AppState, user_id: i64, device_id: &str, e
     let Some(payload) = envelope.get("payload").and_then(Value::as_object) else {
         return;
     };
+    if runtime_questions::question(payload).is_some() {
+        if let Err(error) = runtime_questions::deliver(state, user_id, device_id, payload).await {
+            tracing::warn!(%error, user_id, device_id, "Runtime question IM delivery failed");
+        }
+        return;
+    }
     let Some(plan) = notification_plan(user_id, device_id, payload) else {
         return;
     };
@@ -371,6 +377,9 @@ async fn notify_runtime_event(state: &AppState, user_id: i64, device_id: &str, e
 
 #[path = "device_runtime_im_notification.rs"]
 mod runtime_im_notification;
+
+#[path = "device_runtime_questions.rs"]
+mod runtime_questions;
 
 /// `RUNTIME_VALUE_ORIGINS`: the `valueOrigin` values the runtime terminal event
 /// keeps.

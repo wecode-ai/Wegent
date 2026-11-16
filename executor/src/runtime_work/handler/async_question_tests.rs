@@ -4,6 +4,57 @@
 
 use super::*;
 
+#[tokio::test]
+async fn synchronous_question_answers_reject_duplicates_and_wrong_request_ids() {
+    let (handler, _root) = isolated_runtime_work_handler("im-sync-answer");
+    handler.begin_active_codex_transcript("task", "thread", "turn");
+    let execution_id = start_test_execution(&handler, "task");
+    handler.record_active_codex_turn("task", execution_id, "thread".into(), "turn".into());
+    handler.record_active_codex_transcript_item(
+        "task",
+        "turn",
+        &json!({
+            "id":42,"method":"item/tool/requestUserInput","params":{
+                "threadId":"thread","turnId":"turn","itemId":"question",
+                "questions":[{"id":"q","question":"Continue?","options":[]}]}
+        }),
+    );
+    let (sender, mut receiver) = mpsc::channel(1);
+    handler.active_request_user_inputs.lock().unwrap().insert(
+        "task".into(),
+        ActiveRequestUserInput {
+            execution_id,
+            sender,
+        },
+    );
+    let answer =
+        json!({"requestId":42,"interactionScope":"turn","answers":{"q":{"answers":["Yes"]}}});
+    let mut wrong = answer.clone();
+    wrong["requestId"] = json!(43);
+    let rejected = handler
+        .send_request_user_input_response("task", wrong)
+        .await
+        .unwrap();
+    assert_eq!(rejected["code"], "stale_request_user_input");
+    assert!(receiver.try_recv().is_err());
+    assert_eq!(
+        handler
+            .send_request_user_input_response("task", answer.clone())
+            .await
+            .unwrap()["accepted"],
+        true
+    );
+    assert_eq!(receiver.recv().await.unwrap(), answer);
+    assert_eq!(
+        handler
+            .send_request_user_input_response("task", answer)
+            .await
+            .unwrap()["code"],
+        "stale_request_user_input"
+    );
+    assert!(receiver.try_recv().is_err());
+}
+
 #[test]
 fn question_publication_retries_auth_timeout_and_rate_limit_failures() {
     for code in [401, 403, 408, 425, 429, 500, 502, 503, 504] {

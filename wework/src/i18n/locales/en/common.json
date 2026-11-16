@@ -1467,6 +1467,7 @@
     "away_im_reminder_choose_session": "Choose IM session",
     "away_im_reminder_change_session": "Change session",
     "away_im_reminder_needs_session": "Choose an IM session first",
+    "im_connections_required": "Add an IM connection from the More menu in My stand-in → Stand-in details.",
     "global_im_notifications_unavailable": "IM push is unavailable. Re-login or check the configuration.",
     "global_im_notifications_requires_cloud_login": "Log in to cloud to turn on away reminders",
     "code_comment_count": "{{count}} comments",
@@ -5552,7 +5553,7 @@
     "channel_in_app": "In-app",
     "channel_system": "System notification",
     "channel_im": "IM push",
-    "im_target_required": "Choose an IM conversation from the away-reminder control first.",
+    "im_requires_cloud": "Connect to the cloud to use IM notifications.",
     "back": "Back to categories",
     "total_unread": "{{count}} unread",
     "category_tasks": "Task updates",
@@ -5576,8 +5577,7 @@
     "ask_body": "When you save this assignment, send an in-app notification and push to their connected IM.",
     "without_notification": "Do not notify",
     "with_notification": "Notify",
-    "connect": "Connect to the cloud to view notifications",
-    "im_target": "Choose IM notification conversation"
+    "connect": "Connect to the cloud to view notifications"
   },
   "standIn": {
     "native_input_pending": "Resolve the current question or permission card before sending another message.",
@@ -5602,6 +5602,8 @@
       "default": "Primary stand-in on your default device",
       "saving": "Connecting…",
       "refresh": "Refresh conversations",
+      "add_channels": "Add chat channel",
+      "add_channel": "Add {{channel}}",
       "channel_action": "Connect or view {{channel}}",
       "dialog_title": "Set up {{channel}}",
       "connect_channel": "Connect {{channel}}",
