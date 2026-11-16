@@ -100,7 +100,7 @@ function ScopedCollaborationTemplatePage({
             }
           : null
     detailChanged.current?.(panel)
-    if (!panel && returnTrigger.current) {
+    if (!panel && !busy && !importBusy && returnTrigger.current) {
       const trigger = returnTrigger.current.isConnected
         ? returnTrigger.current
         : pageRef.current?.querySelector<HTMLInputElement>('[data-testid="template-search"]')
@@ -238,7 +238,9 @@ function ScopedCollaborationTemplatePage({
     >
       <div
         hidden={embedded && Boolean(selected || deleting || importOpen)}
-        style={{ display: embedded && (selected || deleting || importOpen) ? 'none' : 'contents' }}
+        style={{
+          display: embedded && (selected || deleting || importOpen) ? 'none' : 'contents',
+        }}
       >
         <header className="collaboration-template-page-heading">
           <div>
@@ -258,6 +260,7 @@ function ScopedCollaborationTemplatePage({
             <button
               type="button"
               data-testid="template-import-open"
+              disabled={busy}
               onClick={event => {
                 returnTrigger.current = event.currentTarget
                 setImportOpen(true)

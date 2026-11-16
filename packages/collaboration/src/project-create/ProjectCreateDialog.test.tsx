@@ -29,6 +29,31 @@ const click = async (id: string) => {
   await act(async () => get(id).click())
 }
 
+it('explains an incomplete task source while advanced settings are collapsed', async () => {
+  await act(async () =>
+    root.render(
+      <ProjectCreateDialog
+        targets={[{ location: 'cloud', create: vi.fn() }]}
+        defaultLocation="cloud"
+        labels={projectCreateLabels.en}
+        allowDingTalkAITable={false}
+        onClose={vi.fn()}
+        onCreated={vi.fn()}
+      />
+    )
+  )
+  await click('collaboration-project-create-advanced')
+  await click('cloud-project-task-provider-github')
+  await click('collaboration-project-create-advanced')
+  const advanced = get('collaboration-project-create-advanced')
+  expect(advanced.getAttribute('aria-expanded')).toBe('false')
+  expect(advanced.textContent).toContain('GitHub')
+  expect(advanced.textContent).toContain(projectCreateLabels.en.repositoryRequired)
+  expect(get<HTMLButtonElement>('cloud-project-create-confirm').disabled).toBe(true)
+  await click('collaboration-project-create-advanced')
+  expect(get<HTMLInputElement>('cloud-project-provider-repository').value).toBe('')
+})
+
 it('returns from group configuration without closing creation or losing its participants', async () => {
   vi.stubGlobal(
     'ResizeObserver',
@@ -84,7 +109,11 @@ it('returns from group configuration without closing creation or losing its part
   expect(get('cloud-project-name').closest('form')?.hidden).toBe(true)
   await act(async () =>
     document.activeElement!.dispatchEvent(
-      new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true })
+      new KeyboardEvent('keydown', {
+        key: 'Escape',
+        bubbles: true,
+        cancelable: true,
+      })
     )
   )
   expect(onClose).not.toHaveBeenCalled()
@@ -125,7 +154,11 @@ it('contains keyboard focus, respects a child dialog and restores the opener on 
   await act(async () => {
     last.focus()
     last.dispatchEvent(
-      new KeyboardEvent('keydown', { key: 'Tab', bubbles: true, cancelable: true })
+      new KeyboardEvent('keydown', {
+        key: 'Tab',
+        bubbles: true,
+        cancelable: true,
+      })
     )
   })
   expect(document.activeElement).toBe(close)

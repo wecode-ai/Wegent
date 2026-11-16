@@ -60,6 +60,139 @@ async function click(testId: string) {
   await act(async () => target!.click())
 }
 
+function pendingRemoteDetail() {
+  const backend = remote()
+  const record = structuredClone(builtinCollaborationTemplates()[0])
+  record.id = 42
+  record.ownerId = 8
+  record.source = 'downloaded'
+  record.document.metadata = {
+    name: 'remote-only-workflow',
+    namespace: 'default',
+  }
+  let resolve!: (record: TemplateRecord) => void
+  let reject!: (reason: Error) => void
+  const pending = new Promise<TemplateRecord>((complete, fail) => {
+    resolve = complete
+    reject = fail
+  })
+  vi.mocked(backend.get).mockReturnValue(pending)
+  vi.mocked(backend.discover).mockResolvedValue({
+    items: [
+      {
+        id: 42,
+        resource_type: 'template',
+        name: record.document.metadata.name,
+        display_name: record.document.spec.displayName,
+        publisher_user_id: 8,
+        publisher_namespace: 'default',
+        current_version: { version: record.document.spec.version },
+        is_installed: false,
+      },
+    ],
+    hasMore: false,
+    nextCursor: null,
+  })
+  const store = new CollaborationTemplateStore({
+    scope: 'backend:7',
+    ownerId: 7,
+    remote: backend,
+    persistence: { read: async () => [], write: vi.fn(async () => undefined) },
+  })
+  return { backend, record, store, resolve, reject }
+}
+
+it('prevents overlapping import and remote detail panels while a detail request is pending', async () => {
+  vi.useFakeTimers()
+  const fixture = pendingRemoteDetail()
+  const footer = document.createElement('footer')
+  document.body.append(footer)
+  try {
+    await act(async () =>
+      root.render(
+        <CollaborationTemplatePage
+          store={fixture.store}
+          locale="en"
+          embedded
+          footerTarget={footer}
+        />
+      )
+    )
+    await act(async () => vi.advanceTimersByTimeAsync(200))
+    await click('template-details-42')
+    expect(fixture.backend.get).toHaveBeenCalledWith(42)
+    const importButton = container.querySelector<HTMLButtonElement>(
+      '[data-testid="template-import-open"]'
+    )!
+    const importBlocked = importButton.disabled
+    await click('template-import-open')
+    const importedWhilePending = Boolean(
+      container.querySelector('[data-testid="template-import-file"]')
+    )
+    await act(async () => fixture.resolve(fixture.record))
+    expect(container.querySelectorAll('[data-testid="template-inline-detail"]')).toHaveLength(1)
+    expect(importBlocked).toBe(true)
+    expect(importedWhilePending).toBe(false)
+    expect(container.querySelector('[data-testid="template-import-file"]')).toBeNull()
+    expect(footer.querySelectorAll('button')).toHaveLength(1)
+    expect(footer.querySelector('[data-testid="template-use"]')).not.toBeNull()
+    expect(footer.querySelector('[data-testid="template-import-save"]')).toBeNull()
+  } finally {
+    footer.remove()
+    vi.useRealTimers()
+  }
+})
+
+it.each(['resolved', 'rejected'] as const)(
+  'restores an enabled remote detail trigger after its pending request is %s',
+  async outcome => {
+    vi.useFakeTimers()
+    const fixture = pendingRemoteDetail()
+    const onDetailChange = vi.fn()
+    try {
+      await act(async () =>
+        root.render(
+          <CollaborationTemplatePage
+            store={fixture.store}
+            locale="en"
+            embedded
+            onDetailChange={onDetailChange}
+          />
+        )
+      )
+      await act(async () => vi.advanceTimersByTimeAsync(200))
+      const trigger = container.querySelector<HTMLButtonElement>(
+        '[data-testid="template-details-42"]'
+      )!
+      trigger.focus()
+      const focusWhileDisabled: boolean[] = []
+      const focus = trigger.focus.bind(trigger)
+      vi.spyOn(trigger, 'focus').mockImplementation(() => {
+        focusWhileDisabled.push(trigger.disabled)
+        focus()
+      })
+      await click('template-details-42')
+      expect(trigger.disabled).toBe(true)
+      container.querySelector<HTMLInputElement>('[data-testid="template-search"]')!.focus()
+      expect(document.activeElement).not.toBe(trigger)
+      if (outcome === 'resolved') {
+        await act(async () => fixture.resolve(fixture.record))
+        expect(container.querySelector('[data-testid="template-inline-detail"]')).not.toBeNull()
+        await act(async () => onDetailChange.mock.lastCall![0].onBack())
+        expect(container.querySelector('[data-testid="template-inline-detail"]')).toBeNull()
+      } else {
+        await act(async () => fixture.reject(new Error('detail download failed')))
+        expect(container.querySelector('[role="alert"]')).not.toBeNull()
+      }
+      expect(trigger.disabled).toBe(false)
+      expect(document.activeElement).toBe(trigger)
+      expect(focusWhileDisabled).not.toContain(true)
+    } finally {
+      vi.useRealTimers()
+    }
+  }
+)
+
 it.each(['en', 'zh-CN'] as const)(
   'confirms deletion, preserves cancellation and retries failure in %s',
   async locale => {

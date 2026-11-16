@@ -1,6 +1,5 @@
 import { Download, X } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
-import { createPortal } from 'react-dom'
 import { subscribeDesktopHostEvents } from '@/api/dsh/desktopHost'
 import { Button } from '@/components/ui/button'
 import {
@@ -69,7 +68,8 @@ export function PluginPythonRuntimeNotice() {
       setRetrying(false)
     }
   }
-  return createPortal(
+  // AppShell is fixed and owns a stacking context; stay beside its modal descendants.
+  return (
     <aside
       data-testid="plugin-python-runtime-notice"
       data-embedded-browser-occlusion
@@ -140,7 +140,6 @@ export function PluginPythonRuntimeNotice() {
           {determinate && <p className="mt-1 text-xs text-text-secondary">{progress}%</p>}
         </div>
       )}
-    </aside>,
-    document.body
+    </aside>
   )
 }

@@ -24,15 +24,8 @@ import {
   UsersRound,
   X,
 } from "lucide-react";
-import {
-  useEffect,
-  useId,
-  useRef,
-  useState,
-  type ChangeEvent,
-  type KeyboardEvent,
-  type ReactNode,
-} from "react";
+import { useEffect, useId, useRef, useState, type ReactNode } from "react";
+import { HoverEditableText } from "./HoverEditableText";
 import { ProjectCreateConfigurationView } from "./ProjectCreateConfigurationView";
 import type { UnifiedModel } from "@wegent/chat-core/models";
 
@@ -150,101 +143,6 @@ function CollaboratorToken({
           <X aria-hidden="true" />
         </button>
       ) : null}
-    </span>
-  );
-}
-
-function HoverEditableText({
-  value,
-  ariaLabel,
-  placeholder,
-  testId,
-  activateOnTextClick = false,
-  showEditButton = false,
-  multiline = true,
-  onChange,
-}: {
-  value: string;
-  ariaLabel: string;
-  placeholder?: string;
-  testId?: string;
-  activateOnTextClick?: boolean;
-  showEditButton?: boolean;
-  multiline?: boolean;
-  onChange(value: string): void;
-}) {
-  const [editing, setEditing] = useState(false);
-  if (editing) {
-    const sharedProps = {
-      autoFocus: true,
-      value,
-      "aria-label": ariaLabel,
-      onChange: (event: ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) =>
-        onChange(event.target.value),
-      onBlur: () => setEditing(false),
-      onKeyDown: (
-        event: KeyboardEvent<HTMLInputElement | HTMLTextAreaElement>,
-      ) => {
-        if (event.key === "Escape") {
-          event.preventDefault();
-          event.stopPropagation();
-          setEditing(false);
-        }
-        if (!multiline && event.key === "Enter") setEditing(false);
-      },
-    };
-    return multiline ? (
-      <textarea
-        {...sharedProps}
-        className="collaboration-project-create-inline-textarea"
-        rows={2}
-      />
-    ) : (
-      <input
-        {...sharedProps}
-        className="collaboration-project-create-inline-input"
-      />
-    );
-  }
-  const startEditingFromText = () => {
-    if (activateOnTextClick) setEditing(true);
-  };
-  return (
-    <span
-      className={`collaboration-project-create-hover-editable${
-        showEditButton ? " is-edit-affordance-visible" : ""
-      }`}
-    >
-      <span
-        className={[
-          !value && placeholder ? "is-placeholder" : "",
-          activateOnTextClick ? "is-clickable" : "",
-        ]
-          .filter(Boolean)
-          .join(" ")}
-        role={activateOnTextClick ? "button" : undefined}
-        tabIndex={activateOnTextClick ? 0 : undefined}
-        data-testid={testId}
-        onClick={startEditingFromText}
-        onKeyDown={(event) => {
-          if (
-            activateOnTextClick &&
-            (event.key === "Enter" || event.key === " ")
-          ) {
-            event.preventDefault();
-            setEditing(true);
-          }
-        }}
-      >
-        {value || placeholder}
-      </span>
-      <button
-        type="button"
-        aria-label={ariaLabel}
-        onClick={() => setEditing(true)}
-      >
-        <Pencil aria-hidden="true" />
-      </button>
     </span>
   );
 }
@@ -913,6 +811,21 @@ export function ProjectCreateDialog(props: ProjectCreateDialogProps) {
         ]
       : []),
   ];
+  const providerSummary =
+    state.taskProvider === "local"
+      ? labels.advancedSettingsSummary
+      : [
+          labels.advancedSettingsSummary,
+          providers.find((provider) => provider.id === state.taskProvider)
+            ?.label,
+          state.repositoryProvider && !state.repositoryAddress.trim()
+            ? labels.repositoryRequired
+            : state.isAITableProvider && !state.aitableLink
+              ? labels.aitableInvalid
+              : null,
+        ]
+          .filter(Boolean)
+          .join(" · ");
 
   const closeGroupConfiguration = () => {
     groupGenerationRunRef.current += 1;
@@ -1795,7 +1708,7 @@ export function ProjectCreateDialog(props: ProjectCreateDialogProps) {
                 <span>{labels.advancedSettings}</span>
                 {!advancedSettingsOpen && (
                   <small className="collaboration-project-create-advanced-summary">
-                    {labels.advancedSettingsSummary}
+                    {providerSummary}
                   </small>
                 )}
                 <ChevronDown aria-hidden="true" />

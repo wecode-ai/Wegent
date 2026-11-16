@@ -60,7 +60,12 @@ export function useProjectGenerationModels(
         return {
           models: catalog.models,
           key: selected ? generationModelKey(selected) : '',
-          options: previous ? current.options : (selected?.options ?? {}),
+          options: previous
+            ? current.options
+            : {
+                ...selected?.options,
+                ...(preferred ? catalog.defaultSelection?.options : undefined),
+              },
           loading: false,
           error: null,
         }

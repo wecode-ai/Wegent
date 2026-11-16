@@ -5758,8 +5758,8 @@ export function CloudTodoWorkspace({
             allowDingTalkAITable
             labels={projectCreateLabels[i18n.language.startsWith('zh') ? 'zh-CN' : 'en']}
             host={{
-              renderModal: ({ title, children, onClose }) => (
-                <Modal title={title} width="wide" onClose={onClose}>
+              renderModal: ({ title, children, onClose, closeLabel }) => (
+                <Modal title={title} width="wide" onClose={onClose} closeLabel={closeLabel}>
                   {children}
                 </Modal>
               ),

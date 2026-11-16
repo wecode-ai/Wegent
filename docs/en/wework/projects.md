@@ -235,7 +235,7 @@ the project creation you started earlier.
 
 The storage location cannot be changed after the project is created. The task source (built-in tasks, GitHub, or GitLab) controls where task data is read from; it does not change whether the project is stored locally or in the cloud.
 
-Expand **Advanced settings** to edit the description or task source; the collapsed **Description, task source** summary previews its contents. New cloud projects default to **Private**. Choosing **Public** gives all signed-in users read-only access to issues they can view; this is a fixed explanation, not another role selection. **Default visibility for new issues** independently offers **Visible to project users** or **Related people only**. These choices are saved when you click **Create project**.
+Expand **Advanced settings** to edit the description or task source; the collapsed **Description, task source** summary previews its contents. After choosing an external task source, it also shows the selected provider and any missing required information. New cloud projects default to **Private**. Choosing **Public** gives all signed-in users read-only access to issues they can view; this is a fixed explanation, not another role selection. **Default visibility for new issues** independently offers **Visible to project users** or **Related people only**. These choices are saved when you click **Create project**.
 
 **Add collaborators** separates People, Agents, and Groups. Empty lists explain the current category. When directory search is available, search for people by name or email; if there are no matches, change the query or category. You may also create the project first and add collaborators in project settings later.
 

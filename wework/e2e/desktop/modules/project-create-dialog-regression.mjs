@@ -1,4 +1,6 @@
 import assert from 'node:assert/strict'
+import { writeFile } from 'node:fs/promises'
+import { join } from 'node:path'
 import { createDevtoolsClient } from '../../../scripts/ai-verify-devtools.mjs'
 import {
   openDirectProjectCreation,
@@ -26,12 +28,68 @@ export async function waitForProjectCreateViewport(control, width = 1024, height
 export async function assertProjectCreateActionHit(control, selector) {
   await control.command('waitFor', selector, { visible: true })
   const [metrics] = JSON.parse(await control.command('getElementMetrics', selector))
+  if (!metrics?.hitTestVisible)
+    await saveProjectCreateFocusEvidence('project-create-hit-failure', selector)
   assert.ok(
     metrics?.hitTestVisible,
     `Project creation action is covered: ${selector}; metrics=${JSON.stringify(metrics)}`
   )
   assert.ok(metrics.top >= 0 && metrics.bottom <= metrics.viewportHeight)
   assert.ok(metrics.left >= 0 && metrics.right <= metrics.viewportWidth)
+}
+
+async function saveProjectCreateFocusEvidence(name, selector) {
+  try {
+    await collectProjectCreateFocusEvidence(name, selector)
+  } catch (error) {
+    console.error('Unable to capture project creation failure evidence', error)
+  }
+}
+
+async function collectProjectCreateFocusEvidence(name, selector) {
+  const client = await createDevtoolsClient(resultDir, DEFAULT_STEP_TIMEOUT_MS)
+  const target = (await client({ action: 'targets' })).find(
+    entry =>
+      entry.type === 'window' &&
+      entry.url.includes('/wework/app/') &&
+      !entry.url.includes('startup-splash')
+  )?.id
+  assert.ok(target, 'The isolated renderer must be available for project focus diagnostics')
+  try {
+    const evidence = await client({
+      action: 'command',
+      target,
+      method: 'Runtime.evaluate',
+      params: {
+        returnByValue: true,
+        expression: `(() => {
+        const describe = element => {
+          if (!(element instanceof HTMLElement)) return null
+          const style = getComputedStyle(element)
+          return { tag: element.tagName, testId: element.dataset.testid, className: element.className,
+            tabIndex: element.tabIndex, tabIndexAttribute: element.getAttribute('tabindex'),
+            contentEditable: element.contentEditable, disabled: element.matches(':disabled'),
+            hidden: Boolean(element.closest('[hidden],[inert],[aria-hidden="true"]')),
+            display: style.display, visibility: style.visibility, position: style.position,
+            zIndex: style.zIndex, transform: style.transform, opacity: style.opacity,
+            isolation: style.isolation, contain: style.contain, filter: style.filter }
+        }
+        const ancestry = element => { const chain = []; while(element) { chain.push(describe(element)); element = element.parentElement } return chain }
+        const scope = document.querySelector(${JSON.stringify(selector)})
+        const rect = scope?.getBoundingClientRect()
+        return { active: ancestry(document.activeElement), scope: ancestry(scope),
+          hit: rect ? ancestry(document.elementFromPoint((rect.left + rect.right) / 2, (rect.top + rect.bottom) / 2)) : null,
+          controls: scope ? Array.from(scope.querySelectorAll('input,button,select,textarea,[contenteditable]')).map(describe) : [] }
+      })()`,
+      },
+    })
+    await writeFile(
+      join(resultDir, `${name}.json`),
+      JSON.stringify(evidence.result?.value, null, 2)
+    )
+  } finally {
+    await client({ action: 'detach', target })
+  }
 }
 
 async function verifyProjectCreateFocusRestoration(control, scoped) {
@@ -323,6 +381,8 @@ async function verifyGroupConfigurationDraft(control, scoped, workspace, agents)
   await control.command('nativePress', opener, { key: 'Enter' })
   await control.command('waitFor', configuration, { visible: true })
   const firstFocusedId = await control.command('getActiveElementTestId', 'body')
+  if (!firstFocusedId)
+    await saveProjectCreateFocusEvidence('project-create-initial-focus-failure', configuration)
   assert.ok(firstFocusedId, 'Group configuration must focus an interactive control')
   const firstControl = `${configuration} ${testId(firstFocusedId)}`
   assert.equal(

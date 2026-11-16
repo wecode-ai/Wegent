@@ -4,6 +4,58 @@ import { createRoot } from 'react-dom/client'
 import { expect, it } from 'vitest'
 import { ProjectCreateConfigurationView } from './ProjectCreateConfigurationView'
 
+it('initially focuses a native editable instruction field without an explicit tab index', async () => {
+  globalThis.IS_REACT_ACT_ENVIRONMENT = true
+  const container = document.createElement('div')
+  document.body.append(container)
+  const root = createRoot(container)
+  try {
+    await act(async () =>
+      root.render(
+        <section role="dialog" aria-modal="true">
+          <ProjectCreateConfigurationView onBack={() => {}} backLabel="Back to project">
+            <div contentEditable suppressContentEditableWarning data-testid="instructions">
+              Instructions
+            </div>
+          </ProjectCreateConfigurationView>
+        </section>
+      )
+    )
+    const editor = container.querySelector<HTMLElement>('[data-testid="instructions"]')!
+    expect(editor.hasAttribute('tabindex')).toBe(false)
+    expect(editor.tabIndex).toBe(-1)
+    expect(document.activeElement).toBe(editor)
+  } finally {
+    await act(async () => root.unmount())
+    container.remove()
+  }
+})
+
+it('respects an explicit negative tab index on an editable field', async () => {
+  globalThis.IS_REACT_ACT_ENVIRONMENT = true
+  const container = document.createElement('div')
+  document.body.append(container)
+  const root = createRoot(container)
+  try {
+    await act(async () =>
+      root.render(
+        <section role="dialog" aria-modal="true">
+          <ProjectCreateConfigurationView onBack={() => {}} backLabel="Back to project">
+            <div contentEditable suppressContentEditableWarning tabIndex={-1}>
+              Excluded field
+            </div>
+            <input aria-label="Instructions" />
+          </ProjectCreateConfigurationView>
+        </section>
+      )
+    )
+    expect(document.activeElement).toBe(container.querySelector('input'))
+  } finally {
+    await act(async () => root.unmount())
+    container.remove()
+  }
+})
+
 it.each(['Escape', 'header'])(
   'returns to a visible destination after %s when the menu entry is gone',
   async action => {

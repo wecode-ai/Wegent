@@ -2,10 +2,14 @@ import { useEffect, useRef } from 'react'
 import { useEscapeKey } from '../markdown/useEscapeKey'
 
 const focusableSelector =
-  'button:not([disabled]), [href], input:not([disabled]):not([type="hidden"]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])'
+  'button:not([disabled]), [href], input:not([disabled]):not([type="hidden"]), select:not([disabled]), textarea:not([disabled]), [contenteditable="true"]:not([tabindex="-1"]), [tabindex]:not([tabindex="-1"])'
 
 function isFocusable(element: HTMLElement) {
-  if (element.tabIndex < 0 || element.closest('[hidden], [aria-hidden="true"], [inert]'))
+  if (
+    (element.tabIndex < 0 &&
+      (!element.matches('[contenteditable="true"]') || element.hasAttribute('tabindex'))) ||
+    element.closest('[hidden], [aria-hidden="true"], [inert]')
+  )
     return false
   for (let node: HTMLElement | null = element; node; node = node.parentElement) {
     const style = getComputedStyle(node)
