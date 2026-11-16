@@ -167,15 +167,21 @@ fn read_config(home: &Path) -> Result<Value, String> {
         .map_err(|error| format!("Read native Codex provider configuration: {error}"))
 }
 
-pub(super) fn official_codex_base_url(home: &Path) -> Result<String, String> {
+pub(super) fn official_codex_base_url(home: &Path) -> Result<Option<String>, String> {
     let config = read_config(home)?;
     let configured = config["openai_base_url"]
         .as_str()
         .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .filter(|value| local_model_proxy::is_official_chatgpt_codex_endpoint(value))
-        .map(|value| value.trim_end_matches('/').to_owned());
-    Ok(configured.unwrap_or_else(|| local_model_proxy::OFFICIAL_CHATGPT_CODEX_BASE_URL.to_owned()))
+        .filter(|value| !value.is_empty());
+    match configured {
+        None => Ok(Some(
+            local_model_proxy::OFFICIAL_CHATGPT_CODEX_BASE_URL.to_owned(),
+        )),
+        Some(value) if local_model_proxy::is_official_chatgpt_codex_endpoint(value) => {
+            Ok(Some(value.trim_end_matches('/').to_owned()))
+        }
+        Some(_) => Ok(None),
+    }
 }
 
 fn defaults(provider: &str) -> Map<String, Value> {
@@ -251,6 +257,17 @@ mod tests {
         assert_eq!(config["supports_standalone_web_search"], false);
         assert!(config.get("auth").is_none());
         assert!(config.get("experimental_bearer_token").is_none());
+    }
+
+    #[test]
+    fn official_base_url_returns_none_for_a_custom_endpoint() {
+        let home = tempfile::tempdir().unwrap();
+        fs::write(
+            home.path().join("config.toml"),
+            "openai_base_url=\"http://127.0.0.1:4567/v1\"\n",
+        )
+        .unwrap();
+        assert_eq!(official_codex_base_url(home.path()).unwrap(), None);
     }
 
     #[test]

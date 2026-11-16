@@ -20,11 +20,12 @@ pub(super) fn request_upstream(
     if is_builtin_codex_provider(&provider) {
         let home = request_home(request)?;
         if official_openai_proxy_applies(request, &provider) {
-            let base_url = native_provider::official_codex_base_url(&home)?;
-            return Ok(Some((
-                official_openai_proxy_upstream(request, base_url),
-                "local_proxy_official_subscription",
-            )));
+            if let Some(base_url) = native_provider::official_codex_base_url(&home)? {
+                return Ok(Some((
+                    official_openai_proxy_upstream(request, base_url),
+                    "local_proxy_official_subscription",
+                )));
+            }
         }
         return Ok(None);
     }
@@ -231,6 +232,31 @@ experimental_bearer_token="must-not-select"
         let _subscription = EnvRestore::capture(WEWORK_CODEX_SUBSCRIPTION_ENABLED_ENV);
         env::set_var(WEGENT_CODEX_HOME_ENV, home.path());
         env::set_var(WEWORK_CODEX_SUBSCRIPTION_ENABLED_ENV, "false");
+        let request = ExecutionRequest {
+            model_config: json!({
+                "model_provider":"openai",
+                "model_id":"gpt-test",
+                "wework_model_kind":"codex-official"
+            }),
+            ..ExecutionRequest::default()
+        };
+
+        assert!(request_upstream(&request).unwrap().is_none());
+    }
+
+    #[test]
+    fn official_chatgpt_stays_direct_with_a_custom_openai_base_url() {
+        let _lock = crate::test_env::lock();
+        let home = tempfile::tempdir().unwrap();
+        let _restore = EnvRestore::capture(WEGENT_CODEX_HOME_ENV);
+        let _subscription = EnvRestore::capture(WEWORK_CODEX_SUBSCRIPTION_ENABLED_ENV);
+        env::set_var(WEGENT_CODEX_HOME_ENV, home.path());
+        env::set_var(WEWORK_CODEX_SUBSCRIPTION_ENABLED_ENV, "true");
+        fs::write(
+            home.path().join("config.toml"),
+            r#"openai_base_url="http://127.0.0.1:4567/v1""#,
+        )
+        .unwrap();
         let request = ExecutionRequest {
             model_config: json!({
                 "model_provider":"openai",
