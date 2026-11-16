@@ -39,8 +39,8 @@ const priorityClasses: Record<CollaborationIssueCardItem['priority'], string> = 
   none: 'text-text-secondary',
   low: 'text-text-secondary',
   medium: 'text-text-secondary',
-  high: 'text-amber-600 dark:text-amber-400',
-  urgent: 'text-red-600 dark:text-red-400',
+  high: 'text-amber-800 dark:text-amber-400',
+  urgent: 'text-red-700 dark:text-red-400',
 }
 
 function collaborationIssueCardClassName({

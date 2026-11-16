@@ -100,7 +100,7 @@ async function verifyTaskLabels(control, home) {
         description.bottom <= row.bottom,
       'The complete goal description must fit inside its menu item'
     )
-    await control.command('nativePress', '[data-testid="set-goal-button"]', { key: 'Escape' })
+    await control.command('click', `${panel} [data-testid="add-context-button"]`)
     await setGoalDraftForTabTransfer(control, panel)
   }
   const goalText = 'Keep pursuing this goal after opening global settings.'
