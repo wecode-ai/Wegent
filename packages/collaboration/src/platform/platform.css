@@ -5133,3 +5133,50 @@ button.collaboration-project-offline:hover {
 .collaboration-management + .collaboration-platform-sidebar-footer {
   margin-top: 0;
 }
+
+@media (max-width: 767px) {
+  .collaboration-platform-sidebar button {
+    min-width: 44px;
+    min-height: 44px;
+  }
+  .collaboration-primary-navigation button,
+  .collaboration-workspace-section-heading,
+  .collaboration-workspace-section-toggle,
+  .collaboration-platform-sidebar .collaboration-workspace-row,
+  .collaboration-platform-sidebar .collaboration-workspace-identity,
+  .collaboration-platform-sidebar
+    .collaboration-workspace-project-list
+    .collaboration-workspace-project {
+    height: 44px;
+    min-height: 44px;
+  }
+  .collaboration-workspace-section-toggle {
+    padding-right: 100px;
+  }
+  .collaboration-workspace-section-toggle > svg {
+    opacity: 1;
+  }
+  .collaboration-platform-sidebar .collaboration-workspace-identity,
+  .collaboration-platform-sidebar
+    .collaboration-workspace-project-list
+    .collaboration-workspace-project {
+    padding-right: 100px;
+  }
+  .collaboration-workspace-section-actions > button,
+  .collaboration-workspace-action-trigger,
+  .collaboration-platform-sidebar .collaboration-workspace-toggle {
+    width: 44px;
+    height: 44px;
+  }
+  .collaboration-platform-sidebar .collaboration-workspace-toggle {
+    top: 0;
+  }
+  .collaboration-workspace-actions {
+    right: 48px;
+    width: 44px;
+    height: 44px;
+    flex-basis: 44px;
+    opacity: 1;
+    pointer-events: auto;
+  }
+}

@@ -1,5 +1,6 @@
 {
   "personalHome": {
+    "backToIssues": "返回事项",
     "codeWorkspace": "代码工作区（可选）",
     "codeWorkspaceSearch": "搜索代码工作区",
     "codeWorkspaceEmpty": "还没有代码工作区",

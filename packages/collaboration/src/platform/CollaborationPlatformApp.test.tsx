@@ -7609,10 +7609,16 @@ describe("Issue permission separation in the real shared editor", () => {
     titleScrollHeight.mockRestore();
   });
   it("restores the host-owned home draft after the collaboration page unmounts", async () => {
-    const { api } = createApi();
+    const second = {
+      ...project,
+      id: "draft-second",
+      name: "Second draft project",
+    };
+    const { api } = createApi({ initialProjects: [project, second] });
     function Host() {
       const [open, setOpen] = useState(true);
       const [value, onChange] = useState("");
+      const [projectId, onSelectProject] = useState<string | null>(null);
       return (
         <>
           <button
@@ -7624,14 +7630,29 @@ describe("Issue permission separation in the real shared editor", () => {
           {open ? (
             <PlatformHarness
               api={api}
-              issueHomeDraft={{ value, onChange }}
+              issueHomeDraft={{ value, onChange, projectId, onSelectProject }}
               renderPersonalHome={({ createIssue }) => createIssue}
               renderIssueComposer={(props) => (
-                <input
-                  data-testid="host-home-draft"
-                  value={props.value}
-                  onChange={(event) => props.onChange(event.target.value)}
-                />
+                <>
+                  <select
+                    data-testid="host-home-project"
+                    value={props.projectId}
+                    onChange={(event) =>
+                      props.onSelectProject(event.target.value)
+                    }
+                  >
+                    {props.projects.map((item) => (
+                      <option key={item.id} value={item.id}>
+                        {item.name}
+                      </option>
+                    ))}
+                  </select>
+                  <input
+                    data-testid="host-home-draft"
+                    value={props.value}
+                    onChange={(event) => props.onChange(event.target.value)}
+                  />
+                </>
               )}
             />
           ) : (
@@ -7641,6 +7662,7 @@ describe("Issue permission separation in the real shared editor", () => {
       );
     }
     await render(<Host />);
+    await change(byTestId("host-home-project") as HTMLSelectElement, second.id);
     await change(
       byTestId("host-home-draft") as HTMLInputElement,
       "Keep the unfinished issue",
@@ -7650,6 +7672,9 @@ describe("Issue permission separation in the real shared editor", () => {
       container.querySelector('[data-testid="host-home-draft"]'),
     ).toBeNull();
     await click(byTestId("toggle-collaboration"));
+    expect((byTestId("host-home-project") as HTMLSelectElement).value).toBe(
+      second.id,
+    );
     expect((byTestId("host-home-draft") as HTMLInputElement).value).toBe(
       "Keep the unfinished issue",
     );

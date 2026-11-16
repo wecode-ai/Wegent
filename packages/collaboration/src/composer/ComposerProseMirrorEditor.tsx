@@ -259,7 +259,14 @@ export const ComposerProseMirrorEditor = forwardRef<
           valueLength: value.length,
           selectionEnd: selectionOffset,
         });
-        replaceComposerValue(view, value, selectionOffset, false, true);
+        // A background reset must not pull the active pane back to this editor.
+        replaceComposerValue(
+          view,
+          value,
+          selectionOffset,
+          false,
+          view.hasFocus(),
+        );
       },
     }),
     [],

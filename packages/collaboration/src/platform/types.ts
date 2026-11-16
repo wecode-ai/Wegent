@@ -69,6 +69,8 @@ export interface CollaborationPlatformHostAdapter {
   templateNavigation?: boolean;
   issueHomeDraft?: {
     value: string;
+    projectId: string | null;
+    onSelectProject(projectId: string): void;
     onChange(value: string): void;
   };
   renderPersonalHome?(props: {

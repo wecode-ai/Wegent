@@ -915,7 +915,7 @@ function IssueHomeLauncher({
   if (renderTaskComposer)
     return (
       <div
-        className="flex min-h-0 flex-1"
+        className="flex min-h-0 min-w-0 max-w-full flex-1"
         data-testid="collaboration-issue-home"
         data-execution-environment-readiness={environmentReadiness.kind}
       >
@@ -1627,10 +1627,22 @@ function CollaborationPlatformAppContent({
       ),
     [domainWorkspaceIds, state.projects, host.capabilities.projectNavigation],
   );
-  const rootIssueProject =
-    domainProjects.find((project) => project.id === rootIssueProjectId) ??
-    domainProjects[0] ??
-    null;
+  const selectedRootProjectId = host.issueHomeDraft
+    ? host.issueHomeDraft.projectId
+    : rootIssueProjectId;
+  const rootIssueProject = selectedRootProjectId
+    ? (domainProjects.find((project) => project.id === selectedRootProjectId) ??
+      null)
+    : (domainProjects[0] ?? null);
+  useEffect(() => {
+    if (
+      host.issueHomeDraft &&
+      !host.issueHomeDraft.projectId &&
+      rootIssueProject
+    ) {
+      host.issueHomeDraft.onSelectProject(rootIssueProject.id);
+    }
+  }, [host.issueHomeDraft, rootIssueProject]);
   useEffect(() => {
     if (ownsPageRequests || (!state.loading && !state.error)) onReady?.();
   }, [onReady, ownsPageRequests, state.error, state.loading]);
@@ -2395,7 +2407,9 @@ function CollaborationPlatformAppContent({
               projects={domainProjects}
               selectedProjectId={rootIssueProject?.id ?? ""}
               workspaces={domainWorkspaces}
-              onSelectProject={setRootIssueProjectId}
+              onSelectProject={
+                host.issueHomeDraft?.onSelectProject ?? setRootIssueProjectId
+              }
               pending={rootIssueLoading}
               onCreateIssue={(
                 content,

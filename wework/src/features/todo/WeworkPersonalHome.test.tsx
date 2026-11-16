@@ -653,3 +653,24 @@ it.each([
     else expect(card.textContent?.match(/Investigate timeout/g)).toHaveLength(1)
   }
 )
+
+it('reveals and focuses a narrow Issue and restores its list position on return', async () => {
+  const originalWidth = window.innerWidth
+  Object.defineProperty(window, 'innerWidth', { configurable: true, value: 768 })
+  try {
+    await setup([source(vi.fn().mockResolvedValue([issue('narrow')]))])
+    const root = screen.getByTestId('personal-home')
+    const side = screen.getByTestId('personal-home-stand-in')
+    vi.spyOn(root, 'getBoundingClientRect').mockReturnValue({ top: 0 } as DOMRect)
+    vi.spyOn(side, 'getBoundingClientRect').mockReturnValue({ top: 888 } as DOMRect)
+    root.scrollTop = 112
+    fireEvent.click(await screen.findByTestId('personal-home-issue-narrow'))
+    expect(screen.getByRole('tabpanel', { name: 'Issue narrow' })).toHaveFocus()
+    expect(root.scrollTop).toBe(1000)
+    fireEvent.click(screen.getByTestId('personal-home-back-to-issues'))
+    expect(root.scrollTop).toBe(112)
+    expect(screen.getByTestId('personal-home-issue-narrow')).toHaveFocus()
+  } finally {
+    Object.defineProperty(window, 'innerWidth', { configurable: true, value: originalWidth })
+  }
+})

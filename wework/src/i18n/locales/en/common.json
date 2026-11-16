@@ -1,5 +1,6 @@
 {
   "personalHome": {
+    "backToIssues": "Back to issues",
     "codeWorkspace": "Code workspace (optional)",
     "codeWorkspaceSearch": "Search code workspaces",
     "codeWorkspaceEmpty": "No code workspaces yet",

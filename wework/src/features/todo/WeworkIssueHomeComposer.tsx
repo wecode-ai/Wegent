@@ -58,7 +58,10 @@ export function WeworkIssueHomeComposer({
     flushSync(() => props.onDraftChange?.(draft))
   }
   const projectControl = (
-    <div data-testid="collaboration-issue-project-bar" className="flex min-w-0 items-center">
+    <div
+      data-testid="collaboration-issue-project-bar"
+      className="flex min-w-0 max-w-full items-center"
+    >
       <button
         type="button"
         data-testid="collaboration-issue-project-trigger"
@@ -74,7 +77,7 @@ export function WeworkIssueHomeComposer({
         className="inline-flex min-h-11 min-w-0 max-w-full items-center gap-2 rounded-md px-2 text-sm text-text-secondary transition-colors hover:bg-text-primary/[0.04] hover:text-text-primary keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-primary md:min-h-7"
       >
         <ProjectIcon className="h-4 w-4 shrink-0 text-text-muted" aria-hidden="true" />
-        <span className="truncate">
+        <span className="min-w-0 truncate">
           {t('personalHome.collaborationProject')} · {selectedProject?.name}
         </span>
         <ChevronDown className="h-4 w-4 shrink-0 text-text-muted" aria-hidden="true" />
@@ -84,7 +87,7 @@ export function WeworkIssueHomeComposer({
   return (
     <section
       data-testid="collaboration-issue-workspace"
-      className="flex min-h-0 w-full flex-col gap-3"
+      className="flex min-h-0 min-w-0 w-full max-w-full flex-col gap-3"
     >
       <div className="flex w-full min-w-0 flex-col gap-3">
         <div
@@ -166,7 +169,7 @@ export function WeworkIssueHomeComposer({
             showWorkspaceMenu={false}
             showExecutionTools={false}
             toolbarLeadingContext={
-              <div className="flex flex-wrap items-center gap-1">
+              <div className="flex min-w-0 max-w-full flex-wrap items-center gap-1">
                 {projectControl}
                 {(
                   [

@@ -2129,6 +2129,13 @@ function WeworkCollaborationPlatformContent(props: WeworkCollaborationPlatformPr
             },
             accountScope: templateScope,
             issueHomeDraft: {
+              projectId:
+                props.homeDraft.inputByScope[`collaboration-home-project:${templateScope}`] ?? null,
+              onSelectProject: projectId =>
+                props.homeDraft.setInputForScope(
+                  `collaboration-home-project:${templateScope}`,
+                  projectId
+                ),
               value: props.homeDraft.inputByScope[`collaboration-home:${templateScope}`] ?? '',
               onChange: value =>
                 props.homeDraft.setInputForScope(`collaboration-home:${templateScope}`, value),

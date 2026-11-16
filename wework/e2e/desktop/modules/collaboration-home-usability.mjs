@@ -14,6 +14,25 @@ async function resizeHome(control, home, width, height, timeoutMs) {
   )
 }
 
+async function waitForNarrowIssue(control, home, timeoutMs) {
+  await until(
+    async () =>
+      JSON.parse(
+        await control.command(
+          'getElementMetrics',
+          `${home}, ${home} [data-testid="collaboration-issue-detail"]`
+        )
+      ),
+    ([frame, detail]) =>
+      frame &&
+      detail?.visibleIntersection &&
+      detail.top <= frame.top + 120 &&
+      detail.visibleIntersection.height >= Math.min(300, detail.height),
+    'The narrow Issue header and working area must be in view',
+    timeoutMs
+  )
+}
+
 async function verifyTaskLabels(control, home) {
   await control.command('nativePress', `${home} [data-testid="personal-home-record-mode"]`, {
     key: 'ArrowRight',
@@ -66,6 +85,13 @@ async function verifyTaskLabels(control, home) {
 async function verifyRecordDraftNavigation(control, home) {
   const record = `${home} [data-testid="collaboration-home-issue-content"]`
   const previous = await control.command('getValue', record)
+  const participating = await control.command(
+    'getAttribute',
+    `${home} [data-testid="personal-home-scope-participating"]`,
+    { value: 'aria-pressed' }
+  )
+  const project = `${home} [data-testid="collaboration-issue-project-trigger"]`
+  const target = await control.command('getAttribute', project, { value: 'aria-label' })
   const draft = 'Preserve this unfinished issue across global settings navigation.'
   await control.command('fill', record, { value: draft })
   await control.command('click', '[data-testid="settings-button"]')
@@ -73,10 +99,18 @@ async function verifyRecordDraftNavigation(control, home) {
   await control.command('click', '[data-testid="settings-back-button"]')
   await control.command('click', '[data-testid="workspace-tab-select-fixed-board"]')
   await control.command('waitFor', record, { visible: true })
+  if (participating === 'true') {
+    await control.command('click', `${home} [data-testid="personal-home-scope-participating"]`)
+  }
   assert.equal(
     await control.command('getValue', record),
     draft,
     'An unfinished Issue must survive opening and leaving global settings'
+  )
+  assert.equal(
+    await control.command('getAttribute', project, { value: 'aria-label' }),
+    target,
+    'Global settings must preserve the target collaboration project alongside its draft'
   )
   for (const selector of [
     record,
@@ -90,7 +124,7 @@ async function verifyRecordDraftNavigation(control, home) {
   await control.command('fill', record, { value: previous })
 }
 
-/** Reuse the home checkpoint's real Issue and conversation; no additional model turn. */
+/** Reuse the checkpoint's real services; no additional model turn. */
 export async function verifyCollaborationHomeUsability(
   control,
   { home, input, issueId, timeoutMs }
@@ -120,6 +154,22 @@ export async function verifyCollaborationHomeUsability(
     await verifyRecordDraftNavigation(control, home)
     await verifyTaskLabels(control, home)
     await resizeHome(control, home, 1100, 800, timeoutMs)
+    const [frame] = JSON.parse(
+      await control.command(
+        'getElementMetrics',
+        `${home} [data-testid="personal-home-items-region"]`
+      )
+    )
+    const [submit] = JSON.parse(
+      await control.command(
+        'getElementMetrics',
+        `${home} [data-testid="collaboration-home-create-issue"]`
+      )
+    )
+    assert.ok(
+      submit.left >= frame.left && submit.right <= frame.right,
+      'The Issue submit action must stay inside its column'
+    )
     await control.command('click', `${home} [data-testid="personal-home-issue-${issueId}"]`)
     const form = `${home} [data-testid="task-comment-form"]`
     await control.command('waitFor', form)
@@ -130,6 +180,23 @@ export async function verifyCollaborationHomeUsability(
       `${form} [data-testid="task-comment-form-send-actions"]`
     )
     await control.command('click', `${home} [data-testid="personal-home-tab-stand-in"]`)
+    await resizeHome(control, home, 768, 900, timeoutMs)
+    await control.command('click', `${home} [data-testid="personal-home-issue-${issueId}"]`)
+    await waitForNarrowIssue(control, home, timeoutMs)
+    await control.command('click', `${home} [data-testid="personal-home-back-to-issues"]`)
+
+    const record = `${home} [data-testid="collaboration-home-issue-content"]`
+    const savedRecord = await control.command('getValue', record)
+    const narrowIssue = 'Narrow creation reveals the resulting Issue'
+    await control.command('fill', record, { value: narrowIssue })
+    await control.command('click', `${home} [data-testid="collaboration-home-create-issue"]`)
+    await control.command('waitFor', `${home} [data-testid="cloud-todo-detail-title"]`, {
+      text: narrowIssue,
+    })
+    await waitForNarrowIssue(control, home, timeoutMs)
+    await control.command('click', `${home} [data-testid="personal-home-back-to-issues"]`)
+    await control.command('fill', record, { value: savedRecord })
+
     assert.equal(
       await control.command('getValue', input),
       draft,

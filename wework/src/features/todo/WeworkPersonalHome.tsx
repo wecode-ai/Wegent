@@ -11,7 +11,7 @@ import {
   useState,
   type ReactNode,
 } from 'react'
-import { Circle, PanelRightClose, PanelRightOpen, UserRound } from 'lucide-react'
+import { ArrowLeft, Circle, PanelRightClose, PanelRightOpen, UserRound } from 'lucide-react'
 import type {
   CollaborationIssue,
   CollaborationProject,
@@ -124,12 +124,39 @@ export function WeworkPersonalHome({
     }>
   >([])
   const [activeTab, setActiveTab] = useState('stand-in')
+  const viewport = useRef<HTMLDivElement>(null)
+  const sidebar = useRef<HTMLElement>(null)
+  const previousTab = useRef('stand-in')
+  const listPosition = useRef(0)
+  const returnFocus = useRef<HTMLElement | null>(null)
   const [detailExpanded, setDetailExpanded] = useState(false)
   const [expandedTabs, setExpandedTabs] = useState<ReadonlySet<string>>(new Set())
   const tabsViewport = useRef<HTMLElement>(null)
   useLayoutEffect(() => {
     revealWorkspaceTab(tabsViewport.current)
   }, [activeTab, issueTabs.length])
+  useLayoutEffect(() => {
+    const root = viewport.current
+    const panel = sidebar.current
+    const previous = previousTab.current
+    previousTab.current = activeTab
+    if (isDesktop || !root || !panel) return
+    if (activeTab !== 'stand-in') {
+      if (previous === 'stand-in') {
+        listPosition.current = root.scrollTop
+        returnFocus.current = root.querySelector<HTMLElement>('[aria-current="true"] button')
+      }
+      root.scrollTop += panel.getBoundingClientRect().top - root.getBoundingClientRect().top
+      panel
+        .querySelector<HTMLElement>('[role="tabpanel"]:not([inert])')
+        ?.focus({ preventScroll: true })
+    } else if (previous !== 'stand-in') {
+      root.scrollTop = listPosition.current
+      const list = composerRegion.current?.closest('main')
+      const target = returnFocus.current?.isConnected ? returnFocus.current : list
+      target?.focus({ preventScroll: true })
+    }
+  }, [activeTab, isDesktop])
   const independent = useIndependentIssuePage(
     assignedOnly ? 'assigned' : 'participating',
     showCompleted,
@@ -234,10 +261,12 @@ export function WeworkPersonalHome({
   return (
     <IssueDetailDraftProvider key={userId} scope={draftScope}>
       <div
+        ref={viewport}
         className="flex h-full min-h-0 flex-col overflow-auto lg:flex-row lg:overflow-hidden"
         data-testid="personal-home"
       >
         <main
+          tabIndex={-1}
           aria-busy={state.loading}
           data-testid="personal-home-items-region"
           className="flex min-w-0 flex-1 flex-col p-5 lg:overflow-auto"
@@ -400,17 +429,29 @@ export function WeworkPersonalHome({
           </div>
         </main>
         <aside
+          ref={sidebar}
           id={`${panelId}-sidebar`}
           aria-label={t('personalHome.standIn')}
-          className={`flex min-h-96 min-w-0 flex-col border-t border-border lg:h-full lg:shrink-0 lg:border-l lg:border-t-0 ${sidebarCollapsed ? 'lg:hidden' : ''} ${detailExpanded || expandedTabs.has(activeTab) ? 'lg:w-[min(75%,72rem)]' : activeTab === 'stand-in' ? 'lg:w-80 xl:w-96' : 'lg:w-96 xl:w-[28rem]'}`}
+          className={`flex ${!isDesktop && activeTab !== 'stand-in' ? 'min-h-full' : 'min-h-96'} min-w-0 flex-col border-t border-border lg:h-full lg:shrink-0 lg:border-l lg:border-t-0 ${sidebarCollapsed ? 'lg:hidden' : ''} ${detailExpanded || expandedTabs.has(activeTab) ? 'lg:w-[min(75%,72rem)]' : activeTab === 'stand-in' ? 'lg:w-80 xl:w-96' : 'lg:w-96 xl:w-[28rem]'}`}
           data-testid="personal-home-stand-in"
         >
+          {!isDesktop && activeTab !== 'stand-in' && (
+            <button
+              type="button"
+              data-testid="personal-home-back-to-issues"
+              onClick={() => setActiveTab('stand-in')}
+              className="flex min-h-11 items-center gap-2 border-b border-border px-3 text-sm text-text-secondary hover:bg-muted"
+            >
+              <ArrowLeft aria-hidden="true" className="h-4 w-4" />
+              {t('personalHome.backToIssues')}
+            </button>
+          )}
           <header
             ref={tabsViewport}
             role="tablist"
             aria-label={t('personalHome.workspaceTabs')}
             data-testid="personal-home-tabs"
-            className="flex h-10 shrink-0 items-center gap-1.5 overflow-x-auto border-b border-border px-3"
+            className="flex h-12 min-h-12 shrink-0 items-center gap-1.5 overflow-x-auto border-b border-border px-3 lg:h-10 lg:min-h-10"
             onKeyDown={event => {
               if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return
               const tabs = Array.from(
@@ -491,6 +532,7 @@ export function WeworkPersonalHome({
               role="tabpanel"
               aria-labelledby={`${panelId}-${tab.id}-tab`}
               aria-label={tab.issue.title}
+              tabIndex={-1}
               className={activeTab === tab.id ? 'flex min-h-0 flex-1 flex-col' : 'hidden'}
               inert={activeTab !== tab.id}
             >
