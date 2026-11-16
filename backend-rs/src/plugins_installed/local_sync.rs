@@ -13,6 +13,8 @@ use serde::Deserialize;
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 
+mod completion;
+
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct SyncRequest {
@@ -64,6 +66,7 @@ fn map_error(error: MysqlError) -> FastApiError {
         let status = match reason.as_str() {
             "SNAPSHOT_NOT_OWNED" => Some(StatusCode::FORBIDDEN),
             "LOCAL_SYNC_DISABLED" => Some(StatusCode::CONFLICT),
+            "INVALID_LOCAL_COMPLETION" => Some(StatusCode::UNPROCESSABLE_ENTITY),
             _ => None,
         };
         if let Some(status) = status {
@@ -129,19 +132,19 @@ async fn local_plan(
         return Err(coordination_error("LOCAL_SYNC_DISABLED"));
     }
     let mut query = &mut *tx;
-    let mut payload = if body.targeted {
+    let (mut payload, revisions) = if body.targeted {
         let target = operation["installedPluginId"]
             .as_i64()
             .or(body.installed_plugin_id)
             .ok_or_else(|| coordination_error("SNAPSHOT_NOT_OWNED"))?;
         let mut payload = json!({"mode":"merge", "scope":"plugins", "plugins":[]});
-        restrict_local_plugin(&mut query, user_id, target, &mut payload)
+        let revisions = restrict_local_plugin(&mut query, user_id, target, &mut payload)
             .await
             .map_err(|error| match error {
                 super::desired_capabilities::BuildError::Mysql(error) => error,
                 _ => coordination_error("plugin_write_unavailable"),
             })?;
-        payload
+        (payload, revisions)
     } else {
         build_local_plugins(&mut query, user_id)
             .await
@@ -180,13 +183,13 @@ async fn local_plan(
     .await?;
     if unchanged {
         return Ok(
-            json!({"enabled":enabled(),"protocolVersion":1,"revision":revision,"unchanged":true,"operation":operation}),
+            json!({"enabled":enabled(),"protocolVersion":1,"revision":revision,"unchanged":true,"operation":operation,"generation":document["spec"]["generation"],"installedRevisions":revisions}),
         );
     }
     let generation = generation.expect("changed snapshot has a generation");
     payload["plugin_sync"] = json!({"version":2,"generation":generation,"complete":!body.targeted});
     Ok(
-        json!({"enabled":enabled(),"protocolVersion":1,"revision":revision,"unchanged":false,"generation":generation,"payload":payload,"operation":operation}),
+        json!({"enabled":enabled(),"protocolVersion":1,"revision":revision,"unchanged":false,"generation":generation,"payload":payload,"operation":operation,"installedRevisions":revisions}),
     )
 }
 

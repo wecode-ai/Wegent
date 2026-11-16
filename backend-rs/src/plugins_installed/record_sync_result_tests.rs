@@ -82,6 +82,7 @@ fn deferred_writes_follow_the_unit_of_work_order() {
     flush.push_update(20, vec!["state='failed'".to_string()]);
     flush.push_delete(5);
     flush.push_insert(DesiredInsert {
+        actual_release_id: 0,
         installed_kind_id: 1,
         user_id: 7,
         device_id: "d".into(),
@@ -179,6 +180,7 @@ async fn a_failed_record_flush_guard_emits_no_insert_delete_or_update() {
     flush.push_delete(5);
     flush.push_update(10, vec!["state='failed'".to_string()]);
     flush.push_insert(DesiredInsert {
+        actual_release_id: 0,
         installed_kind_id: 1,
         user_id: 7,
         device_id: "d".into(),

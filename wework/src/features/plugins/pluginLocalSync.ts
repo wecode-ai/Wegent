@@ -141,7 +141,7 @@ export function createLocalFirstPluginApi(
       skipped: 0,
       results: [],
     }
-    // UI synchronization result only: this never writes a cloud Device receipt.
+    // Native confirms its source device; the renderer must not send a duplicate receipt.
     return { deviceId, pendingCount: 0, reconciled: true, localChanged, sync: result }
   }
   const updateInstalledPlugin = async (

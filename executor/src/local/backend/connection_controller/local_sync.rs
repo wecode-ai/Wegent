@@ -7,6 +7,7 @@ use crate::{
 };
 use fs2::FileExt;
 
+mod completion;
 #[cfg(test)]
 mod execution_tests;
 mod recovery;
@@ -589,6 +590,7 @@ impl LocalBackendConnectionController {
         }
         let plan_order = journal["nextIntentOrder"].clone();
         let plan_request = json!({"protocolVersion":1,"instanceId":instance,"operationId":operation,"recoveryPending":!pending.is_empty() || journal["reconcilePending"] == true,"knownRevision":known_revision,"actualRevision":known_revision,"targeted":targeted,"installedPluginId":installed_plugin_id});
+        let source_device = self.plugin_source_device_id();
         drop(lease.take());
         let snapshot = post(connection, "/api/plugins/local-sync", &plan_request).await?;
         journal = self
@@ -620,8 +622,33 @@ impl LocalBackendConnectionController {
                 return Err(error("plugin_local_invalid_response"));
             }
 
+            let needs_confirmation = !source_device.is_empty()
+                && journal["confirmedDeviceRevision"]
+                    != completion::identity(&source_device, &snapshot);
+            if needs_confirmation {
+                drop(lease.take());
+                completion::confirm(
+                    connection,
+                    instance,
+                    &source_device,
+                    &snapshot,
+                    &journal["lastResult"],
+                    targeted,
+                )
+                .await?;
+                journal = self
+                    .resume_local_sync_journal(connection, path, lease)
+                    .await?;
+                if journal["nextIntentOrder"] != plan_order {
+                    return Err(error("plugin_local_sync_busy"));
+                }
+                journal["confirmedDeviceRevision"] =
+                    completion::identity(&source_device, &snapshot);
+                persist(path, &journal)?;
+            }
+            // Device-state repair must also refresh the marketplace projection.
             return Ok(
-                json!({"enabled":capabilities["enabled"], "protocolVersion":1, "localCompleted":true, "unchanged":true, "result":journal["lastResult"]}),
+                json!({"enabled":capabilities["enabled"], "protocolVersion":1, "localCompleted":true, "unchanged":!needs_confirmation, "result":journal["lastResult"]}),
             );
         }
         if !valid_snapshot(&snapshot)
@@ -661,8 +688,27 @@ impl LocalBackendConnectionController {
                     .all(|item| matches!(item["status"].as_str(), Some("synced" | "removed")))
             });
         if completed {
+            drop(lease.take());
+            completion::confirm(
+                connection,
+                instance,
+                &source_device,
+                &snapshot,
+                &result,
+                targeted,
+            )
+            .await?;
+            journal = self
+                .resume_local_sync_journal(connection, path, lease)
+                .await?;
             let intervening = journal["nextIntentOrder"] != plan_order
                 || !targeted && self.has_foreground_plugin_operation(path);
+            journal["confirmedDeviceRevision"] =
+                if !targeted && !intervening && !source_device.is_empty() {
+                    completion::identity(&source_device, &snapshot)
+                } else {
+                    Value::Null
+                };
             journal["revision"] = if targeted || intervening {
                 Value::Null
             } else {

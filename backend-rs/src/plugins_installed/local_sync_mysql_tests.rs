@@ -3,10 +3,23 @@ use super::*;
 use crate::{Application, auth::AppAuthenticator, config::AuthConfig};
 use std::sync::Arc;
 
+#[path = "local_sync_completion_mysql_tests.rs"]
+mod completion_tests;
+
 #[derive(FromMysqlRow)]
 struct StoredKind {
     id: i64,
     json: Value,
+}
+
+fn http_client() -> brz_http::Client {
+    // The default 400ms socket budget is shorter than the valid 3s lease wait.
+    brz_http::Client::builder()
+        .connect_timeout(std::time::Duration::from_secs(5))
+        .read_timeout(std::time::Duration::from_secs(5))
+        .timeout(std::time::Duration::from_secs(10))
+        .build()
+        .unwrap()
 }
 
 #[tokio::test]
@@ -46,7 +59,7 @@ async fn verify(mysql: &brz_mysql::MysqlService) -> anyhow::Result<()> {
             })
             .await
     });
-    let client = brz_http::Client::new();
+    let client = http_client();
     let post = |id, path: &'static str, body: Value| {
         let client = client.clone();
         let token = jsonwebtoken::encode(
@@ -148,6 +161,7 @@ async fn verify(mysql: &brz_mysql::MysqlService) -> anyhow::Result<()> {
     assert_eq!(removed["payload"]["plugins"], json!([]));
     assert_eq!(mysql.fetch_one::<_,_,Count>("SELECT COUNT(*) AS n FROM kinds WHERE namespace='plugin-local-sync' OR kind='Device'",()).await?.n,0);
     assert_eq!(mysql.fetch_one::<_,_,Count>("SELECT COUNT(*) AS n FROM kinds WHERE user_id=81001 AND kind='PluginSyncState' AND namespace='plugin-sync' AND name='account'",()).await?.n,1);
+    completion_tests::verify(mysql, address, target.id, &state).await?;
     stop.send(()).unwrap();
     task.await??;
     Ok(())

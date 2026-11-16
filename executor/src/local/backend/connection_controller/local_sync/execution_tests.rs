@@ -18,6 +18,7 @@ use std::{
 };
 use tokio::sync::Notify;
 
+mod completion_tests;
 mod digest_tests;
 mod journal_tests;
 mod runtime_token_tests;
@@ -165,6 +166,8 @@ struct Fixture {
     probe_entered: Arc<Notify>,
     plans: Arc<Mutex<Vec<Value>>>,
     submissions: Arc<Mutex<Vec<HashMap<String, String>>>>,
+    completions: Arc<Mutex<Vec<Value>>>,
+    completion_failures: Arc<AtomicUsize>,
     server: tokio::task::JoinHandle<()>,
 }
 
@@ -203,6 +206,8 @@ impl Fixture {
         let probe_entered = Arc::new(Notify::new());
         let plans = Arc::new(Mutex::new(Vec::new()));
         let submissions = Arc::new(Mutex::new(Vec::new()));
+        let completions = Arc::new(Mutex::new(Vec::new()));
+        let completion_failures = Arc::new(AtomicUsize::new(0));
         let removals = Arc::new(Mutex::new(HashMap::<String, bool>::new()));
         let accept_intent = {
             let removals = removals.clone();
@@ -268,12 +273,27 @@ impl Fixture {
                         }
                         let targeted = body["targeted"] == true;
                         if !targeted && body["knownRevision"] == "a".repeat(64) && body["actualRevision"] == body["knownRevision"] && body["recoveryPending"] != true {
-                            return Json(json!({"protocolVersion":1,"revision":"a".repeat(64),"unchanged":true})).into_response();
+                            return Json(json!({"protocolVersion":1,"revision":"a".repeat(64),"unchanged":true,"generation":1,"installedRevisions":{"8":1}})).into_response();
                         }
                         let operation = body["operationId"].as_str();
                         let removed = operation.is_some_and(|id| removals.lock().unwrap().get(id) == Some(&true));
                         let installed_id = body["installedPluginId"].as_u64().unwrap_or(8);
-                        Json(json!({"protocolVersion":1,"revision":"a".repeat(64),"generation":1,"operation":operation.map(|id|json!({"operationId":id,"state":"intent_saved","installedPluginId":8})),"payload":{"mode":"merge","scope":if targeted {"plugin_delta"}else{"plugins"},"plugins":if removed {json!([])}else{json!([{"installed_plugin_id":installed_id}])},"removed_plugins":if removed {json!([{"installed_plugin_id":installed_id}])}else{json!([])},"plugin_sync":{"version":2,"generation":1,"complete":!targeted}}})).into_response()
+                        Json(json!({"protocolVersion":1,"revision":"a".repeat(64),"generation":1,"installedRevisions":{installed_id.to_string():1},"operation":operation.map(|id|json!({"operationId":id,"state":"intent_saved","installedPluginId":8})),"payload":{"mode":"merge","scope":if targeted {"plugin_delta"}else{"plugins"},"plugins":if removed {json!([])}else{json!([{"installed_plugin_id":installed_id}])},"removed_plugins":if removed {json!([{"installed_plugin_id":installed_id}])}else{json!([])},"plugin_sync":{"version":2,"generation":1,"complete":!targeted}}})).into_response()
+                    }
+                }
+            }))
+            .route("/api/plugins/local-sync/complete", post({
+                let completions = completions.clone();
+                let failures = completion_failures.clone();
+                move |Json(body): Json<Value>| {
+                    let completions = completions.clone();
+                    let failures = failures.clone();
+                    async move {
+                        completions.lock().unwrap().push(body);
+                        if failures.swap(0, Ordering::SeqCst) != 0 {
+                            return (axum::http::StatusCode::SERVICE_UNAVAILABLE, Json(json!({"detail":"completion_unavailable"}))).into_response();
+                        }
+                        Json(json!({"recorded":[8],"superseded":[]})).into_response()
                     }
                 }
             }))
@@ -345,6 +365,8 @@ impl Fixture {
             probe_entered,
             plans,
             submissions,
+            completions,
+            completion_failures,
             server,
         }
     }

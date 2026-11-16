@@ -114,7 +114,7 @@ export async function requestPluginExecutor(control, method, params = {}, option
   const response = await fetchLocalRuntime(control, `${origin}/wework/executor/v1/rpc`, {
     method: 'POST',
     headers: { accept: 'application/json', 'content-type': 'application/json' },
-    body: JSON.stringify({ id: 'plugin-regression', method, params }),
+    body: JSON.stringify({ id: options.requestId ?? 'plugin-regression', method, params }),
     timeoutMs: options.timeoutMs ?? 10_000,
   })
   return { status: response.status, payload: await response.json() }

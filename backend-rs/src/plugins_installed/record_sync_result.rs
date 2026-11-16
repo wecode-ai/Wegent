@@ -21,8 +21,10 @@ use crate::plugins_marketplace::query::PluginQuery;
 
 use super::report::{DESIRED_INSTALLS_QUERY, DEVICE_ROW_QUERY, INSERT_INSTALLATION_QUERY};
 
+mod local_completion;
 mod versioned;
 
+pub(super) use local_completion::record_local_completion;
 use versioned::record_versioned_result;
 
 /// `PLUGIN_AUTO_UPDATE_FAILURE_LIMIT` (`app/core/constants.py`).
@@ -550,6 +552,7 @@ struct DesiredInsert {
     user_id: i64,
     device_id: String,
     release_id: i64,
+    actual_release_id: i64,
     state: String,
     error_code: String,
     error_message: String,
@@ -646,7 +649,7 @@ impl PendingFlush {
                                 insert.user_id,
                                 insert.device_id.as_str(),
                                 insert.release_id,
-                                0_i64,
+                                insert.actual_release_id,
                                 insert.state.as_str(),
                                 insert.error_code.as_str(),
                                 insert.error_message.as_str(),
@@ -718,10 +721,37 @@ where
     let Some(release_id) = integer_release_id(&installed.json.0.to_value()) else {
         return Ok(());
     };
+    record_installation_result(
+        session,
+        user_id,
+        device_id,
+        installed.id,
+        release_id,
+        result,
+        item,
+        flush,
+        false,
+    )
+    .await
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn record_installation_result<Q: PluginQuery>(
+    session: &mut Q,
+    user_id: i64,
+    device_id: &str,
+    installed_id: i64,
+    release_id: i64,
+    result: &SyncResult,
+    item: Option<SyncItem>,
+    flush: &mut PendingFlush,
+    confirmed_local: bool,
+) -> MysqlResult<()> {
     let row: Option<PluginDeviceInstallationRow> = session
-        .fetch_optional(DEVICE_ROW_QUERY, (installed.id, device_id))
+        .fetch_optional(DEVICE_ROW_QUERY, (installed_id, device_id))
         .await?;
     if let Some(row) = &row
+        && !confirmed_local
         && auto_update_blocked(row, release_id)
     {
         return Ok(());
@@ -740,10 +770,15 @@ where
         // the session's dirty flush and keeps the model defaults.
         let now = Local::now().naive_local();
         flush.push_insert(DesiredInsert {
-            installed_kind_id: installed.id,
+            installed_kind_id: installed_id,
             user_id,
             device_id: device_id.to_string(),
             release_id,
+            actual_release_id: if confirmed_local && state == "installed" {
+                release_id
+            } else {
+                0
+            },
             state: state.to_string(),
             error_code: if state == "failed" {
                 item.as_ref()
