@@ -10,7 +10,10 @@ import {
   type CSSProperties,
 } from 'react'
 
-import { TemporaryChatPanel } from '@/components/layout/workspace-panels/TemporaryChatPanel'
+import {
+  TemporaryChatPanel,
+  type ConversationDraftSnapshot,
+} from '@/components/layout/workspace-panels/TemporaryChatPanel'
 import { formatRelativeSidebarTime } from '@/components/layout/runtimeSidebarTime'
 import { Tooltip } from '@/components/ui/tooltip'
 import { useTranslation } from '@/hooks/useTranslation'
@@ -106,7 +109,8 @@ export function ProjectSpaceChatSidebar({
   startNew = false,
 }: ProjectSpaceChatSidebarProps) {
   const { t } = useTranslation('common')
-  const { state, services } = useWorkbenchPaneContext()
+  const { state, services, projectChat } = useWorkbenchPaneContext()
+  const { setInputForScope } = projectChat
   const conversations = useMemo(
     () =>
       projectSpaceConversations(
@@ -140,12 +144,20 @@ export function ProjectSpaceChatSidebar({
   const [chatInstance, setChatInstance] = useState(0)
   const chatOwner = useMemo(() => ({ projectKey, chatInstance }), [projectKey, chatInstance])
   const chatOwnerRef = useRef<typeof chatOwner | null>(chatOwner)
+  const retiredDraftScopeRef = useRef<string | null>(null)
   useLayoutEffect(() => {
     chatOwnerRef.current = chatOwner
     return () => {
       chatOwnerRef.current = null
     }
   }, [chatOwner])
+  useEffect(() => {
+    const retiredScope = retiredDraftScopeRef.current
+    if (!retiredScope) return
+    retiredDraftScopeRef.current = null
+    // Retire after the old composer's scope cleanup has published its buffer.
+    setInputForScope(retiredScope, '')
+  }, [boundConversation, setInputForScope])
   const [width, setWidth] = useState(storedProjectChatWidth)
   const [resizing, setResizing] = useState(false)
   const [conversationMenuOpen, setConversationMenuOpen] = useState(false)
@@ -212,16 +224,22 @@ export function ProjectSpaceChatSidebar({
   }, [])
 
   const rememberAddress = useCallback(
-    (address: RuntimeTaskAddress | null) => {
+    (address: RuntimeTaskAddress | null, draft?: ConversationDraftSnapshot) => {
       // A creation callback must not retarget a composer the user has left.
       if (!address || chatOwnerRef.current !== chatOwner) return
       const key = `${address.deviceId}:${address.taskId}`
+      const nextScope = `pane:project-space:${projectKey}:${key}`
+      if (draft && draft.scopeKey !== nextScope) {
+        // Include edits that have not reached the debounced draft store yet.
+        setInputForScope(nextScope, draft.value)
+        retiredDraftScopeRef.current = draft.scopeKey
+      }
       setBoundConversation({ projectKey, key })
       setCreatingNew(false)
       setSelectedConversationKey(key)
       window.localStorage.setItem(lastConversationStorageKey(project), key)
     },
-    [project, projectKey, chatOwner]
+    [project, projectKey, chatOwner, setInputForScope]
   )
 
   const runtimeContext = useMemo<

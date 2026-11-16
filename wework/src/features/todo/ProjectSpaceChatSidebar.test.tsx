@@ -36,6 +36,7 @@ vi.mock('@/features/workbench/useWorkbench', () => ({
       getLocalRuntimeSidebarIdentity: mocks.readLocalIdentity,
     },
     state: mocks.state,
+    projectChat: { setInputForScope: vi.fn() },
     createProjectRuntimeTask: mocks.createProjectRuntimeTask,
   }),
 }))
