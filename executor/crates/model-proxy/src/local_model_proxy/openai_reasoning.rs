@@ -51,10 +51,10 @@ pub(super) fn normalize_official_reasoning_history(
         let original = std::mem::take(items);
         let mut retained = Vec::with_capacity(original.len());
         for mut item in original {
-            let key = history_item_key(&item);
-            let known_foreign = known_foreign_keys.contains(&key);
             let encrypted_state = super::request_identity::has_encrypted_model_state(&item);
             if item.get("type").and_then(Value::as_str) == Some("reasoning") {
+                let key = history_item_key(&item);
+                let known_foreign = known_foreign_keys.contains(&key);
                 let content_has_text = item
                     .get("content")
                     .and_then(Value::as_array)
@@ -70,9 +70,15 @@ pub(super) fn normalize_official_reasoning_history(
                     changed += item_changed;
                 }
                 retained.push(item);
-            } else if encrypted_state && (known_foreign || model_switched) {
-                new_foreign_keys.insert(key);
-                changed += 1;
+            } else if encrypted_state {
+                let key = history_item_key(&item);
+                let known_foreign = known_foreign_keys.contains(&key);
+                if known_foreign || model_switched {
+                    new_foreign_keys.insert(key);
+                    changed += 1;
+                } else {
+                    retained.push(item);
+                }
             } else {
                 retained.push(item);
             }
