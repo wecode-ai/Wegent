@@ -11,6 +11,8 @@ async function fixture() {
   const contributions = []
   const refs = []
   let hookIndex = 0
+  let locale = 'en'
+  let setupOpen = false
   const ctx = {
     effect(factory) {
       cleanups.push(factory())
@@ -34,7 +36,7 @@ async function fixture() {
       },
     },
     wework: {
-      localization: { translate: value => value.en },
+      localization: { translate: value => value[locale] ?? value.en },
       contributions: { register: (...args) => contributions.push(args.slice(1)) },
     },
   }
@@ -53,6 +55,8 @@ async function fixture() {
       : {
           createElement: (component, props, ...children) => ({ component, props, children }),
           useMemo: fn => fn(),
+          useState: value => [setupOpen || value, () => {}],
+          useEffect: () => {},
           useRef: value => (refs[hookIndex++] ??= { current: value }),
         }
   )
@@ -73,6 +77,12 @@ async function fixture() {
     contributions,
     publish,
     renderComposer,
+    showSetup: () => {
+      setupOpen = true
+    },
+    setLocale: value => {
+      locale = value
+    },
   }
 }
 
@@ -168,4 +178,33 @@ test('forwards voice activity changes to the owning composer', async () => {
   voice.onActiveChange(false)
   voice.onActiveChange(true)
   assert.deepEqual(activity, [true, false, true])
+})
+
+test('updates settings copy for the same mounted component when the host language changes', async () => {
+  const f = await fixture()
+  f.setLocale('zh-CN')
+  f.publish('plugins.bundle.config', [
+    {
+      component() {},
+      locale: 'voice-input',
+      options: { key: '@deepseek-ai/dsh-experimental-voice-input-bundle' },
+    },
+  ])
+  const Settings = f.entries.get('wework.settings.section')[0].component
+  const Overlay = f.entries.get('wework.shell.overlay')[0].component
+  f.showSetup()
+  assert.equal(Settings({}).children[0].children[0], '语音输入')
+  assert.equal(Overlay({}).props.closeLabel, '关闭')
+  f.setLocale('en')
+  const english = Settings({})
+  assert.equal(english.children[0].children[0], 'Voice input')
+  assert.equal(Overlay({}).props.title, 'Voice input')
+  assert.equal(Overlay({}).props.closeLabel, 'Close')
+  assert.ok(JSON.stringify(english).includes('Smaller download and lower memory use'))
+  f.setLocale('zh-CN')
+  const chinese = Settings({})
+  assert.equal(chinese.children[0].children[0], '语音输入')
+  assert.equal(Overlay({}).props.title, '语音输入')
+  assert.equal(Overlay({}).props.closeLabel, '关闭')
+  assert.ok(JSON.stringify(chinese).includes('轻量版'))
 })
