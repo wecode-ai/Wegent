@@ -7,7 +7,7 @@ import { IssueCardGoalSummary } from "./IssueCardTaskSummary";
 import { issueNeedsExecutionConfiguration } from "./model";
 import type { CollaborationTranslate } from "../i18n";
 import { Tooltip } from "../issue-detail/Tooltip";
-import { HumanAssistantDispatchStatus } from "../issue-detail/HumanAssistantDispatchStatus";
+import { DirectHumanAssignmentReceiptStatus } from "../issue-detail/DirectHumanAssignmentReceiptStatus";
 
 export function IssueExecutionConfigurationBadge({
   itemId,
@@ -73,9 +73,9 @@ export function IssueBoardCardContent({
       {needsExecutionConfiguration ? (
         <IssueExecutionConfigurationBadge itemId={item.id} translate={t} />
       ) : null}
-      <HumanAssistantDispatchStatus
+      <DirectHumanAssignmentReceiptStatus
         itemId={item.id}
-        dispatch={item.human_assistant_dispatch}
+        receipt={item.directHumanAssignmentReceipt}
         translate={t}
         compact
       />

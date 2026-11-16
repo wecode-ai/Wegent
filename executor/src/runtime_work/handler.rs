@@ -656,6 +656,8 @@ struct ActiveCodexTranscriptItems {
     items: Vec<Value>,
     // Keep settled request IDs until the turn ends so replay cannot reopen them.
     user_input_requests: HashMap<String, bool>,
+    frozen_interaction_request: Option<ExecutionRequest>,
+    published_waiting_for_user_input: bool,
 }
 
 #[derive(Clone)]

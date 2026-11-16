@@ -13,12 +13,13 @@ You can mention yourself: eligible stand-ins receive the event without a human s
 The same stand-in reuses its conversation for the same Issue. Reassignment retains history but still requires fresh authorization.
 Reassignment, unassignment, deletion of the original mention or pausing automatic intake still allows continuing and retrying the conversation, including synchronizing public replies.
 Manually starting a stand-in does not require assigning the Issue to yourself and never changes its assignee. Automatic intake settings select new work without restricting explicit user actions. Current project and Issue access and execution permissions still apply.
+If the initial startup fails, retry from the original Issue without deleting its conversation or reassigning it. Recovery resumes an existing native session or starts one within the original task. The latest startup failure's code, redacted message and timestamp remain available after retries and restarts in the conversation query's `startup_failure` field.
 Substantial assigned work runs in native subagents without requiring an extra delegation request. The primary stand-in coordinates, verifies and replies concisely; simple questions are answered directly. Normally only a brief acknowledgment and the verified result appear as comments, with material blockers, questions or native approvals surfaced when needed. Routine tool and subagent progress stays internal. You can keep writing and sending while subagents work; follow-up wakeups are handled in order.
 Reply directly to a stand-in comment without another mention to continue with that role. Private chats, reasoning and tool activity are not published.
 
 Stand-in replies on an Issue show the owning user followed by the role in parentheses, for example “Alex (Assistant)”, so participants can distinguish different users' stand-ins. A user ID appears while the member name is unavailable and updates to the name when member information loads.
 
-For default-assistant dispatch status and **Configure my assistant** on Issues assigned to a person, see [Human assignees and default assistants](./projects.md#human-assistant-dispatch).
+For default-assistant acceptance receipts, reasons automatic acceptance is blocked and **Configure my assistant** on Issues assigned to a person, see [Human assignees and default assistants](./projects.md#human-assignment-receipts).
 
 <!-- ui-source: src/features/todo/StandInSettingsPage.tsx -->
 <!-- ui-source: src/features/todo/StandInOverviewPage.tsx -->

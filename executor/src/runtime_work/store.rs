@@ -45,6 +45,7 @@ const PERSISTED_RUNTIME_HANDLE_KEYS: &[&str] = &[
     "standInResult",
     "standInResultReceipt",
     "standInIssueWakeups",
+    "startupFailure",
     "standInPublicTurn",
     "standInIssueReplies",
     "overloadRecoveryTurnIds",

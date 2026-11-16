@@ -125,7 +125,7 @@ iPhone 和 Android 的主页、搜索、设备筛选与会话入口见 [Wework �
 
 模板导入中的模型选择：[协作模板与配置共享](./projects.md#collaboration-template-models)。
 
-Issue 默认助理的待授权、等待设备及负责人配置入口：[人工负责人和默认助理](./projects.md#human-assistant-dispatch)。
+Issue 默认助理的接单回执、未自动接单原因、等待设备及负责人配置入口：[人工负责人和默认助理](./projects.md#human-assignment-receipts)。
 
 | 功能关键词                                           | 具体操作说明                                                    |
 | ---------------------------------------------------- | --------------------------------------------------------------- |

@@ -27,7 +27,7 @@ class LoopItemReadContext:
     teams: dict[int, Kind]
     messages: dict[tuple[str, str], ProjectChatMessage]
     human_bindings: dict[str, dict]
-    human_dispatches: dict[str, dict]
+    human_receipts: dict[str, dict]
     visible_ids: set[str]
 
     @classmethod
@@ -61,7 +61,12 @@ class LoopItemReadContext:
         team_ids = {item.assignee_team_id for item in items if item.assignee_team_id}
         agent_ids.update(row.agent_id for row in executions.values() if row.agent_id)
         team_ids.update(row.team_id for row in executions.values() if row.team_id)
-        from app.services.human_assistant_dispatch import current_dispatches
+        from app.services.direct_human_assignment_receipts import current_receipts
+        from app.services.issue_assignments import issue_assignment_service
+
+        assignments = issue_assignment_service.active_for_issues(
+            db, [item.id for item in items if item.assignee_user_id]
+        )
 
         return cls(
             executions=executions,
@@ -87,9 +92,18 @@ class LoopItemReadContext:
             ),
             messages=_messages(db, items),
             human_bindings=human_task_bindings(
-                db, items, user_id, projects=[access.project for access in accesses]
+                db,
+                items,
+                user_id,
+                projects=[access.project for access in accesses],
+                assignments=assignments,
             ),
-            human_dispatches=current_dispatches(db, items),
+            human_receipts=current_receipts(
+                db,
+                items,
+                assignments=assignments,
+                executions={str(row.id): row for row in executions.values()},
+            ),
             visible_ids=_visible_ids(db, items, user_id, access_by_project),
         )
 

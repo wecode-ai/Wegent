@@ -16,6 +16,63 @@ function createClient() {
 }
 
 describe('workspace resource configuration adapter', () => {
+  it('maps the durable receipt on detail, board and assignment responses', async () => {
+    const client = createClient()
+    const receipt = {
+      projectId: 'project-1',
+      issueId: 'issue-1',
+      humanAssignmentId: 'human-1',
+      dispatchId: 'dispatch-1',
+      ownerUserId: 7,
+      state: 'queued',
+      reasonCode: null,
+      runtimeTaskId: null,
+      deliveryId: null,
+      updatedAt: '2026-11-16T00:00:00Z',
+    }
+    const issue = {
+      id: 'issue-1',
+      cloud_project_id: 'project-1',
+      assignee_user_id: 7,
+      assignee_name: 'Ada',
+      direct_human_assignment_receipt: receipt,
+    }
+    const expected = {
+      id: 'issue-1',
+      cloud_project_id: 'project-1',
+      assignee_user_id: 7,
+      assignee_name: 'Ada',
+      directHumanAssignmentReceipt: receipt,
+    }
+    client.get
+      .mockResolvedValueOnce(issue)
+      .mockResolvedValueOnce({
+        items: [issue],
+        members: [],
+        agents: [],
+        task_bindings: [],
+      })
+      .mockResolvedValueOnce({
+        items: [{ ...issue, project_key: 'PRJ', project_name: 'Project', has_active_task: false }],
+      })
+    client.post.mockResolvedValue(issue)
+    const api = createWebSharedWorkspaceApi(client, { getBlob: jest.fn() })
+    await expect(api.issues.get('issue-1')).resolves.toEqual(expected)
+    await expect(api.issues.getBoardSnapshot('project-1')).resolves.toMatchObject({
+      items: [expected],
+    })
+    await expect(
+      api.issues.assign('project-1', 'issue-1', {
+        assigneeType: 'user',
+        assigneeId: '7',
+        version: 1,
+      })
+    ).resolves.toEqual(expected)
+    await expect(api.myWork?.list()).resolves.toEqual([
+      { ...expected, project_key: 'PRJ', project_name: 'Project', has_active_task: false },
+    ])
+  })
+
   it('forwards the observed content revision with an Issue read receipt', async () => {
     const client = createClient()
     client.post.mockResolvedValue({ id: 'issue-1', is_unread: true })

@@ -190,7 +190,7 @@ class LoopItemResponse(BaseModel):
     status_history: list[dict[str, Any]] = Field(default_factory=list)
     approval: dict[str, Any] | None = None
     human_task_binding: dict[str, str] | None = None
-    human_assistant_dispatch: dict[str, Any] | None = None
+    direct_human_assignment_receipt: dict[str, Any] | None = None
     queued_at: str | None = None
     execution_note: str | None = None
     execution_error: str | None = None

@@ -555,20 +555,27 @@ impl RuntimeWorkRpcHandler {
         configs: &[Value],
         issue: &Value,
     ) -> Result<(), AppIpcError> {
-        let dispatch = &issue["human_assistant_dispatch"];
-        let automatic = configs
-            .first()
-            .is_some_and(|config| config["manual"] != true);
+        let dispatch = &issue["direct_human_assignment_receipt"];
+        let automatic = configs.first().is_some_and(|config| {
+            config["manual"] != true && !config["triggerCommentId"].is_string()
+        });
         let configs = if automatic && dispatch.is_object() {
             if !matches!(
-                dispatch["dispatchState"].as_str(),
+                dispatch["state"].as_str(),
                 Some("queued" | "waiting_device")
             ) {
                 return Ok(());
             }
             configs
                 .iter()
-                .filter(|config| config["id"] == "@primary")
+                .filter(|config| {
+                    super::human_assistant_dispatch::dispatch(
+                        config,
+                        issue,
+                        &issue["human_task_binding"],
+                    )
+                    .is_some()
+                })
                 .cloned()
                 .collect::<Vec<_>>()
         } else {
@@ -681,7 +688,7 @@ impl RuntimeWorkRpcHandler {
         let eligible_configs: Vec<Value> = matching
             .into_iter()
             .filter(|config| {
-                issue["human_assistant_dispatch"].is_object()
+                issue["direct_human_assignment_receipt"].is_object()
                     || assignment_after_enable(assignment, config)
             })
             .cloned()

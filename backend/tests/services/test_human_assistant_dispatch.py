@@ -27,12 +27,15 @@ from tests.services.test_loop_item_assignment import (
 
 @pytest.fixture
 def dispatch_enabled(monkeypatch):
-    monkeypatch.setattr(settings, "HUMAN_ASSIGNMENT_ASSISTANT_DISPATCH_ENABLED", True)
+    monkeypatch.setattr(settings, "HUMAN_ASSIGNMENT_RECEIPTS_ENABLED", True)
 
 
 @pytest.fixture(autouse=True)
 def isolate_background_delivery():
-    with patch("app.core.async_utils.schedule_async_task") as schedule:
+    with (
+        patch("app.core.async_utils.schedule_async_task") as schedule,
+        patch("app.core.cache.cache_manager.mget_sync_or_raise", return_value={}),
+    ):
         yield schedule
 
 
@@ -341,7 +344,7 @@ def test_project_policy_disables_default_automatic_handling(
     device.json = payload
     test_db.commit()
     _assign(test_db, project, item, test_user, test_user)
-    assert current_dispatch(test_db, item)["reasonCode"] == "no_authorized_assistant"
+    assert current_dispatch(test_db, item)["reasonCode"] == "automatic_disabled"
     assert test_db.query(LoopItemExecution).filter_by(loop_item_id=item.id).count() == 0
 
 
@@ -355,7 +358,7 @@ def test_flag_rollback_blocks_new_claim_but_preserves_existing_claim_retry(
     _assign(test_db, project, first, test_user, test_user)
     _assign(test_db, project, second, test_user, test_user)
     binding = _bind(test_db, first, test_user)
-    monkeypatch.setattr(settings, "HUMAN_ASSIGNMENT_ASSISTANT_DISPATCH_ENABLED", False)
+    monkeypatch.setattr(settings, "HUMAN_ASSIGNMENT_RECEIPTS_ENABLED", False)
     with pytest.raises(HTTPException, match="disabled"):
         _bind(test_db, second, test_user, task="second")
     test_db.rollback()

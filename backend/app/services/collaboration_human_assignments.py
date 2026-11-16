@@ -5,6 +5,7 @@
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
 from uuid import NAMESPACE_URL, uuid5
 
 from sqlalchemy.orm import Session
@@ -24,19 +25,28 @@ from app.services.notification_copy import NotificationTarget
 from app.services.notification_target import board_notification_target
 from app.services.wework_notifications import create_notification
 
+if TYPE_CHECKING:
+    from app.services.issue_assignments import AssignmentEvent
+
 DIRECT_HUMAN_ROUND_ID = "direct"
 
 
 def human_task_bindings(
-    db: Session, items: list[LoopItem], user_id: int, *, projects: list[CloudProject]
+    db: Session,
+    items: list[LoopItem],
+    user_id: int,
+    *,
+    projects: list[CloudProject],
+    assignments: dict[str, list[AssignmentEvent]] | None = None,
 ) -> dict[str, dict]:
     """Project personal task identities without reading each Issue separately."""
     from app.services.issue_assignments import issue_assignment_service
 
     eligible = _human_binding_items(items, projects, user_id)
-    assignments = issue_assignment_service.active_for_issues(
-        db, [item.id for item in eligible]
-    )
+    if assignments is None:
+        assignments = issue_assignment_service.active_for_issues(
+            db, [item.id for item in eligible]
+        )
     result: dict[str, dict] = {}
     rounds = []
     for item in eligible:

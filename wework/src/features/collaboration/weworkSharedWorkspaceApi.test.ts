@@ -238,16 +238,21 @@ function createMockDeliveryApi() {
 }
 
 describe('createWeworkDeliverySharedWorkspaceApi', () => {
-  it('preserves the human assignee and assistant dispatch across issue responses', async () => {
+  it('maps the direct assignment receipt while preserving its human assignee', async () => {
     const deliveryApi = createMockDeliveryApi()
     const dispatched: CloudLoopItem = {
       ...issue,
       assignee_user_id: 7,
       assignee_name: 'Ada',
-      human_assistant_dispatch: {
+      direct_human_assignment_receipt: {
+        projectId: String(issue.cloud_project_id),
+        issueId: issue.id,
+        humanAssignmentId: 'human-1',
+        dispatchId: 'dispatch-1',
         ownerUserId: 7,
-        endpointRef: null,
-        dispatchState: 'no_authorized_assistant',
+        state: 'blocked_policy',
+        runtimeTaskId: null,
+        deliveryId: null,
         executionId: null,
         reasonCode: 'no_authorized_assistant',
         assignmentId: 'assignment-1',
@@ -261,8 +266,24 @@ describe('createWeworkDeliverySharedWorkspaceApi', () => {
     await expect(api.issues.get(issue.id)).resolves.toMatchObject({
       assignee_user_id: 7,
       assignee_name: 'Ada',
-      human_assistant_dispatch: dispatched.human_assistant_dispatch,
+      directHumanAssignmentReceipt: dispatched.direct_human_assignment_receipt,
     })
+    await expect(api.issues.get(issue.id)).resolves.not.toHaveProperty(
+      'direct_human_assignment_receipt'
+    )
+    vi.mocked(deliveryApi.listMyWork).mockResolvedValue({
+      items: [
+        { ...dispatched, project_key: 'PRJ', project_name: 'Project', has_active_task: false },
+      ],
+    })
+    const [work] = await api.myWork.list()
+    expect(work).toMatchObject({
+      project_key: 'PRJ',
+      project_name: 'Project',
+      has_active_task: false,
+    })
+    expect(work.directHumanAssignmentReceipt).toEqual(dispatched.direct_human_assignment_receipt)
+    expect(work).not.toHaveProperty('direct_human_assignment_receipt')
   })
 
   it('reads every my-work page and surfaces provider failures instead of empty success', async () => {

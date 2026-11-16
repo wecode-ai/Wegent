@@ -5,6 +5,7 @@ import assert from 'node:assert/strict'
 import { verifySilentIssueSaves } from '../modules/issue-save-notification-flows.mjs'
 import { verifyLinkedTasksScrolling } from '../modules/issue-linked-tasks.mjs'
 import { verifyIssuePersonalTaskPrivacy } from '../modules/issue-personal-task-privacy.mjs'
+import { createDirectHumanAssignmentReceiptVerifier } from '../modules/direct-human-assignment-receipt.mjs'
 import { ensureExperimentalFeaturesEnabled } from '../modules/preferences-automation-flows.mjs'
 import {
   assistantMessage,
@@ -507,12 +508,13 @@ export function createDesktopScenario({
   let delivery = null
   let modelRequestCount = 0
   let runtimeTaskId = ''
+  const directReceipt = createDirectHumanAssignmentReceiptVerifier()
 
   const ownerRequest = (pathname, options) => requestJson(backendUrl, ownerToken, pathname, options)
 
   return {
     requiresCloudEnvironment: true,
-    backendEnv: { HUMAN_ASSIGNMENT_ASSISTANT_DISPATCH_ENABLED: 'true' },
+    backendEnv: { HUMAN_ASSIGNMENT_RECEIPTS_ENABLED: 'true' },
 
     async prepareCloud(cloud) {
       backendUrl = cloud.backendUrl
@@ -544,6 +546,7 @@ export function createDesktopScenario({
         writeEvents(response, responseId, [assistantMessage('Ready')])
         return true
       }
+      if (await directReceipt.handleModelRequest(serialized, response, responseId)) return true
       if (!serialized.includes(MARKER)) {
         writeEvents(response, responseId, [])
         return true
@@ -615,30 +618,36 @@ export function createDesktopScenario({
       assert.equal(Object.keys(project.execution_environment?.devices ?? {}).length, 0)
       issue = await createIssue(control, project.id, ownerRequest, owner, uiTimeoutMs)
       assert.equal(String(issue.assignee_user_id), String(owner.id))
-      const assistantDispatch = issue.human_assistant_dispatch
-      assert.ok(assistantDispatch, 'Human assignment must persist an assistant dispatch intent')
-      assert.equal(String(assistantDispatch.ownerUserId), String(owner.id))
-      assert.equal(assistantDispatch.dispatchState, 'no_authorized_assistant')
-      assert.equal(assistantDispatch.reasonCode, 'no_authorized_assistant')
-      assert.equal(assistantDispatch.executionId, null)
-      assert.equal(assistantDispatch.endpointRef, null)
-      assert.ok(assistantDispatch.assignmentId)
+      const assistantReceipt = issue.direct_human_assignment_receipt
+      assert.ok(assistantReceipt, 'Human assignment must expose a durable acceptance receipt')
+      assert.equal(String(assistantReceipt.ownerUserId), String(owner.id))
+      assert.equal(assistantReceipt.projectId, String(project.id))
+      assert.equal(assistantReceipt.issueId, String(issue.id))
+      assert.equal(assistantReceipt.state, 'blocked_policy')
+      assert.equal(assistantReceipt.reasonCode, 'no_authorized_assistant')
+      assert.equal(assistantReceipt.runtimeTaskId, null)
+      assert.equal(assistantReceipt.deliveryId, null)
+      assert.equal(assistantReceipt.executionId, null)
+      assert.ok(assistantReceipt.humanAssignmentId)
+      assert.ok(assistantReceipt.dispatchId)
       const dispatchNotice = scoped(
         `[data-testid="cloud-todo-detail"] [data-testid="human-assistant-dispatch-${issue.id}"]`
       )
-      await control.command('waitFor', dispatchNotice, { text: '待授权', visible: true })
+      await control.command('waitFor', dispatchNotice, { text: '未自动接单', visible: true })
       await control.command(
         'waitFor',
         scoped(`[data-testid="human-assistant-configure-${issue.id}"]`),
         { text: '配置我的助理', visible: true }
       )
       issue = await verifyIssueTags(control, ownerRequest, issue, uiTimeoutMs)
-      assert.equal(issue.human_assistant_dispatch.assignmentId, assistantDispatch.assignmentId)
       assert.equal(
-        issue.human_assistant_dispatch.assignmentVersion,
-        assistantDispatch.assignmentVersion
+        issue.direct_human_assignment_receipt.humanAssignmentId,
+        assistantReceipt.humanAssignmentId
       )
-      assert.equal(issue.human_assistant_dispatch.executionId, null)
+      assert.equal(issue.direct_human_assignment_receipt.dispatchId, assistantReceipt.dispatchId)
+      assert.equal(issue.direct_human_assignment_receipt.runtimeTaskId, null)
+      assert.equal(issue.direct_human_assignment_receipt.deliveryId, null)
+      assert.equal(issue.direct_human_assignment_receipt.state, 'blocked_policy')
       assert.equal(String(issue.assignee_user_id), String(owner.id))
       await captureScreenshot(control, 'assignment-00-created-without-environment.png', CONTENT)
       await control.command('click', '[data-testid="cloud-todo-detail-close"]')
@@ -647,7 +656,7 @@ export function createDesktopScenario({
         scoped(
           `[data-testid="cloud-todo-card-${issue.id}"] [data-testid="human-assistant-dispatch-${issue.id}"]`
         ),
-        { text: '待授权', visible: true }
+        { text: '未自动接单', visible: true }
       )
       const remoteDevice = await cloudEnvironment.waitForDeviceType(
         REMOTE_DOCKER_DEVICE_ID,
@@ -937,6 +946,15 @@ export function createDesktopScenario({
         taskId: runtimeTaskId,
         uiTimeoutMs,
       })
+      await directReceipt.verify({
+        control,
+        request: ownerRequest,
+        projectId: project.id,
+        user: owner,
+        waitForValue,
+        uiTimeoutMs,
+        modelResponseTimeoutMs,
+      })
     },
 
     diagnostics() {
@@ -947,6 +965,7 @@ export function createDesktopScenario({
         modelRequestCount,
         projectId: project?.id ?? null,
         runtimeTaskId: runtimeTaskId || null,
+        directReceipt: directReceipt.diagnostics(),
       }
     },
   }

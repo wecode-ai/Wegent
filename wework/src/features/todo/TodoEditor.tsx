@@ -10,6 +10,7 @@ import {
   type CollaborationAssignment,
   createCollaborationTranslator,
   createSharedIssueDetailPort,
+  mapCollaborationIssueDto,
   IssueMarkdownProvider,
   type CollaborationAttachment,
   formatIssueAttachmentSize,
@@ -148,6 +149,8 @@ function canCreatePersonalTask(props: TodoEditorProps): boolean {
 
 export function TodoEditor(props: TodoEditorProps) {
   const { t, i18n } = useTranslation('common')
+  const item = props.mode === 'edit' ? props.item : null
+  const sharedItem = useMemo(() => (item ? mapCollaborationIssueDto(item) : null), [item])
   const taskOwnerUserId = props.project?.project_store === 'local' ? 0 : props.currentUserId
   const showPersonalTaskAction = canCreatePersonalTask(props)
   const [previewAttachment, setPreviewAttachment] = useState<{
@@ -427,7 +430,7 @@ export function TodoEditor(props: TodoEditorProps) {
       <SharedIssueDetailEditor
         {...commonProps}
         mode="edit"
-        item={props.item as SharedEditorIssue}
+        item={sharedItem as SharedEditorIssue}
         editable={canEditProjectSpaceIssue({
           ...props.item,
           project_store:

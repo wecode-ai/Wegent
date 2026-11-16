@@ -66,10 +66,15 @@ describe('TodoEditor external item sync', () => {
       assignee_agent_id: null,
       assignee_user_id: 1,
       assignee_name: 'Ada',
-      human_assistant_dispatch: {
+      direct_human_assignment_receipt: {
+        projectId: String(baseItem.cloud_project_id),
+        issueId: baseItem.id,
+        humanAssignmentId: 'human-1',
+        dispatchId: 'dispatch-1',
         ownerUserId: 1,
-        endpointRef: null,
-        dispatchState: 'no_authorized_assistant',
+        state: 'blocked_policy',
+        runtimeTaskId: null,
+        deliveryId: null,
         executionId: null,
         reasonCode: 'no_authorized_assistant',
         assignmentId: 'assignment-1',
@@ -92,8 +97,8 @@ describe('TodoEditor external item sync', () => {
     const { rerender } = render(<TodoEditor {...props} currentUserId={1} />)
     expect(screen.getByTestId('cloud-todo-state-assignee')).toHaveTextContent('Ada')
     expect(screen.getByTestId(`human-assistant-dispatch-${item.id}`)).toHaveAttribute(
-      'data-dispatch-state',
-      'no_authorized_assistant'
+      'data-receipt-state',
+      'blocked_policy'
     )
     await user.click(screen.getByTestId(`human-assistant-configure-${item.id}`))
     expect(configure).toHaveBeenCalledOnce()
@@ -101,6 +106,72 @@ describe('TodoEditor external item sync', () => {
     expect(screen.queryByTestId(`human-assistant-configure-${item.id}`)).not.toBeInTheDocument()
     expect(screen.getByTestId(`human-assistant-dispatch-${item.id}`)).toBeInTheDocument()
   })
+
+  it.each([
+    { viewer: 1, humanAssignmentId: 'human-1', canOpen: true },
+    { viewer: 2, humanAssignmentId: 'human-1', canOpen: false },
+    { viewer: 1, humanAssignmentId: 'human-2', canOpen: false },
+  ])(
+    'gates receipt work for viewer $viewer and assignment $humanAssignmentId',
+    async ({ viewer, humanAssignmentId, canOpen }) => {
+      const user = userEvent.setup()
+      const onOpenTaskConversation = vi.fn()
+      const receipt = {
+        projectId: '11',
+        issueId: baseItem.id,
+        humanAssignmentId,
+        dispatchId: 'dispatch-1',
+        ownerUserId: 1,
+        state: 'waiting_user' as const,
+        reasonCode: null,
+        runtimeTaskId: 'private-task',
+        deliveryId: null,
+        updatedAt: '2026-11-16T00:00:00Z',
+      }
+      const item: CloudLoopItem = {
+        ...baseItem,
+        assignee_agent_id: null,
+        assignee_user_id: 1,
+        direct_human_assignment_receipt: receipt,
+      }
+      const binding = {
+        id: 8,
+        device_id: 'owner-device',
+        task_user_id: 1,
+        task_id: 'private-task',
+        human_assignment_id: 'human-1',
+        loop_item_id: item.id,
+        task_title: 'Assistant work',
+        backend_task_id: null,
+        linked_at: '2026-11-16T00:00:00Z',
+      }
+      const props = {
+        mode: 'edit' as const,
+        presentation: 'workspace-panel' as const,
+        item,
+        project,
+        allItems: [item],
+        onUpdated: vi.fn(),
+        onClose: vi.fn(),
+        api,
+        initialTaskBindings: [binding],
+        onOpenTaskConversation,
+      }
+      render(<TodoEditor {...props} currentUserId={viewer} />)
+      const action = `human-assistant-execution-${item.id}`
+      if (canOpen) {
+        await user.click(screen.getByTestId(action))
+        expect(onOpenTaskConversation).toHaveBeenCalledWith(expect.objectContaining(binding))
+      } else {
+        expect(screen.queryByTestId(action)).not.toBeInTheDocument()
+        expect(onOpenTaskConversation).not.toHaveBeenCalled()
+      }
+      expect(screen.getByTestId(`human-assistant-dispatch-${item.id}`)).toHaveAttribute(
+        'data-receipt-state',
+        'waiting_user'
+      )
+    }
+  )
 
   it('clears a deleted draft milestone only after a successful catalog read', async () => {
     const key = 'wework-todo-draft:11:inbox'

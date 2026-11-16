@@ -5,6 +5,7 @@ import {
   IssueCardTaskSummary,
   createIssueBoardCardLabels,
   createCollaborationTranslator,
+  mapCollaborationIssueDto,
   standInProcessingActor,
 } from '@wegent/collaboration'
 import {
@@ -91,7 +92,7 @@ export function CloudTodoCardContent({
   return (
     <IssueBoardCardContent
       item={{
-        ...item,
+        ...mapCollaborationIssueDto(item),
         execution_state: goalBinding?.running ? 'running' : item.execution_state,
         processing_actor:
           standInProcessingActor(
@@ -255,7 +256,7 @@ export function CloudTodoBoardCard({
     <IssueBoardCard
       metadata={metadata}
       item={{
-        ...item,
+        ...mapCollaborationIssueDto(item),
         execution_state: runningTaskBindings.length ? 'running' : item.execution_state,
         processing_actor:
           standInProcessingActor(

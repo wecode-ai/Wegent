@@ -3,17 +3,25 @@ use super::stand_in::settings_error;
 use super::*;
 
 pub(super) fn dispatch<'a>(config: &Value, issue: &'a Value, binding: &Value) -> Option<&'a Value> {
-    issue.get("human_assistant_dispatch").filter(|dispatch| {
-        dispatch.is_object()
-            && config["id"] == "@primary"
-            && config["manual"] != true
-            && !config["triggerCommentId"].is_string()
-            && !binding["triggerCommentId"].is_string()
-            && binding["humanAssignmentId"].is_string()
-            && binding["assignmentId"].is_string()
-            && binding["humanAssignmentId"] == issue["human_task_binding"]["humanAssignmentId"]
-            && binding["assignmentId"] == issue["human_task_binding"]["assignmentId"]
-    })
+    issue
+        .get("direct_human_assignment_receipt")
+        .filter(|dispatch| {
+            dispatch.is_object()
+                && dispatch["projectId"] == config["projectId"]
+                && dispatch["issueId"] == issue["id"]
+                && dispatch["ownerUserId"] == config["userId"]
+                && dispatch["humanAssignmentId"] == binding["humanAssignmentId"]
+                && dispatch["dispatchId"].is_string()
+                && dispatch["executionId"].is_string()
+                && config["id"] == "@primary"
+                && config["manual"] != true
+                && !config["triggerCommentId"].is_string()
+                && !binding["triggerCommentId"].is_string()
+                && binding["humanAssignmentId"].is_string()
+                && binding["assignmentId"].is_string()
+                && binding["humanAssignmentId"] == issue["human_task_binding"]["humanAssignmentId"]
+                && binding["assignmentId"] == issue["human_task_binding"]["assignmentId"]
+        })
 }
 
 #[cfg(test)]
@@ -52,13 +60,15 @@ impl RuntimeWorkRpcHandler {
         issue: &Value,
         error: &AppIpcError,
     ) {
-        let Some(execution) = issue["human_assistant_dispatch"]["executionId"].as_str() else {
+        let Some(execution) = issue["direct_human_assignment_receipt"]["executionId"].as_str()
+        else {
             return;
         };
         let project = config["projectId"].as_str().unwrap_or_default();
         let path = format!("/v1/cloud-projects/{project}/executions/{execution}/dispatch-failed");
+        let message = crate::agents::redact_diagnostic_text(&error.message);
         let body =
-            json!({"error":error.message.chars().take(2000).collect::<String>(),"note":error.code});
+            json!({"error":message.chars().take(2000).collect::<String>(),"note":error.code});
         if let Err(report_error) = self
             .runtime_http(reqwest::Method::POST, &path, Some(&body))
             .await
@@ -106,7 +116,7 @@ impl RuntimeWorkRpcHandler {
             };
             for issue in items["items"].as_array().into_iter().flatten() {
                 // Recovery only consumes durable intents; enabling a role never backfills history.
-                if !issue["human_assistant_dispatch"].is_object()
+                if !issue["direct_human_assignment_receipt"].is_object()
                     || issue["cloud_project_id"] != project
                     || issue["assignee_user_id"] != user
                 {

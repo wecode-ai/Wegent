@@ -126,7 +126,7 @@ export interface CloudLoopItem {
   milestone_id?: string | null
   runner_binding?: { environment_id: string } | null
   human_task_binding?: CollaborationIssue['human_task_binding']
-  human_assistant_dispatch?: CollaborationIssue['human_assistant_dispatch']
+  direct_human_assignment_receipt?: CollaborationIssue['directHumanAssignmentReceipt']
   assignee_group_id?: string | null
   assignee_group_name?: string | null
   id: string

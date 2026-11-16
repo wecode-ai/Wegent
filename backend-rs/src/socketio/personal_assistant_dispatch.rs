@@ -30,14 +30,12 @@ pub(super) fn normalize(value: &Value) -> Value {
 const DISPATCH_PATH: &str = "$.human_assistant_dispatch";
 
 fn enabled() -> bool {
-    crate::config::env_or_dotenv("HUMAN_ASSIGNMENT_ASSISTANT_DISPATCH_ENABLED").is_some_and(
-        |value| {
-            matches!(
-                value.trim().to_ascii_lowercase().as_str(),
-                "true" | "1" | "yes" | "on"
-            )
-        },
-    )
+    crate::config::env_or_dotenv("HUMAN_ASSIGNMENT_RECEIPTS_ENABLED").is_some_and(|value| {
+        matches!(
+            value.trim().to_ascii_lowercase().as_str(),
+            "true" | "1" | "yes" | "on"
+        )
+    })
 }
 
 /// The handler has already validated the authenticated installation and session.
@@ -193,20 +191,20 @@ async fn refresh_issue_on(
     }
     let before = dispatch.clone();
     let mut effects = Effects::default();
-    let endpoint = endpoint_on(tx, &issue, owner).await?;
+    let resolution = endpoint_on(tx, &issue, owner).await?;
     let reason = if matches!(issue.status.as_str(), "completed" | "cancelled" | "deleted") {
         Some("issue_closed")
     } else if !authorized_on(tx, &issue, owner).await? {
         Some("permission_denied")
-    } else if endpoint.is_none() {
-        Some("no_authorized_assistant")
+    } else if resolution.endpoint.is_none() {
+        Some(resolution.reason)
     } else {
         None
     };
     if let Some(reason) = reason {
         revoke_on(tx, &issue, owner, &mut dispatch, reason, &mut effects).await?;
     } else if may_create {
-        let (device, role) = endpoint.expect("authorized endpoint");
+        let (device, role) = resolution.endpoint.expect("authorized endpoint");
         admit_on(
             tx,
             &issue,
@@ -416,17 +414,31 @@ fn dependency_error(error: anyhow::Error) -> brz_mysql::MysqlError {
     }
 }
 
+struct EndpointResolution {
+    endpoint: Option<(DeviceKindRow, schema::Role)>,
+    reason: &'static str,
+}
+
 async fn endpoint_on(
     tx: &mut impl MysqlTransaction,
     issue: &store::Node,
     owner: i64,
-) -> MysqlResult<Option<(DeviceKindRow, schema::Role)>> {
+) -> MysqlResult<EndpointResolution> {
     let devices: Vec<DeviceKindRow> = tx
         .fetch_all(
             format!("{KINDS_DEVICE_QUERY} ORDER BY kinds.updated_at DESC,kinds.id DESC"),
             (owner,),
         )
         .await?;
+    Ok(select_endpoint(devices, issue, owner))
+}
+
+fn select_endpoint(
+    devices: Vec<DeviceKindRow>,
+    issue: &store::Node,
+    owner: i64,
+) -> EndpointResolution {
+    let mut reason = "no_authorized_assistant";
     for device in devices {
         if authority::truthy(&device.json["spec"]["workspaceOwnerId"]) {
             continue;
@@ -437,12 +449,34 @@ async fn endpoint_on(
             continue;
         };
         for role in declaration.roles {
-            if role.permits(owner, &issue.cloud_project_id, &issue.metadata.0["tags"]) {
-                return Ok(Some((device, role)));
+            if let Some(denial) =
+                role.denial_reason(owner, &issue.cloud_project_id, &issue.metadata.0["tags"])
+            {
+                if reason_priority(denial) > reason_priority(reason) {
+                    reason = denial;
+                }
+            } else {
+                return EndpointResolution {
+                    endpoint: Some((device, role)),
+                    reason: "waiting_device",
+                };
             }
         }
     }
-    Ok(None)
+    EndpointResolution {
+        endpoint: None,
+        reason,
+    }
+}
+
+fn reason_priority(reason: &str) -> u8 {
+    match reason {
+        "assistant_disabled" => 1,
+        "project_not_authorized" => 2,
+        "automatic_disabled" => 3,
+        "tag_mismatch" => 4,
+        _ => 0,
+    }
 }
 
 async fn admit_on(

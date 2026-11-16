@@ -109,6 +109,15 @@ impl Role {
     }
 
     pub(super) fn permits(&self, user_id: i64, project_id: &str, tags: &Value) -> bool {
+        self.denial_reason(user_id, project_id, tags).is_none()
+    }
+
+    pub(super) fn denial_reason(
+        &self,
+        user_id: i64,
+        project_id: &str,
+        tags: &Value,
+    ) -> Option<&'static str> {
         let scope = &self.collaboration;
         let policy = scope
             .project_policies
@@ -117,21 +126,28 @@ impl Role {
             .map(|value| &value.policy)
             .or(scope.policy.as_ref())
             .unwrap_or(&self.handling_policy);
-        self.user_id == user_id
-            && self.enabled
-            && scope.enabled
-            && policy.automatic
-            && !scope
-                .excluded_projects
-                .iter()
-                .any(|value| value.matches(project_id))
-            && (scope.all_projects || scope.projects.iter().any(|value| value.matches(project_id)))
-            && (scope.tags.is_empty()
-                || tags.as_array().is_some_and(|tags| {
-                    tags.iter()
-                        .filter_map(Value::as_str)
-                        .any(|tag| scope.tags.iter().any(|required| required == tag))
-                }))
+        if self.user_id != user_id || !self.enabled || !scope.enabled {
+            Some("assistant_disabled")
+        } else if scope
+            .excluded_projects
+            .iter()
+            .any(|value| value.matches(project_id))
+            || !(scope.all_projects || scope.projects.iter().any(|value| value.matches(project_id)))
+        {
+            Some("project_not_authorized")
+        } else if !policy.automatic {
+            Some("automatic_disabled")
+        } else if !scope.tags.is_empty()
+            && !tags.as_array().is_some_and(|tags| {
+                tags.iter()
+                    .filter_map(Value::as_str)
+                    .any(|tag| scope.tags.iter().any(|required| required == tag))
+            })
+        {
+            Some("tag_mismatch")
+        } else {
+            None
+        }
     }
 }
 

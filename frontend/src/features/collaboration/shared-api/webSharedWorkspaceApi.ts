@@ -8,6 +8,7 @@ import {
   createSharedWorkspaceHttpApi,
   mapCollaborationExecutionEnvironmentDto,
   mapCollaborationExecutionDto,
+  mapCollaborationIssueDto,
   mapWorkspaceDeliveryAssetDto,
   mapWorkspaceDeliveryDto,
   mapWorkspaceIssueCollaboratorDto,
@@ -588,7 +589,12 @@ export function createWebSharedWorkspaceApi(
         const response = await client.get<{ items: WorkspaceMyWorkItem[] }>(
           '/v1/cloud-work-items/my-work'
         )
-        return response.items
+        return response.items.map(item => ({
+          ...mapCollaborationIssueDto(item),
+          project_key: item.project_key,
+          project_name: item.project_name,
+          has_active_task: item.has_active_task,
+        }))
       },
     },
     issues: {
@@ -601,7 +607,7 @@ export function createWebSharedWorkspaceApi(
         const response = await client.get<{ items: CollaborationIssue[] }>(
           `/v1/cloud-projects/${encoded(projectId)}/loop-items${suffix}`
         )
-        return response.items
+        return response.items.map(mapCollaborationIssueDto)
       },
       async listPage(projectId, input) {
         const query = new URLSearchParams({
@@ -616,7 +622,7 @@ export function createWebSharedWorkspaceApi(
           task_bindings: Array<Record<string, unknown>>
         }>(`/v1/cloud-projects/${encoded(projectId)}/loop-item-pages?${query.toString()}`)
         return {
-          items: response.items,
+          items: response.items.map(mapCollaborationIssueDto),
           nextCursor: response.next_cursor,
           taskBindings: response.task_bindings.map(binding =>
             mapWorkspaceTaskBindingDto(binding, projectId)
@@ -630,7 +636,7 @@ export function createWebSharedWorkspaceApi(
           }
         >(`/v1/cloud-projects/${encoded(projectId)}/board-snapshot`, { cache: 'no-store' })
         return {
-          items: response.items,
+          items: response.items.map(mapCollaborationIssueDto),
           members: response.members,
           agents: response.agents,
           taskBindings: response.task_bindings.map(binding =>
@@ -639,16 +645,22 @@ export function createWebSharedWorkspaceApi(
         }
       },
       get(issueId) {
-        return client.get(`/v1/loop-items/${encoded(issueId)}`)
+        return client
+          .get<CollaborationIssue>(`/v1/loop-items/${encoded(issueId)}`)
+          .then(mapCollaborationIssueDto)
       },
       create(projectId, input) {
-        return client.post(
-          `/v1/cloud-projects/${encoded(projectId)}/loop-items`,
-          keysToSnakeCase(input)
-        )
+        return client
+          .post<CollaborationIssue>(
+            `/v1/cloud-projects/${encoded(projectId)}/loop-items`,
+            keysToSnakeCase(input)
+          )
+          .then(mapCollaborationIssueDto)
       },
       update(issueId, input) {
-        return client.patch(`/v1/loop-items/${encoded(issueId)}`, keysToSnakeCase(input))
+        return client
+          .patch<CollaborationIssue>(`/v1/loop-items/${encoded(issueId)}`, keysToSnakeCase(input))
+          .then(mapCollaborationIssueDto)
       },
       assign(projectId, issueId, input) {
         if (input.assigneeType === 'team') {
@@ -656,29 +668,37 @@ export function createWebSharedWorkspaceApi(
           if (!Number.isInteger(teamId) || teamId < 1) {
             throw new TypeError(`Invalid team assignee ID: ${input.assigneeId}`)
           }
-          return client.patch(`/v1/loop-items/${encoded(issueId)}`, {
-            version: input.version,
-            assignee_team_id: teamId,
-            notify_assignee: input.notifyAssignee ?? true,
-            position: input.position,
-          })
+          return client
+            .patch<CollaborationIssue>(`/v1/loop-items/${encoded(issueId)}`, {
+              version: input.version,
+              assignee_team_id: teamId,
+              notify_assignee: input.notifyAssignee ?? true,
+              position: input.position,
+            })
+            .then(mapCollaborationIssueDto)
         }
-        return client.post(
-          `/v1/cloud-projects/${encoded(projectId)}/loop-items/${encoded(issueId)}/assign`,
-          keysToSnakeCase(input)
-        )
+        return client
+          .post<CollaborationIssue>(
+            `/v1/cloud-projects/${encoded(projectId)}/loop-items/${encoded(issueId)}/assign`,
+            keysToSnakeCase(input)
+          )
+          .then(mapCollaborationIssueDto)
       },
       approveRun(projectId, issueId, version) {
-        return client.post(
-          `/v1/cloud-projects/${encoded(projectId)}/loop-items/${encoded(issueId)}/approve`,
-          { version }
-        )
+        return client
+          .post<CollaborationIssue>(
+            `/v1/cloud-projects/${encoded(projectId)}/loop-items/${encoded(issueId)}/approve`,
+            { version }
+          )
+          .then(mapCollaborationIssueDto)
       },
       rejectRun(projectId, issueId, version, reason) {
-        return client.post(
-          `/v1/cloud-projects/${encoded(projectId)}/loop-items/${encoded(issueId)}/reject`,
-          { version, reason: reason ?? null }
-        )
+        return client
+          .post<CollaborationIssue>(
+            `/v1/cloud-projects/${encoded(projectId)}/loop-items/${encoded(issueId)}/reject`,
+            { version, reason: reason ?? null }
+          )
+          .then(mapCollaborationIssueDto)
       },
       archive(issueId) {
         return client.delete(`/v1/loop-items/${encoded(issueId)}`)
@@ -692,14 +712,17 @@ export function createWebSharedWorkspaceApi(
           items: CollaborationIssue[]
           next_cursor: string | null
         }>(`/v1/cloud-projects/${encoded(projectId)}/archived-loop-items?${query.toString()}`)
-        return { items: response.items, nextCursor: response.next_cursor }
+        return {
+          items: response.items.map(mapCollaborationIssueDto),
+          nextCursor: response.next_cursor,
+        }
       },
       async restore(issueId) {
         const response = await client.post<{ items: CollaborationIssue[] }>(
           `/v1/loop-items/${encoded(issueId)}/restore`,
           {}
         )
-        return response.items
+        return response.items.map(mapCollaborationIssueDto)
       },
       async reorder(projectId, input) {
         const response = await client.post<{ items: CollaborationIssue[] }>(
@@ -710,7 +733,7 @@ export function createWebSharedWorkspaceApi(
             item_ids: input.issueIds,
           }
         )
-        return response.items
+        return response.items.map(mapCollaborationIssueDto)
       },
       markRead(issueId, activitySequence, contentRevision) {
         return client.post(`/v1/loop-items/${encoded(issueId)}/read`, {

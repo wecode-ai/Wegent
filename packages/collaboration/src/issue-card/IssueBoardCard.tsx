@@ -7,7 +7,7 @@ import { CollaborationIssueCard, type CollaborationIssueCardProps } from './Coll
 import { IssueCardGoalSummary } from './IssueCardTaskSummary'
 import { IssueExecutionConfigurationBadge } from './IssueBoardCardContent'
 import { issueNeedsExecutionConfiguration } from './model'
-import { HumanAssistantDispatchStatus } from '../issue-detail/HumanAssistantDispatchStatus'
+import { DirectHumanAssignmentReceiptStatus } from '../issue-detail/DirectHumanAssignmentReceiptStatus'
 import { Tooltip } from '../issue-detail/Tooltip'
 import type { CollaborationTranslate } from '../i18n'
 import { activityClassNames as cn } from '../issue-detail/activityClassNames'
@@ -152,9 +152,9 @@ export function IssueBoardCard<T extends IssueBoardCardTask>({
           {needsExecutionConfiguration ? (
             <IssueExecutionConfigurationBadge itemId={item.id} translate={t} />
           ) : null}
-          <HumanAssistantDispatchStatus
+          <DirectHumanAssignmentReceiptStatus
             itemId={item.id}
-            dispatch={item.human_assistant_dispatch}
+            receipt={item.directHumanAssignmentReceipt}
             translate={t}
             compact
           />

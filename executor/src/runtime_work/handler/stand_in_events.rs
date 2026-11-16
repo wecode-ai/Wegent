@@ -53,7 +53,7 @@ impl RuntimeWorkRpcHandler {
             return Ok(());
         }
         let store = LocalTaskStore::open(self.task_store_path.as_ref()).map_err(settings_error)?;
-        let personal = if issue["human_assistant_dispatch"].is_object() {
+        let personal = if issue["direct_human_assignment_receipt"].is_object() {
             store
                 .declared_personal_stand_ins(&self.device_id)
                 .map(|settings| {

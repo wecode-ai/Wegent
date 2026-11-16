@@ -12,6 +12,82 @@ fn advertised_role(owner: i64) -> Value {
         "handlingPolicy":{"automatic":true}})
 }
 
+fn declared_device(value: Value) -> DeviceKindRow {
+    DeviceKindRow {
+        id: 9,
+        name: "owned-device".into(),
+        json: json!({"spec":{"personalAssistantDispatch":{"version":1,"roles":[value]}}}),
+    }
+}
+
+#[test]
+fn policy_receipts_explain_the_same_denial_that_prevents_execution() {
+    for (field, value, expected) in [
+        ("enabled", json!(false), "assistant_disabled"),
+        (
+            "collaboration",
+            json!({"enabled":false}),
+            "assistant_disabled",
+        ),
+        (
+            "collaboration",
+            json!({"enabled":true,"allProjects":false}),
+            "project_not_authorized",
+        ),
+        (
+            "handlingPolicy",
+            json!({"automatic":false}),
+            "automatic_disabled",
+        ),
+        (
+            "collaboration",
+            json!({"enabled":true,"allProjects":true,"tags":["engineering"]}),
+            "tag_mismatch",
+        ),
+    ] {
+        let mut value_role = advertised_role(7);
+        value_role[field] = value;
+        let parsed = role(value_role.clone());
+        assert_eq!(parsed.denial_reason(7, "1001", &json!([])), Some(expected));
+        assert!(!parsed.permits(7, "1001", &json!([])));
+        let resolution = select_endpoint(vec![declared_device(value_role)], &issue(), 7);
+        assert!(resolution.endpoint.is_none());
+        assert_eq!(resolution.reason, expected);
+    }
+}
+
+#[test]
+fn policy_receipts_prefer_an_authorized_endpoint_or_the_closest_denial() {
+    let mut disabled = advertised_role(7);
+    disabled["enabled"] = json!(false);
+    let mut tagged = advertised_role(7);
+    tagged["collaboration"]["tags"] = json!(["engineering"]);
+    let resolution = select_endpoint(
+        vec![
+            declared_device(disabled.clone()),
+            declared_device(tagged.clone()),
+        ],
+        &issue(),
+        7,
+    );
+    assert!(resolution.endpoint.is_none());
+    assert_eq!(resolution.reason, "tag_mismatch");
+    let mut matching_issue = issue();
+    matching_issue.metadata.0["tags"] = json!(["engineering"]);
+    let resolution = select_endpoint(
+        vec![declared_device(disabled), declared_device(tagged)],
+        &matching_issue,
+        7,
+    );
+    assert!(resolution.endpoint.is_some());
+    assert_eq!(resolution.reason, "waiting_device");
+    let mut workspace_device = declared_device(advertised_role(7));
+    workspace_device.json["spec"]["workspaceOwnerId"] = json!(7);
+    let resolution = select_endpoint(vec![workspace_device], &issue(), 7);
+    assert!(resolution.endpoint.is_none());
+    assert_eq!(resolution.reason, "no_authorized_assistant");
+}
+
 fn role(value: Value) -> schema::Role {
     schema::declaration(&json!({"version":1,"roles":[value]}))
         .expect("valid declaration")

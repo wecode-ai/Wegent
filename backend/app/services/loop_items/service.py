@@ -355,8 +355,8 @@ class LoopItemService:
         )
         values["approval"] = self._approval_view(execution)
         values["human_task_binding"] = context.human_bindings.get(item.id)
-        values["human_assistant_dispatch"] = (
-            context.human_dispatches.get(item.id) if can_view_detail else None
+        values["direct_human_assignment_receipt"] = (
+            context.human_receipts.get(item.id) if can_view_detail else None
         )
         if execution is not None:
             values["ai_state"] = execution_ai_state_from_resources(

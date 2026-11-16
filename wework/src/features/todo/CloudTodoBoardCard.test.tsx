@@ -70,6 +70,36 @@ const item = {
 } as CloudLoopItem
 
 describe('CloudTodoBoardCard', () => {
+  it('shows the durable receipt on a raw cloud Issue card without replacing its owner', () => {
+    render(
+      <CloudTodoCardContent
+        item={{
+          ...item,
+          assignee_user_id: 7,
+          assignee_name: 'Ada',
+          direct_human_assignment_receipt: {
+            projectId: 'project-1',
+            issueId: item.id,
+            humanAssignmentId: 'human-1',
+            dispatchId: 'dispatch-1',
+            ownerUserId: 7,
+            state: 'queued',
+            reasonCode: null,
+            runtimeTaskId: null,
+            deliveryId: null,
+            updatedAt: '2026-11-16T00:00:00Z',
+          },
+        }}
+        display={{ showAssignee: true, showDate: false, showPriority: false, showTags: false }}
+      />
+    )
+    expect(screen.getByTestId(`human-assistant-dispatch-${item.id}`)).toHaveAttribute(
+      'data-receipt-state',
+      'queued'
+    )
+    expect(screen.getByTestId(`cloud-todo-card-assignee-${item.id}`)).toHaveTextContent('Ada')
+  })
+
   it('projects the running stand-in identity next to the title without a status text row', () => {
     render(
       <CloudTodoCardContent

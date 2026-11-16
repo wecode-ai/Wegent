@@ -46,6 +46,199 @@ fn assert_interaction_status(handler: &RuntimeWorkRpcHandler, expected: Option<&
     );
 }
 
+fn take_interaction_events(receiver: &mut broadcast::Receiver<Value>) -> Vec<Value> {
+    let mut events = Vec::new();
+    while let Ok(event) = receiver.try_recv() {
+        if event["event"] == "runtime.interaction.updated" {
+            events.push(event);
+        }
+    }
+    events
+}
+
+fn frozen_interaction_handler(
+    label: &str,
+) -> (
+    RuntimeWorkRpcHandler,
+    PathBuf,
+    broadcast::Receiver<Value>,
+    u64,
+) {
+    let (mut handler, root) = interaction_handler(label);
+    let (sender, receiver) = broadcast::channel(64);
+    handler.event_tx = Some(sender);
+    let execution_id = start_test_execution(&handler, "task-1");
+    let mut request = ExecutionRequest::default();
+    request.subtask_id = "frozen-subtask".into();
+    request
+        .extra
+        .insert("conversationContext".into(), json!("private_discussion"));
+    request.extra.insert(
+        "origin".into(),
+        json!({"humanAssistantDispatchId":"dispatch-42", "executionId":"42", "publicConversation":false}),
+    );
+    handler
+        .active_local_executions
+        .lock()
+        .unwrap()
+        .get_mut("task-1")
+        .unwrap()
+        .request = Some(request);
+    handler.record_active_codex_turn("task-1", execution_id, "thread-1".into(), "turn-1".into());
+    handler.begin_active_codex_transcript("task-1", "thread-1", "turn-1");
+    handler.store.update_task("task-1", |link| {
+        link.runtime_handle["origin"] =
+            json!({"humanAssistantDispatchId":"dispatch-43", "executionId":"43"});
+    });
+    (handler, root, receiver, execution_id)
+}
+
+fn assert_frozen_interaction(event: &Value, state: &str) {
+    assert_eq!(event["payload"]["executionId"], "42");
+    assert_eq!(event["payload"]["subtaskId"], "frozen-subtask");
+    assert_eq!(event["payload"]["data"], json!({"state":state}));
+    assert_eq!(
+        event["payload"]["conversationContext"],
+        "private_discussion"
+    );
+    assert!(event["payload"]["eventSeq"].as_u64().is_some());
+    let encoded = event.to_string();
+    for private_text in ["Continue?", "Choose deployment", "private-answer"] {
+        assert!(!encoded.contains(private_text));
+    }
+}
+
+#[tokio::test]
+async fn human_assistant_interaction_tracks_real_ordinary_answers_with_frozen_identity() {
+    let (handler, root, mut events, execution_id) = frozen_interaction_handler("frozen-ordinary");
+    let (sender, mut answers) = mpsc::channel(1);
+    handler.active_request_user_inputs.lock().unwrap().insert(
+        "task-1".into(),
+        ActiveRequestUserInput {
+            execution_id,
+            sender,
+        },
+    );
+    for id in [0, 1] {
+        handler.record_active_codex_transcript_item(
+            "task-1",
+            "turn-1",
+            &ordinary_request(json!(id), "turn-1"),
+        );
+        handler.refresh_pending_user_input_status("task-1");
+    }
+    let pending = take_interaction_events(&mut events);
+    assert_eq!(pending.len(), 1);
+    assert_frozen_interaction(&pending[0], "waiting_user");
+    for id in [0, 1] {
+        let answer = json!({"requestId":id, "interactionScope":"turn-1", "answers":{"choice":{"answers":["private-answer"]}}});
+        assert_eq!(
+            handler
+                .send_request_user_input_response("task-1", answer.clone())
+                .await
+                .unwrap()["accepted"],
+            true
+        );
+        assert_eq!(answers.recv().await.unwrap(), answer);
+        let emitted = take_interaction_events(&mut events);
+        if id == 0 {
+            assert!(emitted.is_empty());
+            assert_interaction_status(&handler, Some(INTERACTION_WAITING_FOR_USER_INPUT));
+        } else {
+            assert_eq!(emitted.len(), 1);
+            assert_frozen_interaction(&emitted[0], "running");
+            assert!(
+                emitted[0]["payload"]["eventSeq"].as_u64().unwrap()
+                    > pending[0]["payload"]["eventSeq"].as_u64().unwrap()
+            );
+            assert_interaction_status(&handler, None);
+        }
+    }
+    let _ = fs::remove_dir_all(root);
+}
+
+#[test]
+fn human_assistant_interaction_aggregates_mcp_and_approval_until_every_request_settles() {
+    let (handler, root, mut events, _) = frozen_interaction_handler("frozen-mcp-approval");
+    let mut approval = ordinary_request(json!(1), "turn-1");
+    approval["method"] = json!("item/commandExecution/requestApproval");
+    for pending in [request(), approval.clone()] {
+        handler.record_active_codex_transcript_item("task-1", "turn-1", &pending);
+        handler.refresh_pending_user_input_status("task-1");
+    }
+    let pending = take_interaction_events(&mut events);
+    assert_eq!(pending.len(), 1);
+    assert_frozen_interaction(&pending[0], "waiting_user");
+    let mut settled = request();
+    settled["method"] = json!("wegent/mcpElicitation/settled");
+    settled["params"]["interactionStatus"] = json!("answered");
+    handler.record_active_codex_transcript_item("task-1", "turn-1", &settled);
+    handler.refresh_pending_user_input_status("task-1");
+    assert!(take_interaction_events(&mut events).is_empty());
+    approval["method"] = json!("wegent/approval/settled");
+    approval["params"]["approvalMethod"] = json!("item/commandExecution/requestApproval");
+    approval["params"]["interactionStatus"] = json!("answered");
+    handler.record_active_codex_transcript_item("task-1", "turn-1", &approval);
+    handler.refresh_pending_user_input_status("task-1");
+    let resolved = take_interaction_events(&mut events);
+    assert_eq!(resolved.len(), 1);
+    assert_frozen_interaction(&resolved[0], "running");
+    let _ = fs::remove_dir_all(root);
+}
+
+#[test]
+fn human_assistant_interaction_excludes_async_and_unowned_or_other_turn_requests() {
+    let (handler, root, mut events, execution_id) =
+        frozen_interaction_handler("frozen-interaction-scope");
+    handler.record_active_codex_transcript_item("task-1", "turn-1", &json!({
+        "method":"item/completed", "params":{"turnId":"turn-1", "item":{
+            "id":"async-question", "type":"agentMessage", "phase":"final_answer", "delivery":"async",
+            "questions":[{"title":"Continue?", "options":["Yes", "No"]}]
+        }}
+    }));
+    handler.refresh_pending_user_input_status("task-1");
+    assert!(take_interaction_events(&mut events).is_empty());
+    for (thread, turn, marker) in [
+        ("thread-1", "turn-other", true),
+        ("thread-other", "turn-1", true),
+        ("thread-1", "turn-1", false),
+    ] {
+        handler
+            .active_local_executions
+            .lock()
+            .unwrap()
+            .get_mut("task-1")
+            .unwrap()
+            .request
+            .as_mut()
+            .unwrap()
+            .extra["origin"] = if marker {
+            json!({"humanAssistantDispatchId":"dispatch-42", "executionId":"42"})
+        } else {
+            json!({"executionId":"42"})
+        };
+        handler.record_active_codex_turn("task-1", execution_id, thread.into(), turn.into());
+        handler.begin_active_codex_transcript("task-1", "thread-1", "turn-1");
+        handler.record_active_codex_transcript_item(
+            "task-1",
+            "turn-1",
+            &ordinary_request(json!(0), "turn-1"),
+        );
+        handler.refresh_pending_user_input_status("task-1");
+        assert!(take_interaction_events(&mut events).is_empty());
+    }
+    assert!(handler.finish_local_task_execution("task-1", execution_id));
+    handler.begin_active_codex_transcript("task-1", "thread-1", "turn-1");
+    handler.record_active_codex_transcript_item(
+        "task-1",
+        "turn-1",
+        &ordinary_request(json!(0), "turn-1"),
+    );
+    handler.refresh_pending_user_input_status("task-1");
+    assert!(take_interaction_events(&mut events).is_empty());
+    let _ = fs::remove_dir_all(root);
+}
+
 #[test]
 fn runtime_owner_uses_the_effective_profile_for_mcp_approval_visibility() {
     for (label, profile, visible) in [

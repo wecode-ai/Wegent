@@ -99,13 +99,15 @@ impl RuntimeWorkRpcHandler {
         }
         if origin["humanAssistantDispatchId"].is_string() {
             self.validate_human_assistant_grant(&settings, origin, &issue)?;
-            let dispatch = &issue["human_assistant_dispatch"];
+            let dispatch = &issue["direct_human_assignment_receipt"];
             if dispatch["dispatchId"] != origin["humanAssistantDispatchId"]
                 || dispatch["executionId"] != origin["executionId"]
-                || !matches!(
-                    dispatch["dispatchState"].as_str(),
-                    Some("queued" | "running")
-                )
+                || dispatch["projectId"] != origin["cloudProjectId"]
+                || dispatch["issueId"] != origin["loopItemId"]
+                || dispatch["ownerUserId"] != origin["userId"]
+                || dispatch["humanAssignmentId"] != origin["humanAssignmentId"]
+                || dispatch["reasonCode"] == "cancel_requested"
+                || !matches!(dispatch["state"].as_str(), Some("running" | "waiting_user"))
             {
                 return Err("Assistant assignment is no longer current".into());
             }

@@ -13,6 +13,8 @@ import type {
 import type { ModelSelectionConfig } from "@wegent/chat-core/runtime-stream-types";
 import type {
   CollaborationAssignment,
+  CollaborationIssue,
+  DirectHumanAssignmentReceipt,
   CollaborationExecution,
   CollaborationExecutionEnvironment,
   CollaborationOwnedAgent,
@@ -46,6 +48,25 @@ function camelOrSnake(
   snake: string,
 ): unknown {
   return row[camel] ?? row[snake];
+}
+
+export function mapCollaborationIssueDto(
+  input: WorkspaceDto,
+): CollaborationIssue {
+  const { direct_human_assignment_receipt, ...issue } =
+    input as CollaborationIssue & {
+      direct_human_assignment_receipt?: DirectHumanAssignmentReceipt | null;
+    };
+  return {
+    ...issue,
+    id: String(issue.id),
+    ...(issue.cloud_project_id == null
+      ? {}
+      : { cloud_project_id: String(issue.cloud_project_id) }),
+    ...(direct_human_assignment_receipt === undefined
+      ? {}
+      : { directHumanAssignmentReceipt: direct_human_assignment_receipt }),
+  };
 }
 
 export function mapWorkspaceTaskBindingDto(

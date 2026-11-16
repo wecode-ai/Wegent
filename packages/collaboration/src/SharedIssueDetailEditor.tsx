@@ -112,7 +112,7 @@ import {
   IssueDeliveries,
 } from "./issue-detail/IssueExecutionLists";
 import { taskDeviceLabel } from "./issue-detail/taskBindingPresentation";
-import { HumanAssistantDispatchStatus } from "./issue-detail/HumanAssistantDispatchStatus";
+import { DirectHumanAssignmentReceiptStatus } from "./issue-detail/DirectHumanAssignmentReceiptStatus";
 
 function cn(...values: Array<string | false | null | undefined>): string {
   return values.filter(Boolean).join(" ");
@@ -1137,16 +1137,19 @@ export function TodoEditor(props: TodoEditorProps) {
       ...tasks.filter((task) => !initialTaskIds.has(String(task.id))),
     ];
   }, [props.initialTaskBindings, tasks]);
-  const ownsAssistantDispatch =
-    item?.human_assistant_dispatch != null &&
-    String(props.currentUserId) ===
-      String(item.human_assistant_dispatch.ownerUserId);
-  const assistantTask = ownsAssistantDispatch
+  const assistantReceipt = item?.directHumanAssignmentReceipt;
+  const assistantDeliveryId = assistantReceipt?.deliveryId;
+  const ownsAssignmentReceipt =
+    assistantReceipt != null &&
+    String(props.currentUserId) === String(assistantReceipt.ownerUserId);
+  const assistantTask = ownsAssignmentReceipt
     ? effectiveTasks.find(
         (task) =>
-          task.execution_id != null &&
-          task.execution_id ===
-            String(item.human_assistant_dispatch?.executionId),
+          task.task_user_id === assistantReceipt.ownerUserId &&
+          task.task_id === assistantReceipt.runtimeTaskId &&
+          (task.human_assignment_id === assistantReceipt.humanAssignmentId ||
+            (assistantReceipt.executionId != null &&
+              task.execution_id === assistantReceipt.executionId)),
       )
     : undefined;
   const refreshTaskBindings = useCallback(async () => {
@@ -3638,17 +3641,22 @@ export function TodoEditor(props: TodoEditorProps) {
                     </section>
                   ) : null}
 
-                  <HumanAssistantDispatchStatus
+                  <DirectHumanAssignmentReceiptStatus
                     itemId={item.id}
-                    dispatch={item.human_assistant_dispatch}
+                    receipt={item.directHumanAssignmentReceipt}
                     translate={t}
-                    onOpenExecution={
+                    onOpenTask={
                       assistantTask && props.onOpenTaskConversation
                         ? () => props.onOpenTaskConversation?.(assistantTask)
                         : undefined
                     }
+                    onOpenDelivery={
+                      assistantDeliveryId
+                        ? () => void openDelivery(assistantDeliveryId)
+                        : undefined
+                    }
                     onConfigure={
-                      ownsAssistantDispatch
+                      ownsAssignmentReceipt
                         ? props.onConfigureAssistant
                         : undefined
                     }

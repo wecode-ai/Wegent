@@ -309,10 +309,10 @@ impl RuntimeWorkRpcHandler {
     ) -> Result<(), AppIpcError> {
         if config["manual"] != true
             && !config["triggerCommentId"].is_string()
-            && issue["human_assistant_dispatch"].is_object()
-            && (config["id"] != "@primary"
+            && issue["direct_human_assignment_receipt"].is_object()
+            && (super::human_assistant_dispatch::dispatch(config, issue, binding).is_none()
                 || !matches!(
-                    issue["human_assistant_dispatch"]["dispatchState"].as_str(),
+                    issue["direct_human_assignment_receipt"]["state"].as_str(),
                     Some("queued" | "waiting_device")
                 ))
         {

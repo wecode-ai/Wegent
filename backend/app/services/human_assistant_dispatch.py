@@ -34,7 +34,7 @@ _PENDING_CANCELLATIONS = "human_assistant_cancellations"
 
 
 def enabled() -> bool:
-    return settings.HUMAN_ASSIGNMENT_ASSISTANT_DISPATCH_ENABLED
+    return settings.HUMAN_ASSIGNMENT_RECEIPTS_ENABLED
 
 
 def _now() -> datetime:
@@ -42,47 +42,69 @@ def _now() -> datetime:
 
 
 def _endpoint(db: Session, owner: int, item: LoopItem) -> tuple[Kind, dict] | None:
+    return _endpoint_resolution(db, owner, item)[0]
+
+
+def _endpoint_resolution(
+    db: Session, owner: int, item: LoopItem
+) -> tuple[tuple[Kind, dict] | None, str | None]:
     devices = (
         db.query(Kind)
         .filter_by(kind="Device", namespace="default", user_id=owner, is_active=True)
         .order_by(Kind.updated_at.desc(), Kind.id.desc())
     )
-    project = {"id": str(item.cloud_project_id), "store": "cloud"}
+    reasons = ["no_authorized_assistant"]
     for device in devices:
-        spec = (device.json or {}).get("spec", {})
-        if spec.get("workspaceOwnerId"):
-            continue
-        declaration = spec.get("personalAssistantDispatch", {})
-        for role in declaration.get("roles", []):
-            source = role.get("collaboration") or {}
-            if (
-                role.get("id") != "@primary"
-                or role.get("userId") != owner
-                or not role.get("enabled")
-                or not source.get("enabled")
-                or project in source.get("excludedProjects", [])
-                or not (
-                    source.get("allProjects") or project in source.get("projects", [])
-                )
-            ):
-                continue
-            policy = {
-                **(role.get("handlingPolicy") or {}),
-                **(source.get("policy") or {}),
-            }
-            for override in source.get("projectPolicies", []):
-                if (
-                    override.get("id") == project["id"]
-                    and override.get("store") == "cloud"
-                ):
-                    policy.update(override.get("policy") or {})
-            if policy.get("automatic") is False:
-                continue
-            tags = source.get("tags") or []
-            item_tags = (item.metadata_json or {}).get("tags") or []
-            if tags and not set(tags).intersection(item_tags):
-                continue
-            return device, role
+        role, reason = device_role(device, item)
+        if role is not None:
+            return (device, role), None
+        reasons.append(reason)
+    priority = [
+        "no_authorized_assistant",
+        "assistant_disabled",
+        "project_not_authorized",
+        "automatic_disabled",
+        "tag_mismatch",
+    ]
+    return None, max(reasons, key=priority.index)
+
+
+def device_role(device: Kind, item: LoopItem) -> tuple[dict | None, str]:
+    """Apply the same consent contract to persisted and projected endpoints."""
+    spec = (device.json or {}).get("spec", {})
+    declaration = spec.get("personalAssistantDispatch", {})
+    if spec.get("workspaceOwnerId") or declaration.get("version") != 1:
+        return None, "no_authorized_assistant"
+    for role in declaration.get("roles", []):
+        if role.get("id") == "@primary" and role.get("userId") == device.user_id:
+            reason = _policy_denial(role, item)
+            return (None, reason) if reason else (role, "")
+    return None, "no_authorized_assistant"
+
+
+def _policy_denial(role: dict, item: LoopItem) -> str | None:
+    source = role.get("collaboration") or {}
+    if not role.get("enabled") or not source.get("enabled"):
+        return "assistant_disabled"
+    project = {"id": str(item.cloud_project_id), "store": "cloud"}
+    if project in source.get("excludedProjects", []) or not (
+        source.get("allProjects") or project in source.get("projects", [])
+    ):
+        return "project_not_authorized"
+    policy = source.get("policy")
+    if not isinstance(policy, dict):
+        policy = role.get("handlingPolicy") or {}
+    for override in source.get("projectPolicies", []):
+        if override.get("id") == project["id"] and override.get("store") == "cloud":
+            policy = override.get("policy") or {}
+            break
+    if not policy.get("automatic"):
+        return "automatic_disabled"
+    tags = source.get("tags") or []
+    if tags and not set(tags).intersection(
+        (item.metadata_json or {}).get("tags") or []
+    ):
+        return "tag_mismatch"
     return None
 
 
@@ -146,20 +168,29 @@ def _resolve_dispatch(
         return dispatch
     if dispatch.get("executionId"):
         return dispatch
-    endpoint = _endpoint(db, int(event.member_id), item)
+    endpoint, reason = _endpoint_resolution(db, int(event.member_id), item)
     if endpoint is None:
         dispatch = {
             **dispatch,
             "dispatchState": "no_authorized_assistant",
-            "reasonCode": "no_authorized_assistant",
+            "reasonCode": reason,
         }
     else:
         device, role = endpoint
+        from app.services.direct_human_assignment_receipts import online_endpoints
+
+        online = online_endpoints([device]).get(device.id)
         dispatch = {
             **dispatch,
             "endpointRef": f"wework-local:{device.name}:@primary",
-            "dispatchState": "waiting_device",
-            "reasonCode": "waiting_device",
+            "dispatchState": "queued" if online else "waiting_device",
+            "reasonCode": (
+                None
+                if online
+                else (
+                    "device_state_unavailable" if online is None else "waiting_device"
+                )
+            ),
         }
         if not dispatch.get("executionId") and item.status != "completed":
             execution = LoopItemExecution(
@@ -211,14 +242,21 @@ def current_dispatch(db: Session, item: LoopItem) -> dict | None:
     return current_dispatches(db, [item]).get(item.id)
 
 
-def current_dispatches(db: Session, items: list[LoopItem]) -> dict[str, dict]:
+def dispatch_resources(
+    db: Session,
+    items: list[LoopItem],
+    *,
+    assignments: dict[str, list[AssignmentEvent]] | None = None,
+    executions: dict[str, LoopItemExecution] | None = None,
+) -> tuple[dict[str, dict], dict[str, LoopItemExecution]]:
     """Project assignment intents in batches for Issue lists and My Work."""
     from app.services.issue_assignments import issue_assignment_service
 
     candidates = [item for item in items if item.assignee_user_id]
-    assignments = issue_assignment_service.active_for_issues(
-        db, [item.id for item in candidates]
-    )
+    if assignments is None:
+        assignments = issue_assignment_service.active_for_issues(
+            db, [item.id for item in candidates]
+        )
     dispatches = {}
     for item in candidates:
         for assignment in assignments[item.id]:
@@ -235,16 +273,25 @@ def current_dispatches(db: Session, items: list[LoopItem]) -> dict[str, dict]:
         for dispatch in dispatches.values()
         if dispatch.get("executionId")
     }
-    executions = (
-        {
-            str(row.id): row
+    executions = dict(executions or {})
+    missing = execution_ids - executions.keys()
+    if missing:
+        executions.update(
+            (str(row.id), row)
             for row in db.query(LoopItemExecution).filter(
-                LoopItemExecution.id.in_(execution_ids)
+                LoopItemExecution.id.in_(missing)
             )
-        }
-        if execution_ids
-        else {}
-    )
+        )
+    return dispatches, executions
+
+
+def current_dispatches(
+    db: Session,
+    items: list[LoopItem],
+    *,
+    assignments: dict[str, list[AssignmentEvent]] | None = None,
+) -> dict[str, dict]:
+    dispatches, executions = dispatch_resources(db, items, assignments=assignments)
     return {
         item_id: _dispatch_view(
             db, dispatch, executions.get(str(dispatch.get("executionId")))

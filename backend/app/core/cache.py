@@ -245,6 +245,17 @@ class RedisCache:
             return None
         return self._decode(data)
 
+    def mget_sync_or_raise(self, keys: List[str]) -> Dict[str, Any]:
+        """Read a synchronous projection's device presence in one Redis request."""
+        if not keys:
+            return {}
+        values = self._get_sync_client().mget(keys)
+        return {
+            key: self._decode(data)
+            for key, data in zip(keys, values)
+            if data is not None
+        }
+
     def set_from_sync(
         self,
         key: str,
