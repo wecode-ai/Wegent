@@ -70,9 +70,43 @@ const checksState =
   state === 'pending' ? 'PENDING' : state === 'failure' ? 'FAILURE' : 'SUCCESS'
 const prState = state === 'merged' ? 'MERGED' : 'OPEN'
 const mergedAt = state === 'merged' ? '2026-08-20T08:00:00Z' : null
-const args = process.argv.slice(2).join(' ')
+const argv = process.argv.slice(2)
+const args = argv.join(' ')
+const endpoint = argv.find(value => value === 'user' || value === 'graphql' || value.startsWith('repos/'))
+const requestUrl = 'https://github.com/wecode-ai/Wegent/pull/2631'
+const headSha = 'a'.repeat(40)
+const pullRequest = {
+  number: 2631, url: requestUrl, title: 'feat(wework): show pull request status',
+  state: prState, isDraft: false, mergedAt, headRefOid: headSha,
+  updatedAt: '2026-08-20T08:00:00Z', mergeable: 'MERGEABLE', mergeStateStatus: 'CLEAN',
+  statusCheckRollup: { state: checksState }, mergeQueueEntry: null, timelineItems: { nodes: [] },
+}
+let input
+if (argv.includes('--input')) {
+  let body = ''
+  for await (const chunk of process.stdin) body += chunk
+  input = JSON.parse(body)
+}
 
-if (args.includes('graphql')) {
+// This legacy checkpoint uses an external CLI protocol double, not real GitHub.
+if (endpoint === 'user') {
+  console.log(JSON.stringify({ id: 1, login: 'wework-e2e' }))
+} else if (endpoint === 'repos/wecode-ai/Wegent') {
+  console.log(JSON.stringify({ id: 2630, full_name: 'wecode-ai/Wegent' }))
+} else if (endpoint === 'repos/wecode-ai/Wegent/pulls/2631') {
+  console.log(JSON.stringify({
+    number: 2631, html_url: requestUrl, title: pullRequest.title,
+    state: state === 'merged' ? 'closed' : 'open', merged_at: mergedAt,
+    head: { ref: 'feature/change-request-status', sha: headSha },
+    base: { ref: 'main' }, updated_at: pullRequest.updatedAt,
+  }))
+} else if (endpoint?.includes('/comments?') || endpoint === 'repos/wecode-ai/Wegent/pulls/2631/reviews') {
+  console.log('[]')
+} else if (endpoint?.includes('/check-runs?')) {
+  console.log(JSON.stringify({ check_runs: [] }))
+} else if (endpoint === 'graphql' && input?.variables?.number === 2631) {
+  console.log(JSON.stringify({ data: { repository: { pullRequest } } }))
+} else if (args.includes('graphql')) {
   console.log(
     JSON.stringify({
       data: {
@@ -107,7 +141,7 @@ if (args.includes('graphql')) {
       },
     ])
   )
-} else {
+} else if (argv[0] === 'pr' && argv[1] === 'list') {
   console.log(
     JSON.stringify([
       {
@@ -120,6 +154,13 @@ if (args.includes('graphql')) {
       },
     ])
   )
+} else if (argv[0] === 'auth' && argv[1] === 'status') {
+  console.log('Logged in to github.com as wework-e2e')
+} else if (argv[0] === '--version') {
+  console.log('gh version 2.0.0 (protocol fixture)')
+} else {
+  console.error('Unsupported GitHub protocol fixture request: ' + (endpoint ?? argv[0]))
+  process.exit(64)
 }
 `
   )
@@ -436,6 +477,7 @@ export async function createDesktopScenario({
         'waitFor',
         '[data-testid^="runtime-local-task-change-request-"][data-testid$="-popover"]'
       )
+      await capture(control, 'change-request-status-02b-failed-repair-action.png', 'body')
       await control.command(
         'click',
         '[data-testid^="runtime-local-task-change-request-"][data-testid$="-repair"]'
@@ -453,14 +495,33 @@ export async function createDesktopScenario({
       await control.command('waitFor', '[data-testid="change-request-checks"]', {
         text: '检查通过',
       })
+      await control.command('click', '[data-testid="environment-change-request-status"]')
+      await control.command(
+        'waitFor',
+        '[data-testid="environment-change-request-status-popover"]',
+        { text: '检查通过' }
+      )
+      await control.command(
+        'waitFor',
+        '[data-testid="environment-change-request-status-popover"] [data-testid="resource-observation-status"]',
+        { text: '状态同步正常' }
+      )
       await capture(control, 'change-request-status-04-checks-passed.png')
+      await control.command('click', '[data-testid="environment-change-request-status"]')
 
       await writeFile(statePath, 'unavailable\n')
       await refreshEnvironment(control)
       await control.command('waitFor', '[data-testid="change-request-lookup-hint"]', {
         text: '安装 GitHub CLI',
       })
-      await control.command('waitFor', '[data-testid="create-pull-request-button"]')
+      await control.command('waitFor', CHANGE_REQUEST_BUTTON, { text: '#2631' })
+      assert.equal(
+        Number(
+          await control.command('getElementCount', '[data-testid="create-pull-request-button"]')
+        ),
+        0,
+        'A collection failure must retain the known PR rather than suggest creating a duplicate'
+      )
       await capture(control, 'change-request-status-05-cli-unavailable.png')
 
       await control.command('click', '[data-testid="change-request-open-settings"]')
@@ -484,6 +545,7 @@ export async function createDesktopScenario({
         0,
         'Device Git configuration should not remain under Git hosting settings'
       )
+      await capture(control, 'change-request-status-06-settings-enabled.png', 'body')
       await control.command('click', '[data-testid="settings-nav-connections"]')
       await control.command('waitFor', '[data-testid="cloud-connection-status-card"]', {
         timeoutMs: uiTimeoutMs,
@@ -531,7 +593,8 @@ export async function createDesktopScenario({
         [{ allow_empty: false }],
         'Git credentials were not synced exactly once to the explicitly selected device'
       )
-      await capture(control, 'change-request-status-06-settings-enabled.png', 'body')
+      await control.command('scrollIntoView', '[data-testid="git-device-sync-result"]')
+      await capture(control, 'change-request-status-06b-device-sync-result.png', 'body')
 
       await control.command('click', '[data-testid="settings-nav-git-hosting"]')
       await control.command('waitFor', '[data-testid="git-hosting-settings-page"]', {
@@ -557,6 +620,10 @@ export async function createDesktopScenario({
         'false',
         'Disabled PR/MR status lookup should remain disabled after reopening settings'
       )
+      await control.command('waitFor', '[data-testid="git-hosting-cli-github-status"]', {
+        text: '检测失败',
+        timeoutMs: uiTimeoutMs,
+      })
       await capture(control, 'change-request-status-07-settings-disabled.png', 'body')
 
       await control.command('click', '[data-testid="change-request-status-switch"]')
@@ -583,7 +650,14 @@ export async function createDesktopScenario({
       await control.command('waitFor', '[data-testid="change-request-checks"]', {
         text: '检查通过',
       })
+      await control.command('click', '[data-testid="environment-change-request-status"]')
+      await control.command(
+        'waitFor',
+        '[data-testid="environment-change-request-status-popover"] [data-testid="resource-observation-status"]',
+        { text: '状态同步正常' }
+      )
       await capture(control, 'change-request-status-08-recovered-merged.png')
+      await control.command('click', '[data-testid="environment-change-request-status"]')
     },
 
     diagnostics() {

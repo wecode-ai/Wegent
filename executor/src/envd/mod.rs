@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 pub mod archive;
+pub(crate) mod archive_integrity;
 mod archive_repository;
 pub mod archive_sessions;
 pub use wegent_subprocess::process_service;

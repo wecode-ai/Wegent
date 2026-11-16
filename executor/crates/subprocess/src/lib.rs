@@ -1,5 +1,7 @@
 //! Platform process creation, output collection, and child-tree lifetime primitives.
 
+pub mod line_reader;
+
 #[cfg(windows)]
 use std::{env, path::Path};
 use std::{path::PathBuf, process::Stdio};

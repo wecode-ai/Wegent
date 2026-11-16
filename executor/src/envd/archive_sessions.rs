@@ -5,6 +5,7 @@ use std::{
     fs, io,
     path::{Component, Path, PathBuf},
 };
+use wegent_protocol::session_archive::{ArchivedGoal, ArchivedSession};
 
 /// Portable archive prefixes are independent of runtime mount points.
 #[derive(Clone, Debug)]
@@ -14,6 +15,38 @@ pub struct SessionArchiveRoots {
     pub claude: PathBuf,
     pub codex: PathBuf,
     pub legacy_executor: PathBuf,
+}
+
+#[derive(Default)]
+pub(super) struct SessionArchiveContents {
+    pub files: BTreeMap<PathBuf, PathBuf>,
+    pub goals: BTreeMap<PathBuf, Vec<u8>>,
+    pub codex_bindings: std::collections::HashSet<(PathBuf, String)>,
+    pub bindings: Vec<ArchivedSession>,
+}
+
+impl SessionArchiveContents {
+    fn capture_goal(
+        &mut self,
+        home: &Path,
+        prefix: &Path,
+        id: &str,
+    ) -> io::Result<Option<ArchivedGoal>> {
+        self.codex_bindings
+            .insert((home.to_path_buf(), id.to_owned()));
+        if let Some(bytes) = crate::agents::codex_goal_state::capture(home, id)? {
+            let snapshot = crate::agents::codex_goal_state::Snapshot::decode(&bytes)?;
+            let evidence = snapshot.archive_evidence(&bytes);
+            self.goals.insert(
+                prefix
+                    .join(crate::agents::codex_goal_state::DIRECTORY)
+                    .join(format!("{id}.json")),
+                bytes,
+            );
+            return Ok(Some(evidence));
+        }
+        Ok(None)
+    }
 }
 
 impl SessionArchiveRoots {
@@ -69,8 +102,8 @@ impl SessionArchiveRoots {
         })
     }
 
-    pub(super) fn collect(&self, task_id: &str) -> io::Result<BTreeMap<PathBuf, PathBuf>> {
-        let mut files = BTreeMap::new();
+    pub(super) fn collect(&self, task_id: &str) -> io::Result<SessionArchiveContents> {
+        let mut contents = SessionArchiveContents::default();
         let markers = self.executor.join("sessions").join(task_id);
         let homes = task_agent_homes(&self.workbench.join("agents"), task_id)?;
         let mut candidates = children(&markers)?;
@@ -108,12 +141,16 @@ impl SessionArchiveRoots {
                 ));
             }
             let mut found = false;
+            let mut goals = Vec::new();
             for agent in &homes {
                 let relative = agent.strip_prefix(&self.workbench).unwrap();
                 let prefix =
                     Path::new("agent-homes").join(relative.strip_prefix("agents").unwrap());
-                if collect_session(agent, &prefix, id, claude, &mut files)? {
+                if collect_session(agent, &prefix, id, claude, &mut contents.files)? {
                     found = true;
+                    if !claude {
+                        goals.push(contents.capture_goal(agent, &prefix, id)?);
+                    }
                     for meta in [
                         PathBuf::from("agent.json"),
                         PathBuf::from(format!("runtime/tasks/{task_id}.json")),
@@ -121,7 +158,7 @@ impl SessionArchiveRoots {
                         if !regular(&agent.join(&meta))? {
                             return Err(io::Error::other("Agent archive identity is missing"));
                         }
-                        files.insert(prefix.join(&meta), agent.join(meta));
+                        contents.files.insert(prefix.join(&meta), agent.join(meta));
                     }
                 }
             }
@@ -131,19 +168,42 @@ impl SessionArchiveRoots {
                 } else {
                     (&self.codex, "native-codex")
                 };
-                found = collect_session(root, Path::new(prefix), id, claude, &mut files)?;
+                found = collect_session(root, Path::new(prefix), id, claude, &mut contents.files)?;
+                if found && !claude {
+                    goals.push(contents.capture_goal(root, Path::new(prefix), id)?);
+                }
             }
             if !found {
                 return Err(io::Error::other(format!("Task {task_id} session backup is incomplete: native conversation for {name} is missing")));
             }
-            files.insert(
+            let goal = goals.first().cloned().flatten();
+            if goals.iter().any(|candidate| candidate != &goal) {
+                return Err(io::Error::other(
+                    "Conflicting native Goal snapshots in task archive",
+                ));
+            }
+            let marker_prefix = if claude {
+                ".claude_session_id_"
+            } else {
+                ".codex_thread_id_"
+            };
+            contents.bindings.push(ArchivedSession {
+                bot_id: name.strip_prefix(marker_prefix).map(str::to_owned),
+                engine: if claude { "ClaudeCode" } else { "Codex" }.into(),
+                id: id.into(),
+                goal,
+            });
+            contents.files.insert(
                 Path::new("executor-state/sessions")
                     .join(task_id)
                     .join(marker.file_name().unwrap()),
                 marker,
             );
         }
-        Ok(files)
+        contents.bindings.sort_by(|left, right| {
+            (&left.bot_id, &left.engine, &left.id).cmp(&(&right.bot_id, &right.engine, &right.id))
+        });
+        Ok(contents)
     }
 
     pub(super) fn destination(&self, path: &Path, task_id: &str) -> Option<PathBuf> {
@@ -162,16 +222,12 @@ impl SessionArchiveRoots {
             .then(|| self.executor.join(relative));
         }
         if let Ok(relative) = path.strip_prefix("agent-homes") {
-            let parts: Vec<_> = relative.components().collect();
-            if parts.len() < 4 {
-                return None;
-            }
-            let home_depth = if parts[3].as_os_str() == "bots" { 5 } else { 3 };
-            let suffix: PathBuf = parts.get(home_depth..)?.iter().collect();
+            let suffix = agent_home_suffix(relative)?;
             if suffix == Path::new("agent.json")
                 || suffix == Path::new(&format!("runtime/tasks/{task_id}.json"))
                 || suffix.starts_with("projects")
                 || suffix.starts_with("sessions")
+                || is_goal_snapshot_path(&suffix)
             {
                 return Some(self.workbench.join("agents").join(relative));
             }
@@ -182,7 +238,9 @@ impl SessionArchiveRoots {
             ("native-codex", &self.codex, "sessions"),
         ] {
             if let Ok(relative) = path.strip_prefix(prefix) {
-                return relative.starts_with(child).then(|| root.join(relative));
+                return (relative.starts_with(child)
+                    || (prefix == "native-codex" && is_goal_snapshot_path(relative)))
+                .then(|| root.join(relative));
             }
         }
         // Old archives keep task markers under the old Home-relative prefix.
@@ -212,6 +270,32 @@ impl SessionArchiveRoots {
         }
         None
     }
+}
+
+fn is_goal_snapshot_path(path: &Path) -> bool {
+    path.parent() == Some(Path::new(crate::agents::codex_goal_state::DIRECTORY))
+        && path
+            .extension()
+            .is_some_and(|extension| extension == "json")
+}
+
+fn agent_home_suffix(relative: &Path) -> Option<PathBuf> {
+    let parts: Vec<_> = relative.components().collect();
+    if parts.len() < 4 {
+        return None;
+    }
+    let depth = if parts[3].as_os_str() == "bots" { 5 } else { 3 };
+    Some(parts.get(depth..)?.iter().collect())
+}
+
+pub(super) fn is_goal_snapshot_member(path: &Path) -> bool {
+    path.strip_prefix("native-codex")
+        .is_ok_and(is_goal_snapshot_path)
+        || path
+            .strip_prefix("agent-homes")
+            .ok()
+            .and_then(agent_home_suffix)
+            .is_some_and(|suffix| is_goal_snapshot_path(&suffix))
 }
 
 fn children(root: &Path) -> io::Result<Vec<PathBuf>> {

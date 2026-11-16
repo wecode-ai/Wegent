@@ -57,6 +57,7 @@ const PERSISTED_RUNTIME_HANDLE_KEYS: &[&str] = &[
     "userMessagePresentations",
     "changeRequests",
     "conversationSessions",
+    "connectionEventSubscriptions",
 ];
 static TEMP_FILE_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
@@ -102,6 +103,7 @@ struct PersistedRuntimeWorkIndex {
 #[serde(from = "PersistedRuntimeTaskInput")]
 #[serde(default)]
 struct PersistedRuntimeTask {
+    snapshot_revision: Option<String>,
     local_task_id: String,
     thread_id: Option<String>,
     workspace_path: String,
@@ -130,6 +132,7 @@ struct PersistedRuntimeTask {
 #[derive(Default, Deserialize)]
 #[serde(default)]
 struct PersistedRuntimeTaskInput {
+    snapshot_revision: Option<String>,
     local_task_id: String,
     thread_id: Option<String>,
     workspace_path: String,
@@ -158,6 +161,7 @@ struct PersistedRuntimeTaskInput {
 impl From<PersistedRuntimeTaskInput> for PersistedRuntimeTask {
     fn from(input: PersistedRuntimeTaskInput) -> Self {
         Self {
+            snapshot_revision: input.snapshot_revision,
             local_execution: input.local_execution,
             local_task_id: input.local_task_id,
             thread_id: input.thread_id,
@@ -191,6 +195,7 @@ impl From<PersistedRuntimeTaskInput> for PersistedRuntimeTask {
 impl PersistedRuntimeTask {
     fn from_runtime(link: &RuntimeTaskLink) -> Self {
         Self {
+            snapshot_revision: link.snapshot_revision.clone(),
             local_execution: PersistedLocalExecution::from_runtime(link),
             local_task_id: link.local_task_id.clone(),
             thread_id: link.thread_id.clone(),
@@ -224,6 +229,7 @@ impl PersistedRuntimeTask {
             self.updated_at.max(self.created_at)
         };
         let mut task = RuntimeTaskLink {
+            snapshot_revision: self.snapshot_revision,
             local_task_id: self.local_task_id,
             thread_id: self.thread_id,
             workspace_path: self.workspace_path,
@@ -360,7 +366,41 @@ fn merge_persisted_runtime_handle(current: &Value, persisted: Value, runtime: &s
 fn persisted_task_fingerprint(task: &RuntimeTaskLink) -> Vec<u8> {
     let mut persisted = PersistedRuntimeTask::from_runtime(task);
     persisted.updated_at = 0;
+    persisted.snapshot_revision = None;
     serde_json::to_vec(&persisted).unwrap_or_default()
+}
+
+fn next_snapshot_revision(previous: Option<&str>) -> String {
+    let previous = previous
+        .and_then(|revision| revision.parse::<u64>().ok())
+        .unwrap_or_default();
+    super::events::next_runtime_event_sequence()
+        .max(previous.saturating_add(1))
+        .to_string()
+}
+
+struct MetadataSnapshot {
+    fingerprint: Vec<u8>,
+    revision: Option<String>,
+}
+
+impl MetadataSnapshot {
+    fn capture(task: &RuntimeTaskLink) -> Self {
+        Self {
+            fingerprint: persisted_task_fingerprint(task),
+            revision: task.snapshot_revision.clone(),
+        }
+    }
+
+    fn advance(&self, task: &mut RuntimeTaskLink) -> bool {
+        let changed = self.fingerprint != persisted_task_fingerprint(task);
+        task.snapshot_revision = if changed {
+            Some(next_snapshot_revision(self.revision.as_deref()))
+        } else {
+            self.revision.clone()
+        };
+        changed
+    }
 }
 
 fn persisted_index_requires_migration(index: &PersistedRuntimeWorkIndex) -> bool {
@@ -531,11 +571,16 @@ impl RuntimeWorkStore {
         self.persist_current_index();
     }
 
-    pub fn upsert_task(&self, link: RuntimeTaskLink) {
+    pub fn upsert_task(&self, mut link: RuntimeTaskLink) {
         self.refresh_index_from_disk_if_changed();
         let Some(mut index) = self.index.lock().ok() else {
             return;
         };
+        if let Some(previous) = index.tasks.get(&link.local_task_id) {
+            MetadataSnapshot::capture(previous).advance(&mut link);
+        } else if link.snapshot_revision.is_none() {
+            link.snapshot_revision = Some(next_snapshot_revision(None));
+        }
         self.observe_stand_in(&link);
         index.tasks.insert(link.local_task_id.clone(), link);
         drop(index);
@@ -573,7 +618,9 @@ impl RuntimeWorkStore {
         let Some(task) = next.tasks.get_mut(local_task_id) else {
             return Ok(None);
         };
+        let before = MetadataSnapshot::capture(task);
         updater(task);
+        before.advance(task);
         let updated = task.clone();
         let payload = serialize_index(&next)?;
         atomic_write_file(&self.index_path, &payload)?;
@@ -596,8 +643,10 @@ impl RuntimeWorkStore {
             return None;
         }
         let mut task = index.tasks.remove(local_task_id)?;
+        let before = MetadataSnapshot::capture(&task);
         updater(&mut task);
         task.local_task_id = new_local_task_id.to_owned();
+        before.advance(&mut task);
         let updated = task.clone();
         index.tasks.insert(new_local_task_id.to_owned(), task);
         drop(index);
@@ -615,7 +664,7 @@ impl RuntimeWorkStore {
         self.refresh_index_from_disk_if_changed();
         let mut index = self.index.lock().ok()?;
         let task = index.tasks.get_mut(local_task_id)?;
-        let before = persisted_task_fingerprint(task);
+        let before = MetadataSnapshot::capture(task);
         let revision_before = task
             .execution_state
             .as_ref()
@@ -643,7 +692,7 @@ impl RuntimeWorkStore {
                 task.runtime_handle["lastTurnId"].clone(),
                 task.runtime_handle["origin"].clone(),
             );
-        let metadata_changed = before != persisted_task_fingerprint(task);
+        let metadata_changed = before.advance(task);
         if lifecycle_changed || metadata_changed || task.updated_at != updated_at_before {
             if let Some(state) = task.execution_state.as_mut() {
                 // The revision versions the whole snapshot, not only native turn progress.

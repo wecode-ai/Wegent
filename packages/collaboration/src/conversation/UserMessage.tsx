@@ -4,6 +4,7 @@ import { MessageHoverActions } from './MessageHoverActions'
 import { useMemo, useState } from 'react'
 import {
   Braces,
+  Bell,
   ChevronDown,
   ChevronUp,
   File as FileIcon,
@@ -172,6 +173,17 @@ export function UserMessage({
   const codeCommentCount = message.codeComments?.length ?? 0
 
   if (isStandInActivityMessage(message)) return null
+  if (message.source?.source === 'connection_event') {
+    return (
+      <div
+        data-testid="connection-event-message"
+        className="flex min-w-0 items-start gap-2 text-sm text-text-secondary"
+      >
+        <Bell aria-hidden="true" className="mt-0.5 h-4 w-4 shrink-0" />
+        <span className="min-w-0 break-words">{message.content}</span>
+      </div>
+    )
+  }
 
   return (
     <div

@@ -8,22 +8,87 @@ use crate::task_runtime::personal_stand_in::{
 use chrono::TimeZone;
 
 impl RuntimeWorkRpcHandler {
-    pub(super) fn start_connection_stand_in_scheduler(&self) {
+    pub(super) fn start_connection_scheduler(&self) {
         let Ok(runtime) = tokio::runtime::Handle::try_current() else {
             return;
         };
+        if self
+            .connection_scheduler_started
+            .swap(true, Ordering::AcqRel)
+        {
+            return;
+        }
         let handler = self.clone();
+        let observers = self.clone();
         runtime.spawn(async move {
-            let mut interval = tokio::time::interval(Duration::from_secs(15));
-            interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+            let mut next_maintenance = 0;
             loop {
-                interval.tick().await;
-                if let Err(error) = handler.poll_connection_stand_ins().await {
+                let started_at = chrono::Utc::now().timestamp_millis();
+                let maintenance =
+                    Self::connection_maintenance_due(&mut next_maintenance, started_at);
+                let (conversation_result, stand_in_result) = tokio::join!(
+                    handler.poll_conversation_connection_events(maintenance),
+                    async {
+                        if maintenance {
+                            handler.poll_connection_stand_ins().await
+                        } else {
+                            Ok(())
+                        }
+                    }
+                );
+                if let Err(error) = conversation_result {
+                    log_executor_event(
+                        "Conversation event collection failed",
+                        &[("code", error.code)],
+                    );
+                }
+                if let Err(error) = stand_in_result {
                     log_executor_event(
                         "Connection stand-in collection failed",
                         &[("code", error.code), ("error", error.message)],
                     );
                 }
+                let source = handler.connection_observation_poll_delay(false, started_at);
+                let delay = Self::connection_maintenance_delay(
+                    next_maintenance,
+                    chrono::Utc::now().timestamp_millis(),
+                    source,
+                );
+                tokio::select! {
+                    _ = tokio::time::sleep(delay) => {},
+                    _ = handler.connection_observation_wakeup.notified() => {},
+                }
+            }
+        });
+        runtime.spawn(async move {
+            let mut next_maintenance = 0;
+            loop {
+                let started_at = chrono::Utc::now().timestamp_millis();
+                let maintenance =
+                    Self::connection_maintenance_due(&mut next_maintenance, started_at);
+                let (sources, cleanup) =
+                    tokio::join!(observers.poll_ui_observer_sources(), async {
+                        if maintenance {
+                            observers.poll_ui_observers().await
+                        } else {
+                            Ok(())
+                        }
+                    });
+                for result in [sources, cleanup] {
+                    if let Err(error) = result {
+                        log_executor_event(
+                            "UI observation maintenance deferred",
+                            &[("code", error.code)],
+                        );
+                    }
+                }
+                let source = observers.connection_observation_poll_delay(true, started_at);
+                tokio::time::sleep(Self::connection_maintenance_delay(
+                    next_maintenance,
+                    chrono::Utc::now().timestamp_millis(),
+                    source,
+                ))
+                .await;
             }
         });
     }
@@ -471,22 +536,21 @@ pub(super) fn source_accepts_message(source: &Value, message: &Value) -> bool {
         || (source_provider(source).starts_with(super::super::git_connections::PACKAGE)
             && super::super::git_connections::uses_webhook(source))
     {
-        let boundary = &source["boundary"];
-        let position = &message["position"];
-        return boundary["partition"].is_string()
-            && boundary["partition"] == position["partition"]
-            && boundary["sequence"]
-                .as_u64()
-                .zip(position["sequence"].as_u64())
-                .is_some_and(|(start, received)| received > start);
+        if !source["boundary"].is_object() {
+            return false;
+        }
     }
-    source["enabledAfter"]
-        .as_str()
-        .and_then(|time| chrono::DateTime::parse_from_rfc3339(time).ok())
-        .is_some_and(|enabled| {
-            message_time(&message["at"])
-                .is_ok_and(|received| received >= enabled.timestamp_millis())
-        })
+    if source["boundary"].is_null()
+        && !source["enabledAfter"]
+            .as_str()
+            .and_then(|time| chrono::DateTime::parse_from_rfc3339(time).ok())
+            .is_some()
+    {
+        return false;
+    }
+    wegent_protocol::connection_events::matches_activation(source, message, |value| {
+        message_time(value).ok()
+    })
 }
 
 #[cfg(test)]

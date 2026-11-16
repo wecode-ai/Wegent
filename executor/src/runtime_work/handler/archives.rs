@@ -334,8 +334,31 @@ impl RuntimeWorkRpcHandler {
 
     pub(super) async fn set_task_goal(&self, payload: Value) -> Result<Value, AppIpcError> {
         let link = self.task_link_from_payload(&payload, false).await?;
+        let gate = self.task_send_gate(&format!("goal-status:{}", link.local_task_id));
+        let _guard = gate.lock().await;
+        let link = self
+            .store
+            .get_task(&link.local_task_id)
+            .ok_or_else(|| AppIpcError::new("not_found", "Conversation no longer exists"))?;
+        if let Some(expected) = payload.get("eventGoalExpected") {
+            let current = self
+                .get_task_goal(json!({"taskId":link.local_task_id}))
+                .await?;
+            if current["accepted"] != true
+                || current["goal"]["status"] != expected["status"]
+                || super::control::connection_events::goal_identity(&current["goal"])
+                    != super::control::connection_events::goal_identity(expected)
+            {
+                return Err(AppIpcError::new(
+                    "goal_changed",
+                    "The user changed the waiting Goal",
+                ));
+            }
+        }
         if is_claude_runtime(&link.runtime) {
             let goal = self.set_claude_goal(&link, &payload);
+            self.sync_runtime_task_goal_status(&link.local_task_id, string_field(&goal, "status"));
+            self.cancel_connection_waits_for_goal_identity(&link.local_task_id, &goal)?;
             let mut response = task_action_success(&link);
             response["goal"] = goal;
             return Ok(response);
@@ -374,6 +397,7 @@ impl RuntimeWorkRpcHandler {
                     &link.local_task_id,
                     string_field(&goal, "status"),
                 );
+                self.cancel_connection_waits_for_goal_identity(&link.local_task_id, &goal)?;
                 let resumed = if string_field(&goal, "status").as_deref() == Some("active") {
                     self.journal_active_goal_turn(
                         &link.local_task_id,
@@ -397,8 +421,11 @@ impl RuntimeWorkRpcHandler {
 
     pub(super) async fn clear_task_goal(&self, payload: Value) -> Result<Value, AppIpcError> {
         let link = self.task_link_from_payload(&payload, false).await?;
+        let gate = self.task_send_gate(&format!("goal-status:{}", link.local_task_id));
+        let _guard = gate.lock().await;
         if is_claude_runtime(&link.runtime) {
             let cleared = self.clear_claude_goal(&link);
+            self.sync_runtime_task_goal_status(&link.local_task_id, None);
             let mut response = task_action_success(&link);
             response["cleared"] = Value::Bool(cleared);
             return Ok(response);

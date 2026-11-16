@@ -21,6 +21,7 @@
       "providers": [
         {
           "id": "github",
+          "collectionPagination": "staged",
           "displayName": "GitHub",
           "uses": [],
           "collectionModes": [
@@ -273,6 +274,7 @@
         },
         {
           "id": "gitlab",
+          "collectionPagination": "staged",
           "displayName": "GitLab",
           "uses": [],
           "collectionModes": [

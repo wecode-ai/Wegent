@@ -245,14 +245,15 @@ export function createInMemoryExecutorRegistry(
   }
 
   const resolve = async (deviceId: string) => {
-    if (entries.length === 0) {
+    if (entries.length === 0 && !loadEntry) {
       await refresh()
     }
     let entry = entries.find(item => item.deviceId === deviceId)
-    if (!entry && loadEntry) {
+    if (loadEntry) {
       const loadedEntry = await loadEntry(deviceId)
+      entries = entries.filter(item => item.deviceId !== deviceId)
+      entry = loadedEntry ?? undefined
       if (loadedEntry) {
-        entry = loadedEntry
         entries = [...entries.filter(item => item.deviceId !== loadedEntry.deviceId), loadedEntry]
       }
     }

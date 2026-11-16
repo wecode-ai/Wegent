@@ -128,3 +128,64 @@ test('reveals added grouped questions while preserving the first answer', async 
   expect(screen.getByTestId('request-user-input-custom-audience')).toHaveValue('Saved first answer')
   expect(screen.getByTestId('request-user-input-custom-timing')).toBeVisible()
 })
+
+test('preserves event and Goal context while a real question is expanded or folded', async () => {
+  const { ConversationEventContext } = await import('./composer/ConversationEventContext')
+  const view = (status: string) => {
+    const context = (
+      <ConversationEventContext
+        integrated
+        goal={{
+          threadId: 'original-thread',
+          objective: '处理发布事件',
+          status: 'blocked',
+          tokenBudget: 20000,
+          tokensUsed: 10,
+          timeUsedSeconds: 1,
+          createdAt: 1780000000000,
+          updatedAt: 1780000000000,
+        }}
+        subscriptions={[
+          {
+            subscription_key: 'release',
+            source: { name: '发布文档' },
+            status,
+            waiting_goal: true,
+          },
+        ]}
+        interactionStatus="awaitingUserReply"
+        onPauseGoal={vi.fn()}
+      />
+    )
+    return (
+      <RequestUserInputComposer
+        payload={payload}
+        questionContext={context}
+        renderQuestion={onCollapse => (
+          <RequestUserInputCard payload={payload} onSubmit={vi.fn()} onCollapse={onCollapse} />
+        )}
+      >
+        {context}
+        <input aria-label="Ordinary message" />
+      </RequestUserInputComposer>
+    )
+  }
+  const h = render(view('armed'))
+  expect(screen.getByTestId('goal-status-bar')).toHaveTextContent('等待事件')
+  expect(screen.getByTestId('connection-event-status')).toHaveTextContent('发布文档')
+  expect(screen.getByTestId('request-user-input-custom-audience')).toBeVisible()
+  h.rerender(view('pending'))
+  expect(screen.getByTestId('goal-status-bar')).toHaveTextContent('等待继续执行')
+  expect(screen.getByTestId('connection-event-status')).toHaveTextContent(
+    '等待你处理当前问题或确认'
+  )
+  expect(screen.queryByTestId('resume-goal-button')).not.toBeInTheDocument()
+  await userEvent.click(screen.getByTestId('request-user-input-ignore-button'))
+  expect(screen.queryByTestId('question-conversation-context')).not.toBeInTheDocument()
+  expect(screen.getAllByTestId('connection-event-status')).toHaveLength(1)
+  expect(screen.getByTestId('goal-status-bar')).toHaveTextContent('等待继续执行')
+  expect(screen.getByRole('textbox', { name: 'Ordinary message' })).toBeVisible()
+  await userEvent.click(screen.getByTestId('request-user-input-expand'))
+  expect(screen.getAllByTestId('connection-event-status')).toHaveLength(1)
+  expect(screen.getByTestId('question-conversation-context')).toBeVisible()
+})

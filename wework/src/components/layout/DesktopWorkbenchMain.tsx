@@ -2,6 +2,7 @@ import {
   isQuestionDiscussionTab,
   useQuestionDiscussionWorkspacePanel,
 } from '@/features/notifications/questionDiscussion'
+import { ConversationEventContext } from '@/components/chat/composer/ConversationEventContext'
 import { RequestUserInputComposer } from '@/components/chat/RequestUserInputComposer'
 import {
   getMcpAppPanel,
@@ -5487,6 +5488,24 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
                                   <RequestUserInputComposer
                                     payload={pendingRequestUserInput}
                                     source={currentRuntimeTask}
+                                    questionContext={
+                                      <ConversationEventContext
+                                        integrated
+                                        goal={paneSession.goal}
+                                        goalDraftActive={paneSession.goalDraftActive}
+                                        continuing={paneSession.goalContinuing}
+                                        executionStatus={paneSession.goalExecutionStatus}
+                                        subscriptions={
+                                          currentRuntimeConversationSource?.runtimeHandle
+                                            ?.connectionEventSubscriptions
+                                        }
+                                        interactionStatus={runtimeTaskSummary?.interactionStatus}
+                                        onEditGoal={paneSession.editCurrentGoal}
+                                        onPauseGoal={pauseCurrentGoal}
+                                        onResumeGoal={resumeCurrentGoal}
+                                        onClearGoal={clearCurrentGoal}
+                                      />
+                                    }
                                     renderQuestion={onCollapse =>
                                       pendingRequestUserInput ? (
                                         <RequestUserInputCard
@@ -5590,6 +5609,11 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
                                         goal={paneSession.goal}
                                         goalContinuing={paneSession.goalContinuing}
                                         goalExecutionStatus={paneSession.goalExecutionStatus}
+                                        eventSubscriptions={
+                                          currentRuntimeConversationSource?.runtimeHandle
+                                            ?.connectionEventSubscriptions
+                                        }
+                                        interactionStatus={runtimeTaskSummary?.interactionStatus}
                                         taskPlan={paneSession.taskPlan}
                                         goalDraftActive={paneSession.goalDraftActive}
                                         onSetGoal={
@@ -5892,6 +5916,11 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
                           goal={paneSession.goal}
                           goalContinuing={paneSession.goalContinuing}
                           goalExecutionStatus={paneSession.goalExecutionStatus}
+                          eventSubscriptions={
+                            currentRuntimeConversationSource?.runtimeHandle
+                              ?.connectionEventSubscriptions
+                          }
+                          interactionStatus={runtimeTaskSummary?.interactionStatus}
                           taskPlan={paneSession.taskPlan}
                           goalDraftActive={paneSession.goalDraftActive}
                           onSetGoal={composerSupportsGoal ? setCurrentGoal : undefined}

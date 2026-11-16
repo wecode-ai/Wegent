@@ -2299,6 +2299,58 @@ describe('ChatInput', () => {
     expect(onResumeGoal).toHaveBeenCalledTimes(1)
   })
 
+  test.each(['pending', 'resuming_goal'])(
+    'keeps a %s event Goal waiting for execution without asking the user to start it',
+    status => {
+      const onPauseGoal = vi.fn()
+      render(
+        <ChatInput
+          value=""
+          onChange={vi.fn()}
+          onSubmit={vi.fn()}
+          disabled={false}
+          variant="desktop"
+          goal={{
+            threadId: 'thread-1',
+            objective: 'Process the review',
+            status: 'blocked',
+            tokenBudget: 500,
+            tokensUsed: 12,
+            timeUsedSeconds: 0,
+            createdAt: 1780000000000,
+            updatedAt: 1780000000000,
+          }}
+          eventSubscriptions={[
+            {
+              subscription_key: 'another-wait',
+              status: 'armed',
+              waiting_goal: true,
+              source: { name: 'Other source' },
+              last_collected_at: Date.now(),
+            },
+            {
+              subscription_key: 'review',
+              status,
+              waiting_goal: true,
+              source: { name: 'Review' },
+              last_collected_at: Date.now(),
+            },
+          ]}
+          interactionStatus="awaitingUserReply"
+          onPauseGoal={onPauseGoal}
+          onResumeGoal={vi.fn()}
+        />
+      )
+      expect(screen.getByTestId('goal-status-bar')).toHaveTextContent('等待继续执行')
+      expect(screen.getByTestId('connection-event-status')).toHaveTextContent(
+        '等待你处理当前问题或确认'
+      )
+      expect(screen.queryByTestId('resume-goal-button')).not.toBeInTheDocument()
+      fireEvent.click(screen.getByTestId('pause-goal-button'))
+      expect(onPauseGoal).toHaveBeenCalledOnce()
+    }
+  )
+
   test.each(['usageLimited', 'budgetLimited'] as const)(
     'does not offer the pause action for a %s goal',
     status => {

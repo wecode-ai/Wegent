@@ -15,6 +15,9 @@ function fixture(platform) {
     issueIsPr: false,
     closed: false,
     changed: false,
+    queueState: 'QUEUED',
+    pipelineSha: HEAD,
+    inaccessible: false,
   }
   const ctx = {
     git: {
@@ -31,7 +34,9 @@ function fixture(platform) {
             full_name: state.repository,
             path_with_namespace: state.repository,
           }
-        else if (input.operation === 'object')
+        else if (input.operation === 'object') {
+          if (state.inaccessible)
+            throw Object.assign(new Error('Permission changed'), { code: 'git_permission_denied' })
           data = {
             id: input.number,
             number: state.mismatch ? 999 : input.number,
@@ -41,6 +46,18 @@ function fixture(platform) {
             updated_at: state.changed ? NEW : OLD,
             head: { sha: HEAD },
             sha: HEAD,
+            head_pipeline: { sha: state.pipelineSha, status: state.changed ? 'failed' : 'success' },
+            web_url: `https://${platform}.com/org/repo/${platform === 'github' ? 'pull' : '-/merge_requests'}/${input.number}`,
+          }
+        } else if (input.operation === 'change_request_status')
+          data = {
+            number: input.number,
+            url: `https://github.com/org/repo/pull/${input.number}`,
+            title: 'Observed PR',
+            state: state.closed ? 'CLOSED' : 'OPEN',
+            headRefOid: HEAD,
+            statusCheckRollup: { state: state.changed ? 'FAILURE' : 'SUCCESS' },
+            mergeQueueEntry: state.closed ? null : { state: state.queueState },
           }
         else if (input.operation === 'checks') {
           const check = {
@@ -90,6 +107,74 @@ async function drain(f, source, checkpoint) {
   }
   assert.fail('Selected collection did not finish a bounded cycle')
 }
+
+test('GitHub shares complete status and emits merge queue changes even when REST details do not change', async () => {
+  const f = fixture('github')
+  const source = {
+    ...(await f.discover([pr(1)])),
+    enabledAfter: new Date(Date.now() - 3600000).toISOString(),
+  }
+  const baseline = await drain(f, source, {})
+  assert.deepEqual(baseline.events, [])
+  assert.equal(
+    baseline.checkpoint.resourceStates['https://github.com/org/repo/pull/1'].data.mergeQueueEntry
+      .state,
+    'QUEUED'
+  )
+  f.state.queueState = 'AWAITING_CHECKS'
+  const changed = await drain(f, source, { ...baseline.checkpoint, nextCheckAt: 0 })
+  assert.equal(changed.events.length, 1)
+  assert.equal(changed.events[0].external.objectKind, 'change_request_state')
+  assert.equal(changed.events[0].external.payload.mergeQueueEntry.state, 'AWAITING_CHECKS')
+  assert.deepEqual((await drain(f, source, { ...changed.checkpoint, nextCheckAt: 0 })).events, [])
+})
+
+test('GitLab keeps a stale pipeline separate from the current merge request head', async () => {
+  const f = fixture('gitlab')
+  f.state.pipelineSha = 'b'.repeat(40)
+  const source = {
+    ...(await f.discover([pr(1)])),
+    enabledAfter: new Date(Date.now() - 3600000).toISOString(),
+  }
+  const baseline = await drain(f, source, {})
+  const url = 'https://gitlab.com/org/repo/-/merge_requests/1'
+  assert.equal(baseline.checkpoint.resourceStates[url].data.head_pipeline, undefined)
+  assert.equal(baseline.checkpoint.resourceStates[url].data.observedPipeline.sha, 'b'.repeat(40))
+  f.state.changed = true
+  const oldFailure = await drain(f, source, { ...baseline.checkpoint, nextCheckAt: 0 })
+  assert.equal(oldFailure.checkpoint.resourceStates[url].data.head_pipeline, undefined)
+  assert.ok(
+    oldFailure.events
+      .filter(event => event.external.objectKind === 'change_request_state')
+      .every(event => event.external.payload.conclusion === '')
+  )
+  f.state.pipelineSha = HEAD
+  const currentFailure = await drain(f, source, { ...oldFailure.checkpoint, nextCheckAt: 0 })
+  assert.equal(currentFailure.checkpoint.resourceStates[url].data.head_pipeline.status, 'failed')
+  assert.ok(
+    currentFailure.events.some(
+      event =>
+        event.external.objectKind === 'change_request_state' &&
+        event.external.payload.conclusion === 'failed'
+    )
+  )
+})
+
+test('permission loss keeps the last resource snapshot explicitly unavailable instead of healthy', async () => {
+  const f = fixture('github')
+  const source = {
+    ...(await f.discover([pr(1)])),
+    enabledAfter: new Date(Date.now() - 3600000).toISOString(),
+  }
+  const baseline = await drain(f, source, {})
+  f.state.inaccessible = true
+  const lost = await f.step(source, { ...baseline.checkpoint, nextCheckAt: 0 })
+  assert.equal(lost.resourceStates[0].errorCode, 'git_permission_denied')
+  assert.deepEqual(
+    lost.resourceStates[0].data,
+    baseline.checkpoint.resourceStates[lost.resourceStates[0].topicId].data
+  )
+})
 
 for (const platform of ['github', 'gitlab']) {
   test(

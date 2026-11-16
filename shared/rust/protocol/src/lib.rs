@@ -11,12 +11,16 @@
 
 #![forbid(unsafe_code)]
 
+pub mod connection_events;
 pub mod dispatch;
 mod execution;
 mod openai;
+pub mod session_archive;
 mod status;
 
-pub use execution::{AgentKind, ExecutionRequest, KnowledgeBaseScope, FULL_KB_TOOL_ACCESS_MODE};
+pub use execution::{
+    AgentKind, ExecutionRequest, KnowledgeBaseScope, FULL_KB_TOOL_ACCESS_MODE,
+};
 pub use openai::{OpenAIResponsesRequest, ProtocolError};
 pub use status::TaskStatus;
 

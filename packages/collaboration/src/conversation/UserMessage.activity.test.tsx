@@ -52,6 +52,19 @@ function render(children: ReactNode, language = 'zh-CN') {
   )
 }
 
+it('renders connection delivery as an attributed note without human message actions', () => {
+  const note = {
+    ...message({ source: 'connection_event' }),
+    content: '发布文档 · 继续检查更新',
+  }
+  render(<UserMessage message={note} services={{ images }} editable onStartEdit={vi.fn()} />)
+  expect(container.querySelector('[data-testid="connection-event-message"]')?.textContent).toBe(
+    note.content
+  )
+  expect(container.querySelector('button')).toBeNull()
+  expect(container.querySelector('[data-testid="message-hover-region"]')).toBeNull()
+})
+
 it.each([['zh-CN'], ['en']])('hides explicit host activity in %s without user actions', locale => {
   const onStartEdit = vi.fn()
   render(

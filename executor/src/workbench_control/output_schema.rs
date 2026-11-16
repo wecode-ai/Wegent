@@ -158,6 +158,19 @@ fn run() -> Value {
 
 pub(super) fn capability(name: &str) -> Value {
     match name {
+        "list_connection_event_providers" => {
+            object(json!({"items":array(json!({"type":"object"}))}), &["items"])
+        }
+        "list_connection_event_resources" => object(
+            json!({"items":array(json!({"type":"object"})),"hasMore":{"type":"boolean"},"nextCursor":nullable(string()),"availability":{"type":"object"}}),
+            &["items"],
+        ),
+        "list_connection_event_subscriptions" => {
+            object(json!({"items":array(json!({"type":"object"}))}), &["items"])
+        }
+        "subscribe_connection_events" | "cancel_connection_event_subscription" => {
+            object(json!({"subscription":{"type":"object"}}), &["subscription"])
+        }
         "get_current_context" => object(
             json!({"conversation_id":string(),"device_id":string(),
             "scope":string(),"continuation_scope":string(),"other_tools":array(string())}),

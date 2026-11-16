@@ -2,6 +2,19 @@
 # are forwarded to the Python backend. Knowledge APIs stay Python-owned;
 # their Rust handlers remain registered without active cutover rules.
 
+[[routes]]
+methods = ["POST"]
+path = "/api/runtime-observations/command"
+[[routes]]
+methods = ["POST"]
+path = "/api/runtime-observations/collector"
+[[routes]]
+methods = ["POST"]
+path = "/api/internal/runtime-observations/command"
+[[routes]]
+methods = ["GET"]
+path = "/api/internal/runtime-observations/accounts"
+
 # Personal Git connections are Rust-owned, including public signature-verified ingress.
 [[routes]]
 methods = ["GET", "POST"]
@@ -173,6 +186,7 @@ path = "/api/internal/chat/attachments/:attachment_id/text"
 [[routes]]
 methods = ["GET"]
 path = "/api/devices"
+
 #[[routes]]
 #methods = ["DELETE"]
 #path = "/api/devices/records/:record_id"

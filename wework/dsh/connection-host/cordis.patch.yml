@@ -3,3 +3,4 @@
       name: '@wegent/dsh-connection-host'
       inject:
         - webServer
+        - profileContext

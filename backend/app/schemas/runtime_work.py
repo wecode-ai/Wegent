@@ -212,6 +212,12 @@ class RuntimeMessageSource(BaseModel):
     message_id: Optional[str] = None
 
 
+class RuntimeConnectionEventSource(BaseModel):
+    """Attribution for a host-delivered connection event."""
+
+    source: Literal["connection_event"]
+
+
 class NormalizedRuntimeMessage(BaseModel):
     """Normalized message rendered by Wework for native runtime transcripts."""
 
@@ -228,7 +234,7 @@ class NormalizedRuntimeMessage(BaseModel):
     subtask_id: Optional[str | int] = Field(default=None, alias="subtaskId")
     status: Optional[str] = None
     created_at: Optional[str | int] = Field(default=None, alias="createdAt")
-    source: Optional[RuntimeMessageSource] = None
+    source: Optional[RuntimeMessageSource | RuntimeConnectionEventSource] = None
     attachments: list[dict[str, Any]] = Field(default_factory=list)
     blocks: list[dict[str, Any]] = Field(default_factory=list)
     file_changes: Optional[dict[str, Any]] = Field(default=None, alias="fileChanges")
@@ -636,6 +642,9 @@ class RuntimeSendRequest(BaseModel):
     address: RuntimeTaskAddress
     message: str = Field(..., min_length=1)
     queue_if_busy: bool = Field(default=False, alias="queueIfBusy")
+    resource_event_keys: Optional[list[str]] = Field(
+        default=None, alias="resourceEventKeys", max_length=1000
+    )
     conversation_context: Optional[Literal["private_discussion"]] = Field(
         default=None, alias="conversationContext"
     )
@@ -648,7 +657,7 @@ class RuntimeSendRequest(BaseModel):
         default=None,
         alias="modelSelection",
     )
-    source: Optional[RuntimeMessageSource] = None
+    source: Optional[RuntimeMessageSource | RuntimeConnectionEventSource] = None
     request_user_input_response: Optional[dict[str, Any]] = Field(
         default=None,
         alias="requestUserInputResponse",

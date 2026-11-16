@@ -230,6 +230,26 @@ async fn roundtrip(cancel_last: bool) {
     )
     .unwrap();
     assert!(archive.session_file_included);
+    use sha2::{Digest, Sha256};
+    assert_eq!(
+        archive.receipt.sha256,
+        format!("{:x}", Sha256::digest(&archive.bytes))
+    );
+    for bot in [23, 24] {
+        assert!(archive
+            .receipt
+            .session(42, bot, "ClaudeCode", &format!("session-{bot}"))
+            .is_some());
+        assert!(archive
+            .receipt
+            .session(
+                42,
+                bot,
+                "ClaudeCode",
+                &format!("session-{}", if bot == 23 { 24 } else { 23 })
+            )
+            .is_none());
+    }
     // The restored execution must not be able to read the original state.
     fs::remove_dir_all(roots.workbench.join("agents")).unwrap();
     fs::remove_dir_all(roots.executor.join("sessions")).unwrap();

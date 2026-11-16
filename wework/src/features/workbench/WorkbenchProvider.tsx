@@ -1,4 +1,5 @@
 import { useWorkbenchServiceConnections } from './workbenchServiceConnections'
+import { getChangeRequestMonitor } from './changeRequestMonitor'
 import { createHttpClient } from '@/api/http'
 import { createLocalCodexPluginApi } from '@/api/local/codexPlugins'
 import { createPluginApi } from '@/api/plugins'
@@ -383,6 +384,13 @@ function OwnedWorkbenchProvider({
     standInApi: resolvedServices.standInApi,
     runtimeApi: resolvedServices.runtimeWorkApi,
   })
+  useEffect(() => {
+    if (resolvedServices.deviceApi)
+      getChangeRequestMonitor(resolvedServices.deviceApi).syncConnectionObservations(
+        state.runtimeWork,
+        state.devices
+      )
+  }, [resolvedServices.deviceApi, state.runtimeWork, state.devices])
   const currentContextUsage = state.currentRuntimeTask
     ? contextUsageByRuntimeTask[runtimeConversationKey(state.currentRuntimeTask)]
     : undefined

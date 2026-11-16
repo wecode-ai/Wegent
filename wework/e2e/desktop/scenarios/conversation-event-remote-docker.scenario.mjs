@@ -1,0 +1,427 @@
+import assert from 'node:assert/strict'
+import { randomUUID } from 'node:crypto'
+import { createRequire } from 'node:module'
+import { chmod, cp, readFile, writeFile } from 'node:fs/promises'
+import { join } from 'node:path'
+import { createDesktopScenario as createBridgeScenario } from './stand-in-plugin-bridge.scenario.mjs'
+import { createConversationEventDocker } from '../modules/conversation-event-docker.mjs'
+import { createConversationEventModel } from '../modules/conversation-event-model.mjs'
+import { modelRequestTexts } from '../modules/model-tool-output.mjs'
+import { waitForValue } from '../modules/workspace-agent-setup.mjs'
+import {
+  ACTIVE_WORKBENCH_SELECTOR,
+  ACTIVE_COMPOSER_SELECTOR,
+  ACTIVE_SEND_BUTTON_SELECTOR,
+} from '../modules/shared.mjs'
+import {
+  createSse,
+  handleEmptyReplyPrediction,
+  readRequestBody,
+  responseCompleted,
+  responseCreated,
+} from '../modules/response-protocol.mjs'
+
+const MARKER = 'WEWORK_REMOTE_DOCKER_EVENT'
+const PROVIDER = '@test/connection-source/records'
+
+// Backend, device routing, Docker, DSH, MCP and native sessions are real; only the model is simulated.
+export function createDesktopScenario(options) {
+  const base = createBridgeScenario(options)
+  const { resultDir, workspacePath, uiTimeoutMs, workbenchReadyTimeoutMs, captureScreenshot } =
+    options
+  const model = createConversationEventModel({ markerPrefix: MARKER, providerId: PROVIDER })
+  const deviceId = `wework-event-docker-${randomUUID()}`
+  let cloud
+  let docker
+  let socket
+  let phase = 'ordinary'
+  let modelRequests = 0
+  const evidence = []
+  const records = []
+  const save = () =>
+    writeFile(
+      join(resultDir, 'records.json'),
+      JSON.stringify([{ id: 'archive-record', value: JSON.stringify(records) }])
+    )
+  async function rpc(method, params) {
+    if (!socket) {
+      const { io } = createRequire(
+        new URL('../../../../packages/chat-core/package.json', import.meta.url)
+      )(process.env.WEWORK_E2E_SOCKET_IO_CLIENT || 'socket.io-client')
+      socket = io(`${cloud.backendUrl}/wework-runtime`, {
+        path: '/socket.io',
+        transports: ['websocket'],
+        auth: { token: cloud.authToken },
+        autoConnect: false,
+        forceNew: true,
+        reconnection: false,
+        timeout: uiTimeoutMs,
+      })
+      await new Promise((resolve, reject) => {
+        socket.once('connect', resolve)
+        socket.once('connect_error', reject)
+        socket.connect()
+      })
+    }
+    const ack = await socket.timeout(workbenchReadyTimeoutMs).emitWithAck('runtime:request', {
+      type: 'request',
+      id: randomUUID(),
+      method,
+      params,
+      device_id: deviceId,
+      timeout_seconds: workbenchReadyTimeoutMs / 1000,
+    })
+    if (
+      method === 'runtime.connections.catalog' &&
+      ack.error?.code === 'connection_host_unavailable'
+    )
+      return null
+    assert.equal(ack.ok, true, `${method}: ${ack.error?.message}`)
+    return ack.result
+  }
+  const open = async (control, address) => {
+    await control.command('navigate', 'body', {
+      value: `/runtime-tasks?${new URLSearchParams(address)}`,
+    })
+    await control.command(
+      'waitFor',
+      `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="message-assistant"]`,
+      { text: `${MARKER}_${phase}_WAITING`, timeoutMs: workbenchReadyTimeoutMs }
+    )
+  }
+  async function assertRecoveredUi(control) {
+    for (const id of ['runtime-transcript-error', 'environment-read-error'])
+      await control.command('waitFor', `[data-testid="${id}"]`, {
+        visible: false,
+        timeoutMs: workbenchReadyTimeoutMs,
+      })
+    await control.command('waitFor', '[data-testid="environment-device-name"]', {
+      text: 'Event recovery Remote Docker',
+    })
+    await control.command('fill', ACTIVE_COMPOSER_SELECTOR, {
+      value: 'Check the restored conversation',
+    })
+    await control.command('waitFor', ACTIVE_SEND_BUTTON_SELECTOR, { enabled: true })
+    await control.command('fill', ACTIVE_COMPOSER_SELECTOR, { value: '' })
+  }
+  return {
+    requiresCloudEnvironment: true,
+    backendEnv: {
+      WEGENT_RS_JOB_ALLOWLIST: 'runtime_observation_collectors,runtime_observation_deliveries',
+      SCHEDULED_TASKS_ENABLED: 'true',
+      EMBEDDED_CELERY_ENABLED: 'true',
+    },
+    setCloudEnvironment(value) {
+      cloud = value
+    },
+    async prepareApp(context) {
+      await base.prepareApp(context)
+      await save()
+      await chmod(join(resultDir, 'calls.jsonl'), 0o666)
+      await cp(
+        new URL('../fixtures/conversation-events-provider.mjs', import.meta.url),
+        join(resultDir, 'connection-adapter/index.js')
+      )
+      const adapterPath = join(resultDir, 'connection-adapter/package.json')
+      const adapter = JSON.parse(await readFile(adapterPath, 'utf8'))
+      const declaration = adapter.wework.connections
+      declaration.dependencies['source-copy'] = structuredClone(declaration.dependencies.source)
+      declaration.providers[0].uses.push('source-copy')
+      await writeFile(adapterPath, JSON.stringify(adapter))
+    },
+    async handleHttp(request, response, url) {
+      if (request.method !== 'POST' || !['/responses', '/v1/responses'].includes(url.pathname))
+        return false
+      const body = await readRequestBody(request)
+      if (handleEmptyReplyPrediction(body, response)) return true
+      if (!modelRequestTexts(body).includes(MARKER)) return false
+      modelRequests++
+      const id = `remote-docker-event-${modelRequests}`
+      const completion = responseCompleted(id)
+      completion.response.usage = {
+        input_tokens: 11,
+        input_tokens_details: { cached_tokens: 0 },
+        output_tokens: 3,
+        output_tokens_details: null,
+        total_tokens: 14,
+      }
+      response.writeHead(200, { 'content-type': 'text/event-stream' })
+      response.end(createSse([responseCreated(id), ...model.events(body, phase), completion]))
+      return true
+    },
+    async verify(control) {
+      await cloud.stopRemoteDockerExecutorAndWaitOffline()
+      docker = await createConversationEventDocker({
+        cloud,
+        resultDir,
+        workspacePath,
+        timeoutMs: workbenchReadyTimeoutMs,
+        deviceId,
+      })
+      const pluginPath = join(resultDir, 'connection-marketplace/source/.codex-plugin/plugin.json')
+      const plugin = JSON.parse(await readFile(pluginPath, 'utf8'))
+      plugin.mcpServers.records.command = docker.nodeExecutable
+      await writeFile(pluginPath, JSON.stringify(plugin))
+      let containerId = await docker.start()
+      await rpc('runtime.codex.app_server.request', {
+        method: 'marketplace/add',
+        params: { source: join(resultDir, 'connection-marketplace') },
+      })
+      await waitForValue(
+        () => rpc('runtime.connections.catalog', {}),
+        value => value?.items?.some(item => item.id === PROVIDER),
+        'The delivered Remote Docker source provider must register before installation',
+        workbenchReadyTimeoutMs
+      )
+      await rpc('runtime.connections.dependencies.install', {
+        providerId: PROVIDER,
+        aliases: ['source', 'source-copy'],
+      })
+      const catalog = await rpc('runtime.runner.catalog', {})
+      const selectedModel = catalog.models.find(item => item.runtime === 'codex' && item.is_default)
+      assert.ok(selectedModel)
+      for (const story of ['ordinary', 'goal', 'pause']) {
+        phase = story
+        const taskId = `remote-event-${phase}-${randomUUID()}`
+        const address = {
+          deviceId,
+          taskId,
+          workspacePath,
+          runtime: 'codex',
+        }
+        const prompt = `${MARKER}_${phase} 请订阅发布文档变化，在原会话继续处理。`
+        const created = await rpc('runtime.tasks.create', {
+          taskId,
+          workspacePath,
+          runtime: 'codex',
+          message: prompt,
+          executionRequest: {
+            task_id: taskId,
+            subtask_id: `${taskId}-initial`,
+            prompt,
+            new_session: true,
+            bot: [{ shell_type: 'Codex' }],
+            model_config: {
+              model_id: selectedModel.local_model_id,
+              model_provider: selectedModel.provider,
+              runtime_config: { codex: { use_user_config: true, configured: true } },
+            },
+          },
+        })
+        assert.equal(created.accepted, true)
+        const readTask = () => rpc('runtime.tasks.get', { address })
+        const before = await waitForValue(
+          readTask,
+          value =>
+            !value.task.running &&
+            value.task.runtimeHandle?.connectionEventSubscriptions?.some(
+              item => item.subscription_key === `${MARKER}_${phase}` && item.status === 'armed'
+            ),
+          'The remote model must arm a real source wait',
+          workbenchReadyTimeoutMs
+        )
+        const originalGoal =
+          phase === 'ordinary' ? null : (await rpc('runtime.tasks.goal.get', { address })).goal
+        const armedRequests = modelRequests
+        await waitForValue(
+          async () => {
+            assert.equal(
+              modelRequests,
+              armedRequests,
+              'Waiting for source collection must not poll the model'
+            )
+            return readTask()
+          },
+          value =>
+            value.task.runtimeHandle.connectionEventSubscriptions.some(
+              item =>
+                item.subscription_key === `${MARKER}_${phase}` &&
+                item.last_collected_at &&
+                !item.error_code
+            ),
+          'The real source must complete a collection before stable waiting is shown',
+          workbenchReadyTimeoutMs
+        )
+        const nativeTurns = async () => {
+          const result = await rpc('runtime.tasks.transcript', { address, refresh: true })
+          assert.equal(result.threadId, before.task.threadId)
+          assert.ok(Array.isArray(result.turns))
+          return result.turns.map(turn => turn.id)
+        }
+        const originalTurns = await nativeTurns()
+        if (originalGoal) {
+          assert.equal(originalGoal.status, 'blocked')
+          assert.equal(originalGoal.tokenBudget, 20000)
+        }
+        await open(control, address)
+        await control.command('waitFor', '[data-testid="connection-event-status"]', {
+          text: '等待事件，到达后自动继续',
+        })
+        await captureScreenshot(control, `remote-event-${phase}-waiting.png`)
+        if (phase === 'pause') {
+          await control.command('clickWhenEnabled', '[data-testid="pause-goal-button"]')
+          await control.command('waitFor', '[data-testid="connection-event-status"]', {
+            visible: false,
+          })
+        }
+        const requestsBefore = modelRequests
+        const oldDevice = await cloud.device(deviceId)
+        assert.equal(await docker.destroy(), containerId)
+        const summaryToggle = '[data-testid="environment-info-button"]'
+        if (
+          (await control.command('getAttribute', summaryToggle, { value: 'aria-expanded' })) ===
+          'true'
+        ) {
+          await control.command('click', summaryToggle)
+          await control.command('waitFor', '[data-testid="environment-info-popover"]', {
+            visible: false,
+          })
+        }
+        await control.command('click', summaryToggle)
+        await control.command('waitFor', '[data-testid="environment-read-error"]', {
+          text: 'Event recovery Remote Docker',
+        })
+        await captureScreenshot(control, `remote-event-${phase}-offline.png`)
+        const event = {
+          id: `${phase}-real-record-change`,
+          eventType: 'message.received',
+          topicId: 'release-document',
+          text: `${MARKER}_${phase}_EVENT_RECEIVED`,
+          at: new Date().toISOString(),
+        }
+        records.push(event, event)
+        await save()
+        const deadline = Date.now() + 1500
+        while (Date.now() < deadline) {
+          assert.equal(
+            modelRequests,
+            requestsBefore,
+            'A destroyed execution container cannot poll the model'
+          )
+          await new Promise(resolve => setTimeout(resolve, 100))
+        }
+        const replacementId = await docker.start()
+        assert.notEqual(replacementId, containerId, 'The old container must actually be destroyed')
+        const newDevice = await cloud.device(deviceId)
+        assert.equal(newDevice.runtime_instance_id, oldDevice.runtime_instance_id)
+        if (phase === 'pause') {
+          const deadline = Date.now() + 17000
+          while (Date.now() < deadline) {
+            assert.equal(
+              modelRequests,
+              requestsBefore,
+              'A preserved human pause must prevent event wakeup after recreation'
+            )
+            await new Promise(resolve => setTimeout(resolve, 100))
+          }
+          const paused = (await rpc('runtime.tasks.goal.get', { address })).goal
+          assert.equal(paused.status, 'paused')
+          assert.equal(paused.createdAt, originalGoal.createdAt)
+          assert.equal(paused.tokenBudget, originalGoal.tokenBudget)
+          assert.equal(paused.tokensUsed, originalGoal.tokensUsed)
+          const preserved = await readTask()
+          assert.equal(preserved.task.threadId, before.task.threadId)
+          assert.ok(
+            !preserved.task.runtimeHandle.connectionEventSubscriptions.some(
+              item => item.subscription_key === `${MARKER}_${phase}`
+            ),
+            'Cancelled subscriptions leave the active conversation projection'
+          )
+          const snapshotResponse = await fetch(
+            `${cloud.backendUrl}/api/runtime-observations/command`,
+            {
+              method: 'POST',
+              headers: {
+                Authorization: `Bearer ${cloud.authToken}`,
+                'Content-Type': 'application/json',
+              },
+              body: JSON.stringify({
+                action: 'get_task_subscriptions',
+                deviceId: address.deviceId,
+                taskId,
+              }),
+            }
+          )
+          assert.equal(snapshotResponse.status, 200)
+          const snapshot = await snapshotResponse.json()
+          assert.equal(snapshot.subscriptions.length, 1)
+          assert.equal(snapshot.subscriptions[0].subscription.status, 'cancelled')
+          assert.deepEqual(await nativeTurns(), originalTurns)
+          await assertRecoveredUi(control)
+          await control.command('waitFor', '[data-testid="goal-status-bar"]', { text: '已暂停' })
+          await captureScreenshot(control, 'remote-event-paused-after-recreation.png')
+        } else {
+          const after = await waitForValue(
+            readTask,
+            value =>
+              !value.task.running &&
+              model.completed.has(phase) &&
+              value.task.runtimeHandle?.connectionEventSubscriptions?.some(
+                item =>
+                  item.subscription_key === `${MARKER}_${phase}` && item.status === 'delivered'
+              ),
+            'The replacement container must resume the original conversation once',
+            workbenchReadyTimeoutMs
+          )
+          assert.equal(after.task.threadId, before.task.threadId)
+          if (originalGoal) {
+            const completedGoal = (await rpc('runtime.tasks.goal.get', { address })).goal
+            assert.equal(completedGoal.status, 'complete')
+            assert.equal(completedGoal.createdAt, originalGoal.createdAt)
+            assert.equal(completedGoal.tokenBudget, originalGoal.tokenBudget)
+            assert.ok(
+              completedGoal.tokensUsed >= originalGoal.tokensUsed + 14,
+              'The event turn must charge nonzero model usage to the original Goal'
+            )
+          }
+          await open(control, address)
+          await control.command(
+            'waitFor',
+            `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="message-assistant"]`,
+            { text: `${MARKER}_${phase}_DONE` }
+          )
+          await control.command('waitFor', '[data-testid="connection-event-status"]', {
+            visible: false,
+          })
+          await assertRecoveredUi(control)
+          await captureScreenshot(control, `remote-event-${phase}-continued.png`)
+          const completedRequests = modelRequests
+          const dedupeDeadline = Date.now() + 17000
+          while (Date.now() < dedupeDeadline) {
+            assert.equal(
+              modelRequests,
+              completedRequests,
+              'Duplicate source records must not start another model turn in a later collection cycle'
+            )
+            await new Promise(resolve => setTimeout(resolve, 100))
+          }
+          const continuedTurns = await nativeTurns()
+          assert.deepEqual(continuedTurns.slice(0, originalTurns.length), originalTurns)
+          assert.equal(
+            continuedTurns.length,
+            originalTurns.length + 1,
+            'A duplicate source record must produce exactly one new native turn'
+          )
+        }
+        evidence.push({
+          phase,
+          originalContainer: containerId,
+          replacementContainer: replacementId,
+          deviceId: address.deviceId,
+          taskId,
+          nativeThreadId: before.task.threadId,
+          goal: originalGoal,
+        })
+        containerId = replacementId
+      }
+      await docker.evidence({ cases: evidence, modelRequests })
+    },
+    async cleanup() {
+      socket?.disconnect()
+      await docker?.cleanup()
+    },
+    diagnostics() {
+      return { phase, modelRequests, cases: evidence }
+    },
+  }
+}

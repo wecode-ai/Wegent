@@ -1,4 +1,5 @@
 import { SupersededConversationRead } from '@/features/workbench/runtimeConversationSynchronization'
+import { useWorkbenchDeviceReconnect } from '@/features/workbench/useWorkbenchDeviceReconnect'
 import { pendingRequestUserInputPayload } from './requestUserInputOverlay'
 import {
   useRuntimeConversationMetadata,
@@ -27,6 +28,11 @@ import {
   type SetStateAction,
 } from 'react'
 import i18n from '@/i18n'
+import { useTranslation } from '@/hooks/useTranslation'
+import {
+  findWorkbenchDevice,
+  getWorkbenchDeviceUnavailableDisplayName,
+} from '@/lib/workbench-device'
 import { logRuntimeTaskCreateStage } from '@/lib/runtime-create-diagnostics'
 import { useWorkbenchPaneContext } from '@/features/workbench/useWorkbench'
 import {
@@ -230,6 +236,7 @@ export function useWorkbenchPaneSession({
   debugSnapshotEnabled = true,
 }: WorkbenchPaneSessionOptions) {
   const queueDiagnosticSessionId = useId()
+  const { t } = useTranslation('common')
   const runtimeTranscriptPageSize = resolveRuntimeTranscriptPageSize()
   const {
     state: workbenchState,
@@ -434,7 +441,24 @@ export function useWorkbenchPaneSession({
   const [transcriptLoadingKey, setTranscriptLoadingKey] = useState<string | null>(() =>
     currentRuntimeTask ? runtimeTaskLoadAddressKey(currentRuntimeTask) : null
   )
-  const [transcriptError, setTranscriptError] = useState<string | null>(null)
+  const [transcriptFailure, setTranscriptError] = useState<unknown>(null)
+  const transcriptError =
+    transcriptFailure == null
+      ? null
+      : typeof transcriptFailure === 'object' &&
+          'code' in transcriptFailure &&
+          transcriptFailure.code === 'device_offline'
+        ? t('workbench.conversation_device_offline_notice', {
+            device:
+              getWorkbenchDeviceUnavailableDisplayName(
+                currentRuntimeTask
+                  ? findWorkbenchDevice(workbenchState.devices ?? [], currentRuntimeTask.deviceId)
+                  : null
+              ) || t('workbench.current_device', '当前设备'),
+          })
+        : transcriptFailure instanceof Error
+          ? transcriptFailure.message
+          : String(transcriptFailure)
   const [transcriptReloadVersion, setTranscriptReloadVersion] = useState(0)
   const [transcriptHasMoreBefore, setTranscriptHasMoreBefore] = useState(false)
   const [transcriptBeforeCursor, setTranscriptBeforeCursor] = useState<string | null>(null)
@@ -870,7 +894,7 @@ export function useWorkbenchPaneSession({
           setTranscriptBeforeCursor(null)
           setLoadedTranscriptRanges([])
           setTurnNavigation([])
-          setTranscriptError(error instanceof Error ? error.message : String(error))
+          setTranscriptError(error)
           console.error('[Wework] Runtime pane transcript load failed', {
             key: loadKey,
             address,
@@ -911,6 +935,12 @@ export function useWorkbenchPaneSession({
     setTranscriptReloadVersion(version => version + 1)
   }, [])
 
+  useWorkbenchDeviceReconnect({
+    deviceId: runtimeTaskLoadTarget?.address.deviceId,
+    devices: workbenchState.devices,
+    onReconnect: reloadRuntimeTranscript,
+  })
+
   const loadMoreTranscriptBefore = useCallback(async () => {
     if (
       !isTranscriptScopeCurrent() ||
@@ -945,7 +975,7 @@ export function useWorkbenchPaneSession({
       )
     } catch (error) {
       if (!isTranscriptScopeCurrent()) return
-      setTranscriptError(error instanceof Error ? error.message : String(error))
+      setTranscriptError(error)
       console.error('[Wework] Runtime pane older transcript load failed', {
         key: loadKey,
         address,

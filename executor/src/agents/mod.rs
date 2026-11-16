@@ -12,6 +12,7 @@ use wegent_workspace::cargo_cache;
 mod claude_code;
 use wegent_claude_harness::claude_options;
 mod codex;
+pub(crate) mod codex_goal_state;
 pub(crate) use codex::prepare_provider_migration;
 #[cfg(test)]
 pub(crate) use codex::turn_context_for_test;
@@ -19,6 +20,9 @@ mod completed_file_changes;
 #[cfg(test)]
 pub(crate) use codex::LaunchEnvironment as CodexLaunchEnvironment;
 mod codex_log_db;
+pub use codex::CodexInputAdmission;
+pub use codex::EventGoalAdmission;
+pub(crate) const AUTOMATIC_INPUT_WAITING_FOR_HUMAN: &str = "automatic_input_waiting_for_human";
 mod dify;
 pub(crate) use wegent_workspace::environment_setup;
 pub(crate) mod git_auth;

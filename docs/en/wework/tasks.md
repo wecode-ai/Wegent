@@ -54,6 +54,20 @@ The same capability applies to finding conversations, restoring archived items a
 
 The interface height follows its content, and saved interaction state is restored when you reopen the conversation. You can scroll the conversation with the pointer over a card. Scrollable controls consume wheel movement first, then pass remaining movement to the conversation at their boundary. Use **Expand** for more space and return to the message afterwards. This capability requires personal control access in a Codex conversation and does not grant extra authority to delegated executions.
 
+<a id="connection-event-waits"></a>
+
+### Ask AI to wait for connection events
+
+In the **task conversation composer**, ask AI to continue here when a document or another connected resource changes. AI discovers installed connection providers, selects the resource and saves a subscription through tools. No manual schedule setup is required. Ordinary conversations and Goals both support this; available events depend on the provider and account permissions.
+
+Above the composer, **Waiting for events; resumes automatically** identifies the source. A Goal also shows **Waiting for events**. The host collects events without repeated model turns. Matching new events continue the original conversation with its model, permissions and workspace. Each subscription delivers one batch; AI can subscribe again when more input is needed. Local tasks require Wework to remain running; remote tasks require their device to be online. Recreating a Remote Docker device requires preserving its executor data volumes and native session directory to recover the original conversation's wait and Goal. No model calls run while the device is offline; the source determines which missed historical events remain available.
+
+After an event arrives and before execution starts, **Event received; waiting for this conversation to continue** explains the pending delivery. An unresolved question or approval takes priority and shows **Event received; waiting for your answer or approval**. The Goal shows **Waiting to continue**, without asking you to start it again. Events never answer human requests or authorize external actions. Ask AI to cancel a subscription to stop receiving it. For a waiting Goal, **Pause goal** also stops automatic recovery; paused, cleared or replaced Goals are never resumed by an old wait.
+
+**Preparing event wait** means setup is still in progress. A setup failure shows **Event wait is not ready; ask AI to check and retry**. If **Connection needs authorization** appears, authorize that connection again. If **Status synchronization failed; check the connection** appears, ask AI in the same conversation to inspect the subscription and connection. **Event continuation needs attention; check this conversation** points to an execution problem; inspect the failure in the conversation. Cancelling a subscription does not resume its waiting Goal; explicitly request continuation when wanted.
+
+PR status in the interface shares connector collection with conversation subscriptions. A visible PR continues to update when no conversation subscription exists or its batch has already been delivered. Closing the related views or hiding the window releases that UI observation. Manual refresh uses the same collection path without waking the model. Views on the same device share PR state, while event handling records remain specific to each conversation.
+
 <a id="personal-schedules"></a>
 
 ### Personal scheduled tasks

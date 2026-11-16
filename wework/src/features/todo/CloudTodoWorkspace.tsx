@@ -63,6 +63,7 @@ import type {
   PullRequestAutoRepairStatus,
 } from '@/api/deliveries'
 import type { TaskChangeRequestSnapshot } from '@/api/changeRequests'
+import { changeRequestResourceEventKeys } from '@/features/workbench/changeRequestObservations'
 import { isDefaultWorkItemProject } from '@/api/deliveries'
 import type { AITableField } from '@/api/aitable'
 import { ApiError } from '@/api/http'
@@ -381,7 +382,8 @@ function ProjectChangeRequestAutoRepairObserver({
   statuses: PullRequestAutoRepairStatus[]
   onRepair: (
     binding: CloudTodoBoardTaskBinding,
-    snapshot: TaskChangeRequestSnapshot
+    snapshot: TaskChangeRequestSnapshot,
+    automatic?: boolean
   ) => Promise<void>
 }) {
   const snapshot = useTaskChangeRequest(monitor, binding.changeRequestTarget ?? null)
@@ -389,11 +391,24 @@ function ProjectChangeRequestAutoRepairObserver({
   useEffect(() => {
     const changeRequest = snapshot?.changeRequest
     const status = changeRequest ? autoRepairStatus(changeRequest) : null
-    if (!snapshot || !changeRequest || !status || !statuses.includes(status)) return
+    if (
+      !snapshot ||
+      snapshot.stale ||
+      snapshot.error ||
+      !changeRequest ||
+      !status ||
+      !statuses.includes(status)
+    )
+      return
+    if (
+      binding.changeRequestTarget &&
+      monitor.hasHandledChange(binding.changeRequestTarget, changeRequest)
+    )
+      return
     const eventKey = `${itemId}\0${binding.task_id}\0${changeRequestRepairEventKey(changeRequest)}`
     if (!claimChangeRequestAutoRepair(eventKey)) return
     queueMicrotask(() => {
-      void onRepair(binding, snapshot)
+      void onRepair(binding, snapshot, true)
         .then(() => completeChangeRequestAutoRepair(eventKey, true))
         .catch(error => {
           completeChangeRequestAutoRepair(eventKey, false)
@@ -404,7 +419,7 @@ function ProjectChangeRequestAutoRepairObserver({
           })
         })
     })
-  }, [binding, itemId, onRepair, snapshot, statuses])
+  }, [binding, itemId, monitor, onRepair, snapshot, statuses])
 
   return null
 }
@@ -1386,7 +1401,8 @@ export function CloudTodoWorkspace({
     : null
   async function continueChangeRequestRepair(
     binding: CloudTodoBoardTaskBinding,
-    snapshot: TaskChangeRequestSnapshot
+    snapshot: TaskChangeRequestSnapshot,
+    automatic = false
   ): Promise<void> {
     const changeRequest = snapshot.changeRequest
     if (!changeRequest || !workbench || !selectedProject) return
@@ -1406,14 +1422,17 @@ export function CloudTodoWorkspace({
     const prompt = buildChangeRequestRepairPrompt(
       changeRequest,
       binding.task_title || binding.task_id,
+      t,
       selectedProject.pull_request_automation?.prompt
     )
-    const optimisticUserMessage = createRuntimeUserMessage(prompt)
+    const resourceEventKeys = automatic ? changeRequestResourceEventKeys(snapshot) : []
+    const optimisticUserMessage = automatic ? undefined : createRuntimeUserMessage(prompt)
     const accepted = await workbench.sendRuntimePaneMessage(
       {
         address,
         message: prompt,
-        source: { source: 'manual' },
+        source: { source: automatic ? 'connection_event' : 'manual' },
+        ...(resourceEventKeys.length ? { resourceEventKeys, queueIfBusy: true } : {}),
         cloudProjectId: String(selectedProject.id),
       },
       { optimisticUserMessage }

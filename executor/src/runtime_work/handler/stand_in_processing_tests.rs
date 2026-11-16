@@ -114,6 +114,7 @@ async fn a_waiting_assessment_retires_only_after_the_original_question_is_resolv
             initial_thread_goal: None,
         },
         owner_resolution: None,
+        resource_event_keys: Vec::new(),
         native: None,
     };
     handler

@@ -816,6 +816,12 @@ export function createHybridWorkbenchServices(
   const listKnownDevices = async (signal?: AbortSignal) =>
     mergeKnownDevices(await listLocalDevices(signal), rememberedCloudDevices)
   const resolveExecutorDevice = async (deviceId: string): Promise<RuntimeDeviceInfo | null> => {
+    const remoteDevice = createWorkbenchDeviceResolver(
+      mergeKnownDevices(rememberedLocalDevices, rememberedCloudDevices)
+    ).resolve(deviceId)
+    if (remoteDevice?.device_type === 'remote' || remoteDevice?.device_type === 'cloud') {
+      return remoteDevice
+    }
     const knownDevice = createWorkbenchDeviceResolver(await listKnownDevices()).resolve(deviceId)
     if (knownDevice) return knownDevice
 
@@ -1003,11 +1009,19 @@ export function createHybridWorkbenchServices(
       if (shouldUseCloudDeviceCommand(data.command_key)) {
         return cloudServices.deviceApi.executeCommand(deviceId, data)
       }
-      return cloudRuntimeIpc.request<DeviceCommandResponse>(
-        'device.execute_command',
-        { ...data },
-        deviceId
-      )
+      return cloudRuntimeIpc
+        .request<DeviceCommandResponse>('device.execute_command', { ...data }, deviceId)
+        .catch((error: unknown) => {
+          if (
+            error &&
+            typeof error === 'object' &&
+            'code' in error &&
+            error.code === 'device_offline'
+          ) {
+            throw new Error(`executor-offline:${deviceId}`, { cause: error })
+          }
+          throw error
+        })
     },
     upgradeDevice(deviceId, options) {
       return deviceApi(deviceId).upgradeDevice(deviceId, options)

@@ -966,6 +966,23 @@ jobs:
           go-version: "1.25.9"
           cache: false
 
+      - name: Prepare Remote Docker event recovery from the shared native build
+        if: contains(matrix.segments, 'conversation-event-remote-docker')
+        env:
+          EVENT_DEVICE_BASE_IMAGE: ${{ needs.changes.outputs.desktop_image }}
+        run: |
+          source .github/scripts/lib/apt-packages.sh
+          mapfile -t missing < <(find_missing_apt_packages docker.io)
+          if ((${#missing[@]} > 0)); then
+            bash .github/scripts/install-e2e-apt-packages.sh "${missing[@]}"
+          fi
+          docker info >/dev/null
+          image="wework-event-remote:ci-${GITHUB_RUN_ID}"
+          node .github/scripts/prepare-event-remote-device.mjs \
+            "$EVENT_DEVICE_BASE_IMAGE" \
+            "$GITHUB_WORKSPACE/.ci-artifacts/wework-core-e2e-build" "$image"
+          echo "WEWORK_E2E_REMOTE_IMAGE=$image" >> "$GITHUB_ENV"
+
       - name: Run Wework desktop Cloud E2E checkpoints
         env:
           CI: true
