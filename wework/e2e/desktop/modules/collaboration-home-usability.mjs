@@ -287,11 +287,11 @@ export async function verifyCollaborationHomeUsability(
 ) {
   const [initial] = JSON.parse(await control.command('getElementMetrics', home))
   const draft = await control.command('getValue', input)
-  const toggle = `${home} [data-testid="personal-home-toggle-sidebar"]`
+  const sidebarToggle = `${home} [data-testid="personal-home-toggle-sidebar"]`
   try {
     await resizeHome(control, home, 1440, 900, timeoutMs)
-    await control.command('click', toggle)
-    await control.command('waitFor', `${toggle}[aria-expanded="false"]`)
+    await control.command('click', sidebarToggle)
+    await control.command('waitFor', `${sidebarToggle}[aria-expanded="false"]`)
     assert.equal(
       await control.command(
         'getComputedStyleValue',
@@ -300,7 +300,7 @@ export async function verifyCollaborationHomeUsability(
       ),
       'none'
     )
-    await control.command('click', toggle)
+    await control.command('click', sidebarToggle)
     await control.command('waitFor', input)
     assert.equal(
       await control.command('getValue', input),
@@ -378,19 +378,21 @@ export async function verifyCollaborationHomeUsability(
       paragraph.top >= preview.top && paragraph.top + lineHeight <= preview.bottom + 1,
       'The collapsed Markdown description must show a complete line of useful body text'
     )
-    const toggle = `${home} [data-testid="cloud-todo-detail-description-toggle"]`
-    await control.command('waitFor', `${toggle}[aria-expanded="false"]`)
-    const controlled = await control.command('getAttribute', toggle, { value: 'aria-controls' })
+    const descriptionToggle = `${home} [data-testid="cloud-todo-detail-description-toggle"]`
+    await control.command('waitFor', `${descriptionToggle}[aria-expanded="false"]`)
+    const controlled = await control.command('getAttribute', descriptionToggle, {
+      value: 'aria-controls',
+    })
     assert.ok(controlled, 'The description disclosure must identify the controlled content')
-    await control.command('click', toggle)
-    await control.command('waitFor', `${toggle}[aria-expanded="true"]`)
+    await control.command('click', descriptionToggle)
+    await control.command('waitFor', `${descriptionToggle}[aria-expanded="true"]`)
     const [heading] = JSON.parse(await control.command('getElementMetrics', `${description} h1`))
     assert.ok(
       heading.width > 0 && heading.height > 0,
       'Expanding must reveal the original Markdown heading'
     )
-    await control.command('click', toggle)
-    await control.command('waitFor', `${toggle}[aria-expanded="false"]`)
+    await control.command('click', descriptionToggle)
+    await control.command('waitFor', `${descriptionToggle}[aria-expanded="false"]`)
     await control.command('click', `${home} [data-testid="personal-home-back-to-issues"]`)
     await control.command('fill', record, { value: savedRecord })
 
