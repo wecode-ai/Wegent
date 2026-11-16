@@ -15,7 +15,7 @@ import type {
   CollaborationWorkspace,
   CollaborationWorkspaceMember,
 } from "../types";
-import { WorkspaceMembersConfiguration } from './WorkspaceMembersConfiguration'
+import { WorkspaceMembersConfiguration } from "./WorkspaceMembersConfiguration";
 import {
   WorkspaceCollaborationGroupsConfiguration,
   type WorkspaceResourceCommands,
@@ -234,15 +234,22 @@ describe("WorkspaceCollaborationGroupsConfiguration", () => {
     );
     expect(byTestId("collaboration-group-leader-human-7")).toBeNull();
     await click(byTestId("collaboration-group-create-add-members"));
-    expect(byTestId("collaboration-group-create-member-human-7")).not.toBeNull();
+    expect(
+      byTestId("collaboration-group-create-member-human-7"),
+    ).not.toBeNull();
     expect(container.textContent).toContain("我");
     await click(byTestId("collaboration-group-create-member-agent-1"));
-    await change(byTestId<HTMLInputElement>("collaboration-group-name"), "Agent team");
+    await change(
+      byTestId<HTMLInputElement>("collaboration-group-name"),
+      "Agent team",
+    );
     await click(byTestId("collaboration-group-create"));
     expect(commands.createCollaborationGroup).toHaveBeenCalledWith(
       expect.objectContaining({
         leader: { kind: "agent", id: "1", name: "Codex", responsibility: "" },
-        members: [{ kind: "agent", id: "1", name: "Codex", responsibility: "" }],
+        members: [
+          { kind: "agent", id: "1", name: "Codex", responsibility: "" },
+        ],
       }),
     );
   });
@@ -635,6 +642,77 @@ describe("WorkspaceCollaborationGroupsConfiguration", () => {
         },
       }),
     );
+  });
+
+  it("describes workspace source deletion truthfully and keeps cancel non-destructive", async () => {
+    const sourceGroup = {
+      ...group,
+      owner_type: "workspace" as const,
+      owner_id: "workspace-1",
+    };
+    await act(async () =>
+      root.render(
+        <WorkspaceCollaborationGroupsConfiguration
+          workspace={
+            {
+              id: "workspace-1",
+              access_role: "Owner",
+            } as CollaborationWorkspace
+          }
+          groups={[sourceGroup]}
+          members={[]}
+          agents={[codexAgent, claudeAgent]}
+          locale="zh-CN"
+          commands={commands}
+          canManage
+        />,
+      ),
+    );
+    await click(byTestId("collaboration-group-remove-group-1"));
+    const dialog = container.querySelector('[role="dialog"]')!;
+    expect(dialog.textContent).toContain("删除后无法恢复");
+    expect(dialog.textContent).not.toContain("源资源会保留");
+    await click(byTestId("collaboration-group-delete-cancel"));
+    expect(commands.removeCollaborationGroup).not.toHaveBeenCalled();
+  });
+
+  it("keeps the next group confirmation open when an earlier removal finishes", async () => {
+    let finish!: () => void;
+    commands.removeCollaborationGroup = vi.fn(
+      () =>
+        new Promise<void>((resolve) => {
+          finish = resolve;
+        }),
+    );
+    const second = { ...group, id: "second", name: "Second group" };
+    const renderGroups = async (groups: CollaborationGroup[]) => {
+      await act(async () =>
+        root.render(
+          <WorkspaceCollaborationGroupsConfiguration
+            groups={groups}
+            members={[]}
+            agents={[codexAgent, claudeAgent]}
+            locale="zh-CN"
+            commands={commands}
+            canManage
+          />,
+        ),
+      );
+    };
+    await renderGroups([group, second]);
+    await click(byTestId("collaboration-group-remove-group-1"));
+    await click(byTestId("collaboration-group-delete-confirm"));
+    await renderGroups([second]);
+    await click(byTestId("collaboration-group-remove-second"));
+    await act(async () => finish());
+    expect(byTestId("collaboration-group-delete-dialog").textContent).toContain(
+      "Second group",
+    );
+    expect(
+      byTestId<HTMLButtonElement>("collaboration-group-delete-confirm")
+        .disabled,
+    ).toBe(false);
+    expect(commands.removeCollaborationGroup).toHaveBeenCalledTimes(1);
   });
 
   it("deletes a collaboration group from its detail page after confirmation", async () => {

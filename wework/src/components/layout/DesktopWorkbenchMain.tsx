@@ -83,6 +83,7 @@ import {
 import {
   WEWORK_MIN_EXECUTOR_VERSION,
   isClaudeCodeDevice,
+  isCloudDevice,
   isDeviceBelowWeWorkVersion,
   isWeWorkCompatibleDevice,
   isRemoteTaskDevice,
@@ -324,6 +325,7 @@ import {
   resolveAutomaticModel,
   selectedModelExecutionFields,
 } from '@/features/workbench/runtimeModelSelection'
+import { runtimeTaskModelControlOverrides } from '@/features/workbench/runtimeTaskModelControls'
 import { titleModelForGeneration } from '@/features/workbench/useWorkbenchRuntimeMessaging'
 import {
   restartHarnessAppDevelopmentRuntime,
@@ -1224,6 +1226,16 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
   const { t: tChat } = useTranslation('chat')
   const currentRuntimeTask = pane.currentRuntimeTask
   const currentProject = pane.currentProject
+  // Split panes share one workbench provider. Bind model controls to this
+  // pane's conversation so an inactive pane cannot inherit the active model.
+  const paneModelChat = useMemo<ProjectChatControls>(() => {
+    if (!currentRuntimeTask) return projectChat
+    const selection = projectChat.resolveRuntimeTaskModelSelection(currentRuntimeTask)
+    return {
+      ...projectChat,
+      ...runtimeTaskModelControlOverrides(projectChat, currentRuntimeTask, selection),
+    }
+  }, [currentRuntimeTask, projectChat])
   const currentRuntimeProjectWork = state.runtimeWork?.projects.find(
     projectWork => currentProject && runtimeProjectUiId(projectWork.project) === currentProject.id
   )
@@ -2327,11 +2339,11 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
     (harnessId: LocalHarnessId) =>
       listLocalHarnessModelOptions(
         harnessId,
-        projectChat.models,
-        projectChat.selectedModel,
-        projectChat.selectedModelOptions
+        paneModelChat.models,
+        paneModelChat.selectedModel,
+        paneModelChat.selectedModelOptions
       ),
-    [projectChat.models, projectChat.selectedModel, projectChat.selectedModelOptions]
+    [paneModelChat.models, paneModelChat.selectedModel, paneModelChat.selectedModelOptions]
   )
   const getSelectedHarnessModel = useCallback(
     (preference: LocalHarnessPreference): LocalHarnessModelOption | null => {
@@ -2575,7 +2587,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
         ) ?? null)
       : null
   const activeHarnessResumeModelKey = activeLocalHarnessSession?.modelKey?.trim() || null
-  const harnessModelsReady = projectChat.isModelSelectionReady ?? true
+  const harnessModelsReady = paneModelChat.isModelSelectionReady ?? true
   const activeHarnessResumeModel =
     activeLocalHarnessSession && activeHarnessResumePreference
       ? (getHarnessModelOptions(activeHarnessResumePreference.id).find(
@@ -3154,10 +3166,15 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
           t('workbench.current_device', '当前设备'),
       })
     : activeDeviceVersionUnsupported
-      ? t('workbench.device_status_active_upgrade_required', {
-          device: activeDevice?.name || activeDeviceId || t('workbench.project_device'),
-          version: WEWORK_MIN_EXECUTOR_VERSION,
-        })
+      ? t(
+          activeDevice && isCloudDevice(activeDevice)
+            ? 'workbench.device_status_cloud_version_required'
+            : 'workbench.device_status_active_upgrade_required',
+          {
+            device: activeDevice?.name || activeDeviceId || t('workbench.project_device'),
+            version: WEWORK_MIN_EXECUTOR_VERSION,
+          }
+        )
       : noStandaloneCompatibleDevice
         ? t('workbench.device_status_no_online_device')
         : undefined
@@ -3174,7 +3191,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
   }, [retryFailedMessage])
   const projectChatWithModelSelectorSignal = useMemo<ProjectChatControls>(
     () => ({
-      ...projectChat,
+      ...paneModelChat,
       scopeKey: paneSession.scopeKey,
       attachments: paneSession.attachments,
       uploadingFiles: paneSession.uploadingFiles,
@@ -3184,23 +3201,24 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
       removeAttachment: paneSession.removeAttachment,
       modelSelectorOpenSignal,
       setSelectedModel: model => {
-        projectChat.setSelectedModel(model)
+        paneModelChat.setSelectedModel(model)
         if (model) retryFailedMessageAfterModelSelect()
       },
-      setSelectedModelAndOptions: projectChat.setSelectedModelAndOptions
+      setSelectedModelAndOptions: paneModelChat.setSelectedModelAndOptions
         ? (model, options) => {
-            projectChat.setSelectedModelAndOptions?.(model, options)
+            paneModelChat.setSelectedModelAndOptions?.(model, options)
             retryFailedMessageAfterModelSelect()
           }
         : undefined,
       onModelSelectorOpenChange: (open, closeReason) => {
-        projectChat.onModelSelectorOpenChange?.(open, closeReason)
+        paneModelChat.onModelSelectorOpenChange?.(open, closeReason)
         if (!open && closeReason !== 'selection') pendingModelRetryRef.current = null
       },
       onRefineTrialPrompt: refinePluginTrialPrompt,
     }),
     [
       modelSelectorOpenSignal,
+      paneModelChat,
       paneSession.attachmentErrors,
       paneSession.dismissAttachmentError,
       paneSession.attachments,
@@ -3208,7 +3226,6 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
       paneSession.removeAttachment,
       paneSession.scopeKey,
       paneSession.uploadingFiles,
-      projectChat,
       refinePluginTrialPrompt,
       retryFailedMessageAfterModelSelect,
     ]
@@ -3220,14 +3237,18 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
         throw new Error(t('workbench.environment_branch_generate_failed'))
       }
       const selectedModel =
-        projectChat.getSelectedModel?.() ??
-        projectChat.selectedModel ??
-        resolveAutomaticModel(projectChat.models)
+        paneModelChat.getSelectedModel?.() ??
+        paneModelChat.selectedModel ??
+        resolveAutomaticModel(paneModelChat.models)
       const selectedOptions =
-        projectChat.getSelectedModelOptions?.() ?? projectChat.selectedModelOptions
+        paneModelChat.getSelectedModelOptions?.() ?? paneModelChat.selectedModelOptions
       const executionModel = selectedModelExecutionFields(selectedModel, selectedOptions)
       const generationModel =
-        titleModelForGeneration(appPreferences?.preferences, projectChat.models, executionModel) ??
+        titleModelForGeneration(
+          appPreferences?.preferences,
+          paneModelChat.models,
+          executionModel
+        ) ??
         (executionModel.modelId
           ? {
               modelId: executionModel.modelId,
@@ -3239,7 +3260,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
         selectedModel: selectedModel?.name ?? null,
         configuredTitleModel: appPreferences?.preferences.friendlyTaskTitleModel?.modelName ?? null,
         generationModel: generationModel?.modelId ?? null,
-        availableModelCount: projectChat.models.length,
+        availableModelCount: paneModelChat.models.length,
       })
       if (!generationModel) {
         throw new Error(t('workbench.environment_branch_generate_model_unavailable'))
@@ -3254,7 +3275,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
       appPreferences?.preferences,
       composerWorkspaceTarget?.deviceId,
       currentRuntimeTask?.deviceId,
-      projectChat,
+      paneModelChat,
       branchNameApi,
       t,
     ]
@@ -5747,7 +5768,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
                                 {
                                   source: currentRuntimeConversationSource ?? currentRuntimeTask,
                                   lastTurnId: message.turnId,
-                                  ...runtimeTaskForkModelOptions(projectChat),
+                                  ...runtimeTaskForkModelOptions(paneModelChat),
                                 }
                               )
                             } catch (error) {

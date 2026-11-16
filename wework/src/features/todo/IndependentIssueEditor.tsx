@@ -1,3 +1,5 @@
+import { DefaultRunnerSetting } from '@/components/settings/DefaultRunnerSetting'
+import { IssueProjectEnvironmentPicker } from './IssueProjectEnvironmentPicker'
 import { useEffect, useState, type ReactNode } from 'react'
 import { Folder } from 'lucide-react'
 import type { SharedWorkspaceApi } from '@wegent/collaboration'
@@ -161,58 +163,6 @@ export function IndependentIssueEditor({
       }}
     >
       <fieldset disabled={busy} className="grid min-w-0 gap-5">
-        {canSelectProject && (
-          <div className="grid gap-1">
-            <label className="flex items-center gap-2 text-sm">
-              <Folder className="h-4 w-4 shrink-0 text-text-muted" />
-              <span className="shrink-0 text-text-secondary">
-                {t('issue_creation.project_label')}
-              </span>
-              <select
-                data-testid="independent-issue-project"
-                aria-label={t('issue_creation.project_label')}
-                className={`${control} flex-1`}
-                disabled={loadingProjects}
-                value={projectId}
-                onChange={event => {
-                  setProjectId(event.target.value)
-                  const target = projects.find(row => String(row.id) === event.target.value)
-                  setProjectStatus(target?.board_config?.statuses[0]?.id ?? '')
-                }}
-              >
-                <option value="">{t('issue_creation.independent_option')}</option>
-                {projects.map(project => (
-                  <option key={project.id} value={project.id}>
-                    {project.name}
-                  </option>
-                ))}
-              </select>
-            </label>
-            <p className="text-sm text-text-muted">
-              {t(
-                projectId
-                  ? 'issue_creation.project_scope_hint'
-                  : 'issue_creation.independent_scope_hint'
-              )}
-            </p>
-            {projectError && (
-              <p role="alert" className="text-sm text-error">
-                {projectError}
-                <button
-                  type="button"
-                  data-testid="issue-project-retry"
-                  className="ml-2 underline"
-                  onClick={() => {
-                    setLoadingProjects(true)
-                    setRevision(v => v + 1)
-                  }}
-                >
-                  {t('independentIssues.retry')}
-                </button>
-              </p>
-            )}
-          </div>
-        )}
         <label className="grid gap-1">
           <span className="sr-only">{t('independentIssues.title')}</span>
           <input
@@ -224,17 +174,9 @@ export function IndependentIssueEditor({
             placeholder={t('issue_creation.title_placeholder')}
             value={draft.title}
             onChange={event => set('title', event.target.value)}
-            className="min-h-11 w-full border-0 bg-transparent text-heading-sm font-medium outline-none keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-ring placeholder:text-text-muted md:min-h-8"
+            className="min-h-11 w-full rounded-lg border border-border bg-background px-3 py-2 text-heading-sm font-medium outline-none keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-ring placeholder:text-text-muted md:min-h-8"
           />
         </label>
-        <IssueParticipantPicker
-          api={api}
-          collaborationApi={collaborationApi}
-          userId={userId}
-          selected={people}
-          onChange={changePeople}
-          disabled={busy || owner !== userId}
-        />
         <label className="grid gap-1">
           <span className="sr-only">{t('independentIssues.description')}</span>
           <textarea
@@ -243,11 +185,92 @@ export function IndependentIssueEditor({
             placeholder={t('issue_creation.description_placeholder')}
             value={draft.description}
             onChange={event => set('description', event.target.value)}
-            rows={6}
+            rows={4}
             className="w-full resize-y rounded-lg border border-border bg-background p-3 text-base leading-6 outline-none focus:border-primary"
           />
         </label>
-        <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
+        <div className="grid min-w-0 gap-4 border-t border-border pt-4">
+          {canSelectProject && (
+            <div className="grid gap-1">
+              <label className="flex items-center gap-2 text-sm">
+                <Folder className="h-4 w-4 shrink-0 text-text-muted" />
+                <span className="shrink-0 text-text-secondary">
+                  {t('issue_creation.project_label')}
+                </span>
+                <select
+                  data-testid="independent-issue-project"
+                  aria-label={t('issue_creation.project_label')}
+                  className={`${control} flex-1`}
+                  disabled={loadingProjects}
+                  value={projectId}
+                  onChange={event => {
+                    setProjectId(event.target.value)
+                    const target = projects.find(row => String(row.id) === event.target.value)
+                    setProjectStatus(target?.board_config?.statuses[0]?.id ?? '')
+                  }}
+                >
+                  <option value="">{t('issue_creation.independent_option')}</option>
+                  {projects.map(project => (
+                    <option key={project.id} value={project.id}>
+                      {project.name}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <p className="text-sm text-text-muted">
+                {t(
+                  projectId
+                    ? 'issue_creation.project_scope_hint'
+                    : 'issue_creation.independent_scope_hint'
+                )}
+              </p>
+              {projectError && (
+                <p role="alert" className="text-sm text-error">
+                  {projectError}
+                  <button
+                    type="button"
+                    data-testid="issue-project-retry"
+                    className="ml-2 underline"
+                    onClick={() => {
+                      setLoadingProjects(true)
+                      setRevision(v => v + 1)
+                    }}
+                  >
+                    {t('independentIssues.retry')}
+                  </button>
+                </p>
+              )}
+            </div>
+          )}
+          <div className="grid min-w-0 gap-2">
+            <span className="text-sm text-text-secondary">
+              {t('issue_creation.add_participants')}
+            </span>
+            <IssueParticipantPicker
+              api={api}
+              collaborationApi={collaborationApi}
+              userId={userId}
+              selected={people}
+              onChange={changePeople}
+              disabled={busy || owner !== userId}
+            />
+          </div>
+          <div className="grid min-w-0 gap-2">
+            <span className="text-sm text-text-secondary">{t('issue_creation.runtime_label')}</span>
+            {projectId && collaborationApi ? (
+              <IssueProjectEnvironmentPicker
+                key={projectId}
+                api={collaborationApi}
+                projectId={projectId}
+                disabled={busy}
+              />
+            ) : (
+              <DefaultRunnerSetting compact />
+            )}
+            <p className="text-xs text-text-muted">{t('issue_creation.runtime_optional_hint')}</p>
+          </div>
+        </div>
+        <div className="grid grid-cols-2 gap-4">
           {field(
             t('independentIssues.status'),
             projectId && statuses.length ? (

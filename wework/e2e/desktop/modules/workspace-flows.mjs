@@ -57,7 +57,7 @@ const FIXED_BOARD_TAB_CONTENT_TEST_ID = `workspace-tab-content-${FIXED_BOARD_ROU
 const FIXED_BOARD_CONTENT_SELECTOR = `[data-testid="${FIXED_BOARD_TAB_CONTENT_TEST_ID}"]`
 const WEWORK_COLLABORATION_PLATFORM_TEST_ID = 'wework-collaboration-platform'
 const SHARED_COLLABORATION_PLATFORM_TEST_ID = 'collaboration-platform-root'
-const LOCAL_COLLABORATION_WORKSPACE_ID = 'wework-local-workspace'
+export const LOCAL_COLLABORATION_WORKSPACE_ID = 'wework-local-workspace'
 export function inProjectCreateDialog(selector = '') {
   const dialog = '[data-testid="collaboration-project-create-dialog"]'
   return selector ? `${dialog} ${selector}` : dialog

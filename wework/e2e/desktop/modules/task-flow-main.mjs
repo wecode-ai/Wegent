@@ -216,6 +216,8 @@ import {
   MIXED_TOOL_TURN_MODEL_PROTOCOL_MATRIX_CASES,
   MODEL_API_KEY,
   MODEL_SWITCH_ONLY,
+  PROVIDER_SWITCH_SUBSCRIPTION_ACCOUNT_ID,
+  PROVIDER_SWITCH_SUBSCRIPTION_ACCESS_TOKEN,
   PASTED_WORKSPACE_PATHS_ONLY,
   PLUGIN_DISPLAY_NAME,
   PLUGIN_MARKETPLACE_NAME,
@@ -1345,10 +1347,14 @@ async function main() {
     appBundlePath = desktopApp.appBundlePath
     const resolvedAppCodexBinary = desktopApp.codexBinaryPath ?? codexBinary
     if (!RUNS_PLUGIN_E2E) {
+      const usesModelRoutingSubscription = DESKTOP_SEGMENT === 'model-routing' || MODEL_SWITCH_ONLY
+      const modelRoutingConfigToml = usesModelRoutingSubscription
+        ? `openai_base_url = "${control.url}/backend-api/codex"\nchatgpt_base_url = "${control.url}/backend-api/"`
+        : ''
       await writeCodexConfig(
         codexHome,
         desktopScenario?.modelServerUrl ?? control.url,
-        `${desktopScenario?.codexConfigToml ?? ''}\n${
+        `${desktopScenario?.codexConfigToml ?? ''}\n${modelRoutingConfigToml}\n${
           shouldConfigureToolDetailsMcp() ? toolDetailsMcpConfigToml() : ''
         }\n${
           DESKTOP_SEGMENT === 'permission-modes'
@@ -1361,11 +1367,37 @@ async function main() {
         desktopScenario?.modelProviderId,
         desktopScenario?.modelId
       )
-      await writeFile(
-        join(codexHome, 'auth.json'),
-        `${JSON.stringify({ OPENAI_API_KEY: MODEL_API_KEY })}\n`,
-        'utf8'
-      )
+      if (usesModelRoutingSubscription) {
+        const claims = Buffer.from(
+          JSON.stringify({
+            exp: Math.floor(Date.now() / 1000) + 3600,
+            'https://api.openai.com/auth': {
+              chatgpt_account_id: PROVIDER_SWITCH_SUBSCRIPTION_ACCOUNT_ID,
+              chatgpt_plan_type: 'pro',
+            },
+          })
+        ).toString('base64url')
+        await writeFile(
+          join(codexHome, 'auth.json'),
+          `${JSON.stringify({
+            auth_mode: 'chatgpt',
+            tokens: {
+              account_id: PROVIDER_SWITCH_SUBSCRIPTION_ACCOUNT_ID,
+              access_token: PROVIDER_SWITCH_SUBSCRIPTION_ACCESS_TOKEN,
+              refresh_token: 'wework-model-switch-e2e-refresh',
+              id_token: `header.${claims}.signature`,
+            },
+            last_refresh: new Date().toISOString(),
+          })}\n`,
+          'utf8'
+        )
+      } else {
+        await writeFile(
+          join(codexHome, 'auth.json'),
+          `${JSON.stringify({ OPENAI_API_KEY: MODEL_API_KEY })}\n`,
+          'utf8'
+        )
+      }
     }
 
     const needsPackagedHarnessRuntime =

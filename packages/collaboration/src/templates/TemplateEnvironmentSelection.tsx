@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type { CollaborationExecutionEnvironment } from '../types'
+import { ChevronRight, Monitor } from 'lucide-react'
 import type { CollaborationLocale } from '../i18n'
 import { templateMessages } from './messages'
 
@@ -26,43 +27,60 @@ export function TemplateEnvironmentSelection({
 }) {
   const m = templateMessages[locale]
   const available = environments.filter(
-    environment => environment.device_id != null && environment.can_use !== false
+    environment =>
+      environment.device_id != null &&
+      environment.can_use !== false &&
+      environment.status === 'online'
   )
   return (
-    <section
-      className="collaboration-template-create-section"
+    <details
+      className="collaboration-runtime-disclosure"
       data-testid="template-environment-selection"
     >
-      <h3>{m.executionEnvironment}</h3>
-      <p>{m.environmentAuthorizationHint}</p>
-      {loading && <p role="status">{m.loading}</p>}
-      {error && (
-        <p role="alert">
-          {error}{' '}
-          <button type="button" data-testid="template-environments-retry" onClick={onRetry}>
-            {m.retry}
-          </button>
-        </p>
-      )}
-      {available.map(environment => (
-        <label className="collaboration-template-field" key={environment.id}>
-          <span>{environment.name}</span>
-          <input
-            type="checkbox"
-            data-testid={`template-authorize-environment-${environment.device_id}`}
-            disabled={disabled || environment.status !== 'online'}
-            checked={selected.includes(environment.device_id!)}
-            onChange={event =>
-              onChange(
-                event.target.checked
-                  ? [...selected, environment.device_id!]
-                  : selected.filter(id => id !== environment.device_id)
-              )
-            }
-          />
-        </label>
-      ))}
-      {!available.length && !loading && !error && <p>{m.selectExecutionEnvironment}</p>}
-    </section>
+      <summary data-testid="template-environment-selection-toggle">
+        <ChevronRight aria-hidden="true" />
+        <span>{m.optionalRuntimeConfiguration}</span>
+      </summary>
+      <div className="collaboration-runtime-disclosure-body">
+        <p className="collaboration-runtime-hint">{m.deferredRuntimeHint}</p>
+        {loading && <p role="status">{m.loading}</p>}
+        {error && (
+          <p role="alert">
+            {error}{' '}
+            <button type="button" data-testid="template-environments-retry" onClick={onRetry}>
+              {m.retry}
+            </button>
+          </p>
+        )}
+        {available.map(environment => (
+          <label className="collaboration-runtime-device" key={environment.id}>
+            <input
+              type="checkbox"
+              data-testid={`template-authorize-environment-${environment.device_id}`}
+              disabled={disabled}
+              checked={selected.includes(environment.device_id!)}
+              onChange={event =>
+                onChange(
+                  event.target.checked
+                    ? [...selected, environment.device_id!]
+                    : selected.filter(id => id !== environment.device_id)
+                )
+              }
+            />
+            <Monitor aria-hidden="true" />
+            <span className="collaboration-runtime-device-name" title={environment.name}>
+              {environment.name}
+            </span>
+            <span className="collaboration-runtime-device-status">{m.environmentOnline}</span>
+          </label>
+        ))}
+        {available.length > 0 && (
+          <p className="collaboration-runtime-hint">{m.environmentAuthorizationHint}</p>
+        )}
+        {!available.length && !loading && !error && (
+          <p className="collaboration-runtime-hint">{m.selectExecutionEnvironment}</p>
+        )}
+      </div>
+    </details>
   )
 }

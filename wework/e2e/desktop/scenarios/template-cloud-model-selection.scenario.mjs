@@ -50,13 +50,17 @@ export function createDesktopScenario(options) {
       await control.command('click', selector('template-tab-discover'))
       await control.command('clickWhenEnabled', selector('template-details-product-lifecycle'))
       await control.command('clickWhenEnabled', selector('template-use'))
+      await control.command(
+        'clickWhenEnabled',
+        `${selector('template-runtime-configuration')} > summary`
+      )
       const field = selector('template-model-codex')
       await control.command('waitFor', `${field}:enabled`)
       await control.command('fill', selector('template-group-name-main'), {
         value: `云端模型选择-${process.pid}`,
       })
       await control.command('fill', field, { value: '' })
-      await control.command('waitFor', `${selector('template-bindings-apply')}:disabled`)
+      await control.command('waitFor', `${selector('template-bindings-apply')}:enabled`)
       assert.deepEqual(
         (await agents(projectId)).map(agent => agent.id),
         before.map(agent => agent.id)

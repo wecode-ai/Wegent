@@ -22,6 +22,24 @@ export type AgentModelPolicy =
   | { mode: 'user_select'; model?: never }
   | { mode: 'fixed'; model: RunnerModelIdentity }
 
+/** Persist configuration choices; live runner and model admission belongs to execution. */
+export function agentDefinitionRouting(
+  environmentId?: string,
+  model?: RunnerModelIdentity
+): {
+  executionPolicy: AgentExecutionPolicy
+  modelPolicy: AgentModelPolicy
+} {
+  return {
+    executionPolicy: environmentId
+      ? { mode: 'fixed', environment_id: environmentId }
+      : { mode: 'user_select' },
+    modelPolicy: model
+      ? { mode: 'fixed', model: runnerModelIdentity(model) }
+      : { mode: 'user_select' },
+  }
+}
+
 export interface RunnerModel extends RunnerModelIdentity {
   label: string
   local_model_id: string
@@ -272,7 +290,7 @@ export function resolveRunnerSelection(input: {
   ) {
     throw new Error('RUNNER_MODEL_FIXED: this agent has a fixed model')
   }
-  if (!model && !input.automatic && input.executionPolicy.mode === 'fixed') {
+  if (!model && !input.automatic && policy.mode === 'fixed') {
     const defaults = candidates.map(environment =>
       environment.models.find(item => item.runtime === input.runtime && item.is_default)
     )
@@ -283,7 +301,7 @@ export function resolveRunnerSelection(input: {
   if (model.runtime !== input.runtime)
     throw new Error('RUNNER_RUNTIME_MISMATCH: the model does not support this runtime')
   const selectedModel = runnerModelIdentity(model)
-  if (model.source === 'native' && input.executionPolicy.mode !== 'fixed')
+  if (model.source === 'native' && policy.mode !== 'fixed')
     throw new Error('RUNNER_MODEL_UNAVAILABLE: local models require a fixed environment')
   const catalogCloudModel = (input.cloudModels ?? []).some(
     item => runnerModelKey(item) === runnerModelKey(model!)

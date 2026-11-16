@@ -125,7 +125,7 @@ pub async fn build_with_clients(
 
     Ok(AppState {
         completion_app: std::sync::OnceLock::new(),
-        background_jobs: crate::background_jobs::BackgroundJobsClient::from_env()?,
+        background_jobs: crate::background_jobs::client_from_env()?,
         video_extensions: Arc::new(crate::background_jobs::video::DefaultVideoExtensions),
         entity_resolvers: crate::permissions::EntityResolvers::public(mysql.clone()),
         seed_tasks: crate::new_user_resources::default_tasks(mysql.clone()),

@@ -10,7 +10,7 @@ import { resolveWorkbenchPaths } from './workbench-environment.js'
 
 const execute = promisify(execFile)
 
-/** Target-owned upgrade/recovery step. Run before any executor or Goal recovery starts. */
+/** Target-owned offline migration for stopped release activation. */
 export async function migrateCodexProviderState(
   options: Pick<ManagedExecutorRuntimeOptions, 'environment' | 'dataDirectory'>,
   signal?: AbortSignal,
@@ -32,6 +32,7 @@ export async function migrateCodexProviderState(
           codex_home: home,
           agents_root: agents,
           ...(waitForWriters ? { wait_for_writers: true } : {}),
+          ...(environment.WEWORK_DEVELOPMENT_ISOLATED === '1' ? { admit_current: true } : {}),
         }),
         '--executor-stopped',
         // An older binary must exit without initializing or opening any Home.

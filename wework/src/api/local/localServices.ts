@@ -3872,7 +3872,7 @@ export function createLocalAppServices(deps: LocalAppServicesDeps = {}): Workben
         const selection = await requestRunnerSelection({
           environments,
           cloud_models: cloudModels,
-          cloud_only: agent.executionPolicy.mode !== 'fixed',
+          cloud_only: agent.executionPolicy.mode === 'project_pool',
           runtime: agent.runtime,
           execution_policy:
             task.runner_binding && !recovery

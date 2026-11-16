@@ -6,6 +6,28 @@ import { normalizeTaskDescription } from './taskDescription'
 import { TaskDescriptionEditor } from './TaskDescriptionEditor'
 
 describe('TaskDescriptionEditor', () => {
+  it('shows the empty hint without saving it and removes it when editing starts', async () => {
+    const onChange = vi.fn()
+    const placeholder = '添加描述，说明背景、目标或处理要求…'
+    const view = render(
+      <TaskDescriptionEditor
+        value="<p></p>"
+        onChange={onChange}
+        disabled
+        placeholder={placeholder}
+      />
+    )
+    expect(screen.getByTestId('cloud-todo-detail-description-empty')).toHaveTextContent(placeholder)
+    expect(onChange).not.toHaveBeenCalled()
+    view.rerender(<TaskDescriptionEditor value="" onChange={onChange} placeholder={placeholder} />)
+    expect(screen.queryByTestId('cloud-todo-detail-description-empty')).not.toBeInTheDocument()
+    expect(await screen.findByTestId('cloud-todo-detail-description')).toHaveAttribute(
+      'contenteditable',
+      'true'
+    )
+    expect(onChange).not.toHaveBeenCalled()
+  })
+
   it('repairs only the WebKit first-composition duplicate shape', () => {
     const original = {
       id: 'nested-empty-block',

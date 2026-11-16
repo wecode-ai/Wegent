@@ -294,6 +294,7 @@ fn model_switch_cleanup_is_consumed_once_per_routed_model_change() {
             model_to_commit: Some("wework-gpt-5.6-luna".to_owned()),
             clear_pending_model_switch: false,
         },
+        &Default::default(),
     );
     let repeated_token = register(
         "model-switch-consumed-once",
@@ -330,6 +331,7 @@ fn model_switch_cleanup_is_consumed_once_per_routed_model_change() {
             model_to_commit: Some("gpt-5.6-sol".to_owned()),
             clear_pending_model_switch: false,
         },
+        &Default::default(),
     );
     {
         let entries = registry().lock().expect("registry lock");
