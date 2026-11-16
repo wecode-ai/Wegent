@@ -708,26 +708,35 @@ fails for missing credentials.
 
 ### `cloud-device-lifecycle`
 
-This checkpoint reuses the real cloud Executor started by CI and verifies:
+This checkpoint assigns the two existing CI Executor processes to one sandbox. The public
+Backend registers a test-only sandbox provider that operates those processes through the
+runner. The checkpoint verifies:
 
-1. The initial Backend state is `online`, with an Executor version and Runtime identity.
-2. Wework shows the upgrade action, current version, target version, and temporary-offline warning.
-3. In a managed cloud environment, restart targets the Sandbox identity and disables device
-   actions while restart is pending.
-4. The test really stops the Executor process, waits for Backend `offline`, and starts the same
-   Executor again.
-5. The Backend returns to `online`, Runtime identity stays stable, and Wework reports recovery
-   and re-enables actions.
-6. The public-Backend branch without managed recovery must show an explicit restart failure and
-   must not mislabel the still-online device as offline.
+1. Both Executors start online with distinct Runtime identities. The device menu and
+   Update available badge open a restart confirmation; the badge shows both versions.
+2. The target is idle while its sandbox sibling runs a real desktop task with a held model
+   response. The owner's unforced upgrade request is rejected because of that sibling,
+   and a forced request from a different signed-in user is denied.
+3. Confirming from the badge sends one forced restart for the sandbox identity. Wework
+   disables device actions during the request and while offline.
+4. The provider stops both Executor processes. After Backend and Wework observe the
+   offline state, the same Executor homes restart and reconnect with unchanged Runtime
+   identities. Wework reports recovery and restores the actions while a newer version
+   remains available.
+
+The public Backend starts without a restart provider. The device menu request first
+verifies the real HTTP 501 response, the error and enabled retry, terminal, and menu
+controls, and the device remaining online. The runner then registers the provider in the
+same Backend process and exercises the successful restart.
 
 Evidence screenshots:
 
 - `cloud-device-01-online.png`
-- `cloud-device-upgrade-confirmation.png`
+- `cloud-device-restart-unavailable.png` (unconfigured public deployment only)
+- `cloud-device-restart-confirmation.png`
 - `cloud-device-restart-pending.png`
+- `cloud-device-restart-offline.png`
 - `cloud-device-restart-recovered.png`
-- `cloud-device-restart-unavailable.png` (public-Backend rejection branch only)
 
 ## CI Checkpoint Mapping
 

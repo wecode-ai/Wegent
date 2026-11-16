@@ -137,11 +137,12 @@ classify_wework_path() {
       select_target "cloud:conversation-state"
       return
       ;;
-    # Cloud device restart and upgrade actions require the managed Nevis fixture.
+    # Cloud device restart and upgrade actions use the sandbox process fixture.
     wework/src/components/settings/ConnectionsSettingsPage* | \
       wework/src/components/settings/DeviceVersionBadge* | \
       wework/src/features/cloud-devices/* | \
-      wework/e2e/desktop/modules/cloud-device-lifecycle-flow.mjs)
+      wework/e2e/desktop/modules/cloud-device-lifecycle-flow.mjs | \
+      wework/e2e/desktop/support/cloud-restart-backend.py)
       select_target "cloud:cloud-device-lifecycle"
       return
       ;;

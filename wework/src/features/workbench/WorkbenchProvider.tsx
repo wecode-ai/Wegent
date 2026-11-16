@@ -126,6 +126,7 @@ import {
 } from './useWorkbenchContextCallbacks'
 import { useWorkbenchDataRefresh } from './useWorkbenchDataRefresh'
 import { useWorkbenchDeviceUpgrades } from './useWorkbenchDeviceUpgrades'
+import { WorkbenchCloudDeviceRestarts } from '@/features/cloud-devices/WorkbenchCloudDeviceRestarts'
 import {
   useHandleBlockedModelSelect,
   useHandleBlockedModelSelection,
@@ -932,6 +933,9 @@ function OwnedWorkbenchProvider({
     services: resolvedServices,
     refreshDevices,
   })
+  const refreshDevicesAfterRestart = useStableEvent(() =>
+    refreshDevices({ useCacheFallback: false })
+  )
 
   const selectProject = useSelectProject({
     projectSelectionStartedRef,
@@ -2036,7 +2040,12 @@ function OwnedWorkbenchProvider({
               />
               <RunnerSelectionHost />
               <DesktopGitAccountConfigurationProvider>
-                <QuestionDiscussionScope>{children}</QuestionDiscussionScope>
+                <WorkbenchCloudDeviceRestarts
+                  devices={state.devices}
+                  refreshDevices={refreshDevicesAfterRestart}
+                >
+                  <QuestionDiscussionScope>{children}</QuestionDiscussionScope>
+                </WorkbenchCloudDeviceRestarts>
               </DesktopGitAccountConfigurationProvider>
             </WorkbenchPaneContext.Provider>
           </WorkbenchContext.Provider>

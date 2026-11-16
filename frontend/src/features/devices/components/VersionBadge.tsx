@@ -4,10 +4,10 @@
 
 'use client'
 
-import { ArrowUpCircle } from 'lucide-react'
+import { ArrowUpCircle, RotateCcw } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
-import { Badge } from '@/components/ui/badge'
+import { Badge, badgeVariants } from '@/components/ui/badge'
 import { useTranslation } from '@/hooks/useTranslation'
 
 interface VersionBadgeProps {
@@ -16,6 +16,7 @@ interface VersionBadgeProps {
   updateAvailable: boolean
   className?: string
   onUpgrade?: () => void
+  onRestart?: () => void
   isUpgrading?: boolean
   isOpenClaw?: boolean
 }
@@ -26,6 +27,7 @@ export function VersionBadge({
   updateAvailable,
   className,
   onUpgrade,
+  onRestart,
   isUpgrading,
   isOpenClaw,
 }: VersionBadgeProps) {
@@ -40,17 +42,32 @@ export function VersionBadge({
         <TooltipProvider>
           <Tooltip>
             <TooltipTrigger asChild>
-              <Badge
-                variant="info"
-                data-testid="device-upgrade-badge"
-                onClick={onUpgrade}
-                className={cn(
-                  'border-amber-400 text-amber-600 bg-amber-50 dark:bg-amber-900/20 dark:border-amber-600 dark:text-amber-400 px-1.5 py-0',
-                  onUpgrade && 'cursor-pointer hover:bg-amber-100 dark:hover:bg-amber-900/30'
-                )}
-              >
-                <ArrowUpCircle className="h-3 w-3" />
-              </Badge>
+              {onRestart ? (
+                <button
+                  type="button"
+                  data-testid="cloud-device-restart-version-badge"
+                  aria-label={t('version.clickToRestart')}
+                  onClick={onRestart}
+                  className={cn(
+                    badgeVariants({ variant: 'info' }),
+                    'min-h-11 min-w-11 hover:bg-hover md:min-h-0 md:min-w-0'
+                  )}
+                >
+                  <RotateCcw className="h-3 w-3" aria-hidden="true" />
+                </button>
+              ) : (
+                <Badge
+                  variant="info"
+                  data-testid="device-upgrade-badge"
+                  onClick={onUpgrade}
+                  className={cn(
+                    'border-amber-400 text-amber-600 bg-amber-50 dark:bg-amber-900/20 dark:border-amber-600 dark:text-amber-400 px-1.5 py-0',
+                    onUpgrade && 'cursor-pointer hover:bg-amber-100 dark:hover:bg-amber-900/30'
+                  )}
+                >
+                  <ArrowUpCircle className="h-3 w-3" />
+                </Badge>
+              )}
             </TooltipTrigger>
             <TooltipContent side="bottom" className="max-w-xs">
               <div className="space-y-1.5 text-sm">
@@ -61,7 +78,11 @@ export function VersionBadge({
                 <p className="text-text-muted">
                   {t('version.latest')}: {latestVersion}
                 </p>
-                {onUpgrade && <p className="text-xs text-primary">{t('version.clickToUpgrade')}</p>}
+                {(onRestart || onUpgrade) && (
+                  <p className="text-xs text-primary">
+                    {t(onRestart ? 'version.clickToRestart' : 'version.clickToUpgrade')}
+                  </p>
+                )}
               </div>
             </TooltipContent>
           </Tooltip>
