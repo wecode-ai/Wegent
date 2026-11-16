@@ -33,6 +33,7 @@ const imageServices: AttachmentImageServices<IssueCommentAttachment> = {
 
 /** Web persistence adapter for the same composer and attachment UI used by desktop. */
 export function IssueWebCommentComposer({
+  issueActions,
   assignment,
   issueId,
   attachmentApi,
@@ -47,6 +48,7 @@ export function IssueWebCommentComposer({
   onError,
   settings,
 }: {
+  issueActions?: import('./issueCommentActions').CommentIssueActions
   assignment?: import('./useCommentAssignment').CommentAssignment
   issueId: string
   attachmentApi?: SharedWorkspaceAttachmentsApi
@@ -117,6 +119,7 @@ export function IssueWebCommentComposer({
 
   return (
     <IssueMainCommentComposer
+      issueActions={issueActions}
       assignment={assignment}
       value={draft}
       onChange={setDraft}

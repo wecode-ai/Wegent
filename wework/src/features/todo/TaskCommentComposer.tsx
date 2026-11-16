@@ -17,6 +17,7 @@ import { WorkbenchContext } from '@/features/workbench/workbenchContexts'
 import { ReplyPredictionProvider } from '@/features/reply-predictions/ReplyPredictionProvider'
 
 export function TaskCommentComposer({
+  issueActions,
   assignment,
   value,
   onChange,
@@ -32,6 +33,7 @@ export function TaskCommentComposer({
   placeholder,
   predictionAddress,
 }: {
+  issueActions?: import('@wegent/collaboration').CommentIssueActions
   assignment?: import('@wegent/collaboration').CommentAssignment
   value: string
   onChange: (value: string) => void
@@ -62,6 +64,7 @@ export function TaskCommentComposer({
       }
     >
       <IssueMainCommentComposer
+        issueActions={issueActions}
         assignment={assignment}
         value={value}
         onChange={onChange}

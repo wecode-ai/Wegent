@@ -540,7 +540,7 @@ export async function executeStandardCloudBoardMutation<
   return updated;
 }
 
-function resolveStandardCloudBoardGroupMutation<
+export function resolveStandardCloudBoardGroupMutation<
   T extends StandardCloudBoardItem,
 >({
   column,
