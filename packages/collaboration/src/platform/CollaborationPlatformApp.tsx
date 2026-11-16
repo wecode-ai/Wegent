@@ -2976,6 +2976,10 @@ function CollaborationPlatformAppContent({
               name: projectCreateLabels[locale].currentUser,
             },
             members: projectWorkspaceMembers,
+            searchUsers:
+              projectCreateLocation === "cloud"
+                ? api.members.searchUsers
+                : undefined,
             agents: selectedProjectResourceAgents,
             defaultAgentResourceIds: defaultProjectAgentResourceIds,
             groups: projectWorkspaceGroups,
