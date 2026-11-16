@@ -554,6 +554,13 @@ impl RuntimeWorkRpcHandler {
                 "Codex runtime configuration is not ready for account usage",
             ));
         }
+        // Native subscription limits do not exist for API-key or signed-out
+        // accounts. Do not start the app-server just to reject those reads.
+        let account_type = codex_accounts::current_codex_account_type()
+            .map_err(|error| AppIpcError::new("codex_auth_read_failed", error))?;
+        if account_type.as_deref() != Some("chatgpt") {
+            return Ok(json!({"rateLimits": Value::Null, "rateLimitsByLimitId": {}}));
+        }
         self.codex_app_server
             .request("account/rateLimits/read", Value::Null)
             .await

@@ -5,6 +5,46 @@ use super::*;
 use std::os::unix::fs::PermissionsExt;
 
 #[test]
+fn account_usage_without_subscription_auth_does_not_start_native_requests() {
+    let _lock = crate::test_env::lock();
+    let home = tempfile::tempdir().unwrap();
+    let _homes: Vec<_> = [
+        "WEGENT_EXECUTOR_HOME",
+        "WEGENT_CODEX_HOME",
+        "CODEX_HOME",
+        "WEGENT_WORKBENCH_HOME",
+    ]
+    .into_iter()
+    .map(|key| ScalarEnv::set(key, home.path().to_str().unwrap()))
+    .collect();
+    tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap()
+        .block_on(async {
+            let handler = RuntimeWorkRpcHandler::new(
+                "usage-auth",
+                home.path().join("must-not-start").to_str().unwrap(),
+            );
+            for auth in [
+                None,
+                Some(br#"{"OPENAI_API_KEY":"synthetic-key"}"#.as_slice()),
+            ] {
+                if let Some(auth) = auth {
+                    fs::write(home.path().join("auth.json"), auth).unwrap();
+                }
+                let result = handler.read_codex_rate_limits().await.unwrap();
+                assert!(result["rateLimits"].is_null());
+                assert_eq!(result["rateLimitsByLimitId"], json!({}));
+            }
+            fs::remove_file(home.path().join("auth.json")).unwrap();
+            fs::create_dir(home.path().join("auth.json")).unwrap();
+            let error = handler.read_codex_rate_limits().await.unwrap_err();
+            assert_eq!(error.code, "codex_auth_read_failed");
+        });
+}
+
+#[test]
 fn background_account_usage_waits_for_initial_runtime_proxy_configuration() {
     let _lock = crate::test_env::lock();
     let home = tempfile::tempdir().unwrap();
@@ -17,6 +57,7 @@ fn background_account_usage_waits_for_initial_runtime_proxy_configuration() {
     .into_iter()
     .map(|key| ScalarEnv::set(key, home.path().to_str().unwrap()))
     .collect();
+    fs::write(home.path().join("auth.json"), br#"{"auth_mode":"chatgpt"}"#).unwrap();
     let binary = home.path().join("codex-fixture");
     fs::write(&binary, crate::test_env::with_codex_bundled_catalog(r#"#!/bin/sh
 touch "$(dirname "$0")/native-started"
