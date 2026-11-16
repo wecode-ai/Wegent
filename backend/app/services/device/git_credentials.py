@@ -17,6 +17,7 @@ from app.schemas.device import DeviceType
 from app.services.device.command_service import (
     DeviceCommandError,
     DeviceCommandNotFoundError,
+    _git_command_failure,
     execute_configured_device_command,
 )
 from app.services.device.git_credentials_command import GIT_CREDENTIALS_SECRET_ENV
@@ -270,6 +271,20 @@ def _safe_device_result(
 ) -> dict[str, Any]:
     stdout = result.get("stdout")
     if not result.get("success") or not isinstance(stdout, dict):
+        logger.warning(
+            "Git credential application failed: user_id=%s device_id=%s "
+            "failure=%s exit_code=%s timed_out=%s stdout_is_object=%s",
+            user_id,
+            device_id,
+            (
+                "invalid_json_result"
+                if result.get("success") and not isinstance(stdout, dict)
+                else _git_command_failure(result)
+            ),
+            result.get("exit_code") if type(result.get("exit_code")) is int else None,
+            bool(result.get("timed_out")),
+            isinstance(stdout, dict),
+        )
         error_code = stdout.get("error") if isinstance(stdout, dict) else None
         if error_code == "sync_in_progress":
             raise DeviceGitCredentialConflictError(

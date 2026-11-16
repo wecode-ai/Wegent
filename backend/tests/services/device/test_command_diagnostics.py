@@ -8,7 +8,7 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from app.services.device import command_service
+from app.services.device import command_service, git_credentials
 
 
 @pytest.mark.parametrize(
@@ -38,6 +38,13 @@ from app.services.device import command_service
         ),
         ("No such file or directory", "path_missing"),
         ("an unknown Git error", "git_error"),
+        (
+            "[WinError 206] The filename or extension is too long",
+            "command_line_too_long",
+        ),
+        ("ModuleNotFoundError: No module named 'fcntl'", "platform_lock_unavailable"),
+        ("SyntaxError: unterminated string literal", "command_script_invalid"),
+        ("[WinError 1314] A required privilege is not held", "link_privilege_missing"),
     ],
 )
 def test_git_failure_categories_do_not_need_raw_output(stderr, category):
@@ -55,6 +62,22 @@ def test_git_timeout_and_success_categories():
         command_service._git_command_failure({"success": True, "exit_code": 0})
         == "none"
     )
+
+
+def test_credential_application_logs_failure_category_without_secret_output(caplog):
+    secret = "secret-must-not-appear-in-device-diagnostics"
+    result = {
+        "success": False,
+        "exit_code": secret,
+        "stdout": secret,
+        "stderr": f"ModuleNotFoundError: No module named 'fcntl' {secret}",
+    }
+    with caplog.at_level(logging.WARNING):
+        with pytest.raises(git_credentials.DeviceGitCredentialSyncError):
+            git_credentials._safe_device_result("device-1", result, [], user_id=1)
+    assert "failure=platform_lock_unavailable" in caplog.text
+    assert "exit_code=None" in caplog.text
+    assert secret not in caplog.text
 
 
 @pytest.mark.asyncio
