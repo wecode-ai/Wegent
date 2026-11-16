@@ -23,7 +23,7 @@ export function renderPerformanceReport(reports) {
     '',
     'Baseline not established; these are observations, not a performance pass.',
     '',
-    '| Checkpoint | Environment | Functional | Coverage | RPCs | Describe | Full task reads | Parse / protocol failures | DOM records |',
+    '| Checkpoint | Environment | Functional | Metric coverage | RPCs | Describe | Full task reads | Parse / protocol failures | DOM records |',
     '| --- | --- | --- | --- | ---: | ---: | ---: | ---: | ---: |',
   ]
   const coverageNotes = []

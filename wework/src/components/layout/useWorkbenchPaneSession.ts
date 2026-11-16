@@ -1,3 +1,4 @@
+import { readAfterRuntimeTaskCreation } from '@/features/workbench/runtimeTaskCreation'
 import { SupersededConversationRead } from '@/features/workbench/runtimeConversationSynchronization'
 import { pendingRequestUserInputPayload } from './requestUserInputOverlay'
 import {
@@ -707,8 +708,13 @@ export function useWorkbenchPaneSession({
     }
 
     let cancelled = false
+    const controller = new AbortController()
     const snapshotVersion = beginRuntimeGoalSnapshot(runtimeTaskLoadTarget.address)
-    void getRuntimeGoal(runtimeTaskLoadTarget.address)
+    void readAfterRuntimeTaskCreation(
+      runtimeTaskLoadTarget.address,
+      () => getRuntimeGoal(runtimeTaskLoadTarget.address),
+      controller.signal
+    )
       .then(response => {
         if (
           !cancelled &&
@@ -751,6 +757,7 @@ export function useWorkbenchPaneSession({
 
     return () => {
       cancelled = true
+      controller.abort()
     }
   }, [getRuntimeGoal, lifecycleStore, runtimeTaskLoadTarget])
 

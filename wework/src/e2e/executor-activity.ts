@@ -11,6 +11,7 @@ export interface ExecutorActivity {
   requestFailures: number
   duplicateEvents: number
   duplicateDeliveries: number
+  injectedDuplicateDeliveries: number
   streamStarts: number
   reconnects: number
   fullTaskListReads: number
@@ -19,7 +20,14 @@ export interface ExecutorActivity {
 
 type Activity =
   | { kind: 'request'; method: string; pendingOnly: boolean }
-  | { kind: 'event'; name: string; sequence: number; stream: symbol; delivered: boolean }
+  | {
+      kind: 'event'
+      name: string
+      sequence: number
+      stream: symbol
+      delivered: boolean
+      injected?: boolean
+    }
   | {
       kind: Exclude<
         keyof ExecutorActivity,
@@ -51,6 +59,7 @@ export function startExecutorActivity() {
     requestFailures: 0,
     duplicateEvents: 0,
     duplicateDeliveries: 0,
+    injectedDuplicateDeliveries: 0,
     streamStarts: 0,
     reconnects: 0,
     fullTaskListReads: 0,
@@ -73,7 +82,10 @@ export function startExecutorActivity() {
       }
       events.set(activity.name, (events.get(activity.name) ?? 0) + 1)
       const seen = deliveries.get(activity.stream) ?? new Set<number>()
-      if (seen.has(activity.sequence)) counts.duplicateDeliveries += 1
+      if (seen.has(activity.sequence)) {
+        counts.duplicateDeliveries += 1
+        if (activity.injected) counts.injectedDuplicateDeliveries += 1
+      }
       seen.add(activity.sequence)
       deliveries.set(activity.stream, seen)
     } else counts[activity.kind] += 1

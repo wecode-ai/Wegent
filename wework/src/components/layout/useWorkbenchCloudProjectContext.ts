@@ -1,3 +1,4 @@
+import { readAfterRuntimeTaskCreation } from '@/features/workbench/runtimeTaskCreation'
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import type { ComposerCloudMentionCandidate } from '@/components/chat/composer/composerMentionCandidates'
 import type { CloudLoopItem, CloudProject } from '@/api/deliveries'
@@ -529,6 +530,7 @@ export function useWorkbenchCloudProjectContext({
   const boundProjectSpaceApi = boundCloudProject ? projectSpaceApiFor(boundCloudProject) : undefined
   useEffect(() => {
     let active = true
+    const controller = new AbortController()
     const lookupGeneration = contextLookupGenerationRef.current + 1
     contextLookupGenerationRef.current = lookupGeneration
     if (!contextRuntimeTask) {
@@ -543,6 +545,7 @@ export function useWorkbenchCloudProjectContext({
       })
       return () => {
         active = false
+        controller.abort()
       }
     }
     const contextTaskKey = `${contextRuntimeTask.deviceId}:${contextRuntimeTask.taskId}`
@@ -557,6 +560,7 @@ export function useWorkbenchCloudProjectContext({
     if (!contextActive) {
       return () => {
         active = false
+        controller.abort()
       }
     }
     if (
@@ -567,8 +571,13 @@ export function useWorkbenchCloudProjectContext({
       const lookupStartedAt = performance.now()
       void waitForPendingProjectSpaceContext(
         () =>
-          findContextForTask(
-            runtimeTaskAddressForBinding(contextRuntimeTask, currentRuntimeTaskRef.current)
+          readAfterRuntimeTaskCreation(
+            contextRuntimeTask,
+            () =>
+              findContextForTask(
+                runtimeTaskAddressForBinding(contextRuntimeTask, currentRuntimeTaskRef.current)
+              ),
+            controller.signal
           ),
         contextRuntimeTask,
         () => active
@@ -634,6 +643,7 @@ export function useWorkbenchCloudProjectContext({
         })
       return () => {
         active = false
+        controller.abort()
       }
     }
     void hydrateLocalWorkItems(userId)
@@ -658,6 +668,7 @@ export function useWorkbenchCloudProjectContext({
       })
     return () => {
       active = false
+      controller.abort()
     }
   }, [
     contextActive,

@@ -65,3 +65,31 @@ test('keeps a failed task lookup distinct from a completed execution', async () 
     'Task is no longer available'
   )
 })
+
+test('only a matching explicit transcript cancellation avoids error logging', async () => {
+  const log = vi.spyOn(console, 'error').mockImplementation(() => {})
+  const controller = new AbortController()
+  controller.abort()
+  const request = vi.fn().mockRejectedValue(controller.signal.reason)
+  const api = createRuntimeWorkApiFromIpc(request, async () => 'device')
+  try {
+    await expect(
+      api.getRuntimeTranscript(
+        { taskId: 'task', deviceId: 'device' },
+        { signal: controller.signal }
+      )
+    ).rejects.toBe(controller.signal.reason)
+    expect(log).not.toHaveBeenCalled()
+    const failure = new Error('Storage read failed')
+    request.mockRejectedValueOnce(failure)
+    await expect(
+      api.getRuntimeTranscript(
+        { taskId: 'task', deviceId: 'device' },
+        { signal: controller.signal }
+      )
+    ).rejects.toBe(failure)
+    expect(log).toHaveBeenCalledOnce()
+  } finally {
+    log.mockRestore()
+  }
+})

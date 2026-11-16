@@ -1,3 +1,4 @@
+import { getRuntimeTaskCreationDiagnostics } from '@/features/workbench/runtimeTaskCreation'
 import type {
   DesktopControlCommand,
   DesktopControlExtensionResult,
@@ -268,6 +269,8 @@ export async function executeVerificationControlCommand(
   dependencies: VerificationControlDependencies
 ): Promise<DesktopControlExtensionResult> {
   switch (command.action) {
+    case 'getRuntimeTaskCreationDiagnostics':
+      return { handled: true, value: JSON.stringify(getRuntimeTaskCreationDiagnostics()) }
     case 'startUiRefreshCapture':
       return {
         handled: true,

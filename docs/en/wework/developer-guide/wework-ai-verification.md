@@ -109,6 +109,16 @@ Measurement spans control registration through the last received acknowledgement
 
 Analyze measured variation before establishing a baseline: distinguish startup, polling, business actions and lifecycle termination. Runner contention affects timings and polling counts. Keep renders, DOM mutations and paint frames distinct. Future baseline enforcement still requires an explicit first-establishment phase and must never silently bootstrap again after trusted baseline evidence is lost.
 
+### Diagnosing issues exposed by the current run
+
+`observations` retains wall-clock sample times and renderer elapsed time; `captures` retains each renderer's start/end times. Totals alone cannot establish request frequency. Commands are counted once at started, not twice for started/result acknowledgements.
+
+Controlled transport replays retain the raw duplicate-delivery count and separately record `injectedDuplicateDeliveries`. Only duplicates without real fault-injection provenance are marked as invariant anomalies. Provenance comes from the shared transport gate, with no scenario-name exemptions or error ignore lists. Wire replays discarded by deduplication remain separate facts.
+
+ResizeObserver loop errors include the latest 32 native observer callbacks: construction stacks, callback names and up to four targets' test identifiers, tags and dimensions. Diagnostics capture no DOM text, change no callback timing and suppress no error. This bounded context does not certify complete historical resize delivery.
+
+Transcript cancellation is recognized from the actual AbortSignal and matching rejection; each layer preserves cancellation and the original rejection without duplicating it as a fault. Other failures racing an aborted signal remain reportable. Goal and project-context reads for optimistically opened tasks wait for the same real creation Promise; departing views cancel their own reads while independent tasks remain unaffected. The new `runtime-task-readiness` checkpoint reuses Core CI, holds the actual create request, proves a reader reached the barrier without dispatching RPC, then releases it and verifies the real model result and goal response. No fixed delay establishes readiness.
+
 ## Idle Executor request regression
 
 `idle-executor-requests` uses isolated real Electron and Executor instances with no tasks and no cloud connection. It reuses the shared runner's initial telemetry refusal, reloads the main window, and observes requests. Worktree capability discovery, telemetry configuration, and the shared SSE subscription must each occur once after reload. Foreground and close-to-background observation windows each last 6.5 seconds, crossing the five-second poll interval: pending-interaction discovery and Runtime identity checks must continue, without full task-catalog polling or repeated startup configuration. Known asynchronous bootstrap requests, such as plugin initialization, may finish; a fixed delay is not used to infer startup readiness.

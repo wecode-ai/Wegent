@@ -1,3 +1,4 @@
+import { trackRuntimeTaskCreation } from '@/features/workbench/runtimeTaskCreation'
 import { useConversationFind } from '@/components/chat/useConversationFind'
 import {
   applyRuntimeConversationAction,
@@ -687,6 +688,22 @@ describe('explicit composer draft replacement', () => {
     expect(result.current.input).toBe(draft)
     expect(result.current.replaceDraftKey).toBe(initialKey + 1)
     expect(result.current.queuedMessages).toEqual([])
+  })
+
+  test('goal hydration waits for an optimistically opened task to persist', async () => {
+    let accept!: () => void
+    const pending = new Promise<void>(resolve => {
+      accept = resolve
+    })
+    trackRuntimeTaskCreation(address, pending)
+    const { unmount } = await renderSession()
+    expect(mocks.context.getRuntimeGoal).not.toHaveBeenCalled()
+    await act(async () => {
+      accept()
+      await pending
+    })
+    await waitFor(() => expect(mocks.context.getRuntimeGoal).toHaveBeenCalledOnce())
+    unmount()
   })
 
   test('marks editing the current goal even when its objective matches the current draft', async () => {

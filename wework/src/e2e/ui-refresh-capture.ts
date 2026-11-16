@@ -45,6 +45,7 @@ interface Capture {
   commits: number
   actualDurationMs: number
   executor: ReturnType<typeof startExecutorActivity>
+  removals: Array<{ atMs: number; parent: string | null; testIds: string[] }>
 }
 
 const captures = new Map<string, Capture>()
@@ -173,6 +174,33 @@ function recordMutations(records: MutationRecord[]): void {
   if (records.length === 0) return
   for (const capture of captures.values()) {
     for (const region of capture.regions.values()) recordRegion(region, records)
+    for (const record of records) {
+      for (const node of record.removedNodes) {
+        if (!(node instanceof Element)) continue
+        if (
+          ![...capture.regions.values()].some(
+            region =>
+              region.roots.some(root => contains(root, record.target)) ||
+              rootsInNode(node, region.counts.selector).length > 0
+          )
+        )
+          continue
+        const testIds = [node, ...node.querySelectorAll('[data-testid]')]
+          .map(element => element.getAttribute('data-testid'))
+          .filter((id): id is string => Boolean(id))
+          .slice(0, 16)
+        if (!testIds.length) continue
+        capture.removals.push({
+          atMs: performance.now() - capture.startedMs,
+          parent:
+            record.target instanceof Element
+              ? (record.target.closest('[data-testid]')?.getAttribute('data-testid') ?? null)
+              : null,
+          testIds,
+        })
+        if (capture.removals.length > 32) capture.removals.shift()
+      }
+    }
   }
 }
 
@@ -247,6 +275,7 @@ export function startUiRefreshCapture(options: UiRefreshOptions = {}) {
     commits: 0,
     actualDurationMs: 0,
     executor: startExecutorActivity(),
+    removals: [],
   })
   return {
     captureId: id,
@@ -284,6 +313,7 @@ export function readUiRefreshCapture(token: { captureId: string; rendererInstanc
       ? { count: capture.commits, actualDurationMs: capture.actualDurationMs }
       : null,
     executor: capture.executor.snapshot(),
+    removals: [...capture.removals],
   }
 }
 

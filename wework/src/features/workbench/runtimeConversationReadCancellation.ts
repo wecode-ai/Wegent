@@ -1,3 +1,14 @@
+export function isRuntimeReadCancellation(error: unknown, signal?: AbortSignal): boolean {
+  return Boolean(
+    signal?.aborted &&
+    (error === signal.reason ||
+      (typeof error === 'object' &&
+        error !== null &&
+        'name' in error &&
+        error.name === 'AbortError'))
+  )
+}
+
 export interface RuntimeReadOptions {
   signal?: AbortSignal
 }

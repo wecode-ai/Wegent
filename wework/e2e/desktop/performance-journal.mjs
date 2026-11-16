@@ -19,6 +19,7 @@ const EXECUTOR_COUNTERS = [
   'cancellations',
   'duplicateEvents',
   'duplicateDeliveries',
+  'injectedDuplicateDeliveries',
   'streamStarts',
   'reconnects',
   'fullTaskListReads',
@@ -86,7 +87,7 @@ export class DesktopPerformanceJournal {
   }
 
   record(clientId, snapshot, action = 'ready', phase = 'ready', commandId = null) {
-    this.commands.set(action, (this.commands.get(action) ?? 0) + 1)
+    if (phase === 'started') this.commands.set(action, (this.commands.get(action) ?? 0) + 1)
     try {
       const metrics = flattenPerformance(snapshot)
       const previous = this.contexts.get(snapshot.captureId)
@@ -104,8 +105,26 @@ export class DesktopPerformanceJournal {
           .map(([name, count]) => [name, count - (previous?.metrics[name] ?? 0)])
           .filter(([, count]) => count !== 0)
       )
-      this.observations.push({ captureId: snapshot.captureId, action, phase, commandId, changes })
-      this.contexts.set(snapshot.captureId, { clientId, metrics })
+      this.observations.push({
+        captureId: snapshot.captureId,
+        action,
+        phase,
+        commandId,
+        changes,
+        observedAt: snapshot.finishedAt,
+        elapsedMs: snapshot.durationMs,
+        removals: (snapshot.removals ?? []).filter(
+          removal => removal.atMs >= (previous?.durationMs ?? 0)
+        ),
+      })
+      this.contexts.set(snapshot.captureId, {
+        clientId,
+        metrics,
+        startedAt: snapshot.startedAt,
+        finishedAt: snapshot.finishedAt,
+        durationMs: snapshot.durationMs,
+        removals: snapshot.removals ?? [],
+      })
     } catch (error) {
       this.errors.add(error.message)
     }
@@ -122,13 +141,28 @@ export class DesktopPerformanceJournal {
       }
     }
     const metrics = Object.fromEntries(totals)
-    const violations = INVARIANTS.filter(name => (metrics[name] ?? 0) !== 0)
+    const violations = INVARIANTS.filter(name => {
+      const count = metrics[name] ?? 0
+      return (
+        (name === 'executor.duplicateDeliveries'
+          ? count - (metrics['executor.injectedDuplicateDeliveries'] ?? 0)
+          : count) !== 0
+      )
+    })
     return {
       schema: PERFORMANCE_SCHEMA,
       ...this.metadata,
       functionalPassed,
       complete: this.contexts.size > 0 && this.errors.size === 0,
       contexts: this.contexts.size,
+      captures: [...this.contexts].map(([captureId, context]) => ({
+        captureId,
+        clientId: context.clientId,
+        startedAt: context.startedAt,
+        finishedAt: context.finishedAt,
+        durationMs: context.durationMs,
+        removals: context.removals,
+      })),
       coverageErrors: [...this.errors],
       violations,
       metrics,

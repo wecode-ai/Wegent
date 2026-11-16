@@ -1,3 +1,4 @@
+import { isRuntimeReadCancellation } from '@/features/workbench/runtimeConversationReadCancellation'
 import type { ConnectionDependencyPluginApi } from '@/api/standInConnectionDependencies'
 import { createStandInExecutorApi } from '@/api/standIn'
 import { modelInterfaceRuntimeConfig } from '../../../electron/src/host/model-interface-runtime'
@@ -2205,7 +2206,10 @@ export function createRuntimeWorkApiFromIpc(
       }
       return response
     } catch (error) {
-      if (method === 'runtime.tasks.transcript') {
+      if (
+        method === 'runtime.tasks.transcript' &&
+        !isRuntimeReadCancellation(error, requestOptions?.signal)
+      ) {
         console.error(`[Wework] ${transportLabel} runtime IPC transcript failed`, {
           address: runtimeAddressDebug(normalizedData),
           elapsedMs: Math.round(nowMs() - startedAt),

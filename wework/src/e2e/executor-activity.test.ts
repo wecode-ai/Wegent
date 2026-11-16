@@ -1,3 +1,8 @@
+import {
+  armRuntimeTransportGate,
+  releaseRuntimeTransportGate,
+  resetRuntimeTransportGates,
+} from './runtime-transport-gates'
 import { afterEach, beforeEach, expect, test, vi } from 'vitest'
 import {
   describeDshExecutor,
@@ -147,6 +152,85 @@ test('out-of-order distinct delivery is not mistaken for duplicate processing', 
     expect(activity.snapshot()).toMatchObject({
       duplicateDeliveries: 1,
       events: { 'task.changed': 4 },
+    })
+  } finally {
+    activity.stop()
+  }
+})
+
+test('actual transport replay is attributed to fault injection without losing the duplicate fact', () => {
+  const sources: Array<{ onmessage: ((message: MessageEvent<string>) => void) | null }> = []
+  vi.stubGlobal(
+    'EventSource',
+    class {
+      onmessage = null
+      onerror = null
+      close() {}
+      constructor() {
+        sources.push(this)
+      }
+    }
+  )
+  armRuntimeTransportGate({
+    id: 'observed-replay',
+    kind: 'event',
+    name: 'task.replayed',
+    hold: false,
+  })
+  const activity = startExecutorActivity()
+  const listener = vi.fn()
+  const unsubscribe = subscribeDshExecutorEvents(listener)
+  try {
+    sources[0].onmessage?.({
+      data: JSON.stringify({
+        protocolVersion: 1,
+        sequence: 1,
+        event: 'task.replayed',
+        payload: {},
+      }),
+    } as MessageEvent<string>)
+    releaseRuntimeTransportGate('observed-replay')
+    expect(listener).toHaveBeenCalledTimes(2)
+    expect(activity.snapshot()).toMatchObject({
+      duplicateDeliveries: 1,
+      injectedDuplicateDeliveries: 1,
+      events: { 'task.replayed': 2 },
+    })
+  } finally {
+    resetRuntimeTransportGates()
+    unsubscribe()
+    activity.stop()
+  }
+})
+
+test('cancellation covers opted-in reads while genuine parse errors racing abort remain faults', async () => {
+  vi.spyOn(console, 'error').mockImplementation(() => {})
+  vi.spyOn(console, 'warn').mockImplementation(() => {})
+  const controller = new AbortController()
+  controller.abort()
+  const activity = startExecutorActivity()
+  try {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => {
+        throw controller.signal.reason
+      })
+    )
+    await expect(
+      requestDshExecutor('runtime.tasks.get', {}, { signal: controller.signal })
+    ).rejects.toBe(controller.signal.reason)
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => new Response('{invalid'))
+    )
+    await expect(
+      requestDshExecutor('runtime.tasks.transcript', {}, { signal: controller.signal })
+    ).rejects.toThrow()
+    expect(activity.snapshot()).toMatchObject({
+      cancellations: 1,
+      transportFailures: 0,
+      parseFailures: 1,
+      requestFailures: 1,
     })
   } finally {
     activity.stop()

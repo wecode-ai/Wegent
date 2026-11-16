@@ -1,8 +1,9 @@
+import { isRuntimeReadCancellation } from '@/features/workbench/runtimeConversationReadCancellation'
 import { createRequestId } from '@/lib/request-id'
 import { reportE2EError } from '@/e2e/error-capture'
 import { recordExecutorActivity, registerExecutorActivity } from '@/e2e/executor-activity'
 import { logModelLoading } from '@/lib/model-loading-diagnostics'
-import { deliverRuntimeTransport } from '@/e2e/runtime-transport-gates'
+import { deliverRuntimeTransport, isRuntimeTransportReplay } from '@/e2e/runtime-transport-gates'
 
 const EXECUTOR_BASE_PATH = '/wework/executor/v1'
 registerExecutorActivity()
@@ -156,7 +157,7 @@ async function observeExecutorRequest<T>(
   try {
     return await request()
   } catch (error) {
-    if (options.signal?.aborted) {
+    if (isRuntimeReadCancellation(error, options.signal)) {
       recordExecutorActivity({ kind: 'cancellations' })
       throw error
     }
@@ -220,10 +221,12 @@ async function performDshExecutorRequest<T>(
         'x-request-id': requestId,
       },
       body: requestBody,
-      ...(isCancellableRuntimeRead(method) && options.signal ? { signal: options.signal } : {}),
+      ...(method === 'runtime.tasks.transcript' && options.signal
+        ? { signal: options.signal }
+        : {}),
     })
   } catch (error) {
-    if (isCancellableRuntimeRead(method) && options.signal?.aborted) throw error
+    if (isRuntimeReadCancellation(error, options.signal)) throw error
     recordExecutorActivity({ kind: 'transportFailures' })
     diagnostic('fetch_failed')
     transportDiagnostic('fetch_failed', {
@@ -248,7 +251,7 @@ async function performDshExecutorRequest<T>(
   try {
     parsedBody = await response.json()
   } catch (error) {
-    if (isCancellableRuntimeRead(method) && options.signal?.aborted) throw error
+    if (isRuntimeReadCancellation(error, options.signal)) throw error
     recordExecutorActivity({ kind: 'parseFailures' })
     diagnostic('body_parse_failed')
     transportDiagnostic('body_parse_failed', {
@@ -287,10 +290,6 @@ async function performDshExecutorRequest<T>(
     throw error
   }
   return body.result
-}
-
-function isCancellableRuntimeRead(method: string): boolean {
-  return method === 'runtime.tasks.transcript'
 }
 
 function connectionError(error: unknown): unknown {
@@ -417,6 +416,7 @@ function connectDshExecutorEventStream(
           sequence: event.sequence,
           stream,
           delivered: true,
+          injected: isRuntimeTransportReplay(),
         })
         listener(event)
       }

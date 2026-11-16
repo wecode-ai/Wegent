@@ -7,6 +7,9 @@ function snapshot() {
   return {
     version: 1,
     captureId: 'renderer',
+    startedAt: '2026-11-16T00:00:00.000Z',
+    finishedAt: '2026-11-16T00:00:00.010Z',
+    durationMs: 10,
     regions: {
       document: {
         observed: true,
@@ -33,6 +36,7 @@ function snapshot() {
       cancellations: 0,
       duplicateEvents: 0,
       duplicateDeliveries: 0,
+      injectedDuplicateDeliveries: 0,
       streamStarts: 1,
       reconnects: 0,
       fullTaskListReads: 0,
@@ -45,19 +49,25 @@ const metadata = { checkpoint: 'sample', platform: 'linux', arch: 'x64', variant
 test('cumulative snapshots retain command boundaries without double counting', () => {
   const journal = new DesktopPerformanceJournal(metadata)
   journal.record('client', snapshot())
+  journal.record('client', snapshot(), 'click', 'started', 'command-1')
   const next = snapshot()
   next.renders.app = 4
   journal.record('client', next, 'click', 'result', 'command-1')
   const result = journal.report(true)
   assert.equal(result.complete, true)
   assert.equal(result.metrics['renders.app'], 4)
-  assert.deepEqual(result.observations[1], {
+  assert.deepEqual(result.observations[2], {
     captureId: 'renderer',
     action: 'click',
     phase: 'result',
     commandId: 'command-1',
     changes: { 'renders.app': 2 },
+    observedAt: '2026-11-16T00:00:00.010Z',
+    elapsedMs: 10,
+    removals: [],
   })
+  assert.equal(result.commands.click, 1)
+  assert.equal(result.captures[0].durationMs, 10)
   assert.equal(result.comparisonValidated, false)
   assert.equal(result.baselineStatus, 'not-established')
 })
@@ -99,4 +109,17 @@ test('a lost renderer is not rendered as a functional or performance pass', () =
   assert.match(markdown, /incomplete/)
   assert.match(markdown, /unavailable/)
   assert.equal(report.metrics['renders.app'], undefined)
+})
+
+test('controlled replays remain recorded without hiding uninjected duplicates', () => {
+  for (const injected of [0, 1]) {
+    const journal = new DesktopPerformanceJournal(metadata)
+    const value = snapshot()
+    value.executor.duplicateDeliveries = 1
+    value.executor.injectedDuplicateDeliveries = injected
+    journal.record('client', value)
+    const report = journal.report(true)
+    assert.equal(report.metrics['executor.duplicateDeliveries'], 1)
+    assert.deepEqual(report.violations, injected ? [] : ['executor.duplicateDeliveries'])
+  }
 })

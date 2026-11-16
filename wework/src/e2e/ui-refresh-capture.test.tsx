@@ -94,6 +94,22 @@ test('observes a selected root being replaced by its parent and keeps the new ro
   expect(result.finalMatches).toBe(1)
 })
 
+test('keeps bounded removal provenance without retaining UI text or nodes', () => {
+  const token = start({ regions: [{ name: 'body', selector: 'body' }] })
+  for (let index = 0; index < 40; index += 1) {
+    const node = document.createElement('div')
+    node.dataset.testid = `panel-${index}`
+    node.textContent = 'private conversation'
+    document.body.append(node)
+    node.remove()
+  }
+  const result = stop(token)
+  expect(result.removals).toHaveLength(32)
+  expect(result.removals[0].testIds).toEqual(['panel-8'])
+  expect(result.removals.at(-1)).toMatchObject({ testIds: ['panel-39'], parent: null })
+  expect(JSON.stringify(result.removals)).not.toContain('private conversation')
+})
+
 test('distinguishes real React render attempts from commits and unavailable instrumentation', () => {
   function Panel({ value }: { value: number }) {
     capture.recordUiRender('unit-panel')

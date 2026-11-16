@@ -1,3 +1,4 @@
+import { trackRuntimeTaskCreation } from '@/features/workbench/runtimeTaskCreation'
 import {
   DEFAULT_WORK_ITEM_PROJECT_ID,
   DEFAULT_WORK_ITEM_PROJECT_KEY,
@@ -28,6 +29,48 @@ import {
 } from './workbenchCloudProjectContextTestFixtures'
 
 describe('useWorkbenchCloudProjectContext', () => {
+  test('context discovery waits for optimistic task creation to finish', async () => {
+    const task = { deviceId: 'creation-context-device', taskId: 'pending-context' }
+    let accept!: () => void
+    const pending = new Promise<void>(resolve => {
+      accept = resolve
+    })
+    trackRuntimeTaskCreation(task, pending)
+    const targetProject = project('created-space', 'local')
+    const findCloudContextForTask = vi
+      .fn()
+      .mockResolvedValue({ project: targetProject, loop_item: null })
+    const api = {
+      listCloudProjects: vi.fn().mockResolvedValue({ items: [] }),
+      listCloudFiles: vi.fn().mockResolvedValue({ items: [] }),
+      listLoopItems: vi.fn().mockResolvedValue({ items: [] }),
+      listDeliveries: vi.fn().mockResolvedValue({ items: [] }),
+      findCloudContextForTask,
+    }
+    const services = { projectSpaceApis: { local: api } } as unknown as WorkbenchServices
+    const { result, unmount } = renderHook(() =>
+      useWorkbenchCloudProjectContext({
+        active: true,
+        currentRuntimeTask: task,
+        defaultProjectSpace: null,
+        paneKey: 'creation-context-pane',
+        runtimeTaskTitle: 'Task',
+        services,
+      })
+    )
+    await act(async () => {
+      await Promise.resolve()
+    })
+    expect(findCloudContextForTask).not.toHaveBeenCalled()
+    await act(async () => {
+      accept()
+      await pending
+    })
+    await waitFor(() => expect(result.current.boundCloudProject).toEqual(targetProject))
+    expect(findCloudContextForTask).toHaveBeenCalledOnce()
+    unmount()
+  })
+
   test('retains the same task binding across hidden tabs and failed refreshes', async () => {
     const targetProject = project('retained-space', 'local')
     const item = loopItem(targetProject.id)

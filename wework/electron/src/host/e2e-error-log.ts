@@ -90,6 +90,9 @@ export function recordE2ERendererError(
         type = report.type
         errorDetails = {
           message: report.message,
+          ...(report.diagnostics && typeof report.diagnostics === 'object'
+            ? { diagnostics: report.diagnostics }
+            : {}),
           ...(typeof report.stack === 'string' ? { stack: report.stack } : {}),
           ...Object.fromEntries(
             ['code', 'status', 'errorCode', 'retryable']
