@@ -612,6 +612,19 @@ class RealCloudEnvironment {
     )
   }
 
+  async configurePublicSandboxRestart() {
+    assert.ok(this.usePublicSandboxController)
+    const response = await fetch(
+      `http://127.0.0.1:${this.pythonBackendPort}/__desktop_e2e/configure-sandbox-restart`,
+      {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${this.backendEnv.INTERNAL_SERVICE_TOKEN}` },
+        signal: AbortSignal.timeout(DEFAULT_STEP_TIMEOUT_MS),
+      }
+    )
+    assert.equal(response.status, 204, 'Could not configure the public sandbox process controller')
+  }
+
   async stopBackend() {
     await stopProcessGroup(this.rustBackend)
     await stopProcessGroup(this.pythonBackend)

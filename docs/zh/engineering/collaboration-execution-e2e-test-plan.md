@@ -691,9 +691,14 @@ Git 账号同步到该设备，否则克隆会因缺少凭据失败。
    Executor 数据目录重新启动，Runtime identity 保持不变。即使仍有新版本可用，
    Wework 也显示“重新在线”并恢复操作。
 
+公网 Backend 初始不注册重启提供方。先确认设备菜单发出的真实请求返回 501，界面
+显示失败且仍可重试、打开终端或使用设备菜单，设备仍在线。随后在同一 Backend
+进程中启用沙箱提供方，继续执行成功链路。
+
 证据截图：
 
 - `cloud-device-01-online.png`
+- `cloud-device-restart-unavailable.png`（仅公网未配置场景）
 - `cloud-device-restart-confirmation.png`
 - `cloud-device-restart-pending.png`
 - `cloud-device-restart-offline.png`

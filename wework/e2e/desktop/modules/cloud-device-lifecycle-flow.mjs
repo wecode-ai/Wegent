@@ -130,6 +130,42 @@ async function waitForRestartStatus(control, selector, pattern, message) {
   )
 }
 
+async function verifyUnconfiguredRestart(control, cloud, controls) {
+  const { deviceCard, restartStatus, terminalButton, moreButton } = controls
+  await expectUpgradeRejected(
+    cloud,
+    cloud.authToken,
+    { force_stop_tasks: true },
+    501,
+    /device restart is not configured in this deployment/i
+  )
+  await control.command('click', '[data-testid="confirm-restart-device-button"]')
+  await waitForRestartStatus(
+    control,
+    restartStatus,
+    /重启请求发送失败|could not send the restart request/i,
+    'The unconfigured public Backend did not surface a restart error'
+  )
+  const restartRetry = `[data-testid="connection-device-restart-retry-${CLOUD_DEVICE_ID}"]`
+  for (const selector of [restartRetry, terminalButton, moreButton]) {
+    await control.command('waitFor', selector, {
+      enabled: true,
+      timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+    })
+  }
+  const deviceStatus = await control.command(
+    'getText',
+    `${deviceCard} [data-testid="connection-device-status"]`
+  )
+  assert.match(deviceStatus, /在线|online/i, 'The rejected restart did not leave the UI online')
+  assert.equal((await cloud.device(CLOUD_DEVICE_ID))?.status, 'online')
+  assert.equal(cloud.sandboxRestartRequestCount(), 0, 'The unconfigured request reached a provider')
+  await captureVerificationScreenshot(control, 'cloud-device-restart-unavailable.png')
+  console.log(
+    '[cloud-device-lifecycle] Unconfigured restart rejected; device stayed online and actions remained enabled'
+  )
+}
+
 export async function verifyCloudDeviceLifecycleFlow(control, cloud) {
   const deviceCard = `[data-testid="connection-device-${CLOUD_DEVICE_ID}"]`
   const versionBadge = `[data-testid="connection-upgrade-badge-${CLOUD_DEVICE_ID}"]`
@@ -164,7 +200,17 @@ export async function verifyCloudDeviceLifecycleFlow(control, cloud) {
   const menuConfirmation = await control.command('getText', RESTART_DIALOG)
   assert.match(menuConfirmation, /短暂离线|temporarily go offline/i)
   assert.match(menuConfirmation, /终端|terminal/i)
-  await control.command('click', '[data-testid="cancel-restart-device-button"]')
+  if (cloud.usePublicSandboxController) {
+    await verifyUnconfiguredRestart(control, cloud, {
+      deviceCard,
+      restartStatus,
+      terminalButton,
+      moreButton,
+    })
+    await cloud.configurePublicSandboxRestart()
+  } else {
+    await control.command('click', '[data-testid="cancel-restart-device-button"]')
+  }
 
   const nonOwnerToken = await createNonOwner(cloud)
   const restart = cloud.armSandboxRestart()

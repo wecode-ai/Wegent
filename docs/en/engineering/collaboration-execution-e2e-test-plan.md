@@ -724,9 +724,15 @@ runner. The checkpoint verifies:
    identities. Wework reports recovery and restores the actions while a newer version
    remains available.
 
+The public Backend starts without a restart provider. The device menu request first
+verifies the real HTTP 501 response, the error and enabled retry, terminal, and menu
+controls, and the device remaining online. The runner then registers the provider in the
+same Backend process and exercises the successful restart.
+
 Evidence screenshots:
 
 - `cloud-device-01-online.png`
+- `cloud-device-restart-unavailable.png` (unconfigured public deployment only)
 - `cloud-device-restart-confirmation.png`
 - `cloud-device-restart-pending.png`
 - `cloud-device-restart-offline.png`

@@ -5,12 +5,14 @@
 """Run the public Backend with the desktop E2E sandbox process controller."""
 
 import os
+from secrets import compare_digest
 from urllib.parse import quote
 
 import httpx
+from fastapi import HTTPException, Request, Response
 from sqlalchemy.orm import Session
 
-from app.main import app
+from app.main import _fastapi_app, app
 from app.services.device.cloud_device_restart import (
     CloudDeviceRestartResult,
     register_cloud_device_restart_handler,
@@ -44,4 +46,11 @@ async def restart_ci_sandbox(
     return CloudDeviceRestartResult(True, "E2E sandbox restart accepted")
 
 
-register_cloud_device_restart_handler(restart_ci_sandbox)
+@_fastapi_app.post("/__desktop_e2e/configure-sandbox-restart", include_in_schema=False)
+async def configure_ci_sandbox(request: Request) -> Response:
+    """Enable the process controller after testing the unconfigured deployment."""
+    token = os.environ["INTERNAL_SERVICE_TOKEN"]
+    if not compare_digest(request.headers.get("Authorization", ""), f"Bearer {token}"):
+        raise HTTPException(status_code=403)
+    register_cloud_device_restart_handler(restart_ci_sandbox)
+    return Response(status_code=204)
