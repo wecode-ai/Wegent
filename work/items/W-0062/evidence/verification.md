@@ -64,6 +64,12 @@ pnpm --filter wework test src/features/todo/CloudTodoWorkspace.test.tsx src/feat
 
 同轮 Cloud shard 5 的既有 task-model-deletion 场景发现独立缺陷：删除本地模型并刷新目录后，store 已判为不可用，但任务缓存仍使 selectionReady 为 true。真实 model store 与任务选择 hook 集成测试稳定复现；现在成功刷新目录时清除已删除的本地模型缓存，当前和后台任务均停止发送，保留改选入口。请求开始后新选的模型和单独验证的隐藏云模型继续有效。4 个相关文件的 48 项模型测试通过，未修改该 E2E 的断言、等待时限或场景。
 
+随后合入主线 06f2cbee8 并解决创建链与双语导航冲突：复用新的 ProjectCollaboratorPicker，删除已被主线替代的 ProjectPeoplePicker，保留搜索失败原因与重试、同项目成员恢复，以及模板和手动协作者合并；模型与设备保持主线的可选契约。共享创建目录与完整平台 217 项、11 文件测试通过，普通入口/资源工厂/API/任务模型 117 项测试通过，模型 readiness 与 diagnostics 另 26 项通过；共享构建及 Wework typecheck 通过，双语文档和 reload 导航 11 项通过。
+
+同轮 Core shard 4 的 runtime-task-queue 未在断言时限内观察到第二个 StandIn 模型请求。官方 executor artifact 显示前一原生 turn 于 10:45:43 完成，第二轮 10:45:53 开始 spawning、10:46:02 才进入 thread/start；同期独立读取请求也耗时约 7–11 秒，尚不足以确认具体堵点。增加仅对超过 250ms 的阶段记录 phase/task_id/elapsed_ms 的诊断，覆盖原生完成、observer、队列释放与下轮准备；没有修改调度逻辑、E2E 断言或等待时限，也不将此次诊断记为根因修复。
+
+该诊断版本已完成 Executor Rust test profile 编译，并用生成的同一测试二进制执行分类并发 7 项和原生生命周期 42 项测试，49 项全部通过；Rustfmt 检查通过。初始 Cargo 测试过滤器未匹配模块，未将其 0 项结果计为测试通过。Wework 完整 lint 通过，0 错误、4 项既有警告。
+
 # Verification and rollback
 
 The unit plan covers cloud member creation, partial failures, search recovery, authoritative server-roster checks, the existing template pipeline, local-source hiding and the disabled flag. The existing CI-covered `collaboration-shared-core` scenario now includes real-account member persistence and reload checks. Local E2E and real Electron verification were not run, as instructed. The initial test results above were recorded before integration with the latest main branch. Set `VITE_COLLAB_PROJECT_CREATE_MEMBERS_V1=false` in the Wework build environment and rebuild to disable ordinary-entry member creation without deleting existing memberships.

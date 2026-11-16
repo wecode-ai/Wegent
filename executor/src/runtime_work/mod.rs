@@ -47,6 +47,7 @@ mod transcript_search_projection;
 mod transcript_search_text;
 mod transcript_transport;
 pub(crate) mod transcript_work;
+pub(crate) mod turn_diagnostics;
 mod util;
 pub(crate) use util::external_work_kind;
 pub(crate) use util::stand_in_requires_confirmation;

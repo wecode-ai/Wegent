@@ -487,7 +487,9 @@ impl RuntimeWorkRpcHandler {
         id: Option<&str>,
         outcome: Option<CommandState>,
     ) {
+        let stage = turn_diagnostics::TurnStage::start(task, "command_completion_lock");
         let operation = self.turn_queue_operation.clone().lock_owned().await;
+        drop(stage);
         {
             if self
                 .active_local_executions

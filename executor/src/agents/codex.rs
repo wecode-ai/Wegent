@@ -34,6 +34,7 @@ use crate::{
     prompt_mentions::{is_skill_reference, skill_name},
     protocol::{ExecutionRequest, CODEX_FILES_MENTIONED_HEADER, CODEX_REQUEST_MARKER},
     runner::ExecutionOutcome,
+    runtime_work::turn_diagnostics::TurnStage,
     server::{
         codex_model_catalog, executor_loopback_base_url,
         local_model_proxy::{self, LocalModelProxyUpstream, VisionSidecarUpstream},
@@ -2341,8 +2342,15 @@ async fn run_codex_app_server_turn_on_shared_client(
         overload_turn_recovering,
         defer_interactive_forms: _,
     } = options;
-    let prepared = prepare_codex_execution_request(request, cancellation.as_mut()).await?;
-    let launch_config = build_codex_launch_config_for_prepared_request(&prepared)?;
+    let task_id = request.task_id.clone();
+    let prepared = {
+        let _stage = TurnStage::start(&task_id, "codex_request_preparation");
+        prepare_codex_execution_request(request, cancellation.as_mut()).await?
+    };
+    let launch_config = {
+        let _stage = TurnStage::start(&task_id, "codex_launch_configuration");
+        build_codex_launch_config_for_prepared_request(&prepared)?
+    };
     let mut fields = task_fields(&prepared.request.task_id, &prepared.request.subtask_id);
     fields.push(("binary", client.binary.clone()));
     if let Some(cwd) = prepared.request.cwd() {
