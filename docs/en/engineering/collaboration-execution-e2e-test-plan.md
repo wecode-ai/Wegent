@@ -711,20 +711,20 @@ fails for missing credentials.
 This checkpoint reuses the real cloud Executor started by CI and verifies:
 
 1. The initial Backend state is `online`, with an Executor version and Runtime identity.
-2. Wework shows the upgrade action, current version, target version, and temporary-offline warning.
+2. The Update available badge opens the restart confirmation and shows the current version, latest advertised version, and temporary-offline warning.
 3. In a managed cloud environment, restart targets the Sandbox identity and disables device
    actions while restart is pending.
 4. The test really stops the Executor process, waits for Backend `offline`, and starts the same
    Executor again.
 5. The Backend returns to `online`, Runtime identity stays stable, and Wework reports recovery
-   and re-enables actions.
+   and re-enables actions while a newer version remains available.
 6. The public-Backend branch without managed recovery must show an explicit restart failure and
    must not mislabel the still-online device as offline.
 
 Evidence screenshots:
 
 - `cloud-device-01-online.png`
-- `cloud-device-upgrade-confirmation.png`
+- `cloud-device-restart-confirmation.png`
 - `cloud-device-restart-pending.png`
 - `cloud-device-restart-recovered.png`
 - `cloud-device-restart-unavailable.png` (public-Backend rejection branch only)

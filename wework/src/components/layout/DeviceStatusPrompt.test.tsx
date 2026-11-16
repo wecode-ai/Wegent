@@ -2,7 +2,12 @@ import '@/i18n'
 import { render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, test, vi } from 'vitest'
+import { createSettingsDeviceApi } from '@/components/settings/settings-cloud-api'
+import { WorkbenchCloudDeviceRestarts } from '@/features/cloud-devices/WorkbenchCloudDeviceRestarts'
+import type { DeviceInfo } from '@/types/devices'
 import { DeviceStatusPrompt } from './DeviceStatusPrompt'
+
+vi.mock('@/components/settings/settings-cloud-api', () => ({ createSettingsDeviceApi: vi.fn() }))
 
 describe('DeviceStatusPrompt', () => {
   beforeEach(() => {
@@ -21,7 +26,7 @@ describe('DeviceStatusPrompt', () => {
             name: 'Old Device',
             status: 'online',
             is_default: false,
-            device_type: 'cloud',
+            device_type: 'local',
             bind_shell: 'claudecode',
             executor_version: '1.8.4',
             slot_used: 0,
@@ -32,7 +37,7 @@ describe('DeviceStatusPrompt', () => {
             name: 'New Device',
             status: 'online',
             is_default: false,
-            device_type: 'cloud',
+            device_type: 'local',
             bind_shell: 'claudecode',
             executor_version: '1.8.5',
           },
@@ -51,6 +56,50 @@ describe('DeviceStatusPrompt', () => {
     await userEvent.click(screen.getByTestId('device-status-upgrade-button'))
 
     expect(onUpgradeDevice).toHaveBeenCalledWith('old-device')
+  })
+
+  test('confirms a cloud restart and reports recovery even when the version is still old', async () => {
+    const oldDevice: DeviceInfo = {
+      id: 1,
+      device_id: 'old-device',
+      name: 'Old Device',
+      status: 'online',
+      is_default: false,
+      device_type: 'cloud',
+      bind_shell: 'claudecode',
+      executor_version: '1.8.4',
+      runtime_instance_id: 'before',
+      update_available: true,
+    }
+    const restartCloudDevice = vi.fn().mockResolvedValue({ message: 'accepted' })
+    vi.mocked(createSettingsDeviceApi).mockReturnValue({
+      restartCloudDevice,
+    } as ReturnType<typeof createSettingsDeviceApi>)
+    const onUpgradeDevice = vi.fn().mockResolvedValue(undefined)
+    const refreshDevices = vi.fn().mockResolvedValue(undefined)
+    const view = (device: DeviceInfo) => (
+      <WorkbenchCloudDeviceRestarts devices={[device]} refreshDevices={refreshDevices}>
+        <DeviceStatusPrompt
+          devices={[device]}
+          activeDeviceId={device.device_id}
+          upgradingDevices={{}}
+          onUpgradeDevice={onUpgradeDevice}
+          onOpenCloudDeviceSettings={vi.fn()}
+        />
+      </WorkbenchCloudDeviceRestarts>
+    )
+    const { rerender } = render(view(oldDevice))
+    await userEvent.click(screen.getByTestId('device-status-restart-button'))
+    expect(screen.getByTestId('confirm-restart-device-dialog')).toHaveTextContent('短暂离线')
+    expect(restartCloudDevice).not.toHaveBeenCalled()
+    await userEvent.click(screen.getByTestId('confirm-restart-device-button'))
+    expect(restartCloudDevice).toHaveBeenCalledExactlyOnceWith('old-device')
+    expect(onUpgradeDevice).not.toHaveBeenCalled()
+    expect(
+      await screen.findByTestId('connection-device-restart-status-old-device')
+    ).toHaveTextContent('设备将短暂离线')
+    rerender(view({ ...oldDevice, runtime_instance_id: 'after' }))
+    expect(await screen.findByText('设备已重新在线。')).toBeVisible()
   })
 
   test('does not count offline devices with available updates in the sidebar action', () => {

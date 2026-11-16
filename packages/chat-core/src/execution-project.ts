@@ -54,6 +54,7 @@ export interface DeviceInfo {
   app_device_id?: string | null
   socket_device_id?: string | null
   runtime_instance_id?: string | null
+  cloud_config?: { sandboxId?: string }
   runtime_routes?: DeviceRuntimeRoute[]
   runtime_features?: RuntimeFeatureSet | null
 }

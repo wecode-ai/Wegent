@@ -147,6 +147,16 @@
   "actions": {
     "upgrade": "升级"
   },
+  "restart": {
+    "action": "重启设备",
+    "title": "重启云设备？",
+    "description": "{{name}} 将短暂离线，正在运行的任务和连接可能中断。",
+    "busy": "{{name}} 有正在运行的任务。重启会中断任务，并使设备短暂离线。",
+    "sending": "正在发送重启请求…",
+    "requested": "已请求重启。设备重新连接后即可使用。",
+    "failed": "重启请求发送失败，请重试。",
+    "unavailable": "当前后端不支持重启云设备。"
+  },
   "upgrade": {
     "started": "升级已开始",
     "failed": "升级失败",
@@ -166,6 +176,7 @@
     "current": "当前版本",
     "latest": "最新版本",
     "updateAvailable": "有新版本可用",
+    "clickToRestart": "重启设备",
     "clickToUpgrade": "点击升级",
     "openclawNotSupported": "OpenClaw 设备不支持自动升级"
   },

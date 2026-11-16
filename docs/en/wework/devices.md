@@ -17,7 +17,7 @@ Open **left sidebar → Cloud work**. **Connection settings** at the top right o
 | Status, resources and version | Inspect the card and expand details                                                       | Offline differs from a loading error; inspect errors first                                 |
 | Terminal / IDE / Desktop      | Choose the supported card operation                                                       | Runs on that device, not an arbitrary directory on this computer                           |
 | Connection information        | Device actions → connection information                                                   | Do not copy credentials into chat or public documentation                                  |
-| Upgrade / restart             | Choose the device action and review confirmation                                          | Temporarily goes offline; wait for progress and recovery rather than submitting repeatedly |
+| Restart device             | Choose Restart device in the card menu or select the Update available badge, then review the confirmation                                          | Temporarily goes offline; wait for progress and recovery rather than submitting repeatedly |
 | Delete device                 | Device actions → delete, verify target and confirm                                        | Neither a backup nor deletion of remote project directories                                |
 | New project                   | Cloud work → New project → device and directory                                           | Cloud sign-in does not automatically select cloud execution                                |
 
@@ -56,7 +56,7 @@ In the desktop app, **left sidebar → Cloud work** includes local recovery guid
 When the cloud connection is available, select **Cloud work** in the sidebar to open its dedicated page instead of General settings. The page combines:
 
 - Cloud and remote device status, executor version, terminal, IDE, and other device actions.
-- CPU, memory, and disk usage for cloud devices, plus connection details, upgrade, restart, and delete actions. Version upgrades restart the cloud device so the Executor can update automatically during startup. During an upgrade or restart, the device briefly goes offline and the page reports progress until it reconnects.
+- CPU, memory, and disk usage for cloud devices, plus connection details, restart, and delete actions. During a restart, the device briefly goes offline and the page reports progress until it reconnects. Check the Executor version reported after reconnection. Restart requires a deployment-provided implementation. The app reports when restart is unavailable.
 - Projects associated with cloud or remote devices. Selecting a project returns to the standard task workbench with that project active.
 
 Use **Connection settings** in the page header to open **Settings → Connections**. **Add device** opens the same settings page and starts the add-device flow. **New project** returns to the standard project creation flow, where the user chooses a device and a project directory on that device.

@@ -114,7 +114,7 @@ Internal routes below support version maintenance and automated checks; they are
 | Left sidebar → Scheduled    | View scheduled tasks                                                                                                   | `/automations` |
 | Left sidebar → Plugins      | Find, install and manage plugins and app authorization. See [Plugins and Skills](./plugins-and-skills.md)              | `/plugins`     |
 | Left sidebar → Applications | Open the applications page                                                                                             | `/sites`       |
-| Left sidebar → Cloud work   | View devices and cloud projects; desktop apps also offer the local version. See [Devices and cloud work](./devices.md) | `/cloud-work`  |
+| Left sidebar → Cloud work   | View devices and cloud projects. The desktop app also offers the local version. In deployments that support cloud-device restart, use the card menu or the Update available badge. See [Devices and cloud work](./devices.md) | `/cloud-work`  |
 
 ### Space and auxiliary feature links
 

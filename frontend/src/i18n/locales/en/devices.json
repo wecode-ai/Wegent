@@ -147,6 +147,16 @@
   "actions": {
     "upgrade": "Upgrade"
   },
+  "restart": {
+    "action": "Restart device",
+    "title": "Restart cloud device?",
+    "description": "{{name}} will temporarily go offline. Running tasks and connections may be interrupted.",
+    "busy": "{{name}} has running tasks. Restarting will interrupt them and temporarily disconnect the device.",
+    "sending": "Sending restart request…",
+    "requested": "Restart requested. The device will be available after it reconnects.",
+    "failed": "Could not request a restart. Try again.",
+    "unavailable": "Cloud device restart is unavailable on this backend."
+  },
   "upgrade": {
     "started": "Upgrade started",
     "failed": "Upgrade failed",
@@ -166,6 +176,7 @@
     "current": "Current Version",
     "latest": "Latest Version",
     "updateAvailable": "Update Available",
+    "clickToRestart": "Restart device",
     "clickToUpgrade": "Click to upgrade",
     "openclawNotSupported": "OpenClaw devices do not support auto-upgrade"
   },

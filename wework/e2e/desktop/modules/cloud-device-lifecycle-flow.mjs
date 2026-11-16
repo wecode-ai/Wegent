@@ -20,7 +20,7 @@ async function waitForCondition(predicate, timeoutMs, message) {
 
 export async function verifyCloudDeviceLifecycleFlow(control, cloudEnvironment) {
   const deviceCard = `[data-testid="connection-device-${CLOUD_DEVICE_ID}"]`
-  const upgradeBadge = `[data-testid="connection-upgrade-badge-${CLOUD_DEVICE_ID}"]`
+  const versionBadge = `[data-testid="connection-upgrade-badge-${CLOUD_DEVICE_ID}"]`
   const restartStatus = `[data-testid="connection-device-restart-status-${CLOUD_DEVICE_ID}"]`
   const terminalButton = `[data-testid="connection-terminal-button-${CLOUD_DEVICE_ID}"]`
   const moreButton = `[data-testid="connection-more-button-${CLOUD_DEVICE_ID}"]`
@@ -54,43 +54,42 @@ export async function verifyCloudDeviceLifecycleFlow(control, cloudEnvironment) 
   await control.command('waitFor', deviceCard, {
     timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
   })
-  await control.command('waitFor', upgradeBadge, {
+  await control.command('waitFor', versionBadge, {
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
   await captureVerificationScreenshot(control, 'cloud-device-01-online.png')
-  const upgradeLabel = await control.command('getText', upgradeBadge)
+  const versionBadgeLabel = await control.command('getText', versionBadge)
   assert.match(
-    upgradeLabel,
+    versionBadgeLabel,
     /有新版本|update available/i,
     'The cloud device card did not expose the Backend-reported available update'
   )
-  await control.command('click', upgradeBadge)
-  await control.command('waitFor', '[data-testid="confirm-upgrade-device-dialog"]', {
+  await control.command('click', versionBadge)
+  await control.command('waitFor', '[data-testid="confirm-restart-device-dialog"]', {
     text: testLatestVersion,
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
-  const upgradeConfirmation = await control.command(
+  const versionBadgeConfirmation = await control.command(
     'getText',
-    '[data-testid="confirm-upgrade-device-dialog"]'
+    '[data-testid="confirm-restart-device-dialog"]'
   )
   assert.match(
-    upgradeConfirmation,
+    versionBadgeConfirmation,
     new RegExp(currentDevice.executor_version.replaceAll('.', '\\.')),
-    'The upgrade confirmation did not show the current Executor version'
+    'The restart confirmation opened from the version badge did not show the current Executor version'
   )
   assert.match(
-    upgradeConfirmation,
+    versionBadgeConfirmation,
     new RegExp(testLatestVersion.replaceAll('.', '\\.')),
-    'The upgrade confirmation did not show the latest Executor version'
+    'The restart confirmation opened from the version badge did not show the latest Executor version'
   )
   assert.match(
-    upgradeConfirmation,
+    versionBadgeConfirmation,
     /短暂离线|temporarily go offline/i,
-    'The upgrade confirmation did not warn about temporary offline status'
+    'The restart confirmation opened from the version badge did not warn about temporary offline status'
   )
-  await captureVerificationScreenshot(control, 'cloud-device-upgrade-confirmation.png')
-  await control.command('click', '[data-testid="cancel-upgrade-device-button"]')
-  await cloudEnvironment.setExecutorLatestVersion(currentDevice.executor_version)
+  await captureVerificationScreenshot(control, 'cloud-device-restart-confirmation.png')
+  await control.command('click', '[data-testid="cancel-restart-device-button"]')
 
   await control.command('click', moreButton)
   await control.command('click', `[data-testid="connection-restart-menu-item-${CLOUD_DEVICE_ID}"]`)
@@ -145,6 +144,7 @@ export async function verifyCloudDeviceLifecycleFlow(control, cloudEnvironment) 
       'A rejected restart request incorrectly presented the cloud device as offline'
     )
     await captureVerificationScreenshot(control, 'cloud-device-restart-unavailable.png')
+    await cloudEnvironment.setExecutorLatestVersion(currentDevice.executor_version)
     return
   }
 
@@ -205,9 +205,15 @@ export async function verifyCloudDeviceLifecycleFlow(control, cloudEnvironment) 
     'The restarted cloud Executor did not recover its online Backend state'
   )
   assert.equal(
+    recoveredDevice?.update_available,
+    true,
+    'A restarted device must recover while a newer version remains available'
+  )
+  assert.equal(
     recoveredDevice?.runtime_instance_id,
     restartedExecutor.runtimeInstanceId,
     'The recovered device card and restarted Executor resolved to different Runtime identities'
   )
   await captureVerificationScreenshot(control, 'cloud-device-restart-recovered.png')
+  await cloudEnvironment.setExecutorLatestVersion(currentDevice.executor_version)
 }

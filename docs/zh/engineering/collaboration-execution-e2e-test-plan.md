@@ -681,16 +681,16 @@ Git 账号同步到该设备，否则克隆会因缺少凭据失败。
 该 checkpoint 复用 CI 启动的真实云端 Executor，验证：
 
 1. 初始 Backend 状态为 `online`，设备具有 Executor 版本和 Runtime identity。
-2. Wework 展示版本升级入口、当前版本、目标版本和短暂离线提示。
+2. Wework 的“有新版本”徽标打开重启确认，显示当前版本、已发布版本和短暂离线提示。
 3. 管理型云环境中，重启操作命中 Sandbox identity；重启等待期间设备操作被禁用。
 4. 测试真实停止 Executor 进程，等待 Backend 变为 `offline`，再启动同一 Executor。
-5. Backend 恢复 `online`，Runtime identity 保持稳定，Wework 显示“重新在线”并恢复操作。
+5. Backend 恢复 `online`，Runtime identity 保持稳定，即使仍有新版本可用，Wework 也显示“重新在线”并恢复操作。
 6. 不支持管理型恢复的公共 Backend 分支必须明确显示重启失败，且不能把在线设备误标为离线。
 
 证据截图：
 
 - `cloud-device-01-online.png`
-- `cloud-device-upgrade-confirmation.png`
+- `cloud-device-restart-confirmation.png`
 - `cloud-device-restart-pending.png`
 - `cloud-device-restart-recovered.png`
 - `cloud-device-restart-unavailable.png`（仅公共 Backend 拒绝分支）

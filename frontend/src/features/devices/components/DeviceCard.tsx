@@ -9,7 +9,7 @@
 
 'use client'
 
-import { Monitor, Play, Star, MoreVertical, Trash2, Loader2, Pencil } from 'lucide-react'
+import { Monitor, Play, Star, MoreVertical, Trash2, Loader2, Pencil, RotateCcw } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import {
   DropdownMenu,
@@ -44,6 +44,7 @@ export interface DeviceCardProps {
   onSetDefault: (device: DeviceInfo) => void
   onDelete: (device: DeviceInfo) => void
   onCancelTask: (taskId: number) => Promise<void>
+  onRestart?: (device: DeviceInfo) => Promise<void>
   onUpgrade?: (device: DeviceInfo) => void
   onEditAlias?: (device: DeviceInfo) => void
   isUpgrading?: boolean
@@ -68,6 +69,7 @@ export function DeviceCard({
   onSetDefault,
   onDelete,
   onCancelTask,
+  onRestart,
   onUpgrade,
   onEditAlias,
   isUpgrading,
@@ -76,6 +78,26 @@ export function DeviceCard({
 }: DeviceCardProps) {
   const { t } = useTranslation('devices')
   const [confirmDelete, setConfirmDelete] = useState(false)
+  const [confirmRestart, setConfirmRestart] = useState(false)
+  const [restarting, setRestarting] = useState(false)
+  const [restartError, setRestartError] = useState<string | null>(null)
+  const openRestart = () => {
+    setRestartError(null)
+    setConfirmRestart(true)
+  }
+  const restart = async () => {
+    if (!onRestart || restarting) return
+    setRestarting(true)
+    setRestartError(null)
+    try {
+      await onRestart(device)
+      setConfirmRestart(false)
+    } catch (error) {
+      setRestartError(error instanceof Error ? error.message : t('restart.failed'))
+    } finally {
+      setRestarting(false)
+    }
+  }
   const upgradeHint =
     device.device_type === 'app'
       ? t('version.upgradeInWework')
@@ -149,7 +171,9 @@ export function DeviceCard({
                   executorVersion={device.executor_version}
                   latestVersion={device.latest_version}
                   updateAvailable={device.update_available && !upgradeHint}
+                  onRestart={onRestart ? openRestart : undefined}
                   onUpgrade={
+                    onUpgrade &&
                     device.update_available &&
                     device.status === 'online' &&
                     !isUpgrading &&
@@ -206,7 +230,7 @@ export function DeviceCard({
                     variant="default"
                     size="sm"
                     onClick={() => onStartTask(device.device_id)}
-                    disabled={device.status !== 'online'}
+                    disabled={device.status !== 'online' || restarting}
                     className="flex items-center gap-2"
                     data-testid={`start-device-chat-${device.registered_device_id || device.device_id}`}
                   >
@@ -230,6 +254,17 @@ export function DeviceCard({
               </Button>
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end">
+              {onRestart && (
+                <DropdownMenuItem
+                  onClick={openRestart}
+                  disabled={restarting}
+                  className="min-h-11 md:min-h-0"
+                  data-testid={`restart-cloud-device-${device.id}`}
+                >
+                  <RotateCcw className="w-4 h-4 mr-2" />
+                  {t('restart.action')}
+                </DropdownMenuItem>
+              )}
               <DropdownMenuItem onClick={() => onEditAlias?.(device)}>
                 <Pencil className="w-4 h-4 mr-2" />
                 {t('edit_alias')}
@@ -253,6 +288,50 @@ export function DeviceCard({
           </DropdownMenu>
         </div>
       </div>
+
+      {onRestart && (
+        <AlertDialog
+          open={confirmRestart}
+          onOpenChange={open => !restarting && setConfirmRestart(open)}
+        >
+          <AlertDialogContent data-testid="cloud-device-restart-dialog">
+            <AlertDialogHeader>
+              <AlertDialogTitle>{t('restart.title')}</AlertDialogTitle>
+              <AlertDialogDescription>
+                {t(
+                  device.running_tasks.length || device.slot_used > 0
+                    ? 'restart.busy'
+                    : 'restart.description',
+                  {
+                    name: device.name,
+                  }
+                )}
+              </AlertDialogDescription>
+            </AlertDialogHeader>
+            {restartError && (
+              <p className="text-sm text-destructive" role="alert">
+                {restartError}
+              </p>
+            )}
+            <AlertDialogFooter>
+              <AlertDialogCancel disabled={restarting} data-testid="cancel-cloud-device-restart">
+                {t('delete_cancel')}
+              </AlertDialogCancel>
+              <AlertDialogAction
+                variant="primary"
+                data-testid="confirm-cloud-device-restart"
+                disabled={restarting}
+                onClick={event => {
+                  event.preventDefault()
+                  void restart()
+                }}
+              >
+                {t(restarting ? 'restart.sending' : 'restart.action')}
+              </AlertDialogAction>
+            </AlertDialogFooter>
+          </AlertDialogContent>
+        </AlertDialog>
+      )}
 
       <AlertDialog open={confirmDelete} onOpenChange={setConfirmDelete}>
         <AlertDialogContent>
