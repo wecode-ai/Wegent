@@ -17,6 +17,13 @@ export async function verifyStandInStartupRecovery({
 }) {
   const role = settings.roles.find(role => role.id === 'recovery-reviewer')
   assert.ok(role)
+  const waitForBackend = () =>
+    until(
+      () => rpc('executor.backend.status', {}),
+      result => result.connected === true,
+      'The Executor must reconnect to the real Backend before cloud delegation'
+    )
+  await waitForBackend()
   for (const restart of [false, true]) {
     const created = await request(`/v1/cloud-projects/${project.id}/loop-items`, {
       title: 'Retry a failed native startup after restarting the Executor',
@@ -102,6 +109,7 @@ export async function verifyStandInStartupRecovery({
           logOffset,
           timeoutMs,
         })
+        await waitForBackend()
         const restored = await rpc('runtime.tasks.get', { taskId })
         assert.equal(restored.task.status, 'failed')
         assert.deepEqual(restored.task.runtimeHandle.startupFailure, failure)
