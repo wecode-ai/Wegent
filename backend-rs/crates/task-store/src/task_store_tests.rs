@@ -410,9 +410,11 @@ async fn bounded_history_uses_owned_task_route_and_skips_disabled_reads() {
     let (route, statement, count) = &calls[0];
     assert_eq!(*route, crate::request_sql::RouteKey::Task(42));
     assert_eq!(*count, 5);
-    assert!(statement.starts_with("SELECT id, message_id, created_at FROM subtasks"));
+    assert!(statement.starts_with(
+        "SELECT /*+ NO_MERGE(history_candidates) */ id, message_id, created_at FROM ("
+    ));
     assert!(statement.contains("SELECT id FROM tasks WHERE id = ? AND user_id = ?"));
-    assert!(statement.ends_with("id DESC LIMIT ?"));
+    assert!(statement.ends_with("ORDER BY message_id DESC, created_at DESC, id DESC LIMIT ?"));
     assert!(!statement.contains("result"));
 }
 

@@ -56,11 +56,18 @@ pub fn history_ids_statement(table: &str, window: SubtaskHistoryWindow) -> Strin
     if window.summary_checkpoint_only {
         statement.push_str(&summary_checkpoint_predicate(table));
     }
-    // MySQL 8.0 can allocate JSON columns in a filesort even when they are not
-    // projected. Read the leading boundary without ordering, then finish the
-    // deterministic ordering in Rust; LIMIT provides the DB-side row bound.
-    statement.push_str(" ORDER BY id DESC LIMIT ?");
-    statement
+    // Materialize only ordering keys before sorting: MySQL can otherwise carry
+    // unprojected JSON eligibility payloads into its filesort. NO_MERGE keeps
+    // those payloads out while retaining the DB-side candidate bound.
+    let candidates = statement.replacen(
+        "SELECT id FROM",
+        "SELECT id, message_id, created_at FROM",
+        1,
+    );
+    format!(
+        "SELECT /*+ NO_MERGE(history_candidates) */ id FROM ({candidates}) \
+         AS history_candidates ORDER BY message_id DESC, created_at DESC, id DESC LIMIT ?"
+    )
 }
 
 /// Keep narrow candidate reads and selected payload reads on the caller's route.
@@ -77,8 +84,8 @@ pub async fn history_candidates_on(
     }
     use crate::task_store_statements::StatementArg;
     let mut statement = history_ids_statement(tables.subtasks, window).replacen(
-        "SELECT id FROM",
-        "SELECT id, message_id, created_at FROM",
+        "*/ id FROM",
+        "*/ id, message_id, created_at FROM",
         1,
     );
     let mut args = vec![StatementArg::Int(task_id)];
@@ -193,9 +200,10 @@ mod tests {
             queries.push(history_ids_statement("subtasks_0001", window));
         }
         for query in &queries {
-            assert!(query.starts_with("SELECT id FROM subtasks_0001"));
+            assert!(query.contains("SELECT id, message_id, created_at FROM subtasks_0001"));
             assert!(query.contains("AND message_id < ?"));
-            assert!(query.ends_with("ORDER BY id DESC LIMIT ?"));
+            assert!(query.starts_with("SELECT /*+ NO_MERGE(history_candidates) */ id FROM ("));
+            assert!(query.ends_with("ORDER BY message_id DESC, created_at DESC, id DESC LIMIT ?"));
             assert!(!query.split("FROM").next().unwrap().contains("result"));
         }
         assert!(queries[1].contains("JSON_TYPE"));
@@ -225,6 +233,7 @@ mod tests {
         assert!(cache.contains("role = 'USER' AND OCTET_LENGTH(prompt) > 0"));
         assert!(cache.contains("JSON_TYPE(JSON_EXTRACT(result, '$.value')) = 'STRING'"));
         assert!(cache.contains("OCTET_LENGTH(JSON_UNQUOTE(JSON_EXTRACT(result, '$.value'))) > 0"));
-        assert!(cache.ends_with("ORDER BY id DESC LIMIT ?"));
+        assert!(cache.contains("NO_MERGE(history_candidates)"));
+        assert!(cache.ends_with("ORDER BY message_id DESC, created_at DESC, id DESC LIMIT ?"));
     }
 }

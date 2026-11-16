@@ -102,6 +102,98 @@ async fn assistant_subtasks_preserve_large_results_and_nullable_message_order() 
     fixture.close().await;
 }
 
+#[tokio::test]
+#[ignore = "requires disposable MySQL 8; run explicitly in the Backend Rust CI job"]
+async fn history_candidates_materialize_keys_before_sorting_large_json() {
+    use wegent_backend_rs::task_store::SubtaskHistoryWindow;
+    use wegent_backend_rs::task_store_history::HistorySelection;
+
+    let fixture = fixture::Fixture::new().await;
+    http_e2e::seed_task(&fixture.mysql, "tasks", 42, 7).await;
+    let store = DefaultTaskStore::new(fixture.mysql.clone());
+    for table in ["subtasks", "subtasks_0007"] {
+        fixture.seed(table, 42, 7).await;
+        fixture
+            .mysql
+            .execute(
+                format!(
+                    "ALTER TABLE {table} DROP INDEX idx_task_id, \
+             ADD INDEX idx_task_message (task_id, message_id)"
+                ),
+                (),
+            )
+            .await
+            .unwrap();
+        let tables = wegent_backend_rs::task_store_tables::TableTemplates {
+            tasks: "tasks",
+            subtasks: table,
+        };
+        for selection in [
+            HistorySelection::Ready,
+            HistorySelection::All,
+            HistorySelection::Cache,
+        ] {
+            let window = SubtaskHistoryWindow {
+                limit: 2,
+                before_message_id: Some(3),
+                summary_checkpoint_only: false,
+                selection,
+            };
+            let start = history_candidate_bytes_sent(&fixture.mysql).await;
+            let mut sql = &fixture.mysql;
+            let candidates = wegent_backend_rs::task_store_history::history_candidates_on(
+                &mut sql,
+                tables,
+                42,
+                Some(7),
+                window,
+                wegent_backend_rs::request_sql::RouteKey::Task(42),
+            )
+            .await
+            .unwrap();
+            assert_eq!(
+                candidates.iter().map(|row| row.id).collect::<Vec<_>>(),
+                [10, 20]
+            );
+            let bytes = history_candidate_bytes_sent(&fixture.mysql).await - start;
+            assert!(
+                bytes < 32 * 1024,
+                "candidate query transferred {bytes} bytes"
+            );
+        }
+    }
+    // The production store must retain its task ownership guard.
+    let mut sql = &fixture.mysql;
+    let rows = store
+        .list_subtasks_history_window_on(
+            &mut sql,
+            42,
+            8,
+            SubtaskHistoryWindow {
+                limit: 2,
+                before_message_id: Some(3),
+                summary_checkpoint_only: false,
+                selection: HistorySelection::Cache,
+            },
+        )
+        .await
+        .unwrap();
+    assert!(rows.is_empty());
+    fixture.close().await;
+}
+
+async fn history_candidate_bytes_sent(mysql: &brz_mysql::MysqlService) -> u64 {
+    let rows: Vec<MysqlRow> = mysql
+        .fetch_all("SHOW SESSION STATUS LIKE 'Bytes_sent'", ())
+        .await
+        .unwrap();
+    rows[0]
+        .get_required::<String>("Value")
+        .unwrap()
+        .parse()
+        .unwrap()
+}
+
 fn assert_task_detail_message_order(rows: &[MysqlRow]) {
     let ids: Vec<i64> = rows
         .iter()
