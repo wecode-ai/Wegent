@@ -662,6 +662,7 @@ const sharedMessages: Record<
       "按北京时间日期跳过法定休息日，包含补班周末。选择“每天”可覆盖全部补班日；其他重复规则仍限制执行日期。",
     "todo.unassigned": "未指派",
     "todo.issue_title": "任务标题",
+    "todo.title_required": "请输入事项标题",
     "todo.issue_title_placeholder": "目标或事项标题",
     "todo.issue_description": "任务描述",
     "todo.issue_description_placeholder": "添加描述，说明背景、目标或处理要求…",
@@ -1267,6 +1268,7 @@ const sharedMessages: Record<
       "Uses Beijing dates, excludes statutory days off and includes make-up working weekends. Choose Daily to include every make-up workday; other recurrence rules still limit dates.",
     "todo.unassigned": "Unassigned",
     "todo.issue_title": "Issue title",
+    "todo.title_required": "Enter an issue title",
     "todo.issue_title_placeholder": "Goal or issue title",
     "todo.issue_description": "Issue description",
     "todo.issue_description_placeholder":

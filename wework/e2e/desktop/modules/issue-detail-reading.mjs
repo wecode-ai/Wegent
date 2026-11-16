@@ -507,7 +507,17 @@ export async function verifyIssueDetailReading(control, { captureScreenshot, uiT
   await control.command('waitFor', scope('[data-testid="issue-save-status"]'), { text: '已保存' })
 
   const title = scope('[data-testid="cloud-todo-detail-title"]')
+  await control.command('fill', title, { value: '' })
+  await control.command('press', title, { key: 'Enter' })
+  const titleError = scope('[data-testid="issue-title-error"]')
+  await control.command('waitFor', titleError, { text: '请输入事项标题', visible: true })
+  assert.equal(await control.command('getAttribute', title, { value: 'aria-invalid' }), 'true')
+  assert.equal(
+    await control.command('getAttribute', title, { value: 'aria-describedby' }),
+    await control.command('getAttribute', titleError, { value: 'id' })
+  )
   await control.command('fill', title, { value: `${TITLE}已更新` })
+  await control.command('waitFor', titleError, { visible: false })
   await control.command('waitFor', scope('[data-testid="issue-save-status"]'), {
     text: '有未保存的修改',
   })

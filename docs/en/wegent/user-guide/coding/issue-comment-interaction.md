@@ -19,6 +19,7 @@ Local projects currently do not support manual participant editing. Details show
 Titles and descriptions use shared semantic sizes and follow appearance settings. Changing text size or window width remeasures the title so it remains fully visible without losing editing focus.
 Descriptions expose a keyboard-accessible Edit description action that focuses the editor. Loading and normalizing Markdown alone does not mark the content as unsaved.
 Titles and properties save immediately; description edits use Save. A shared header indicator reports unsaved changes, saving, saved, or failure. Failed changes remain available for retry.
+An empty title stays as a draft and shows an associated required-field error after Enter or blur, without sending an invalid save request. Entering a title clears the error; a newer invalid edit cannot retry a superseded title.
 Replies to ordinary human discussions say they continue the discussion. Only discussions with execution records promise execution continuation; stand-in conversations and human work assignments retain their own reply explanations.
 Comment editors expose accessible names. Property labels, input hints, and timestamps use the readable secondary text color.
 The scroll viewport reserves the composer's measured footprint so keyboard focus and automatic positioning remain visible. Description Save and Cancel wait for an in-flight write; cancelling a failed edit also discards that description's retry operation.

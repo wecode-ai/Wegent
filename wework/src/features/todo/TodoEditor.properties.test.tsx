@@ -193,6 +193,48 @@ describe('immediate Issue properties', () => {
     expect(updateLoopItem).toHaveBeenCalledOnce()
   })
 
+  it.each([
+    { value: '', workspacePanel: true, enter: true },
+    { value: '   ', workspacePanel: false, enter: false },
+  ])(
+    'explains an empty title without submitting it: %j',
+    async ({ value, workspacePanel, enter }) => {
+      const { updateLoopItem } = setup(undefined, workspacePanel)
+      const title = screen.getByTestId('cloud-todo-detail-title')
+      fireEvent.change(title, { target: { value } })
+      if (enter) fireEvent.keyDown(title, { key: 'Enter' })
+      else fireEvent.blur(title)
+      expect(await screen.findByTestId('issue-title-error')).toHaveTextContent(
+        '请输入事项标题'
+      )
+      expect(title).toHaveAttribute('aria-invalid', 'true')
+      expect(title).toHaveAccessibleDescription('请输入事项标题')
+      expect(title).toHaveValue(value)
+      expect(updateLoopItem).not.toHaveBeenCalled()
+      fireEvent.blur(title)
+      expect(updateLoopItem).not.toHaveBeenCalled()
+      fireEvent.change(title, { target: { value: 'Corrected title' } })
+      expect(screen.queryByTestId('issue-title-error')).not.toBeInTheDocument()
+      fireEvent.blur(title)
+      await waitFor(() => expect(updateLoopItem).toHaveBeenCalledOnce())
+      expect(updateLoopItem.mock.lastCall?.[1]).toMatchObject({ title: 'Corrected title' })
+    }
+  )
+
+  it('discards a superseded title retry when a newer title fails local validation', async () => {
+    const { updateLoopItem } = setup()
+    updateLoopItem.mockRejectedValueOnce(new Error('Offline'))
+    const title = screen.getByTestId('cloud-todo-detail-title')
+    fireEvent.change(title, { target: { value: 'Abandoned' } })
+    fireEvent.blur(title)
+    await screen.findByTestId('cloud-todo-field-retry')
+    fireEvent.change(title, { target: { value: '' } })
+    fireEvent.blur(title)
+    expect(await screen.findByTestId('issue-title-error')).toBeVisible()
+    expect(screen.queryByTestId('cloud-todo-field-retry')).not.toBeInTheDocument()
+    expect(updateLoopItem).toHaveBeenCalledOnce()
+  })
+
   it('keeps a restored title visible while older writes finish and persists the latest intent', async () => {
     const { updateLoopItem } = setup()
     const first = Promise.withResolvers<CloudLoopItem>()

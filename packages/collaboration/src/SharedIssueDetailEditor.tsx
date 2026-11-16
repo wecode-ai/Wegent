@@ -1034,8 +1034,21 @@ export function TodoEditor(props: TodoEditorProps) {
       ),
   );
   const savingDescription = fieldSaves.pendingFields.has("description");
+  const titleScope = `${isCreate ? "create" : "edit"}:${project?.id ?? ""}:${item?.id ?? ""}`;
+  const [invalidTitleScope, setInvalidTitleScope] = useState<string | null>(
+    null,
+  );
+  const titleInvalid = invalidTitleScope === titleScope && !title.trim();
+  const titleErrorId = useId();
   async function saveTitle() {
-    if (!item || !editable || !title.trim()) return;
+    if (!editable) return;
+    if (!title.trim()) {
+      setInvalidTitleScope(titleScope);
+      fieldSaves.discardFailure("title");
+      return;
+    }
+    setInvalidTitleScope(null);
+    if (!item) return;
     const next = title.trim();
     setTitle(next);
     if (
@@ -3125,6 +3138,9 @@ export function TodoEditor(props: TodoEditorProps) {
                       isCreate ? "cloud-todo-title" : "cloud-todo-detail-title"
                     }
                     aria-label={t("todo.issue_title", "任务标题")}
+                    aria-required="true"
+                    aria-invalid={titleInvalid || undefined}
+                    aria-describedby={titleInvalid ? titleErrorId : undefined}
                     autoFocus={isCreate}
                     value={title}
                     onChange={(event) => setTitle(event.target.value)}
@@ -3161,6 +3177,16 @@ export function TodoEditor(props: TodoEditorProps) {
                         "task-detail-content-clickable",
                     )}
                   />
+                  {titleInvalid ? (
+                    <p
+                      id={titleErrorId}
+                      data-testid="issue-title-error"
+                      role="alert"
+                      className="mt-2 text-sm text-destructive"
+                    >
+                      {t("todo.title_required", "请输入事项标题")}
+                    </p>
+                  ) : null}
                 </div>
                 {workspacePanel && item ? (
                   <section
