@@ -171,7 +171,10 @@ async function verifyDingtalkReleaseAuth({
       )
     )
   const checkBusiness = root =>
-    invoke(`sh ${quote(join(root, 'scripts/run-dws.sh'))} account-status`, before.account_id)
+    invoke(
+      `sh ${quote(join(root, 'scripts/run-dws.sh'))} account-status`,
+      JSON.stringify({ accountId: before.account_id, authenticated: true })
+    )
   const oldRoots = await rootsAt(initialVersion)
   await checkBusiness(oldRoots[1])
   evidence.push({
