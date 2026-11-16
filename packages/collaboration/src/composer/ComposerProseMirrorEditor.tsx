@@ -829,6 +829,8 @@ function editorAttributes(
     "data-testid": props.testId,
     role: "textbox",
     "aria-multiline": "true",
+    "aria-label": props.placeholder,
+    "aria-placeholder": props.placeholder,
     spellcheck: "true",
     rows: String(props.rows),
     placeholder: props.placeholder,

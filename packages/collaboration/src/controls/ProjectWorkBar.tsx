@@ -558,7 +558,7 @@ export function ProjectWorkBar({
                 <div className={cn('flex min-h-0 flex-1 flex-col', isMobile && 'px-5 pb-5')}>
                   <label
                     className={cn(
-                      'mb-1.5 flex h-9 shrink-0 items-center gap-2 rounded-xl border border-border bg-surface px-3 text-text-secondary',
+                      'mb-1.5 flex h-9 max-md:min-h-11 shrink-0 items-center gap-2 rounded-xl border border-border bg-surface px-3 text-text-secondary',
                       isMobile && 'h-11 rounded-2xl text-base'
                     )}
                   >
@@ -723,7 +723,7 @@ export function ProjectWorkBar({
                                   closeMenu()
                                 }}
                                 className={cn(
-                                  'ml-7 flex h-9 w-[calc(100%-1.75rem)] items-center gap-2 rounded-lg px-3 text-left text-sm font-medium leading-[18px] text-text-secondary hover:bg-muted',
+                                  'ml-7 flex h-9 max-md:min-h-11 w-[calc(100%-1.75rem)] items-center gap-2 rounded-lg px-3 text-left text-sm font-medium leading-[18px] text-text-secondary hover:bg-muted',
                                   isMobile && 'h-11'
                                 )}
                               >
@@ -759,7 +759,7 @@ export function ProjectWorkBar({
                                       handleSelectDeviceWorkspace(project.id, workspace)
                                     }
                                     className={cn(
-                                      'ml-7 flex h-9 w-[calc(100%-1.75rem)] items-center gap-2 rounded-lg px-3 text-left text-sm leading-[18px]',
+                                      'ml-7 flex h-9 max-md:min-h-11 w-[calc(100%-1.75rem)] items-center gap-2 rounded-lg px-3 text-left text-sm leading-[18px]',
                                       selectable
                                         ? 'text-text-secondary hover:bg-muted'
                                         : 'cursor-not-allowed text-text-muted opacity-60',
@@ -815,7 +815,7 @@ export function ProjectWorkBar({
                           type="button"
                           data-testid="add-local-project-option"
                           onClick={() => handleCreateProject('existing')}
-                          className="flex h-8 w-full items-center gap-3 rounded-lg px-4 text-left text-sm font-medium leading-[18px] text-text-secondary hover:bg-muted"
+                          className="flex h-8 max-md:min-h-11 w-full items-center gap-3 rounded-lg px-4 text-left text-sm font-medium leading-[18px] text-text-secondary hover:bg-muted"
                         >
                           <FolderPlus className="h-4 w-4 shrink-0" />
                           <span className="min-w-0 flex-1">
@@ -832,7 +832,7 @@ export function ProjectWorkBar({
                           type="button"
                           data-testid="no-project-option"
                           onClick={handleClearProject}
-                          className="flex h-8 w-full items-center gap-3 rounded-lg px-4 text-left text-sm font-medium leading-[18px] text-text-secondary hover:bg-muted"
+                          className="flex h-8 max-md:min-h-11 w-full items-center gap-3 rounded-lg px-4 text-left text-sm font-medium leading-[18px] text-text-secondary hover:bg-muted"
                         >
                           <FolderX className="h-4 w-4 shrink-0" />
                           <span className="min-w-0 flex-1">
@@ -853,7 +853,7 @@ export function ProjectWorkBar({
               data-testid="project-work-button"
               onClick={handleToggleMenu}
               className={cn(
-                'flex h-9 min-w-[44px] items-center gap-2 rounded-full px-2 text-base font-medium leading-5 text-text-secondary transition-[background-color,color,box-shadow] hover:bg-background/70 hover:text-text-primary hover:shadow-[0_8px_22px_rgba(0,0,0,0.10)] focus-visible:outline-none keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-primary/30',
+                'flex h-9 max-md:min-h-11 min-w-[44px] items-center gap-2 rounded-full px-2 text-base font-medium leading-5 text-text-secondary transition-[background-color,color,box-shadow] hover:bg-background/70 hover:text-text-primary hover:shadow-[0_8px_22px_rgba(0,0,0,0.10)] focus-visible:outline-none keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-primary/30',
                 open && 'bg-background/70 text-text-primary shadow-[0_8px_22px_rgba(0,0,0,0.10)]',
                 buttonClassName
               )}
@@ -874,7 +874,7 @@ export function ProjectWorkBar({
               <ChevronDown className="h-4 w-4" />
             </button>
           ) : currentProject ? (
-            <div className="flex h-8 w-full min-w-0 items-center rounded-lg text-sm font-normal leading-[18px] text-text-secondary">
+            <div className="flex h-8 max-md:min-h-11 w-full min-w-0 items-center rounded-lg text-sm font-normal leading-[18px] text-text-secondary">
               {showClearButton ? (
                 <button
                   type="button"
@@ -882,7 +882,7 @@ export function ProjectWorkBar({
                   onClick={handleClearProject}
                   title={menuLabels?.clear ?? t('workbench.no_project', '不使用项目')}
                   aria-label={menuLabels?.clear ?? t('workbench.no_project', '不使用项目')}
-                  className="group flex h-8 w-8 shrink-0 items-center justify-center rounded-lg transition-colors hover:bg-background/70 hover:text-text-primary focus-visible:outline-none keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-primary/30"
+                  className="group flex h-8 max-md:min-h-11 w-8 max-md:min-w-11 shrink-0 items-center justify-center rounded-lg transition-colors hover:bg-background/70 hover:text-text-primary focus-visible:outline-none keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-primary/30"
                 >
                   <ProjectFolderIcon
                     project={currentProject}
@@ -891,7 +891,7 @@ export function ProjectWorkBar({
                   <X className="hidden h-4 w-4 group-hover:block" />
                 </button>
               ) : (
-                <span className="flex h-8 w-8 shrink-0 items-center justify-center">
+                <span className="flex h-8 max-md:min-h-11 w-8 max-md:min-w-11 shrink-0 items-center justify-center">
                   <ProjectFolderIcon project={currentProject} className="h-4 w-4" />
                 </span>
               )}
@@ -902,7 +902,7 @@ export function ProjectWorkBar({
                 onClick={handleToggleMenu}
                 title={t('workbench.change_project', '更改项目')}
                 className={cn(
-                  'flex h-8 w-full min-w-0 items-center gap-1.5 rounded-lg px-1.5 transition-colors hover:bg-background/70 hover:text-text-primary focus-visible:outline-none keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-primary/30',
+                  'flex h-8 max-md:min-h-11 w-full min-w-0 items-center gap-1.5 rounded-lg px-1.5 transition-colors hover:bg-background/70 hover:text-text-primary focus-visible:outline-none keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-primary/30',
                   open && 'bg-background/70 text-text-primary',
                   buttonClassName
                 )}
@@ -927,7 +927,7 @@ export function ProjectWorkBar({
               data-testid="project-work-button"
               onClick={handleToggleMenu}
               className={cn(
-                'flex h-8 w-full min-w-[44px] items-center gap-1.5 rounded-lg px-2 text-sm font-normal leading-[18px] text-text-secondary transition-colors hover:bg-background/70 hover:text-text-primary focus-visible:outline-none keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-primary/30',
+                'flex h-8 max-md:min-h-11 w-full min-w-[44px] items-center gap-1.5 rounded-lg px-2 text-sm font-normal leading-[18px] text-text-secondary transition-colors hover:bg-background/70 hover:text-text-primary focus-visible:outline-none keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-primary/30',
                 open && 'bg-background/70 text-text-primary',
                 buttonClassName
               )}

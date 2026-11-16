@@ -3924,3 +3924,15 @@
   background: rgb(var(--color-bg-muted));
   color: rgb(var(--color-text-primary));
 }
+
+@media (max-width: 767px) {
+  .task-detail-primary-metadata .task-detail-rail-value,
+  .task-detail-expanded-properties .task-detail-rail-value,
+  .task-detail-primary-metadata .task-detail-rail-value-content,
+  .task-detail-expanded-properties .task-detail-rail-value-content,
+  .task-detail-left .task-detail-pill,
+  .task-detail-workspace-description .task-detail-desc-toggle {
+    min-height: 44px;
+    min-width: 44px;
+  }
+}

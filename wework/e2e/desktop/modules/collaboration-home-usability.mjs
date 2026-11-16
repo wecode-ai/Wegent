@@ -63,6 +63,33 @@ async function verifyTaskLabels(control, home) {
   )
 }
 
+async function verifyRecordDraftNavigation(control, home) {
+  const record = `${home} [data-testid="collaboration-home-issue-content"]`
+  const previous = await control.command('getValue', record)
+  const draft = 'Preserve this unfinished issue across global settings navigation.'
+  await control.command('fill', record, { value: draft })
+  await control.command('click', '[data-testid="settings-button"]')
+  await control.command('click', '[data-testid="settings-menu-button"]')
+  await control.command('click', '[data-testid="settings-back-button"]')
+  await control.command('click', '[data-testid="workspace-tab-select-fixed-board"]')
+  await control.command('waitFor', record, { visible: true })
+  assert.equal(
+    await control.command('getValue', record),
+    draft,
+    'An unfinished Issue must survive opening and leaving global settings'
+  )
+  for (const selector of [
+    record,
+    `${home} [data-testid="personal-home-general-chat"] [data-testid="chat-message-input"]`,
+  ]) {
+    assert.ok(
+      (await control.command('getAttribute', selector, { value: 'aria-label' }))?.trim(),
+      'Each core collaboration input must have a localized accessible name'
+    )
+  }
+  await control.command('fill', record, { value: previous })
+}
+
 /** Reuse the home checkpoint's real Issue and conversation; no additional model turn. */
 export async function verifyCollaborationHomeUsability(
   control,
@@ -90,6 +117,7 @@ export async function verifyCollaborationHomeUsability(
       draft,
       'Sidebar restoration must retain the draft'
     )
+    await verifyRecordDraftNavigation(control, home)
     await verifyTaskLabels(control, home)
     await resizeHome(control, home, 1100, 800, timeoutMs)
     await control.command('click', `${home} [data-testid="personal-home-issue-${issueId}"]`)

@@ -804,6 +804,7 @@ function PlatformHarness({
   projectAgentConfiguration,
   renderProject,
   renderIssueComposer,
+  issueHomeDraft,
   renderStandInPage,
   renderPersonalHome,
   createIndependentIssue,
@@ -820,6 +821,7 @@ function PlatformHarness({
   projectTemplateRequest?: CollaborationPlatformHostAdapter["projectTemplateRequest"];
   refreshKey?: string;
   renderIssueComposer?: CollaborationPlatformHostAdapter["renderIssueComposer"];
+  issueHomeDraft?: CollaborationPlatformHostAdapter["issueHomeDraft"];
   renderStandInPage?: CollaborationPlatformHostAdapter["renderStandInPage"];
   renderPersonalHome?: CollaborationPlatformHostAdapter["renderPersonalHome"];
   createIndependentIssue?: CollaborationPlatformHostAdapter["createIndependentIssue"];
@@ -850,6 +852,7 @@ function PlatformHarness({
     projectTemplateRequest,
     cloudAccess,
     renderIssueComposer,
+    issueHomeDraft,
     renderStandInPage,
     renderPersonalHome,
     createIndependentIssue,
@@ -7604,5 +7607,51 @@ describe("Issue permission separation in the real shared editor", () => {
     await click(byTestId("cloud-todo-create-task"));
     expect(onCreateTask).toHaveBeenCalledOnce();
     titleScrollHeight.mockRestore();
+  });
+  it("restores the host-owned home draft after the collaboration page unmounts", async () => {
+    const { api } = createApi();
+    function Host() {
+      const [open, setOpen] = useState(true);
+      const [value, onChange] = useState("");
+      return (
+        <>
+          <button
+            data-testid="toggle-collaboration"
+            onClick={() => setOpen((current) => !current)}
+          >
+            Settings
+          </button>
+          {open ? (
+            <PlatformHarness
+              api={api}
+              issueHomeDraft={{ value, onChange }}
+              renderPersonalHome={({ createIssue }) => createIssue}
+              renderIssueComposer={(props) => (
+                <input
+                  data-testid="host-home-draft"
+                  value={props.value}
+                  onChange={(event) => props.onChange(event.target.value)}
+                />
+              )}
+            />
+          ) : (
+            <p>Settings</p>
+          )}
+        </>
+      );
+    }
+    await render(<Host />);
+    await change(
+      byTestId("host-home-draft") as HTMLInputElement,
+      "Keep the unfinished issue",
+    );
+    await click(byTestId("toggle-collaboration"));
+    expect(
+      container.querySelector('[data-testid="host-home-draft"]'),
+    ).toBeNull();
+    await click(byTestId("toggle-collaboration"));
+    expect((byTestId("host-home-draft") as HTMLInputElement).value).toBe(
+      "Keep the unfinished issue",
+    );
   });
 });

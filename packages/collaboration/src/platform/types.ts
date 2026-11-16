@@ -67,6 +67,10 @@ export interface CollaborationPlatformHostAdapter {
   };
   templateStore?: import("../templates/store").CollaborationTemplateStore;
   templateNavigation?: boolean;
+  issueHomeDraft?: {
+    value: string;
+    onChange(value: string): void;
+  };
   renderPersonalHome?(props: {
     projects: CollaborationProject[];
     createIssue: ReactNode;

@@ -326,6 +326,7 @@ export interface WeworkCollaborationPlatformProps {
   services: WorkbenchServices
   startupActive?: boolean
   workspaceActive?: boolean
+  homeDraft: Pick<WorkbenchContextValue['projectChat'], 'inputByScope' | 'setInputForScope'>
   activeProjectRef?: RuntimeProjectSpaceRef | null
   defaultProjectRequested?: boolean
   focusedItemId?: string | null
@@ -2127,6 +2128,11 @@ function WeworkCollaborationPlatformContent(props: WeworkCollaborationPlatformPr
               if (!cloudConnection.isConnected) setCloudLoginIntent('general')
             },
             accountScope: templateScope,
+            issueHomeDraft: {
+              value: props.homeDraft.inputByScope[`collaboration-home:${templateScope}`] ?? '',
+              onChange: value =>
+                props.homeDraft.setInputForScope(`collaboration-home:${templateScope}`, value),
+            },
             templateStore,
             templateNavigation: true,
             createIndependentIssue: () =>

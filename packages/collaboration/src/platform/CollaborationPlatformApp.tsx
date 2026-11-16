@@ -737,6 +737,7 @@ function FirstWorkStarter({
 }
 
 function IssueHomeLauncher({
+  draft,
   messages,
   projects,
   workspaces,
@@ -750,6 +751,7 @@ function IssueHomeLauncher({
   renderTaskComposer,
   currentUserId,
 }: {
+  draft?: CollaborationPlatformHostAdapter["issueHomeDraft"];
   currentUserId?: number;
   messages: PlatformMessages;
   projects: CollaborationProject[];
@@ -769,7 +771,9 @@ function IssueHomeLauncher({
   locale: CollaborationLocale;
   renderTaskComposer?: CollaborationPlatformHostAdapter["renderIssueComposer"];
 }) {
-  const [content, setContent] = useState("");
+  const [localContent, setLocalContent] = useState("");
+  const content = draft?.value ?? localContent;
+  const setContent = draft?.onChange ?? setLocalContent;
   const [members, setMembers] = useState<CollaborationMember[]>([]);
   const [agents, setAgents] = useState<WorkspaceProjectAgent[]>([]);
   const [mentionIssues, setMentionIssues] = useState<CollaborationIssue[]>([]);
@@ -2354,6 +2358,7 @@ function CollaborationPlatformAppContent({
             />
           ) : (
             <IssueHomeLauncher
+              draft={host.issueHomeDraft}
               renderTaskComposer={
                 host.renderIssueComposer
                   ? (props) =>

@@ -153,7 +153,7 @@ test('finds older agents in management and chat after creating 205 agents', asyn
     }
     await context?.close()
     const deletedOwner = await admin.adminDeleteUser(ownerId)
-    if (deletedOwner.status !== 200) cleanupErrors.push(`Owner ${ownerId}: ${deletedOwner.status}`)
+    if (deletedOwner.status !== 204) cleanupErrors.push(`Owner ${ownerId}: ${deletedOwner.status}`)
     expect(cleanupErrors, 'Pagination fixtures must be removed').toEqual([])
   }
 })
