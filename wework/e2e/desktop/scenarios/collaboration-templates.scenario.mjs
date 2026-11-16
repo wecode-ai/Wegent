@@ -68,8 +68,8 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
   const capture = (control, name) =>
     captureScreenshot(control, `collaboration-templates-${name}.png`, CONTENT)
   const click = (control, name) => control.command('click', testId(name))
-  const wait = (control, name, text) =>
-    control.command('waitFor', testId(name), { text, timeoutMs: uiTimeoutMs })
+  const wait = (control, name, text, timeoutMs = uiTimeoutMs) =>
+    control.command('waitFor', testId(name), { text, timeoutMs })
   const openTemplateProject = async (control, text) => {
     await click(control, 'template-use')
     const workspace = testId('collaboration-project-workspace-wework-local-workspace')
@@ -380,7 +380,7 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
       await control.command('clickWhenEnabled', testId('collaboration-project-create-confirm'), {
         timeoutMs: uiTimeoutMs,
       })
-      await wait(control, 'cloud-project-header-title', projectName)
+      await wait(control, 'cloud-project-header-title', projectName, workbenchReadyTimeoutMs)
       await selectCollaborationProjectView(control, CONTENT, 'manage', uiTimeoutMs)
       await click(control, 'collaboration-project-settings-sharing')
       await wait(control, 'project-template-settings')
@@ -418,7 +418,7 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
       await wait(control, 'collaboration-project-groups-page', '产品全流程小组')
       await capture(control, '09-imported-groups')
       await reloadMainWindow(control, 'Template-created project did not reload')
-      await wait(control, 'cloud-project-header-title', projectName)
+      await wait(control, 'cloud-project-header-title', projectName, workbenchReadyTimeoutMs)
       await selectCollaborationProjectView(control, CONTENT, 'manage', uiTimeoutMs)
       await click(control, 'collaboration-project-settings-groups')
       await wait(control, 'collaboration-project-groups-page', '调研分析小组')
