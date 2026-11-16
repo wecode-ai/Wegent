@@ -225,7 +225,15 @@ export function StandInImConnections({
               const availableTrigger = Array.from(
                 section.current?.querySelectorAll('button') ?? []
               ).find(button => button.dataset.testid === `stand-in-im-channel-${channel}`)
-              const focusTarget = availableTrigger ?? trigger.current
+              const focusTarget =
+                availableTrigger ??
+                section.current?.querySelector<HTMLButtonElement>(
+                  '[data-testid="stand-in-im-add-channels"]'
+                ) ??
+                section.current?.querySelector<HTMLButtonElement>(
+                  '[data-testid="stand-in-im-discovery-retry"]'
+                ) ??
+                (trigger.current?.isConnected ? trigger.current : null)
               focusTarget?.focus({ preventScroll: true })
             })
           }}

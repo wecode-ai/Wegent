@@ -8,7 +8,10 @@ import { requestExecutor } from './executor-rpc.mjs'
 import { setNativeCatalogOverride } from './model-catalog-recovery.mjs'
 import { interpretedImReplyEvents } from './runtime-im-question-understanding.mjs'
 import { until } from './plugin-regression-fixture.mjs'
-import { waitForCompletedRuntimeTaskThread } from './runtime-task-evidence.mjs'
+import {
+  waitForBackendRuntimeTerminal,
+  waitForCompletedRuntimeTaskThread,
+} from './runtime-task-evidence.mjs'
 import {
   assistantMessage,
   createSse,
@@ -35,6 +38,7 @@ export function createRuntimeImQuestions({ workspacePath, uiTimeoutMs, modelResp
   let standInTaskId
   let finishBusyResponse
   let transientSendFailed = false
+  let heldQuestionText = null
   const delivered = []
   const requested = new Set()
   const fixture = async payload => {
@@ -62,6 +66,18 @@ export function createRuntimeImQuestions({ workspacePath, uiTimeoutMs, modelResp
         return false
       const body = await readRequestBody(request)
       if (handleEmptyReplyPrediction(body, response)) return true
+      if (JSON.stringify(body.input).includes(`${PREFIX}delivery-probe`)) {
+        const id = `${PREFIX}delivery-probe`
+        response.writeHead(200, { 'content-type': 'text/event-stream' })
+        response.end(
+          createSse([
+            responseCreated(id),
+            assistantMessage(`${id}_complete`),
+            responseCompleted(id),
+          ])
+        )
+        return true
+      }
       const interpreted = interpretedImReplyEvents(body)
       if (interpreted) {
         const id = `${PREFIX}stand_in_reply`
@@ -143,6 +159,42 @@ export function createRuntimeImQuestions({ workspacePath, uiTimeoutMs, modelResp
         },
         uiTimeoutMs
       )
+      const catalog = await requestExecutor(control, 'runtime.runner.catalog', {}, uiTimeoutMs)
+      const model = catalog.models.find(value => value.runtime === 'codex' && value.is_default)
+      assert.ok(model, 'The real Codex model route must be configured')
+      const app = await cloud.waitForConnectedAppDevice()
+      const createTask = async (mode, options = {}) => {
+        const taskId = `im-question-${mode}-${randomUUID()}`
+        const workspace = join(workspacePath, taskId)
+        await mkdir(workspace, { recursive: true })
+        const created = await requestExecutor(
+          control,
+          'runtime.tasks.create',
+          {
+            taskId,
+            workspacePath: workspace,
+            message: `${PREFIX}${mode}`,
+            title: taskId,
+            ...options,
+            executionRequest: {
+              task_id: taskId,
+              subtask_id: `${taskId}-initial`,
+              user_id: userId,
+              prompt: `${PREFIX}${mode}`,
+              new_session: true,
+              bot: [{ shell_type: 'Codex', name: 'IM question verification' }],
+              model_config: {
+                model_id: model.local_model_id,
+                model_provider: model.provider,
+                runtime_config: { codex: { use_user_config: true, configured: true } },
+              },
+            },
+          },
+          uiTimeoutMs
+        )
+        assert.equal(created.accepted, true, created.error)
+        return taskId
+      }
       api = createServer(async (req, res) => {
         try {
           const body = await readRequestBody(req)
@@ -154,13 +206,35 @@ export function createRuntimeImQuestions({ workspacePath, uiTimeoutMs, modelResp
             assert.equal(req.url, '/v1.0/robot/oToMessages/batchSend')
             assert.deepEqual(body.userIds, ['question-ci-staff'])
             assert.equal(body.msgKey, 'sampleText')
+            const text = JSON.parse(body.msgParam).content
+            assert.notEqual(
+              text,
+              heldQuestionText,
+              'A provider timeout must not hide a blocked Runtime event turn'
+            )
             if (!transientSendFailed) {
               transientSendFailed = true
+              heldQuestionText = text
+              // Keep this provider request open while a later event must pass
+              // through the same real device connection and Rust FIFO handler.
+              const probeTaskId = await createTask('delivery-probe')
+              await waitForBackendRuntimeTerminal(
+                cloud,
+                app.socket_device_id,
+                probeTaskId,
+                uiTimeoutMs
+              )
+              assert.equal(
+                res.destroyed,
+                false,
+                'Later Runtime events must pass before IM times out'
+              )
+              heldQuestionText = null
               res.writeHead(503).end(JSON.stringify({ message: 'Temporary provider failure' }))
               return
             }
             const id = `question-ci-${delivered.length + 1}`
-            delivered.push({ id, text: JSON.parse(body.msgParam).content })
+            delivered.push({ id, text })
             res.end(JSON.stringify({ processQueryKey: id }))
           }
         } catch (error) {
@@ -175,9 +249,6 @@ export function createRuntimeImQuestions({ workspacePath, uiTimeoutMs, modelResp
           operation: 'seed',
           apiBase: `http://127.0.0.1:${api.address().port}`,
         })
-        const catalog = await requestExecutor(control, 'runtime.runner.catalog', {}, uiTimeoutMs)
-        const model = catalog.models.find(value => value.runtime === 'codex' && value.is_default)
-        assert.ok(model, 'The real Codex model route must be configured')
         standInSnapshot = await requestExecutor(
           control,
           'runtime.stand_in.personal.get',
@@ -244,47 +315,21 @@ export function createRuntimeImQuestions({ workspacePath, uiTimeoutMs, modelResp
           const synchronous = mode === 'sync' || mode === 'inferred-sync'
 
           if (mode === 'im') await fixture({ operation: 'disable' })
-          const taskId = `im-question-${mode}-${randomUUID()}`
-          const workspace = join(workspacePath, taskId)
-          await mkdir(workspace, { recursive: true })
-          const created = await requestExecutor(
-            control,
-            'runtime.tasks.create',
-            {
-              taskId,
-              workspacePath: workspace,
-              message: `${PREFIX}${mode}`,
-              title: taskId,
-              ...(synchronous ? { modelOptions: { collaboration_mode: 'plan' } } : {}),
-              ...(mode === 'im'
-                ? {
-                    source: {
-                      source: 'im',
-                      external_id: session.sessionKey,
-                      channel_type: 'dingtalk',
-                      channel_id: 779179,
-                      conversation_id: 'question-ci',
-                      sender_id: 'question-ci-owner',
-                    },
-                  }
-                : {}),
-              executionRequest: {
-                task_id: taskId,
-                subtask_id: `${taskId}-initial`,
-                user_id: userId,
-                prompt: `${PREFIX}${mode}`,
-                new_session: true,
-                bot: [{ shell_type: 'Codex', name: 'IM question verification' }],
-                model_config: {
-                  model_id: model.local_model_id,
-                  model_provider: model.provider,
-                  runtime_config: { codex: { use_user_config: true, configured: true } },
-                },
-              },
-            },
-            uiTimeoutMs
-          )
-          assert.equal(created.accepted, true, created.error)
+          const taskId = await createTask(mode, {
+            ...(synchronous ? { modelOptions: { collaboration_mode: 'plan' } } : {}),
+            ...(mode === 'im'
+              ? {
+                  source: {
+                    source: 'im',
+                    external_id: session.sessionKey,
+                    channel_type: 'dingtalk',
+                    channel_id: 779179,
+                    conversation_id: 'question-ci',
+                    sender_id: 'question-ci-owner',
+                  },
+                }
+              : {}),
+          })
           const message = await until(
             () => {
               assert.ifError(api.failure)

@@ -37,14 +37,14 @@ impl brz_http_server::Authenticator<UsersMeUser> for AppAuthenticator {
         &'a self,
         request: brz_http_server::AuthRequest<'a>,
     ) -> Result<UsersMeUser, brz_http_server::AuthFailure> {
-        let authorization = request
-            .header("authorization")
-            .and_then(|value| std::str::from_utf8(value).ok());
+        let header = request.header("authorization");
+        let authorization = header.and_then(|value| std::str::from_utf8(value).ok());
         let user = get_current_user(&self.state().auth, &self.state().mysql, authorization)
             .await
             .ok();
         users_me_principal(
             user,
+            header.is_none(),
             super::users_me_bootstrap::is_required(&self.state().mysql),
         )
         .await
@@ -75,10 +75,14 @@ impl brz_http_server::Authenticator<UsersMeUser> for AppAuthenticator {
 
 async fn users_me_principal(
     user: Option<UserRow>,
+    anonymous: bool,
     bootstrap: impl std::future::Future<Output = brz_mysql::MysqlResult<bool>>,
 ) -> Result<UsersMeUser, brz_http_server::AuthFailure> {
     if let Some(user) = user {
         return Ok(UsersMeUser::Authenticated(user));
+    }
+    if !anonymous {
+        return Err(brz_http_server::AuthFailure::invalid_credentials("Bearer"));
     }
     if bootstrap.await.map_err(|error| {
         tracing::error!(%error, "admin password bootstrap read failed");
@@ -505,7 +509,7 @@ mod tests {
 
     #[tokio::test]
     async fn authenticated_profiles_do_not_depend_on_admin_password_setup() {
-        let result = users_me_principal(Some(user_row("{}")), async {
+        let result = users_me_principal(Some(user_row("{}")), false, async {
             panic!("Authenticated profiles must not read the anonymous bootstrap state")
         })
         .await
@@ -516,11 +520,23 @@ mod tests {
     #[tokio::test]
     async fn anonymous_handshake_requires_setup_only_while_the_marker_is_pending() {
         assert!(matches!(
-            users_me_principal(None, std::future::ready(Ok(true))).await,
+            users_me_principal(None, true, std::future::ready(Ok(true))).await,
             Ok(UsersMeUser::PasswordSetupRequired)
         ));
         assert!(matches!(
-            users_me_principal(None, std::future::ready(Ok(false))).await,
+            users_me_principal(None, true, std::future::ready(Ok(false))).await,
+            Err(brz_http_server::AuthFailure::InvalidCredentials { .. })
+        ));
+    }
+
+    #[tokio::test]
+    async fn rejected_credentials_do_not_enter_the_anonymous_setup_handshake() {
+        let result = users_me_principal(None, false, async {
+            panic!("Rejected credentials must not read the anonymous bootstrap state")
+        })
+        .await;
+        assert!(matches!(
+            result,
             Err(brz_http_server::AuthFailure::InvalidCredentials { .. })
         ));
     }

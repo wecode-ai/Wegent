@@ -11,6 +11,7 @@ import time
 from contextlib import asynccontextmanager
 from typing import Any, AsyncIterator
 
+from anyio import fail_after
 from sqlalchemy.orm import Session
 
 from app.core.cache import cache_manager
@@ -100,7 +101,7 @@ async def _locked(user_id: int) -> AsyncIterator[dict[str, Any]]:
             token = lock.local.token
             state: dict[str, Any] | None = None
             try:
-                async with asyncio.timeout(LOCK_OPERATION_SECONDS):
+                with fail_after(LOCK_OPERATION_SECONDS):
                     state = await _read_state(client, key)
                     cutoff = time.time() - RETENTION_SECONDS
                     state = {

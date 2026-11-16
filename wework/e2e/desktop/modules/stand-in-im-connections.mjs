@@ -100,6 +100,15 @@ export function createStandInImConnectionsStory({ uiTimeoutMs, captureScreenshot
       await control.command('waitFor', connections, { text: '还没有已登记的 Telegram 私聊' })
       await waitForPrimaryConnections(0)
       await captureScreenshot(control, 'im-stand-in-00-empty-conversations.png')
+      await control.command('clickWhenEnabled', refresh)
+      await waitForPrimaryConnections(0)
+      await control.command('nativePress', '[data-testid="stand-in-im-dialog-close"]', {
+        key: 'Escape',
+      })
+      await control.command('waitFor', '[data-testid="stand-in-im-add-channels"]:focus')
+      await control.command('clickWhenEnabled', '[data-testid="stand-in-im-add-channels"]')
+      await control.command('clickWhenEnabled', '[data-testid="stand-in-im-channel-telegram"]')
+      await control.command('waitFor', connections, { text: '还没有已登记的 Telegram 私聊' })
       keys = (await fixture({ operation: 'seed', count: 1 })).keys
       const first = `[data-testid="stand-in-im-connect-${keys[0]}"]`
       await control.command('clickWhenEnabled', refresh)

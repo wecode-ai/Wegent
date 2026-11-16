@@ -778,12 +778,13 @@ async def test_lock_expiry_cannot_overwrite_a_new_owners_question_state(setup):
     assert await s.cache.get(key) == replacement
 
 
-async def test_locked_operations_time_out_and_release_without_losing_state(
+async def test_locked_operations_time_out_without_the_python311_timeout_api(
     setup, monkeypatch
 ):
     s = setup
     await deliver(s, event())
     before = await s.cache.get(service._state_key(7))
+    monkeypatch.delattr(asyncio, "timeout", raising=False)
     monkeypatch.setattr(service, "LOCK_OPERATION_SECONDS", 0.01)
     with pytest.raises(TimeoutError):
         async with service._locked(7):
