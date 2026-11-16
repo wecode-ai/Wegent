@@ -33,6 +33,10 @@ import type {
 } from '../types'
 import { useAutomaticProcessingRules } from './useAutomaticProcessingRules'
 import { ProjectSettingsPage } from './ProjectSettingsPage'
+import {
+  useProjectSettingsRefresh,
+  ProjectSettingsRefreshFeedback,
+} from './useProjectSettingsRefresh'
 import { AutomaticProcessingTriggerFields } from './AutomaticProcessingTriggerFields'
 import {
   EMPTY_DRAFT,
@@ -91,6 +95,7 @@ export function ProjectAutomaticProcessing({
   agents,
   locale,
   translate,
+  onProjectChange,
 }: {
   api: SharedWorkspaceApi
   project: CollaborationProject
@@ -98,6 +103,7 @@ export function ProjectAutomaticProcessing({
   agents: CollaborationAgent[]
   locale: 'zh-CN' | 'en'
   translate: CollaborationTranslate
+  onProjectChange?(project: CollaborationProject): void
 }) {
   const {
     rules,
@@ -137,6 +143,12 @@ export function ProjectAutomaticProcessing({
         ? translate('todo.automatic_processing_unavailable', '当前项目暂不支持自动处理。')
         : '')
   const canManage = project.access_role === 'Owner' || project.access_role === 'Maintainer'
+  const projectRefresh = useProjectSettingsRefresh(api, project.id, onProjectChange)
+
+  async function reloadAfterMutation() {
+    await projectRefresh.refresh()
+    await load()
+  }
 
   useEffect(() => {
     setDraft(EMPTY_DRAFT)
@@ -292,8 +304,8 @@ export function ProjectAutomaticProcessing({
       ? translate('todo.trigger_issue_created', 'Issue 创建后')
       : draft.trigger === 'tag_added'
         ? draft.tag.trim()
-          ? `${translate('todo.trigger_tag_added', '添加 Tag 后')} · ${draft.tag.trim()}`
-          : translate('todo.trigger_tag_added', '添加指定 Tag 后')
+          ? `${translate('todo.trigger_tag_added', '添加标签后')} · ${draft.tag.trim()}`
+          : translate('todo.trigger_tag_added', '添加指定标签后')
         : draft.trigger === 'status_changed'
           ? statusTriggerLabel(draft)
           : draft.trigger === 'schedule'
@@ -436,7 +448,7 @@ export function ProjectAutomaticProcessing({
       } else {
         await api.automations.create(project.id, input)
       }
-      await load()
+      await reloadAfterMutation()
       if (activeSaveScope.current !== saveScope) return
       setEditing(false)
       setDraft(EMPTY_DRAFT)
@@ -462,7 +474,7 @@ export function ProjectAutomaticProcessing({
         ...inputFromDraft({ ...ruleDraft, enabled: !ruleDraft.enabled }),
         version: rule.version,
       })
-      await load()
+      await reloadAfterMutation()
     } catch (toggleError) {
       setError(
         toggleError instanceof Error
@@ -484,7 +496,7 @@ export function ProjectAutomaticProcessing({
         setEditing(false)
         setDraft(EMPTY_DRAFT)
       }
-      await load()
+      await reloadAfterMutation()
     } catch (removeError) {
       setError(
         removeError instanceof Error
@@ -522,6 +534,11 @@ export function ProjectAutomaticProcessing({
       title={translate('todo.automatic_processing', '自动处理')}
     >
       <div className="space-y-4" data-testid="automatic-processing">
+        <ProjectSettingsRefreshFeedback
+          {...projectRefresh}
+          testId="automatic-processing-project-refresh"
+          translate={translate}
+        />
         {loading ? (
           <p
             className="py-8 text-center text-sm text-text-muted"

@@ -53,18 +53,17 @@ export function AutomaticProcessingTriggerFields({
 
   return (
     <>
-      <fieldset className="grid grid-cols-2 gap-2" data-testid="automatic-processing-trigger">
+      <fieldset className="flex flex-wrap gap-2" data-testid="automatic-processing-trigger">
         <legend className="mb-2 text-sm font-medium text-text-primary">
           {translate('todo.when', '当发生')}
         </legend>
         {TRIGGER_OPTIONS.filter(option => option.kind !== 'external' || hasIncomingHooks).map(
           (option, index) => {
             const selected = draft.trigger === option.kind
-            const Icon = option.icon
             const localeIndex = locale === 'zh-CN' ? 0 : 1
             return (
               <label
-                className={`!flex min-h-[68px] cursor-pointer items-start gap-3 rounded-xl border px-3 py-3 transition-colors ${
+                className={`!flex min-h-11 cursor-pointer items-center gap-2 rounded-lg border px-3 py-2 transition-colors focus-within:ring-2 focus-within:ring-focus md:min-h-9 ${
                   selected ? 'automatic-processing-selected' : 'border-border hover:bg-muted/60'
                 }`}
                 key={option.kind}
@@ -72,18 +71,12 @@ export function AutomaticProcessingTriggerFields({
                 <input
                   autoFocus={index === 0}
                   checked={selected}
-                  className="sr-only"
+                  className="h-4 w-4 accent-current"
                   data-testid={`automatic-processing-trigger-${option.kind}`}
                   name="automatic-processing-trigger"
                   onChange={() => selectTrigger(option.kind)}
                   type="radio"
                   value={option.kind}
-                />
-                <Icon
-                  aria-hidden="true"
-                  className={`mt-0.5 h-4 w-4 shrink-0 ${
-                    selected ? 'automatic-processing-selected-icon' : 'text-text-secondary'
-                  }`}
                 />
                 <span className="min-w-0">
                   <strong className="block text-sm font-medium text-text-primary">
@@ -91,20 +84,20 @@ export function AutomaticProcessingTriggerFields({
                       ? translate('todo.trigger_status_changed', option.title[localeIndex])
                       : option.title[localeIndex]}
                   </strong>
-                  <span className="mt-0.5 block text-xs leading-5 text-text-secondary">
-                    {option.kind === 'status_changed'
-                      ? translate(
-                          'todo.trigger_status_changed_description',
-                          option.description[localeIndex]
-                        )
-                      : option.description[localeIndex]}
-                  </span>
                 </span>
               </label>
             )
           }
         )}
       </fieldset>
+
+      <p className="text-sm leading-5 text-text-secondary" aria-live="polite">
+        {
+          TRIGGER_OPTIONS.find(option => option.kind === draft.trigger)?.description[
+            locale === 'zh-CN' ? 0 : 1
+          ]
+        }
+      </p>
 
       {draft.trigger !== 'created' ? (
         <div className="divide-y divide-border overflow-hidden rounded-xl border border-border px-4">
@@ -114,13 +107,13 @@ export function AutomaticProcessingTriggerFields({
                 className="w-14 shrink-0 font-medium text-text-primary"
                 htmlFor="automatic-processing-tag"
               >
-                {translate('todo.matching_tag', 'Tag')}
+                {translate('todo.matching_tag', '标签')}
               </label>
               <input
                 className="h-8 min-w-0 flex-1 rounded-lg border border-border bg-background px-3 outline-none keyboard:focus:border-focus"
                 data-testid="automatic-processing-tag"
                 id="automatic-processing-tag"
-                placeholder={translate('todo.matching_tag_placeholder', '输入需要匹配的 Tag')}
+                placeholder={translate('todo.matching_tag_placeholder', '输入需要匹配的标签')}
                 value={draft.tag}
                 onChange={event => updateDraft({ tag: event.target.value })}
               />

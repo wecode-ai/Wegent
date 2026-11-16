@@ -5,6 +5,10 @@
 import type { ReactNode } from 'react'
 import type { CollaborationTranslate } from '../i18n'
 import type { ProjectSettingsSection } from './ProjectSettingsShell'
+import {
+  projectSettingsContentClassName,
+  projectSettingsPageClassName,
+} from './ProjectSettingsPage'
 
 export function createProjectAiTeamSections({
   agentsContent,
@@ -28,26 +32,26 @@ export function createProjectAiTeamSections({
     },
     {
       id: 'members',
-      label: translate('todo.ai_team_members', '成员'),
+      label: translate('todo.project_members', '项目成员'),
       content: membersContent,
     },
     {
       id: 'groups',
-      label: translate('todo.ai_team_groups', '协作团队'),
+      label: translate('todo.collaboration_groups', '协作小组'),
       content: groupsContent,
     },
   ]
   return pages.map(page => ({
     id: page.id,
-    group,
+    group: page.id === 'members' ? undefined : group,
     label: page.label,
     testId: `${testIdPrefix}-${page.id}`,
     content: (
       <div
-        className="min-h-0 flex-1 px-5 py-6 text-sm"
+        className={projectSettingsPageClassName}
         data-testid={`collaboration-project-${page.id}-page`}
       >
-        <div className="mx-auto max-w-5xl">{page.content}</div>
+        <div className={projectSettingsContentClassName}>{page.content}</div>
       </div>
     ),
   }))

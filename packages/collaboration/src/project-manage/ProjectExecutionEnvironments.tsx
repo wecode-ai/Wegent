@@ -22,6 +22,10 @@ import type {
 } from '../types'
 import { ProjectEnvironmentConfiguration } from './ProjectEnvironmentConfiguration'
 import { ProjectEnvironmentDevices } from './ProjectEnvironmentDevices'
+import {
+  projectSettingsContentClassName,
+  projectSettingsPageClassName,
+} from './ProjectSettingsPage'
 import { repositoryKey } from './environmentConfiguration'
 import { environmentAuthorizationError } from './environmentAuthorization'
 import { useExecutionEnvironmentList } from '../execution-environment/useExecutionEnvironmentList'
@@ -711,15 +715,11 @@ export function ProjectExecutionEnvironments({
   }
 
   return (
-    <div
-      className={
-        presentation === 'devices' ? 'min-w-0' : 'min-h-0 flex-1 overflow-y-auto px-8 py-7'
-      }
-    >
-      <div className="mx-auto max-w-[840px]">
+    <div className={presentation === 'devices' ? 'min-w-0' : projectSettingsPageClassName}>
+      <div className={projectSettingsContentClassName}>
         {presentation === 'page' && (
           <>
-            <h1 className="text-heading-lg font-semibold">
+            <h1 className="heading-base text-text-primary">
               {translate(
                 isWorkspaceScope
                   ? 'todo.workspace_execution_environments'
@@ -727,7 +727,7 @@ export function ProjectExecutionEnvironments({
                 '执行环境'
               )}
             </h1>
-            <p className="mt-1 text-sm text-text-muted">
+            <p className="mt-1 text-sm text-text-secondary">
               {translate(
                 isWorkspaceScope
                   ? 'todo.workspace_execution_environments_intro'

@@ -18,6 +18,11 @@ import {
 } from "../templates/agents";
 import { applyProjectTemplate } from "../templates/projectConfiguration";
 import { templateMessages } from "../templates/messages";
+import { createCollaborationTranslator } from "../i18n";
+import {
+  useProjectSettingsRefresh,
+  ProjectSettingsRefreshFeedback,
+} from "./useProjectSettingsRefresh";
 
 function ScopedProjectCollaborationGroups({
   api,
@@ -60,6 +65,12 @@ function ScopedProjectCollaborationGroups({
   const [membersError, setMembersError] = useState<string | null>(null);
   const [membersRevision, setMembersRevision] = useState(0);
   const [groupsError, setGroupsError] = useState<string | null>(null);
+  const projectRefresh = useProjectSettingsRefresh(
+    api,
+    projectId,
+    onProjectChanged,
+  );
+  const translate = createCollaborationTranslator(locale);
 
   const active = useRef(false);
   const reloadRevision = useRef(0);
@@ -108,6 +119,11 @@ function ScopedProjectCollaborationGroups({
       reloadRevision.current++;
     };
   }, [reload]);
+
+  async function reloadAfterMutation() {
+    await projectRefresh.refresh();
+    await reload();
+  }
 
   useEffect(() => {
     let active = true;
@@ -224,6 +240,11 @@ function ScopedProjectCollaborationGroups({
 
   return (
     <>
+      <ProjectSettingsRefreshFeedback
+        {...projectRefresh}
+        testId="project-groups-refresh"
+        translate={translate}
+      />
       {groupsError ? (
         <div
           className="collaboration-alert"
@@ -287,9 +308,7 @@ function ScopedProjectCollaborationGroups({
               templateMessages[locale].partial,
               templateRoutingResolver(),
             );
-            await reload();
-            const latest = await api.projects.get(projectId);
-            if (active.current) onProjectChanged?.(latest);
+            await reloadAfterMutation();
             return created;
           },
           searchUsers: async () => [],
@@ -311,7 +330,7 @@ function ScopedProjectCollaborationGroups({
               projectId,
               input,
             );
-            await reload();
+            await reloadAfterMutation();
             return created;
           },
           async updateCollaborationGroup(groupId, input) {
@@ -342,7 +361,7 @@ function ScopedProjectCollaborationGroups({
             if (!updated) {
               throw new Error("Project collaboration group API is unavailable");
             }
-            await reload();
+            await reloadAfterMutation();
             return updated;
           },
           async addCollaborationGroup(groupId) {
@@ -354,7 +373,7 @@ function ScopedProjectCollaborationGroups({
               projectId,
               groupId,
             );
-            await reload();
+            await reloadAfterMutation();
             return added;
           },
           async removeCollaborationGroup(groupId) {
@@ -363,7 +382,7 @@ function ScopedProjectCollaborationGroups({
               throw new Error("Project collaboration group API is unavailable");
             }
             await api.projects.removeCollaborationGroup(projectId, groupId);
-            await reload();
+            await reloadAfterMutation();
           },
         }}
       />

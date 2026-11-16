@@ -14,11 +14,12 @@ import {
 import { BoardLayoutEditor } from './BoardLayoutEditor'
 import { ProjectProviderSection, ProjectTagsSection } from './ProjectManageSections'
 import { ProjectMembersSection } from './ProjectMembersSection'
-import { useProjectMembers } from './useProjectMembers'
 import {
-  createVersionMutationQueue,
-  type VersionMutationQueue,
-} from '../versionMutationQueue'
+  projectSettingsContentClassName,
+  projectSettingsPageClassName,
+} from './ProjectSettingsPage'
+import { useProjectMembers } from './useProjectMembers'
+import { createVersionMutationQueue, type VersionMutationQueue } from '../versionMutationQueue'
 import { repositoryAddress, repositoryProviderConfig } from './provider'
 import { collectProjectTags, updateBoardViewTag } from '../project-board/projectTags'
 import { hasTooManyTags, isTagNameTooLong } from '../tagging'
@@ -606,18 +607,18 @@ export function ProjectManageView<
   }
 
   return (
-    <div className={embedded ? 'min-h-0' : 'min-h-0 flex-1 overflow-y-auto px-8 py-7'}>
-      <div className={embedded ? '' : 'mx-auto max-w-[900px]'}>
+    <div className={embedded ? 'min-h-0' : projectSettingsPageClassName}>
+      <div className={embedded ? '' : projectSettingsContentClassName}>
         {!embedded && section !== 'members' ? (
-          <header className="pb-7">
-            <h1 className="text-heading-lg font-semibold">
+          <header className="pb-6">
+            <h1 className="heading-base text-text-primary">
               {section === 'agents'
                 ? host.translate('todo.project_agents', '智能体')
                 : section === 'board'
                   ? host.translate('todo.board_settings', '看板设置')
                   : host.translate('todo.project_basic_information', '基本信息')}
             </h1>
-            <p className="mt-1 text-sm text-text-muted">
+            <p className="mt-1 text-sm text-text-secondary">
               {section === 'agents'
                 ? host.translate(
                     'todo.project_agents_description',
@@ -637,8 +638,8 @@ export function ProjectManageView<
         ) : null}
 
         {(section === 'all' || section === 'overview') && (
-          <section className="border-t border-border py-6">
-            <h2 className="text-heading-md font-semibold">
+          <section className="pb-6">
+            <h2 className="text-base font-medium">
               {host.translate('todo.project_information', '项目信息')}
             </h2>
             <dl className="mt-4 grid gap-4 rounded-xl bg-muted px-4 py-4 sm:grid-cols-2">
@@ -669,16 +670,18 @@ export function ProjectManageView<
 
         {(section === 'all' || section === 'overview') && (
           <section className="border-t border-border py-6">
-            <h2 className="text-heading-md font-semibold">
+            <h2 className="text-base font-medium">
               {host.translate('todo.project_access', '项目访问范围')}
             </h2>
-            <p className="mt-1 text-sm text-text-muted">
+            <p className="mt-1 text-sm text-text-secondary">
               {host.translate(
                 'todo.project_access_description',
                 '决定谁能进入项目，以及普通用户可以看到哪些任务。'
               )}
             </p>
             <div
+              role="group"
+              aria-label={host.translate('todo.project_access', '项目访问范围')}
               className={classNames(
                 'mt-4 grid gap-1 rounded-lg bg-muted p-1',
                 'max-w-md grid-cols-2'
@@ -688,19 +691,20 @@ export function ProjectManageView<
                 <button
                   key={value}
                   type="button"
+                  aria-pressed={visibility === value}
                   data-testid={`cloud-project-manage-visibility-${value.replace('_', '-')}`}
                   disabled={visibilityBusy}
                   onClick={() => void saveVisibility(value)}
                   className={classNames(
-                    'h-8 rounded-md text-xs',
-                    visibility === value ? 'bg-background shadow-sm' : 'text-text-muted'
+                    'min-h-11 rounded-md px-3 text-sm outline-none keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-focus/70 md:min-h-8',
+                    visibility === value ? 'bg-background shadow-sm' : 'text-text-secondary'
                   )}
                 >
                   {visibilityLabels[value]}
                 </button>
               ))}
             </div>
-            <p className="mt-2 text-sm text-text-muted">{visibilityDescriptions[visibility]}</p>
+            <p className="mt-2 text-sm text-text-secondary">{visibilityDescriptions[visibility]}</p>
             {visibility === 'public' && (
               <label className="mt-4 flex items-center justify-between gap-3 text-sm">
                 <span>{host.translate('todo.public_access_role', '所有登录用户的角色')}</span>

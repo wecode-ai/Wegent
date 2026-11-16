@@ -10,6 +10,7 @@ import { CollaborationTemplateStore } from './store'
 import { builtinCollaborationTemplates } from './builtins'
 import type { CollaborationTemplateRemote, TemplateRecord } from './types'
 import { TemplateBindings } from './TemplateBindings'
+import { TemplateDialog } from './TemplateDialog'
 
 let root: Root
 let container: HTMLDivElement
@@ -59,6 +60,28 @@ async function click(testId: string) {
   expect(target).not.toBeNull()
   await act(async () => target!.click())
 }
+
+it('browses template details within the existing picker dialog and returns without losing the library', async () => {
+  const store = new CollaborationTemplateStore({
+    scope: 'local:7',
+    ownerId: 7,
+    persistence: { read: async () => [], write: async () => undefined },
+  })
+  await act(async () =>
+    root.render(
+      <TemplateDialog title="Choose template" closeLabel="Close" onClose={vi.fn()}>
+        <CollaborationTemplatePage embedded store={store} locale="en" onUse={vi.fn()} />
+      </TemplateDialog>
+    )
+  )
+  await click('template-details-product-lifecycle')
+  expect(container.querySelectorAll('dialog[open]')).toHaveLength(1)
+  expect(container.querySelector('[data-testid="template-detail-inline"]')).not.toBeNull()
+  await click('template-detail-cancel')
+  expect(container.querySelector('[data-testid="template-detail-inline"]')).toBeNull()
+  expect(container.querySelector('[data-testid="template-search"]')).not.toBeNull()
+  expect(container.querySelectorAll('dialog[open]')).toHaveLength(1)
+})
 
 it.each(['en', 'zh-CN'] as const)(
   'confirms deletion, preserves cancellation and retries failure in %s',
@@ -228,6 +251,13 @@ it('preconfigures a new Agent coordinator instead of requiring an existing Agent
       />
     )
   )
+  expect(container.querySelector('[data-testid="template-role-main-role-0"]')).toBeNull()
+  const customize = container.querySelector<HTMLDetailsElement>('details')!
+  await act(async () => {
+    customize.open = true
+    customize.dispatchEvent(new Event('toggle'))
+  })
+  expect(container.querySelector('[data-testid="template-roster-main"]')).toBeNull()
   expect(
     container.querySelector<HTMLSelectElement>('[data-testid="template-role-main-role-0"]')!.value
   ).toBe('agent:template-agent:main-role-0')

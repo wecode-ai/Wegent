@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { useEffect, useRef, type ReactNode } from 'react'
-import { X } from 'lucide-react'
+import { ArrowLeft, X } from 'lucide-react'
 
 export function TemplateDialog({
   title,
@@ -12,6 +12,7 @@ export function TemplateDialog({
   footer,
   onClose,
   busy = false,
+  embedded = false,
 }: {
   title: string
   description?: string
@@ -20,9 +21,11 @@ export function TemplateDialog({
   footer?: ReactNode
   onClose(): void
   busy?: boolean
+  embedded?: boolean
 }) {
   const ref = useRef<HTMLDialogElement>(null)
   useEffect(() => {
+    if (embedded) return
     const previous = document.activeElement
     const dialog = ref.current!
     dialog.showModal()
@@ -30,18 +33,9 @@ export function TemplateDialog({
       dialog.close()
       if (previous instanceof HTMLElement && previous.isConnected) previous.focus()
     }
-  }, [])
-  return (
-    <dialog
-      ref={ref}
-      className="collaboration-template-dialog"
-      aria-label={title}
-      data-testid="collaboration-template-dialog"
-      onCancel={event => {
-        event.preventDefault()
-        if (!busy) onClose()
-      }}
-    >
+  }, [embedded])
+  const content = (
+    <>
       <header>
         <div>
           <h2>{title}</h2>
@@ -55,11 +49,33 @@ export function TemplateDialog({
           disabled={busy}
           onClick={onClose}
         >
-          <X aria-hidden="true" />
+          {embedded ? <ArrowLeft aria-hidden="true" /> : <X aria-hidden="true" />}
         </button>
       </header>
       <div className="collaboration-template-dialog-body">{children}</div>
       {footer && <footer>{footer}</footer>}
+    </>
+  )
+  return embedded ? (
+    <section
+      aria-label={title}
+      className="collaboration-template-detail"
+      data-testid="template-detail-inline"
+    >
+      {content}
+    </section>
+  ) : (
+    <dialog
+      ref={ref}
+      className="collaboration-template-dialog"
+      aria-label={title}
+      data-testid="collaboration-template-dialog"
+      onCancel={event => {
+        event.preventDefault()
+        if (!busy) onClose()
+      }}
+    >
+      {content}
     </dialog>
   )
 }

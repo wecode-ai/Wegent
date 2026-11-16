@@ -126,7 +126,8 @@ describe("CollaborationParticipantsTabs", () => {
       Array.from(
         container.querySelectorAll('nav[aria-label="AI 团队"] button'),
       ).map((node) => node.textContent),
-    ).toEqual(["智能体", "成员", "协作团队"]);
+    ).toEqual(["智能体", "协作小组"]);
+    expect(container.querySelector('nav[aria-label="项目设置"]')?.textContent).toContain('项目成员');
     for (const [id, text] of [
       ["agents", "Agents content"],
       ["members", "Members content"],
@@ -142,7 +143,7 @@ describe("CollaborationParticipantsTabs", () => {
       expect(
         container
           .querySelector(`[data-testid="collaboration-project-${id}-page"]`)
-          ?.firstElementChild?.classList.contains("max-w-5xl"),
+          ?.firstElementChild?.classList.contains("max-w-4xl"),
       ).toBe(true);
     }
   });

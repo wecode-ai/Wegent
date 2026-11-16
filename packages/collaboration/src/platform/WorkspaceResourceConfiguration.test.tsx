@@ -16,6 +16,7 @@ import type {
   CollaborationWorkspaceMember,
 } from "../types";
 import { WorkspaceMembersConfiguration } from "./WorkspaceMembersConfiguration";
+import { ProjectSettingsShell } from "../project-manage/ProjectSettingsShell";
 import {
   WorkspaceCollaborationGroupsConfiguration,
   type WorkspaceResourceCommands,
@@ -113,6 +114,76 @@ describe("WorkspaceCollaborationGroupsConfiguration", () => {
       await new Promise((resolve) => setTimeout(resolve, 0));
     });
   }
+
+  it("keeps independent sections and rule drafts when returning from another settings page", async () => {
+    const renderSettings = (selectedSectionId: string) =>
+      act(async () =>
+        root.render(
+          <ProjectSettingsShell
+            ariaLabel="Settings"
+            selectedSectionId={selectedSectionId}
+            sections={[
+              {
+                id: "groups",
+                label: "Groups",
+                testId: "nav-groups",
+                content: (
+                  <WorkspaceCollaborationGroupsConfiguration
+                    groups={[{ ...group }]}
+                    members={[humanMember]}
+                    agents={[codexAgent, claudeAgent]}
+                    locale="en"
+                    commands={commands}
+                    canManage
+                    initialSelectedGroupId={group.id}
+                  />
+                ),
+              },
+              {
+                id: "environment",
+                label: "Environment",
+                testId: "nav-environment",
+                content: <p>Environment settings</p>,
+              },
+            ]}
+          />,
+        ),
+      );
+    await renderSettings("groups");
+    await click(byTestId("collaboration-group-detail-tab-rules"));
+    expect(
+      byTestId("collaboration-group-detail-tab-members").getAttribute(
+        "aria-expanded",
+      ),
+    ).toBe("true");
+    await change(
+      byTestId("collaboration-group-detail-instructions"),
+      "Keep my unfinished rules",
+    );
+    await renderSettings("environment");
+    await renderSettings("groups");
+    expect(
+      byTestId<HTMLTextAreaElement>("collaboration-group-detail-instructions")
+        .value,
+    ).toBe("Keep my unfinished rules");
+    expect(
+      byTestId("collaboration-group-detail-tab-rules").getAttribute(
+        "aria-expanded",
+      ),
+    ).toBe("true");
+    expect(byTestId("collaboration-group-save-status").textContent).toBe(
+      "Unsaved changes",
+    );
+    await click(byTestId("collaboration-group-detail-discard"));
+    expect(
+      byTestId<HTMLTextAreaElement>("collaboration-group-detail-instructions")
+        .value,
+    ).toBe(group.instructions);
+    expect(byTestId("collaboration-group-save-status").textContent).toBe(
+      "Configuration saved",
+    );
+    expect(commands.updateCollaborationGroup).not.toHaveBeenCalled();
+  });
 
   async function change(
     element: HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement,
@@ -582,7 +653,7 @@ describe("WorkspaceCollaborationGroupsConfiguration", () => {
     await click(byTestId("collaboration-group-manage-group-1"));
     expect(
       byTestId("collaboration-group-detail-tab-members").getAttribute(
-        "aria-selected",
+        "aria-expanded",
       ),
     ).toBe("true");
     await click(byTestId("collaboration-group-detail-tab-rules"));
@@ -619,7 +690,11 @@ describe("WorkspaceCollaborationGroupsConfiguration", () => {
       "gpu",
     );
     await click(byTestId("collaboration-group-environment-tag-add"));
-    await click(byTestId("collaboration-group-detail-tab-members"));
+    expect(
+      byTestId("collaboration-group-detail-tab-members").getAttribute(
+        "aria-expanded",
+      ),
+    ).toBe("true");
     await click(byTestId("collaboration-group-remove-member-agent-2"));
     await click(byTestId("collaboration-group-detail-save"));
 

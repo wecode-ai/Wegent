@@ -59,7 +59,8 @@ function apiFor(listMembers = vi.fn(async () => [member])) {
 async function render(
   api: SharedWorkspaceApi,
   projectId = 'project-1',
-  workspaceId = 'workspace-1'
+  workspaceId = 'workspace-1',
+  onProjectChanged?: (project: CollaborationProject) => void
 ) {
   if (!root) {
     container = document.createElement('div')
@@ -76,6 +77,7 @@ async function render(
         agents={[]}
         locale="en"
         canManage
+        onProjectChanged={onProjectChanged}
       />
     )
   )
@@ -89,6 +91,32 @@ afterEach(() => {
 })
 
 describe('project collaboration-group loading', () => {
+  it('publishes the advanced project version after group writes and retries refresh without repeating the write', async () => {
+    const api = apiFor()
+    const latest = { id: 'project-1', version: 5 } as CollaborationProject
+    api.projects.get = vi.fn().mockRejectedValueOnce(new Error('Offline')).mockResolvedValue(latest)
+    const onProjectChanged = vi.fn()
+    await render(api, 'project-1', 'workspace-1', onProjectChanged)
+    await act(async () =>
+      view.props!.commands.createCollaborationGroup!({
+        name: 'Delivery',
+        leader: { kind: 'agent', id: 'agent-1' },
+        members: [],
+      })
+    )
+    expect(api.projects.createCollaborationGroup).toHaveBeenCalledOnce()
+    expect(
+      container.querySelector('[data-testid="project-groups-refresh-error"]')?.textContent
+    ).toContain('Configuration saved')
+    await act(async () =>
+      container
+        .querySelector<HTMLButtonElement>('[data-testid="project-groups-refresh-retry"]')!
+        .click()
+    )
+    expect(onProjectChanged).toHaveBeenCalledExactlyOnceWith(latest)
+    expect(api.projects.createCollaborationGroup).toHaveBeenCalledOnce()
+    expect(container.querySelector('[data-testid="project-groups-refresh-error"]')).toBeNull()
+  })
   it('keeps groups and agents usable after members fail, completes mutations, and retries members', async () => {
     const listMembers = vi
       .fn()

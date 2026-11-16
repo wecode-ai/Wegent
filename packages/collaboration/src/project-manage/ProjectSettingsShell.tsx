@@ -2,7 +2,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-import { useState, type ReactNode } from 'react'
+import { Activity, useState, type ReactNode } from 'react'
 
 export interface ProjectSettingsSection {
   content: ReactNode
@@ -28,8 +28,10 @@ export function ProjectSettingsShell({
   const [internalSelectedId, setInternalSelectedId] = useState(sections[0]?.id ?? '')
   const selectedId = selectedSectionId ?? internalSelectedId
   const selected = sections.find(section => section.id === selectedId) ?? sections[0]
+  const [visited, setVisited] = useState(() => new Set([selectedId]))
 
   if (!selected) return null
+  if (!visited.has(selected.id)) setVisited(new Set([...visited, selected.id]))
 
   const groups = new Map<string, { label: string; sections: ProjectSettingsSection[] }>()
   for (const section of sections) {
@@ -44,14 +46,14 @@ export function ProjectSettingsShell({
 
   return (
     <div
-      className="flex h-full min-h-0 flex-1 flex-col overflow-hidden bg-background md:flex-row"
+      className="flex h-full min-h-0 flex-1 flex-col overflow-hidden bg-background [--color-text-muted:var(--color-text-secondary)] md:flex-row"
       data-testid={testId}
     >
       <aside className="flex w-full shrink-0 gap-1 overflow-x-auto border-b border-border px-3 py-2 md:block md:w-44 md:space-y-6 md:overflow-y-auto md:border-b-0 md:border-r md:py-5">
         {[...groups].map(([id, group]) => (
           <section key={id} className="shrink-0">
             <h2
-              className="sr-only px-2 pb-2 text-xs font-medium text-text-muted md:not-sr-only"
+              className="sr-only px-2 pb-2 text-xs font-medium text-text-secondary md:not-sr-only"
               data-testid={`${testId}-group-${id}`}
             >
               {group.label}
@@ -84,7 +86,15 @@ export function ProjectSettingsShell({
         className="h-full min-h-0 min-w-0 flex-1 overflow-y-auto overscroll-y-contain [scrollbar-gutter:stable]"
         data-testid={`${testId}-content`}
       >
-        {selected.content}
+        {sections
+          .filter(section => section.id === selected.id || visited.has(section.id))
+          .map(section => (
+            <Activity key={section.id} mode={section.id === selected.id ? 'visible' : 'hidden'}>
+              <div className="min-h-0" data-testid={`${testId}-page-${section.id}`}>
+                {section.content}
+              </div>
+            </Activity>
+          ))}
       </main>
     </div>
   )

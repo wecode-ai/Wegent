@@ -11,11 +11,19 @@
 .collaboration-template-card footer,
 .collaboration-template-notice,
 .collaboration-template-dialog > header,
+.collaboration-template-detail > header,
 .collaboration-template-dialog > footer {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 12px;
+}
+
+.collaboration-template-detail > footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  padding-top: 20px;
 }
 
 .collaboration-template-page h2,
@@ -66,7 +74,8 @@
   background: rgb(var(--color-text-primary));
   color: rgb(var(--color-bg-base));
 }
-.collaboration-template-dialog .collaboration-primary-button:hover:not(:disabled) {
+.collaboration-template-dialog
+  .collaboration-primary-button:hover:not(:disabled) {
   background: rgb(var(--color-text-primary) / 0.8);
 }
 .collaboration-template-page .collaboration-danger-button,
@@ -75,7 +84,8 @@
   background: rgb(var(--color-error) / 0.08);
 }
 .collaboration-template-page .collaboration-danger-button:hover:not(:disabled),
-.collaboration-template-dialog .collaboration-danger-button:hover:not(:disabled) {
+.collaboration-template-dialog
+  .collaboration-danger-button:hover:not(:disabled) {
   background: rgb(var(--color-error) / 0.14);
 }
 .collaboration-template-page svg,
@@ -94,12 +104,12 @@
   display: flex;
   gap: 4px;
 }
-.collaboration-template-toolbar button[aria-pressed='true'] {
+.collaboration-template-toolbar button[aria-pressed="true"] {
   box-shadow: inset 0 0 0 1px rgb(var(--color-border));
 }
 
 .collaboration-template-page input,
-.collaboration-template-field input:not([type='checkbox']):not([type='radio']),
+.collaboration-template-field input:not([type="checkbox"]):not([type="radio"]),
 .collaboration-template-field textarea,
 .collaboration-template-field select {
   min-width: 0;
@@ -307,7 +317,7 @@
   color: rgb(var(--color-text-muted));
   cursor: default;
 }
-.collaboration-runtime-device > input[type='checkbox'] {
+.collaboration-runtime-device > input[type="checkbox"] {
   width: 16px;
   height: 16px;
   min-height: 0;
@@ -350,18 +360,6 @@
 .collaboration-template-binding p {
   margin: 3px 0 0;
   font-size: var(--text-sm);
-  color: rgb(var(--color-text-muted));
-}
-.collaboration-template-settings {
-  padding: 24px;
-  max-width: 800px;
-}
-.collaboration-template-settings section {
-  padding: 24px 0;
-  border-bottom: 1px solid rgb(var(--color-border));
-}
-.collaboration-template-settings p {
-  margin: 8px 0 16px;
   color: rgb(var(--color-text-muted));
 }
 

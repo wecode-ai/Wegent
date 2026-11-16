@@ -126,6 +126,8 @@ export interface IssueDetailSearchableSelectProps<TValue extends string> {
   footer?: ReactNode;
   contentClassName?: string;
   groupLimit?: number;
+  open?: boolean;
+  onOpenChange?(open: boolean): void;
   showAllLabel?(group: string, count: number): string;
   onChange(value: TValue): void;
 }
@@ -173,11 +175,18 @@ export function IssueDetailSearchableSelect<TValue extends string>({
   contentClassName,
   groupLimit,
   showAllLabel,
+  open: controlledOpen,
+  onOpenChange,
   onChange,
 }: IssueDetailSearchableSelectProps<TValue>) {
   const portalTheme = useCollaborationPortalTheme();
   const searchInputRef = useRef<HTMLInputElement>(null);
-  const [open, setOpen] = useState(false);
+  const [internalOpen, setInternalOpen] = useState(false);
+  const open = controlledOpen ?? internalOpen;
+  const setOpen = (value: boolean) => {
+    setInternalOpen(value);
+    onOpenChange?.(value);
+  };
   const [query, setQuery] = useState("");
   const [expandedGroups, setExpandedGroups] = useState<Set<string>>(
     () => new Set(),

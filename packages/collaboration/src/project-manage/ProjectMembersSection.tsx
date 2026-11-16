@@ -10,6 +10,7 @@ import type {
 } from './types'
 import type { useProjectMembers } from './useProjectMembers'
 import { MemberSearchPicker } from '../controls/MemberSearchPicker'
+import { projectSettingsContentClassName } from './ProjectSettingsPage'
 
 const grid =
   'grid grid-cols-1 gap-3 md:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_minmax(0,0.8fr)_2.25rem] md:gap-4'
@@ -96,7 +97,7 @@ export function ProjectMembersSection<
 
   return (
     <section className={className} data-testid="cloud-project-members-panel">
-      <div className="mx-auto max-w-5xl">
+      <div className={projectSettingsContentClassName}>
         <header className="flex items-start justify-between gap-4">
           <div className="min-w-0">
             <div className="flex items-center gap-2">

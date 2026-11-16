@@ -67,6 +67,7 @@ export function TemplateBindings({
   )
   const [names, setNames] = useState<Record<string, string>>({})
   const [removed, setRemoved] = useState<Record<string, string[]>>({})
+  const [customizing, setCustomizing] = useState<Record<string, boolean>>({})
   const configured = useMemo(
     () => ({
       ...document,
@@ -179,7 +180,7 @@ export function TemplateBindings({
               }}
             />
           </label>
-          {group.roles.every(role => !!role.agentKey) && (
+          {group.roles.every(role => !!role.agentKey) && !customizing[group.key] && (
             <ul
               className="collaboration-template-agent-roster"
               data-testid={`template-roster-${group.key}`}
@@ -200,67 +201,75 @@ export function TemplateBindings({
               ))}
             </ul>
           )}
-          <details open={group.roles.every(role => !!role.agentKey) ? undefined : true}>
+          <details
+            open={group.roles.every(role => !!role.agentKey) ? !!customizing[group.key] : true}
+            onToggle={event => {
+              const open = event.currentTarget.open
+              setCustomizing(current =>
+                current[group.key] === open ? current : { ...current, [group.key]: open }
+              )
+            }}
+          >
             <summary data-testid={`template-customize-${group.key}`}>{m.customizeMembers}</summary>
-            {group.roles.map(role => (
-              <div className="collaboration-template-binding" key={role.key}>
-                <div>
-                  <div className="collaboration-template-role-heading">
-                    <strong>{role.name}</strong>
-                    {!group.roles.every(role => !!role.agentKey) &&
-                      removeButton(group.key, role.key, role.name, role.key === group.leaderRole)}
+            {(customizing[group.key] || !group.roles.every(role => !!role.agentKey)) &&
+              group.roles.map(role => (
+                <div className="collaboration-template-binding" key={role.key}>
+                  <div>
+                    <div className="collaboration-template-role-heading">
+                      <strong>{role.name}</strong>
+                      {removeButton(group.key, role.key, role.name, role.key === group.leaderRole)}
+                    </div>
+                    <p>{role.responsibility}</p>
                   </div>
-                  <p>{role.responsibility}</p>
-                </div>
-                <label className="collaboration-template-field">
-                  <span className="sr-only">{role.name}</span>
-                  <select
-                    disabled={disabled}
-                    data-testid={`template-role-${group.key}-${role.key}`}
-                    value={
-                      bindings[group.key]?.[role.key]
-                        ? `${bindings[group.key][role.key].kind}:${bindings[group.key][role.key].id}`
-                        : ''
-                    }
-                    onChange={event => {
-                      const candidate = [
-                        ...candidates,
-                        ...Object.values(templateAgentBindings(document)[group.key]),
-                      ].find(
-                        candidate => `${candidate.kind}:${candidate.id}` === event.target.value
-                      )
-                      const next = {
-                        ...bindings,
-                        [group.key]: { ...bindings[group.key] },
+                  <label className="collaboration-template-field">
+                    <span className="sr-only">{role.name}</span>
+                    <select
+                      disabled={disabled}
+                      data-testid={`template-role-${group.key}-${role.key}`}
+                      value={
+                        bindings[group.key]?.[role.key]
+                          ? `${bindings[group.key][role.key].kind}:${bindings[group.key][role.key].id}`
+                          : ''
                       }
-                      if (candidate) next[group.key][role.key] = candidate
-                      else delete next[group.key][role.key]
-                      setBindings(next)
-                    }}
-                  >
-                    {role.agentKey && (
-                      <option value={`agent:${templateAgentId(role.agentKey)}`}>
-                        {m.autoCreate} ·{' '}
-                        {
-                          document.spec.resources.collaboration.agents?.find(
-                            agent => agent.key === role.agentKey
-                          )?.name
+                      onChange={event => {
+                        const candidate = [
+                          ...candidates,
+                          ...Object.values(templateAgentBindings(document)[group.key]),
+                        ].find(
+                          candidate => `${candidate.kind}:${candidate.id}` === event.target.value
+                        )
+                        const next = {
+                          ...bindings,
+                          [group.key]: { ...bindings[group.key] },
                         }
-                      </option>
-                    )}
-                    <option value="">{m.choose}</option>
-                    {candidates.map(candidate => (
-                      <option
-                        key={`${candidate.kind}:${candidate.id}`}
-                        value={`${candidate.kind}:${candidate.id}`}
-                      >
-                        {candidate.label}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-              </div>
-            ))}
+                        if (candidate) next[group.key][role.key] = candidate
+                        else delete next[group.key][role.key]
+                        setBindings(next)
+                      }}
+                    >
+                      {role.agentKey && (
+                        <option value={`agent:${templateAgentId(role.agentKey)}`}>
+                          {m.autoCreate} ·{' '}
+                          {
+                            document.spec.resources.collaboration.agents?.find(
+                              agent => agent.key === role.agentKey
+                            )?.name
+                          }
+                        </option>
+                      )}
+                      <option value="">{m.choose}</option>
+                      {candidates.map(candidate => (
+                        <option
+                          key={`${candidate.kind}:${candidate.id}`}
+                          value={`${candidate.kind}:${candidate.id}`}
+                        >
+                          {candidate.label}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                </div>
+              ))}
           </details>
         </section>
       ))}

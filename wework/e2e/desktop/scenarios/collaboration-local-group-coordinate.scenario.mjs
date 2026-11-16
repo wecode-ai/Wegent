@@ -20,6 +20,7 @@ import {
   waitForTestIdByText,
 } from '../modules/workspace-flows.mjs'
 import { selectCollaborationProjectView } from '../modules/collaboration-project-navigation.mjs'
+import { verifyLocalSettingsProjectVersion } from '../modules/collaboration-settings-ux.mjs'
 
 const CONTENT = '[data-workspace-tab-content][aria-hidden="false"]'
 const MODEL = 'local-model:desktop-e2e-responses'
@@ -592,6 +593,7 @@ export async function createDesktopScenario({
       reviewerAgentId = group.reviewerId
       humanUserId = group.humanId
       await captureScreenshot(control, 'local-coordinate-02-default-device-in-group.png', CONTENT)
+      await verifyLocalSettingsProjectVersion(control, { scoped, projectName: PROJECT })
       await createIssueAndAssignGroup(control, uiTimeoutMs)
 
       await waitForPromise(

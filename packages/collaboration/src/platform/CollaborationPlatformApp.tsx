@@ -2563,6 +2563,7 @@ function CollaborationPlatformAppContent({
       ];
       content = (
         <ProjectSettingsShell
+          key={workspace.id}
           ariaLabel={`${messages.settings} · ${workspaceDisplayName}`}
           testId="workspace-settings-shell"
           selectedSectionId={workspaceSettingsView}

@@ -118,7 +118,7 @@ Open **Milestones** in the project. The Issue-detail selector only associates ex
 
 | Feature                            | Steps                                                                                                                       | Conditions and result                                                                                              |
 | ---------------------------------- | --------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------ |
-| Add project member                 | Project settings → AI team → Members → Add member → search username/email → choose role → click result                      | Clicking adds immediately; no extra Save button; requires management permission                                    |
+| Add project member                 | Project settings → Project members → Add member → search username/email → choose role → click result                      | Clicking adds immediately; no extra Save button; requires management permission                                    |
 | Responsibilities, role and removal | Edit responsibilities/capabilities on the row and blur to save; change role/remove where allowed                            | Inherited membership, effective role and permissions constrain actions; not every member can be removed            |
 | Discuss, assign or move            | Issue details → discussion composer → Assign to or Move to → select target → Send and update                                | Selection only stages changes; without text, select Update issue; use × to cancel a selection                      |
 | Close and reopen                   | Issue details → arrow beside Send inside the composer, bottom right → Close issue or Reopen issue                           | With a draft, the action is Comment and close; details stay open and closure uses the existing Completed state     |
@@ -425,6 +425,18 @@ Use the project-space header to switch among **Board**, **Calendar**, **Gantt**,
 Calendar and Gantt filters, grouping, and sorting are first stored as personal settings on the current device. Choose **Restore project settings** to discard personal changes. Members with project-management permission can choose **Save as project settings** so other members open the project with the same defaults.
 
 ## Execution environment in Project settings
+
+Switching between settings pages within the same project keeps unsaved drafts on visited pages, including execution-environment repositories and setup steps, and collaboration-group rules and stages. Returning lets you continue editing. Switching pages neither saves changes nor runs setup commands. Drafts are discarded when leaving project settings, switching projects, or reloading the app; use the owning page's Save action first.
+
+Opening a collaboration group shows its name and goal first, followed by summary rows for members, rules, environment requirements and sharing. Expand each row to edit; multiple regions can remain open. The footer shows whether changes are saved. **Discard changes** restores the saved configuration, and **Save** submits the changes. Expanding or collapsing a region never saves configuration.
+
+**Project members** manages human access. **AI team → Agents / Collaboration groups** manages execution and coordination. **Basic information → Tags → New tag** provides a persistent **Tag name** label; enter the name and submit **New tag**.
+
+After saving a collaboration group or automatic rule, you can return directly to Basic information without reloading. If **Configuration saved, but project details could not be refreshed. Retry the refresh.** appears, **Retry** only reads project details again; it never repeats the configuration write.
+
+An Agent's **Runtime settings → Automatic allocation** uses cloud models. When no models are available for this mode, choose **Specify device** to open the same execution-environment picker and select a device for its native models. No device is bound automatically.
+
+Opening a template under **Configuration sharing → Choose template** shows its details within the same dialog. Choose **Back to templates** to continue browsing. **Confirm collaboration configuration → Customize members** switches between the role summary and editing form. Use **Save to My templates** to retain the current configuration or **Export configuration (YAML)** to download it.
 
 In a collaboration project, open **Project settings → Execution environment** to add a repository and initialize an execution environment when needed. A project without a repository can use a blank workspace. Normally, selecting a repository or entering its Git URL is enough: the name and directory are derived automatically. Expand **Advanced options** only to customize the name, directory, or branch. Setup steps are optional; no placeholder fields are required to save the configuration.
 

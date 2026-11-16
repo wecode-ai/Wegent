@@ -1011,6 +1011,22 @@ component-level validation outlines to override the native-outline reset.
 
 ### 7.1 Forms
 
+- Project settings share a `20px` horizontal gutter, `24px` top inset, a
+  `max-w-4xl` reading width and the small heading role. Human access belongs
+  under Project members; AI team groups Agents and Collaboration groups.
+- Preserve drafts when moving between settings sections within one project.
+  Mount sections on first visit and suspend hidden effects; do not preload
+  unrelated settings or keep their requests active. Project changes reset
+  drafts. Explanatory settings text uses the secondary foreground so small
+  text remains readable, including on neutral surfaces.
+- Keep group identity compact above independently expandable configuration
+  rows for members, rules, environment and sharing. Collapsed rows summarize
+  their current draft values. Keep save status and discard/save actions together.
+  Do not repeat avatars,
+  source labels, counters or bordered profile cards that push editing below
+  the first viewport. Template pickers replace their list with details in the
+  same dialog; role summaries give way to their editing controls.
+
 - Every field has an accessible name; ordinary settings fields also have a
   persistent visible label.
 - Placeholder text is an example or prompt, not the only label.

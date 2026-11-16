@@ -1113,6 +1113,7 @@ export function CollaborationApp({
                 ),
                 manage: (
                   <ProjectSettingsShell
+                    key={project.id}
                     ariaLabel={messages.settings}
                     onSectionChange={(sectionId) => {
                       const nextSectionId =
@@ -1275,6 +1276,7 @@ export function CollaborationApp({
                                 "collaboration-project-settings-automatic-processing",
                               content: (
                                 <ProjectAutomaticProcessing
+                                  onProjectChange={commands.replaceProject}
                                   api={api}
                                   project={project}
                                   members={members}

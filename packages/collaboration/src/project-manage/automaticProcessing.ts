@@ -40,8 +40,8 @@ export const TRIGGER_OPTIONS = [
   {
     kind: 'tag_added',
     icon: Tag,
-    title: ['添加 Tag 后', 'Tag added'],
-    description: ['Issue 添加指定 Tag 时', 'When a matching tag is added'],
+    title: ['添加标签后', 'Tag added'],
+    description: ['Issue 添加指定标签时', 'When a matching tag is added'],
   },
   {
     kind: 'status_changed',
