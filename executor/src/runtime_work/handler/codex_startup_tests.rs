@@ -29,6 +29,7 @@ fn account_usage_without_subscription_auth_does_not_start_native_requests() {
             for auth in [
                 None,
                 Some(br#"{"OPENAI_API_KEY":"synthetic-key"}"#.as_slice()),
+                Some(br#"{"auth_mode":"apiKey"}"#.as_slice()),
             ] {
                 if let Some(auth) = auth {
                     fs::write(home.path().join("auth.json"), auth).unwrap();
@@ -37,6 +38,9 @@ fn account_usage_without_subscription_auth_does_not_start_native_requests() {
                 assert!(result["rateLimits"].is_null());
                 assert_eq!(result["rateLimitsByLimitId"], json!({}));
             }
+            fs::write(home.path().join("auth.json"), b"invalid JSON").unwrap();
+            let error = handler.read_codex_rate_limits().await.unwrap_err();
+            assert_eq!(error.code, "codex_rate_limits_unavailable");
             fs::remove_file(home.path().join("auth.json")).unwrap();
             fs::create_dir(home.path().join("auth.json")).unwrap();
             let error = handler.read_codex_rate_limits().await.unwrap_err();
@@ -100,10 +104,22 @@ done
                 )
                 .await
                 .unwrap();
-            let result = handler.read_codex_rate_limits().await;
+            for mode in [
+                "chatgpt",
+                "chatgptAuthTokens",
+                "personalAccessToken",
+                "headers",
+                "future",
+            ] {
+                fs::write(
+                    home.path().join("auth.json"),
+                    serde_json::to_vec(&json!({"auth_mode":mode})).unwrap(),
+                )
+                .unwrap();
+                let result = handler.read_codex_rate_limits().await.unwrap();
+                assert_eq!(result["proxy"], "http://127.0.0.1:7890");
+                assert_eq!(result["rateLimits"]["primary"]["usedPercent"], 12);
+            }
             handler.codex_app_server.restart().await;
-            let result = result.unwrap();
-            assert_eq!(result["proxy"], "http://127.0.0.1:7890");
-            assert_eq!(result["rateLimits"]["primary"]["usedPercent"], 12);
         });
 }
