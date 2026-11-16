@@ -10,7 +10,7 @@ import { resolveWorkbenchPaths } from './workbench-environment.js'
 
 const execute = promisify(execFile)
 
-/** Target-owned upgrade/recovery step. Run before any executor or Goal recovery starts. */
+/** Target-owned offline migration for stopped release activation. */
 export async function migrateCodexProviderState(
   options: Pick<ManagedExecutorRuntimeOptions, 'environment' | 'dataDirectory'>,
   signal?: AbortSignal,

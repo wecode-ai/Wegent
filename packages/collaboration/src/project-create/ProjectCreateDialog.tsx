@@ -938,14 +938,6 @@ export function ProjectCreateDialog(props: ProjectCreateDialogProps) {
         }}
       >
         <div className="collaboration-project-create-body">
-          {props.importActions ? (
-            <fieldset
-              className="contents"
-              disabled={state.saving || Boolean(state.createdProject)}
-            >
-              {props.importActions}
-            </fieldset>
-          ) : null}
           {props.workspaceSelection && (
             <label className="collaboration-project-create-field">
               <span>{props.workspaceSelection.label}</span>
@@ -2036,6 +2028,14 @@ export function ProjectCreateDialog(props: ProjectCreateDialogProps) {
               </div>
             ) : null}
           </section>
+          {props.importActions ? (
+            <fieldset
+              className="contents"
+              disabled={state.saving || Boolean(state.createdProject)}
+            >
+              {props.importActions}
+            </fieldset>
+          ) : null}
         </div>
         {!groupEditorDraft && !groupModelPickerOpen ? (
           <footer className="collaboration-project-create-footer">
