@@ -156,6 +156,7 @@ pub(super) async fn create(
             knowledge_base_names: &[],
             web_runtime_guidance: false,
             subtask_bot_resolved: false,
+            attachment_ids: &[],
         },
     )
     .await

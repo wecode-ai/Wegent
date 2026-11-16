@@ -115,6 +115,9 @@ pub struct BuildExecutionRequestInput<'a> {
     /// the builder reuses [`Self::bot`] instead of issuing a second identical
     /// `kinds` read.
     pub subtask_bot_resolved: bool,
+    /// `build_execution_request(attachment_ids=...)`: the caller's attachment
+    /// ids, used to preserve their material order.
+    pub attachment_ids: &'a [i64],
 }
 
 /// `WEB_RUNTIME_GUIDANCE_MARKER` / `WEB_RUNTIME_GUIDANCE_CLOSE`
@@ -1015,6 +1018,8 @@ async fn build_request_with_runtime(
     let attachment_contexts = contexts::attachments_by_subtask(&state.mysql, input.user_subtask_id)
         .await
         .map_err(dependency)?;
+    let attachment_contexts =
+        contexts::order_attachment_contexts(attachment_contexts, input.attachment_ids);
     let attachments: Vec<Value> = attachment_contexts
         .iter()
         .map(contexts::executor_attachment_payload)

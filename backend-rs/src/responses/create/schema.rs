@@ -10,6 +10,9 @@ use serde::Deserialize;
 
 use crate::http_compat::FastApiError;
 
+/// `ResponseCreateInput.attachment_ids`'s Pydantic limit.
+const MAX_ATTACHMENT_IDS: usize = 100;
+
 /// The create request fields the flow reads. `attachment_ids` and the wegent
 /// options are added with the slices that consume them.
 #[derive(Debug, Deserialize)]
@@ -40,6 +43,43 @@ pub struct ResponseCreateInput {
     /// Model's own default in place.
     #[serde(default)]
     pub reasoning: Option<super::reasoning::ReasoningConfig>,
+    /// `ResponseCreateInput.attachment_ids`: uploaded attachment context
+    /// ids linked to the request's user subtask.
+    #[serde(default, deserialize_with = "attachment_ids")]
+    pub attachment_ids: Vec<i64>,
+}
+
+/// Match Pydantic's optional, positive, bounded attachment id list.
+fn attachment_ids<'de, D: serde::Deserializer<'de>>(deserializer: D) -> Result<Vec<i64>, D::Error> {
+    use serde::de::Error;
+    let raw_ids = Option::<Vec<serde_json::Value>>::deserialize(deserializer)?.unwrap_or_default();
+    let mut ids = Vec::with_capacity(raw_ids.len());
+    for raw_id in raw_ids {
+        let id = match raw_id {
+            serde_json::Value::Number(number) => number
+                .as_i64()
+                .or_else(|| {
+                    number
+                        .as_f64()
+                        .filter(|value| value.fract() == 0.0)
+                        .map(|value| value as i64)
+                })
+                .ok_or_else(|| Error::custom("attachment_ids entries must be integers"))?,
+            serde_json::Value::String(text) => text
+                .trim()
+                .parse::<i64>()
+                .map_err(|_| Error::custom("attachment_ids entries must be integers"))?,
+            _ => return Err(Error::custom("attachment_ids entries must be integers")),
+        };
+        if id < 1 {
+            return Err(Error::custom("attachment_ids entries must be >= 1"));
+        }
+        ids.push(id);
+    }
+    if ids.len() > MAX_ATTACHMENT_IDS {
+        return Err(Error::custom("attachment_ids must have at most 100 items"));
+    }
+    Ok(ids)
 }
 
 /// `parse_wegent_tools`: the request tool settings the create flow reads.
@@ -542,5 +582,36 @@ mod tests {
         let default: ResponseCreateInput =
             serde_json::from_value(json!({"model": "m"})).expect("parse");
         assert!(!default.omit_mcp_binary_output);
+    }
+
+    #[test]
+    fn parses_and_validates_attachment_ids() {
+        let body: ResponseCreateInput = serde_json::from_value(json!({
+            "model": "m",
+            "attachment_ids": [31, " 12 ", 12.0],
+        }))
+        .expect("parse");
+        assert_eq!(body.attachment_ids, vec![31, 12, 12]);
+
+        for empty in [
+            json!({"model": "m"}),
+            json!({"model": "m", "attachment_ids": null}),
+            json!({"model": "m", "attachment_ids": []}),
+        ] {
+            let body: ResponseCreateInput = serde_json::from_value(empty).expect("parse");
+            assert!(body.attachment_ids.is_empty());
+        }
+
+        for invalid in [
+            json!({"model": "m", "attachment_ids": [0]}),
+            json!({"model": "m", "attachment_ids": [1, "2.5"]}),
+            json!({"model": "m", "attachment_ids": [1, null]}),
+            json!({"model": "m", "attachment_ids": (1..=101).collect::<Vec<_>>()}),
+        ] {
+            assert!(
+                serde_json::from_value::<ResponseCreateInput>(invalid).is_err(),
+                "invalid attachment_ids must be rejected"
+            );
+        }
     }
 }

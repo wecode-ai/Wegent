@@ -14,11 +14,13 @@ import uuid
 from collections.abc import Callable, Iterator
 from concurrent.futures import Future, ThreadPoolExecutor
 from contextlib import contextmanager
+from io import BytesIO
 from pathlib import Path
 from typing import Any, TypeVar
 
 import httpx
 import socketio
+from PIL import Image
 from redis import Redis
 from sqlalchemy import text
 
@@ -98,6 +100,78 @@ class TerminalHandoffGateway(unittest.TestCase):
             and capture["url"] in {"/v1/chat/completions", "/v1/responses"}
         ]
 
+    def test_response_attachments_reach_the_vision_model(self) -> None:
+        self._create_team(pipeline=False)
+        attachment_ids = []
+        for color in ("red", "blue"):
+            image = BytesIO()
+            Image.new("RGB", (10, 10), color).save(image, format="PNG")
+            upload = self._json(
+                self.api.post(
+                    "/api/v1/attachments/upload",
+                    files={
+                        "file": (
+                            f"{self.marker}-{color}.png",
+                            image.getvalue(),
+                            "image/png",
+                        )
+                    },
+                ),
+                201,
+            )
+            attachment_ids.append(int(upload["id"]))
+
+        response = self._json(
+            self.api.post(
+                "/api/v1/responses",
+                json={
+                    "model": f"default#{self.marker}",
+                    "input": "Analyze the uploaded image",
+                    "attachment_ids": attachment_ids[::-1],
+                },
+            )
+        )
+        task_id = int(response["id"].removeprefix("resp_"))
+
+        with SessionLocal() as db:
+            contexts = (
+                db.query(SubtaskContext)
+                .filter(
+                    SubtaskContext.id.in_(attachment_ids),
+                    SubtaskContext.user_id == self.user_id,
+                )
+                .all()
+            )
+            task, rows = self._snapshot(task_id)
+            contexts = {context.id: context for context in contexts}
+            for context in contexts.values():
+                self.assertEqual(context.subtask_id, rows[0]["id"], rows)
+                self.assertEqual(context.context_type, "attachment")
+                self.assertEqual(context.status, "ready")
+                self.assertTrue(context.image_base64, "image attachment must be parsed")
+
+        captures = self._wait_for(lambda: self._model_requests() or None)
+        self.assertEqual(len(captures), 1, captures)
+        user_messages = [
+            message
+            for message in captures[0]["body"]["messages"]
+            if message.get("role") == "user"
+        ]
+        image_blocks = [
+            block
+            for message in user_messages
+            for block in message.get("content", [])
+            if block.get("type") == "image_url"
+        ]
+        self.assertEqual(len(image_blocks), 2, captures)
+        self.assertEqual(
+            [block["image_url"]["url"] for block in image_blocks],
+            [
+                f"data:image/png;base64,{contexts[attachment_id].image_base64}"
+                for attachment_id in attachment_ids[::-1]
+            ],
+        )
+
     def _create_team(self, *, pipeline: bool, stages: int = 2) -> tuple[int, list[int]]:
         self._json(
             self.api.post(
@@ -106,6 +180,7 @@ class TerminalHandoffGateway(unittest.TestCase):
                     "kind": "Model",
                     "metadata": {"name": self.marker, "namespace": "default"},
                     "spec": {
+                        "modelCapabilities": {"supportsImage": True},
                         "modelConfig": {
                             "env": {
                                 "model": "openai",
@@ -113,7 +188,7 @@ class TerminalHandoffGateway(unittest.TestCase):
                                 "api_key": "mock-api-key",
                                 "base_url": f"{self.model.base_url}v1",
                             }
-                        }
+                        },
                     },
                 },
             ),

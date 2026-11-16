@@ -450,6 +450,7 @@ async fn trigger_ai(state: &AppState, turn: &ChatTurn, user_id: i64) -> Result<(
             // injects the web runtime guidance.
             web_runtime_guidance: turn.client_origin == CLIENT_ORIGIN_FRONTEND,
             subtask_bot_resolved: true,
+            attachment_ids: &[],
         },
         &turn.additional_skills,
         turn.options.generation.as_ref(),

@@ -409,6 +409,31 @@ pub fn executor_attachment_payload(context: &SubtaskContextRow) -> Value {
     ]))
 }
 
+/// `_order_contexts_by_attachment_ids`: caller-ordered attachments first,
+/// followed by every other context in its stored order.
+pub(super) fn order_attachment_contexts(
+    contexts: Vec<SubtaskContextRow>,
+    attachment_ids: &[i64],
+) -> Vec<SubtaskContextRow> {
+    if attachment_ids.is_empty() {
+        return contexts;
+    }
+
+    let mut by_id = std::collections::HashMap::new();
+    by_id.extend(contexts.into_iter().map(|context| (context.id, context)));
+
+    let mut ordered = Vec::with_capacity(by_id.len());
+    for attachment_id in attachment_ids {
+        if let Some(context) = by_id.remove(attachment_id) {
+            ordered.push(context);
+        }
+    }
+    let mut remaining = by_id.into_values().collect::<Vec<_>>();
+    remaining.sort_by_key(|context| context.created_at);
+    ordered.extend(remaining);
+    ordered
+}
+
 /// Prepare attachment metadata and inline content for the current user turn.
 pub(super) fn attachment_prompt(
     rows: &[SubtaskContextRow],
@@ -748,6 +773,30 @@ mod tests {
             assert_eq!(prompt.as_array().unwrap().len(), 2);
             assert_eq!(prompt[1]["text"], "Describe this");
         }
+    }
+
+    #[test]
+    fn attachment_contexts_follow_the_requested_order() {
+        let first = row(
+            31,
+            9,
+            7,
+            "attachment",
+            json!({"original_filename": "first.pdf"}),
+        );
+        let second = row(
+            12,
+            9,
+            7,
+            "attachment",
+            json!({"original_filename": "second.pdf"}),
+        );
+        let rows = vec![first, second];
+        let ordered = order_attachment_contexts(rows, &[12, 31, 99]);
+        assert_eq!(
+            ordered.iter().map(|row| row.id).collect::<Vec<_>>(),
+            [12, 31]
+        );
     }
 
     /// The three reads keep the source's predicates and ordering
