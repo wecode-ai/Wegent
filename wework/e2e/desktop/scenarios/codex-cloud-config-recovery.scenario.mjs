@@ -69,12 +69,16 @@ export function createDesktopScenario({ resultDir, workspacePath }) {
     async verify(control) {
       // The auth-mode switch below controls which turn is active. Reply
       // predictions also open turns and have their own auth-mode checkpoint.
+      // The tray's periodic Codex quota read is an unrelated app-server request
+      // that can block an auth-mode switch as `pending_requests=1`, so disable
+      // it to give the restores a deterministic idle precondition.
       const preferences = JSON.parse(
         await control.command('setAppPreferences', 'body', {
-          value: JSON.stringify({ replyPredictionsEnabled: false }),
+          value: JSON.stringify({ replyPredictionsEnabled: false, trayUsageEnabled: false }),
         })
       )
       assert.equal(preferences.replyPredictionsEnabled, false)
+      assert.equal(preferences.trayUsageEnabled, false)
 
       const addresses = new Map()
       const rpc = (method, params, timeoutMs = DEFAULT_STEP_TIMEOUT_MS) =>
@@ -171,8 +175,8 @@ export function createDesktopScenario({ resultDir, workspacePath }) {
         const offset = (await readFile(logPath, 'utf8')).length
         const result = await rpc(
           'runtime.codex.app_server.restart',
-          // Force the intentional fault-injection restart; background rate-limit
-          // reads can be in flight and must not turn this setup step into a
+          // Force the intentional fault-injection restart so a concurrent
+          // composer prediction or read cannot turn this setup step into a
           // confirmation path.
           { force: true },
           RECOVERY_TIMEOUT_MS
@@ -204,6 +208,10 @@ export function createDesktopScenario({ resultDir, workspacePath }) {
           RECOVERY_TIMEOUT_MS
         )
         assert.equal(idleRestart.activeTaskCount, 0)
+        // The restart gate only succeeds when the app-server has no in-flight
+        // request; assert that precondition before the first turn instead of
+        // retrying a task that the busy check rejected.
+        assert.equal(idleRestart.pendingRequestCount, 0)
         evidence.push({ officialRestore: name, idleRestart })
         const marker = `${PREFIX}_${name}`
         model.plan(marker)

@@ -117,8 +117,8 @@ fn publish_output(file: tempfile::NamedTempFile, result: &Value) -> Result<Value
 }
 
 pub(super) fn collection_read_error(error: AppIpcError) -> AppIpcError {
-    // Only host-declared reads receive recovery hints for process, transport or
-    // generic request failures. Permission and protocol rejections remain stopped.
+    // Add timed backoff only for process, transport or generic read failures.
+    // Every attempt still enforces the current connector authorization.
     if matches!(
         error.code.as_str(),
         "connection_cli_failed" | "connection_cli_timeout" | "connection_cli_request_unavailable"
