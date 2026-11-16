@@ -26,6 +26,16 @@ fn flag<'a>(args: &'a [String], name: &str) -> Option<&'a str> {
 fn active(root: &Path, args: &[String]) -> Option<String> {
     let words = args.iter().map(String::as_str).collect::<Vec<_>>();
     match words.as_slice() {
+        ["chat", "+messages-list", ..] => Some(fs::read_to_string(root.join("history.json")).expect("native image history")),
+        ["chat", "message", "download-media", ..] => {
+            assert_eq!(flag(args, "--resource-id"), Some("@source-story-image"));
+            assert_eq!(flag(args, "--message-id"), Some("source-story-image-message"));
+            assert_eq!(flag(args, "--open-conversation-id"), Some("source-story-group"));
+            let output = flag(args, "--output").expect("host-owned output");
+            fs::copy(root.join("image.png"), output).expect("download actual image bytes");
+            fs::write(root.join("download-path.txt"), output).expect("download audit");
+            Some(r#"{"success":true}"#.into())
+        }
         ["chat", "search", ..] => Some(r#"{"success":true,"result":{"groups":[{"openConversationId":"source-story-group","title":"Source story group"}],"hasMore":false}}"#.into()),
         ["chat", "message", "list-mentions", ..] | ["chat", "message", "search-advanced", ..] => {
             Some(fs::read_to_string(root.join("mentions.json")).expect("published protocol data"))
@@ -36,12 +46,16 @@ fn active(root: &Path, args: &[String]) -> Option<String> {
             let sender = flag(args, "--ref-sender").expect("bound sender");
             let text = flag(args, "--text").expect("exact reply text");
             let uuid = flag(args, "--uuid").expect("native idempotency key");
+            let mentions = flag(args, "--at-open-dingtalk-ids").unwrap_or("");
+            if message == "SOURCE_REPLY_STORY-message-1" {
+                assert_eq!(mentions, "source-story-colleague");
+            }
             assert_eq!(group, "source-story-group");
             assert_eq!(sender, "source-story-sender");
             assert!(message.starts_with("SOURCE_REPLY_STORY-message-"));
             assert!(uuid.len() == 64 && uuid.bytes().all(|byte| byte.is_ascii_hexdigit()));
             assert!(args.iter().any(|arg| arg == "--ai-tag=true"));
-            let record = format!("{{\"messageId\":{},\"group\":{},\"uuid\":{},\"text\":{}}}\n", quote(message), quote(group), quote(uuid), quote(text));
+            let record = format!("{{\"messageId\":{},\"group\":{},\"uuid\":{},\"text\":{},\"mentions\":{}}}\n", quote(message), quote(group), quote(uuid), quote(text), quote(mentions));
             fs::OpenOptions::new().create(true).append(true).open(root.join("replies.jsonl"))
                 .expect("reply audit").write_all(record.as_bytes()).expect("record accepted reply");
             Some(format!("{{\"success\":true,\"result\":{{\"openMessageId\":{}}}}}", quote(&format!("accepted-{message}"))))

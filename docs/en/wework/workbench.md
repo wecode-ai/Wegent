@@ -45,11 +45,15 @@ In a separate window, right-click a tab and choose **Move to main window** to re
 
 The Task page and auxiliary product pages such as Plugins and Cloud Work share the same full-bleed desktop content container below the title bar. Switching pages within a tab therefore keeps the left sidebar's position and chrome stable instead of shifting with the page type. Pages may still render their own internal chrome inside this container.
 
+<a id="board-automations"></a>
+
 ## Configure board automations
 
-Under **Automation** in a project space, choose a scheduled trigger and select daily, weekdays, weekly, or **Hourly**. Hourly schedules support minute 0–59 and use the configured timezone.
+Open **top + → Collaboration → project → Project settings → Automatic processing**, create or edit a rule and select **Scheduled**. Choose Daily, Monday–Friday or Weekly, or enter a custom Cron expression under advanced settings. The entry depends on project capabilities and management permissions; changes apply after saving.
 
-Scheduled automations have a **Run** button on both their list card and detail view, including when their schedule is paused. Save configuration changes before running. The button is disabled while a run is starting to prevent duplicate submissions and becomes available again after a failed start. View results in run history.
+Scheduled rules offer **Run only on mainland China statutory workdays**. This filter defaults to off and uses Beijing dates to exclude statutory days off and include make-up working weekends. Choose Daily to cover all make-up workdays; other Cron date constraints still apply. Existing Monday–Friday rules retain their meaning. Summaries and the editor preserve the setting for both local and cloud projects. Event triggers do not use this filter.
+
+Click **Save** after editing, then check the trigger and workday filter summary in the rule list. Disable a rule to suspend future automatic triggers. Reopening the editor restores the saved filter. Saving a rule does not prove completion; check Issue activity and execution records for actual results.
 
 ## Manage issues and tasks in workspaces
 
@@ -156,6 +160,8 @@ A queued Issue answer does not clear the wait. After confirmed acceptance, local
 
 Selecting ordinary project work opens its original Issue details on the right, even without a running task; it never creates a placeholder task. Unassigned work belongs to its creator. Questions match their effective recipient or responsible participant first. Confirmed running agents and stand-ins do not count as ordinary human work, but questions assigned to you remain visible while independent AI steps continue. Opening this page does not expand project permissions.
 
+Once a question's answer is accepted or the question is cancelled, both the question and its Issue entry leave the **Needs your input** list and details. An unfinished Issue, content edits, or later execution completion do not recreate the entry. It returns for another unresolved or new question, or for work explicitly assigned to you after the questions were handled. Queued answers and requests whose settlement cannot yet be verified remain pending verification; reads reconcile automatically after recovery without granting cached questions reply authority.
+
 For one project, open **Collaboration → select project → board**, then select the toolbar's **Needs my action** button and count; select it again to clear. This temporary filter resets when switching projects and does not change saved views. Use **Only issues needing my input** in board view settings for a persistent view; it evaluates the current viewer. Local discovery includes native ownership and explicit assignments to the current verified sign-in identity, without globally merging matching names or IDs. Answers use the session's actual author. If a question still targets another identity, explicitly transfer it to the current name before answering; old recipients and historical authors are never silently rewritten. Cloud authorization always uses the server's current account.
 
 **With you for** measures elapsed calendar time since this handoff, not the record date or working time. Older work without reliable evidence shows **Handoff time not recorded**; an update timestamp never invents a wait. See [Issue human handoffs](./personal-stand-in.md#issue-human-handoffs) and [Waiting time and workflow analysis](./personal-stand-in.md#waiting-time-and-workflow-analysis) for transfer, acceptance, offline recovery and analysis limits. Ordinary work currently covers native projects; external-provider projects are not guaranteed to enumerate every Issue. Failed reads retain the last same-scope results and show a retry error, rather than reporting no pending work.
@@ -218,7 +224,7 @@ The titlebar's **Open workspace location** and neighboring IDE dropdown open the
 
 The right workspace displays project files, previews, and change reviews. Multi-root projects show a folder selector in the Files tab. Switching folders changes only the file-tree and preview root; it does not change the execution directory used by the task, terminal, or conversation.
 
-Selecting a writable non-Markdown text file opens it directly in the editor without a separate **Edit** action. Changes autosave after about three seconds, so the editor does not show a manual **Save** button. Markdown files open in rendered preview by default and switch to the editor through **Source**; read-only text and binary files remain in preview mode.
+Selecting a writable plain text file opens it directly in the editor without a separate **Edit** action. Changes autosave after about three seconds, so the editor does not show a manual **Save** button. Markdown and HTML files open in rendered preview by default and switch to the editor through **Source**; read-only text and binary files remain in preview mode.
 
 Local file and directory links in an AI response open in the Files tab. Document links with URL-encoded separators in an absolute Windows path are recognized as local references rather than external protocols. File links can jump to referenced lines, while directory links make that directory the file-tree root. In the macOS desktop app, the Files tab's **Open** and **Open location** actions support both files and directories.
 

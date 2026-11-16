@@ -230,7 +230,9 @@ impl RuntimeWorkRpcHandler {
             "runtime.tasks.list" => {
                 boxed_rpc(move || async move { self.list_tasks(&payload).await })
             }
-            "runtime.tasks.get" => boxed_rpc(move || async move { self.get_task(&payload) }),
+            "runtime.tasks.get" => {
+                boxed_rpc(move || async move { self.get_task_with_active_provider(&payload).await })
+            }
             "runtime.tasks.running_count" => {
                 boxed_rpc(move || async move { Ok(self.running_task_count()) })
             }
@@ -442,7 +444,7 @@ impl RuntimeWorkRpcHandler {
                 boxed_rpc(move || async move { self.switch_codex_account(payload).await })
             }
             "runtime.codex.auth.login.start" => {
-                boxed_rpc(move || async move { self.start_codex_login().await })
+                boxed_rpc(move || async move { self.start_codex_login(payload).await })
             }
             "runtime.codex.auth.login.cancel" => {
                 boxed_rpc(move || async move { self.cancel_codex_login(payload).await })

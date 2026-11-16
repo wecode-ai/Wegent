@@ -231,6 +231,7 @@ def build_trigger_config(
             cron=CronTriggerConfig(
                 expression=trigger_config.get("expression", "0 9 * * *"),
                 timezone=trigger_config.get("timezone", "UTC"),
+                workday_only=trigger_config.get("workday_only", False),
             ),
         )
     elif trigger_type_enum == SubscriptionTriggerType.INTERVAL:
@@ -298,6 +299,7 @@ def extract_trigger_config(trigger: SubscriptionTriggerConfig) -> Dict[str, Any]
         return {
             "expression": trigger.cron.expression,
             "timezone": trigger.cron.timezone,
+            "workday_only": trigger.cron.workday_only,
         }
     elif trigger.type == SubscriptionTriggerType.INTERVAL and trigger.interval:
         return {
@@ -357,7 +359,7 @@ def calculate_next_execution_time(
     if trigger_type_enum == SubscriptionTriggerType.CRON:
         # Use croniter to calculate next run with timezone support
         try:
-            from croniter import croniter
+            from app.utils.schedule_time import next_cron_datetime
 
             cron_expr = trigger_config.get("expression", "0 9 * * *")
             timezone_str = trigger_config.get("timezone", "UTC")
@@ -375,8 +377,9 @@ def calculate_next_execution_time(
             now_user_tz = now_utc.astimezone(user_tz)
 
             # Calculate next execution in user's timezone
-            iter = croniter(cron_expr, now_user_tz)
-            next_user_tz = iter.get_next(datetime)
+            next_user_tz = next_cron_datetime(
+                cron_expr, now_user_tz, trigger_config.get("workday_only", False)
+            )
 
             # Ensure the result has timezone info
             if next_user_tz.tzinfo is None:
@@ -394,6 +397,10 @@ def calculate_next_execution_time(
             # Return naive UTC datetime for database storage
             return next_utc.replace(tzinfo=None)
         except Exception as e:
+            from shared.utils.workday import WorkdayCalendarError
+
+            if isinstance(e, WorkdayCalendarError):
+                raise
             logger.warning(f"Failed to parse cron expression: {e}")
             return None
 

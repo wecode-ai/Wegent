@@ -195,16 +195,16 @@ def finalize_empty_cancellation(db: Session, *, task_id: int, user_id: int) -> b
         task = task_store.get_owned_active_task(db, task_id=task_id, user_id=user_id)
         if not task:
             return False
+        db.refresh(task, with_for_update=True)
         # A current locking read fences retries and new rows under InnoDB RR.
-        if _has_active_assistant(db, task_id):
+        if _has_active_assistant(db, task_id, nowait=True):
             db.rollback()
             return False
-        db.refresh(task, with_for_update=True)
         task_crd = Task.model_validate(task.json)
         if not task_crd.status or task_crd.status.status in _TASK_FINAL_STATES:
             db.rollback()
             return False
-        # RC has no gap fence. Recheck without waiting in the reverse retry order.
+        # Recheck current attempts while retaining the task-first lock order.
         if _has_active_assistant(db, task_id, nowait=True):
             db.rollback()
             return False
@@ -246,6 +246,7 @@ def finalize_stuck_cancellation(
     if not task or not task.json:
         return []
 
+    db.refresh(task, with_for_update=True)
     task_crd = Task.model_validate(task.json)
     if task_crd.status and task_crd.status.status in _TASK_FINAL_STATES:
         return []

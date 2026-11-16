@@ -12,8 +12,8 @@
 //! capability report"}`.
 //!
 //! The normalized value keeps pydantic's field order and defaults, including
-//! explicit JSON nulls for `source` and `cloud_model`, so a later comparison
-//! with the stored catalogue is a value comparison.
+//! explicit JSON nulls for optional model metadata, so a later comparison with
+//! the stored catalogue is a value comparison.
 
 use std::collections::BTreeSet;
 
@@ -23,7 +23,7 @@ const RUNTIMES: [&str; 2] = ["codex", "claude_code"];
 const CLOUD_MODEL_TYPES: [&str; 3] = ["public", "user", "group"];
 
 const CATALOG_KEYS: [&str; 3] = ["errors", "runtimes", "models"];
-const MODEL_KEYS: [&str; 9] = [
+const MODEL_KEYS: [&str; 11] = [
     "runtime",
     "provider",
     "model_id",
@@ -33,6 +33,8 @@ const MODEL_KEYS: [&str; 9] = [
     "local_model_id",
     "account_label",
     "is_default",
+    "default_reasoning_effort",
+    "supported_reasoning_efforts",
 ];
 const CLOUD_MODEL_KEYS: [&str; 4] = ["name", "type", "namespace", "resource_user_id"];
 
@@ -167,6 +169,20 @@ fn normalize_model(value: &Value) -> Option<Value> {
         Some(Value::Bool(flag)) => *flag,
         Some(_) => return None,
     };
+    let default_reasoning_effort = match object.get("default_reasoning_effort") {
+        None | Some(Value::Null) => None,
+        Some(value) => Some(value.as_str()?),
+    };
+    let supported_reasoning_efforts = match object.get("supported_reasoning_efforts") {
+        None | Some(Value::Null) => None,
+        Some(Value::Array(items)) => Some(
+            items
+                .iter()
+                .map(Value::as_str)
+                .collect::<Option<Vec<_>>>()?,
+        ),
+        Some(_) => return None,
+    };
 
     Some(json!({
         "runtime": runtime,
@@ -178,6 +194,8 @@ fn normalize_model(value: &Value) -> Option<Value> {
         "local_model_id": local_model_id,
         "account_label": account_label,
         "is_default": is_default,
+        "default_reasoning_effort": default_reasoning_effort,
+        "supported_reasoning_efforts": supported_reasoning_efforts,
     }))
 }
 
@@ -258,9 +276,51 @@ mod tests {
                 "label": "GPT-6.1-Sol",
                 "local_model_id": "gpt-6.1-sol",
                 "account_label": "CodeX",
-                "is_default": true
+                "is_default": true,
+                "default_reasoning_effort": null,
+                "supported_reasoning_efforts": null
             })
         );
+    }
+
+    #[test]
+    fn reasoning_capabilities_are_preserved_with_optional_nulls() {
+        for (default, supported) in [
+            (json!("high"), json!(["low", "high"])),
+            (json!("high"), Value::Null),
+            (Value::Null, json!([])),
+            (Value::Null, Value::Null),
+        ] {
+            let mut report = catalog();
+            report["models"][0]["default_reasoning_effort"] = default.clone();
+            report["models"][0]["supported_reasoning_efforts"] = supported.clone();
+            let normalized = normalize(&report).expect("reasoning capabilities are valid");
+            assert_eq!(normalized["models"][0]["default_reasoning_effort"], default);
+            assert_eq!(
+                normalized["models"][0]["supported_reasoning_efforts"],
+                supported
+            );
+        }
+    }
+
+    #[test]
+    fn reasoning_capabilities_require_strings_and_string_arrays() {
+        for (field, invalid) in [
+            ("default_reasoning_effort", json!(1)),
+            ("default_reasoning_effort", json!(true)),
+            ("default_reasoning_effort", json!([])),
+            ("default_reasoning_effort", json!({})),
+            ("supported_reasoning_efforts", json!(1)),
+            ("supported_reasoning_efforts", json!(true)),
+            ("supported_reasoning_efforts", json!("high")),
+            ("supported_reasoning_efforts", json!({})),
+            ("supported_reasoning_efforts", json!([1])),
+            ("supported_reasoning_efforts", json!(["high", null])),
+        ] {
+            let mut report = catalog();
+            report["models"][0][field] = invalid;
+            assert!(normalize(&report).is_none(), "{field} must be strict");
+        }
     }
 
     #[test]

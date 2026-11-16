@@ -2339,7 +2339,7 @@ function ProjectItem({
   )
   const hasHiddenRuntimeTasks = hasHiddenRuntimeSidebarTaskItems(
     prioritizedRuntimeTaskItems,
-    runtimeTaskVisibleLimit
+    visibleRuntimeTaskItems
   )
   const canCollapseRuntimeTasks = hasExpandedRuntimeSidebarTaskItems(
     prioritizedRuntimeTaskItems,
@@ -2684,7 +2684,7 @@ function ProjectItem({
                 {
                   label: projectArchiving
                     ? t('workbench.archiving_conversations', '归档中...')
-                    : t('workbench.archive_project_conversations', '归档对话'),
+                    : t('workbench.archive_all_chats', '归档所有聊天'),
                   icon: Archive,
                   testId: `archive-project-conversations-${project.id}`,
                   disabled: !canArchiveProjectConversations,
@@ -2859,7 +2859,7 @@ function ProjectItem({
                         aria-controls={`project-local-tasks-panel-${project.id}`}
                         className="flex h-[30px] items-center rounded-md px-2 text-left text-base leading-5 text-[rgb(var(--color-sidebar-text-muted))] hover:bg-[rgb(var(--color-sidebar-hover))] hover:text-[rgb(var(--color-sidebar-text-secondary))]"
                       >
-                        {t('workbench.expand_display', '展开显示')}
+                        {t('workbench.show_more', '显示更多')}
                       </button>
                     )}
                     {canCollapseRuntimeTasks && (
@@ -2872,7 +2872,7 @@ function ProjectItem({
                         aria-controls={`project-local-tasks-panel-${project.id}`}
                         className="flex h-[30px] items-center rounded-md px-2 text-left text-base leading-5 text-[rgb(var(--color-sidebar-text-muted))] hover:bg-[rgb(var(--color-sidebar-hover))] hover:text-[rgb(var(--color-sidebar-text-secondary))]"
                       >
-                        {t('workbench.collapse_display', '折叠显示')}
+                        {t('workbench.show_less', '收起')}
                       </button>
                     )}
                   </div>
@@ -4017,6 +4017,14 @@ export function DesktopSidebar({
     sidebarWorklistsScrollRef,
   ])
 
+  const runtimeWorkLoadStatus = (
+    <RuntimeWorkLoadStatus
+      load={runtimeWorkLoad}
+      hasSnapshot={runtimeWork != null}
+      onRetry={onRetryRuntimeWork}
+    />
+  )
+
   return (
     <aside
       data-testid={containerTestId}
@@ -4027,9 +4035,7 @@ export function DesktopSidebar({
       onPointerEnter={onPointerEnter}
       onPointerLeave={onPointerLeave}
       className={cn(
-        'relative z-popover h-full shrink-0 overflow-visible transition-[width,background-color] duration-[300ms] ease-[cubic-bezier(0.16,1,0.3,1)] motion-reduce:transition-none will-change-[width]',
-        !collapsed &&
-          'border-r border-border/70 wework:border-black/[0.08] wework:dark:border-white/[0.08]',
+        'group/sidebar relative h-full shrink-0 overflow-visible transition-[width,background-color] duration-[300ms] ease-[cubic-bezier(0.16,1,0.3,1)] motion-reduce:transition-none will-change-[width]',
         background.imagePath && background.inSidebar
           ? 'bg-background/25'
           : 'bg-[rgb(var(--color-sidebar))]',
@@ -4177,11 +4183,6 @@ export function DesktopSidebar({
               setSidebarScrolled(viewport.scrollTop > 0)
             }}
           >
-            <RuntimeWorkLoadStatus
-              load={runtimeWorkLoad}
-              hasSnapshot={runtimeWork != null}
-              onRetry={onRetryRuntimeWork}
-            />
             <nav className="mb-4 space-y-0.5">
               {sidebarNavigation.map(item => {
                 if (item.surface === 'module') {
@@ -4238,6 +4239,7 @@ export function DesktopSidebar({
                 )
               })}
             </nav>
+            {priorityFilterActive && runtimeWorkLoadStatus}
             {priorityFilterActive ? (
               <DesktopSidebarPrioritySection
                 priorityItems={priorityView.priorityItems}
@@ -4740,6 +4742,7 @@ export function DesktopSidebar({
                       </Tooltip>
                     </div>
                   </DesktopSidebarSectionHeader>
+                  {runtimeWorkLoadStatus}
                   {displayedChatsExpanded && (
                     <div className="space-y-0.5 pb-2">
                       {standaloneLocalHarnessSessions.length === 0 &&

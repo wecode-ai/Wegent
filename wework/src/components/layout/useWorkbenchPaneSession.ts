@@ -530,6 +530,7 @@ export function useWorkbenchPaneSession({
   const taskLifecycle = useRuntimeTaskLifecycle(lifecycleAddress)
   const taskGoalStatus = taskLifecycle?.goalStatus ?? null
   const goalExecutionStatus = taskLifecycle?.task?.goalExecutionStatus ?? null
+  const quotaWaitPending = Boolean(taskLifecycle?.task?.runtimeHandle?.quotaWait)
   const currentRuntime =
     currentRuntimeTask?.runtime ??
     findRuntimeTask(workbenchState.runtimeWork, currentRuntimeTask)?.runtime ??
@@ -1066,18 +1067,25 @@ export function useWorkbenchPaneSession({
 
   const getRuntimeModelFields = useCallback(
     (modelOptionsOverride?: ModelOptions) => {
-      const selectedModel =
-        projectChat.getSelectedModel?.() ??
-        projectChat.selectedModel ??
-        resolveAutomaticModel(projectChat.models)
-      const selectedModelOptions =
-        projectChat.getSelectedModelOptions?.() ?? projectChat.selectedModelOptions
+      // A pane renders one conversation, which may differ from the provider's
+      // active pane in a split layout. Resolve against this pane's address.
+      const taskModelSelection = currentRuntimeTask
+        ? projectChat.resolveRuntimeTaskModelSelection?.(currentRuntimeTask)
+        : null
+      const selectedModel = currentRuntimeTask
+        ? (taskModelSelection?.selectedModel ?? null)
+        : (projectChat.getSelectedModel?.() ??
+          projectChat.selectedModel ??
+          resolveAutomaticModel(projectChat.models))
+      const selectedModelOptions = currentRuntimeTask
+        ? (taskModelSelection?.selectedModelOptions ?? {})
+        : (projectChat.getSelectedModelOptions?.() ?? projectChat.selectedModelOptions)
       return selectedModelExecutionFields(selectedModel, {
         ...selectedModelOptions,
         ...modelOptionsOverride,
       })
     },
-    [projectChat]
+    [currentRuntimeTask, projectChat]
   )
 
   const appendLocalUserMessage = useCallback(
@@ -1679,6 +1687,18 @@ export function useWorkbenchPaneSession({
     ]
   )
 
+  const setDefaultCollaborationMode = useCallback(() => {
+    if (currentRuntimeTask) {
+      projectChat.setRuntimeTaskSelectedModelOption(
+        currentRuntimeTask,
+        'collaborationMode',
+        'default'
+      )
+      return
+    }
+    projectChat.setSelectedModelOption('collaborationMode', 'default')
+  }, [currentRuntimeTask, projectChat])
+
   const sendRequestUserInputResponse = useCallback(
     async (
       response: RequestUserInputResponse,
@@ -1696,7 +1716,7 @@ export function useWorkbenchPaneSession({
           ? { collaborationMode: 'default' }
           : undefined
         if (options.forceDefaultCollaborationMode) {
-          projectChat.setSelectedModelOption('collaborationMode', 'default')
+          setDefaultCollaborationMode()
         }
         // A question that is answered by the next user message - a non-blocking
         // Codex question or an implementation-plan confirmation - is delivered like
@@ -1752,11 +1772,11 @@ export function useWorkbenchPaneSession({
       currentRuntimeTask,
       getRuntimeModelFields,
       lifecycleStore,
-      projectChat,
       queuedMessages.length,
       sendQueuedMessageAsGuidance,
       sendRuntimePaneMessage,
       setAnsweredRequestUserInputIds,
+      setDefaultCollaborationMode,
       setQueuedMessages,
     ]
   )
@@ -2641,10 +2661,10 @@ export function useWorkbenchPaneSession({
   ])
 
   const setCurrentGoal = useCallback(async () => {
-    projectChat.setSelectedModelOption('collaborationMode', 'default')
+    setDefaultCollaborationMode()
     setGoalDraftActive(true)
     return true
-  }, [projectChat, setGoalDraftActive])
+  }, [setDefaultCollaborationMode, setGoalDraftActive])
 
   const cancelGoalDraft = useCallback(() => {
     setGoalDraftActive(false)
@@ -2763,16 +2783,23 @@ export function useWorkbenchPaneSession({
 
   const pauseCurrentResponse = useCallback(async () => {
     if (!currentRuntimeTask) return
+    const goalPauseRequired =
+      goal?.status === 'active' ||
+      taskGoalStatus === 'active' ||
+      (quotaWaitPending &&
+        [goal?.status, taskGoalStatus].some(
+          status => status === 'usageLimited' || status === 'blocked'
+        ))
     logRuntimeQueueStage(currentRuntimeTask, 'queue-stop-requested', {
       source: 'composer',
-      goalPauseRequired: goal?.status === 'active' || taskGoalStatus === 'active',
+      goalPauseRequired,
     })
     let accepted: boolean | null = null
     let queuePauseRequested = false
     let restoreQueue: (() => void) | undefined
     let abortReason: 'goal-pause-rejected' | null = null
     try {
-      if (goal?.status === 'active' || taskGoalStatus === 'active') {
+      if (goalPauseRequired) {
         const paused = await updateCurrentGoalStatus('paused')
         if (!paused) {
           abortReason = 'goal-pause-rejected'
@@ -2801,6 +2828,7 @@ export function useWorkbenchPaneSession({
     currentRuntimeTask,
     goal?.status,
     queueController,
+    quotaWaitPending,
     taskGoalStatus,
     updateCurrentGoalStatus,
   ])

@@ -10,7 +10,7 @@ Supports Team, Task, and KnowledgeBase resource types.
 """
 
 import logging
-from typing import Dict, Optional
+from typing import Dict, Optional, Union
 
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
@@ -24,6 +24,7 @@ from app.schemas.share import (
     JoinByLinkRequest,
     JoinByLinkResponse,
     KBShareInfoResponse,
+    KnowledgeBaseMemberListResponse,
     MemberListResponse,
     MyKBPermissionResponse,
     MyPermissionSourcesResponse,
@@ -163,7 +164,7 @@ def delete_share_link(
 
 
 # =============================================================================
-# Public Share Info (no auth required)
+# Share Info (opaque tokens are public; legacy locators require existing access)
 # =============================================================================
 
 
@@ -175,18 +176,23 @@ def delete_share_link(
 def get_share_info(
     share_token: str,
     db: Session = Depends(get_db),
+    current_user: Optional[User] = Depends(security.get_current_user_optional),
 ) -> ShareInfoResponse:
     """
     Get public information about a share link.
 
-    No authentication required - used for share link preview.
+    Opaque tokens allow anonymous preview. Legacy locators require resource access.
 
     - **share_token**: Share token from URL
     """
     # Try each service to decode the token
     for service in [team_share_service, task_share_service, knowledge_share_service]:
         try:
-            return service.get_share_info(db=db, share_token=share_token)
+            return service.get_share_info(
+                db=db,
+                share_token=share_token,
+                viewer_id=current_user.id if current_user else None,
+            )
         except HTTPException as e:
             if e.status_code == 400 and "Invalid resource type" in str(e.detail):
                 continue
@@ -205,11 +211,12 @@ def get_share_info(
 def get_public_kb_info(
     token: str,
     db: Session = Depends(get_db),
+    current_user: Optional[User] = Depends(security.get_current_user_optional),
 ) -> PublicKnowledgeBaseResponse:
     """
     Get public knowledge base information by share token.
 
-    No authentication required - used for public share page.
+    Opaque tokens allow anonymous preview. Legacy locators require resource access.
 
     - **token**: Share token from URL
     """
@@ -217,6 +224,7 @@ def get_public_kb_info(
         return knowledge_share_service.get_public_kb_info(
             db=db,
             share_token=token,
+            viewer_id=current_user.id if current_user else None,
         )
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e)) from e
@@ -230,17 +238,19 @@ def get_public_kb_info(
 def get_kb_share_token(
     kb_id: int,
     db: Session = Depends(get_db),
+    current_user: User = Depends(security.get_current_user),
 ) -> Dict[str, str]:
     """
     Get share token for a knowledge base by ID.
 
-    No authentication required - used for redirecting old share links.
+    Requires existing resource access. Only owners may retrieve opaque bearers.
 
     - **kb_id**: Knowledge base ID
     """
     token = knowledge_share_service.get_share_token_by_kb_id(
         db=db,
         knowledge_base_id=kb_id,
+        user_id=current_user.id,
     )
     if not token:
         raise HTTPException(status_code=404, detail="Share link not found")
@@ -297,7 +307,7 @@ def join_by_link(
 
 @router.get(
     "/{resource_type}/{resource_id}/members",
-    response_model=MemberListResponse,
+    response_model=Union[KnowledgeBaseMemberListResponse, MemberListResponse],
     summary="Get members",
 )
 def get_members(

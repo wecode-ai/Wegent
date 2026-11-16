@@ -78,6 +78,8 @@ export interface AutomaticProcessingDraft {
   statuses: string[]
   statusTransition: 'any' | 'entered_processing'
   cronExpression: string
+  timezone: string
+  workdayOnly: boolean
   hookId: string
   eventType: AutomationEventType | ''
   targetKind: TargetKind
@@ -96,6 +98,8 @@ export const EMPTY_DRAFT: AutomaticProcessingDraft = {
   statuses: [],
   statusTransition: 'any',
   cronExpression: '0 9 * * 1-5',
+  timezone: 'Asia/Shanghai',
+  workdayOnly: false,
   hookId: '',
   eventType: '',
   targetKind: 'agent',
@@ -186,7 +190,18 @@ export function buildScheduleCron({ frequency, time, weekday }: ScheduleValue): 
   return `${Number(minute)} ${Number(hour)} * * ${dayOfWeek}`
 }
 
-export function scheduleLabel(cronExpression: string, locale: 'zh-CN' | 'en'): string {
+export function scheduleLabel(
+  cronExpression: string,
+  locale: 'zh-CN' | 'en',
+  workdayOnly = false
+): string {
+  const label = baseScheduleLabel(cronExpression, locale)
+  return workdayOnly
+    ? `${label} · ${locale === 'zh-CN' ? '仅中国大陆法定工作日' : 'Mainland China statutory workdays only'}`
+    : label
+}
+
+function baseScheduleLabel(cronExpression: string, locale: 'zh-CN' | 'en'): string {
   const schedule = parseSchedule(cronExpression)
   if (schedule.frequency === 'custom') {
     return locale === 'zh-CN'
@@ -198,7 +213,7 @@ export function scheduleLabel(cronExpression: string, locale: 'zh-CN' | 'en'): s
     return locale === 'zh-CN' ? `每天 ${time}` : `Every day at ${time}`
   }
   if (schedule.frequency === 'weekdays') {
-    return locale === 'zh-CN' ? `工作日 ${time}` : `Weekdays at ${time}`
+    return locale === 'zh-CN' ? `周一至周五 ${time}` : `Monday–Friday at ${time}`
   }
   const weekday =
     WEEKDAY_OPTIONS.find(([value]) => value === schedule.weekday) ?? WEEKDAY_OPTIONS[0]
@@ -230,6 +245,8 @@ export function draftFromRule(rule: WorkspaceAutomationRule): AutomaticProcessin
     statusTransition:
       eventConfig.transition === 'entered_processing' ? 'entered_processing' : 'any',
     cronExpression: rule.cronExpression ?? '',
+    timezone: rule.timezone,
+    workdayOnly: rule.workdayOnly ?? false,
     hookId: String(eventConfig.subscriptionId ?? eventConfig.subscription_id ?? ''),
     eventType: trigger === 'external' ? (rule.eventType ?? '') : '',
     targetKind: rule.targetKind,

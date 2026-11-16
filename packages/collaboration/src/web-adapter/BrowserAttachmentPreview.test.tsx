@@ -8,6 +8,8 @@ import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { createCollaborationTranslator } from '../i18n'
 import { BrowserAttachmentPreview } from './BrowserAttachmentPreview'
+import { IssueMarkdownProvider } from '../issue-detail/IssueMarkdownProvider'
+import type { SharedWorkspaceAttachmentsApi } from '../ports/SharedWorkspaceApi'
 
 const translate = createCollaborationTranslator('zh-CN')
 let container: HTMLDivElement
@@ -42,6 +44,14 @@ async function unmount() {
 describe('BrowserAttachmentPreview', () => {
   beforeEach(() => {
     vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true)
+    vi.stubGlobal(
+      'ResizeObserver',
+      class {
+        observe() {}
+        unobserve() {}
+        disconnect() {}
+      }
+    )
     Object.defineProperty(HTMLDialogElement.prototype, 'showModal', {
       configurable: true,
       value(this: HTMLDialogElement) {
@@ -161,6 +171,70 @@ describe('BrowserAttachmentPreview', () => {
     expect(document.querySelector('[data-testid="browser-attachment-preview-image"]')).toBeNull()
     await unmount()
     expect(URL.revokeObjectURL).toHaveBeenCalledWith('blob:attachment-preview')
+  })
+
+  it('renders Markdown and resolves embedded files with the same Issue service', async () => {
+    const content = '# Report\n\n**Rendered**\n\n![Chart](./chart.png)\n\n[Notes](./notes.txt)'
+    const read = vi.fn(async (id: string) =>
+      id === 'attachment-1'
+        ? Object.assign(new Blob([content], { type: 'text/markdown' }), {
+            text: async () => content,
+          })
+        : new Blob(['png'], { type: 'image/png' })
+    )
+    const list = vi.fn().mockResolvedValue([
+      {
+        id: 'attachment-1',
+        display_name: 'report.md',
+        content_type: 'text/markdown',
+      },
+      { id: 'chart', display_name: 'chart.png', content_type: 'image/png' },
+      { id: 'notes', display_name: 'notes.txt', content_type: 'text/plain' },
+    ])
+    const open = vi.fn()
+    await act(async () =>
+      root.render(
+        <IssueMarkdownProvider
+          attachments={{ list, read } as unknown as SharedWorkspaceAttachmentsApi}
+          issueId="issue-6"
+          onOpenAttachment={open}
+        >
+          <BrowserAttachmentPreview
+            attachmentId="attachment-1"
+            filename="report.md"
+            read={read}
+            translate={translate}
+            onClose={vi.fn()}
+          />
+        </IssueMarkdownProvider>
+      )
+    )
+    const markdown = element('browser-attachment-preview-markdown')
+    expect(markdown.querySelector('h1')?.textContent).toBe('Report')
+    expect(markdown.querySelector('strong')?.textContent).toBe('Rendered')
+    expect(markdown.querySelector('img')?.src).toBe('blob:attachment-preview')
+    expect(read).toHaveBeenCalledWith('chart')
+    await act(async () =>
+      markdown
+        .querySelector<HTMLButtonElement>('[data-testid="issue-comment-file-attachment"]')!
+        .click()
+    )
+    expect(open).toHaveBeenCalledWith(expect.objectContaining({ id: 'notes' }))
+    expect(list).toHaveBeenCalledWith('issue-6')
+  })
+
+  it('retries a failed read without closing the attachment viewer', async () => {
+    const read = vi
+      .fn()
+      .mockRejectedValueOnce(new Error('offline'))
+      .mockResolvedValue(new Blob(['png'], { type: 'image/png' }))
+    await render(read)
+    expect(document.querySelector('[role="alert"]')?.textContent).toBe('预览失败')
+    expect(read).toHaveBeenCalledTimes(1)
+    await act(async () => element<HTMLButtonElement>('browser-attachment-preview-retry').click())
+    expect(element('browser-attachment-preview-image')).not.toBeNull()
+    expect(document.querySelector('[role="alert"]')).toBeNull()
+    expect(read).toHaveBeenCalledTimes(2)
   })
 
   it('discards an in-flight response after the preview is unmounted', async () => {

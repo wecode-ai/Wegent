@@ -34,11 +34,14 @@ export interface RuntimePaneQueuedMessage extends QueuedWorkbenchMessage {
   modelId?: string
   modelType?: RuntimeSendRequest['modelType']
   modelOptions?: ModelOptions
+  startNewSession?: RuntimeSendRequest['startNewSession']
+  expectedThreadId?: RuntimeSendRequest['expectedThreadId']
   runtimeGoalRequest?: boolean
   initialGoal?: RuntimeGoalCreateInput
   additionalContext?: RuntimeAdditionalContext
   cloudProjectId?: RuntimeSendRequest['cloudProjectId']
   origin?: RuntimeSendRequest['origin']
+  conversationContext?: RuntimeSendRequest['conversationContext']
 }
 
 export interface GuidanceWorkbenchMessage {

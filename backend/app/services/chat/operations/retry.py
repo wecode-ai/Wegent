@@ -111,6 +111,8 @@ def reset_subtask_for_retry(
     Raises:
         Exception: If database commit fails
     """
+    if task is not None:
+        db.refresh(task, with_for_update=True)
     generation_id = uuid4().hex if protect_attempt else None
     changed = subtask_store.update_fields_if_attempt(
         db,

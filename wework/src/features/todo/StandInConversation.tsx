@@ -9,6 +9,9 @@ import { TemporaryChatPanel } from '@/components/layout/workspace-panels/Tempora
 import type { RuntimeTaskAddress } from '@/types/api'
 import { useTranslation } from '@/hooks/useTranslation'
 import { localRuntimeAttachments } from '@/lib/runtime-attachments'
+import type { WorkspaceStandInSettings } from '@wegent/collaboration'
+import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
+import { useStandInConversationModel } from './useStandInConversationModel'
 
 export function StandInConversation({
   api,
@@ -21,6 +24,9 @@ export function StandInConversation({
   draftRequest,
   onDraftRequestConsumed,
   contentFooter,
+  settings,
+  services,
+  scope,
 }: {
   api: StandInExecutorApi
   userId: number
@@ -32,6 +38,9 @@ export function StandInConversation({
   draftRequest?: { id: number; text: string }
   onDraftRequestConsumed?(id: number): void
   contentFooter?: ReactNode
+  settings?: Pick<WorkspaceStandInSettings, 'model' | 'modelOptions'>
+  services?: WorkbenchServices
+  scope?: 'collaboration'
 }) {
   useStandInOpened('conversation', roleId ? 'role' : 'primary', active)
   const { t } = useTranslation('common')
@@ -43,8 +52,19 @@ export function StandInConversation({
     message: string
   } | null>(null)
   const [attempt, setAttempt] = useState(0)
-  const taskId = standInConversationTaskId(userId, roleId)
+  const taskId = standInConversationTaskId(userId, roleId, scope)
   const workbench = useContext(WorkbenchContext)
+  const modelControls = useStandInConversationModel(
+    services ?? workbench?.services,
+    {
+      ...settings,
+      executionDeviceId: deviceId,
+      enabled: true,
+      prompt: '',
+      version: 0,
+    },
+    active
+  )
   const aliases = getUnambiguousWorkbenchDeviceAliases(workbench?.state.devices ?? [])
   const persistedTaskExists = Boolean(
     workbench?.runtimeTaskReminders.items.some(
@@ -131,17 +151,24 @@ export function StandInConversation({
         assistantMessageStyle="bubble"
         markReadWhenActive
         nativeConversation
+        modelControls={modelControls}
         expanded
         active={active}
         placeholder={t(
-          roleId ? 'standIn.workspace.role_prompt' : 'standIn.workspace.primary_prompt'
+          scope === 'collaboration'
+            ? 'personalHome.conversationPrompt'
+            : roleId
+              ? 'standIn.workspace.role_prompt'
+              : 'standIn.workspace.primary_prompt'
         )}
         emptyStateText={t(
-          hasPendingWork
-            ? 'standIn.workspace.pending_work_help'
-            : roleId
-              ? 'standIn.workspace.role_empty'
-              : 'standIn.workspace.primary_empty'
+          scope === 'collaboration'
+            ? 'personalHome.conversationEmpty'
+            : hasPendingWork
+              ? 'standIn.workspace.pending_work_help'
+              : roleId
+                ? 'standIn.workspace.role_empty'
+                : 'standIn.workspace.primary_empty'
         )}
         onOpenRuntimeTask={onOpenTask}
         createTask={async (message, options) => {
@@ -150,6 +177,7 @@ export function StandInConversation({
           try {
             const result = await api.conversation(userId, deviceId, message, roleId, {
               ...options.executionModel,
+              ...(scope ? { conversationScope: scope } : {}),
               attachments: localRuntimeAttachments(options.attachments),
               clientUserMessageId: options.optimisticUserMessage.id,
             })

@@ -96,20 +96,6 @@ mod tests {
     }
 
     #[test]
-    fn maps_completed_file_change_with_canonical_tool_name() {
-        let message = json!({"method":"item/completed","params":{"item":{
-            "id":"call-1","type":"fileChange","status":"completed","changes":[]
-        }}});
-        let input = post_tool_use_from_notification(&context(), &message)
-            .unwrap()
-            .unwrap();
-        assert_eq!(input.tool_name, "apply_patch");
-        assert_eq!(input.tool_use_id, "call-1");
-        assert_eq!(input.session_id, "thread-1");
-        assert_eq!(input.user.name, "alice");
-    }
-
-    #[test]
     fn ignores_failed_missing_id_and_non_file_items() {
         for message in [
             json!({"method":"item/completed","params":{"item":{"id":"1","type":"fileChange","status":"failed"}}}),

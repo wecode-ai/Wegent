@@ -25,12 +25,14 @@ export function StandInNotificationPrompt({ scopeKey }: { scopeKey: string }) {
   return (
     <div
       data-testid="stand-in-notification-prompt"
-      className="mb-3 flex items-center gap-3 rounded-2xl border border-border bg-surface p-3 text-sm"
+      className="mb-3 grid grid-cols-[1rem_minmax(0,1fr)_auto] items-start gap-x-2 gap-y-2 rounded-xl border border-border bg-surface p-3 text-sm"
     >
-      <Bell className="h-5 w-5 shrink-0" aria-hidden="true" />
+      <Bell className="mt-0.5 h-4 w-4" aria-hidden="true" />
       <div className="min-w-0 flex-1">
         <p className="font-medium">{t('standIn.desktop_notifications.title')}</p>
-        <p className="text-text-secondary">{t('standIn.desktop_notifications.description')}</p>
+        <p className="mt-1 text-xs leading-relaxed text-text-secondary">
+          {t('standIn.desktop_notifications.description')}
+        </p>
         {error && (
           <p role="alert" className="text-error">
             {t('standIn.desktop_notifications.error')}
@@ -38,40 +40,9 @@ export function StandInNotificationPrompt({ scopeKey }: { scopeKey: string }) {
         )}
       </div>
       <Button
-        data-testid="stand-in-notifications-enable"
-        disabled={busy}
-        onClick={async () => {
-          setBusy(true)
-          setError(false)
-          try {
-            await invokeDesktopHost('notification.openSettings')
-            window.dispatchEvent(new CustomEvent(OPEN_NOTIFICATION_SETTINGS_EVENT))
-          } catch {
-            setError(true)
-          } finally {
-            setBusy(false)
-          }
-        }}
-      >
-        {t('standIn.desktop_notifications.enable')}
-      </Button>
-      <Button
         variant="ghost"
-        data-testid="stand-in-notifications-never"
-        onClick={() => {
-          try {
-            localStorage.setItem(key, '1')
-          } catch {
-            setError(true)
-            return
-          }
-          setDismissed(key)
-        }}
-      >
-        {t('standIn.desktop_notifications.never')}
-      </Button>
-      <Button
-        variant="ghost"
+        size="icon"
+        className="-mr-1 -mt-1 h-11 w-11 md:h-7 md:w-7"
         data-testid="stand-in-notifications-dismiss"
         aria-label={t('standIn.desktop_notifications.dismiss')}
         title={t('standIn.desktop_notifications.dismiss')}
@@ -82,6 +53,46 @@ export function StandInNotificationPrompt({ scopeKey }: { scopeKey: string }) {
       >
         <X className="h-4 w-4" />
       </Button>
+      <div className="col-span-2 col-start-2 flex flex-wrap items-center gap-2">
+        <Button
+          variant="outline"
+          size="sm"
+          className="min-h-11 px-2 md:h-7 md:min-h-7"
+          data-testid="stand-in-notifications-enable"
+          disabled={busy}
+          onClick={async () => {
+            setBusy(true)
+            setError(false)
+            try {
+              await invokeDesktopHost('notification.openSettings')
+              window.dispatchEvent(new CustomEvent(OPEN_NOTIFICATION_SETTINGS_EVENT))
+            } catch {
+              setError(true)
+            } finally {
+              setBusy(false)
+            }
+          }}
+        >
+          {t('standIn.desktop_notifications.enable')}
+        </Button>
+        <Button
+          variant="ghost"
+          size="sm"
+          className="min-h-11 px-2 md:h-7 md:min-h-7"
+          data-testid="stand-in-notifications-never"
+          onClick={() => {
+            try {
+              localStorage.setItem(key, '1')
+            } catch {
+              setError(true)
+              return
+            }
+            setDismissed(key)
+          }}
+        >
+          {t('standIn.desktop_notifications.never')}
+        </Button>
+      </div>
     </div>
   )
 }

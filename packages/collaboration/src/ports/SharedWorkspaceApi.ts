@@ -83,10 +83,16 @@ export interface WorkspaceProjectUpdateInput {
 }
 
 export interface WorkspaceMyWorkItem extends CollaborationIssue {
+  attention_order?: [number, number, string] | null;
   project_key: string;
   project_name: string;
   has_active_task: boolean;
   is_unread?: boolean;
+  task_bindings?: WorkspaceTaskBinding[];
+  assignment_context?: Pick<
+    CollaborationAssignment,
+    "body" | "created_by_user_name" | "created_at"
+  > | null;
 }
 
 export interface WorkspaceMessageImportInput {
@@ -112,6 +118,7 @@ export interface WorkspaceIssuePageInput {
 }
 
 export interface WorkspaceTaskBinding {
+  standInPending?: boolean | null;
   id: string;
   projectId: string;
   issueId: string | null;
@@ -141,6 +148,8 @@ export interface WorkspaceBoardSnapshot extends CollaborationBoardSnapshot {
 }
 
 export interface WorkspaceIssueCreateInput {
+  requestId?: string;
+  personalTask?: boolean;
   milestoneId?: string | null;
   title: string;
   description?: string;
@@ -329,6 +338,7 @@ export interface WorkspaceAutomationRule {
   eventType: import("../automation/types").AutomationEventType | null;
   eventConfig: Record<string, unknown>;
   cronExpression: string | null;
+  workdayOnly?: boolean;
   timezone: string;
   runnerSelection?: import("../agent-form/runnerRouting").RunnerSelection;
   executionDeviceId: string | null;
@@ -351,6 +361,7 @@ export interface WorkspaceAutomationInput {
   eventType: import("../automation/types").AutomationEventType | null;
   eventConfig: Record<string, unknown>;
   cronExpression: string | null;
+  workdayOnly?: boolean;
   timezone: string;
   runnerSelection?: import("../agent-form/runnerRouting").RunnerSelection;
   executionDeviceId: string | null;
@@ -486,6 +497,14 @@ export interface SharedWorkspaceProjectsApi {
 
 export interface SharedWorkspaceMyWorkApi {
   list(): Promise<WorkspaceMyWorkItem[]>;
+  page?(input?: {
+    cursor?: string;
+    limit?: number;
+    scope?: "assigned" | "created" | "participating";
+    includeCompleted?: boolean;
+    order?: "recent" | "attention" | "activity" | "assignment" | "priority";
+    viewerIds?: readonly (string | number)[];
+  }): Promise<WorkspacePage<WorkspaceMyWorkItem>>;
 }
 
 export interface SharedWorkspaceIssuesApi {
@@ -548,7 +567,11 @@ export interface SharedWorkspaceIssuesApi {
 
 export interface SharedWorkspaceCommentsApi {
   list(issueId: string): Promise<CollaborationComment[]>;
-  create(issueId: string, body: string): Promise<CollaborationComment>;
+  create(
+    issueId: string,
+    body: string,
+    options?: { clientMessageId?: string },
+  ): Promise<CollaborationComment>;
 }
 
 export interface SharedWorkspaceAssignmentsApi {

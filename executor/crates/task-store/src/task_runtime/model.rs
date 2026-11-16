@@ -79,6 +79,14 @@ pub struct ProjectTagChange {
     pub target: Option<String>,
 }
 
+#[derive(Debug, Clone, Default)]
+pub struct TaskCreateOptions {
+    pub start_at: Option<String>,
+    pub due_at: Option<String>,
+    pub personal_task: bool,
+    pub request_id: Option<String>,
+}
+
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct TaskCreate {
     pub milestone_id: Option<String>,
@@ -444,6 +452,8 @@ pub struct RuntimeTaskAddress {
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct TaskBinding {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub stand_in_pending: Option<bool>,
     pub id: String,
     pub cloud_project_id: String,
     pub loop_item_id: Option<String>,

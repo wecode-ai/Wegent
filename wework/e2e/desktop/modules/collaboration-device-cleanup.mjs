@@ -1,3 +1,4 @@
+import { revealCollaborationSidebarElement } from './collaboration-sidebar-navigation.mjs'
 import assert from 'node:assert/strict'
 import { REMOTE_DOCKER_DEVICE_ID } from './shared.mjs'
 import { verifyCloudRegistrationDeletionRace } from './collaboration-device-registration-race.mjs'
@@ -75,6 +76,10 @@ export async function verifyCollaborationDeviceCleanup({
       .workspace_ids.includes(String(space.id))
   )
   await control.command('click', scoped('[data-testid="collaboration-primary-home"]'))
+  await revealCollaborationSidebarElement(
+    control,
+    scoped('[data-testid="collaboration-primary-devices"]')
+  )
   await control.command('click', scoped('[data-testid="collaboration-primary-devices"]'))
   for (const id of ids)
     await control.command('waitFor', scoped(`[data-testid="collaboration-devices-delete-${id}"]`), {
@@ -183,6 +188,10 @@ export async function verifyCollaborationDeviceCleanup({
   )
   await verifyCloudRegistrationDeletionRace(cloud, ownerId)
   await control.command('click', scoped('[data-testid="collaboration-primary-home"]'))
+  await revealCollaborationSidebarElement(
+    control,
+    scoped('[data-testid="collaboration-primary-devices"]')
+  )
   await control.command('click', scoped('[data-testid="collaboration-primary-devices"]'))
   await control.command(
     'waitFor',

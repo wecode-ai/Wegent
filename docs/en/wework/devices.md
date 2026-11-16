@@ -23,6 +23,16 @@ Open **left sidebar → Cloud work**. **Connection settings** at the top right o
 
 Wework manages a local execution environment for local projects, conversations, Codex, and local models. Closing the window to the tray keeps local tasks running; quitting the application stops Wework-managed local processes.
 
+## Access this computer's tasks from a phone or another computer
+
+On the computer that should execute tasks, open **Settings → Personal → Cloud connection** and enable **Allow remote access to tasks on this computer**. The switch defaults to off and is stored only on that computer. Other devices signed in to the same account cannot change it.
+
+If local settings fail to load, the switch stays disabled. Click **Retry** beside the error to read the settings again. Changing the interface language does not interrupt a pending save.
+
+Once enabled, phones and other computers using the same account can select this online computer to view, create, and continue its tasks. Operations execute on the selected computer. Each installation manages its own switch independently, and the current computer is not duplicated in its own remote device list.
+
+Turning the switch off blocks subsequent remote task access. Keep Wework running and connected to the cloud on the target computer. This setting does not additionally expose device terminals or IDE access.
+
 ## Connect to Wegent
 
 <!-- ui-source: src/pages/LoginPage.tsx -->

@@ -26,6 +26,9 @@ permissions:
   contents: read
   packages: read
 
+env:
+  WEWORK_IDLE_TASKS_CONSIDER_SYSTEM_LOAD: ${{ vars.WEWORK_IDLE_TASKS_CONSIDER_SYSTEM_LOAD || 'false' }}
+
 defaults:
   run:
     shell: bash
@@ -151,7 +154,7 @@ jobs:
         id: runtime
         env:
           EXECUTOR_SOURCE_DIGEST: ${{ hashFiles('frontend/e2e/fixtures/claudecode-executor/Dockerfile', 'executor/Cargo.toml', 'executor/Cargo.lock', 'executor/src/**', 'executor/crates/**', 'shared/rust/**', 'executor/vendor/**', 'sdk/plugin-auth/**', 'sdk/plugin-creator/**', 'shared/assets/**', 'shared/protocol/**', '.github/ci/rust-toolchain') }}
-          BACKEND_RS_SOURCE_DIGEST: ${{ hashFiles('backend-rs/Cargo.toml', 'backend-rs/Cargo.lock', 'backend-rs/src/**', 'backend-rs/crates/**', 'shared/rust/**', 'shared/assets/codex-models/**', 'backend-rs/examples/**', 'backend-rs/migrations/**', '.github/runtime-images/backend-rs-e2e.Dockerfile', '.github/runtime-images/backend-rs-builder.Dockerfile', '.github/ci/rust-toolchain', '.github/actions/setup-rust-cache/action.yml') }}
+          BACKEND_RS_SOURCE_DIGEST: ${{ hashFiles('backend-rs/Cargo.toml', 'backend-rs/Cargo.lock', 'backend-rs/src/**', 'backend-rs/crates/**', 'shared/rust/**', 'shared/assets/codex-models/**', 'shared/assets/calendars/**', 'backend-rs/examples/**', 'backend-rs/migrations/**', '.github/runtime-images/backend-rs-e2e.Dockerfile', '.github/runtime-images/backend-rs-builder.Dockerfile', '.github/ci/rust-toolchain', '.github/actions/setup-rust-cache/action.yml') }}
         run: |
           runtime_output="$(mktemp)"
           GITHUB_OUTPUT="$runtime_output" \
@@ -263,7 +266,7 @@ jobs:
           persist-credentials: false
 
       - name: Build shared real object storage for desktop E2E
-        if: contains(needs.changes.outputs.wework_desktop_core_e2e_matrix, 'collaboration-issue-mcp-comments') || contains(needs.changes.outputs.wework_desktop_core_e2e_matrix, 'collaboration-delivery-editing') || contains(needs.changes.outputs.wework_desktop_cloud_e2e_matrix, 'plugin-write-coordination') || contains(needs.changes.outputs.wework_desktop_cloud_e2e_matrix, 'plugin-runtime-route-refresh') || contains(needs.changes.outputs.wework_desktop_cloud_e2e_matrix, 'plugin-background-sync-isolation') || contains(needs.changes.outputs.wework_desktop_cloud_e2e_matrix, 'plugin-periodic-reconcile')
+        if: contains(needs.changes.outputs.wework_desktop_core_e2e_matrix, 'collaboration-issue-mcp-comments') || contains(needs.changes.outputs.wework_desktop_core_e2e_matrix, 'collaboration-delivery-editing') || contains(needs.changes.outputs.wework_desktop_cloud_e2e_matrix, 'plugin-write-coordination') || contains(needs.changes.outputs.wework_desktop_cloud_e2e_matrix, 'plugin-runtime-route-refresh') || contains(needs.changes.outputs.wework_desktop_cloud_e2e_matrix, 'plugin-background-sync-isolation') || contains(needs.changes.outputs.wework_desktop_cloud_e2e_matrix, 'plugin-periodic-reconcile') || contains(needs.changes.outputs.wework_desktop_cloud_e2e_matrix, 'plugin-package-integrity-recovery')
         uses: ./.github/actions/build-minio-e2e
         with:
           save-cache: ${{ github.ref == 'refs/heads/main' }}
@@ -795,12 +798,17 @@ jobs:
             if ($LASTEXITCODE -ne 0) { throw "Failed to compile the DingTalk recovery protocol fixture" }
             "WEWORK_E2E_DWS_RECOVERY_FIXTURE_BIN=$recoveryBinary" |
               Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+            $ownerBinary = Join-Path $directory "source-owner-task-dws.exe"
+            rustc wework/e2e/desktop/fixtures/source-owner-task-dingtalk-cli.rs --edition 2021 -o $ownerBinary
+            if ($LASTEXITCODE -ne 0) { throw "Failed to compile the owner task protocol fixture" }
+            "WEWORK_E2E_DWS_OWNER_TASK_FIXTURE_BIN=$ownerBinary" |
+              Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
           }
 
       - name: Run Windows Wework desktop Core shard E2E
         id: windows-core-e2e
         # Finish before the job deadline so failure logs and artifacts can upload.
-        timeout-minutes: 40
+        timeout-minutes: 55
         continue-on-error: true
         shell: pwsh
         env:
@@ -943,7 +951,7 @@ jobs:
           setup-uv: "false"
 
       - name: Set up real object storage for plugin sync recovery E2E
-        if: contains(matrix.segments, 'plugin-write-coordination') || contains(matrix.segments, 'plugin-runtime-route-refresh') || contains(matrix.segments, 'plugin-background-sync-isolation') || contains(matrix.segments, 'plugin-periodic-reconcile')
+        if: contains(matrix.segments, 'plugin-write-coordination') || contains(matrix.segments, 'plugin-runtime-route-refresh') || contains(matrix.segments, 'plugin-background-sync-isolation') || contains(matrix.segments, 'plugin-periodic-reconcile') || contains(matrix.segments, 'plugin-package-integrity-recovery')
         uses: ./.github/actions/setup-minio-e2e
 
       - name: Prepare real GitHub CLI for account authentication E2E
@@ -1290,12 +1298,29 @@ jobs:
           test -x "$WEWORK_E2E_APP_BIN"
           test -x "$WEWORK_E2E_EXECUTOR_BIN"
           test -x "$WEWORK_E2E_BACKEND_RS_BIN"
-          segments=browser-toolbar-actions,tray-lifecycle,browser-annotation-design
+          segments=browser-toolbar-actions,tray-lifecycle,clipboard-history-image
           if [[ "$COMPONENT_UPDATE_E2E" == "true" ]]; then
             segments+=,component-update
           fi
           node wework/e2e/desktop/run-checkpoints.mjs \
             --parallel-segments "$segments"
+
+      - name: Upload macOS Inspector failure evidence before cleanup
+        if: always() && failure()
+        continue-on-error: true
+        uses: actions/upload-artifact@v4
+        with:
+          name: wework-desktop-macos-inspector-failure-evidence
+          path: |
+            wework/test-results/desktop-e2e/*/failure.txt
+            wework/test-results/desktop-e2e/*/scenario-state.json
+            wework/test-results/desktop-e2e/*/model-requests.json
+            wework/test-results/desktop-e2e/*/*.log
+            wework/test-results/desktop-e2e/*/*.png
+            wework/test-results/desktop-e2e/*/*.png.conversation-diagnostics.json
+          if-no-files-found: ignore
+          retention-days: 7
+          compression-level: 6
 
       - name: Describe verified native macOS runtimes
         env:
@@ -1367,6 +1392,7 @@ jobs:
 
       - name: Prune transient Wework desktop E2E caches
         if: always()
+        timeout-minutes: 2
         run: .github/scripts/prune-wework-desktop-e2e-diagnostics.sh
 
       - name: Upload Wework desktop macOS diagnostics

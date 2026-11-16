@@ -674,13 +674,19 @@ class TestEmbeddingDimensionContract:
         mock_milvus_vs.return_value = mock_store
         mock_store.get_nodes.return_value = [MagicMock(), MagicMock()]
 
+        client.query.return_value = [{"doc_ref": "doc_1"}, {"doc_ref": "doc_1"}]
+
         result = self._backend().delete_document(
             knowledge_id="kb_1",
             doc_ref="doc_1",
         )
 
         assert result["deleted_chunks"] == 2
-        mock_store.delete_nodes.assert_called_once()
+        mock_milvus_vs.assert_not_called()
+        client.delete.assert_any_call(
+            collection_name="test_kb_kb_1",
+            filter='knowledge_id == "kb_1" and doc_ref == "doc_1"',
+        )
 
     @pytest.mark.parametrize("value", [float("nan"), float("inf")])
     @patch("knowledge_engine.storage.milvus_backend.VectorStoreIndex")

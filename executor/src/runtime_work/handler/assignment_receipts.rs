@@ -3,6 +3,72 @@ use super::stand_in::settings_error;
 use super::*;
 
 impl RuntimeWorkRpcHandler {
+    pub(super) async fn reconcile_accepted_stand_in_binding(
+        &self,
+        config: &Value,
+        issue: &Value,
+        binding: &Value,
+    ) -> Result<(), AppIpcError> {
+        if !config["userId"].is_i64()
+            || !config["projectId"].is_string()
+            || !issue["id"].is_string()
+            || !config["id"].is_string()
+            || !matches!(config["projectStore"].as_str(), Some("local" | "cloud"))
+        {
+            return Ok(());
+        }
+        let task_id = self.stand_in_task_id(config, issue);
+        let Some(task) = self.local_task_link(&task_id).filter(|task| {
+            !self.store.is_deleted_archived_task_id(&task_id)
+                && !self.archived_link_is_deleted(task)
+                && super::stand_in::stand_in_origin_matches(
+                    config,
+                    issue,
+                    &task.runtime_handle["origin"],
+                )
+        }) else {
+            return Ok(());
+        };
+        if !self.stand_in_assignment_is_handled(config, &task.local_task_id, binding) {
+            return Ok(());
+        }
+        let issue_id = issue["id"].as_str().unwrap_or_default();
+        let pending = if config["projectStore"] == "local" {
+            LocalTaskStore::open(self.task_store_path.as_ref())
+                .map_err(settings_error)?
+                .list_task_bindings(issue_id)
+                .map_err(settings_error)?
+                .iter()
+                .any(|row| {
+                    row.task_id == task_id
+                        && row.device_id == self.device_id
+                        && row.stand_in_pending == Some(true)
+                })
+        } else {
+            let device = self.cloud_device_id()?;
+            let existing = self
+                .runtime_http(
+                    reqwest::Method::GET,
+                    &format!("/v1/loop-items/{issue_id}/tasks"),
+                    None,
+                )
+                .await?;
+            existing.as_array().into_iter().flatten().any(|row| {
+                row["task_id"] == task_id
+                    && row["device_id"] == device
+                    && row["task_user_id"] == config["userId"]
+                    && row["stand_in_pending"] == true
+            })
+        };
+        if pending {
+            // Only synchronize an existing reservation; never resurrect an unlinked task.
+            self.record_stand_in_issue_wakeup(&task_id, binding);
+            self.accept_stand_in_assignment(config, issue, binding)
+                .await?;
+        }
+        Ok(())
+    }
+
     pub(super) async fn accept_stand_in_assignment(
         &self,
         config: &Value,
@@ -28,15 +94,23 @@ impl RuntimeWorkRpcHandler {
         });
         binding["taskId"] = json!(self.stand_in_task_id(config, issue));
         binding["taskTitle"] = issue["title"].clone();
+        binding["standInPending"] = json!(self
+            .store
+            .get_task_summary(binding["taskId"].as_str().unwrap())
+            .is_none());
         binding["standInConversationId"] =
             json!(super::stand_in::stand_in_issue_identity(config, issue));
+        if !binding["executionContext"].is_object() {
+            binding["executionContext"] = json!({});
+        }
+        binding["executionContext"]["origin"] = self.stand_in_issue_origin(config, issue, &binding);
         let issue_id = issue["id"].as_str().unwrap_or_default();
         if binding["triggerCommentId"].is_string() {
             self.runtime_http(
                 reqwest::Method::POST,
                 &format!("/v1/loop-items/{issue_id}/tasks"),
                 Some(&json!({
-                    "deviceId":binding["deviceId"],"taskId":binding["taskId"],"taskTitle":issue["title"],"standInConversationId":binding["standInConversationId"]
+                    "deviceId":binding["deviceId"],"taskId":binding["taskId"],"taskTitle":issue["title"],"standInPending":binding["standInPending"],"standInConversationId":binding["standInConversationId"]
                 })),
             )
             .await?;

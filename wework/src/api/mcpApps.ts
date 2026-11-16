@@ -14,9 +14,11 @@ export interface McpAppDiscovery {
 }
 export interface McpAppDescriptor extends McpAppDiscovery {
   resource: McpAppResource
+  modelContext?: Parameters<NonNullable<AppBridge['onupdatemodelcontext']>>[0] | null
 }
 export interface McpAppRequest {
   address: RuntimeTaskAddress
+  turnId?: string
   callId: string
   sessionId?: string
   method?: string

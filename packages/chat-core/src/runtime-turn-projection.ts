@@ -10,6 +10,13 @@ import type {
   WorkbenchMessage,
 } from "./runtime-conversation";
 
+export function runtimeAssistantViewId(
+  turnId: string,
+  anchor = "assistant",
+): string {
+  return `runtime-view:${turnId}:${anchor}`;
+}
+
 export function projectRuntimeConversationTurn(
   turn: RuntimeConversationTurn,
 ): WorkbenchMessage[] {
@@ -65,7 +72,10 @@ function projectTurn(
       textItems[0]?.createdAt ??
       (blocks[0] ? new Date(blocks[0].createdAt).toISOString() : "");
     messages.push({
-      id: `runtime-view:${turn.id ?? turn.clientUserMessageId ?? "pending"}:${assistantAnchor}`,
+      id: runtimeAssistantViewId(
+        turn.id ?? turn.clientUserMessageId ?? "pending",
+        assistantAnchor,
+      ),
       role: "assistant",
       content: textItems.map((item) => item.content).join("\n\n"),
       status: isLast ? turnStatus(turn) : "done",

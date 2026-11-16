@@ -295,7 +295,9 @@ export function createHttpClient(options: HttpClientOptions): HttpClient {
         typeof init.body === 'string' &&
         ['POST', 'PATCH'].includes(init.method ?? '')
       ) {
-        const selection = await requestRunnerSelection(selectionRequest)
+        const selection = await requestRunnerSelection(selectionRequest).catch(cause => {
+          throw selectionRequest.recovery_from_environment_id ? error : cause
+        })
         const body = JSON.parse(init.body) as Record<string, unknown>
         delete body.runnerSelection
         delete body.runner_selection

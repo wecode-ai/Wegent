@@ -1,5 +1,9 @@
 #!/bin/sh
 directory=$(dirname -- "$0")
+if [ "$1" = debug ]; then
+  cat "$directory/bundled_models.json"
+  exit $?
+fi
 cd / || exit 1
 while IFS= read -r line; do
   printf '%s\n' "$line" >> "$directory/requests.jsonl"
@@ -18,6 +22,10 @@ while IFS= read -r line; do
     rm "$error_file"
     printf '}\n'
     continue
+  fi
+  notification_file="$directory/$method.notifications.jsonl"
+  if [ -f "$notification_file" ]; then
+    cat "$notification_file"
   fi
   printf '{"id":%s,"result":' "$id"
   cat "$directory/$method.json"

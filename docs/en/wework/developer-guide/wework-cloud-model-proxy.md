@@ -85,6 +85,10 @@ Passthrough preserves the original bytes of normal upstream chunks. A read error
 
 #### Portable Responses Tools
 
+All model streams share the executor's SSE framing and payload parser, including Responses tool bridging, ordinary Responses, passthrough inspection, Chat Completions, Anthropic Messages, tool history, and Harness adapters. The parser consumes LF, CRLF, and CR boundaries in stream order, keeping a split CRLF pair as one line ending. It joins every `data:` line within an event and preserves incomplete UTF-8 characters between network chunks. Responses tool dispatch and terminal detection use the JSON `type`, independently of the optional SSE `event:` field. Rewriting replaces all previous data lines while preserving event metadata. Passthrough inspection and history recording do not modify forwarded chunks.
+
+The `model-sse-parsing` desktop E2E checkpoint runs real Electron, executor, and Codex components with only the model service simulated. It covers Responses function bridging, native Responses, Chat Completions, and Anthropic Messages using multiline JSON, mixed line endings, split Chinese characters, and misleading event headers. Real Code Mode tools must write and read a file, and the successful result must reach the next model request's history. Responses tool streams stay open until the real tool result arrives, proving that complete CR-terminated frames dispatch without waiting for EOF. This is model protocol regression coverage; compatibility with real provider services remains unverified.
+
 Local model interfaces, cloud models, stand-ins, and configured Codex providers default to `tool_profile: "function"`, with native `tool_search` and namespaces disabled. Existing configurations without profile or capability fields use the same defaults without recreating models. An explicit `tool_profile: "custom"` preserves native custom tools. Local `codex_tool_compatibility: "native"` or cloud capability switches enable native namespaces and tool search. Cloud `codex_request_mode: "passthrough"` preserves the complete native request; `standard` always bridges tools to functions. Defaults do not depend on provider IDs, model names, or a Responses endpoint claiming Codex-specific capabilities.
 
 `tool_profile: "function"` also applies to custom tools inside native namespaces. With `native_namespace_tools` enabled, the proxy preserves the namespace and its description while converting custom tools such as `exec` into function tools with a string `input` parameter. Historical calls, outputs, and forced tool choices use the same protocol. When native namespaces are disabled, the proxy flattens namespaces and keeps the same input wrapper for their custom tools. SSE responses restore the original tool name, namespace, and raw input so tools sharing a name remain distinct.
@@ -92,6 +96,16 @@ Local model interfaces, cloud models, stand-ins, and configured Codex providers 
 Built-in tool types inside namespaces return a request validation error instead of crashing the proxy. Existing function definitions with an omitted type retain their previous conversion behavior.
 
 The `responses-tool-compatibility` desktop E2E checkpoint runs real Electron, Backend, executor, and Codex components with only the model service simulated. The simulator rejects unconverted custom `exec`, checks function arguments, and requires local and cloud models to execute real commands, read a file after reload, and preserve tool history. It also verifies explicit native configuration. This is model protocol regression coverage; compatibility with real provider services remains unverified.
+
+#### Legacy DeepSeek configurations
+
+Changing defaults alone cannot fix rejected `exec` calls when a legacy configuration already
+stores `tool_profile: "custom"`. Direct `api.deepseek.com` Responses requests in `auto` mode
+still follow its supported tool capabilities: preserve native `apply_patch` and reversibly adapt
+other custom tools, namespaces, and client tool search to function tools. Configurations without
+a legacy profile use the shared function default above. Match the actual endpoint, without
+guessing model names or retrying failed requests. Explicit `standard` and `passthrough` modes
+retain precedence; other gateways use the shared policy.
 
 #### Kimi K3 Chat Completions Compatibility
 

@@ -233,6 +233,21 @@ def _set_sqlite_pragma(dbapi_conn, connection_record):
     cursor.close()
 
 
+def _register_sqlite_functions(dbapi_conn, connection_record):
+    """Register share lookup functions on every SQLite connection."""
+    # SQLite unit fixtures use the same SHA-256 expression as MySQL share lookup.
+    dbapi_conn.create_function(
+        "sha2",
+        2,
+        lambda value, bits: (
+            hashlib.sha256(value.encode("utf-8")).hexdigest()
+            if value is not None and bits == 256
+            else None
+        ),
+        deterministic=True,
+    )
+
+
 # Session-scoped engine and tables - created once per test session (per worker)
 @pytest.fixture(scope="session")
 def test_engine(worker_id):
@@ -259,6 +274,7 @@ def test_engine(worker_id):
         pool_pre_ping=True,
     )
 
+    event.listen(engine, "connect", _register_sqlite_functions)
     # Enable WAL mode for better concurrent access (only for file-based databases)
     if worker_id != "master":
         event.listen(engine, "connect", _set_sqlite_pragma)

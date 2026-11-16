@@ -159,6 +159,18 @@ impl ExecutorEventHub {
     }
 
     pub fn subscribe_after(&self, after: u64) -> ExecutorEventSubscription {
+        self.subscribe_after_internal(after, false)
+    }
+
+    pub fn subscribe_for_relay(&self, after: u64) -> ExecutorEventSubscription {
+        self.subscribe_after_internal(after, true)
+    }
+
+    fn subscribe_after_internal(
+        &self,
+        after: u64,
+        retain_history: bool,
+    ) -> ExecutorEventSubscription {
         let mut state = self
             .state
             .lock()
@@ -170,8 +182,21 @@ impl ExecutorEventHub {
         if history_lost {
             let recovery = state.recovery_event(after);
             let resume_after = event_sequence(&recovery).unwrap_or(latest_sequence);
+            // Relay retained events before the higher-sequence recovery marker.
+            // Snapshot consumers continue to receive only the recovery marker.
+            let mut replay = if retain_history {
+                state
+                    .events
+                    .iter()
+                    .filter(|event| event.sequence > after)
+                    .map(|event| event.value.clone())
+                    .collect::<Vec<_>>()
+            } else {
+                Vec::new()
+            };
+            replay.push(recovery);
             return ExecutorEventSubscription {
-                replay: vec![recovery],
+                replay,
                 receiver,
                 resume_after,
             };

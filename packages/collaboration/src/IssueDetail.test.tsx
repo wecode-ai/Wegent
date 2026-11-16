@@ -131,6 +131,46 @@ describe("IssueDetail browser due date boundary", () => {
     expect(onChange).toHaveBeenCalledExactlyOnceWith(issue);
   });
 
+  it("forwards host paste normalization to create and edit editors", () => {
+    const normalizePastedFiles = vi.fn(async (files: File[]) => files);
+    const create = editorFrom(
+      IssueCreate({
+        api: {} as SharedWorkspaceApi,
+        project,
+        allIssues: [],
+        messages: collaborationMessages["zh-CN"],
+        normalizePastedFiles,
+        onClose: vi.fn(),
+        onCreated: vi.fn(),
+        onError: vi.fn(),
+      }),
+    );
+    const edit = editorFrom(
+      IssueDetail({
+        api: {} as SharedWorkspaceApi,
+        project,
+        issue,
+        allIssues: [issue],
+        comments: [],
+        messages: collaborationMessages["zh-CN"],
+        normalizePastedFiles,
+        onClose: vi.fn(),
+        onChange: vi.fn(),
+        onRead: vi.fn(),
+        onCommentsChange: vi.fn(),
+        onConflict: vi.fn(),
+        onError: vi.fn(),
+      }),
+    );
+
+    expect(create.props.extensions.normalizePastedFiles).toBe(
+      normalizePastedFiles,
+    );
+    expect(edit.props.extensions.normalizePastedFiles).toBe(
+      normalizePastedFiles,
+    );
+  });
+
   it.each([
     [
       "create",

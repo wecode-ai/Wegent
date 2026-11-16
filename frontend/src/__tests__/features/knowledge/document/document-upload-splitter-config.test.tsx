@@ -443,6 +443,51 @@ describe('DocumentUpload source interactions', () => {
     expect(onOpenChange).not.toHaveBeenCalled()
   })
 
+  it.each(['web', 'text'] as const)(
+    'reveals a long %s error inside the body without changing focus',
+    async source => {
+      const message = 'Detailed failure reason '.repeat(80)
+      const rect = jest
+        .spyOn(HTMLElement.prototype, 'getBoundingClientRect')
+        .mockImplementation(function (this: HTMLElement) {
+          const top = this.getAttribute('role') === 'alert' ? 300 : 0
+          const bottom = this.getAttribute('role') === 'alert' ? 900 : 200
+          return {
+            top,
+            bottom,
+            left: 0,
+            right: 300,
+            width: 300,
+            height: bottom - top,
+            x: 0,
+            y: top,
+            toJSON: () => ({}),
+          }
+        })
+      try {
+        createDocuments.mockResolvedValueOnce([{ attachmentId: 101, error: message }])
+        mount(jest.fn().mockRejectedValue(new Error(message)))
+        selectSource(source)
+        const input = screen.getByTestId(
+          source === 'web' ? 'document-web-url' : 'document-text-content'
+        )
+        fireEvent.change(input, {
+          target: { value: source === 'web' ? 'https://example.com/article' : 'Keep this draft' },
+        })
+        input.focus()
+        fireEvent.click(screen.getByTestId(`document-${source}-submit`))
+        expect(await screen.findByRole('alert')).toHaveTextContent(message.trim())
+        const body = screen.getByTestId(`document-${source}-body`)
+        expect(body.tagName).toBe('DIV')
+        expect(body.scrollTop).toBeGreaterThan(0)
+        expect(input).toHaveFocus()
+        expect(input).toBeEnabled()
+      } finally {
+        rect.mockRestore()
+      }
+    }
+  )
+
   it('retains web input and its localized error when fetching fails', async () => {
     mount(jest.fn().mockRejectedValue(new Error('FETCH_TIMEOUT')))
     selectSource('web')

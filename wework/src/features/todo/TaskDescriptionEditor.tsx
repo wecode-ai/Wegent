@@ -18,6 +18,7 @@ import {
   type ImeCompositionSnapshot,
 } from './imeComposition'
 import { normalizeTaskDescription } from './taskDescription'
+import { normalizeClipboardImageFiles } from '@/lib/clipboard-images'
 
 interface TaskDescriptionEditorProps {
   value: string
@@ -407,18 +408,20 @@ export function TaskDescriptionEditor({
       const referenceBlockId = editor.getTextCursorPosition().block.id
       event.preventDefault()
       event.stopPropagation()
-      void Promise.resolve(pasteFiles(files)).then(markdown => {
-        if (!markdown) return
-        const blocks = parseTaskDescriptionBlocks(editor, markdown)
-        if (!blocks.length) return
-        const inserted = editor.insertBlocks(blocks, referenceBlockId, 'after')
-        let lastInserted = inserted.at(-1)
-        if (lastInserted?.type === 'attachmentImage') {
-          ;[lastInserted] = editor.insertBlocks([{ type: 'paragraph' }], lastInserted.id, 'after')
-        }
-        if (lastInserted) editor.setTextCursorPosition(lastInserted.id, 'end')
-        emitEditorChange()
-      })
+      void normalizeClipboardImageFiles(files)
+        .then(async normalizedFiles => pasteFiles(normalizedFiles))
+        .then(markdown => {
+          if (!markdown) return
+          const blocks = parseTaskDescriptionBlocks(editor, markdown)
+          if (!blocks.length) return
+          const inserted = editor.insertBlocks(blocks, referenceBlockId, 'after')
+          let lastInserted = inserted.at(-1)
+          if (lastInserted?.type === 'attachmentImage') {
+            ;[lastInserted] = editor.insertBlocks([{ type: 'paragraph' }], lastInserted.id, 'after')
+          }
+          if (lastInserted) editor.setTextCursorPosition(lastInserted.id, 'end')
+          emitEditorChange()
+        })
     },
     [editor, emitEditorChange]
   )

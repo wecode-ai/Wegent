@@ -1,3 +1,4 @@
+import { setSessionTelemetryConsent } from '@/telemetry/sessionConsent'
 import type { AppPreferences } from '@/desktop/appPreferences'
 import { WorkbenchContext } from '@/features/workbench/useWorkbench'
 import type { WorkbenchContextValue } from '@/features/workbench/workbenchContextTypes'
@@ -26,8 +27,10 @@ const defaultPreferences: AppPreferences = {
   terminalContextInjectionEnabled: true,
   contextCompactionThreshold: 85,
   experimentalFeaturesEnabled: false,
+  collaborationExperienceEnabled: false,
   telemetryConsentAsked: true,
   telemetryEnabled: true,
+  telemetryConsentRevision: 0,
   performanceRecordingEnabled: false,
   trayUnreadEnabled: true,
   trayRunningEnabled: true,
@@ -94,8 +97,10 @@ vi.mock('@/desktop/appPreferences', () => ({
     language: 'zh-CN',
     terminalContextInjectionEnabled: true,
     experimentalFeaturesEnabled: false,
+    collaborationExperienceEnabled: false,
     telemetryConsentAsked: true,
     telemetryEnabled: true,
+    telemetryConsentRevision: 0,
     performanceRecordingEnabled: false,
     trayUnreadEnabled: true,
     trayRunningEnabled: true,
@@ -156,6 +161,10 @@ vi.mock('@/api/local/codexPlugins', () => ({
   }),
 }))
 
+vi.mock('@/api/local/harnessApps', () => ({
+  harnessAppsApi: { list: async () => [] },
+}))
+
 vi.mock('@/api/wegentUsage', () => ({
   getWegentUsageDisplay: getWegentUsageDisplayMock,
 }))
@@ -171,6 +180,7 @@ vi.mock('@/features/cloud-connection/useCloudConnection', () => ({
 
 describe('GeneralSettingsPage', () => {
   beforeEach(() => {
+    setSessionTelemetryConsent(undefined)
     getAppPreferencesMock.mockReset()
     updateAppPreferencesMock.mockReset()
     applyLanguagePreferenceMock.mockReset()
@@ -462,6 +472,94 @@ describe('GeneralSettingsPage', () => {
     expect(boardButton).toHaveAttribute('aria-pressed', 'true')
   })
 
+  test('keeps an enabled experiment rollback control visible after experimental settings are disabled', async () => {
+    const preferences = { ...defaultPreferences, collaborationExperienceEnabled: true }
+    getAppPreferencesMock.mockResolvedValue(preferences)
+    updateAppPreferencesMock.mockImplementation(patch =>
+      Promise.resolve({ ...preferences, ...patch })
+    )
+    render(<GeneralSettingsPage />)
+
+    const toggle = await screen.findByTestId('general-collaboration-experience-toggle')
+    await waitFor(() => expect(toggle).toBeEnabled())
+    expect(toggle).toHaveAttribute('aria-checked', 'true')
+    await userEvent.click(toggle)
+
+    await waitFor(() =>
+      expect(updateAppPreferencesMock).toHaveBeenCalledWith({
+        collaborationExperienceEnabled: false,
+      })
+    )
+    expect(screen.queryByTestId('general-collaboration-experience-toggle')).not.toBeInTheDocument()
+  })
+
+  test('keeps the experiment entry absent until its beta preference is deliberately enabled', async () => {
+    const preferences = { ...defaultPreferences, experimentalFeaturesEnabled: true }
+    getAppPreferencesMock.mockResolvedValue(preferences)
+    updateAppPreferencesMock.mockImplementation(patch =>
+      Promise.resolve({ ...preferences, ...patch })
+    )
+    render(<GeneralSettingsPage />)
+
+    const toggle = await screen.findByTestId('general-collaboration-experience-toggle')
+    await waitFor(() => expect(toggle).toBeEnabled())
+    expect(
+      within(screen.getByTestId('general-fixed-tab-add')).queryByRole('option', {
+        name: '协作 exp',
+      })
+    ).not.toBeInTheDocument()
+    await userEvent.click(toggle)
+
+    await waitFor(() =>
+      expect(updateAppPreferencesMock).toHaveBeenCalledWith({
+        collaborationExperienceEnabled: true,
+      })
+    )
+    expect(
+      within(screen.getByTestId('general-fixed-tab-add')).getByRole('option', {
+        name: '协作 exp',
+      })
+    ).toBeInTheDocument()
+    fireEvent.change(screen.getByTestId('general-fixed-tab-add'), {
+      target: { value: 'fixed-collaboration-exp' },
+    })
+    await waitFor(() =>
+      expect(updateAppPreferencesMock).toHaveBeenCalledWith({
+        fixedWorkspaceTabs: [
+          ...defaultPreferences.fixedWorkspaceTabs,
+          { id: 'fixed-collaboration-exp', kind: 'auxiliary', contentRoute: '/collaboration-exp' },
+        ],
+        startupWorkspaceTabId: 'fixed-task',
+      })
+    )
+  })
+
+  test('keeps disabled experiment preferences intact while editing existing fixed tabs', async () => {
+    const experiment = {
+      id: 'fixed-collaboration-exp',
+      kind: 'auxiliary' as const,
+      contentRoute: '/collaboration-exp?projectId=one',
+    }
+    const fixedWorkspaceTabs = [...defaultPreferences.fixedWorkspaceTabs, experiment]
+    getAppPreferencesMock.mockResolvedValue({ ...defaultPreferences, fixedWorkspaceTabs })
+    render(<GeneralSettingsPage />)
+
+    const startup = await screen.findByTestId('general-fixed-tab-startup-fixed-board')
+    await waitFor(() => expect(startup).toBeEnabled())
+    expect(screen.queryByTestId('general-collaboration-experience-toggle')).not.toBeInTheDocument()
+    expect(
+      screen.queryByTestId('general-fixed-tab-startup-fixed-collaboration-exp')
+    ).not.toBeInTheDocument()
+    await userEvent.click(startup)
+
+    await waitFor(() =>
+      expect(updateAppPreferencesMock).toHaveBeenCalledWith({
+        fixedWorkspaceTabs,
+        startupWorkspaceTabId: 'fixed-board',
+      })
+    )
+  })
+
   test('shows an unavailable saved friendly title model for replacement', async () => {
     const taskModel = {
       name: 'gpt-5',
@@ -580,10 +678,13 @@ describe('GeneralSettingsPage', () => {
     await userEvent.click(toggle)
 
     await waitFor(() => {
-      expect(updateAppPreferencesMock).toHaveBeenCalledWith({
-        telemetryConsentAsked: true,
-        telemetryEnabled: false,
-      })
+      expect(updateAppPreferencesMock).toHaveBeenCalledWith(
+        {
+          telemetryConsentAsked: true,
+          telemetryEnabled: false,
+        },
+        expect.any(Number)
+      )
     })
   })
 

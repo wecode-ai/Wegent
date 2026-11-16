@@ -1,0 +1,8 @@
+{
+  "order": 181600,
+  "scenario": "./scenarios/html-interactions.scenario.mjs",
+  "scenarioOnly": true,
+  "ci": {
+    "core": { "order": 119600, "shard": 5, "position": 18600 }
+  }
+}

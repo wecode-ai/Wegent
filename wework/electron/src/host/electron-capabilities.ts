@@ -59,6 +59,7 @@ import { BACKGROUND_TIMER_THROTTLING_SWITCH } from './window-background-policy.j
 import { sendE2EKey, sendE2EText, type E2EKeyPhase } from './e2e-keyboard.js'
 import { inspectWorkspacePaths } from './workspace-path-inspector.js'
 import { readClipboardWorkspacePaths } from './workspace-path-clipboard.js'
+import { clipboardImageToPngDataUrl } from './clipboard-image-conversion.js'
 import { FeedbackBundleManager, type FeedbackExportRequest } from './feedback-bundle-manager.js'
 import { captureWebContentsDataUrl } from './web-contents-capture.js'
 import type { TrayActivation, TrayMenuState, TraySnapshot } from './tray-manager.js'
@@ -170,7 +171,10 @@ export interface ElectronDesktopServices {
   pendingSchemes: SchemeQueue
   openScheme: (url: string) => void
   takePendingWorkspaceOpenRequests?: () => Array<{ path: string; label?: string }>
-  updatePreferences?: (patch: Record<string, unknown>) => Promise<Record<string, unknown>>
+  updatePreferences?: (
+    patch: Record<string, unknown>,
+    expectedTelemetryConsentRevision?: number
+  ) => Promise<Record<string, unknown>>
   weworkSyncRequest?: (request: WeworkSyncRequest) => Promise<unknown>
 }
 
@@ -288,7 +292,7 @@ export interface ElectronE2EHost {
     executorPid: number | null
     workbenchRuntimes: unknown[]
   }
-  rendererStartupReady: (source: 'task-list' | 'other') => void | Promise<void>
+  rendererStartupReady: (source: 'task-list' | 'task-list-error' | 'other') => void | Promise<void>
   rendererStartupFailed: (failure: {
     message: string
     stack?: string
@@ -297,6 +301,10 @@ export interface ElectronE2EHost {
   startupSplashSnapshot: () => StartupSplashSnapshot | null
   startupSplashInspect: () => Promise<Record<string, unknown>>
   startupSplashClick: (testId: string) => Promise<void>
+  startupSplashSize: (
+    width: number,
+    height: number
+  ) => Promise<{ width: number; height: number; maximized: boolean }>
   startupLogPath: (path: string | null) => void
   trayActivate: (activation: TrayActivation) => boolean
   traySetState: (state: TrayMenuState) => void
@@ -386,6 +394,7 @@ export function createElectronCapabilityRouter(
     startupSplashSnapshot: () => null,
     startupSplashInspect: () => Promise.reject(new Error('Startup splash is unavailable')),
     startupSplashClick: () => Promise.reject(new Error('Startup splash is unavailable')),
+    startupSplashSize: () => Promise.reject(new Error('Startup splash is unavailable')),
     startupLogPath: () => undefined,
     trayActivate: () => false,
     traySetState: () => undefined,
@@ -457,11 +466,12 @@ export function createElectronCapabilityRouter(
   router.register('desktop.events', params =>
     desktopServices.events.read(integerParam(params, 'after') ?? 0)
   )
-  router.register('renderer.startupReady', params =>
-    e2eHost.rendererStartupReady(
-      optionalStringParam(params, 'source') === 'task-list' ? 'task-list' : 'other'
+  router.register('renderer.startupReady', params => {
+    const source = optionalStringParam(params, 'source')
+    return e2eHost.rendererStartupReady(
+      source === 'task-list' || source === 'task-list-error' ? source : 'other'
     )
-  )
+  })
   router.register('renderer.startupFailed', params =>
     e2eHost.rendererStartupFailed({
       message: optionalStringParam(params, 'message') ?? 'Desktop frontend failed to initialize',
@@ -482,13 +492,18 @@ export function createElectronCapabilityRouter(
   })
   registerAppUpdateCapabilities(router, desktopServices.appUpdates)
   router.register('attachment.begin', params =>
-    attachments.begin(stringParam(params, 'filename'), requiredIntegerParam(params, 'size'))
+    attachments.begin(
+      stringParam(params, 'filename'),
+      requiredIntegerParam(params, 'size'),
+      optionalStringParam(params, 'uploadId')
+    )
   )
   router.register('attachment.append', params =>
     attachments.append(
       stringParam(params, 'uploadId'),
       requiredIntegerParam(params, 'offset'),
-      stringParam(params, 'chunkBase64')
+      stringParam(params, 'chunkBase64'),
+      optionalStringParam(params, 'appendId')
     )
   )
   router.register('attachment.finish', params =>
@@ -637,6 +652,13 @@ export function createElectronCapabilityRouter(
   })
   router.register('clipboard.readWorkspacePaths', params =>
     readClipboardWorkspacePaths(stringArrayParam(params, 'fallbackPaths') ?? [])
+  )
+  router.register('clipboard.convertImageToPng', params =>
+    clipboardImageToPngDataUrl(
+      rawStringParam(params, 'dataBase64'),
+      stringParam(params, 'fileName'),
+      optionalStringParam(params, 'mimeType') ?? ''
+    )
   )
   router.register('clipboard.writeText', params =>
     clipboard.writeText(rawStringParam(params, 'text'))
@@ -920,6 +942,12 @@ export function createElectronCapabilityRouter(
     }
     return e2eHost.startupSplashClick(testId)
   })
+  router.register('e2e.setStartupSplashSize', params =>
+    e2eHost.startupSplashSize(
+      requiredIntegerParam(params, 'width'),
+      requiredIntegerParam(params, 'height')
+    )
+  )
   router.register('e2e.setStartupLogPath', params => {
     assertE2EEnabled('Startup log directory failure fixture')
     return e2eHost.startupLogPath(nullableStringParam(params, 'path') ?? null)
@@ -1007,6 +1035,7 @@ export function createElectronCapabilityRouter(
         target: params.target,
         address: objectParam(params, 'address'),
         callId: stringParam(params, 'callId'),
+        ...(typeof params.turnId === 'string' ? { turnId: params.turnId } : {}),
       },
       owner
     )
@@ -1055,22 +1084,7 @@ export function createElectronCapabilityRouter(
       return mcpAppDocuments.respond(new Request(url)).status
     }
     if (!mcpAppDocuments.owns(url)) throw new Error('Unknown MCP App document')
-    const contents = e2eHost.captureTarget('main')
-    const frame = contents?.mainFrame.framesInSubtree.find(frame => frame.url === url)
-    if (!frame) throw new Error('MCP App frame is not loaded')
-    const action = stringParam(params, 'action')
-    if (!['text', 'click', 'fill', 'attribute', 'value'].includes(action))
-      throw new Error('Unsupported MCP App test action')
-    return frame.executeJavaScript(`(() => {
-      const element = document.querySelector(${JSON.stringify(stringParam(params, 'selector'))});
-      if (!element) throw new Error('MCP App target not found');
-      const action = ${JSON.stringify(action)};
-      if (action === 'click') element.click();
-      if (action === 'fill') { element.value = ${JSON.stringify(optionalStringParam(params, 'value') ?? '')}; element.dispatchEvent(new Event('input', { bubbles: true })); }
-      if (action === 'attribute') return element.getAttribute(${JSON.stringify(optionalStringParam(params, 'value') ?? '')});
-      if (action === 'value') return element.value;
-      return element.textContent;
-    })()`)
+    return controlInlineVisualizationFrame(e2eHost.captureTarget('main'), params)
   })
   router.register('filesystem.stat', async params => {
     const path = stringParam(params, 'path')
@@ -1144,10 +1158,13 @@ export function createElectronCapabilityRouter(
     acknowledgeNotificationReply(stringParam(params, 'id'), stringParam(params, 'accountKey'))
   )
   router.register('preferences.get', () => preferences.read())
-  const updatePreferences = async (preferencePatch: Record<string, unknown>) => {
+  const updatePreferences = async (
+    preferencePatch: Record<string, unknown>,
+    expectedTelemetryConsentRevision?: number
+  ) => {
     const updated = desktopServices.updatePreferences
-      ? await desktopServices.updatePreferences(preferencePatch)
-      : await preferences.update(preferencePatch)
+      ? await desktopServices.updatePreferences(preferencePatch, expectedTelemetryConsentRevision)
+      : await preferences.update(preferencePatch, expectedTelemetryConsentRevision)
     if (typeof updated.preventSleepWhileTasksRunning === 'boolean') {
       e2eHost.setSystemSleepEnabled(updated.preventSleepWhileTasksRunning)
     }
@@ -1159,7 +1176,14 @@ export function createElectronCapabilityRouter(
     if (!patch || typeof patch !== 'object' || Array.isArray(patch)) {
       invalidParam('patch')
     }
-    return updatePreferences(patch as Record<string, unknown>)
+    const expected = params.expectedTelemetryConsentRevision
+    if (
+      expected !== undefined &&
+      (typeof expected !== 'number' || !Number.isSafeInteger(expected) || expected < 0)
+    ) {
+      invalidParam('expectedTelemetryConsentRevision')
+    }
+    return updatePreferences(patch as Record<string, unknown>, expected as number | undefined)
   })
   router.register('runtime.changeWorkbenchMode', async (params, context) => {
     const mode = stringParam(params, 'mode')
@@ -1640,17 +1664,24 @@ export function e2eSystemPressureOverride(environment: NodeJS.ProcessEnv = proce
   return { cpuLoadRatio: 0.1, freeMemoryRatio: 0.5, userIdleSeconds: 60 }
 }
 
+export function enforceIdleSystemLoadLimits(environment: NodeJS.ProcessEnv = process.env): boolean {
+  return environment.WEWORK_IDLE_TASKS_CONSIDER_SYSTEM_LOAD?.trim().toLowerCase() !== 'false'
+}
+
 export async function systemPressureSnapshot(): Promise<{
   cpuLoadRatio: number
   freeMemoryRatio: number
   userIdleSeconds: number
+  enforceSystemLoadLimits: boolean
 }> {
   const override = e2eSystemPressureOverride()
-  if (override) return override
+  const enforceSystemLoadLimits = enforceIdleSystemLoadLimits()
+  if (override) return { ...override, enforceSystemLoadLimits }
   const cpuBefore = cpuTimeSample()
   await new Promise(resolve => setTimeout(resolve, 100))
   const cpuAfter = cpuTimeSample()
   return {
+    enforceSystemLoadLimits,
     cpuLoadRatio: cpuLoadRatioBetween(cpuBefore, cpuAfter),
     freeMemoryRatio: availableMemoryRatio(
       process.getSystemMemoryInfo(),

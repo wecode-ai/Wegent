@@ -168,12 +168,3 @@ export function isRunningRuntimeEvent(name: string): boolean {
 export function isTerminalRuntimeEvent(name: string): boolean {
   return TERMINAL_RUNTIME_EVENTS.has(name)
 }
-
-export function shouldReloadRuntimeWork(name: string, taskKnown: boolean): boolean {
-  if (!taskKnown) return true
-  return (
-    name === 'runtime.task.title.updated' ||
-    RUNNING_RUNTIME_EVENTS.has(name) ||
-    TERMINAL_RUNTIME_EVENTS.has(name)
-  )
-}

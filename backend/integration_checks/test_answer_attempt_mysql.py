@@ -19,13 +19,14 @@ from app.core.config import settings
 from app.models.knowledge import KnowledgeDocument
 from app.models.knowledge_citation import KnowledgeCitation
 from app.models.subtask import Subtask, SubtaskStatus
+from app.models.task import TaskResource
 from app.services.chat.operations.retry import reset_subtask_for_retry
 from app.services.chat.storage import db as storage
 from app.services.chat.storage.answer_attempt import AnswerSaveResult
 from app.services.chat.trigger.lifecycle import persist_completed_result
 from app.stores.tasks import subtask_store
 
-HEAD = "a91e7c42d803"
+HEAD = "c6e8a1d4f902"
 PREVIOUS = "f3a7c9e1b2d4"
 
 
@@ -69,7 +70,7 @@ def database(monkeypatch):
         # This suite isolates answer persistence; task projections have separate tests.
         monkeypatch.setattr(
             storage.db_handler,
-            "_update_task_status_sync",
+            "_update_task_status_in_session",
             lambda *a, **k: storage.TaskStatusUpdateResult(),
         )
         yield engine, config
@@ -82,6 +83,18 @@ def database(monkeypatch):
 
 
 def answer(db, *, identity="a" * 32, status=SubtaskStatus.RUNNING):
+    if db.get(TaskResource, 9) is None:
+        db.add(
+            TaskResource(
+                id=9,
+                user_id=7,
+                kind="Task",
+                name="answer-attempt",
+                namespace="default",
+                json={"status": {"status": "RUNNING"}},
+            )
+        )
+        db.flush()
     row = Subtask(
         user_id=7,
         task_id=9,

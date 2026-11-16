@@ -1,7 +1,13 @@
 import { describe, expect, it } from 'vitest'
 
 import type { DeviceInfo } from '@/types/runtime'
-import { mobileOperableDevices, onlineDevicesFirst, selectedOnlineDeviceId } from './deviceOrdering'
+import {
+  mobileCreatableDevices,
+  mobileProjectCreatableDevices,
+  mobileOperableDevices,
+  onlineDevicesFirst,
+  selectedOnlineDeviceId,
+} from './deviceOrdering'
 
 describe('onlineDevicesFirst', () => {
   it('places online and busy devices before offline devices while preserving group order', () => {
@@ -45,6 +51,74 @@ describe('selectedOnlineDeviceId', () => {
 })
 
 describe('mobileOperableDevices', () => {
+  it('creates tasks only on the online installation that advertises consent and creation support', () => {
+    const app: DeviceInfo = {
+      ...device('same-name', 'online'),
+      device_type: 'app',
+      execution_target_id: 'app-record-11',
+      runtime_features: {
+        schemaVersion: 4,
+        remoteTaskAccess: { version: 1, enabled: true, taskCreation: true },
+      },
+    }
+    expect(mobileCreatableDevices([app]).map(item => item.device_id)).toEqual(['app-record-11'])
+    expect(mobileProjectCreatableDevices([app])).toEqual([])
+    for (const invalid of [
+      { ...app, status: 'offline' as const },
+      {
+        ...app,
+        execution_target_id: 'app-record-22',
+        runtime_features: {
+          schemaVersion: 4,
+          remoteTaskAccess: { version: 1 as const, enabled: false, taskCreation: true },
+        },
+      },
+      {
+        ...app,
+        runtime_features: {
+          schemaVersion: 4,
+          remoteTaskAccess: { version: 1 as const, enabled: true, taskCreation: false },
+        },
+      },
+    ]) {
+      expect(mobileCreatableDevices([invalid])).toEqual([])
+    }
+  })
+
+  it('uses each opted-in desktop installation route without mixing same-name computers', () => {
+    const a: DeviceInfo = {
+      ...device('shared-desktop-name', 'online'),
+      device_type: 'app',
+      execution_target_id: 'app-record-11',
+      runtime_instance_id: 'runtime-a',
+      runtime_features: { schemaVersion: 4, remoteTaskAccess: { version: 1, enabled: true } },
+    }
+    const b: DeviceInfo = {
+      ...a,
+      id: 2,
+      execution_target_id: 'app-record-22',
+      runtime_instance_id: 'runtime-b',
+    }
+    expect(mobileOperableDevices([a, b]).map(item => item.device_id)).toEqual([
+      'app-record-11',
+      'app-record-22',
+    ])
+    expect(
+      mobileOperableDevices([
+        a,
+        {
+          ...b,
+          runtime_features: { schemaVersion: 4, remoteTaskAccess: { version: 1, enabled: false } },
+        },
+      ]).map(item => item.device_id)
+    ).toEqual(['app-record-11'])
+    expect(mobileOperableDevices([{ ...a, execution_target_id: null }])).toEqual([])
+    expect(mobileCreatableDevices([a, b])).toEqual([])
+    expect(
+      mobileCreatableDevices([a, device('cloud', 'online')]).map(item => item.device_id)
+    ).toEqual(['cloud'])
+  })
+
   it('keeps Claude Code remote executors while removing unsupported registrations and shells', () => {
     const devices = [
       { ...device('app', 'online'), device_type: 'app' as const },

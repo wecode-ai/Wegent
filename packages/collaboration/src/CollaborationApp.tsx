@@ -81,6 +81,7 @@ import {
 } from "./project-manage";
 
 export interface CollaborationIssueDetailRenderContext {
+  commentBoard?: import("./issue-detail/issueCommentActions").IssueCommentBoardContext;
   api: SharedWorkspaceApi;
   project: CollaborationProject;
   issue: CollaborationIssue;
@@ -112,6 +113,7 @@ interface CollaborationAppProps {
   showProjectBack?: boolean;
   /** Enables Issue archive actions and the project archive box. */
   issueArchiveEnabled?: boolean;
+  normalizePastedFiles?(files: File[]): Promise<File[]>;
   onProjectChange?(project: CollaborationProject): void;
   /**
    * Host work that must succeed before the Issue is archived, such as stopping
@@ -144,6 +146,7 @@ export function CollaborationApp({
   refreshProjectRequestKey = 0,
   showProjectBack = true,
   issueArchiveEnabled = false,
+  normalizePastedFiles,
   onProjectChange,
   onCreateTask,
   onPrepareIssueArchive,
@@ -158,6 +161,11 @@ export function CollaborationApp({
     [locale],
   );
   const [createProjectOpen, setCreateProjectOpen] = useState(false);
+  const issueBoardRef = useRef<{
+    issueId: string;
+    projectId: string;
+    board: import("./issue-detail/issueCommentActions").IssueCommentBoardContext;
+  } | null>(null);
   const [createIssueOpen, setCreateIssueOpen] = useState(false);
   const [createIssueDefaults, setCreateIssueDefaults] =
     useState<BoardIssueCreateDefaults>();
@@ -966,13 +974,16 @@ export function CollaborationApp({
                         unassigned: messages.unassigned,
                         noTag: messages.noTag,
                       }}
-                      onOpen={(issue) =>
+                      onOpen={(issue, board) => {
+                        issueBoardRef.current = board
+                          ? { issueId: issue.id, projectId: project.id, board }
+                          : null;
                         host.navigate({
                           projectId: project.id,
                           issueId: issue.id,
                           view: "board",
-                        })
-                      }
+                        });
+                      }}
                       onMove={async (issue, mutation) => {
                         await executeStandardCloudBoardMutation({
                           item: issue,
@@ -1332,11 +1343,17 @@ export function CollaborationApp({
                 });
               }}
               onError={() => commands.reportError(messages.saveFailed)}
+              normalizePastedFiles={normalizePastedFiles}
             />
           )}
           {selectedIssue && project ? (
             renderIssueDetail ? (
               renderIssueDetail({
+                commentBoard:
+                  issueBoardRef.current?.issueId === selectedIssue.id &&
+                  issueBoardRef.current.projectId === project.id
+                    ? issueBoardRef.current.board
+                    : undefined,
                 api,
                 project,
                 issue: selectedIssue,
@@ -1392,6 +1409,12 @@ export function CollaborationApp({
               })
             ) : (
               <IssueDetail
+                commentBoard={
+                  issueBoardRef.current?.issueId === selectedIssue.id &&
+                  issueBoardRef.current.projectId === project.id
+                    ? issueBoardRef.current.board
+                    : undefined
+                }
                 api={api}
                 project={project}
                 issue={selectedIssue}
@@ -1404,6 +1427,7 @@ export function CollaborationApp({
                 defaultAssistant={host.defaultAssistant}
                 messages={messages}
                 translate={translate}
+                normalizePastedFiles={normalizePastedFiles}
                 onClose={() => {
                   commands.clearSelectedIssue();
                   host.navigate({

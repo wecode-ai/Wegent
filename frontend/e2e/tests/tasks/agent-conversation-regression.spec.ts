@@ -9,6 +9,7 @@
  */
 
 import { APIRequestContext, Page, expect, test, type Route } from '@playwright/test'
+import { createAuthenticatedSocketClient } from '../../../../packages/chat-core/src/socket/authenticatedSocketClient'
 import { ADMIN_USER } from '../../config/test-users'
 import { ApiClient, createApiClient } from '../../utils/api-client'
 import { createGitHttpFixture } from '../../utils/device-git-http-fixture'
@@ -902,6 +903,69 @@ test.describe('Agent conversation regression', () => {
     await assertOversizedDeviceCompletionFailure(request, taskId)
   })
 
+  test('device ClaudeCode preserves streamed text order after completion and reload', async ({
+    page,
+    request,
+  }) => {
+    const prompt = `Return the ordered device response for ${makeContextToken('device_order')}`
+    // Each model delta spans several of the real Executor's 256-character
+    // frames. Distinct text in every frame exposes even a single swap.
+    const reply = ['first', 'second', 'third', 'last']
+      .map((label, index) =>
+        [0, 1, 2].map(part => `${label}-${part}-${String(index * 3 + part).repeat(245)}`).join('')
+      )
+      .join(' ')
+
+    await waitForWeworkDeviceOnline(request)
+    await configureStreamRule(request, prompt, reply)
+    const sent = await request.post(`${API_BASE_URL}/api/device-chat/tasks`, {
+      headers: authHeaders(),
+      data: {
+        teamId: deviceTeam.id,
+        deviceId: DEVICE_ID,
+        message: prompt,
+        taskType: 'task',
+        clientOrigin: 'frontend',
+      },
+    })
+    expect(sent.status()).toBe(200)
+    const { taskId, assistantSubtaskId, deviceId, aiTriggered } = (await sent.json()) as {
+      taskId: number
+      assistantSubtaskId: number
+      deviceId: string
+      aiTriggered: boolean
+    }
+    expect(taskId).toBeGreaterThan(0)
+    createdTaskIds.add(taskId)
+    expect(assistantSubtaskId).toBeGreaterThan(0)
+    expect(deviceId).toBeTruthy()
+    expect(aiTriggered).toBe(true)
+    await waitForBackendTerminal(request, taskId)
+
+    const detail = await request.get(`${API_BASE_URL}/api/tasks/${taskId}`, {
+      headers: authHeaders(),
+    })
+    expect(detail.status()).toBe(200)
+    const { subtasks } = (await detail.json()) as {
+      subtasks: Array<{
+        id: number
+        status: string
+        result?: { value?: string; blocks?: Array<{ type: string; content?: string }> }
+      }>
+    }
+    const assistant = subtasks.find(subtask => subtask.id === assistantSubtaskId)
+    expect(assistant?.status).toBe('COMPLETED')
+    expect(assistant?.result?.value).toBe(reply)
+    const textBlocks = assistant?.result?.blocks?.filter(block => block.type === 'text') ?? []
+    expect(textBlocks.map(block => block.content).join('')).toBe(reply)
+
+    await configureTaskPagePreferences(page, deviceTeam.id, 'task')
+    await page.goto(`/devices/chat?${new URLSearchParams({ deviceId, taskId: String(taskId) })}`)
+    await expect(page.getByTestId('messages-container')).toContainText(reply)
+    await page.reload()
+    await expect(page.getByTestId('messages-container')).toContainText(reply)
+  })
+
   test('device Git project runs without server AES keys on the executor', async ({ request }) => {
     const gitFixture = await createGitHttpFixture()
     const gitAccountId = `${TEST_PREFIX}-device-git-account`
@@ -1208,6 +1272,168 @@ test.describe('Agent conversation regression', () => {
     expect(secondStageText).toContain(automaticPipelineTeam.stageTwoMemberPrompt)
     expect(secondStageText).toContain(automaticPipelineTeam.stageTwoSystemPrompt)
     await waitForBackendTerminal(request, taskId)
+  })
+
+  test('Socket.IO binds a Git checkout on the first turn and reuses it on follow-up', async ({
+    request,
+  }) => {
+    const git = await createGitHttpFixture()
+    const client = createAuthenticatedSocketClient({
+      socketBaseUrl: () => API_BASE_URL,
+      getToken: () => token,
+      namespace: '/chat',
+    })
+    const stateFile = '.wegent-e2e-workspace-path'
+    const checkCheckout = [
+      `test "$(git remote get-url origin)" = '${git.url}'`,
+      'test "$(git branch --show-current)" = main',
+      'test "$(git rev-parse --show-toplevel)" = "$(pwd -P)"',
+    ]
+    type SendAck = { task_id: number; subtask_id: number; error?: string }
+    const configureCheckoutTurn = (
+      prompt: string,
+      reply: string,
+      marker: string,
+      checks: string[]
+    ) =>
+      configureToolScenario(request, prompt, [
+        {
+          toolCalls: [
+            {
+              toolName: 'Bash',
+              arguments: {
+                command: [
+                  'set -eu',
+                  ...checkCheckout,
+                  ...checks,
+                  `printf '%s\\n' '${marker}'`,
+                ].join('\n'),
+              },
+            },
+          ],
+        },
+        { responseContent: reply },
+      ])
+
+    try {
+      await client.ensureConnected()
+      const socket = client.getRawSocket()!
+      const firstPrompt = `Verify the initial Git checkout for ${TEST_PREFIX}`
+      const firstReply = `Initial checkout verified for ${TEST_PREFIX}`
+      const firstMarker = makeContextToken('first_checkout')
+      await configureCheckoutTurn(firstPrompt, firstReply, firstMarker, [
+        'grep -Fx "# Device Git E2E" README.md',
+        `pwd -P > '${stateFile}'`,
+      ])
+      const first = (await socket.timeout(10_000).emitWithAck('chat:send', {
+        team_id: codeTeam.id,
+        task_type: 'code',
+        message: firstPrompt,
+        git_url: git.url,
+        git_repo: 'repository',
+        git_domain: git.domain,
+        branch_name: 'main',
+      })) as SendAck
+      expect(first.error).toBeUndefined()
+      expect(first.task_id).toBeGreaterThan(0)
+      createdTaskIds.add(first.task_id)
+      expect(first.subtask_id).toBeGreaterThan(0)
+      await waitForBackendTerminal(request, first.task_id)
+      await assertCodingCommandOutputs(request, 'ClaudeCode', [firstMarker])
+
+      const followUpPrompt = `Verify that the follow-up reuses the same Git checkout for ${TEST_PREFIX}`
+      const followUpReply = `Checkout reused for ${TEST_PREFIX}`
+      const followUpMarker = makeContextToken('reused_checkout')
+      await configureCheckoutTurn(followUpPrompt, followUpReply, followUpMarker, [
+        `test "$(cat '${stateFile}')" = "$(pwd -P)"`,
+      ])
+      // The continuation omits Git metadata. Backend must
+      // resolve the persisted repository and Executor must reuse the checkout.
+      const followUp = (await socket.timeout(10_000).emitWithAck('chat:send', {
+        task_id: first.task_id,
+        team_id: codeTeam.id,
+        task_type: 'code',
+        message: followUpPrompt,
+      })) as SendAck
+      expect(followUp.error).toBeUndefined()
+      expect(followUp.task_id).toBe(first.task_id)
+      expect(followUp.subtask_id).toBeGreaterThan(first.subtask_id)
+      await assertCodingCommandOutputs(request, 'ClaudeCode', [followUpMarker])
+      await waitForBackendTerminal(request, first.task_id)
+
+      const response = await request.get(`${API_BASE_URL}/api/tasks/${first.task_id}`, {
+        headers: authHeaders(),
+      })
+      expect(response.status(), await response.text()).toBe(200)
+      const task = (await response.json()) as {
+        git_url: string
+        branch_name: string
+        subtasks: Array<{ role: string; status: string; result?: { value?: string } }>
+      }
+      expect(task.git_url).toBe(git.url)
+      expect(task.branch_name).toBe('main')
+      expect(task.subtasks.filter(subtask => subtask.role === 'ASSISTANT')).toEqual([
+        expect.objectContaining({
+          status: 'COMPLETED',
+          result: expect.objectContaining({ value: firstReply }),
+        }),
+        expect.objectContaining({
+          status: 'COMPLETED',
+          result: expect.objectContaining({ value: followUpReply }),
+        }),
+      ])
+    } finally {
+      client.dispose()
+      await git.close()
+    }
+  })
+
+  test('Socket.IO rejects a whitespace-only Git URL before dispatch', async ({ request }) => {
+    const client = createAuthenticatedSocketClient({
+      socketBaseUrl: () => API_BASE_URL,
+      getToken: () => token,
+      namespace: '/chat',
+    })
+    const prompt = `Verify rejection of a blank Git URL for ${TEST_PREFIX}`
+
+    try {
+      await client.ensureConnected()
+      const ack = (await client.getRawSocket()!.timeout(10_000).emitWithAck('chat:send', {
+        team_id: codeTeam.id,
+        task_type: 'code',
+        message: prompt,
+        git_url: ' ',
+      })) as { task_id: number; error?: string }
+      expect(ack.error).toBeUndefined()
+      expect(ack.task_id).toBeGreaterThan(0)
+      createdTaskIds.add(ack.task_id)
+
+      await expect
+        .poll(
+          async () => {
+            const response = await request.get(`${API_BASE_URL}/api/tasks/${ack.task_id}`, {
+              headers: authHeaders(),
+            })
+            expect(response.status(), await response.text()).toBe(200)
+            const task = (await response.json()) as {
+              subtasks: Array<{ role: string; status: string; error_message?: string }>
+            }
+            const assistant = task.subtasks.find(subtask => subtask.role === 'ASSISTANT')
+            return assistant && ['FAILED', 'COMPLETED', 'CANCELLED'].includes(assistant.status)
+              ? assistant
+              : undefined
+          },
+          { timeout: RESPONSE_TIMEOUT_MS }
+        )
+        .toMatchObject({
+          status: 'FAILED',
+          error_message: 'Git workspace is missing a repository URL',
+        })
+      const captures = await loadCapturedModelRequests(request)
+      expect(captures.some(capture => extractText(capture.body).includes(prompt))).toBe(false)
+    } finally {
+      client.dispose()
+    }
   })
 
   async function createTestResources(request: APIRequestContext): Promise<void> {

@@ -53,7 +53,12 @@ impl RuntimeWorkRpcHandler {
             Ok(current) => current,
             Err(error) => {
                 self.automation_store
-                    .mark_needs_attention(&run.id, error.message)
+                    .settle_coordinated_run(
+                        &run.id,
+                        AutomationRunStatus::NeedsAttention,
+                        None,
+                        Some(error.message),
+                    )
                     .map_err(|error| AppIpcError::new("calendar_store_error", error))?;
                 return Ok(());
             }

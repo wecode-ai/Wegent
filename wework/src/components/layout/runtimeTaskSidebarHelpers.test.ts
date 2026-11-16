@@ -6,6 +6,7 @@ import {
   getRuntimeSidebarTaskItems,
   getRuntimeChatSidebarTaskItems,
   getVisibleRuntimeSidebarTaskItems,
+  hasHiddenRuntimeSidebarTaskItems,
   RUNTIME_PROJECT_TASK_PREVIEW_LIMIT,
 } from './runtimeTaskSidebarHelpers'
 
@@ -145,6 +146,52 @@ describe('runtimeTaskSidebarHelpers', () => {
       'ordered-3',
       'ordered-4',
     ])
+  })
+
+  test('reports only unpinned tasks that are absent from the rendered task list', () => {
+    const workspace: RuntimeDeviceWorkspace = {
+      deviceId: 'device-1',
+      workspacePath: '/workspace/repo',
+      available: true,
+      tasks: Array.from({ length: RUNTIME_PROJECT_TASK_PREVIEW_LIMIT + 1 }, (_, index) => ({
+        taskId: `task-${index + 1}`,
+        workspacePath: '/workspace/repo',
+        title: `Task ${index + 1}`,
+        runtime: 'codex',
+        updatedAt: `2026-08-18T0${RUNTIME_PROJECT_TASK_PREVIEW_LIMIT + 1 - index}:00:00.000Z`,
+        recencyAt: `2026-08-18T0${RUNTIME_PROJECT_TASK_PREVIEW_LIMIT + 1 - index}:00:00.000Z`,
+      })),
+    }
+    const items = getRuntimeSidebarTaskItems([workspace])
+
+    const visibleItems = getVisibleRuntimeSidebarTaskItems(items)
+    expect(visibleItems).toHaveLength(RUNTIME_PROJECT_TASK_PREVIEW_LIMIT)
+    expect(hasHiddenRuntimeSidebarTaskItems(items, visibleItems)).toBe(true)
+
+    const queuedItems = items.map(item => ({
+      ...item,
+      task: { ...item.task, status: 'queued' },
+    }))
+    const visibleQueuedItems = getVisibleRuntimeSidebarTaskItems(queuedItems)
+    expect(visibleQueuedItems).toHaveLength(items.length)
+    expect(hasHiddenRuntimeSidebarTaskItems(queuedItems, visibleQueuedItems)).toBe(false)
+
+    const visibleAlwaysVisibleItems = getVisibleRuntimeSidebarTaskItems(
+      items,
+      RUNTIME_PROJECT_TASK_PREVIEW_LIMIT,
+      undefined,
+      () => true
+    )
+    expect(visibleAlwaysVisibleItems).toHaveLength(items.length)
+    expect(hasHiddenRuntimeSidebarTaskItems(items, visibleAlwaysVisibleItems)).toBe(false)
+
+    const visibleItemsWithCurrentTask = getVisibleRuntimeSidebarTaskItems(
+      items,
+      RUNTIME_PROJECT_TASK_PREVIEW_LIMIT,
+      items.at(-1)?.task.taskId
+    )
+    expect(visibleItemsWithCurrentTask).toHaveLength(items.length)
+    expect(hasHiddenRuntimeSidebarTaskItems(items, visibleItemsWithCurrentTask)).toBe(false)
   })
 
   test('sorts queued runtime tasks by their real execution position', () => {

@@ -37,6 +37,8 @@ pub mod device_pull_claim;
 mod device_pull_payload;
 pub mod device_reconcile;
 #[cfg(test)]
+pub(crate) mod issue_timestamp_tests;
+#[cfg(test)]
 pub(crate) use device_reconcile::verify_reconnect_projection;
 #[cfg(test)]
 pub(crate) use runtime_projection::verify_late_human_reply_projection;
@@ -65,9 +67,9 @@ pub mod runtime_features;
 pub mod runtime_projection;
 pub mod runtime_request;
 pub mod runtime_rpc;
+mod runtime_rpc_policy;
 pub mod session;
 pub mod skill_registry;
-pub(crate) mod subtask_lock;
 pub mod terminal_attach;
 pub(crate) mod terminal_device;
 pub mod terminal_relay;

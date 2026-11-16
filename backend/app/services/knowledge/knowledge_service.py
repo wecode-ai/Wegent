@@ -45,6 +45,7 @@ from app.schemas.knowledge import (
     AllGroupedPersonal,
     AllGroupedSummary,
     AllGroupedTeamGroup,
+    BatchDeletionResult,
     BatchOperationResult,
     KnowledgeBaseCreate,
     KnowledgeBaseResponse,
@@ -68,6 +69,11 @@ from app.services.knowledge.content_scope import (
     assert_user_content_is_mutable,
     wiki_pages,
 )
+from app.services.knowledge.deletion_cleanup import (
+    clean_external_index,
+    requires_index_cleanup,
+)
+from app.services.knowledge.event_logging import emit_fact_snapshots
 from app.services.knowledge.external_document_identity import WIKI_PROVIDER_ID
 from app.services.knowledge.folder_policy import assert_document_can_be_placed_in_folder
 from app.services.knowledge.knowledge_access_policy import (
@@ -93,6 +99,16 @@ from app.services.knowledge.permission_policy import (
     can_manage_accessible_knowledge_base_documents,
     can_manage_accessible_knowledge_document,
 )
+from app.services.knowledge.wiki_reporting import binding_fact
+from shared.event_reporting import is_event_reporting_enabled
+from shared.event_reporting.catalogs.knowledge import (
+    emit_document_created,
+    emit_document_deleted,
+    emit_knowledge_base_deleted,
+    loaded_scalar,
+    observe,
+)
+from shared.knowledge_cleanup import ContentDeletionOutcome
 from shared.knowledge_module import normalize_document_extension
 
 batch_logger = logging.getLogger(__name__)
@@ -167,6 +183,7 @@ class DocumentDeleteResult:
     success: bool
     kb_id: Optional[int] = None
     error: Optional[str] = None
+    cleanup: ContentDeletionOutcome = field(default_factory=ContentDeletionOutcome)
 
 
 @dataclass
@@ -177,7 +194,7 @@ class BatchDeleteResult:
     for triggering KB summary updates.
     """
 
-    result: BatchOperationResult
+    result: BatchDeletionResult
     kb_ids: list[int]  # Unique KB IDs from successfully deleted documents
 
 
@@ -1049,7 +1066,9 @@ class KnowledgeService:
         db: Session,
         knowledge_base_id: int,
         user_id: int,
-    ) -> bool:
+        continue_on_external_engine_failure: bool = False,
+        return_outcome: bool = False,
+    ) -> bool | ContentDeletionOutcome:
         """
         Delete a knowledge base.
 
@@ -1102,19 +1121,40 @@ class KnowledgeService:
             )
             if attachment_id
         }
+        requires_index_cleanup((kb.json or {}).get("spec", {}))
         purge_spec = KnowledgeService._build_code_wiki_purge_spec(
             db, kb, user_id, documents
         )
-        # Reference-mode purge needs the KB record before deletion commits.
-        # Keep the records intact when the runtime cannot complete the purge.
+        cleanup = ContentDeletionOutcome()
         if purge_spec is not None:
-            purge_result = _run_async_in_new_loop(
-                _get_rag_gateway().purge_knowledge_index(purge_spec, db=db)
-            )
-            if (purge_result or {}).get("status") not in {"success", "deleted"}:
-                raise RuntimeError("Code Wiki remote purge did not complete")
+            try:
+                cleanup = clean_external_index(
+                    lambda: _run_async_in_new_loop(
+                        _get_rag_gateway().purge_knowledge_index(purge_spec, db=db)
+                    ),
+                    continue_on_failure=continue_on_external_engine_failure,
+                    failure_message="Knowledge base remote purge did not complete",
+                )
+            except Exception:
+                db.rollback()
+                raise
 
+        deleted_document_facts = []
+        collect_document_facts = is_event_reporting_enabled(
+            "knowledge.document.deleted"
+        )
         for document in documents:
+            if collect_document_facts:
+                deleted_document_facts.append(
+                    (
+                        "knowledge.document.deleted",
+                        {
+                            "kb_id": knowledge_base_id,
+                            "document_id": loaded_scalar(document, "id"),
+                            "data": {"delete_mode": "code_wiki"},
+                        },
+                    )
+                )
             db.delete(document)
 
         # Delete all folders belonging to this knowledge base to prevent orphaned records.
@@ -1156,8 +1196,14 @@ class KnowledgeService:
         # Physically delete the knowledge base
         db.delete(kb)
         db.commit()
+        emit_fact_snapshots(deleted_document_facts)
+        emit_knowledge_base_deleted(
+            kb_id=knowledge_base_id,
+            delete_mode="physical",
+        )
         KnowledgeService._cleanup_deleted_code_wiki_resources(db, attachment_refs)
-        return True
+        cleanup.content_deleted = True
+        return cleanup if return_outcome else True
 
     @staticmethod
     def _lock_active_knowledge_base(
@@ -1602,6 +1648,7 @@ class KnowledgeService:
         knowledge_base_id: int,
         user_id: int,
         data: KnowledgeDocumentCreate,
+        trigger: str = "upload",
     ) -> KnowledgeDocument:
         """
         Create a new document in a knowledge base.
@@ -1693,6 +1740,14 @@ class KnowledgeService:
 
         db.commit()
         db.refresh(document)
+        emit_document_created(
+            kb_id=knowledge_base_id,
+            document_id=loaded_scalar(document, "id"),
+            source_type=loaded_scalar(document, "source_type"),
+            trigger=trigger,
+            file_extension=loaded_scalar(document, "file_extension"),
+            content_bytes=loaded_scalar(document, "file_size"),
+        )
         return document
 
     @staticmethod
@@ -1773,11 +1828,23 @@ class KnowledgeService:
             db.add(document)
             db.flush()
             KnowledgeService._update_document_count_cache(db, knowledge_base_id)
+            from app.services.knowledge.wiki_reporting import emit_binding_snapshot
+
+            binding_snapshot = binding_fact(db, document, "created", committed=True)
             db.commit()
+            emit_binding_snapshot(binding_snapshot)
         except IntegrityError:
             db.rollback()
             raise
         db.refresh(document)
+        emit_document_created(
+            kb_id=knowledge_base_id,
+            document_id=loaded_scalar(document, "id"),
+            source_type=loaded_scalar(document, "source_type"),
+            trigger="external_import",
+            file_extension=loaded_scalar(document, "file_extension"),
+            content_bytes=loaded_scalar(document, "file_size"),
+        )
         return document
 
     @staticmethod
@@ -2083,9 +2150,11 @@ class KnowledgeService:
         db: Session,
         document_id: int,
         user_id: int,
+        trigger: str = "openapi",
+        continue_on_external_engine_failure: bool = False,
     ) -> DocumentDeleteResult:
         """
-        Physically delete a document, its RAG index, and associated attachment.
+        Delete content, allowing explicitly confirmed external cleanup failures.
 
         Args:
             db: Database session
@@ -2151,25 +2220,21 @@ class KnowledgeService:
         # enforces ownership filtering. A non-owner requester (e.g., admin/group
         # manager) would cause the deletion to silently fail and leave orphaned records.
         context_owner_user_id = doc.user_id
+        collect_document_fact = is_event_reporting_enabled("knowledge.document.deleted")
+        source_type = (
+            loaded_scalar(doc, "source_type") if collect_document_fact else None
+        )
+        had_active_index = (
+            loaded_scalar(doc, "is_active") if collect_document_fact else None
+        )
 
-        # Delete the RAG index first, while the document still identifies the
-        # reference to remove. The row is the only thing that says which chunks
-        # belonged to this document, so deleting it first and then swallowing a
-        # remote failure would orphan the old references. A remote failure
-        # propagates: the document survives and the caller can retry.
+        cleanup = ContentDeletionOutcome()
         spec = kb.json.get("spec", {})
-        retrieval_config = spec.get("retrievalConfig")
-
-        if retrieval_config:
-            retriever_name = retrieval_config.get("retriever_name")
-
-            if retriever_name:
+        if requires_index_cleanup(spec):
+            try:
                 kb_info = get_kb_index_info_by_record(
-                    db=db,
-                    knowledge_base=kb,
-                    current_user_id=user_id,
+                    db=db, knowledge_base=kb, current_user_id=user_id
                 )
-
                 from app.services.rag.runtime_resolver import RagRuntimeResolver
 
                 try:
@@ -2181,48 +2246,71 @@ class KnowledgeService:
                             index_owner_user_id=kb_info.index_owner_user_id,
                         )
                     )
-                except ValueError as exc:
-                    # An unusable retrieval configuration is a server-side
-                    # failure, not an access problem: keep the document and
-                    # do not let it read as a permission error.
+                except ValueError as error:
                     raise RuntimeError(
-                        f"Cannot resolve the index removal for document "
-                        f"{doc_ref}: {exc}"
-                    ) from exc
-                result = _run_async_in_new_loop(
-                    rag_gateway.delete_document_index(delete_runtime_spec, db=db)
+                        f"Cannot resolve the index removal for document {doc_ref}: {error}"
+                    ) from error
+
+                def remove_index() -> dict[str, Any]:
+                    result = _run_async_in_new_loop(
+                        rag_gateway.delete_document_index(delete_runtime_spec, db=db)
+                    )
+                    if result.get("status") in {"success", "deleted"}:
+                        logger.info(
+                            "Deleted RAG index for doc_ref '%s' in knowledge base %s "
+                            "(index_owner_user_id=%s, status=%s, deleted_chunks=%s, "
+                            "deleted_parent_nodes=%s, index_name=%s)",
+                            doc_ref,
+                            kind_id,
+                            kb_info.index_owner_user_id,
+                            result.get("status"),
+                            result.get("deleted_chunks"),
+                            result.get("deleted_parent_nodes"),
+                            result.get("index_name"),
+                        )
+                    observe(
+                        "knowledge.document.index_cleanup.finished",
+                        lambda: {
+                            "kb_id": kind_id,
+                            "document_id": document_id,
+                            "status": "completed",
+                            "data": {
+                                "result_status": result.get("status"),
+                                "deleted_chunks": loaded_scalar(
+                                    result, "deleted_chunks"
+                                ),
+                                "trigger": trigger,
+                            },
+                        },
+                    )
+                    return result
+
+                cleanup = clean_external_index(
+                    remove_index,
+                    continue_on_failure=continue_on_external_engine_failure,
                 )
-                delete_status = result.get("status")
-                if delete_status in {"success", "deleted"}:
-                    logger.info(
-                        "Deleted RAG index for doc_ref '%s' in knowledge base %s "
-                        "(index_owner_user_id=%s, status=%s, deleted_chunks=%s, "
-                        "deleted_parent_nodes=%s, index_name=%s)",
-                        doc_ref,
-                        kind_id,
-                        kb_info.index_owner_user_id,
-                        delete_status,
-                        result.get("deleted_chunks"),
-                        result.get("deleted_parent_nodes"),
-                        result.get("index_name"),
-                    )
-                else:
-                    # A concrete data plane either removes the chunks or
-                    # raises. Anything else must not read as a successful
-                    # removal, so keep the document and surface it.
-                    raise RuntimeError(
-                        f"RAG index removal for doc_ref '{doc_ref}' in "
-                        f"knowledge base {kind_id} reported "
-                        f"{result.get('reason', delete_status or 'unknown')}"
-                    )
+            except Exception:
+                db.rollback()
+                raise
 
         # Physically delete document from database
+        from app.services.knowledge.wiki_reporting import emit_binding_snapshot
+
+        binding_snapshot = binding_fact(db, doc, "deleted", committed=True)
         db.delete(doc)
 
         # Update cached document count in knowledge base spec
         KnowledgeService._update_document_count_cache(db, kind_id)
 
         db.commit()
+        emit_binding_snapshot(binding_snapshot)
+        emit_document_deleted(
+            kb_id=kind_id,
+            document_id=document_id,
+            source_type=source_type,
+            trigger=trigger,
+            had_active_index=had_active_index,
+        )
 
         # Delete associated attachment (context) if exists
         if attachment_id:
@@ -2242,7 +2330,8 @@ class KnowledgeService:
                 retry_orphan_cleanup=retry_orphan_cleanup,
             )
 
-        return DocumentDeleteResult(success=True, kb_id=kind_id)
+        cleanup.content_deleted = True
+        return DocumentDeleteResult(success=True, kb_id=kind_id, cleanup=cleanup)
 
     @staticmethod
     def update_document_content(
@@ -3506,92 +3595,20 @@ class KnowledgeService:
     # ============== Batch Document Operations ==============
 
     @staticmethod
-    def _build_batch_delete_message(
-        success_count: int,
-        failed_ids: list[int],
-        failure_messages: list[str],
-    ) -> str:
-        """Build a batch delete message that preserves the failure class."""
-        message = (
-            f"Successfully deleted {success_count} documents, {len(failed_ids)} failed"
-        )
-        if success_count > 0 or not failed_ids:
-            return message
-        if len(failure_messages) != len(failed_ids):
-            return message
-
-        lower_messages = [
-            failure_message.lower() for failure_message in failure_messages
-        ]
-        if lower_messages and all("not found" in msg for msg in lower_messages):
-            return "Document not found"
-        if any(
-            "permission" in msg
-            or "access denied" in msg
-            or "owner or maintainer" in msg
-            for msg in lower_messages
-        ):
-            return (
-                "Only Owner or Maintainer can delete documents from this knowledge base"
-            )
-        if len(failure_messages) == 1:
-            return failure_messages[0]
-        return message
-
-    @staticmethod
     def batch_delete_documents(
         db: Session,
         document_ids: list[int],
         user_id: int,
+        continue_on_external_engine_failure: bool = False,
     ) -> BatchDeleteResult:
-        """
-        Batch delete multiple documents.
+        """Delete each requested document through the single-delete policy."""
+        from app.services.knowledge.batch_deletion import delete_documents
 
-        Args:
-            db: Database session
-            document_ids: List of document IDs to delete
-            user_id: Requesting user ID
-
-        Returns:
-            BatchDeleteResult with operation result and KB IDs for summary updates
-        """
-        success_count = 0
-        failed_ids = []
-        failure_messages = []
-        kb_ids = set()  # Collect unique KB IDs from deleted documents
-
-        requested_ids = list(dict.fromkeys(document_ids))
-
-        for doc_id in requested_ids:
-            try:
-                result = KnowledgeService.delete_document(db, doc_id, user_id)
-                if result.success:
-                    success_count += 1
-                    if result.kb_id is not None:
-                        kb_ids.add(result.kb_id)
-                else:
-                    failed_ids.append(doc_id)
-                    failure_messages.append(result.error or "Document not found")
-            except ValueError as exc:
-                failed_ids.append(doc_id)
-                failure_messages.append(str(exc))
-            except Exception as exc:  # noqa: BLE001 - continue deleting remaining docs
-                failed_ids.append(doc_id)
-                failure_messages.append(str(exc))
-                batch_logger.exception("Unexpected error deleting document %s", doc_id)
-
-        operation_result = BatchOperationResult(
-            success_count=success_count,
-            failed_count=len(failed_ids),
-            failed_ids=failed_ids,
-            message=KnowledgeService._build_batch_delete_message(
-                success_count, failed_ids, failure_messages
-            ),
-        )
-
-        return BatchDeleteResult(
-            result=operation_result,
-            kb_ids=list(kb_ids),
+        return delete_documents(
+            db,
+            document_ids,
+            user_id,
+            continue_on_external_engine_failure=continue_on_external_engine_failure,
         )
 
     @staticmethod

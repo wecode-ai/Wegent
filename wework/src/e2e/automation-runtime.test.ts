@@ -71,6 +71,36 @@ function installNativeModelOwner() {
 }
 
 describe('Electron desktop E2E automation', () => {
+  test('forwards startup splash size changes through the native host', async () => {
+    const previous = { width: 1000, height: 620, maximized: false }
+    const native = vi.spyOn(desktopHost, 'invokeDesktopHost').mockResolvedValue(previous as never)
+    const results: Array<{ ok: boolean; value: string }> = []
+    let polls = 0
+    vi.stubGlobal('fetch', async (url: string, options?: RequestInit) => {
+      if (url.includes('/commands?')) {
+        if (++polls > 1) return new Response(null, { status: 410 })
+        return new Response(
+          JSON.stringify({
+            id: 'startup-size-roundtrip',
+            action: 'setStartupSplashSize',
+            selector: 'body',
+            value: JSON.stringify({ width: 1100, height: 620 }),
+          })
+        )
+      }
+      if (url.endsWith('/results')) results.push(JSON.parse(String(options?.body)))
+      return new Response('{}')
+    })
+    await runDesktopControlClient('http://127.0.0.1:43111', 'main')
+    expect(native).toHaveBeenCalledWith('e2e.setStartupSplashSize', {
+      width: 1100,
+      height: 620,
+    })
+    expect(results).toContainEqual(
+      expect.objectContaining({ ok: true, value: JSON.stringify(previous) })
+    )
+  })
+
   test.each([undefined, false, true])(
     'preserves window maximization through the host command (%s)',
     async maximized => {

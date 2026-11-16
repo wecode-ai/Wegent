@@ -1309,6 +1309,12 @@ class TaskOperationsMixin:
                 raise HTTPException(
                     status_code=409, detail="取消目标已变化，请刷新后重试。"
                 )
+            task = task_stores.task_store.get_owned_active_task(
+                db, task_id=task_id, user_id=user_id
+            )
+            if not task:
+                raise HTTPException(status_code=404, detail="Task not found")
+            db.refresh(task, with_for_update=True)
             running_subtask = (
                 task_stores.subtask_store.get_latest_assistant_for_user_by_statuses(
                     db,
@@ -1336,12 +1342,6 @@ class TaskOperationsMixin:
                 raise HTTPException(
                     status_code=409, detail="取消目标已变化，请刷新后重试。"
                 )
-            task = task_stores.task_store.get_owned_active_task(
-                db, task_id=task_id, user_id=user_id
-            )
-            if not task:
-                raise HTTPException(status_code=404, detail="Task not found")
-            db.refresh(task, with_for_update=True)
             update_task_on_cancel(db, task)
             db.commit()
         except HTTPException:

@@ -25,6 +25,7 @@ pub(crate) fn completed_native_codex_turn(thread_id: &str, turn: &Value) -> Code
         .expect("A root completion must have an outcome");
     let (started_at_ms, completed_at_ms, duration_ms) = state.turn_timing();
     CodexAppServerTurn {
+        quota_recovery: None,
         thread_id: thread_id.to_owned(),
         outcome,
         response_item_id: state.response_item_id().map(str::to_owned),

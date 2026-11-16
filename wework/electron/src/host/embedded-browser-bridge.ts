@@ -130,6 +130,8 @@ export class EmbeddedBrowserBridge {
     response: import('node:http').ServerResponse,
     token: string
   ): Promise<void> {
+    // A browser mutation cannot be replayed after an idle-socket close race.
+    response.setHeader('connection', 'close')
     response.setHeader('access-control-allow-origin', '*')
     response.setHeader('access-control-allow-headers', 'content-type, authorization')
     response.setHeader('content-type', 'application/json')
@@ -466,7 +468,15 @@ export class EmbeddedBrowserBridge {
       // This script returns synchronously. A Promise callback can be destroyed by
       // the navigation that the action itself dispatched.
       { awaitPromise: false }
-    )
+    ).catch(error => {
+      console.warn('[embedded-browser-action]', {
+        label,
+        action: request.action,
+        previewOnly,
+        error: errorMessage(error),
+      })
+      throw error
+    })
   }
 
   private async waitForCondition(label: string, request: BrowserBridgeRequest): Promise<unknown> {
@@ -504,7 +514,7 @@ export class EmbeddedBrowserBridge {
           )
         )
       } catch (error) {
-        if (!isUnavailableBrowserError(error, label)) throw error
+        if (!isRetryableWaitError(error, label)) throw error
         await new Promise(resolve => setTimeout(resolve, pollMs))
         continue
       }
@@ -630,8 +640,14 @@ export class EmbeddedBrowserBridge {
   }
 }
 
-function isUnavailableBrowserError(error: unknown, label: string): boolean {
-  return errorMessage(error) === `Embedded browser is unavailable: ${label}`
+function isRetryableWaitError(error: unknown, label: string): boolean {
+  const message = errorMessage(error)
+  return (
+    message === `Embedded browser is unavailable: ${label}` ||
+    // A document navigation replaces the inspected target while the wait
+    // condition is evaluated; the next poll evaluates against the new document.
+    message.includes('Inspected target navigated or closed')
+  )
 }
 
 async function writeRuntimeRecord(path: string, record: RuntimeRecord): Promise<void> {

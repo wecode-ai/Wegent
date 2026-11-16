@@ -77,13 +77,18 @@ const taskRecord = {
 }
 
 describe('local delivery API', () => {
-  test('includes native project work in My Work while isolating a failed project read', async () => {
-    const request = vi.fn(async (method: string, params?: Record<string, unknown>) => {
-      if (method === 'projects.list')
-        return [projectRecord, { ...projectRecord, id: 'broken', name: 'Broken' }]
-      if (method === 'todos.list' && params?.project_id === projectRecord.id)
-        return [{ ...taskRecord, created_by_user_id: 0 }]
-      throw new Error('Offline project')
+  test('reads native My Work and task context in one bounded IPC request', async () => {
+    const request = vi.fn().mockResolvedValue({
+      items: [
+        {
+          issue: { ...taskRecord, created_by_user_id: 0 },
+          project_key: 'LOCAL',
+          project_name: 'Local board',
+          task_bindings: [],
+          assignment_context: null,
+        },
+      ],
+      next_cursor: 'next-page',
     })
     const result = await createLocalDeliveryApi(request).listMyWork()
     expect(result.items).toHaveLength(1)
@@ -92,7 +97,19 @@ describe('local delivery API', () => {
       project_name: 'Local board',
       created_by_user_name: 'local',
     })
-    expect(result.errors).toEqual(['Broken: Offline project'])
+    expect(result.next_cursor).toBe('next-page')
+    expect(request).toHaveBeenCalledExactlyOnceWith('todos.my_work', {
+      limit: 100,
+      scope: 'participating',
+      include_completed: true,
+      assignee_user_ids: [0],
+    })
+  })
+  test('surfaces a failed My Work read instead of reporting an empty successful page', async () => {
+    const request = vi.fn().mockRejectedValue(new Error('Local store unavailable'))
+    await expect(createLocalDeliveryApi(request).listMyWork()).rejects.toThrow(
+      'Local store unavailable'
+    )
   })
   test.each(['local', 'github'])(
     'resolves creator zero only for the local identity, not %s provider identities',

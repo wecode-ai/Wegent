@@ -59,6 +59,7 @@ from app.services.knowledge.knowledge_access_policy import (
 from app.services.knowledge.permission_policy import (
     can_manage_accessible_knowledge_base_documents,
 )
+from app.services.knowledge.wiki_reporting import wiki_request, wiki_stage
 from app.services.wiki.connector import (
     WIKI_CONNECTORS,
     WikiApiError,
@@ -367,6 +368,7 @@ async def delete_wiki_connection(
 
 
 @router.post("/wiki/connection/test", response_model=WikiConnectionTestResponse)
+@wiki_request("test")
 async def test_wiki_connection(
     body: Optional[WikiConnectionTestRequest] = None,
     db: Session = Depends(get_db),
@@ -397,17 +399,27 @@ async def test_wiki_connection(
     )
     site_url = body.site_url.strip() if body and body.site_url else saved["site_url"]
     connector = WIKI_CONNECTORS.get(connector_type)
+    wiki_stage("validation", connector_type=connector_type)
     if connector is None:
+        wiki_stage(
+            "validation", connector_type=connector_type, reason="unsupported_connector"
+        )
         return WikiConnectionTestResponse(
             ok=False, message=f"不支持的连接器类型：{connector_type}"
         )
     if not site_url:
+        wiki_stage(
+            "validation", connector_type=connector_type, reason="missing_site_url"
+        )
         return WikiConnectionTestResponse(
             ok=False, message="请先填写站点地址与 API Key"
         )
     try:
         normalized_site_url = await asyncio.to_thread(validate_wiki_site_url, site_url)
     except WikiApiError as exc:
+        wiki_stage(
+            "validation", connector_type=connector_type, reason="invalid_site_url"
+        )
         return WikiConnectionTestResponse(ok=False, message=exc.message)
     target_changed = bool(
         stored_connection
@@ -418,6 +430,11 @@ async def test_wiki_connection(
     )
     api_key = (body.api_key or "").strip() if body else ""
     if not api_key and target_changed:
+        wiki_stage(
+            "validation",
+            connector_type=connector_type,
+            reason="target_changed_without_key",
+        )
         return WikiConnectionTestResponse(
             ok=False,
             message="测试新的站点地址或连接器时必须重新输入 API Key",
@@ -425,6 +442,9 @@ async def test_wiki_connection(
     if not api_key:
         api_key = stored_connection.config.api_key if stored_connection else ""
     if not api_key:
+        wiki_stage(
+            "validation", connector_type=connector_type, reason="missing_api_key"
+        )
         return WikiConnectionTestResponse(
             ok=False, message="请先填写站点地址与 API Key"
         )
@@ -435,6 +455,7 @@ async def test_wiki_connection(
         or saved["default_locale"],
     )
     db.commit()
+    wiki_stage("connector_call", connector_type=connector_type)
     result = await connector.test_connection(config)
     return WikiConnectionTestResponse(
         ok=result.ok, message=result.message, version=result.version
@@ -506,6 +527,7 @@ async def list_kb_bindings(
     "/knowledge/{knowledge_base_id}/wiki-bindings",
     response_model=WikiBindingCreateResponse,
 )
+@wiki_request("bind")
 async def create_kb_binding(
     knowledge_base_id: int,
     body: WikiBindingCreateRequest,
@@ -519,6 +541,7 @@ async def create_kb_binding(
         provider = get_external_sync_provider(WIKI_PROVIDER_ID)
         if provider is None:
             raise WikiApiError("bad_request", "Wiki 同步服务不可用")
+        wiki_stage("resolve_selections")
         resolved = await provider.resolve_selections(
             db,
             current_user,
@@ -527,6 +550,7 @@ async def create_kb_binding(
             project_path=body.project_path,
             branch=body.branch,
         )
+        wiki_stage("binding_operation")
         result = external_document_import_service.import_resolved_documents(
             db=db,
             user=current_user,
@@ -555,6 +579,7 @@ async def create_kb_binding(
     "/knowledge/{knowledge_base_id}/wiki-bindings/{document_id}",
     status_code=status.HTTP_204_NO_CONTENT,
 )
+@wiki_request("unbind")
 async def delete_kb_binding(
     knowledge_base_id: int,
     document_id: int,
@@ -564,6 +589,7 @@ async def delete_kb_binding(
     kb = _load_kb(db, knowledge_base_id)
     _require_kb_edit(db, kb, current_user)
     try:
+        wiki_stage("binding_operation")
         unbind_kb_wiki_document(
             db, knowledge_base_id, document_id, user_id=current_user.id
         )

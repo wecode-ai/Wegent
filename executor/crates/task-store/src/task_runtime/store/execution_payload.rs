@@ -179,9 +179,6 @@ pub(super) fn local_execution_runtime_payload(execution: &LocalExecution) -> Val
         payload_object.insert("standaloneChatWorkspace".to_owned(), json!(true));
     }
     payload_object.insert("origin".to_owned(), origin.clone());
-    if dispatch_id.is_some() {
-        payload_object.insert("collaboration_model".to_owned(), json!("single"));
-    }
 
     if let Some(member_profiles) = stored
         .get("memberRuntimeProfiles")

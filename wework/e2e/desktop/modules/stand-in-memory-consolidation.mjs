@@ -17,6 +17,16 @@ const CONTENT = `MEMORY_LEARNING：${MEMORY_HISTORY_FACT}`
 const USER = 9001
 const SOURCE = `stand-in-chat-${USER}-primary`
 
+export function assertMemoryReviewModelSelection(task, model, options = {}) {
+  const selection = task.runtimeHandle.modelSelection
+  assert.equal(selection?.modelName, model.local_model_id)
+  assert.equal(selection?.modelType, 'runtime')
+  assert.equal(selection?.options?.runnerModelProvider, model.provider)
+  for (const [key, value] of Object.entries(options)) {
+    assert.equal(selection?.options?.[key], value)
+  }
+}
+
 export function assertMemoryReviewToolBoundary(body) {
   const pending = [
     ...(body.tools ?? []),
@@ -56,6 +66,8 @@ export function createMemoryConsolidation({
   let saved
   let committed
   let releaseFinalResponse
+  let selectedModel
+  let selectedOptions
   const emit = body =>
     mcpToolRequestEvents(body, {
       toolName: call.name,
@@ -124,7 +136,15 @@ export function createMemoryConsolidation({
     }
   }
   return {
-    activate() {
+    activate(model, options = {}) {
+      assert.equal(typeof model?.local_model_id, 'string')
+      assert.equal(typeof model.provider, 'string')
+      assert.ok(
+        !model.local_model_id.startsWith('local-model:'),
+        'This fixture verifies native catalog models with a direct upstream identity'
+      )
+      selectedModel = model
+      selectedOptions = options
       active = true
     },
     get result() {
@@ -136,6 +156,18 @@ export function createMemoryConsolidation({
         !JSON.stringify(body.input ?? []).includes('Consolidate useful durable memories')
       )
         return false
+      assert.equal(
+        body.model,
+        selectedModel.local_model_id,
+        'Memory consolidation must call its selected upstream model'
+      )
+      if (selectedOptions.reasoning) {
+        assert.equal(
+          body.reasoning?.effort,
+          selectedOptions.reasoning,
+          'Memory consolidation must execute the saved reasoning effort'
+        )
+      }
       assertMemoryReviewToolBoundary(body)
       const id = `memory-consolidation-response-${Date.now()}`
       const events = advance(body)
@@ -151,7 +183,7 @@ export function createMemoryConsolidation({
       response.end(createSse([responseCreated(id), ...events, responseCompleted(id)]))
       return true
     },
-    async verify(control) {
+    async verify(control, model, options = {}) {
       const rpc = (method, payload) => requestExecutor(control, method, payload, uiTimeoutMs)
       const settings = await rpc('runtime.stand_in.personal.get', { userId: USER })
       await rpc('runtime.stand_in.personal.save', {
@@ -173,7 +205,7 @@ export function createMemoryConsolidation({
       assert.deepEqual(schedule.schedule, { type: 'interval', value: 6, unit: 'hours' })
       assert.equal(schedule.conversationMode, 'independent')
       assert.equal(schedule.notificationPolicy, 'attention_only')
-      active = true
+      this.activate(model, options)
       try {
         const started = await rpc('runtime.automations.run_now', { automationId: schedule.id })
         assert.ok(started.run?.id, 'Run now must return a real execution receipt')
@@ -208,6 +240,8 @@ export function createMemoryConsolidation({
           await rpc('runtime.automation_runs.list', { automationId: schedule.id })
         ).items.find(item => item.id === started.run.id)
         assert.ok(runningRun?.taskId)
+        const stored = await rpc('runtime.tasks.get', { taskId: runningRun.taskId })
+        assertMemoryReviewModelSelection(stored.task, model, options)
         await assertMemoryReviewHiddenFromSidebar(control, rpc, runningRun.taskId)
         releaseFinalResponse()
         await control.command('waitFor', '[data-testid="message-assistant"]', {

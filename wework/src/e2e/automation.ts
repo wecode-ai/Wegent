@@ -136,9 +136,11 @@ import { nextConnectorSyncRevision } from '@/features/cloud-connection/connector
 import { flushDesktopLocalStoragePersistence } from '@/desktop/localStoragePersistence'
 import type { LocalPluginInventoryRead } from '@/features/plugins/pluginInventorySources'
 import { checkForWeworkUpdate, downloadPendingWeworkUpdate } from '@/lib/app-updater'
+import { saveTelemetryConsent } from '@/telemetry/sessionConsent'
 import { weworkTaskScheme } from '@/features/notifications/scheme'
 import {
   E2E_DROPPED_RUNTIME_EVENTS_KEY,
+  E2E_DROPPED_RUNTIME_EVENT_COUNTS_KEY,
   E2E_RUNTIME_EVENT_DISPATCHERS_KEY,
   E2E_RUNTIME_EVENT_LISTENERS_KEY,
 } from '@/api/runtime/runtimeChatStream'
@@ -315,6 +317,7 @@ export interface WeworkAutomationBridge {
   isDesktop: () => boolean
   getRuntimeConfig: () => ReturnType<typeof getRuntimeConfig>
   getRoute: () => string
+  getControlDiagnostics: typeof getDesktopControlDiagnostics
   navigate: (path: string) => string
   waitForTestId: (testId: string, options?: { timeoutMs?: number }) => Promise<boolean>
   queryTestIds: (prefix?: string) => string[]
@@ -411,18 +414,20 @@ function reloadMainWindowLocalStorageInput(
 
 async function setEmbeddedBrowserLocalStorageItem(command: DesktopControlCommand) {
   const input = embeddedBrowserStorageInput(command)
-  return evalEmbeddedBrowserJson<string>(
+  return evalEmbeddedBrowserWhenReady<string>(
+    command,
+    input.label,
     `(localStorage.setItem(${JSON.stringify(input.key)}, ${JSON.stringify(input.value)}), ` +
-      `localStorage.getItem(${JSON.stringify(input.key)}))`,
-    input.label
+      `localStorage.getItem(${JSON.stringify(input.key)}))`
   )
 }
 
 async function getEmbeddedBrowserLocalStorageItem(command: DesktopControlCommand) {
   const input = embeddedBrowserStorageInput(command)
-  return evalEmbeddedBrowserJson<string | null>(
-    `localStorage.getItem(${JSON.stringify(input.key)})`,
-    input.label
+  return evalEmbeddedBrowserWhenReady<string | null>(
+    command,
+    input.label,
+    `localStorage.getItem(${JSON.stringify(input.key)})`
   )
 }
 
@@ -557,6 +562,7 @@ function createBridge(): WeworkAutomationBridge {
     isDesktop: isElectronRuntime,
     getRuntimeConfig,
     getRoute: () => stripAppBasePath(window.location.pathname),
+    getControlDiagnostics: getDesktopControlDiagnostics,
     navigate: path => {
       const appPath = normalizeAppPath(path)
       const nextPath = joinAppPath(getRuntimeConfig().appBasePath, appPath)
@@ -760,6 +766,8 @@ export async function installWeworkAutomationBridge(
     return
   }
 
+  // Startup assets can fill the default buffer before a failure snapshot is requested.
+  performance.setResourceTimingBufferSize(10_000)
   if (isDesktopRuntime()) {
     await loadDesktopE2ERuntimeConfig()
     installLocalHarnessDiagnostics()
@@ -2254,7 +2262,10 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
       if (!element) throw new Error(`Unable to find selector "${command.selector}"`)
       const property = command.value?.trim()
       if (!property) throw new Error('getComputedStyleValue requires a CSS property')
-      return getComputedStyle(element).getPropertyValue(property).trim()
+      const pseudo = command.target
+      if (pseudo !== undefined && pseudo !== '::before' && pseudo !== '::after')
+        throw new Error('getComputedStyleValue target must be ::before or ::after')
+      return getComputedStyle(element, pseudo).getPropertyValue(property).trim()
     }
     case 'capture':
       return captureDesktopControlScreenshot(command.selector)
@@ -2420,6 +2431,12 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
       root[E2E_DROPPED_RUNTIME_EVENTS_KEY] ??= []
       root[E2E_DROPPED_RUNTIME_EVENTS_KEY].push(command.value ?? '')
       return ''
+    }
+    case 'getDroppedRuntimeEventCounts': {
+      const root = globalThis as typeof globalThis & {
+        [E2E_DROPPED_RUNTIME_EVENT_COUNTS_KEY]?: Record<string, number>
+      }
+      return JSON.stringify(root[E2E_DROPPED_RUNTIME_EVENT_COUNTS_KEY] ?? {})
     }
     case 'holdLocalExecutorRequests': {
       const { method, phase } = JSON.parse(command.value ?? '{}') as {
@@ -2774,6 +2791,15 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
       })
       return JSON.stringify(updated.localHarnesses)
     }
+    case 'getAppPreferences':
+      return JSON.stringify(await getAppPreferences())
+    case 'setTelemetryConsent': {
+      const { enabled, expectedRevision } = JSON.parse(command.value ?? '{}') as {
+        enabled: boolean
+        expectedRevision: number
+      }
+      return JSON.stringify(await saveTelemetryConsent(enabled, expectedRevision))
+    }
     case 'setAppPreferences': {
       const patch = JSON.parse(command.value ?? '{}') as AppPreferencesPatch
       const preferences = await updateAppPreferences(patch)
@@ -2874,6 +2900,23 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
         phase: 'press',
       })
       return ''
+    case 'setStartupSplashSize': {
+      const nextSize = JSON.parse(command.value ?? '{}') as { width?: number; height?: number }
+      if (
+        !Number.isFinite(nextSize.width) ||
+        !Number.isFinite(nextSize.height) ||
+        Number(nextSize.width) <= 0 ||
+        Number(nextSize.height) <= 0
+      ) {
+        throw new Error('setStartupSplashSize requires positive width and height')
+      }
+      return JSON.stringify(
+        await invokeDesktopHost('e2e.setStartupSplashSize', {
+          width: Number(nextSize.width),
+          height: Number(nextSize.height),
+        })
+      )
+    }
     case 'setMainWindowSize': {
       const nextSize = JSON.parse(command.value ?? '{}') as {
         width?: number
@@ -3584,7 +3627,6 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
       stopRuntimeStreamDiagnostics()
       return JSON.stringify(getRuntimeStreamDiagnostics())
     case 'getWorkbenchDebugSnapshot':
-      performance.setResourceTimingBufferSize(10_000)
       return JSON.stringify({
         ...getWorkbenchDebugSnapshot(),
         conversationRendering: await collectConversationRenderingDiagnostics(capability =>
@@ -3659,7 +3701,6 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
       ) {
         throw new Error('Plugin image timing diagnostics require an absolute image path')
       }
-      performance.setResourceTimingBufferSize(10_000)
       const completed = performance.getEntriesByType('resource') as PerformanceResourceTiming[]
       return JSON.stringify(
         completed

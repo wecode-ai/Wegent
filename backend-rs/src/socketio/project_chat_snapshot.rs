@@ -625,7 +625,7 @@ async fn write_message<T: MysqlTransaction>(
             (
                 row.status.as_str(),
                 Json(metadata.clone()),
-                Utc::now().naive_utc(),
+                super::project_chat_messages::database_timestamp(Utc::now().naive_utc()),
                 row.id,
             ),
         )
@@ -755,7 +755,11 @@ async fn update_task_ai_state<T: MysqlTransaction>(
     transaction
         .execute(
             "UPDATE loop_items SET metadata=?, version=version+1, updated_at=? WHERE id=?",
-            (Json(Value::Object(task_metadata)), now, task.id.as_str()),
+            (
+                Json(Value::Object(task_metadata)),
+                super::project_chat_messages::database_timestamp(now),
+                task.id.as_str(),
+            ),
         )
         .await
         .map(|_| ())
@@ -962,142 +966,12 @@ pub(crate) async fn handle(
     json!({"ok": true, "result": reconciled.messages})
 }
 
-pub(super) async fn publish_item_change(
-    state: &crate::state::AppState,
-    runtime: &std::sync::Arc<super::runtime::SocketRuntime>,
-    item_id: &str,
-    actor_user_id: i64,
-) {
-    publish_item_change_with_reason(state, runtime, item_id, actor_user_id, "project_chat").await;
-}
-
-pub(super) async fn publish_item_change_with_reason(
-    state: &crate::state::AppState,
-    runtime: &super::runtime::SocketRuntime,
-    item_id: &str,
-    actor_user_id: i64,
-    reason: &str,
-) {
-    let recipients = state
-        .mysql
-        .with_transaction(async |transaction| {
-            changed_item_recipients(transaction, item_id, actor_user_id).await
-        })
-        .await;
-    let Ok(Some(recipients)) = recipients else {
-        return;
-    };
-    let payload = json!({
-        "projectId": recipients.project_id,
-        "itemId": item_id,
-        "version": recipients.version,
-        "reason": reason,
-    });
-    for user_id in recipients.users {
-        let room = format!("wework-runtime:user:{user_id}");
-        if let Err(error) = runtime
-            .emitters()
-            .loop_item_changed(user_id, &payload)
-            .await
-        {
-            tracing::warn!(%error, room, "loop item changed local delivery failed");
-        }
-        super::device_lifecycle::publish_room_event(
-            state,
-            super::device_runtime_event::LOOP_ITEM_CHANGED_EVENT,
-            &payload,
-            super::device_runtime_event::RUNTIME_NAMESPACE,
-            &room,
-        )
-        .await;
-    }
-}
+#[path = "project_chat_snapshot_publication.rs"]
+mod publication;
+pub(super) use publication::{publish_item_change, publish_item_change_with_reason};
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn a_recorded_snapshot_parses_camel_case_fields() {
-        let snapshot = parse_snapshot(&json!({
-            "deviceId": "electron-22508b4b",
-            "taskId": "runtime-140211547",
-            "running": false,
-            "completeHistory": false,
-            "turns": [{
-                "id": "01a1ac30-0e67-7470-856e-2fe9edeb6f02",
-                "userMessageIds": [],
-                "status": "done",
-                "completedAt": 1793891317000i64
-            }]
-        }))
-        .expect("the recorded snapshot validates");
-        assert_eq!(snapshot.device_id, "electron-22508b4b");
-        assert_eq!(snapshot.task_id, "runtime-140211547");
-        assert_eq!(snapshot.turns[0].status, "done");
-        assert_eq!(terminal_status(&snapshot.turns[0]), Some("completed"));
-    }
-
-    #[test]
-    fn invalid_turns_are_rejected() {
-        assert!(
-            parse_snapshot(&json!({
-                "deviceId": "d",
-                "taskId": "t",
-                "turns": [{"id": "x", "status": "mystery"}]
-            }))
-            .is_err()
-        );
-        assert!(
-            parse_snapshot(&json!({
-                "deviceId": "",
-                "taskId": "t",
-                "turns": []
-            }))
-            .is_err()
-        );
-        assert!(
-            parse_snapshot(&json!({
-                "deviceId": "d",
-                "taskId": "t",
-                "running": "no",
-                "turns": []
-            }))
-            .is_err()
-        );
-    }
-
-    #[test]
-    fn the_chat_read_projects_explicit_unaliased_columns() {
-        // Recording 20261105234003, dependencies.jsonl rows 58393/58395: the
-        // source selects every modeled column with SQLAlchemy labels; the
-        // engine maps the direct table columns but rejects `SELECT *`.
-        let sql = chat_statement(3);
-        assert!(sql.starts_with("SELECT project_chat_messages.id, "));
-        assert!(!sql.contains("SELECT *"));
-        assert!(!sql.contains(" AS project_chat_messages_"));
-        for column in [
-            "project_chat_messages.message_id",
-            "project_chat_messages.metadata",
-            "project_chat_messages.runtime_task_id",
-            "project_chat_messages.status",
-            "project_chat_messages.deleted_at",
-        ] {
-            assert!(sql.contains(column), "{column} is missing");
-        }
-        assert!(sql.contains("project_chat_messages.runtime_device_id IN (?, ?, ?)"));
-        assert!(sql.contains("ORDER BY project_chat_messages.id"));
-    }
-
-    #[test]
-    fn the_room_follows_the_project_and_task_identity() {
-        assert_eq!(
-            project_chat_room("7", Some("task-1")),
-            "wework-project-chat:task:7:task-1"
-        );
-        assert_eq!(
-            project_chat_room("7", None),
-            "wework-project-chat:project:7"
-        );
-    }
-}
+#[path = "project_chat_snapshot_tests.rs"]
+mod tests;
+#[cfg(test)]
+pub(crate) use tests::verify_snapshot_timestamp;

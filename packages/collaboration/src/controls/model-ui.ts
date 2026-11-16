@@ -1,3 +1,8 @@
+import { normalizeModelOptionValue } from "@wegent/chat-core/local-runtime-model";
+export {
+  normalizeModelOptionValue,
+  normalizeModelOptionAliases,
+} from "@wegent/chat-core/local-runtime-model";
 import {
   builtinCodexCatalogModel,
   codexCatalogModelIdForUpstream,
@@ -700,32 +705,6 @@ function resolveOptionSummaryLabel(
 ): string {
   if (!option) return "";
   return option.summaryLabel || resolveOptionLabel(option, resolveLabel);
-}
-
-export function normalizeModelOptionValue(
-  optionId: string,
-  value?: string,
-): string | undefined {
-  if (!value) return value;
-  if (optionId !== "reasoning") return value;
-
-  const normalized = value.trim().toLowerCase().replace(/\s+/g, "_");
-  if (["extra_high", "x_high", "x-high"].includes(normalized)) {
-    return "xhigh";
-  }
-  if (normalized === "maximum") return "max";
-  return value;
-}
-
-export function normalizeModelOptionAliases(
-  options: ModelOptions = {},
-): ModelOptions {
-  return Object.fromEntries(
-    Object.entries(options).map(([optionId, value]) => [
-      optionId,
-      normalizeModelOptionValue(optionId, value) ?? value,
-    ]),
-  );
 }
 
 function selectedControlValue(

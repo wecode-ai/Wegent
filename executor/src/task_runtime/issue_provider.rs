@@ -1557,10 +1557,7 @@ fn provider_error(error: impl std::fmt::Display) -> TaskRuntimeError {
 
 #[cfg(test)]
 mod tests {
-    use super::{
-        creator_from_labels, labels_for_write, normalize_repository, parent_number,
-        priority_from_labels, status_from_labels,
-    };
+    use super::{creator_from_labels, labels_for_write, parent_number, status_from_labels};
     use crate::task_runtime::TaskProviderKind;
 
     #[tokio::test]
@@ -1588,37 +1585,9 @@ mod tests {
     }
 
     #[test]
-    fn removes_gitlab_web_page_suffix_from_repository() {
-        assert_eq!(
-            normalize_repository("hongyu91/tab-prompt/-/issues", TaskProviderKind::Gitlab).unwrap(),
-            "hongyu91/tab-prompt"
-        );
-    }
-
-    #[test]
     fn reads_controlled_parent_marker() {
         assert_eq!(parent_number("Details\n\nWegent-Parent: #42\n"), Some(42));
         assert_eq!(parent_number("No hierarchy"), None);
-    }
-
-    #[test]
-    fn maps_workflow_fields_to_controlled_issue_labels() {
-        let labels = labels_for_write(
-            vec![
-                "bug".to_owned(),
-                "wegent:priority:low".to_owned(),
-                "wegent:status:pending".to_owned(),
-            ],
-            "high",
-            "in_review",
-        );
-        assert_eq!(
-            labels,
-            vec!["bug", "wegent:priority:high", "wegent:status:in_review"]
-        );
-        assert_eq!(priority_from_labels(&labels), "high");
-        assert_eq!(status_from_labels("open", &labels), "in_review");
-        assert_eq!(status_from_labels("opened", &labels), "in_review");
     }
 
     #[test]

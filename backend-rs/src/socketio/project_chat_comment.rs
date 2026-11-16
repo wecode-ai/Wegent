@@ -256,7 +256,7 @@ pub(super) async fn enqueue_root(
         };
         let row = tx.execute(messages::INSERT_MESSAGE_SQL, messages::insert_message_args(&message)).await?;
         if let Some(metadata) = human_update {
-            tx.execute("UPDATE loop_items SET metadata=?, version=version+1, updated_at=UTC_TIMESTAMP(6) WHERE id=?",
+            tx.execute("UPDATE loop_items SET metadata=?, version=version+1, updated_at=CURRENT_TIMESTAMP(6) WHERE id=?",
                 (brz_mysql::Json(metadata), issue.id.as_str())).await?;
         }
         new_response = true;
@@ -362,7 +362,7 @@ pub(super) async fn settle_human_reply(
     target["events"] = json!(events);
     let recipient = target["recipient_user_id"].as_i64().unwrap_or(0);
     let responsible = target["responsible_user_id"].as_i64().unwrap_or(0);
-    tx.execute("UPDATE loop_items SET metadata=?, version=version+1, updated_at=UTC_TIMESTAMP(6) WHERE id=?",
+    tx.execute("UPDATE loop_items SET metadata=?, version=version+1, updated_at=CURRENT_TIMESTAMP(6) WHERE id=?",
         (issue.metadata, issue.id.as_str())).await?;
     tx.execute("DELETE FROM loop_items WHERE resource_type='human_request_index' AND parent_id=? AND name=?",
         (issue.id.as_str(), request_id)).await?;

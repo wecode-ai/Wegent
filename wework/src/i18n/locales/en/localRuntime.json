@@ -25,5 +25,7 @@
   "local_workspace_opening_unavailable": "Local workspace opening is unavailable outside the Electron desktop app",
   "local_file_opening_unavailable": "Local file opening is unavailable outside the Electron desktop app",
   "local_file_revealing_unavailable": "Local file revealing is unavailable outside the Electron desktop app",
-  "local_app_icons_unavailable": "Local application icons are unavailable outside the Electron desktop app"
+  "local_app_icons_unavailable": "Local application icons are unavailable outside the Electron desktop app",
+  "service_unavailable_title": "Local service is unavailable",
+  "service_unavailable_description": "Features using this service are unavailable. You can keep using the workbench and retry the connection."
 }

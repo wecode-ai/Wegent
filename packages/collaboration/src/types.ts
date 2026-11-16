@@ -124,6 +124,11 @@ export type BackendCollaborationProject = CollaborationProject & {
 };
 
 export interface CollaborationIssue {
+  resource_participants?: Array<{
+    kind: "agent" | "group";
+    id: number;
+    name: string;
+  }>;
   human_requests?: import("./issueParticipation").IssueHumanRequest[];
   milestone_id?: string | null;
   id: string;
@@ -142,7 +147,7 @@ export interface CollaborationIssue {
   assignee_team_name?: string | null;
   execution_id?: number | null;
   execution_state?: string | null;
-  processing_actor?: { kind: 'agent' | 'stand_in'; name: string } | null;
+  processing_actor?: { kind: "agent" | "stand_in"; name: string } | null;
   execution_note?: string | null;
   can_approve?: boolean;
   human_task_binding?: {
@@ -219,6 +224,7 @@ export interface CollaborationAssignment {
 }
 
 export interface CollaborationWorkspace {
+  is_system_default?: boolean;
   owner_user_id?: number;
   id: string;
   location: "local" | "cloud";

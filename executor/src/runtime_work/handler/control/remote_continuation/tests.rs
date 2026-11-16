@@ -136,6 +136,8 @@ fn remote_continuation_reuses_addressed_send_and_keeps_durable_device_scoped_rec
             );
             let first = first.unwrap();
             let second = second.unwrap();
+            workbench_control::assert_output_contract("continue_conversation", &first);
+            workbench_control::assert_output_contract("continue_conversation", &second);
             assert_ne!(first["duplicate"], second["duplicate"]);
             assert_eq!(first["operation"], second["operation"]);
             assert_eq!(first["operation"]["delivery_status"], "accepted");
@@ -167,6 +169,7 @@ fn remote_continuation_reuses_addressed_send_and_keeps_durable_device_scoped_rec
                 .control_operation(&ctx, "get_operation", json!({"operation_id":operation_id}))
                 .await
                 .unwrap();
+            workbench_control::assert_output_contract("get_operation", &receipt);
             assert_eq!(receipt["operation"], first["operation"]);
             assert!(receipt["current_conversation"].is_null());
             let duplicate = reloaded

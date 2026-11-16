@@ -142,7 +142,10 @@ interface ProjectBoardAdapterProps {
     config: ProjectBoardViews,
     settings?: import("../project-board/projectBoardViews").BoardViewSaveSettings,
   ): Promise<void>;
-  onOpen(issue: CollaborationIssue): void;
+  onOpen(
+    issue: CollaborationIssue,
+    board?: import("../issue-detail/issueCommentActions").IssueCommentBoardContext,
+  ): void;
   onOpenChildren?(issue: CollaborationIssue): void;
   onCurrentParentIdChange?(parentId: string | null): void;
   onDeleteIssue?(issue: CollaborationIssue): void;
@@ -255,13 +258,11 @@ export function ProjectBoardAdapter({
   const filterScope = `${project.project_store}:${project.id}:${handlingUserId ?? "anonymous"}`;
   const [personalFilter, setPersonalFilter] = useState({
     scope: filterScope,
-    enabled: false,
+    enabled: null as boolean | null,
   });
   if (personalFilter.scope !== filterScope) {
-    setPersonalFilter({ scope: filterScope, enabled: false });
+    setPersonalFilter({ scope: filterScope, enabled: null });
   }
-  const needsMyInput =
-    personalFilter.scope === filterScope && personalFilter.enabled;
   const myIssues = useMemo(
     () =>
       issues.filter((issue) => {
@@ -285,6 +286,10 @@ export function ProjectBoardAdapter({
       }),
     [issues, handlingUserId, taskBindings, isIssueRunning, runtimeWork?.work],
   );
+  const needsMyInput =
+    personalFilter.scope === filterScope
+      ? (personalFilter.enabled ?? myIssues.length > 0)
+      : myIssues.length > 0;
   const visibleIssues = needsMyInput ? myIssues : issues;
   const availableTags = useMemo(
     () => collectProjectTags(project, issues),
@@ -489,7 +494,7 @@ export function ProjectBoardAdapter({
                 type="button"
                 data-testid="project-needs-my-input-filter"
                 aria-pressed={needsMyInput}
-                className={`inline-flex h-8 shrink-0 items-center gap-1.5 rounded-lg border px-3 text-xs outline-none hover:bg-muted focus-visible:ring-2 focus-visible:ring-focus max-md:h-11 ${needsMyInput ? "border-text-primary/30 bg-muted text-text-primary" : "border-border bg-background text-text-secondary"}`}
+                className={`inline-flex h-8 shrink-0 items-center gap-1.5 rounded-lg border px-3 text-xs outline-none focus-visible:ring-2 focus-visible:ring-focus max-md:h-11 ${needsMyInput ? "border-text-primary bg-text-primary text-background hover:bg-text-primary/80" : "border-border bg-background text-text-secondary hover:bg-muted"}`}
                 onClick={() =>
                   setPersonalFilter({
                     scope: filterScope,
@@ -498,7 +503,11 @@ export function ProjectBoardAdapter({
                 }
               >
                 {translate("todo.home_my_todos")}
-                <span>{myIssues.length}</span>
+                <span
+                  className={`min-w-5 rounded-full px-1.5 text-center ${needsMyInput ? "bg-background/20 text-background" : "bg-muted text-text-primary"}`}
+                >
+                  {myIssues.length}
+                </span>
               </button>
             )}
             {tagFilter.control}
@@ -593,7 +602,9 @@ export function ProjectBoardAdapter({
                   ariaLabel: translate(
                     "todo.board_create_in_column",
                     undefined,
-                    { column: column.label },
+                    {
+                      column: column.label,
+                    },
                   ),
                   label: translate("todo.board_create_first"),
                   onClick: () => {
@@ -759,7 +770,13 @@ export function ProjectBoardAdapter({
             archiveLabel: translate("todo.archive_issue", "归档任务"),
             articleTestId: collaborationTestIds.issue(issue.id),
             dragEnabled: canEditCollaborationIssue(issue),
-            onOpen: () => onOpen(issue),
+            onOpen: () =>
+              onOpen(issue, {
+                columns: controller.columns,
+                groupBy: controller.state.groupBy,
+                name: savedViews.view?.name ?? project.name,
+                sourceColumnKey: column.key,
+              }),
           };
           const progress = childrenProgress.get(issue.id);
           const childrenAction =
@@ -786,7 +803,7 @@ export function ProjectBoardAdapter({
               display: issueDisplay,
               focused,
               issue,
-              onOpen: () => onOpen(issue),
+              onOpen: cardProps.onOpen,
               onDelete: cardProps.onArchive,
               previewDisabled,
               taskBindings: taskBindings.filter(

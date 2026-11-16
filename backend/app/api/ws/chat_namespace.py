@@ -2361,6 +2361,12 @@ def _mark_task_and_board_cancelling(
         subtask = task_stores.subtask_store.get_by_id(db, subtask_id=subtask_id)
         if not subtask:
             return False
+        task = task_stores.task_store.get_regular_active_task(
+            db, task_id=subtask.task_id
+        )
+        if not task or not task.json:
+            return False
+        db.refresh(task, with_for_update=True)
         db.refresh(subtask, with_for_update=True)
         if subtask.answer_generation_id != generation_id or subtask.status not in (
             SubtaskStatus.PENDING,
@@ -2369,11 +2375,6 @@ def _mark_task_and_board_cancelling(
             return False
 
         # Persist intent only. Runtime callback owns the terminal transition.
-        task = task_stores.task_store.get_regular_active_task(
-            db, task_id=subtask.task_id
-        )
-        if not task or not task.json:
-            return False
 
         task_crd = Task.model_validate(task.json)
         if task_crd.status:

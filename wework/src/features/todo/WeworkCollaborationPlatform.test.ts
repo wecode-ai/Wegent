@@ -45,7 +45,6 @@ import {
   publishProjectSpaceTaskContextChanged,
   rememberProjectSpaceTaskBinding,
 } from './projectSpaceSelection'
-import { updateIssueWhenPersonalTaskStarts } from './workItemTaskInput'
 
 type BoardIssueCardRenderer = NonNullable<
   ComponentProps<typeof CollaborationApp>['renderBoardIssueCard']
@@ -527,26 +526,6 @@ function deferred<T>() {
 }
 
 describe('Wework collaboration workspace API', () => {
-  it('does not reject task creation when the Issue start update fails', async () => {
-    const issues = {
-      get: vi.fn().mockResolvedValue({
-        id: 'ISSUE-1',
-        status: 'pending',
-        tags: [],
-        version: 4,
-      }),
-      update: vi.fn().mockRejectedValue(new Error('没有权限更新 Issue')),
-    }
-
-    await expect(updateIssueWhenPersonalTaskStarts(issues, 'ISSUE-1')).resolves.toBe(
-      '没有权限更新 Issue'
-    )
-    expect(issues.update).toHaveBeenCalledWith('ISSUE-1', {
-      status: 'in_progress',
-      version: 4,
-    })
-  })
-
   it('keeps the cloud project choice available before cloud login', () => {
     render(
       createElement(WeworkCollaborationPlatform, {
@@ -1094,6 +1073,7 @@ describe('Wework collaboration workspace API', () => {
     'archived',
     'foreign',
     'unlinked',
+    'ambiguous-alias',
     'local',
     'superseded',
     'superseded-error',
@@ -1150,7 +1130,15 @@ describe('Wework collaboration workspace API', () => {
           },
           project: project as never,
           runtimePort: { bindTask: vi.fn(), unbindTask: vi.fn() },
-          services: { standInApi: { readTask } } as never,
+          services: {
+            standInApi: {
+              readTask,
+              deviceIdentity: vi.fn(async (deviceId: string) => ({
+                deviceId,
+                backendDeviceId: status === 'ambiguous-alias' ? 'app-record-42' : deviceId,
+              })),
+            },
+          } as never,
           setLocation: vi.fn(),
           userId: 1,
           workspace: { id: 'workspace', name: 'Workspace' } as never,
@@ -2732,7 +2720,7 @@ describe('Wework collaboration workspace API', () => {
     expect(workspaces).toEqual([
       expect.objectContaining({
         id: 'wework-local-workspace',
-        name: '本地空间',
+        name: '个人分组',
       }),
     ])
     expect(projects).toEqual([

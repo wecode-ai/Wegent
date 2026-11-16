@@ -247,8 +247,9 @@ The audited elevation recipes are intentionally light:
 - prominent surface: a `0.5px` stroke plus very soft `0 3px 7.5px / 4%` and
   `0 0 20px / 5%` shadows.
 
-Ordinary page content has no shadow. Use elevation for composers, menus,
-popovers, floating sidebars, and dialogs. Never reproduce the rejected Wework
+Ordinary page content has no shadow. Use elevation for the main work surface
+above the window chrome, composers, menus, popovers, floating sidebars, and
+dialogs. Never reproduce the rejected Wework
 composer shadow `0 18px 44px`; it is not the Codex recipe.
 
 ## 4. Color system
@@ -442,9 +443,23 @@ may reveal on hover/focus but must remain keyboard accessible.
   Trailing actions and metadata must remain outside the activator. Preserve
   keyboard sorting on the sortable container.
 - Section spacing may be larger than row spacing; avoid divider-heavy grouping.
-- On macOS light theme, use the captured warm translucent/off-white sidebar
-  material and keep the main canvas pure white. Preserve the traffic-light safe
-  area and Wework's four-item global top navigation, in order: sidebar toggle,
+- The desktop shell uses surface elevation. The title bar and task/conversation
+  sidebar share one continuous base surface. In the 2026-11-15 Codex capture,
+  this is the outer navigation rail and title-bar gray (`#F4F4F4`), not the
+  lighter inner conversation-list panel. Wework's main work surface is opaque
+  white above that base in the default light theme. Use the selected theme's
+  main-surface color in other themes; configured background images retain
+  their chosen visibility.
+- Apply `16px` left corners and the quiet Codex elevation to the complete main
+  content frame, including its header and split panes: a `0.5px` foreground
+  stroke at `12%`, `0 3px 7.5px` black at `3%`, and `0 0 16px` black at `2%`.
+  The sidebar has no permanent divider or elevated stacking context. Paint the
+  main frame above its base so its shadow falls onto the sidebar; keep resize
+  handles and transient menus above the frame. Collapsed sidebar previews use
+  their own floating layer. Mobile layouts and popout windows keep their
+  existing surface composition.
+- Preserve the traffic-light safe area and Wework's four-item global top
+  navigation, in order: sidebar toggle,
   Wework current-app entry, TODO/work-items entry, and application-list entry.
   Style those controls with Codex sizing and neutral states; never replace,
   reorder, or remove them merely to imitate Codex's Back and Forward controls.
@@ -456,10 +471,11 @@ may reveal on hover/focus but must remain keyboard accessible.
   not duplicate Search as a primary-navigation list row.
 - Secondary row actions can appear on hover/focus but must not steal the row's
   primary click and must have a keyboard path.
-- Overflowing sidebar lists keep an overlay scrollbar visible at every scroll
-  position. Match the Codex desktop sidebar with a quiet theme-aware `8px`
-  thumb inset `3px` from the sidebar edge; scrollbars must not change the content
-  width or inherit the content-edge mask.
+- Overflowing sidebar lists use a quiet theme-aware `4px` overlay thumb inside an
+  `8px` drag target inset `3px` from the sidebar edge. Show it while the pointer
+  is anywhere in the sidebar, a sidebar control has visible keyboard focus, or
+  the scrollbar is being dragged; hide it when those interactions end. Scrollbars
+  must not change the content width or inherit the content-edge mask.
 - Task titles use a `12px` edge fade instead of ellipsis. After `600ms` of hover
   or keyboard focus, scroll at `30px/s`, decelerating continuously over the final
   `40px` to rest. Keep the end visible until pointer exit or blur, then return to
@@ -1017,6 +1033,13 @@ component-level validation outlines to override the native-outline reset.
   禁止远程控制的 APP 设备；这些设备的工作目录保留展示但不可用于 Web 发起执行。
   ProjectChat is the canonical per-Issue activity stream. Connected hosts must not
   add REST comments, assignments or runs, or switch sources after subscription failure.
+  协作 exp 的只读任务时间线还可以独立呈现 Issue 已持久化的状态与指派历史，
+  使用其原始身份与用户署名；这些历史事实不得伪装成 ProjectChat 消息，
+  不得重复合并 REST 评论或执行记录，也不得作为消息订阅失败的替代源。
+  The collaboration experiment may separately present persisted Issue status and
+  assignment history using native identities and user attribution. These facts
+  are not ProjectChat messages, must not duplicate REST comments or executions,
+  and must never substitute for a failed message subscription.
   Browser execution selection excludes APP devices from standalone targets and marks
   their workspaces unavailable, following the backend remote-control policy.
   看板卡片、进展弹层、任务侧栏及执行详情还须在挂载会话读取组件前检查设备能力。

@@ -202,7 +202,12 @@ async def test_rest_cancel_schedules_only_after_confirmed_commit(
         "get_latest_assistant_for_user_by_statuses",
         MagicMock(return_value=row),
     )
-    compare = MagicMock(return_value=True)
+
+    def compare_after_task_lock(*args, **kwargs):
+        db.refresh.assert_called_once_with(task, with_for_update=True)
+        return True
+
+    compare = MagicMock(side_effect=compare_after_task_lock)
     monkeypatch.setattr(task_stores.subtask_store, "update_fields_if_attempt", compare)
     monkeypatch.setattr(
         task_stores.task_store, "get_owned_active_task", MagicMock(return_value=task)

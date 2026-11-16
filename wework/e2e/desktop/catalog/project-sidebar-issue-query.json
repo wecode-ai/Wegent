@@ -1,0 +1,12 @@
+{
+  "order": 125110,
+  "scenario": "./scenarios/project-sidebar-issue-query.scenario.mjs",
+  "scenarioOnly": true,
+  "ci": {
+    "core": {
+      "order": 74110,
+      "shard": 6,
+      "position": 5110
+    }
+  }
+}

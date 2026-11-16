@@ -3,8 +3,16 @@
 # SPDX-License-Identifier: Apache-2.0
 
 import logging
+from dataclasses import replace
+from unittest.mock import Mock
 
+from fastapi.testclient import TestClient
+
+from app import main
+from app.core.config import settings
 from app.main import _request_context_fields, _should_capture_http_body
+from app.services.execution.package_runtime import IMAGE_EXECUTION_PATH
+from shared.telemetry import config, core, instrumentation
 from shared.telemetry.instrumentation import _should_capture_http_client_body
 
 
@@ -29,6 +37,36 @@ def test_site_environment_variable_bodies_are_excluded_from_telemetry() -> None:
     assert _should_capture_http_body(path) is False
     assert _should_capture_http_body(f"{path}/DATABASE_URL") is False
     assert _should_capture_http_body("/api/sites/prj_123") is True
+
+
+def test_image_runtime_body_is_excluded_with_capture_enabled(monkeypatch) -> None:
+    otel_config = replace(
+        config.get_otel_config(), enabled=True, capture_request_body=True
+    )
+    monkeypatch.setattr(config, "get_otel_config", lambda *_: otel_config)
+    monkeypatch.setattr(core, "init_telemetry", Mock())
+    monkeypatch.setattr(core, "is_telemetry_enabled", lambda: True)
+    monkeypatch.setattr(instrumentation, "setup_opentelemetry_instrumentation", Mock())
+    monkeypatch.setattr(settings, "CHAT_SHELL_MODE", "http")
+    monkeypatch.setattr(settings, "INTERNAL_SERVICE_TOKEN", "test-runtime-token")
+    monkeypatch.setattr("opentelemetry.trace.get_current_span", lambda: Mock())
+    log_body = Mock()
+    monkeypatch.setattr(main, "log_json_body", log_body)
+    headers = {"Authorization": "Bearer test-runtime-token"}
+
+    client = TestClient(main.create_app())
+    request = {"model_config": {"modelType": "image", "api_key": "test-provider-key"}}
+    # Zero IDs produce an endpoint validation error without invoking a provider.
+    response = client.post(IMAGE_EXECUTION_PATH, json=request, headers=headers)
+    assert response.status_code == 422
+    assert response.json() == {"detail": "Expected a persisted task turn"}
+    log_body.assert_not_called()
+    assert not _should_capture_http_body(f"{IMAGE_EXECUTION_PATH}/")
+
+    client.post("/api/health", json={"probe": "visible"})
+    log_body.assert_called_once()
+    assert log_body.call_args.args[0] == "http.request.body"
+    assert "visible" in log_body.call_args.args[1]
 
 
 def test_platform_environment_variable_bodies_are_excluded_from_httpx_traces() -> None:

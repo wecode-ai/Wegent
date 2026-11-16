@@ -34,6 +34,7 @@ pub(crate) async fn agent_admission(
     assigner: i64,
     mut context: Value,
     instruction: &str,
+    session_environment_id: Option<&str>,
 ) -> Result<Admission> {
     authority::require(state, &issue.cloud_project_id, assigner).await?;
     let source = context["runtime_source"]
@@ -141,6 +142,8 @@ pub(crate) async fn agent_admission(
             assigner,
             &context["runner_selection"],
             authority::truthy(&context["run_id"]),
+            session_environment_id,
+            false,
         )
         .await?;
         configured_model = route["model"]["model_id"].as_str().unwrap_or("").into();
@@ -234,7 +237,7 @@ pub(super) async fn assign(
                 });
             }
             let admission =
-                agent_admission(state, &issue, &agent, owner, context, instruction).await?;
+                agent_admission(state, &issue, &agent, owner, context, instruction, None).await?;
             let name = if agent.title.is_empty() {
                 agent.name.clone()
             } else {
@@ -277,7 +280,7 @@ pub(super) async fn assign(
         let status=if kind!="human"&&issue.status!="completed"&&issue.status!="in_progress"&&has_status(project,"in_progress"){
             status_history(&mut metadata,project,&issue.status,"in_progress",owner);attribute_history(&mut metadata, "status_history", &automation);"in_progress".to_owned()
         }else{issue.status.clone()};
-        tx.execute("UPDATE loop_items SET assignee_user_id=?,assignee_team_id=?,assignee_agent_id=?,status=?,metadata=?,version=version+1,updated_by_user_id=?,updated_at=UTC_TIMESTAMP(6) WHERE id=?",(user,team,agent,status.as_str(),Json(metadata.clone()),owner,issue.id.as_str())).await?;
+        tx.execute("UPDATE loop_items SET assignee_user_id=?,assignee_team_id=?,assignee_agent_id=?,status=?,metadata=?,version=version+1,updated_by_user_id=?,updated_at=CURRENT_TIMESTAMP(6) WHERE id=?",(user,team,agent,status.as_str(),Json(metadata.clone()),owner,issue.id.as_str())).await?;
         issue.status=status;issue.metadata=Json(metadata);issue.assignee_user_id=user;issue.assignee_team_id=team;issue.assignee_agent_id=agent.to_owned();
         let execution=if created&&issue.status!="completed" {if let Some(admission)=admission.as_ref(){
             let execution=queue::enqueue_on(tx,state,&issue,run,admission).await?;
@@ -286,7 +289,7 @@ pub(super) async fn assign(
         }else{None}}else{None};
         if kind=="human" {
             if notify&&created&&previous_user!=user && let Some(pending)=notifications::direct_human_on(tx,state,project,&issue,user,owner,&name,&assignment_id).await?{notifications.push(pending);}
-            tx.execute("UPDATE loop_items SET status='succeeded',completed_at=UTC_TIMESTAMP(6),version=version+1,updated_at=UTC_TIMESTAMP(6) WHERE id=?",(run.id.as_str(),)).await?;
+            tx.execute("UPDATE loop_items SET status='succeeded',completed_at=UTC_TIMESTAMP(6),version=version+1,updated_at=CURRENT_TIMESTAMP(6) WHERE id=?",(run.id.as_str(),)).await?;
         }else{
             let device_id=if let Some(execution)=execution{execution.device_id}else{
                 let (device_id,): (String,) = tx.fetch_one(
@@ -295,7 +298,7 @@ pub(super) async fn assign(
                 ).await?;
                 device_id
             };
-            tx.execute("UPDATE loop_items SET status='queued',assignee_agent_id=?,device_id=?,version=version+1,updated_at=UTC_TIMESTAMP(6) WHERE id=?",(agent,device_id.as_str(),run.id.as_str())).await?;
+            tx.execute("UPDATE loop_items SET status='queued',assignee_agent_id=?,device_id=?,version=version+1,updated_at=CURRENT_TIMESTAMP(6) WHERE id=?",(agent,device_id.as_str(),run.id.as_str())).await?;
         }
         Ok(notifications)
     }).await?;

@@ -17,6 +17,7 @@ type MessageRequest = {
 type Scenario = {
   model: string
   mode: 'complete' | 'stop' | 'large-output'
+  subagentType?: string
   parentCalls: number
   childCalls: number
   childFinished: boolean
@@ -172,7 +173,7 @@ function respond(res: ServerResponse, body: MessageRequest, scenario: Scenario):
     const agent = body.tools?.find(tool => tool.name === 'Agent')
     const args: Record<string, unknown> = {
       description: 'Background lifecycle regression worker',
-      subagent_type: 'general-purpose',
+      subagent_type: scenario.subagentType ?? 'general-purpose',
       prompt: workerPrompt,
     }
     if (agent?.input_schema?.properties?.run_in_background) args.run_in_background = true
@@ -208,7 +209,7 @@ export function handleClaudeBackgroundRequest(
   const url = new URL(req.url || '/', 'http://mock-model')
   if (url.pathname === '/claude-background-scenarios') {
     if (req.method === 'POST') {
-      const input = JSON.parse(rawBody) as Pick<Scenario, 'model' | 'mode'>
+      const input = JSON.parse(rawBody) as Pick<Scenario, 'model' | 'mode' | 'subagentType'>
       if (!input.model || !['complete', 'stop', 'large-output'].includes(input.mode)) {
         json(res, 400, { error: 'A model and background lifecycle mode are required' })
         return true

@@ -19,6 +19,10 @@ const HOST_STATE_VARS: &[&str] = &[
     "WEGENT_BUNDLED_PLUGIN_MARKETPLACE_DIR",
     "WEGENT_MANAGED_HOOKS_DIR",
     "WEGENT_EXECUTOR_HOME",
+    "WORKSPACE_ROOT",
+    "WEGENT_WORKSPACE_ROOT",
+    "LOCAL_WORKSPACE_ROOT",
+    "WEGENT_EXECUTOR_PROJECTS_DIR",
     "WEGENT_NATIVE_CODEX_HOME",
     "WEWORK_PYTHON_RUNTIME_URL",
     "WEWORK_PYTHON_RUNTIME_TOKEN",
@@ -57,6 +61,21 @@ pub fn zip_entries(entries: &[(&str, &str)]) -> Vec<u8> {
         writer.write_all(content.as_bytes()).unwrap();
     }
     writer.finish().unwrap().into_inner()
+}
+
+/// Minimal native model metadata shared by Codex CLI fixtures.
+pub const CODEX_BUNDLED_CATALOG: &str = r#"{"models":[{"slug":"gpt-test","visibility":"list","priority":0,"base_instructions":"Native fixture"}]}"#;
+
+/// Add the bundled model export command without changing app-server traffic.
+pub fn with_codex_bundled_catalog(script: &str) -> String {
+    script.replacen(
+        "#!/bin/sh\n",
+        &format!(
+            "#!/bin/sh\nif [ \"$1\" = debug ]; then\n  printf '%s\\n' '{}'\n  exit 0\nfi\n",
+            CODEX_BUNDLED_CATALOG
+        ),
+        1,
+    )
 }
 
 #[cfg(test)]

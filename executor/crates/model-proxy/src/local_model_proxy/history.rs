@@ -387,28 +387,54 @@ pub(super) fn record_responses_stream<S>(
 where
     S: Stream<Item = Result<Bytes, std::io::Error>> + Send + 'static,
 {
-    let state = (Box::pin(stream), history);
-    futures_util::stream::unfold(
-        state,
-        |(mut stream, history): (Pin<Box<S>>, Arc<CodexToolHistory>)| async move {
-            let item = stream.next().await?;
-            if let Ok(bytes) = &item {
-                inspect_completed_events(bytes, history.as_ref()).await;
+    let state = HistoryStreamState {
+        stream: Box::pin(stream),
+        history,
+        pending: String::new(),
+        pending_utf8: Vec::new(),
+        invalid_utf8: false,
+    };
+    futures_util::stream::unfold(state, |mut state| async move {
+        let Some(item) = state.stream.next().await else {
+            if !state.invalid_utf8 && super::finish_stream_utf8(&state.pending_utf8).is_ok() {
+                inspect_completed_event(&state.pending, &state.history).await;
             }
-            Some((item, (stream, history)))
-        },
-    )
+            return None;
+        };
+        if let Ok(bytes) = &item {
+            state.record(bytes).await;
+        }
+        Some((item, state))
+    })
 }
 
-async fn inspect_completed_events(bytes: &Bytes, history: &CodexToolHistory) {
-    let text = String::from_utf8_lossy(bytes);
-    for line in text.lines() {
-        let Some(data) = line.strip_prefix("data:") else {
-            continue;
-        };
-        let Ok(event) = serde_json::from_str::<Value>(data.trim()) else {
-            continue;
-        };
+struct HistoryStreamState<S> {
+    stream: Pin<Box<S>>,
+    history: Arc<CodexToolHistory>,
+    pending: String,
+    pending_utf8: Vec<u8>,
+    invalid_utf8: bool,
+}
+
+impl<S> HistoryStreamState<S> {
+    async fn record(&mut self, bytes: &Bytes) {
+        if self.invalid_utf8 {
+            return;
+        }
+        if super::append_stream_utf8(&mut self.pending, &mut self.pending_utf8, bytes).is_err() {
+            self.invalid_utf8 = true;
+            self.pending.clear();
+            self.pending_utf8.clear();
+            return;
+        }
+        while let Some(block) = super::take_sse_block(&mut self.pending) {
+            inspect_completed_event(&block, &self.history).await;
+        }
+    }
+}
+
+async fn inspect_completed_event(block: &str, history: &CodexToolHistory) {
+    if let Some(event) = super::sse::json(block) {
         if event.get("type").and_then(Value::as_str) == Some("response.completed") {
             if let Some(response) = event.get("response") {
                 history.record_response(response).await;

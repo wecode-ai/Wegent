@@ -1,0 +1,16 @@
+{
+  "order": 123500,
+  "scenario": "./scenarios/plugin-package-integrity-recovery.scenario.mjs",
+  "scenarioOnly": true,
+  "paths": [
+    "executor/crates/plugin-packages/src/services/workbench*.rs",
+    "executor/crates/plugin-packages/src/local/capabilities/plugin_preparation.rs"
+  ],
+  "ci": {
+    "cloud": {
+      "order": 48500,
+      "shard": 7,
+      "position": 6500
+    }
+  }
+}

@@ -64,7 +64,7 @@ async def test_uncertain_commit_reports_refresh_without_success(monkeypatch):
         module, "collect_completed_result", AsyncMock(return_value={"value": "answer"})
     )
     wrapped = AsyncMock()
-    emitter = module.StatusUpdatingEmitter(wrapped, 7, 12)
+    emitter = module.StatusUpdatingEmitter(wrapped, 7, 12, generation_id="a" * 32)
     published = AsyncMock()
     monkeypatch.setattr(emitter, "_publish_task_completed_event", published)
     await emitter.emit_done(7, 12, result={"value": "answer"})
@@ -230,7 +230,7 @@ async def test_post_commit_pipeline_error_does_not_change_commit_result(monkeypa
         AsyncMock(side_effect=RuntimeError("next stage unavailable")),
     )
     assert (
-        await handler.update_subtask_status(12, "COMPLETED")
+        await handler.update_subtask_status(12, "COMPLETED", generation_id="a" * 32)
         is AnswerSaveResult.COMMITTED
     )
 

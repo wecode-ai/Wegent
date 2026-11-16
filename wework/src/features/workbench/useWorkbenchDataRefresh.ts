@@ -3,10 +3,8 @@ import { mergeDeviceLists } from '@/lib/workbench-device'
 import { mergeRuntimeWorkLists } from '@/features/workbench/runtimeWorkMerge'
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import type { Dispatch } from 'react'
-import { reportDesktopStartupFailure } from '@/desktop/startupFailure'
 import { createModelLoadingTrace, logModelLoading } from '@/lib/model-loading-diagnostics'
 import type { ExecutorClient } from '@/api/executorAccess'
-import { getDesktopWindowLabel, isElectronRuntime } from '@/lib/runtime-environment'
 import type {
   DeviceInfo,
   RuntimeSupervisorState,
@@ -16,7 +14,7 @@ import type {
   RuntimeWorkListResponse,
   User,
 } from '@/types/api'
-import { isCloudDevice, isRemoteDevice } from '@/lib/device-capabilities'
+import { isRemoteTaskDevice } from '@/lib/device-capabilities'
 import { normalizeRuntimeWorkspacePath } from '@/lib/runtime-project'
 import type { CloudRuntimeState, CloudWorkCheckKey, WorkbenchState } from '@/types/workbench'
 import {
@@ -548,11 +546,6 @@ export function useWorkbenchDataRefresh({
           type: 'runtime_work_load_failed',
           error: result.reason instanceof Error ? result.reason.message : String(result.reason),
         })
-        if (preferCached && isElectronRuntime() && getDesktopWindowLabel() === 'main') {
-          void reportDesktopStartupFailure(result.reason, 'task_list_initialize').catch(error => {
-            console.error('[Wework] Failed to report task-list startup failure:', error)
-          })
-        }
         return
       }
       const runtimeWork = applyRuntimeTaskOverrides(result.value, true, supervisorRevision)
@@ -920,7 +913,7 @@ export function useWorkbenchDataRefresh({
       }
       const device = devicesRef.current.find(item => item.device_id === address.deviceId)
       const listCloudRuntimeWork =
-        device && (isCloudDevice(device) || isRemoteDevice(device))
+        device && isRemoteTaskDevice(device)
           ? cloudBackgroundApiRef.current?.listRuntimeWork
           : undefined
       const runtimeWork = applyRuntimeTaskOverrides(

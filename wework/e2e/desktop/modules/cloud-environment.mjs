@@ -1,6 +1,7 @@
 import { writeCodexConfig, setMatrixUpstreamProtocol } from './desktop-build-flows.mjs'
 import { remoteDeviceE2EExtension } from '../remote-device-extension.mjs'
 import { createPreparationObserver } from './preparation-progress.mjs'
+import { waitForBoardValue } from './collaboration-board-flows.mjs'
 
 import { randomBytes } from 'node:crypto'
 import { LocalPluginObjectStorage } from './local-plugin-object-storage.mjs'
@@ -32,6 +33,7 @@ import {
   mkdir,
   pathExists,
   readFile,
+  redisCliBinary,
   repoDir,
   reservePort,
   resultDir,
@@ -1118,7 +1120,7 @@ class RealCloudEnvironment {
 
   async setExecutorLatestVersion(version) {
     await runChecked(
-      'redis-cli',
+      redisCliBinary(),
       [
         '-h',
         '127.0.0.1',
@@ -1154,34 +1156,15 @@ class RealCloudEnvironment {
   }
 
   async startDuplicateAppDeviceIdentity() {
-    assert.ok(this.executorBinary, 'The real Executor binary is not ready')
     const appDevice = await this.waitForConnectedAppDevice()
-    const home = join(resultDir, `duplicate-app-executor-home-${process.pid}`)
-    const codexHome = join(home, 'codex')
-    const logPath = join(resultDir, `duplicate-app-executor-${process.pid}.log`)
-    await writeCodexConfig(codexHome, this.modelServerUrl)
-    const env = this.executorEnv({
-      deviceId: appDevice.device_id,
-      deviceName: 'Wework E2E Duplicate App Device',
-      deviceType: 'app',
-      home,
-      codexHome,
-      logFile: `duplicate-app-executor-${process.pid}-runtime.log`,
-    })
     assert.ok(appDevice.app_device_id, 'The real App registration must expose its IPC address')
-    env.WEGENT_APP_IPC_DEVICE_ID = appDevice.app_device_id
-    const executor = spawn(this.executorBinary, [], {
-      cwd: weworkDir,
-      env,
-      // App mode owns a real IPC stdio connection and exits when its input closes.
-      stdio: ['pipe', 'pipe', 'pipe'],
-      detached: process.platform !== 'win32',
-    })
-    this.generatedRemoteExecutors.push(executor)
-    await Promise.all([
-      appendProcessOutput(executor.stdout, logPath),
-      appendProcessOutput(executor.stderr, logPath),
-    ])
+    const { logPath } = await this.startAppDeviceContender(
+      appDevice.device_id,
+      'duplicate-app-executor',
+      {
+        appDeviceId: appDevice.app_device_id,
+      }
+    )
     const startedAt = Date.now()
     let matching = []
     while (Date.now() - startedAt < WORKBENCH_READY_TIMEOUT_MS) {
@@ -1197,7 +1180,7 @@ class RealCloudEnvironment {
     assert.equal(
       matching.length,
       2,
-      `The second real app Executor did not register; see ${logPath}`
+      `The second real App Executor did not register; see ${logPath}`
     )
     assert.equal(
       new Set(matching.map(device => device.execution_target_id)).size,
@@ -1207,6 +1190,38 @@ class RealCloudEnvironment {
     assert.equal(new Set(matching.map(device => device.runtime_instance_id)).size, 2)
     assert.ok(matching.every(device => device.app_device_id === appDevice.app_device_id))
     return appDevice
+  }
+
+  async startAppDeviceContender(deviceId, label, { appDeviceId, runtimeInstanceId }) {
+    assert.ok(this.executorBinary, 'The real Executor binary is not ready')
+    const name = `${label}-${process.pid}`
+    const home = join(resultDir, `${name}-home`)
+    const codexHome = join(home, 'codex')
+    const logPath = join(resultDir, `${name}.log`)
+    await writeCodexConfig(codexHome, this.modelServerUrl)
+    const env = this.executorEnv({
+      deviceId,
+      deviceName: 'Wework E2E Duplicate App Device',
+      deviceType: 'app',
+      home,
+      codexHome,
+      logFile: `${name}-runtime.log`,
+    })
+    env.WEGENT_APP_IPC_DEVICE_ID = appDeviceId
+    if (runtimeInstanceId) env.WEGENT_RUNTIME_INSTANCE_ID = runtimeInstanceId
+    const executor = spawn(this.executorBinary, [], {
+      cwd: weworkDir,
+      env,
+      // App mode owns a real IPC stdio connection and exits when its input closes.
+      stdio: ['pipe', 'pipe', 'pipe'],
+      detached: process.platform !== 'win32',
+    })
+    this.generatedRemoteExecutors.push(executor)
+    await Promise.all([
+      appendProcessOutput(executor.stdout, logPath),
+      appendProcessOutput(executor.stderr, logPath),
+    ])
+    return { executor, logPath }
   }
 
   async waitForDeviceType(deviceId, expectedType) {
@@ -1299,7 +1314,7 @@ class RealCloudEnvironment {
   }
 
   terminalSessionRecords() {
-    const keys = commandOutput('redis-cli', [
+    const keys = commandOutput(redisCliBinary(), [
       '-p',
       String(this.redisPort),
       '--raw',
@@ -1311,7 +1326,7 @@ class RealCloudEnvironment {
       .map(value => value.trim())
       .filter(Boolean)
     return keys.map(key => {
-      const serialized = commandOutput('redis-cli', [
+      const serialized = commandOutput(redisCliBinary(), [
         '-p',
         String(this.redisPort),
         '--raw',
@@ -1329,7 +1344,7 @@ class RealCloudEnvironment {
       'The terminal session ID is not safe for the Redis fixture'
     )
     const subscriberCount = Number(
-      commandOutput('redis-cli', [
+      commandOutput(redisCliBinary(), [
         '-p',
         String(this.redisPort),
         '--raw',
@@ -1470,6 +1485,26 @@ class RealCloudEnvironment {
     await waitForAliasStatus('offline', historical.runtime_instance_id)
     await assertOriginalAppRegistration()
     return historical
+  }
+
+  async waitForRunnerCatalog(deviceRecordId) {
+    // Registration precedes model discovery; preserve a real catalog before disconnecting.
+    await waitForBoardValue(
+      async () => {
+        const environments = await fetchJson(
+          `${this.backendUrl}/api/v1/resources/execution-environments`,
+          {
+            headers: { Authorization: `Bearer ${this.authToken}` },
+            signal: AbortSignal.timeout(DEFAULT_STEP_TIMEOUT_MS),
+          }
+        )
+        const catalog = environments.find(device => device.id === String(deviceRecordId))
+        return catalog?.models.some(model => model.runtime === 'codex' && model.is_default) === true
+      },
+      true,
+      `Executor ${deviceRecordId} must publish its default Codex model before disconnecting`,
+      WORKBENCH_READY_TIMEOUT_MS
+    )
   }
 
   async seedCloudProtocolModels() {
@@ -1693,6 +1728,24 @@ class RealCloudEnvironment {
       'offline',
       this.remoteDockerExecutorLogPath
     )
+  }
+
+  async resumeRemoteDockerExecutor() {
+    assert.equal(this.remoteDockerExecutor, null, 'The remote executor must be offline')
+    const previous = await this.device(REMOTE_DOCKER_DEVICE_ID)
+    assert.ok(previous?.runtime_instance_id, 'The remote executor must retain its installation')
+    this.remoteDockerExecutor = await this.spawnExecutor(
+      this.remoteDockerExecutorEnv,
+      this.remoteDockerExecutorLogPath
+    )
+    const current = await this.waitForDeviceStatus(
+      REMOTE_DOCKER_DEVICE_ID,
+      'online',
+      this.remoteDockerExecutorLogPath
+    )
+    assert.equal(current.runtime_instance_id, previous.runtime_instance_id)
+    assert.equal(current.id, previous.id)
+    return current
   }
 
   async waitForWorkspaceRemoved(workspacePath) {

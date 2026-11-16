@@ -6,7 +6,6 @@ import {
   isTerminalRuntimeEvent,
   RuntimeTaskLifecycleProjection,
   runtimeTaskKey,
-  shouldReloadRuntimeWork,
 } from './runtimeTaskLifecycle'
 
 const address: RuntimeTaskAddress = {
@@ -81,14 +80,6 @@ describe('RuntimeTaskLifecycleProjection', () => {
   it('recognizes native task lifecycle start events as running', () => {
     expect(isRunningRuntimeEvent('runtime.task.started')).toBe(true)
     expect(isRunningRuntimeEvent('runtime.task.status')).toBe(true)
-  })
-
-  it('invalidates work for unknown tasks and canonical lifecycle changes', () => {
-    expect(shouldReloadRuntimeWork('response.output_text.delta', false)).toBe(true)
-    expect(shouldReloadRuntimeWork('response.created', true)).toBe(true)
-    expect(shouldReloadRuntimeWork('response.completed', true)).toBe(true)
-    expect(shouldReloadRuntimeWork('runtime.task.title.updated', true)).toBe(true)
-    expect(shouldReloadRuntimeWork('response.output_text.delta', true)).toBe(false)
   })
 })
 

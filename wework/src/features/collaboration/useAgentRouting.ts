@@ -4,6 +4,7 @@ import {
   policyModels,
   runnerModelKey,
   cloudRunnerModels,
+  runnerSupportsModel,
   type AgentExecutionPolicy,
   type AgentModelPolicy,
   type RunnerEnvironment,
@@ -24,6 +25,8 @@ interface RoutingDraft {
   executionPolicy: AgentExecutionPolicy | null
   modelMode: 'fixed' | 'user_select'
   model: RunnerModelIdentity | null
+  /** The fixed model came from a saved policy and may be hidden from the catalog. */
+  modelPersisted: boolean
   initializeModel: boolean
   unchanged: boolean
 }
@@ -74,6 +77,7 @@ export function useAgentRouting(
     executionPolicy: creation ? { mode: 'project_pool' } : null,
     modelMode: 'fixed',
     model: null,
+    modelPersisted: false,
     initializeModel: creation,
     unchanged: false,
   }))
@@ -85,6 +89,7 @@ export function useAgentRouting(
         unchanged: false,
         // A device's native identity cannot be carried to another device.
         model: current.model?.source === 'cloud' ? current.model : null,
+        modelPersisted: current.model?.source === 'cloud' ? current.modelPersisted : false,
       }))
     },
     [setDraft]
@@ -95,6 +100,7 @@ export function useAgentRouting(
       setDraft(current => ({
         ...current,
         modelMode: mode,
+        modelPersisted: false,
         initializeModel: false,
         unchanged: false,
       }))
@@ -104,7 +110,13 @@ export function useAgentRouting(
   const setModel = useCallback(
     (model: RunnerModelIdentity | null) => {
       logModelLoading(traceId, 'agent.model_selected', { selected: model !== null })
-      setDraft(current => ({ ...current, model, initializeModel: false, unchanged: false }))
+      setDraft(current => ({
+        ...current,
+        model,
+        modelPersisted: false,
+        initializeModel: false,
+        unchanged: false,
+      }))
     },
     [setDraft, traceId]
   )
@@ -237,6 +249,14 @@ export function useAgentRouting(
   const { modelMode, model } = initializedDraft
   const modelAvailable =
     model !== null && models.some(item => runnerModelKey(item) === runnerModelKey(model))
+  // A saved cloud model is supported when any merged candidate for the policy
+  // supports its runtime. For fixed policies the inventory may omit runtimes
+  // that the native catalog reveals, so validate against the merged candidates
+  // instead of the raw inventory entry.
+  const persistedModelSupported =
+    draft.modelPersisted &&
+    model !== null &&
+    candidates.some(environment => runnerSupportsModel(environment, model))
   const modelPolicy: AgentModelPolicy | null =
     modelMode === 'user_select' ? { mode: 'user_select' } : model ? { mode: 'fixed', model } : null
   const validEnvironment =
@@ -247,6 +267,7 @@ export function useAgentRouting(
         executionPolicy: policy ?? null,
         modelMode: modelPolicy?.mode ?? 'fixed',
         model: modelPolicy?.model ?? null,
+        modelPersisted: modelPolicy?.mode === 'fixed' && modelPolicy.model?.source === 'cloud',
         initializeModel: false,
         unchanged: true,
       })
@@ -281,9 +302,11 @@ export function useAgentRouting(
     nativeLoading,
     error,
     modelAvailable,
+    persistedModelSupported,
     valid:
       (!activated && draft.unchanged && executionPolicy !== null && modelPolicy !== null) ||
-      (validEnvironment && (modelMode === 'user_select' || modelAvailable)),
+      (validEnvironment &&
+        (modelMode === 'user_select' || modelAvailable || persistedModelSupported)),
     load,
   }
 }

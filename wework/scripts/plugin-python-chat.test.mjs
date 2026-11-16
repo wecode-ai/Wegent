@@ -26,7 +26,7 @@ test.each([false, true])(
     const history = []
     const respond = async () => {
       const body = {
-        tools: exec ? [] : [{ name: 'exec_command' }, { name: 'write_stdin' }],
+        ...(exec ? {} : { tools: [{ name: 'exec_command' }, { name: 'write_stdin' }] }),
         input: [
           { role: 'user', content: 'WEWORK_PLUGIN_PYTHON_CHAT Wework Python plugin execution:' },
           ...(exec

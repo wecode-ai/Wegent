@@ -11,6 +11,20 @@ from llama_index.core.base.embeddings.base import BaseEmbedding
 from pydantic import PrivateAttr
 
 
+def parent_insert_request(collection_name, rows, partition_name=None, **kwargs):
+    """Use the actual SDK codec for the parent's auto-ID collection schema."""
+    from pymilvus import DataType
+    from pymilvus.client.prepare import Prepare
+
+    fields = [
+        {"name": "id", "type": DataType.INT64, "is_primary": True, "auto_id": True},
+        {"name": "vector", "type": DataType.FLOAT_VECTOR, "params": {"dim": 1}},
+    ]
+    return Prepare.row_insert_param(
+        collection_name, rows, partition_name, fields, [], enable_dynamic=True
+    )
+
+
 class StubEmbeddingModel(BaseEmbedding):
     """Embedding model with an explicit declared-dimension contract."""
 

@@ -8,6 +8,7 @@ import { promisify } from 'node:util'
 import { requestExecutor } from './executor-rpc.mjs'
 import { storyUntil } from './stand-in-source-story-evidence.mjs'
 import { seedCollectionTimeout } from './stand-in-collection-timeout.mjs'
+import { verifyCollectionLockRecovery } from './stand-in-collection-lock.mjs'
 import {
   openStandInActivity,
   verifyStandInProfileNavigation,
@@ -39,6 +40,8 @@ export function createDirectRecoveryVerification(options) {
   let active = false
   let coordinatorCalls = 0
   let workCalls = 0
+  let collectionLockCalls = 0
+  const resultDeliveries = []
   let round = 0
   let dispatchBatch = false
   const rpc = (control, method, params) =>
@@ -148,6 +151,17 @@ export function createDirectRecoveryVerification(options) {
       if (isReplyPredictionRequest(body)) return false
       const input = JSON.stringify(body.input ?? [])
       let events = delegatedTaskResultEvents(body)
+      const latestUser = (body.input ?? []).filter(item => item.role === 'user').at(-1)
+      const deliveredTask = JSON.stringify(latestUser?.content ?? '').match(
+        /Wework delegated task result:.*?taskId=([^,\s]+)/
+      )?.[1]
+      if (events && deliveredTask) {
+        resultDeliveries.push({
+          taskId: deliveredTask,
+          model: body.model,
+          effort: body.reasoning?.effort,
+        })
+      }
       if (!events && input.includes('Review this silent intake batch')) {
         coordinatorCalls++
         const read = `${MARKER}-read-${round}`
@@ -177,6 +191,9 @@ export function createDirectRecoveryVerification(options) {
             toolCallId: ready ? ignore : read,
           }).events
         }
+      } else if (!events && input.includes(`${MARKER}-collection-lock`)) {
+        collectionLockCalls++
+        events = [assistantMessage(`${MARKER}_COLLECTION_LOCK_RECOVERED`)]
       } else if (!events && input.includes(MARKER)) {
         if (dispatchBatch) {
           const fresh = JSON.stringify(
@@ -208,6 +225,16 @@ export function createDirectRecoveryVerification(options) {
       const catalog = await rpc(control, 'runtime.runner.catalog', {})
       const model = catalog.models.find(item => item.runtime === 'codex' && item.is_default)
       assert.ok(model)
+      assert.equal(model.local_model_id, 'gpt-5.6-luna')
+      assert.equal(model.default_reasoning_effort, 'none')
+      assert.deepEqual(model.supported_reasoning_efforts, [])
+      for (const key of ['reasoning', 'reasoningEffort']) {
+        assert.equal(
+          initial.primary?.modelOptions?.[key],
+          undefined,
+          'The regression must inherit the catalog default without an explicit effort'
+        )
+      }
       await control.command('seedLocalProject', 'body', {
         value: JSON.stringify({ projectKey: MARKER, name: MARKER, path: options.workspacePath }),
       })
@@ -365,6 +392,27 @@ export function createDirectRecoveryVerification(options) {
           options.modelResponseTimeoutMs,
           'The primary conversation must report the selected batch result before archiving its source'
         )
+        const deliveries = resultDeliveries.filter(delivery => ids.includes(delivery.taskId))
+        assert.ok(
+          deliveries.length > 0,
+          'A real source result must reach the native model with effort none'
+        )
+        for (const delivery of deliveries) {
+          assert.equal(delivery.model, 'gpt-5.6-luna')
+          assert.equal(
+            delivery.effort,
+            'none',
+            'The native model request must preserve the stand-in catalog default none during result delivery'
+          )
+        }
+        await verifyCollectionLockRecovery({
+          database,
+          rpc: (method, params) => rpc(control, method, params),
+          root,
+          userId: USER,
+          timeoutMs: options.modelResponseTimeoutMs,
+        })
+        assert.equal(collectionLockCalls, 1, 'The recovered all-contact message executes once')
         await rpc(control, 'runtime.tasks.archive', { taskId: direct.taskId })
         await control.command('clickWhenEnabled', '[data-testid="personal-stand-in-button"]')
         await openStandInActivity(control)
@@ -391,6 +439,7 @@ export function createDirectRecoveryVerification(options) {
           '[stand-in-direct-recovery]',
           JSON.stringify({
             directWorks: workCalls,
+            collectionLockCalls,
             coordinatorRequests: coordinatorCalls,
             nativeSessionRecovered: true,
             nativeSessionReused: true,
@@ -409,7 +458,7 @@ export function createDirectRecoveryVerification(options) {
       }
     },
     diagnostics() {
-      return { coordinatorCalls, workCalls, round }
+      return { coordinatorCalls, workCalls, collectionLockCalls, round }
     },
   }
 }

@@ -1,9 +1,10 @@
 import assert from 'node:assert/strict'
-import { writeFile } from 'node:fs/promises'
+import { mkdir, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import {
   ACTIVE_COMPOSER_SELECTOR,
   ACTIVE_WORKBENCH_SELECTOR,
+  MODEL_API_KEY,
   createSingleRootLocalProject,
   withTimeout,
 } from '../modules/shared.mjs'
@@ -231,6 +232,25 @@ export function createDesktopScenario(options) {
         const catalog = await rpc('runtime.runner.catalog', {})
         const model = catalog.models.find(model => model.runtime === 'codex' && model.is_default)
         assert.ok(model, 'The configured Codex model is missing from the runner catalog')
+        // A backend Agent owns its provider configuration. The desktop catalog
+        // is not permission to inherit another native Home's credentials.
+        const namedHome = join(
+          options.homePath,
+          '.wegent/workbench/agents/native-lifecycle-user/default/native-lifecycle-agent'
+        )
+        await mkdir(namedHome, { recursive: true })
+        await writeFile(
+          join(namedHome, 'config.toml'),
+          [
+            `model_provider=${JSON.stringify(model.provider)}`,
+            `[model_providers.${JSON.stringify(model.provider)}]`,
+            'name="Lifecycle fixture model service"',
+            `base_url="http://127.0.0.1:${process.env.WEWORK_E2E_MODEL_SERVER_PORT}/v1"`,
+            `experimental_bearer_token=${JSON.stringify(MODEL_API_KEY)}`,
+            'wire_api="responses"',
+            '',
+          ].join('\n')
+        )
         const modelConfig = {
           model: 'openai',
           model_id: model.local_model_id,

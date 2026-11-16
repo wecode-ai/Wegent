@@ -5,8 +5,8 @@
 """Run real media-hosting E2E outside pytest's service-mocking conftest.
 
 CI supplies dedicated MySQL, Redis, MinIO and the current Rust example binary.
-Only the remote video model is simulated; its HTTP handler actually downloads
-all reference media. Chat and MCP run through the public hybrid listener.
+Only the remote models are simulated. Video references are downloaded from
+storage, and Chat and MCP run through the public hybrid listener.
 """
 
 import json
@@ -16,10 +16,11 @@ import unittest
 
 from media_hosting.fixture import REPORT, HostingFixture
 from media_hosting.generation_cases import GenerationCases
+from media_hosting.image_cases import ImageCases
 from media_hosting.upload_cases import UploadCases
 
 
-class AttachmentMediaHosting(UploadCases, GenerationCases, HostingFixture):
+class AttachmentMediaHosting(UploadCases, GenerationCases, ImageCases, HostingFixture):
     pass
 
 
@@ -36,7 +37,7 @@ if __name__ == "__main__":
         "errors": len(result.errors),
         "skipped": len(result.skipped),
         "success": result.wasSuccessful()
-        and result.testsRun == 11
+        and result.testsRun == 13
         and not result.skipped,
     }
     (REPORT / "result.json").write_text(json.dumps(report, indent=2) + "\n")

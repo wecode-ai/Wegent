@@ -548,8 +548,14 @@ vi.mock('@/config/runtime', () => ({
   stripAppBasePath: (path: string) => path,
 }))
 
-vi.mock('@/api/http', () => ({
-  createHttpClient: vi.fn(() => ({})),
+vi.mock('@/api/http', async importOriginal => ({
+  ...(await importOriginal<typeof import('@/api/http')>()),
+  createHttpClient: vi.fn(() => ({
+    get: vi.fn(async (path: string) => {
+      if (path.startsWith('/v1/personal-issues?')) return { items: [], next_cursor: null }
+      throw new Error(`Unexpected HTTP client request: ${path}`)
+    }),
+  })),
 }))
 
 vi.mock('@/api/devices', () => ({
@@ -1100,6 +1106,7 @@ describe('DesktopWorkbenchLayout', () => {
       projects: [{ id: 1, name: 'github_wegent', tasks: [] }],
       devices: [],
       runtimeWork: null,
+      runtimeWorkLoad: { phase: 'loading', error: null },
       currentProject: null,
       currentRuntimeTask: null,
       standaloneDeviceId: null,
@@ -1509,6 +1516,8 @@ describe('DesktopWorkbenchLayout', () => {
             address
           )
           return {
+            selectionResolved: Boolean(taskSelection),
+            selectionReady: true,
             taskSelection,
             selectedModel: taskModel,
             activeModel: taskModel,
@@ -1688,6 +1697,7 @@ describe('DesktopWorkbenchLayout', () => {
         projects: state.projects,
         devices: state.devices,
         runtimeWork: state.runtimeWork,
+        runtimeWorkLoad: state.runtimeWorkLoad,
         standaloneDeviceId: state.standaloneDeviceId,
         selectedDeviceWorkspaceId: state.selectedDeviceWorkspaceId,
         pendingProjectWorkspaceProjectId: state.pendingProjectWorkspaceProjectId,
@@ -2125,6 +2135,16 @@ describe('DesktopWorkbenchLayout', () => {
 
     expect(screen.getByTestId('cloud-project-header')).toHaveTextContent(project.name)
     expect(screen.getByTestId('board-view-editor')).toBeInTheDocument()
+  })
+
+  test('keeps sibling dialog identities distinct when dialogs are closed', () => {
+    const errors = vi.spyOn(console, 'error')
+    try {
+      render(<DesktopWorkbenchLayout {...baseProps} />)
+      expect(errors.mock.calls.filter(args => String(args[0]).includes('same key'))).toEqual([])
+    } finally {
+      errors.mockRestore()
+    }
   })
 
   test('returns to the previous page after opening settings through direct navigation', async () => {
@@ -2860,6 +2880,20 @@ describe('DesktopWorkbenchLayout', () => {
             models: [harnessTestModel],
             selectedModel,
             selectedModelOptions: { reasoning_effort: 'high' },
+            resolveRuntimeTaskModelSelection: () => ({
+              selectionResolved: true,
+              selectionReady: true,
+              taskSelection: selectedModel
+                ? {
+                    modelName: selectedModel.name,
+                    modelType: selectedModel.type,
+                    options: { reasoning_effort: 'high' },
+                  }
+                : null,
+              selectedModel,
+              activeModel: selectedModel,
+              selectedModelOptions: { reasoning_effort: 'high' },
+            }),
           }}
           onCancelRuntimePaneTask={onCancelRuntimePaneTask}
           onForkCurrentRuntimeTask={onForkCurrentRuntimeTask}
@@ -4625,13 +4659,17 @@ describe('DesktopWorkbenchLayout', () => {
     expect(closeButton.parentElement).toHaveClass(
       'absolute',
       'right-1',
-      'opacity-0',
+      'opacity-100',
+      'md:opacity-0',
+      '[@media(pointer:coarse)]:opacity-100',
       'group-hover/tab:opacity-100',
       'focus-within:opacity-100'
     )
     expect(closeButton).toHaveClass(
-      'h-[18px]',
-      'w-[18px]',
+      'h-11',
+      'w-11',
+      'md:h-6',
+      'md:w-6',
       'rounded-full',
       'hover:bg-text-primary/70',
       'hover:text-background'
@@ -5222,13 +5260,17 @@ describe('DesktopWorkbenchLayout', () => {
     expect(closeButton.parentElement).toHaveClass(
       'absolute',
       'right-1',
-      'opacity-0',
+      'opacity-100',
+      'md:opacity-0',
+      '[@media(pointer:coarse)]:opacity-100',
       'group-hover/tab:opacity-100',
       'focus-within:opacity-100'
     )
     expect(closeButton).toHaveClass(
-      'h-[18px]',
-      'w-[18px]',
+      'h-11',
+      'w-11',
+      'md:h-6',
+      'md:w-6',
       'rounded-full',
       'hover:bg-text-primary/70',
       'hover:text-background'
@@ -6714,6 +6756,25 @@ describe('DesktopWorkbenchLayout', () => {
       'data-embedded-browser-label',
       'workspace-browser-runtime-b'
     )
+  })
+
+  test('reveals the workbench when its initial task list fails without claiming list readiness', async () => {
+    runtimeMocks.electron = true
+    render(
+      <DesktopWorkbenchLayout
+        {...baseProps}
+        state={{
+          ...baseProps.state,
+          runtimeWork: null,
+          runtimeWorkLoad: { phase: 'error', error: 'Local executor is unavailable' },
+        }}
+      />
+    )
+    await waitFor(() => {
+      expect(desktopHostMocks.invoke).toHaveBeenCalledWith('renderer.startupReady', {
+        source: 'task-list-error',
+      })
+    })
   })
 
   test('reveals the Electron startup window once the task list is ready', async () => {

@@ -3,7 +3,7 @@ import '@/i18n'
 import { render, screen, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import type { ComponentProps } from 'react'
-import { describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { TodoEditor } from './TodoEditor'
 
 const item = {
@@ -65,6 +65,16 @@ function editor(overrides: Partial<ComponentProps<typeof TodoEditor>> = {}) {
 }
 
 describe('Issue execution lists', () => {
+  beforeEach(() =>
+    vi.stubGlobal(
+      'IntersectionObserver',
+      class {
+        observe() {}
+        disconnect() {}
+      }
+    )
+  )
+  afterEach(() => vi.unstubAllGlobals())
   it('previews two of nine tasks and expands inside the task section with keyboard support', async () => {
     const user = userEvent.setup()
     const onCreateTask = vi.fn()

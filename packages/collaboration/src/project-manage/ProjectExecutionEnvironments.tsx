@@ -604,7 +604,7 @@ export function ProjectExecutionEnvironments({
         sharedDuringAdd
           ? translate(
               'todo.execution_environment_shared_add_failed',
-              '环境已共享到空间，但添加到项目失败：{{reason}}。请重试添加。',
+              '环境已共享到分组，但添加到项目失败：{{reason}}。请重试添加。',
               { reason }
             )
           : sharing
@@ -721,7 +721,7 @@ export function ProjectExecutionEnvironments({
               ? 'todo.workspace_execution_environments_intro'
               : 'todo.project_execution_environments_intro',
             isWorkspaceScope
-              ? '管理共享给空间内项目的执行环境。'
+              ? '管理共享给分组内项目的执行环境。'
               : '选择此项目可以使用的执行环境，项目目录会在首次运行时自动准备。'
           )}
         </p>

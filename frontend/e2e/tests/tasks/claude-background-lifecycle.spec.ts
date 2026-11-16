@@ -1,7 +1,15 @@
+import { readFile } from 'node:fs/promises'
 import { APIRequestContext } from '@playwright/test'
 import { test, expect, EXECUTOR_USER, executorMockUrl } from '../../fixtures/executor-test'
 import { createApiClient, createBackendRequestHeaders } from '../../utils/api-client'
-import { collectTaskToolCalls, extractTaskAnswer } from '../../utils/provider-native-test-support'
+import {
+  clearToolScenario,
+  collectTaskToolCalls,
+  configureToolScenario,
+  extractTaskAnswer,
+  getTask,
+  waitForTaskTerminal,
+} from '../../utils/provider-native-test-support'
 
 const API_URL = process.env.E2E_API_URL || 'http://localhost:8000'
 const MOCK_URL = executorMockUrl()
@@ -10,7 +18,11 @@ const EXECUTOR_IMAGE =
   process.env.E2E_CLAUDE_EXECUTOR_IMAGE || 'wegent/e2e-claudecode-executor:latest'
 const INHERITED_CEILING_MS = 500
 
-type Capture = { kind: string; timestamp: number; body: { messages: unknown[] } }
+type Capture = {
+  kind: string
+  timestamp: number
+  body: { messages: unknown[]; system?: unknown }
+}
 type TaskDetail = {
   status: string
   model_id?: string
@@ -27,15 +39,18 @@ type TaskDetail = {
 test.describe('Real Claude background subagent lifecycle', () => {
   test.describe.configure({ timeout: 180_000 })
 
-  for (const mode of ['complete', 'stop'] as const) {
-    test(`background subagent ${mode === 'complete' ? 'outlives the inherited ceiling and completes' : 'stopped by the parent cannot complete the task'}`, async ({
-      page,
-      request,
-    }, testInfo) => {
-      const model = `e2e-claude-bg-${mode}-${Date.now()}`
+  for (const scenarioName of ['complete', 'stop', 'coordinate'] as const) {
+    const mode = scenarioName === 'stop' ? 'stop' : 'complete'
+    const title =
+      scenarioName === 'coordinate'
+        ? 'Web coordinate chat runs a configured team member as a Claude subagent'
+        : `background subagent ${mode === 'complete' ? 'outlives the inherited ceiling and completes' : 'stopped by the parent cannot complete the task'}`
+    test(title, async ({ page, request }, testInfo) => {
+      const model = `e2e-claude-bg-${scenarioName}-${Date.now()}`
       const shellName = `${model}-shell`
       const botName = `${model}-bot`
       const teamName = `${model}-team`
+      const workerName = scenarioName === 'coordinate' ? `${model}-worker` : undefined
       const login = await createApiClient(request).login(
         EXECUTOR_USER.username,
         EXECUTOR_USER.password,
@@ -45,11 +60,19 @@ test.describe('Real Claude background subagent lifecycle', () => {
       const headers = createBackendRequestHeaders(login.data!.access_token)
       let taskId: number | undefined
       try {
+        const { teamId, subagentType } = await createAgent(
+          request,
+          headers,
+          model,
+          shellName,
+          botName,
+          teamName,
+          workerName
+        )
         const configured = await request.post(`${MOCK_URL}/claude-background-scenarios`, {
-          data: { model, mode },
+          data: { model, mode, subagentType },
         })
         expect(configured.ok(), await configured.text()).toBe(true)
-        const teamId = await createAgent(request, headers, model, shellName, botName, teamName)
         await page.addInitScript(id => {
           localStorage.setItem('user_onboarding_completed', 'true')
           localStorage.setItem('wegent_last_team_id', String(id))
@@ -110,6 +133,10 @@ test.describe('Real Claude background subagent lifecycle', () => {
           expect(scenario.childFinished).toBe(true)
           const parentWaiting = scenario.requests.find(capture => capture.kind === 'parent-1')!
           const childDone = scenario.requests.find(capture => capture.kind === 'child-1')!
+          if (workerName) {
+            expect(subagentType).toBeTruthy()
+            expect(JSON.stringify(childDone.body.system)).toContain(`TEAM_MEMBER_${workerName}`)
+          }
           expect(childDone.timestamp - parentWaiting.timestamp).toBeGreaterThan(
             INHERITED_CEILING_MS
           )
@@ -135,6 +162,7 @@ test.describe('Real Claude background subagent lifecycle', () => {
         for (const [kind, name] of [
           ['teams', teamName],
           ['bots', botName],
+          ...(workerName ? [['bots', workerName]] : []),
           ['models', model],
         ]) {
           const removed = await request.delete(
@@ -176,7 +204,7 @@ test.describe('Real Claude background subagent lifecycle', () => {
         data: { model, mode: 'large-output' },
       })
       expect(configured.ok(), await configured.text()).toBe(true)
-      const teamId = await createAgent(request, headers, model, shellName, botName, teamName)
+      const { teamId } = await createAgent(request, headers, model, shellName, botName, teamName)
       await page.addInitScript(id => {
         localStorage.setItem('user_onboarding_completed', 'true')
         localStorage.setItem('wegent_last_team_id', String(id))
@@ -294,14 +322,162 @@ test.describe('Real Claude background subagent lifecycle', () => {
   })
 })
 
+test('cloud Claude registers downloadable artifacts before new and reused turns finish', async ({
+  page,
+  request,
+  executorAccount,
+}) => {
+  test.setTimeout(120_000)
+  const model = `e2e-cloud-artifact-${crypto.randomUUID().slice(0, 12)}`
+  const shell = `${model}-shell`
+  const bot = `${model}-bot`
+  const team = `${model}-team`
+  const token = executorAccount.token
+  const headers = createBackendRequestHeaders(token)
+  let taskId: number | undefined
+  let executorName: string | undefined
+  const cleanup: Array<() => Promise<unknown>> = []
+
+  try {
+    const { teamId } = await createAgent(request, headers, model, shell, bot, team)
+    await page.addInitScript(id => {
+      localStorage.setItem('user_onboarding_completed', 'true')
+      localStorage.setItem('wegent_last_team_id', String(id))
+      localStorage.setItem('wegent_last_team_id_chat', String(id))
+    }, teamId)
+    await page.goto(`/chat?teamId=${teamId}`, { waitUntil: 'domcontentloaded' })
+    const selector = page.getByTestId('model-selector')
+    await expect(selector).toBeEnabled()
+    await selector.click()
+    await page.getByTestId('model-cascade-search-input').fill(model)
+    await page.getByTestId(`model-option-${model}`).click()
+
+    for (const turn of [1, 2]) {
+      const prompt = `Create the test file for ${model}, turn ${turn}.`
+      const name = `report-${turn}.txt`
+      const content = `ARTIFACT_CONTENT_${model}_${turn}`
+      const marker = `ARTIFACT_REGISTERED_${model}_${turn}`
+      await configureToolScenario(request, prompt, [
+        {
+          toolCalls: [
+            {
+              toolName: 'Bash',
+              arguments: {
+                command: [
+                  'set -eu',
+                  `printf '%s' '${content}' > "$WEGENT_TASK_WORKSPACE/${name}"`,
+                  `"$WEGENT_EXECUTOR_BINARY" artifact declare --path '${name}'`,
+                  `printf '%s' '${marker}'`,
+                ].join('\n'),
+              },
+            },
+          ],
+        },
+        { responseContent: `Created ${name}.` },
+      ])
+      cleanup.push(() => clearToolScenario(request, prompt))
+      const gate = await request.post(`${MOCK_URL}/stream-rules`, {
+        data: { matchText: marker, responseContent: `Created ${name}.`, holdResponse: true },
+      })
+      expect(gate.ok(), await gate.text()).toBe(true)
+      cleanup.push(() =>
+        request.delete(`${MOCK_URL}/stream-rules`, { params: { matchText: marker } })
+      )
+
+      await page.getByTestId('message-input').fill(prompt)
+      await page.getByTestId('send-button').click()
+      await expect.poll(() => new URL(page.url()).searchParams.get('taskId')).not.toBeNull()
+      const id = Number(new URL(page.url()).searchParams.get('taskId'))
+      expect(id).toBeGreaterThan(0)
+      taskId ??= id
+      expect(id).toBe(taskId)
+
+      let artifactId: number | undefined
+      await expect
+        .poll(
+          async () => {
+            const detail = (await getTask(request, token, id)) as {
+              status: string
+              subtasks: Array<{
+                status: string
+                executor_name?: string
+                contexts?: Array<{ id: number; name: string; context_type: string }>
+              }>
+            }
+            const subtask = detail.subtasks.find(item =>
+              item.contexts?.some(
+                context =>
+                  context.name === name && context.context_type === 'remote_workspace_artifact'
+              )
+            )
+            if (!subtask) return undefined
+            expect(detail.status).toBe('RUNNING')
+            expect(subtask.status).toBe('RUNNING')
+            expect(subtask.executor_name).toBeTruthy()
+            executorName ??= subtask.executor_name
+            expect(subtask.executor_name).toBe(executorName)
+            artifactId = subtask.contexts!.find(context => context.name === name)!.id
+            return artifactId
+          },
+          { timeout: 35_000 }
+        )
+        .toBeGreaterThan(0)
+
+      const file = await request.get(
+        `${API_URL}/api/tasks/${id}/remote-workspace/artifacts/${artifactId}/file`,
+        { headers }
+      )
+      expect(file.ok(), await file.text()).toBe(true)
+      expect(await file.text()).toBe(content)
+      const released = await request.post(`${MOCK_URL}/stream-rules/release`, {
+        data: { matchText: marker },
+      })
+      expect(released.ok(), await released.text()).toBe(true)
+      await waitForTaskTerminal(token, id, /^COMPLETED$/)
+
+      const artifact = page.getByTestId(`remote-workspace-artifact-download-${artifactId}`)
+      await expect(artifact).toBeEnabled()
+      const [download] = await Promise.all([page.waitForEvent('download'), artifact.click()])
+      expect(download.suggestedFilename()).toBe(name)
+      expect(await download.failure()).toBeNull()
+      expect(await readFile(await download.path())).toEqual(Buffer.from(content))
+
+      await clearToolScenario(request, prompt)
+      const removed = await request.delete(`${MOCK_URL}/stream-rules`, {
+        params: { matchText: marker },
+      })
+      expect(removed.ok(), await removed.text()).toBe(true)
+    }
+  } finally {
+    for (const action of cleanup.reverse()) await action()
+    if (taskId) {
+      const removed = await request.delete(`${API_URL}/api/tasks/${taskId}`, { headers })
+      expect([200, 204, 404]).toContain(removed.status())
+    }
+    for (const [kind, name] of [
+      ['teams', team],
+      ['bots', bot],
+      ['models', model],
+    ]) {
+      const removed = await request.delete(`${API_URL}/api/v1/namespaces/default/${kind}/${name}`, {
+        headers,
+      })
+      expect([200, 204, 404]).toContain(removed.status())
+    }
+    const removed = await request.delete(`${API_URL}/api/shells/${shell}`, { headers })
+    expect([200, 204, 404]).toContain(removed.status())
+  }
+})
+
 async function createAgent(
   request: APIRequestContext,
   headers: Record<string, string>,
   model: string,
   shellName: string,
   botName: string,
-  teamName: string
-): Promise<number> {
+  teamName: string,
+  workerName?: string
+): Promise<{ teamId: number; subagentType?: string }> {
   const created = await request.post(`${API_URL}/api/v1/namespaces/default/models`, {
     headers,
     data: {
@@ -336,10 +512,44 @@ async function createAgent(
     data: { name: shellName, baseShellRef: 'ClaudeCode', baseImage: EXECUTOR_IMAGE },
   })
   expect(shell.ok(), await shell.text()).toBe(true)
+  const botId = await createBot(request, headers, model, shellName, botName)
+  const workerId = workerName
+    ? await createBot(request, headers, model, shellName, workerName)
+    : undefined
+  const team = await request.post(`${API_URL}/api/teams`, {
+    headers,
+    data: {
+      name: teamName,
+      bots: workerId
+        ? [
+            { bot_id: botId, bot_prompt: '', role: 'leader' },
+            { bot_id: workerId, bot_prompt: `TEAM_MEMBER_${workerName}`, role: 'worker' },
+          ]
+        : [{ bot_id: botId, bot_prompt: '', role: 'worker' }],
+      ...(workerId ? { workflow: { mode: 'coordinate' } } : {}),
+      bind_mode: ['chat'],
+      namespace: 'default',
+      is_active: true,
+      requires_workspace: false,
+    },
+  })
+  expect(team.ok(), await team.text()).toBe(true)
+  const teamId = (await team.json()).id
+  expect(teamId).toBeTruthy()
+  return { teamId, subagentType: workerId ? `${workerName}-${workerId}` : undefined }
+}
+
+async function createBot(
+  request: APIRequestContext,
+  headers: Record<string, string>,
+  model: string,
+  shellName: string,
+  name: string
+): Promise<number> {
   const bot = await request.post(`${API_URL}/api/bots`, {
     headers,
     data: {
-      name: botName,
+      name,
       shell_name: shellName,
       agent_config: { bind_model: model, bind_model_type: 'user' },
       inherit_base_capabilities: false,
@@ -351,19 +561,5 @@ async function createAgent(
   expect(bot.ok(), await bot.text()).toBe(true)
   const botId = (await bot.json()).id
   expect(botId).toBeTruthy()
-  const team = await request.post(`${API_URL}/api/teams`, {
-    headers,
-    data: {
-      name: teamName,
-      bots: [{ bot_id: botId, bot_prompt: '', role: 'worker' }],
-      bind_mode: ['chat'],
-      namespace: 'default',
-      is_active: true,
-      requires_workspace: false,
-    },
-  })
-  expect(team.ok(), await team.text()).toBe(true)
-  const teamId = (await team.json()).id
-  expect(teamId).toBeTruthy()
-  return teamId
+  return botId
 }

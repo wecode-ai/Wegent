@@ -298,12 +298,24 @@ def test_rejected_conditional_answer_write_rolls_back_inserted_evidence(monkeypa
 
     monkeypatch.setattr(storage, "_db_session", session)
     monkeypatch.setattr(
-        storage.task_stores.subtask_store, "get_by_id", lambda *a, **k: answer
+        storage.task_stores.subtask_store, "get_basic_by_id", lambda *a, **k: answer
     )
     monkeypatch.setattr(
         storage.task_stores.subtask_store,
         "update_fields_if_attempt",
         lambda *a, **k: False,
+    )
+    monkeypatch.setattr(
+        storage.task_stores.subtask_store,
+        "get_basic_by_id_for_update",
+        lambda *a, **k: answer,
+    )
+    monkeypatch.setattr(
+        storage.task_stores.task_store,
+        "get_by_id_for_update",
+        lambda *a, **k: SimpleNamespace(
+            id=7, kind="Task", is_active=1, json={"status": {"status": "RUNNING"}}
+        ),
     )
     monkeypatch.setattr(module, "require_source", lambda *a: None)
 

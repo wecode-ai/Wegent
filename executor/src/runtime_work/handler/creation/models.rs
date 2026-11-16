@@ -1,6 +1,33 @@
 //! Model credentials enter only through the authenticated desktop IPC channel.
 use super::*;
 
+pub(in super::super) fn codex_runtime_model_config(
+    name: &str,
+    provider: &Value,
+    inherited: &Value,
+) -> Value {
+    let mut config = inherited
+        .as_object()
+        .cloned()
+        .map(Value::Object)
+        .unwrap_or_else(|| json!({}));
+    config["model_id"] = json!(name);
+    config["model_provider"] = provider.clone();
+    if !config["runtime_config"].is_object() {
+        config["runtime_config"] = config
+            .get("runtimeConfig")
+            .filter(|runtime| runtime.is_object())
+            .cloned()
+            .unwrap_or_else(|| json!({}));
+    }
+    if !config["runtime_config"]["codex"].is_object() {
+        config["runtime_config"]["codex"] = json!({});
+    }
+    config["runtime_config"]["codex"]["use_user_config"] = json!(true);
+    config["runtime_config"]["codex"]["configured"] = json!(true);
+    config
+}
+
 impl RuntimeWorkRpcHandler {
     pub(in super::super) fn sync_creation_model_profiles(
         &self,
@@ -113,9 +140,10 @@ impl RuntimeWorkRpcHandler {
                 "Selected model is unavailable on this device; refresh the Wework model catalog"
             }));
         }
-        Ok(
-            json!({"model_id":name,"model_provider":models[0]["provider"],
-            "runtime_config":{"codex":{"use_user_config":true,"configured":true}}}),
-        )
+        Ok(codex_runtime_model_config(
+            name,
+            &models[0]["provider"],
+            &Value::Null,
+        ))
     }
 }

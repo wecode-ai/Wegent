@@ -2,7 +2,11 @@ import { randomUUID } from 'node:crypto'
 import type { Page } from '@playwright/test'
 import { test, expect, executorMockUrl } from '../../fixtures/executor-test'
 import { DataBuilders } from '../../fixtures/data-builders'
-import { createApiClient, type ApiResponse } from '../../utils/api-client'
+import {
+  createApiClient,
+  createBackendRequestHeaders,
+  type ApiResponse,
+} from '../../utils/api-client'
 import { modelToolDefinitions } from '../../utils/model-tool-discovery'
 
 const MOCK = executorMockUrl()
@@ -281,7 +285,9 @@ test('stops ClaudeCode through a cross-namespace Shell reference after refresh',
     let runtime: unknown
     await expect
       .poll(async () => {
-        const heartbeat = await request.get(`${MANAGER}/tasks/${taskId}/heartbeat`)
+        const heartbeat = await request.get(`${MANAGER}/tasks/${taskId}/heartbeat`, {
+          headers: createBackendRequestHeaders(),
+        })
         expect(heartbeat.ok(), await heartbeat.text()).toBe(true)
         runtime = await heartbeat.json()
         return runtime

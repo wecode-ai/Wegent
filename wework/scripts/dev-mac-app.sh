@@ -41,6 +41,10 @@ Environment:
   WEWORK_DEV_COMPONENT_RESOURCES   Component links. Defaults to the worktree dependency cache.
   WEWORK_DEV_CODEX_BINARY          Codex binary. Defaults to the repository-locked binary.
   WEWORK_DEV_DWS_BINARY            DWS binary. Defaults to the repository-prepared binary.
+  CARGO_TARGET_DIR                 Cargo cache location; component/worktree subdirectories are added.
+  WEGENT_CARGO_TARGET_ROOT         Override the default Cargo cache root.
+  WEGENT_DISABLE_SHARED_CARGO_TARGET
+                                   Set to 1 to build under the current worktree's target directory.
   WEWORK_DRY_RUN=1                 Print the resolved launch configuration without starting.
 EOF
 }
@@ -293,6 +297,7 @@ print_configuration() {
   echo "  VITE_WEGENT_BACKEND_URL=$VITE_WEGENT_BACKEND_URL"
   echo "  WEWORK_EXECUTOR_PATH=$WEWORK_EXECUTOR_PATH"
   echo "  WEGENT_EXECUTOR_BINARY=${WEGENT_EXECUTOR_BINARY:-<managed by command>}"
+  echo "  CARGO_TARGET_DIR=${CARGO_TARGET_DIR:-<Cargo default>}"
   echo "  Development data: $HOME/.wegent/development/workbench (shared by dev worktrees)"
   echo "  WEWORK_HARNESS_RUNTIME_ASSET_CACHE_ROOT=$WEWORK_HARNESS_RUNTIME_ASSET_CACHE_ROOT"
   echo "  WEWORK_HARNESS_RUNTIME_ROOT=$WEWORK_HARNESS_RUNTIME_ROOT"

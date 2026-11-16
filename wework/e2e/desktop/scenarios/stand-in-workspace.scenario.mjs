@@ -9,6 +9,7 @@ import {
   editProjectSource,
 } from '../modules/stand-in-flows.mjs'
 import assert from 'node:assert/strict'
+import { openCollaborationIssueCreation } from '../modules/collaboration-personal-home.mjs'
 import { execFile } from 'node:child_process'
 import { mkdir, readFile, rm, writeFile } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
@@ -367,7 +368,7 @@ export function createDesktopScenario({
       )
       assert.equal(saved.collaboration.enabled, false)
       await control.command('click', '[data-testid="workspace-tab-select-fixed-board"]')
-      await control.command('click', `${CONTENT} [data-testid="collaboration-primary-home"]`)
+      await openCollaborationIssueCreation(control, selector => `${CONTENT} ${selector}`)
       await control.command('waitFor', '[data-testid="collaboration-issue-project-trigger"]', {
         visible: true,
       })

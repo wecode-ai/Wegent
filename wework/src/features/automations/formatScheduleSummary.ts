@@ -4,8 +4,18 @@ import type { useTranslation } from '@/hooks/useTranslation'
 export function formatScheduleSummary(
   schedule: AutomationSchedule,
   locale: string,
-  t: ReturnType<typeof useTranslation>['t'],
-  timezone: string
+  t: ReturnType<typeof useTranslation>['t']
+): string {
+  const summary = baseScheduleSummary(schedule, locale, t)
+  return schedule.type === 'cron' && schedule.workdayOnly
+    ? `${summary} · ${t('todo.automation_workday_only_summary')}`
+    : summary
+}
+
+function baseScheduleSummary(
+  schedule: AutomationSchedule,
+  locale: string,
+  t: ReturnType<typeof useTranslation>['t']
 ): string {
   if (schedule.type === 'interval') {
     return locale.startsWith('zh')
@@ -16,7 +26,6 @@ export function formatScheduleSummary(
     return new Intl.DateTimeFormat(locale, {
       dateStyle: 'short',
       timeStyle: 'short',
-      timeZone: timezone,
     }).format(new Date(schedule.executeAt))
   }
   const parts = schedule.expression.trim().split(/\s+/)
@@ -28,7 +37,8 @@ export function formatScheduleSummary(
     parts[3] === '*'
   ) {
     const time = `${String(Number(parts[1])).padStart(2, '0')}:${String(Number(parts[0])).padStart(2, '0')}`
-    if (parts[4] === '1-5') return locale.startsWith('zh') ? `工作日 ${time}` : `Weekdays ${time}`
+    if (parts[4] === '1-5')
+      return locale.startsWith('zh') ? `周一至周五 ${time}` : `Monday–Friday ${time}`
     if (parts[4] === '*') return locale.startsWith('zh') ? `每天 ${time}` : `Daily ${time}`
     if (/^[0-7]$/.test(parts[4])) {
       const day = new Intl.DateTimeFormat(locale, {

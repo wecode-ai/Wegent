@@ -9,12 +9,13 @@ const [binary, directory, ...args] = process.argv.slice(2)
 const child = spawn(binary, args, { stdio: ['pipe', 'pipe', 'inherit'] })
 const pending = new Map()
 const timers = new Set()
+let input
 
 if (!args.includes('app-server')) {
   process.stdin.pipe(child.stdin)
   child.stdout.pipe(process.stdout)
 } else {
-  createInterface({ input: process.stdin })
+  input = createInterface({ input: process.stdin })
     .on('line', line => {
       const request = JSON.parse(line)
       if (request.id !== undefined && request.method)
@@ -65,8 +66,12 @@ child.once('error', error => {
   console.error(error.message)
   process.exitCode = 1
 })
-child.once('exit', (code, signal) => {
+child.once('close', (code, signal) => {
   for (const timer of timers) clearInterval(timer)
-  process.exit(code ?? (signal ? 1 : 0))
+  input?.close()
+  process.stdin.unpipe(child.stdin)
+  process.stdin.pause()
+  // Let Node drain forwarded output before exiting, including large CLI catalogs.
+  process.exitCode = code ?? (signal ? 1 : 0)
 })
 for (const signal of ['SIGTERM', 'SIGINT']) process.on(signal, () => child.kill(signal))

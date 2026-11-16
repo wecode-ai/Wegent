@@ -104,7 +104,8 @@ class StatusUpdatingEmitter(ResultEmitter):
         subtask_id: int,
         executor_name: Optional[str] = None,
         executor_namespace: Optional[str] = None,
-        expected_status: Optional[str] = None,
+        expected_status: str | tuple[str, ...] | None = None,
+        expected_device: tuple[int, str] | None = None,
         generation_id: Optional[str] = None,
     ):
         """Initialize the status updating emitter.
@@ -125,6 +126,7 @@ class StatusUpdatingEmitter(ResultEmitter):
         self._executor_name = executor_name
         self._executor_namespace = executor_namespace
         self._expected_status = expected_status
+        self._expected_device = expected_device
         self._generation_id = generation_id
         self._save_unconfirmed = False
         self._status_updated = False
@@ -151,6 +153,11 @@ class StatusUpdatingEmitter(ResultEmitter):
     def terminal_transition_lost(self) -> bool:
         """True when a terminal update was dropped because status changed."""
         return self._terminal_transition_lost
+
+    @property
+    def failure_handled(self) -> bool:
+        """Report whether the terminal update was persisted, deferred, or superseded."""
+        return self._status_updated or self._terminal_transition_lost
 
     def _resolve_owner_user_id(self) -> Optional[int]:
         from app.db.session import SessionLocal
@@ -656,6 +663,8 @@ class StatusUpdatingEmitter(ResultEmitter):
                 self._subtask_id,
                 type(exc).__name__,
             )
+            if self._generation_id is None:
+                raise
             return None
 
     async def _update_status_failed(
@@ -702,6 +711,11 @@ class StatusUpdatingEmitter(ResultEmitter):
                 executor_namespace=self._executor_namespace,
                 generation_id=self._generation_id,
                 expected_status=self._expected_status,
+                **(
+                    {"expected_device": self._expected_device}
+                    if self._expected_device is not None
+                    else {}
+                ),
             )
             if not self._accept_save(persisted):
                 return None
@@ -722,7 +736,7 @@ class StatusUpdatingEmitter(ResultEmitter):
                 self._subtask_id,
                 type(exc).__name__,
             )
-            return None
+            raise
 
     async def _update_status_cancelled(self) -> Optional[Dict[str, Any]]:
         """Update subtask and task status to CANCELLED.
@@ -764,7 +778,7 @@ class StatusUpdatingEmitter(ResultEmitter):
                 self._subtask_id,
                 type(exc).__name__,
             )
-            return None
+            raise
 
     def _accept_save(self, saved: AnswerSaveResult) -> bool:
         if saved:

@@ -122,6 +122,25 @@ export class HostPipeServer extends EventEmitter<HostPipeEvents> {
       this.protocolFailure(session, new Error('Desktop host request is malformed'))
       return
     }
+    const startedAt = performance.now()
+    const trace = (phase: 'received' | 'completed') => {
+      if (
+        process.env.VITE_WEWORK_E2E !== 'true' ||
+        process.env.WEWORK_E2E_HOST_PIPE_DIAGNOSTICS !== '1'
+      )
+        return
+      console.debug(
+        '[host-pipe-request]',
+        JSON.stringify({
+          at: new Date().toISOString(),
+          requestId: message.id,
+          capability: message.capability,
+          phase,
+          elapsedMs: Math.round(performance.now() - startedAt),
+        })
+      )
+    }
+    trace('received')
     try {
       const completions: HostCapabilityCompletion[] = []
       const result = await this.router.invoke(
@@ -170,6 +189,8 @@ export class HostPipeServer extends EventEmitter<HostPipeEvents> {
           details: normalized.details,
         },
       })
+    } finally {
+      trace('completed')
     }
   }
 

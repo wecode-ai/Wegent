@@ -529,7 +529,7 @@ export function WorkspaceProjectsHome<
 
         <section className="mt-8">
           <header className="mb-1 flex items-center text-sm font-semibold">
-            {host.translate("todo.home_all_spaces", "全部空间")}
+            {host.translate("todo.home_all_spaces", "全部分组")}
             <button
               type="button"
               data-testid="cloud-projects-home-manage"
@@ -556,7 +556,7 @@ export function WorkspaceProjectsHome<
         <p className="mt-5 text-xs text-text-muted">
           {host.translate(
             "todo.projects_home_footnote",
-            "本地空间保存在当前设备；云端空间可与项目成员共享任务、文件和交付。",
+            "本地分组保存在当前设备；云端分组可与项目成员共享任务、文件和交付。",
           )}
         </p>
       </div>

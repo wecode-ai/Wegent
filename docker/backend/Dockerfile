@@ -20,6 +20,7 @@ FROM rust-builder-base AS rust-builder-deps
 COPY backend-rs/Cargo.toml backend-rs/Cargo.lock ./
 COPY backend-rs/crates ./crates
 COPY shared/rust /app/shared/rust
+COPY shared/assets/calendars /app/shared/assets/calendars
 RUN mkdir src \
     && printf 'pub fn placeholder() {}\n' > src/lib.rs \
     && printf 'fn main() {}\n' > src/main.rs \

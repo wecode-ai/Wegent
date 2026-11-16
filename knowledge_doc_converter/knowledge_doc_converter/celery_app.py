@@ -81,3 +81,9 @@ def _start_metrics_server(**kwargs):
         from knowledge_doc_converter.core.metrics import start_metrics_server
 
         start_metrics_server(settings.PROMETHEUS_PORT, settings.PROMETHEUS_PATH)
+
+
+# Register task outcome observation without starting a sender.
+from shared.event_reporting.celery import install_task_logging  # noqa: E402
+
+install_task_logging()

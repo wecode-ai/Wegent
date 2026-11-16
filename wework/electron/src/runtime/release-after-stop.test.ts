@@ -69,7 +69,7 @@ async function fixture(protocol: number | false = 1) {
 }
 
 test('stopped preparation precedes the timed trial and admits only its matching package', async () => {
-  const { root, store, target, homes } = await fixture()
+  const { root, store, source, target, homes } = await fixture()
   vi.stubEnv('OPENAI_API_KEY', 'synthetic-not-forwarded')
   await expect(
     assertReleaseAfterStopReady(store, target, { weworkAfterStopPreparation: 1 })
@@ -87,6 +87,13 @@ test('stopped preparation precedes the timed trial and admits only its matching 
       { weworkAfterStopPreparation: 1 }
     )
   ).rejects.toThrow('bridge updater')
+  await store.confirm(target.id)
+  await atomicReleaseWrite(join(store.root, 'active'), source.id)
+  for (const protocol of [1, 2]) {
+    await expect(
+      assertReleaseAfterStopReady(store, source, { weworkAfterStopPreparation: protocol })
+    ).resolves.toBeUndefined()
+  }
 })
 
 test('a stopped hook can restart after failure without confirming or replacing its activation', async () => {

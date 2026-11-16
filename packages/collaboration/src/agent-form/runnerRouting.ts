@@ -27,6 +27,8 @@ export interface RunnerModel extends RunnerModelIdentity {
   local_model_id: string
   account_label: string
   is_default: boolean
+  default_reasoning_effort?: string | null
+  supported_reasoning_efforts?: string[] | null
 }
 
 export interface RunnerEnvironment {
@@ -187,6 +189,26 @@ export function policyModels(
 export interface RunnerSelection {
   execution_policy?: AgentExecutionPolicy
   model?: RunnerModelIdentity
+  recovery_from_environment_id?: string
+}
+
+/**
+ * A saved fixed cloud reference carries the full execution identity even when
+ * the admin has since hidden the model from the discovery catalog. The server
+ * still resolves and authorizes that persisted reference when the task runs,
+ * so discovery membership is not the authorization source for it.
+ */
+function isPersistedCloudReference(
+  modelPolicy: AgentModelPolicy,
+  model: RunnerModelIdentity
+): boolean {
+  const reference = model.cloud_model
+  return (
+    modelPolicy.mode === 'fixed' &&
+    model.source === 'cloud' &&
+    Boolean(reference?.name && reference.type && reference.namespace) &&
+    typeof reference?.resource_user_id === 'number'
+  )
 }
 
 /** Resolve a local execution using the same rules as the server queue. */
@@ -229,7 +251,12 @@ export function resolveRunnerSelection(input: {
     throw new Error('RUNNER_POLICY_FIXED: this agent has a fixed environment rule')
   }
   let candidates = policyEnvironments(input.environments, policy, true)
-  if (input.boundEnvironmentId)
+  const recovery =
+    !!input.boundEnvironmentId &&
+    !input.automatic &&
+    selection.recovery_from_environment_id === input.boundEnvironmentId &&
+    !candidates.some(item => item.id === input.boundEnvironmentId)
+  if (input.boundEnvironmentId && !recovery)
     candidates = candidates.filter(item => item.id === input.boundEnvironmentId)
   if (!candidates.length)
     throw new Error(
@@ -258,9 +285,13 @@ export function resolveRunnerSelection(input: {
   const selectedModel = runnerModelIdentity(model)
   if (model.source === 'native' && input.executionPolicy.mode !== 'fixed')
     throw new Error('RUNNER_MODEL_UNAVAILABLE: local models require a fixed environment')
+  const catalogCloudModel = (input.cloudModels ?? []).some(
+    item => runnerModelKey(item) === runnerModelKey(model!)
+  )
   if (
     model.source === 'cloud' &&
-    !(input.cloudModels ?? []).some(item => runnerModelKey(item) === runnerModelKey(model!))
+    !catalogCloudModel &&
+    !isPersistedCloudReference(input.modelPolicy, model)
   )
     throw new Error(
       'RUNNER_MODEL_UNAVAILABLE: the cloud model is unavailable or no longer authorized'
@@ -279,5 +310,6 @@ export function resolveRunnerSelection(input: {
         : selection.model
           ? 'execution_selection'
           : 'environment_default',
+    ...(recovery ? { recovery_from_environment_id: input.boundEnvironmentId } : {}),
   }
 }

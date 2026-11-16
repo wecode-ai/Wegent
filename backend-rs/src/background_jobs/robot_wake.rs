@@ -128,8 +128,15 @@ async fn routed_candidates(app: &AppState, row: &Execution) -> Result<BTreeSet<i
         if route["model"]["source"] == "cloud" {
             routing::require_cloud_model(app, row.assigner_user_id, &route["model"]).await?;
         }
-        let ids =
-            routing::candidates_for_snapshot(app, &row.cloud_project_id, agent, route).await?;
+        let ids = routing::candidates_for_snapshot(
+            app,
+            &row.cloud_project_id,
+            agent,
+            route,
+            row.assigner_user_id,
+            row.automatic(),
+        )
+        .await?;
         result = Some(match result {
             None => ids,
             Some(current) => current.intersection(&ids).copied().collect(),
@@ -139,7 +146,11 @@ async fn routed_candidates(app: &AppState, row: &Execution) -> Result<BTreeSet<i
     let issue = store::get(&app.mysql, "task", &row.loop_item_id)
         .await?
         .context("Issue unavailable")?;
-    if let Some(binding) = routing::issue_binding(app, &issue).await? {
+    if let Some(binding) = routing::issue_binding(app, &issue).await?
+        && !super::super::project::runner_recovery::original_session(row)
+        && !super::super::project::runner_recovery::permits_on(&mut &app.mysql, row, &binding)
+            .await?
+    {
         result.retain(|id| id.to_string() == binding);
     }
     Ok(result)

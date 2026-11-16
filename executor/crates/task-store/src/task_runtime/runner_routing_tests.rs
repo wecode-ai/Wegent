@@ -1,7 +1,7 @@
 use super::*;
 use tempfile::TempDir;
 
-fn setup() -> (
+pub(super) fn setup() -> (
     TempDir,
     LocalTaskStore,
     LoopItem,
@@ -324,13 +324,14 @@ fn queued_nested_runtime_payload_requires_catalog_before_claim() {
 
 #[test]
 fn native_claim_binds_issue_and_rechecks_removed_model_and_can_cancel() {
-    let (_directory, store, project, agent, issue, catalog) = setup();
+    let (_directory, store, project, agent, issue, mut catalog) = setup();
+    catalog["models"][0]["default_reasoning_effort"] = json!("low");
     let run = store
         .enqueue_execution(
             &project.id,
             &issue.id,
             &agent.id,
-            json!({"message":"First"}),
+            json!({"message":"First","modelOptions":{"reasoning":"high","speed":"fast"}}),
             None,
         )
         .unwrap();
@@ -348,6 +349,12 @@ fn native_claim_binds_issue_and_rechecks_removed_model_and_can_cancel() {
         payload["executionRequest"]["model_config"]["model_provider"],
         "test"
     );
+    assert_eq!(
+        payload["executionRequest"]["model_config"]["reasoning"]["effort"],
+        "high"
+    );
+    assert_eq!(payload["modelSelection"]["options"]["reasoning"], "high");
+    assert_eq!(payload["modelSelection"]["options"]["speed"], "fast");
     assert_eq!(
         payload["executionRequest"]["preload_skills"],
         json!(["review"])
@@ -799,12 +806,28 @@ fn group_automation_prompt_survives_manager_resume_after_a_member_round() {
         .unwrap();
     let member_execution = claim_prompt_execution(&store, &catalog);
     assert_eq!(member_execution.agent_id, member.id);
+    assert_eq!(
+        store
+            .get_task(&project.id, &issue.id)
+            .unwrap()
+            .assignee_agent_id
+            .as_deref(),
+        Some(member.id.as_str())
+    );
     store
         .complete_execution(member_execution.id, Some("Evidence checked"))
         .unwrap()
         .unwrap();
     let resumed = claim_prompt_execution(&store, &catalog);
     assert_eq!(resumed.agent_id, agent.id);
+    assert_eq!(
+        store
+            .get_task(&project.id, &issue.id)
+            .unwrap()
+            .assignee_agent_id
+            .as_deref(),
+        Some(agent.id.as_str())
+    );
     let payload = resumed.execution_payload.unwrap();
     let message = payload["message"].as_str().unwrap();
     assert!(message.starts_with(&format!("{context}\n\n<collaboration_round_results>")));

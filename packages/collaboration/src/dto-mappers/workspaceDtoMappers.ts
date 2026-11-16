@@ -69,6 +69,11 @@ export function mapWorkspaceTaskBindingDto(
     taskId: String(row.task_id ?? row.taskId ?? ""),
     taskTitle: nullableString(row.task_title ?? row.taskTitle),
     backendTaskId: nullableNumber(row.backend_task_id ?? row.backendTaskId),
+    ...((row.stand_in_pending ?? row.standInPending) == null
+      ? {}
+      : {
+          standInPending: (row.stand_in_pending ?? row.standInPending) === true,
+        }),
     humanAssignmentId: nullableString(
       row.human_assignment_id ?? row.humanAssignmentId,
     ),
@@ -252,6 +257,9 @@ export function mapCollaborationWorkspaceDto(
   const setupSteps =
     executionEnvironment.setup_steps ?? executionEnvironment.setupSteps;
   return {
+    ...(typeof row.is_system_default === "boolean"
+      ? { is_system_default: row.is_system_default }
+      : {}),
     id: String(row.id),
     location: "cloud",
     ...((row.owner_user_id ?? row.ownerUserId) === undefined

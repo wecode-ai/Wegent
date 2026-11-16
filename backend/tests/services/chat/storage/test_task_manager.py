@@ -44,6 +44,8 @@ def test_database_handler_updates_subtask_status_through_store():
         answer_generation_id=None,
     )
     handler = DatabaseHandler()
+    task = _build_existing_task(task_id=1385, user_id=7)
+    task.is_active = TaskResource.STATE_ACTIVE
 
     with (
         patch(
@@ -51,14 +53,22 @@ def test_database_handler_updates_subtask_status_through_store():
             return_value=_mock_db_session(db),
         ),
         patch(
-            "app.services.chat.storage.db.task_stores.subtask_store.get_by_id",
+            "app.services.chat.storage.db.task_stores.subtask_store.get_basic_by_id",
             return_value=subtask,
         ) as get_subtask_mock,
         patch(
             "app.services.chat.storage.db.task_stores.subtask_store.update_fields_if_attempt",
             return_value=True,
         ) as update_mock,
-        patch.object(handler, "_update_task_status_sync") as update_task_mock,
+        patch(
+            "app.services.chat.storage.db.task_stores.subtask_store.get_basic_by_id_for_update",
+            return_value=subtask,
+        ),
+        patch(
+            "app.services.chat.storage.db.task_stores.task_store.get_by_id_for_update",
+            return_value=task,
+        ),
+        patch.object(handler, "_update_task_status_in_session") as update_task_mock,
     ):
         handler._update_subtask_sync(
             subtask_id=1861,
@@ -67,7 +77,7 @@ def test_database_handler_updates_subtask_status_through_store():
         )
 
     get_subtask_mock.assert_called_once_with(db, subtask_id=1861)
-    update_task_mock.assert_called_once_with(1385, changed_subtask_id=1861)
+    update_task_mock.assert_called_once_with(db, task, 1861, terminal=True)
     update_kwargs = update_mock.call_args.kwargs
     assert update_kwargs["generation_id"] is None
     assert update_kwargs["from_statuses"] == (SubtaskStatus.PENDING,)
@@ -124,7 +134,9 @@ def test_database_handler_recomputes_task_status_from_subtask_store():
         task_id=1385,
         states=TaskResource.is_active_query(),
     )
-    list_subtasks_mock.assert_called_once_with(db, task_id=1385, owner_user_id=7)
+    list_subtasks_mock.assert_called_once_with(
+        db, task_id=1385, owner_user_id=7, include_contexts=False
+    )
     update_payload = update_task_mock.call_args.kwargs["payload"]
     assert update_payload["status"]["status"] == "COMPLETED"
     assert update_payload["status"]["progress"] == 100
@@ -170,7 +182,7 @@ def test_database_handler_auto_advance_uses_changed_subtask_status():
             return_value=[last_subtask],
         ),
         patch(
-            "app.services.chat.storage.db.task_stores.subtask_store.get_by_id",
+            "app.services.chat.storage.db.task_stores.subtask_store.get_basic_by_id",
             return_value=changed_subtask,
         ),
         patch(

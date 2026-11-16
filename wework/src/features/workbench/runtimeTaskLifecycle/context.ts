@@ -24,28 +24,33 @@ export function useRuntimeTaskLifecycleStoreSnapshot(
   return useSyncExternalStore(store.subscribe, store.getSnapshot, store.getSnapshot)
 }
 
-export function useRuntimeTaskLifecycle(
-  address: RuntimeTaskAddress | null | undefined
-): RuntimeTaskLifecycleSnapshot | null {
-  const store = useContext(RuntimeTaskLifecycleContext)
+export function useRuntimeTaskLifecycleResolver(explicitStore?: RuntimeTaskLifecycleStore) {
+  const contextualStore = useContext(RuntimeTaskLifecycleContext)
+  const store = explicitStore ?? contextualStore
   if (!store) {
     throw new Error('RuntimeTaskLifecycleProvider is required')
   }
   const snapshot = useRuntimeTaskLifecycleStoreSnapshot(store)
-  return store.selectTask(snapshot, address)
+  return useCallback(
+    (address: RuntimeTaskAddress | null | undefined) => store.selectTask(snapshot, address),
+    [snapshot, store]
+  )
+}
+
+export function useRuntimeTaskLifecycle(
+  address: RuntimeTaskAddress | null | undefined
+): RuntimeTaskLifecycleSnapshot | null {
+  return useRuntimeTaskLifecycleResolver()(address)
 }
 
 export function useRuntimeTaskSummaryResolver(
   runtimeWork: RuntimeWorkListResponse | null | undefined,
   explicitStore?: RuntimeTaskLifecycleStore
 ) {
-  const contextualStore = useContext(RuntimeTaskLifecycleContext)
-  const store = explicitStore ?? contextualStore
-  if (!store) throw new Error('RuntimeTaskLifecycleProvider is required')
-  const snapshot = useRuntimeTaskLifecycleStoreSnapshot(store)
+  const resolve = useRuntimeTaskLifecycleResolver(explicitStore)
   return useCallback(
     (address: RuntimeTaskAddress | null | undefined) =>
-      findRuntimeTask(runtimeWork, address) ?? store.selectTask(snapshot, address)?.task ?? null,
-    [runtimeWork, snapshot, store]
+      findRuntimeTask(runtimeWork, address) ?? resolve(address)?.task ?? null,
+    [runtimeWork, resolve]
   )
 }

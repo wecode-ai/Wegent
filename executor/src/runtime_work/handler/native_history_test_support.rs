@@ -10,6 +10,11 @@ pub(in crate::runtime_work::handler) fn install_native_history(
     next_cursor: Option<&str>,
 ) {
     fs::create_dir_all(root).unwrap();
+    fs::write(
+        root.join("bundled_models.json"),
+        crate::test_env::CODEX_BUNDLED_CATALOG,
+    )
+    .unwrap();
     let terminal_boundary = |turn: &Value| {
         matches!(
             turn["status"].as_str(),
@@ -98,13 +103,17 @@ pub(in crate::runtime_work::handler) fn install_native_history(
     [Console]::WriteLine((@{id=$request.id;error=$failure} | ConvertTo-Json -Depth 100 -Compress))
     continue
   }
+  $notificationFile = Join-Path $PSScriptRoot ($method + '.notifications.jsonl')
+  if (Test-Path $notificationFile) {
+    foreach ($notification in [IO.File]::ReadLines($notificationFile)) { [Console]::WriteLine($notification) }
+  }
   $result = ConvertFrom-Json ([IO.File]::ReadAllText((Join-Path $PSScriptRoot ($method + '.json'))))
   [Console]::WriteLine((@{id=$request.id;result=$result} | ConvertTo-Json -Depth 100 -Compress))
 }"#,
         )
         .unwrap();
         let binary = root.join("native-history.cmd");
-        fs::write(&binary, "@echo off\r\npowershell.exe -NoProfile -ExecutionPolicy Bypass -File \"%~dp0native-history.ps1\"\r\n").unwrap();
+        fs::write(&binary, "@echo off\r\nif \"%~1\"==\"debug\" (\r\n  type \"%~dp0bundled_models.json\"\r\n  exit /b 0\r\n)\r\npowershell.exe -NoProfile -ExecutionPolicy Bypass -File \"%~dp0native-history.ps1\"\r\n").unwrap();
         binary
     };
     handler.codex_app_server =

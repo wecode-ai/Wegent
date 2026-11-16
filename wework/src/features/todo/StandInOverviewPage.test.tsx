@@ -13,8 +13,13 @@ import '@/i18n'
 import { WORKSPACE_NAVIGATION_EVENT } from '@/lib/navigation'
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import type { CollaborationProject, SharedWorkspaceApi } from '@wegent/collaboration'
+import {
+  runnerModelKey,
+  type CollaborationProject,
+  type SharedWorkspaceApi,
+} from '@wegent/collaboration'
 import { expect, it, vi } from 'vitest'
+import { StandInConversation } from './StandInConversation'
 import { StandInOverviewPage } from './StandInOverviewPage'
 const menuMocks = vi.hoisted(() => ({ leave: vi.fn((action: () => void) => action()) }))
 vi.mock('@/features/automations/AutomationsPage', async () => {
@@ -48,20 +53,22 @@ function requestScheduledWork() {
 vi.mock('./StandInWorkConfirmation', () => ({ StandInWorkConfirmation: () => null }))
 
 vi.mock('./StandInConversation', () => ({
-  StandInConversation: ({
-    roleId,
-    draftRequest,
-    contentFooter,
-  }: {
-    roleId?: string
-    draftRequest?: { text: string }
-    contentFooter?: import('react').ReactNode
-  }) => (
-    <div data-testid="identity-conversation">
-      {roleId ?? 'primary'}
-      {draftRequest?.text}
-      {contentFooter}
-    </div>
+  StandInConversation: vi.fn(
+    ({
+      roleId,
+      draftRequest,
+      contentFooter,
+    }: {
+      roleId?: string
+      draftRequest?: { text: string }
+      contentFooter?: import('react').ReactNode
+    }) => (
+      <div data-testid="identity-conversation">
+        {roleId ?? 'primary'}
+        {draftRequest?.text}
+        {contentFooter}
+      </div>
+    )
   ),
 }))
 
@@ -116,7 +123,7 @@ async function renderLoadedOverview(props: ReturnType<typeof fixture>['props']) 
   render(<StandInOverviewPage {...props} />)
   try {
     await waitFor(() => expect(api.personalGet).toHaveBeenCalledTimes(2))
-    expect(await screen.findByRole('status')).toHaveTextContent('正在读取分身功能设置')
+    expect(await screen.findByRole('status')).toHaveTextContent('正在读取助理功能设置')
     expect(screen.queryByTestId('stand-in-onboarding')).not.toBeInTheDocument()
     expect(screen.queryByTestId('stand-in-overview-role-default')).not.toBeInTheDocument()
     expect(screen.queryByTestId('identity-conversation')).not.toBeInTheDocument()
@@ -338,7 +345,7 @@ it('reopens usage examples after onboarding without recreating a scheduled revie
   await openRoles()
   const user = userEvent.setup()
   await user.click(await navigationEntry('stand-in-guide-open'))
-  expect(await screen.findByRole('dialog', { name: '分身使用示例' })).toBeVisible()
+  expect(await screen.findByRole('dialog', { name: '助理使用示例' })).toBeVisible()
   expect(screen.getByTestId('stand-in-onboarding-example-daily_brief')).toBeVisible()
   expect(screen.queryByRole('checkbox')).not.toBeInTheDocument()
   expect(screen.getByTestId('stand-in-onboarding-example-weekly_review')).toBeVisible()
@@ -378,7 +385,7 @@ it('lists existing stand-ins without execution history and keeps project names s
   render(<StandInOverviewPage {...props} />)
   await openRoles()
   const row = await screen.findByTestId('stand-in-overview-role-default')
-  expect(within(row).getByText('默认分身')).toBeInTheDocument()
+  expect(within(row).getByText('默认助理')).toBeInTheDocument()
   expect(within(row).getByText('Downloads')).toBeInTheDocument()
   expect(row).toHaveTextContent('已连接 1 个项目')
   expect(row).toHaveTextContent('未开启')
@@ -387,26 +394,38 @@ it('lists existing stand-ins without execution history and keeps project names s
 
 it('opens settings for the selected stand-in and reflects its renamed identity', async () => {
   const first = { ...newStandInRole('device', 'first'), name: 'Coding' }
-  const second = { ...newStandInRole('device', 'second'), name: 'Reviewer' }
+  const second: StandInRole = {
+    ...newStandInRole('device', 'second'),
+    name: 'Reviewer',
+    model: { runtime: 'codex', provider: 'local', model_id: 'review-model' },
+    modelOptions: { modelSelection: 'model', reasoning: 'high' },
+  }
   const { props } = fixture([first, second])
   const user = userEvent.setup()
   render(<StandInOverviewPage {...props} />)
   await openRoles()
   await user.click(await screen.findByTestId('stand-in-overview-role-second'))
   expect(await screen.findByTestId('identity-conversation')).toHaveTextContent('second')
+  expect(vi.mocked(StandInConversation).mock.lastCall?.[0]).toMatchObject({
+    settings: second,
+    services: props.services,
+  })
   expect(screen.queryByTestId('stand-in-settings')).not.toBeInTheDocument()
   await user.click(await navigationEntry('stand-in-role-chat'))
   expect(await screen.findByTestId('stand-in-activity')).toHaveTextContent('尚无处理记录')
   await user.click(screen.getByTestId('stand-in-work-dialog-close'))
   expect(await screen.findByTestId('identity-conversation')).toHaveTextContent('second')
-  expect(screen.getByTestId('stand-in-details-open')).toHaveAccessibleName('分身详情')
+  expect(screen.getByTestId('stand-in-details-open')).toHaveAccessibleName('助理详情')
   await user.click(await navigationEntry('stand-in-settings-open'))
   expect(screen.getByRole('dialog', { name: '设置' })).toBeInTheDocument()
-  const name = await screen.findByRole('textbox', { name: '分身名称' })
+  const name = await screen.findByRole('textbox', { name: '助理名称' })
   expect(name).toHaveValue('Reviewer')
   expect(screen.queryByTestId('stand-in-role-select')).not.toBeInTheDocument()
   await user.clear(name)
   await user.type(name, '代码审查')
+  expect(vi.mocked(StandInConversation).mock.lastCall?.[0].settings).toMatchObject({
+    name: 'Reviewer',
+  })
   await user.click(screen.getByTestId('stand-in-save'))
   await openRoles()
   await waitFor(() =>
@@ -414,8 +433,13 @@ it('opens settings for the selected stand-in and reflects its renamed identity',
   )
   expect(screen.getByTestId('stand-in-overview-role-first')).toHaveTextContent('Coding')
   expect(screen.getByTestId('identity-conversation')).toHaveTextContent('second')
+  expect(vi.mocked(StandInConversation).mock.lastCall?.[0].settings).toMatchObject({
+    name: '代码审查',
+    model: second.model,
+    modelOptions: second.modelOptions,
+  })
   await user.click(await navigationEntry('stand-in-settings-open'))
-  expect(await screen.findByRole('textbox', { name: '分身名称' })).toHaveValue('代码审查')
+  expect(await screen.findByRole('textbox', { name: '助理名称' })).toHaveValue('代码审查')
   await user.click(screen.getByTestId('stand-in-close'))
   await user.click(await navigationEntry('stand-in-memory-open'))
   await user.click(await screen.findByTestId('stand-in-memory-add'))
@@ -494,9 +518,31 @@ it('hides empty message associations while preserving existing execution history
 
 it('starts in the primary conversation and opens its editable profile explicitly', async () => {
   const { props, personalAgents, personalSave } = fixture()
+  const api = props.services.standInApi!
+  const model = { runtime: 'codex' as const, provider: 'openai', model_id: 'profile-model' }
+  const nextModel = { ...model, model_id: 'next-profile-model' }
+  const modelOptions = { modelSelection: 'model', reasoning: 'high' }
+  const settings = await api.personalGet(7, 'device')
+  settings.primary = { enabled: true, prompt: '', preferences: '', model, modelOptions }
+  vi.spyOn(api, 'catalog').mockResolvedValue({
+    models: [model, nextModel].map(identity => ({
+      ...identity,
+      label: identity.model_id,
+      local_model_id: identity.model_id,
+      account_label: 'Local account',
+      is_default: identity === model,
+      default_reasoning_effort: 'high',
+      supported_reasoning_efforts: ['high', 'max'],
+    })),
+  })
   const user = userEvent.setup()
   render(<StandInOverviewPage {...props} />)
   expect(await screen.findByTestId('identity-conversation')).toHaveTextContent('primary')
+  const conversationProps = () => vi.mocked(StandInConversation).mock.lastCall?.[0]
+  expect(conversationProps()).toMatchObject({
+    settings: { model, modelOptions },
+    services: props.services,
+  })
   expect(screen.queryByTestId('stand-in-activity')).not.toBeInTheDocument()
   expect(screen.queryByTestId('stand-in-agent')).not.toBeInTheDocument()
   expect(personalAgents).not.toHaveBeenCalled()
@@ -505,6 +551,26 @@ it('starts in the primary conversation and opens its editable profile explicitly
   await user.click(screen.getByTestId('stand-in-primary-cancel'))
   expect(await screen.findByTestId('stand-in-overview')).toBeInTheDocument()
   expect(personalSave).not.toHaveBeenCalled()
+  await user.click(await navigationEntry('stand-in-settings-open'))
+  await user.click(await screen.findByTestId('model-selector-button'))
+  await user.click(await screen.findByTestId('model-advanced-toggle'))
+  await user.click(await screen.findByTestId(`model-option-${runnerModelKey(nextModel)}`))
+  await user.click(await screen.findByTestId('model-control-reasoning-max'))
+  await user.click(screen.getByTestId('model-selector-button'))
+  expect(conversationProps()?.settings).toMatchObject({ model, modelOptions })
+  expect(personalSave).not.toHaveBeenCalled()
+  await user.click(screen.getByTestId('stand-in-primary-save'))
+  await waitFor(() =>
+    expect(conversationProps()?.settings).toMatchObject({
+      model: nextModel,
+      modelOptions: { modelSelection: 'model', reasoning: 'max' },
+    })
+  )
+  expect(personalSave).toHaveBeenCalledWith(
+    7,
+    expect.objectContaining({ primary: conversationProps()?.settings }),
+    'device'
+  )
 })
 
 it.each(['primary', 'role', 'memory'] as const)(
@@ -649,6 +715,7 @@ it('groups actual stand-in executions by project, excludes ordinary tasks, and o
   expect(screen.getByTestId('stand-in-work-preview')).toHaveTextContent('Review')
   await user.click(screen.getByTestId('stand-in-preview-open'))
   expect(onOpenTask).toHaveBeenCalledWith(runtimeItem.address)
+  expect(screen.queryByTestId('stand-in-work-dialog')).not.toBeInTheDocument()
 })
 
 it('preserves the mounted conversation when settings refresh fails', async () => {
@@ -661,7 +728,7 @@ it('preserves the mounted conversation when settings refresh fails', async () =>
   await waitFor(() => expect(api.personalGet).toHaveBeenCalledTimes(3))
   await userEvent.click(await navigationEntry('stand-in-status-open'))
   expect(await screen.findByRole('alert')).toHaveTextContent(
-    '未能加载分身设置。请检查执行设备是否在线，再点击「重新加载」。'
+    '未能加载助理设置。请检查执行设备是否在线，再点击「重新加载」。'
   )
   expect(screen.getByTestId('identity-conversation')).toBe(conversation)
   vi.mocked(api.personalGet).mockResolvedValue(settings)

@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
@@ -17,6 +17,110 @@ async function createStore(): Promise<{ root: string; store: RendererStorageStor
 }
 
 describe('RendererStorageStore', () => {
+  it('notifies login observers when a pending seed becomes durable through an unrelated update', async () => {
+    const { root } = await createStore()
+    const notify = vi.fn()
+    const store = new RendererStorageStore(root, notify)
+    const blocked = join(root, `renderer-local-storage.json.${process.pid}.tmp`)
+    await mkdir(blocked)
+    await store.initialize({ 'wework.cloudConnection': 'synthetic-session' })
+    expect(notify).not.toHaveBeenCalled()
+    await rm(blocked, { recursive: true })
+    await store.update({ clear: false, changes: { appearance: 'dark' } })
+    expect(notify).toHaveBeenCalledExactlyOnceWith({
+      clear: false,
+      changes: { 'wework.cloudConnection': 'synthetic-session', appearance: 'dark' },
+    })
+  })
+
+  it('preserves browser state when origin history cannot be read', async () => {
+    const { root, store } = await createStore()
+    await store.initialize({ credential: 'preserved' })
+    const history = join(root, 'renderer-local-storage-origins.json')
+    await mkdir(history)
+    const cleanup = { clearAll: vi.fn(), clearOrigin: vi.fn() }
+    await expect(store.prepareOrigin('http://127.0.0.1:4101', cleanup)).rejects.toThrow(
+      'unreadable'
+    )
+    expect(cleanup.clearAll).not.toHaveBeenCalled()
+    expect(cleanup.clearOrigin).not.toHaveBeenCalled()
+    await expect(store.read()).resolves.toEqual({ credential: 'preserved' })
+  })
+  it('refuses a snapshot boundary until temporary initial state can be persisted', async () => {
+    const { root, store } = await createStore()
+    const path = join(root, 'renderer-local-storage.json')
+    const blocked = `${path}.${process.pid}.tmp`
+    await mkdir(blocked)
+    await store.initialize({ credential: 'synthetic-temporary-account' })
+    await expect(store.close()).rejects.toThrow()
+    await expect(readFile(path)).rejects.toMatchObject({ code: 'ENOENT' })
+  })
+
+  it('persists temporary state before closing when its write path is repaired', async () => {
+    const { root, store } = await createStore()
+    const path = join(root, 'renderer-local-storage.json')
+    const blocked = `${path}.${process.pid}.tmp`
+    await mkdir(blocked)
+    const seed = { credential: 'synthetic-temporary-account' }
+    await store.initialize(seed)
+    await rm(blocked, { recursive: true })
+    await store.close()
+    expect(JSON.parse(await readFile(path, 'utf8')).entries).toEqual(seed)
+  })
+
+  it('preserves unreadable state and refuses to certify it as a snapshot-ready store', async () => {
+    const { root, store } = await createStore()
+    const path = join(root, 'renderer-local-storage.json')
+    await writeFile(path, '{invalid')
+    await expect(store.initialize({})).resolves.toEqual({})
+    await expect(store.close()).rejects.toThrow('unreadable')
+    expect(await readFile(path, 'utf8')).toBe('{invalid')
+  })
+  it('retains the filesystem error code without exposing stored contents', async () => {
+    const { root, store } = await createStore()
+    await mkdir(join(root, 'renderer-local-storage.json'))
+    await expect(store.initialize({})).resolves.toEqual({})
+    await expect(store.update({ clear: false, changes: {} })).rejects.toThrow(/EISDIR|EACCES|EPERM/)
+  })
+  it('keeps initial browser state available when its first durable write fails', async () => {
+    const { root, store } = await createStore()
+    const path = join(root, 'renderer-local-storage.json')
+    const blocked = `${path}.${process.pid}.tmp`
+    await mkdir(blocked)
+    const seed = { appearance: 'dark', credential: 'synthetic-kept-session' }
+
+    await expect(store.initialize(seed)).resolves.toEqual(seed)
+    await expect(store.read()).resolves.toEqual(seed)
+    await expect(store.update({ clear: false, changes: { appearance: 'light' } })).rejects.toThrow()
+    await expect(readFile(path)).rejects.toMatchObject({ code: 'ENOENT' })
+    await rm(blocked, { recursive: true })
+    await store.update({ clear: false, changes: { appearance: 'light' } })
+    expect(await store.read()).toEqual({ ...seed, appearance: 'light' })
+    expect(JSON.parse(await readFile(path, 'utf8')).entries).toEqual({
+      ...seed,
+      appearance: 'light',
+    })
+  })
+  it.each(['{broken-json', '{"version":9,"entries":{"credential":"keep"}}'])(
+    'keeps the renderer available without replacing damaged durable state: %s',
+    async damaged => {
+      const { root, store } = await createStore()
+      const path = join(root, 'renderer-local-storage.json')
+      await writeFile(path, damaged)
+      await expect(store.initialize({ appearance: 'light' })).resolves.toEqual({
+        appearance: 'light',
+      })
+      await expect(store.read()).resolves.toEqual({})
+      await expect(
+        store.update({ clear: false, changes: { appearance: 'dark' } })
+      ).rejects.toThrow()
+      expect(await readFile(path, 'utf8')).toBe(damaged)
+      await writeFile(path, '{"version":1,"entries":{"credential":"repaired"}}')
+      await expect(store.read()).resolves.toEqual({ credential: 'repaired' })
+      await store.update({ clear: false, changes: { appearance: 'dark' } })
+      expect(await store.read()).toEqual({ credential: 'repaired', appearance: 'dark' })
+    }
+  )
   it('notifies login observers after persistence without allowing them to fail storage updates', async () => {
     const { root } = await createStore()
     const onUpdate = vi.fn(() => {

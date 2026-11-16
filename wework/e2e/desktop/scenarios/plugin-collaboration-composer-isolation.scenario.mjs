@@ -110,6 +110,8 @@ export async function createDesktopScenario({
     )
     const address = currentRuntimeTaskFromDebugSnapshot(debug)
     assert.ok(address?.deviceId && address.workspacePath)
+    const runtime = await environment.waitForConnectedAppDevice()
+    assert.ok(runtime.execution_target_id)
     const workspace = await request('/api/v1/workspaces', {
       name: `Plugin isolation ${process.pid}`,
     })
@@ -124,7 +126,7 @@ export async function createDesktopScenario({
       title: issueTitle,
     })
     await request(`/api/v1/loop-items/${issue.id}/tasks`, {
-      deviceId: address.deviceId,
+      deviceId: runtime.execution_target_id,
       taskId: address.taskId,
       taskTitle: issueTitle,
       executionContext: { runtime: 'codex', workspacePath: address.workspacePath },
