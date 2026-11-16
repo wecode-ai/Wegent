@@ -239,7 +239,7 @@ async def test_admin_device_monitor_restarts_all_cloud_devices(
     device_monitor.admin_device_batch_manager._reset_for_tests()
     with (
         patch(
-            "app.services.device.admin_device_batch.restart_admin_device",
+            "app.services.device.admin_device_batch.restart_cloud_device",
             new=fake_restart,
         ),
         patch.object(

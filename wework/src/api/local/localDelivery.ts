@@ -733,6 +733,10 @@ export function createLocalProjectChatAgentApi(
       cache.invalidate('agents:')
       return { deleted: true }
     },
+    async remove(projectId: string, agentId: string, version: number) {
+      await request('chat_agents.delete', { project_id: projectId, agent_id: agentId, version })
+      cache.invalidate('agents:')
+    },
   }
 }
 

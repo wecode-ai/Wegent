@@ -2,13 +2,14 @@ import { readRequestBody as readJson } from '../modules/response-protocol.mjs'
 import assert from 'node:assert/strict'
 
 import { waitForWorkbenchDebugState } from '../modules/workspace-flows.mjs'
-import { selectE2EModel } from '../modules/shared.mjs'
+import { DEFAULT_MODEL_ID, DEFAULT_MODEL_LABEL, selectE2EModel } from '../modules/shared.mjs'
 
 const ACTIVE_SURFACE = '[data-workspace-tab-content][aria-hidden="false"]'
 const COMPOSER = '[data-testid="desktop-empty-composer-frame"] [data-testid="chat-message-input"]'
 const FIRST_PROMPT = 'SPLIT LEFT TASK: investigate online Connector authentication'
 const SECOND_PROMPT = 'SPLIT RIGHT TASK'
 const THIRD_PROMPT = 'SPLIT OUTSIDE TASK'
+const MODEL_ISOLATION_FOLLOW_UP = `${FIRST_PROMPT} model isolation follow-up`
 const TABLE_MARKDOWN = '| A | B |\n| --- | --- |\n| 中文 | **bold** |\n| Empty |  |'
 const PANE_SELECTOR = '[data-testid^="workbench-pane-"][data-focused]'
 const SPLIT_ATTACHMENT_FILENAME = 'split-pane-only.png'
@@ -517,6 +518,21 @@ async function paneSelectorForTitle(control, title) {
   return `[data-testid="${testId}"]`
 }
 
+const DEFAULT_MODEL_LABELS = [DEFAULT_MODEL_LABEL, 'GPT-5.6 Luna']
+
+async function assertPaneModelLabel(control, paneSelector, expectedLabels, timeoutMs) {
+  const labels = Array.isArray(expectedLabels) ? expectedLabels : [expectedLabels]
+  const selector = `${paneSelector} [data-testid="model-selector-button"]`
+  const startedAt = Date.now()
+  let lastLabel = ''
+  while (Date.now() - startedAt < timeoutMs) {
+    lastLabel = await control.command('getText', selector, { visible: true })
+    if (labels.some(label => lastLabel.includes(label))) return
+    await new Promise(resolve => setTimeout(resolve, 100))
+  }
+  throw new Error(`Pane model label did not match ${labels.join(' | ')}; last label: ${lastLabel}`)
+}
+
 async function assertPaneConversation(control, paneSelector, expectedText) {
   await control.command('waitFor', `${paneSelector} [data-testid="message-assistant"]`, {
     text: expectedText,
@@ -572,6 +588,7 @@ async function assertIndependentTitlebar(control, paneSelector, title) {
 export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspacePath }) {
   let active = false
   let nextAttachmentId = 1
+  const modelIsolationFollowUpModels = []
   return {
     appEnvironment: {
       // This scenario authenticates no cloud session; keep model fixtures local.
@@ -671,6 +688,7 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
       ) {
         const body = await readJson(request)
         const input = JSON.stringify(body.input ?? body.messages ?? [])
+        const isModelIsolationFollowUp = input.includes(MODEL_ISOLATION_FOLLOW_UP)
         const prompt = input.includes(SECOND_PROMPT)
           ? SECOND_PROMPT
           : input.includes(FIRST_PROMPT)
@@ -679,14 +697,16 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
               ? THIRD_PROMPT
               : null
         if (!prompt) return false
+        if (isModelIsolationFollowUp) modelIsolationFollowUpModels.push(body.model)
         const responseId = `wework-split-${Date.now()}`
+        const completion = isModelIsolationFollowUp
+          ? `${FIRST_PROMPT}_MODEL_ISOLATION_COMPLETE`
+          : `${prompt}_COMPLETE${prompt === FIRST_PROMPT ? `\n\n${TABLE_MARKDOWN}` : ''}`
         response.writeHead(200, { 'Content-Type': 'text/event-stream; charset=utf-8' })
         response.end(
           sse([
             responseCreated(responseId),
-            assistantMessage(
-              `${prompt}_COMPLETE${prompt === FIRST_PROMPT ? `\n\n${TABLE_MARKDOWN}` : ''}`
-            ),
+            assistantMessage(completion),
             responseCompleted(responseId),
           ])
         )
@@ -771,6 +791,12 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
 
       await control.command('click', '[data-testid="new-chat-button"]')
       await control.command('waitFor', COMPOSER, { stableMs: 500 })
+      await selectE2EModel(
+        control,
+        'local-model:desktop-e2e-responses',
+        'Desktop E2E Responses',
+        ACTIVE_SURFACE
+      )
       const secondTaskRow = await createTask(control, SECOND_PROMPT, taskTimeoutMs)
       const secondTaskId = secondTaskRow.replace('runtime-local-task-row-', '')
 
@@ -1111,6 +1137,71 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
       const restoredSecondPane = await paneSelectorForTitle(control, SECOND_PROMPT)
       await assertPaneConversation(control, restoredFirstPane, `${FIRST_PROMPT}_COMPLETE`)
       await assertPaneConversation(control, restoredSecondPane, `${SECOND_PROMPT}_COMPLETE`)
+
+      // Each pane must switch only its own conversation model and persist it.
+      // Keep the second pane as the focused model scope; the driver clicks
+      // programmatically, so the send below does not move pane focus.
+      await control.command('click', `${restoredSecondPane} [data-testid^="workbench-pane-title-"]`)
+      await waitForWorkbenchDebugState(
+        control,
+        snapshot => snapshot.workbench?.activeTask?.taskId === secondTaskId,
+        'The second pane did not own the focused model scope before the isolation send',
+        uiTimeoutMs
+      )
+      await selectE2EModel(control, DEFAULT_MODEL_ID, DEFAULT_MODEL_LABEL, restoredFirstPane)
+      await assertPaneModelLabel(control, restoredSecondPane, 'Desktop E2E Responses', uiTimeoutMs)
+      await control.command('fill', `${restoredFirstPane} [data-testid="chat-message-input"]`, {
+        value: MODEL_ISOLATION_FOLLOW_UP,
+      })
+      await control.command(
+        'clickWhenEnabled',
+        `${restoredFirstPane} [data-testid="send-message-button"]`,
+        { timeoutMs: taskTimeoutMs }
+      )
+      await waitForWorkbenchDebugState(
+        control,
+        snapshot => snapshot.workbench?.activeTask?.taskId === secondTaskId,
+        'The send moved the focused model scope away from the second pane',
+        uiTimeoutMs
+      )
+      await assertPaneConversation(
+        control,
+        restoredFirstPane,
+        `${FIRST_PROMPT}_MODEL_ISOLATION_COMPLETE`
+      )
+      assert.ok(
+        modelIsolationFollowUpModels.length > 0,
+        'The addressed pane follow-up never reached the model endpoint'
+      )
+      assert.ok(
+        modelIsolationFollowUpModels.every(model => model === DEFAULT_MODEL_ID),
+        `The addressed pane send executed with ${modelIsolationFollowUpModels.join(', ')}`
+      )
+      await waitForWorkbenchDebugState(
+        control,
+        snapshot =>
+          (snapshot.workbench?.activeWorkspace?.tasks ?? []).some(
+            task =>
+              task.taskId === firstTaskId && task.modelSelection?.modelName === DEFAULT_MODEL_ID
+          ),
+        'Switching one pane model did not persist that pane task selection',
+        taskTimeoutMs
+      )
+      await waitForWorkbenchDebugState(
+        control,
+        snapshot =>
+          (snapshot.workbench?.activeWorkspace?.tasks ?? []).some(
+            task =>
+              task.taskId === secondTaskId &&
+              task.modelSelection?.modelName === 'local-model:desktop-e2e-responses'
+          ),
+        'Switching one pane model changed the other pane task selection',
+        taskTimeoutMs
+      )
+      await assertPaneModelLabel(control, restoredFirstPane, DEFAULT_MODEL_LABELS, uiTimeoutMs)
+      await assertPaneModelLabel(control, restoredSecondPane, 'Desktop E2E Responses', uiTimeoutMs)
+      await captureScreenshot(control, '11a-split-pane-model-isolation.png', 'body')
+
       const firstGroupBadge = `${firstRow} [data-testid="runtime-local-task-split-group-${firstTaskId}"]`
       const secondGroupBadge = `${secondRow} [data-testid="runtime-local-task-split-group-${secondTaskId}"]`
       await control.command('waitFor', firstGroupBadge, {

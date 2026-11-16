@@ -17,7 +17,7 @@ Open **left sidebar → Cloud work**. **Connection settings** at the top right o
 | Status, resources and version | Inspect the card and expand details                                                       | Offline differs from a loading error; inspect errors first                                 |
 | Terminal / IDE / Desktop      | Choose the supported card operation                                                       | Runs on that device, not an arbitrary directory on this computer                           |
 | Connection information        | Device actions → connection information                                                   | Do not copy credentials into chat or public documentation                                  |
-| Upgrade / restart             | Choose the device action and review confirmation                                          | Temporarily goes offline; wait for progress and recovery rather than submitting repeatedly |
+| Restart device             | Choose Restart device in the card menu or select the Update available badge, then review the confirmation                                          | Temporarily goes offline; wait for progress and recovery rather than submitting repeatedly |
 | Delete device                 | Device actions → delete, verify target and confirm                                        | Neither a backup nor deletion of remote project directories                                |
 | New project                   | Cloud work → New project → device and directory                                           | Cloud sign-in does not automatically select cloud execution                                |
 
@@ -56,7 +56,7 @@ In the desktop app, **left sidebar → Cloud work** includes local recovery guid
 When the cloud connection is available, select **Cloud work** in the sidebar to open its dedicated page instead of General settings. The page combines:
 
 - Cloud and remote device status, executor version, terminal, IDE, and other device actions.
-- CPU, memory, and disk usage for cloud devices, plus connection details, upgrade, restart, and delete actions. Version upgrades restart the cloud device so the Executor can update automatically during startup. During an upgrade or restart, the device briefly goes offline and the page reports progress until it reconnects.
+- CPU, memory, and disk usage for cloud devices, plus connection details, restart, and delete actions. During a restart, the device briefly goes offline and running tasks may be interrupted, including tasks on other devices in the same sandbox. The page reports progress until the device reconnects. Check the Executor version reported after reconnection. Restart requires a deployment-provided implementation. The app reports when restart is unavailable.
 - Projects associated with cloud or remote devices. Selecting a project returns to the standard task workbench with that project active.
 
 Use **Connection settings** in the page header to open **Settings → Connections**. **Add device** opens the same settings page and starts the add-device flow. **New project** returns to the standard project creation flow, where the user chooses a device and a project directory on that device.
@@ -76,3 +76,11 @@ The startup command writes the backend address into the device's environment (`W
 When running a self-hosted backend, set `WEGENT_BACKEND_PUBLIC_URL` (and `WEGENT_SOCKET_URL` when it differs) to an address reachable from devices so newly generated commands carry the correct address.
 
 Use **Copy to another device** in the task menu to continue work elsewhere. A running response is stopped before the copy is created.
+
+<a id="collaboration-device-defaults"></a>
+
+## Collaboration defaults and offline registrations
+
+Open **Collaboration → Collaboration management → Execution devices** and choose an online device under **Personal default execution environment**. Changes save immediately. If the saved default is unavailable, **Clear default device** removes the old preference; offline devices stay out of the options. New Issues reuse this user preference; **Runtime (optional)** can change it. For project Issues, **Choose or add a device** reuses the project grant flow in a popover without losing the draft. Project permissions and fixed Agent policies are still checked at execution.
+
+The directory and selectors show online devices only. Concurrent application installations on one computer may have separate entries; local and registered views of the same Runtime are joined. Offline registrations older than seven days are automatically deactivated only when they have no queued or running work. Tasks and execution history are retained. Failed status reads never permit cleanup; legacy records without a known last-online time begin their retention period when first observed offline.

@@ -52,6 +52,17 @@ export function AgentEnvironmentFields({
           }
         />
       </div>
+      {selectionOnly &&
+        !routing.environmentLoading &&
+        !routing.environments.some(item => item.project_authorized) && (
+          <p
+            role="status"
+            className="text-xs text-text-muted"
+            data-testid={`${prefix}-environment-empty`}
+          >
+            {t('workbench.runner_environment_setup_hint')}
+          </p>
+        )}
       {environment ? (
         <p className="text-xs text-text-muted">
           {t(`workbench.runner_owner_${environment.owner_type}`)} ·{' '}

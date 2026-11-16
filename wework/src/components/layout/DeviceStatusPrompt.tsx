@@ -1,12 +1,18 @@
-import { AlertCircle, ArrowUpCircle, Loader2, PlusCircle } from 'lucide-react'
+import { AlertCircle, ArrowUpCircle, Loader2, PlusCircle, RotateCcw } from 'lucide-react'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
+import { CloudDeviceRestartProgress } from '@/features/cloud-devices/WorkbenchCloudDeviceRestarts'
+import {
+  cloudDeviceRestartKey,
+  useWorkbenchCloudDeviceRestarts,
+} from '@/features/cloud-devices/useWorkbenchCloudDeviceRestarts'
 import { useTranslation } from '@/hooks/useTranslation'
 import {
   WEWORK_MIN_EXECUTOR_VERSION,
   canRequestDeviceUpgrade,
   hasWeWorkUpdateAvailable,
   isClaudeCodeDevice,
+  isCloudDevice,
   isDeviceBelowWeWorkVersion,
   isDeviceRunningTask,
   isWeWorkCompatibleDevice,
@@ -99,7 +105,41 @@ function isUpgradeActive(upgradeState: DeviceUpgradeState | undefined): boolean 
   )
 }
 
-export function DeviceStatusPrompt({
+export function DeviceStatusPrompt(props: DeviceStatusPromptProps) {
+  const cloudRestarts = useWorkbenchCloudDeviceRestarts()
+  const activeDevice = findWorkbenchDevice(props.devices, props.activeDeviceId)
+  const activeKey = activeDevice ? cloudDeviceRestartKey(activeDevice) : props.activeDeviceId
+  const progress = cloudRestarts?.progress ?? {}
+  const restartProgress = Object.entries(progress)
+    .filter(([key]) => !activeKey || key === activeKey)
+    .map(([, entry]) => entry)
+  const showOtherDevices =
+    !activeKey &&
+    props.devices.some(
+      device => isClaudeCodeDevice(device) && !progress[cloudDeviceRestartKey(device)]
+    )
+
+  return (
+    <>
+      {restartProgress.length > 0 && (
+        <div data-testid="device-status-restart-progress" className={props.className}>
+          {restartProgress.map(({ device }) => (
+            <CloudDeviceRestartProgress
+              key={device.device_id}
+              device={device}
+              compact={props.presentation === 'sidebar-action'}
+            />
+          ))}
+        </div>
+      )}
+      {(restartProgress.length === 0 || showOtherDevices) && (
+        <DeviceStatusPromptContent {...props} />
+      )}
+    </>
+  )
+}
+
+function DeviceStatusPromptContent({
   devices,
   upgradingDevices,
   onUpgradeDevice,
@@ -112,6 +152,7 @@ export function DeviceStatusPrompt({
   className,
 }: DeviceStatusPromptProps) {
   const { t } = useTranslation('common')
+  const cloudRestarts = useWorkbenchCloudDeviceRestarts()
   const [manualPending, setManualPending] = useState(false)
   const [sidebarTooltipPosition, setSidebarTooltipPosition] = useState<{
     left: number
@@ -172,6 +213,65 @@ export function DeviceStatusPrompt({
       setManualPending(false)
     }
   }
+
+  const deviceActions = (deviceIds: string[], upgradeLabel: string) => {
+    const cloudTargets = claudeCodeDevices.filter(
+      device => isCloudDevice(device) && deviceIds.includes(device.device_id)
+    )
+    const restartTargets = cloudRestarts
+      ? cloudTargets.filter(device => !cloudRestarts.isRestarting(device))
+      : []
+    const upgradeIds = deviceIds.filter(id => !cloudTargets.some(device => device.device_id === id))
+    return [
+      ...(upgradeIds.length
+        ? [{ name: 'upgrade', label: upgradeLabel, run: () => void runUpgrades(upgradeIds) }]
+        : []),
+      ...(restartTargets.length && cloudRestarts
+        ? [
+            {
+              name: 'restart',
+              label:
+                restartTargets.length === 1
+                  ? t('workbench.connection_restart_action')
+                  : t('workbench.device_status_restart_devices_action', {
+                      count: restartTargets.length,
+                    }),
+              run: () => cloudRestarts.requestRestart(restartTargets),
+            },
+          ]
+        : []),
+    ]
+  }
+
+  const renderDeviceActionButtons = (
+    deviceIds: string[],
+    upgradeLabel: string,
+    testId: string,
+    buttonClass: string
+  ) =>
+    deviceActions(deviceIds, upgradeLabel).map(({ name, label, run }) => (
+      <button
+        key={name}
+        type="button"
+        data-testid={name === 'restart' ? 'device-status-restart-button' : testId}
+        disabled={manualPending}
+        onClick={run}
+        className={cn(
+          'inline-flex h-7 shrink-0 items-center gap-1 rounded-md px-2 font-medium disabled:cursor-not-allowed disabled:opacity-60',
+          name === 'restart' && 'min-h-11 min-w-11 md:min-h-0 md:min-w-0',
+          buttonClass
+        )}
+      >
+        {manualPending ? (
+          <Loader2 className="h-3.5 w-3.5 animate-spin" />
+        ) : name === 'restart' ? (
+          <RotateCcw className="h-3.5 w-3.5" />
+        ) : (
+          <ArrowUpCircle className="h-3.5 w-3.5" />
+        )}
+        {label}
+      </button>
+    ))
 
   const updateSidebarTooltipPosition = () => {
     const rect = sidebarActionRef.current?.getBoundingClientRect()
@@ -242,36 +342,50 @@ export function DeviceStatusPrompt({
       </div>
     )
 
+    const actions = loading
+      ? [{ name: 'upgrade', label: actionLabel, run: undefined }]
+      : deviceActions(deviceIds, actionLabel)
+
     return (
       <>
         <div
           ref={sidebarActionRef}
           data-testid="device-status-prompt"
-          className={cn('relative shrink-0', className)}
+          className={cn('relative flex shrink-0 gap-1', className)}
           onMouseEnter={openSidebarTooltip}
           onMouseMove={updateSidebarTooltipPosition}
           onMouseLeave={closeSidebarTooltip}
           onFocusCapture={openSidebarTooltip}
           onBlurCapture={closeSidebarTooltip}
         >
-          <button
-            type="button"
-            data-testid="device-status-sidebar-action-button"
-            disabled={manualPending || loading || deviceIds.length === 0}
-            onClick={() => void runUpgrades(deviceIds)}
-            aria-label={message}
-            className={cn(
-              'inline-flex h-7 items-center gap-1.5 rounded-md px-2 text-xs font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-60',
-              toneClass
-            )}
-          >
-            {manualPending || loading ? (
-              <Loader2 className="h-3.5 w-3.5 animate-spin" />
-            ) : (
-              <ArrowUpCircle className="h-3.5 w-3.5" />
-            )}
-            <span>{actionLabel}</span>
-          </button>
+          {actions.map(({ name, label, run }) => (
+            <button
+              key={name}
+              type="button"
+              data-testid={
+                name === 'restart'
+                  ? 'device-status-sidebar-restart-button'
+                  : 'device-status-sidebar-action-button'
+              }
+              disabled={manualPending || loading || deviceIds.length === 0}
+              onClick={run}
+              aria-label={`${label}. ${message}`}
+              className={cn(
+                'inline-flex h-7 items-center gap-1.5 rounded-md px-2 text-xs font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-60',
+                name === 'restart' && 'min-h-11 min-w-11 md:min-h-0 md:min-w-0',
+                toneClass
+              )}
+            >
+              {manualPending || loading ? (
+                <Loader2 className="h-3.5 w-3.5 animate-spin" />
+              ) : name === 'restart' ? (
+                <RotateCcw className="h-3.5 w-3.5" />
+              ) : (
+                <ArrowUpCircle className="h-3.5 w-3.5" />
+              )}
+              <span>{label}</span>
+            </button>
+          ))}
         </div>
         {typeof document === 'undefined' ? tooltip : createPortal(tooltip, document.body)}
       </>
@@ -344,16 +458,21 @@ export function DeviceStatusPrompt({
   if (activeDevice && isDeviceBelowWeWorkVersion(activeDevice)) {
     const canUpgrade = canRequestDeviceUpgrade(activeDevice)
     const upgradeDeviceIds = canUpgrade ? [activeDevice.device_id] : []
-    const message = canUpgrade
-      ? t('workbench.device_status_active_upgrade_required', {
+    const message = isCloudDevice(activeDevice)
+      ? t('workbench.device_status_cloud_version_required', {
           device: getDeviceName(activeDevice, t),
           version: WEWORK_MIN_EXECUTOR_VERSION,
         })
-      : t('workbench.device_status_active_upgrade_waiting', {
-          device: getDeviceName(activeDevice, t),
-          reason: getBlockedReason(activeDevice, t),
-          version: WEWORK_MIN_EXECUTOR_VERSION,
-        })
+      : canUpgrade
+        ? t('workbench.device_status_active_upgrade_required', {
+            device: getDeviceName(activeDevice, t),
+            version: WEWORK_MIN_EXECUTOR_VERSION,
+          })
+        : t('workbench.device_status_active_upgrade_waiting', {
+            device: getDeviceName(activeDevice, t),
+            reason: getBlockedReason(activeDevice, t),
+            version: WEWORK_MIN_EXECUTOR_VERSION,
+          })
 
     if (presentation === 'sidebar-action') {
       if (!canUpgrade) return null
@@ -377,21 +496,11 @@ export function DeviceStatusPrompt({
       >
         <AlertCircle className="h-3.5 w-3.5 shrink-0 text-warning wework:text-amber-600" />
         <span className="min-w-0 flex-1">{message}</span>
-        {upgradeDeviceIds.length > 0 && (
-          <button
-            type="button"
-            data-testid="device-status-upgrade-button"
-            disabled={manualPending}
-            onClick={() => void runUpgrades(upgradeDeviceIds)}
-            className="inline-flex h-7 shrink-0 items-center gap-1 rounded-md px-2 font-medium text-warning hover:bg-warning/15 disabled:cursor-not-allowed disabled:opacity-60 wework:text-amber-900 wework:hover:bg-amber-100"
-          >
-            {manualPending ? (
-              <Loader2 className="h-3.5 w-3.5 animate-spin" />
-            ) : (
-              <ArrowUpCircle className="h-3.5 w-3.5" />
-            )}
-            {t('workbench.device_status_upgrade_action')}
-          </button>
+        {renderDeviceActionButtons(
+          upgradeDeviceIds,
+          t('workbench.device_status_upgrade_action'),
+          'device-status-upgrade-button',
+          'text-warning hover:bg-warning/15 wework:text-amber-900 wework:hover:bg-amber-100'
         )}
       </div>
     )
@@ -435,8 +544,11 @@ export function DeviceStatusPrompt({
     const upgradeDeviceIds = upgradeDevices.map(device => device.device_id)
     const blockedDevice = lowVersionBlockedDevices[0]
     const upgradeDevice = upgradeDevices[0]
-    const message =
-      blockedDevice && upgradeDeviceIds.length === 0
+    const message = outdatedDevices.some(isCloudDevice)
+      ? t('workbench.device_status_cloud_versions_required', {
+          version: WEWORK_MIN_EXECUTOR_VERSION,
+        })
+      : blockedDevice && upgradeDeviceIds.length === 0
         ? t('workbench.device_status_upgrade_waiting', {
             device: getDeviceName(blockedDevice, t),
             reason: getBlockedReason(blockedDevice, t),
@@ -474,25 +586,13 @@ export function DeviceStatusPrompt({
       >
         <AlertCircle className="h-3.5 w-3.5 shrink-0 text-warning wework:text-amber-600" />
         <span className="min-w-0 flex-1">{message}</span>
-        {upgradeDeviceIds.length > 0 && (
-          <button
-            type="button"
-            data-testid="device-status-upgrade-button"
-            disabled={manualPending}
-            onClick={() => void runUpgrades(upgradeDeviceIds)}
-            className="inline-flex h-7 shrink-0 items-center gap-1 rounded-md px-2 font-medium text-warning hover:bg-warning/15 disabled:cursor-not-allowed disabled:opacity-60 wework:text-amber-900 wework:hover:bg-amber-100"
-          >
-            {manualPending ? (
-              <Loader2 className="h-3.5 w-3.5 animate-spin" />
-            ) : (
-              <ArrowUpCircle className="h-3.5 w-3.5" />
-            )}
-            {upgradeDevices.length === 1
-              ? t('workbench.device_status_upgrade_single_action')
-              : t('workbench.device_status_upgrade_devices_action', {
-                  count: upgradeDevices.length,
-                })}
-          </button>
+        {renderDeviceActionButtons(
+          upgradeDeviceIds,
+          upgradeDevices.length === 1
+            ? t('workbench.device_status_upgrade_single_action')
+            : t('workbench.device_status_upgrade_devices_action', { count: upgradeDevices.length }),
+          'device-status-upgrade-button',
+          'text-warning hover:bg-warning/15 wework:text-amber-900 wework:hover:bg-amber-100'
         )}
       </div>
     )
@@ -556,20 +656,12 @@ export function DeviceStatusPrompt({
             count: updateCandidates.length,
           })}
         </span>
-        <button
-          type="button"
-          data-testid="device-status-update-button"
-          disabled={manualPending}
-          onClick={() => void runUpgrades(upgradeDeviceIds)}
-          className="inline-flex h-7 shrink-0 items-center gap-1 rounded-md px-2 font-medium text-primary hover:bg-primary/10 disabled:cursor-not-allowed disabled:opacity-60"
-        >
-          {manualPending ? (
-            <Loader2 className="h-3.5 w-3.5 animate-spin" />
-          ) : (
-            <ArrowUpCircle className="h-3.5 w-3.5" />
-          )}
-          {t('workbench.device_status_update_action')}
-        </button>
+        {renderDeviceActionButtons(
+          upgradeDeviceIds,
+          t('workbench.device_status_update_action'),
+          'device-status-update-button',
+          'text-primary hover:bg-primary/10'
+        )}
       </div>
     )
   }

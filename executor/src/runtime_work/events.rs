@@ -361,6 +361,9 @@ impl CodexNotificationEventMapper {
         {
             self.clear_resumed_native_retry(&emit_context, notification.params);
         }
+        if notification.method == "turn/completed" {
+            self.clear_completed_turn_retry_waits(&emit_context, notification.params);
+        }
         if codex_stream_debug_enabled()
             && notification.method == "item/agentMessage/delta"
             && stream_thread_id(notification.params).is_some()

@@ -121,6 +121,10 @@ path = "/api/v1/workspaces"
 #[[routes]]
 #methods = ["GET"]
 #path = "/api/v1/cloud-projects/:project_id/chat-agents"
+
+[[routes]]
+methods = ["DELETE"]
+path = "/api/v1/cloud-projects/:project_id/chat-agents/:agent_id"
 #[[routes]]
 #methods = ["GET"]
 #path = "/api/knowledge/documents"
