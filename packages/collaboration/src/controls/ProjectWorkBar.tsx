@@ -97,6 +97,9 @@ export interface ProjectWorkBarProps {
   menuClassName?: string
   emptyLabel?: string
   selectorLabel?: string
+  menuLabels?: Partial<
+    Record<'search' | 'empty' | 'emptyHint' | 'noResults' | 'clear' | 'addLocal', string>
+  >
   showProjectSelector?: boolean
   // When false, the desktop trigger shows a static folder icon instead of the
   // hover-to-clear button (used when the current project is a default the user
@@ -131,6 +134,7 @@ export function ProjectWorkBar({
   menuClassName,
   emptyLabel,
   selectorLabel,
+  menuLabels,
   showProjectSelector = true,
   showClearButton = true,
   projectMenuOpenSignal,
@@ -562,7 +566,7 @@ export function ProjectWorkBar({
                       type="search"
                       value={projectQuery}
                       onChange={event => setProjectQuery(event.target.value)}
-                      placeholder={t('workbench.search_projects', '搜索项目')}
+                      placeholder={menuLabels?.search ?? t('workbench.search_projects', '搜索项目')}
                       className={cn(
                         'min-w-0 flex-1 bg-transparent text-sm leading-[18px] text-text-primary outline-none placeholder:text-text-muted',
                         isMobile && 'text-base leading-5'
@@ -575,10 +579,11 @@ export function ProjectWorkBar({
                       className="px-4 py-3 text-sm leading-[18px]"
                     >
                       <div className="text-text-secondary">
-                        {t('workbench.no_projects', '暂无项目')}
+                        {menuLabels?.empty ?? t('workbench.no_projects', '暂无项目')}
                       </div>
                       <div className="mt-1 text-xs leading-4 text-text-muted">
-                        {t('workbench.no_projects_action', '请添加本地项目或远程项目后重试。')}
+                        {menuLabels?.emptyHint ??
+                          t('workbench.no_projects_action', '请添加本地项目或远程项目后重试。')}
                       </div>
                     </div>
                   ) : filteredProjects.length === 0 ? (
@@ -586,7 +591,8 @@ export function ProjectWorkBar({
                       data-testid="project-search-empty"
                       className="px-4 py-3 text-sm leading-[18px] text-text-muted"
                     >
-                      {t('workbench.project_search_no_results', '没有匹配的项目')}
+                      {menuLabels?.noResults ??
+                        t('workbench.project_search_no_results', '没有匹配的项目')}
                     </div>
                   ) : (
                     <div
@@ -810,7 +816,8 @@ export function ProjectWorkBar({
                         >
                           <FolderPlus className="h-4 w-4 shrink-0" />
                           <span className="min-w-0 flex-1">
-                            {t('workbench.add_local_project', '添加本地项目')}
+                            {menuLabels?.addLocal ??
+                              t('workbench.add_local_project', '添加本地项目')}
                           </span>
                         </button>
                       </div>
@@ -826,7 +833,7 @@ export function ProjectWorkBar({
                         >
                           <FolderX className="h-4 w-4 shrink-0" />
                           <span className="min-w-0 flex-1">
-                            {t('workbench.no_project', '不使用项目')}
+                            {menuLabels?.clear ?? t('workbench.no_project', '不使用项目')}
                           </span>
                         </button>
                       </div>
@@ -870,8 +877,8 @@ export function ProjectWorkBar({
                   type="button"
                   data-testid="clear-project-button"
                   onClick={handleClearProject}
-                  title={t('workbench.no_project', '不使用项目')}
-                  aria-label={t('workbench.no_project', '不使用项目')}
+                  title={menuLabels?.clear ?? t('workbench.no_project', '不使用项目')}
+                  aria-label={menuLabels?.clear ?? t('workbench.no_project', '不使用项目')}
                   className="group flex h-8 w-8 shrink-0 items-center justify-center rounded-lg transition-colors hover:bg-background/70 hover:text-text-primary focus-visible:outline-none keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-primary/30"
                 >
                   <ProjectFolderIcon

@@ -230,6 +230,7 @@ export function WeworkPersonalHome({
     setIssueTabs(remaining)
     if (activeTab === id) setActiveTab(remaining[Math.max(0, index - 1)]?.id ?? 'stand-in')
   }
+  const firstUse = !projects.length && !independent.context?.api
   return (
     <IssueDetailDraftProvider key={userId} scope={draftScope}>
       <div
@@ -266,7 +267,12 @@ export function WeworkPersonalHome({
             <div ref={composerRegion} className="mb-5" data-testid="personal-home-create">
               {createIssue}
             </div>
-            <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
+            <div
+              hidden={firstUse}
+              className={
+                firstUse ? 'hidden' : 'mb-3 flex flex-wrap items-center justify-between gap-3'
+              }
+            >
               <div
                 role="group"
                 aria-label={t('personalHome.issueScope')}

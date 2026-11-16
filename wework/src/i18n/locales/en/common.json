@@ -1,6 +1,14 @@
 {
   "personalHome": {
     "codeWorkspace": "Code workspace (optional)",
+    "codeWorkspaceSearch": "Search code workspaces",
+    "codeWorkspaceEmpty": "No code workspaces yet",
+    "codeWorkspaceHint": "Choose a source directory when the task needs code. You can start without one.",
+    "codeWorkspaceNoResults": "No matching code workspaces",
+    "codeWorkspaceNone": "No code workspace",
+    "codeWorkspaceAdd": "Add a local code directory",
+    "connectForIssueTitle": "Connect to create your issue",
+    "connectForIssueHint": "Independent issues are saved in your cloud account. Connect to your team's Wework service and sign in; the issue form will open next. You can cancel and return to your work.",
     "collaborationProject": "Collaboration project",
     "showSidebar": "Show sidebar",
     "hideSidebar": "Hide sidebar",

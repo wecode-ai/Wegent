@@ -1,4 +1,5 @@
 import { isDeviceRuntimeProject } from '@/lib/runtime-project-state'
+import type { ProjectWorkBarProps } from '@wegent/collaboration/controls/ProjectWorkBar'
 import { PluginTrialTemplateStrip } from '@wegent/collaboration/composer/PluginTrialTemplateStrip'
 import { PluginTrialSelectionContext } from '@wegent/collaboration/composer/PluginTrialSelectionContext'
 import { ComposerErrorBanner } from '@wegent/collaboration/composer'
@@ -121,6 +122,7 @@ export interface ProjectChatControls {
 
 export interface ProjectWorkControls {
   projectSelectorLabel?: string
+  projectMenuLabels?: ProjectWorkBarProps['menuLabels']
   projects: ProjectWithTasks[]
   devices: DeviceInfo[]
   runtimeWork?: RuntimeWorkListResponse | null

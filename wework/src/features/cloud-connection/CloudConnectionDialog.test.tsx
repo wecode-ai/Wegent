@@ -1,4 +1,4 @@
-import { render, screen } from '@testing-library/react'
+import { act, render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
@@ -7,6 +7,7 @@ import {
   type CloudConnectionContextValue,
 } from './CloudConnectionContext'
 import { CloudConnectionDialog } from './CloudConnectionDialog'
+import i18n from '@/i18n'
 
 function cloudConnection(backendUrl?: string): CloudConnectionContextValue {
   return {
@@ -44,6 +45,41 @@ describe('CloudConnectionDialog', () => {
     renderDialog(cloudConnection())
 
     expect(screen.getByTestId('cloud-backend-url-input')).toHaveValue('https://cloud.example.com')
+  })
+
+  it('explains the Issue intent and resumes it only after authorization completes', async () => {
+    await i18n.changeLanguage('zh-CN')
+    let finish!: () => void
+    const connection = cloudConnection('https://saved.example.com')
+    connection.connectWithAuthorization = vi.fn().mockImplementation(
+      () =>
+        new Promise<void>(resolve => {
+          finish = resolve
+        })
+    )
+    const onConnected = vi.fn()
+    const onClose = vi.fn()
+    render(
+      <CloudConnectionContext.Provider value={connection}>
+        <CloudConnectionDialog
+          open
+          onlineCloudDeviceCount={0}
+          intent="independent-issue"
+          onConnected={onConnected}
+          onClose={onClose}
+          onOpenSettings={vi.fn()}
+        />
+      </CloudConnectionContext.Provider>
+    )
+    expect(screen.getByTestId('cloud-connection-dialog')).toHaveTextContent(
+      '独立事项保存在你的云端账号中'
+    )
+    await userEvent.click(screen.getByTestId('cloud-backend-url-input'))
+    await userEvent.keyboard('{Enter}')
+    expect(onConnected).not.toHaveBeenCalled()
+    await act(async () => finish())
+    expect(onConnected).toHaveBeenCalledOnce()
+    expect(onClose).not.toHaveBeenCalled()
   })
 
   it('prefers the current Backend URL over build-time config', () => {

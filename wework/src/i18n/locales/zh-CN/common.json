@@ -1,6 +1,14 @@
 {
   "personalHome": {
     "codeWorkspace": "代码工作区（可选）",
+    "codeWorkspaceSearch": "搜索代码工作区",
+    "codeWorkspaceEmpty": "还没有代码工作区",
+    "codeWorkspaceHint": "任务需要处理代码时再选择目录，也可以直接开始。",
+    "codeWorkspaceNoResults": "没有匹配的代码工作区",
+    "codeWorkspaceNone": "不使用代码工作区",
+    "codeWorkspaceAdd": "添加本地代码目录",
+    "connectForIssueTitle": "连接后创建事项",
+    "connectForIssueHint": "独立事项保存在你的云端账号中。连接团队的 Wework 服务并登录后，将继续打开事项表单；也可以取消并返回当前工作。",
     "collaborationProject": "协作项目",
     "showSidebar": "显示侧栏",
     "hideSidebar": "收起侧栏",

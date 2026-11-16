@@ -220,6 +220,14 @@ function ProjectTaskComposer({
   })
   const projectWork: ProjectWorkControls = {
     projectSelectorLabel: t('personalHome.codeWorkspace'),
+    projectMenuLabels: {
+      search: t('personalHome.codeWorkspaceSearch'),
+      empty: t('personalHome.codeWorkspaceEmpty'),
+      emptyHint: t('personalHome.codeWorkspaceHint'),
+      noResults: t('personalHome.codeWorkspaceNoResults'),
+      clear: t('personalHome.codeWorkspaceNone'),
+      addLocal: t('personalHome.codeWorkspaceAdd'),
+    },
     projects: state.projects,
     devices: state.devices,
     runtimeWork: state.runtimeWork,

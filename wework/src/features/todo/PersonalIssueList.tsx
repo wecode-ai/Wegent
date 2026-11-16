@@ -245,7 +245,11 @@ export function PersonalIssueList({
                 summary={
                   <PersonalHomeIssueActivity
                     summary={
-                      item.description && item.description.trim() !== item.title.trim() ? (
+                      item.description &&
+                      !item.description
+                        .trim()
+                        .replace(/\s+/g, ' ')
+                        .startsWith(item.title.trim().replace(/\s+/g, ' ').replace(/…$/, '')) ? (
                         <p className="line-clamp-1 max-w-3xl whitespace-pre-wrap text-base leading-6 text-text-secondary">
                           {item.description}
                         </p>

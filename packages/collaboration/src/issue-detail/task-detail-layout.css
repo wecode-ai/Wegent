@@ -422,13 +422,18 @@
 .task-detail-workspace-panel .task-detail-title {
   width: 100%;
   field-sizing: fixed;
-  min-height: 40px;
-  font-size: 25px;
+  min-height: 28px;
+  font-size: var(--text-heading-md);
   margin: 0;
   padding: 0;
   border-radius: 0;
   font-weight: 650;
   line-height: 1.35;
+}
+
+.task-detail-workspace-panel .task-detail-title[data-title-expanded="false"] {
+  max-height: 4.05em;
+  overflow-y: auto;
 }
 
 .task-detail-workspace-layout .task-detail-rail-prop {
@@ -777,7 +782,13 @@
 
 @container (max-width: 360px) {
   .task-detail-property-grid {
-    grid-template-columns: max-content minmax(0, 1fr);
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .task-detail-property-grid .task-detail-property {
+    grid-column: auto;
+    grid-template-columns: minmax(0, 1fr);
+    align-content: start;
+    gap: 4px;
   }
 }
 

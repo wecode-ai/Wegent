@@ -659,6 +659,8 @@ const sharedMessages: Record<
     "todo.issue_description": "任务描述",
     "todo.issue_description_placeholder": "添加描述，说明背景、目标或处理要求…",
     "todo.no_issue_description": "暂无描述",
+    "todo.expand_title": "展开完整标题",
+    "todo.collapse_title": "收起标题",
     "todo.expand_description": "展开描述",
     "todo.current_conversation": "当前会话",
     "todo.expand_conversation": "点击展开会话",
@@ -1256,6 +1258,8 @@ const sharedMessages: Record<
     "todo.issue_description_placeholder":
       "Add a description with background, goals, or requirements…",
     "todo.no_issue_description": "No description yet",
+    "todo.expand_title": "Read full title",
+    "todo.collapse_title": "Collapse title",
     "todo.expand_description": "Expand description",
     "todo.current_conversation": "Current conversation",
     "todo.expand_conversation": "Expand conversation",

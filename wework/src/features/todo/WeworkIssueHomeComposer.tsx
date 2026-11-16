@@ -91,6 +91,25 @@ export function WeworkIssueHomeComposer({
           role="tablist"
           aria-label={t('issue_creation.entry_mode')}
           className="flex items-center gap-5"
+          onKeyDown={event => {
+            if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return
+            const tabs = Array.from(
+              event.currentTarget.querySelectorAll<HTMLButtonElement>('[role="tab"]:not(:disabled)')
+            )
+            const index = tabs.indexOf(event.target as HTMLButtonElement)
+            if (index < 0) return
+            event.preventDefault()
+            const target =
+              event.key === 'Home'
+                ? tabs[0]
+                : event.key === 'End'
+                  ? tabs.at(-1)
+                  : tabs[
+                      (index + (event.key === 'ArrowRight' ? 1 : -1) + tabs.length) % tabs.length
+                    ]
+            target?.click()
+            target?.focus()
+          }}
         >
           {[false, ...(renderTaskComposer ? [true] : [])].map(mode => (
             <button
@@ -100,6 +119,7 @@ export function WeworkIssueHomeComposer({
               id={`${composerId}-${mode ? 'task' : 'record'}-tab`}
               aria-controls={`${composerId}-${mode ? 'task' : 'record'}-panel`}
               aria-selected={taskMode === mode}
+              tabIndex={taskMode === mode ? 0 : -1}
               data-testid={mode ? 'personal-home-new-issue' : 'personal-home-record-mode'}
               disabled={disabled}
               onClick={() => {

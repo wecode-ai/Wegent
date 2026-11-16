@@ -1061,6 +1061,8 @@ export function TodoEditor(props: TodoEditorProps) {
     return () => observer.disconnect();
   }, [item?.id, canPinPersonalTaskAction]);
   const titleRef = useRef<HTMLTextAreaElement>(null);
+  const [titleExpanded, setTitleExpanded] = useState(false);
+  const [titleOverflowing, setTitleOverflowing] = useState(false);
   const descriptionCollapseRef = useRef<HTMLDivElement>(null);
   const propertiesTriggerRef = useRef<HTMLButtonElement>(null);
   const [propertiesExpanded, setPropertiesExpanded] = useState(false);
@@ -1240,6 +1242,12 @@ export function TodoEditor(props: TodoEditorProps) {
       if (textarea.scrollHeight > 0) {
         textarea.style.height = `${textarea.scrollHeight}px`;
       }
+      const lineHeight = Number.parseFloat(
+        window.getComputedStyle(textarea).lineHeight,
+      );
+      setTitleOverflowing(
+        workspacePanel && textarea.scrollHeight > lineHeight * 3 + 1,
+      );
     };
     resize();
 
@@ -1331,6 +1339,7 @@ export function TodoEditor(props: TodoEditorProps) {
     setAttachmentBusy(false);
     setAttachmentError(null);
     setEditingContent(!readFirst);
+    setTitleExpanded(false);
   }, [editItemId, readFirst]);
 
   useLayoutEffect(() => {
@@ -3093,6 +3102,7 @@ export function TodoEditor(props: TodoEditorProps) {
                     }
                     aria-label={t("todo.issue_title", "任务标题")}
                     autoFocus={isCreate}
+                    data-title-expanded={titleExpanded}
                     value={title}
                     onChange={(event) => setTitle(event.target.value)}
                     onBlur={() => void saveTitle()}
@@ -3128,6 +3138,28 @@ export function TodoEditor(props: TodoEditorProps) {
                         "task-detail-content-clickable",
                     )}
                   />
+                  {workspacePanel && titleOverflowing ? (
+                    <button
+                      type="button"
+                      data-testid="cloud-todo-title-expand"
+                      className="task-detail-workspace-properties-toggle"
+                      aria-expanded={titleExpanded}
+                      onClick={() => setTitleExpanded((current) => !current)}
+                    >
+                      {t(
+                        titleExpanded
+                          ? "todo.collapse_title"
+                          : "todo.expand_title",
+                      )}
+                      <ChevronDown
+                        className={cn(
+                          "h-3.5 w-3.5",
+                          titleExpanded && "rotate-180",
+                        )}
+                        aria-hidden="true"
+                      />
+                    </button>
+                  ) : null}
                 </div>
                 {workspacePanel && item ? (
                   <section

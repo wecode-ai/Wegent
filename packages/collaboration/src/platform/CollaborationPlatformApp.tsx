@@ -675,7 +675,7 @@ function FirstWorkStarter({
     : messages.firstProjectHomeTitle;
   return (
     <section
-      className="collaboration-first-project-starter"
+      className={`collaboration-first-project-starter${onCreateIssue ? " collaboration-first-issue-starter" : ""}`}
       data-testid={
         onCreateIssue
           ? "collaboration-first-issue-starter"

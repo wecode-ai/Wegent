@@ -15,7 +15,13 @@ async function resizeHome(control, home, width, height, timeoutMs) {
 }
 
 async function verifyTaskLabels(control, home) {
-  await control.command('click', `${home} [data-testid="personal-home-new-issue"]`)
+  await control.command('nativePress', `${home} [data-testid="personal-home-record-mode"]`, {
+    key: 'ArrowRight',
+  })
+  await control.command(
+    'waitFor',
+    `${home} [data-testid="personal-home-new-issue"][aria-selected="true"]`
+  )
   await control.command('waitFor', `${home} [data-testid="personal-home-task-content"]`)
   const panel = `${home} [role="tabpanel"][aria-labelledby$="-task-tab"]:not([inert])`
   assert.match(
@@ -31,7 +37,13 @@ async function verifyTaskLabels(control, home) {
     /协作项目|Collaboration project/,
     'The Issue storage project must have its own visible label'
   )
-  await control.command('click', `${home} [data-testid="personal-home-record-mode"]`)
+  await control.command('nativePress', `${home} [data-testid="personal-home-new-issue"]`, {
+    key: 'Home',
+  })
+  await control.command(
+    'waitFor',
+    `${home} [data-testid="personal-home-record-mode"][aria-selected="true"]`
+  )
 }
 
 /** Reuse the home checkpoint's real Issue and conversation; no additional model turn. */

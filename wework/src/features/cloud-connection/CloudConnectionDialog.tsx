@@ -26,6 +26,8 @@ interface CloudConnectionDialogProps {
   onClose: () => void
   onOpenSettings: () => void
   onAddDevice?: () => void
+  intent?: 'independent-issue'
+  onConnected?: () => void
 }
 
 function displayHost(value?: string | null): string {
@@ -43,6 +45,8 @@ export function CloudConnectionDialog({
   onClose,
   onOpenSettings,
   onAddDevice,
+  intent,
+  onConnected,
 }: CloudConnectionDialogProps) {
   const { t } = useTranslation('common')
   const cloud = useOptionalCloudConnection()
@@ -73,7 +77,8 @@ export function CloudConnectionDialog({
     try {
       normalizeCloudBackendUrl(backendUrl, socketBaseUrl)
       await cloud.connectWithAuthorization(backendUrl, openCloudAuthorizationWindow, socketBaseUrl)
-      onClose()
+      if (onConnected) onConnected()
+      else onClose()
     } catch (connectError) {
       setError(
         connectError instanceof Error
@@ -105,13 +110,19 @@ export function CloudConnectionDialog({
           </div>
           <div className="min-w-0 flex-1">
             <h2 className="text-base font-semibold text-text-primary">
-              {t('workbench.cloud_connection_title', '连接云端')}
+              {t(
+                intent === 'independent-issue'
+                  ? 'personalHome.connectForIssueTitle'
+                  : 'workbench.cloud_connection_title'
+              )}
             </h2>
             <p className="mt-1 text-sm leading-5 text-text-secondary">
-              {t(
-                'workbench.cloud_connection_description',
-                '授权后会加入服务端模型、云设备和云端 Codex 认证同步。'
-              )}
+              {intent === 'independent-issue'
+                ? t('personalHome.connectForIssueHint')
+                : t(
+                    'workbench.cloud_connection_description',
+                    '授权后会加入服务端模型、云设备和云端 Codex 认证同步。'
+                  )}
             </p>
           </div>
           <button

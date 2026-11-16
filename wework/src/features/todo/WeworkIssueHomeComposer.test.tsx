@@ -155,6 +155,26 @@ describe('Wework Issue home task composer', () => {
     expect(props.onSubmit).not.toHaveBeenCalled()
   })
 
+  test('moves between creation tabs with arrow keys and keeps drafts unsubmitted', async () => {
+    const props = createProps()
+    render(
+      <WeworkIssueHomeComposer {...props} renderTaskComposer={() => <span>Task editor</span>} />
+    )
+    const record = screen.getByTestId('personal-home-record-mode')
+    const task = screen.getByTestId('personal-home-new-issue')
+    record.focus()
+    await userEvent.keyboard('{ArrowRight}')
+    expect(task).toHaveFocus()
+    expect(task).toHaveAttribute('aria-selected', 'true')
+    expect(record).toHaveAttribute('tabindex', '-1')
+    await userEvent.keyboard('{Home}')
+    expect(record).toHaveFocus()
+    expect(record).toHaveAttribute('aria-selected', 'true')
+    await userEvent.keyboard('{End}{ArrowRight}')
+    expect(record).toHaveFocus()
+    expect(props.onSubmit).not.toHaveBeenCalled()
+  })
+
   test('opens separate member and Issue pickers from toolbar triggers', async () => {
     const props = createProps()
     props.members = [

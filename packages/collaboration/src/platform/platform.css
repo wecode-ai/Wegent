@@ -877,6 +877,24 @@ button.collaboration-project-offline:hover {
   text-align: center;
 }
 
+.collaboration-first-issue-starter {
+  width: 100%;
+  min-height: 0;
+  align-items: flex-start;
+  margin: 0;
+  padding: 24px 0;
+  text-align: left;
+}
+
+.collaboration-first-issue-starter .collaboration-first-project-copy {
+  justify-items: start;
+}
+
+.collaboration-first-issue-starter .collaboration-first-project-guide {
+  justify-content: flex-start;
+  margin-top: 20px;
+}
+
 .collaboration-first-project-icon {
   display: inline-flex;
   width: 44px;

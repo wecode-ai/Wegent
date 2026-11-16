@@ -185,7 +185,7 @@ export const platformMessages = {
     firstProjectHomeTitle: "开始第一个协作项目",
     firstIssueHomeTitle: "从第一件事开始",
     firstIssueHomeHint:
-      "记录要推进的目标或问题，按需邀请协作者，不必先创建项目。",
+      "记录要推进的目标或问题，按需邀请协作者，不必先创建项目。独立事项保存在云端，未连接时需先登录。",
     firstProjectHomeHint: "把一个目标交给成员和智能体，并持续看到推进过程。",
     firstProjectGuideCapture: "记录目标",
     firstProjectGuideAssign: "分配协作",
@@ -447,7 +447,7 @@ export const platformMessages = {
     firstProjectHomeTitle: "Start your first collaboration project",
     firstIssueHomeTitle: "Start with your first issue",
     firstIssueHomeHint:
-      "Capture a goal or question and invite collaborators as needed. No project required.",
+      "Capture a goal or question and invite collaborators as needed. No project required. Independent issues are saved in the cloud; sign in if you are not connected.",
     firstProjectHomeHint:
       "Give a goal to members and agents, then follow its progress through delivery.",
     firstProjectGuideCapture: "Capture the goal",
