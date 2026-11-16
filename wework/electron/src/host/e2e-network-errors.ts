@@ -3,9 +3,16 @@ import { e2eErrorLog } from './e2e-error-log.js'
 
 const registeredSessions = new WeakSet<Session>()
 
+function networkAddress(value: string) {
+  const url = new URL(value)
+  return { origin: url.origin, path: url.pathname }
+}
+
 export function recordE2ENetworkError(details: Electron.OnErrorOccurredListenerDetails): void {
   e2eErrorLog.record('network', 'request-failed', 'error', {
-    path: new URL(details.url).pathname,
+    ...networkAddress(details.url),
+    requestId: details.id,
+    resourceType: details.resourceType,
     method: details.method,
     error: details.error,
     webContentsId: details.webContentsId,
@@ -21,7 +28,9 @@ export function installE2ENetworkErrors(target: Session): void {
   target.webRequest.onCompleted({ urls: ['<all_urls>'] }, details => {
     if (details.statusCode < 400) return
     e2eErrorLog.record('network', 'http-failed', 'error', {
-      path: new URL(details.url).pathname,
+      ...networkAddress(details.url),
+      requestId: details.id,
+      resourceType: details.resourceType,
       method: details.method,
       status: details.statusCode,
       webContentsId: details.webContentsId,

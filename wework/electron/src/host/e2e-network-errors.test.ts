@@ -14,7 +14,9 @@ test('observes connection failures and HTTP failures without collecting query cr
   const webRequest = { onErrorOccurred: vi.fn(), onCompleted: vi.fn() }
   installE2ENetworkErrors({ webRequest } as unknown as Session)
   const details = {
-    url: 'https://upstream.test/route?token=synthetic-secret',
+    url: 'https://synthetic-user:synthetic-password@upstream.test:9443/route?token=synthetic-secret',
+    id: 42,
+    resourceType: 'xhr',
     method: 'POST',
     webContentsId: 1,
   }
@@ -28,6 +30,13 @@ test('observes connection failures and HTTP failures without collecting query cr
     'http-failed',
   ])
   expect(JSON.stringify(record.mock.calls)).not.toContain('synthetic-secret')
+  expect(JSON.stringify(record.mock.calls)).not.toContain('synthetic-password')
+  expect(record.mock.calls[2][3]).toMatchObject({
+    origin: 'https://upstream.test:9443',
+    path: '/route',
+    requestId: 42,
+    resourceType: 'xhr',
+  })
 })
 
 test('does not register network interceptors in ordinary sessions', () => {
