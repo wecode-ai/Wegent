@@ -44,6 +44,12 @@ import { ModelSelector } from "../controls/ModelSelector";
 import { createCollaborationTranslator } from "../i18n";
 import { CollaborationGroupRoster } from "../platform/CollaborationGroupRoster";
 import { changeCollaborationGroupLeader } from "./collaborationGroupDraft";
+import {
+  ProjectCreateMemberPicker,
+  cacheDiscoveredMembers,
+  mergeProjectCreateMembers,
+} from "./ProjectCreateMemberPicker";
+import type { CollaborationUser } from "../types";
 import { useCollaborationPortalTheme } from "../theme";
 import type {
   ProjectCreateCollaborationGroupDraft,
@@ -113,18 +119,28 @@ function CollaboratorToken({
   label,
   onRemove,
   removeLabel,
+  testId,
 }: {
   icon: ReactNode;
   label: string;
   onRemove?: () => void;
   removeLabel?: string;
+  testId?: string;
 }) {
   return (
-    <span className="collaboration-project-create-collaborator-token">
+    <span
+      className="collaboration-project-create-collaborator-token"
+      data-testid={testId}
+    >
       {icon}
       <span>{label}</span>
       {onRemove ? (
-        <button type="button" onClick={onRemove} aria-label={removeLabel}>
+        <button
+          type="button"
+          onClick={onRemove}
+          aria-label={removeLabel}
+          data-testid={testId ? `${testId}-remove` : undefined}
+        >
           <X aria-hidden="true" />
         </button>
       ) : null}
@@ -277,17 +293,45 @@ export function ProjectCreateDialog(props: ProjectCreateDialogProps) {
     targets,
     allowDingTalkAITable,
     labels,
-    resourceSetup,
+    resourceSetup: suppliedResourceSetup,
     testIds,
     host,
     onClose,
     workspaceContext,
   } = props;
   const { state, commands } = useProjectCreateController(props);
+  const [discoveredMembers, setDiscoveredMembers] = useState<
+    CollaborationUser[]
+  >([]);
+  useEffect(() => {
+    const users =
+      suppliedResourceSetup?.members.map((member) => ({
+        id: member.user_id,
+        user_name: member.user_name,
+        email: member.email,
+      })) ?? [];
+    setDiscoveredMembers((current) => cacheDiscoveredMembers(current, users));
+  }, [suppliedResourceSetup?.members]);
+  const matchingResourceSetup =
+    suppliedResourceSetup?.location === state.location
+      ? suppliedResourceSetup
+      : undefined;
+  const resourceSetup = matchingResourceSetup
+    ? {
+        ...matchingResourceSetup,
+        members: mergeProjectCreateMembers(
+          matchingResourceSetup.members,
+          discoveredMembers,
+        ),
+      }
+    : undefined;
   const portalTheme = useCollaborationPortalTheme();
   const translate = createCollaborationTranslator(labels.locale);
   const generationComposerRef = useRef<ComposerInputHandle>(null);
   const [collaboratorPickerOpen, setCollaboratorPickerOpen] = useState(false);
+  useEffect(() => {
+    if (state.projectCreated || state.saving) setCollaboratorPickerOpen(false);
+  }, [state.projectCreated, state.saving]);
   const [advancedSettingsOpen, setAdvancedSettingsOpen] = useState(false);
   const [groupRecommendationDismissed, setGroupRecommendationDismissed] =
     useState(false);
@@ -918,7 +962,11 @@ export function ProjectCreateDialog(props: ProjectCreateDialogProps) {
           void commands.submit();
         }}
       >
-        <div className="collaboration-project-create-body">
+        <fieldset
+          className="collaboration-project-create-body"
+          disabled={state.saving || state.projectCreated}
+          style={{ border: 0, margin: 0, minWidth: 0 }}
+        >
           <label className="collaboration-project-create-field">
             <span>{labels.name}</span>
             <input
@@ -1137,6 +1185,7 @@ export function ProjectCreateDialog(props: ProjectCreateDialogProps) {
                       key={`member:${member.user_id}`}
                       icon={<UserRound aria-hidden="true" />}
                       label={member.user_name}
+                      testId={`collaboration-project-create-selected-member-${member.user_id}`}
                       removeLabel={`${labels.cancel} ${member.user_name}`}
                       onRemove={() => removeMember(member.user_id)}
                     />
@@ -1177,6 +1226,24 @@ export function ProjectCreateDialog(props: ProjectCreateDialogProps) {
                     className={`${portalTheme.className ?? ""} collaboration-project-create-collaborator-menu`}
                     data-testid="collaboration-project-create-collaborator-menu"
                   >
+                    <ProjectCreateMemberPicker
+                      setup={resourceSetup}
+                      selectedIds={state.memberUserIds}
+                      labels={labels}
+                      onDiscovered={(users) =>
+                        setDiscoveredMembers((current) =>
+                          cacheDiscoveredMembers(current, users),
+                        )
+                      }
+                      onSelect={(userId) => {
+                        commands.setMemberUserIds(
+                          state.memberUserIds.includes(userId)
+                            ? state.memberUserIds.filter((id) => id !== userId)
+                            : [...state.memberUserIds, userId],
+                        );
+                        commands.setCollaborationGroupDraft(null);
+                      }}
+                    />
                     {resourceSetup.groups.length > 0 ? (
                       <div>
                         <small>{labels.availableGroups}</small>
@@ -1241,7 +1308,10 @@ export function ProjectCreateDialog(props: ProjectCreateDialogProps) {
                         </button>
                       </div>
                     ) : null}
-                    {resourceSetup.groups.length === 0 &&
+                    {resourceSetup.location !== "local" &&
+                    !resourceSetup.searchMembers &&
+                    resourceSetup.members.length === 0 &&
+                    resourceSetup.groups.length === 0 &&
                     availableAgents.length === 0 ? (
                       <p>{labels.noAvailableCollaborators}</p>
                     ) : null}
@@ -1292,6 +1362,13 @@ export function ProjectCreateDialog(props: ProjectCreateDialogProps) {
                 </p>
               ) : null}
             </section>
+          ) : state.location === "local" ? (
+            <p
+              className="collaboration-project-create-hint"
+              data-testid="collaboration-project-create-members-unavailable"
+            >
+              {labels.membersUnavailable}
+            </p>
           ) : null}
 
           {groupModelPickerOpen && typeof document !== "undefined"
@@ -1856,13 +1933,38 @@ export function ProjectCreateDialog(props: ProjectCreateDialogProps) {
               </div>
             ) : null}
           </section>
-
-          {state.error && (
-            <p className="collaboration-project-create-error" role="alert">
-              {state.error}
-            </p>
-          )}
-        </div>
+        </fieldset>
+        {state.error && (
+          <div className="collaboration-project-create-error" role="alert">
+            {state.projectCreated ? (
+              <p>{labels.projectCreatedSetupPending}</p>
+            ) : null}
+            {state.memberFailures.length ? (
+              <ul data-testid="collaboration-project-create-member-failures">
+                {state.memberFailures.map((failure) => (
+                  <li key={failure.userId}>
+                    {resourceSetup?.members.find(
+                      (member) => member.user_id === failure.userId,
+                    )?.user_name ?? failure.userName}
+                    : {failure.reason}
+                  </li>
+                ))}
+              </ul>
+            ) : (
+              <p>{state.error}</p>
+            )}
+            {state.confirmedMembers.length ? (
+              <div data-testid="collaboration-project-create-confirmed-members">
+                <strong>{labels.confirmedMembers}</strong>
+                <ul>
+                  {state.confirmedMembers.map((member) => (
+                    <li key={member.user_id}>{member.user_name}</li>
+                  ))}
+                </ul>
+              </div>
+            ) : null}
+          </div>
+        )}
         {!groupEditorDraft && !groupModelPickerOpen ? (
           <footer className="collaboration-project-create-footer">
             <button
@@ -1880,7 +1982,11 @@ export function ProjectCreateDialog(props: ProjectCreateDialogProps) {
               data-testid={testIds?.confirm ?? "cloud-project-create-confirm"}
               disabled={!state.canSubmit}
             >
-              {state.saving ? labels.creating : labels.create}
+              {state.saving
+                ? labels.creating
+                : state.projectCreated
+                  ? labels.retrySetup
+                  : labels.create}
             </button>
           </footer>
         ) : null}

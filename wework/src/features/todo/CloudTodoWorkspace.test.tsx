@@ -781,6 +781,7 @@ describe('CloudTodoWorkspace', () => {
     clearRuntimeConversationCacheForTests()
     vi.restoreAllMocks()
     vi.unstubAllGlobals()
+    vi.unstubAllEnvs()
     localStorage.clear()
   })
 
@@ -2684,6 +2685,7 @@ describe('CloudTodoWorkspace', () => {
   it.each(['reply', 'direct'])(
     'opens a new personal task for the current human assignment via %s',
     async entry => {
+      const user = userEvent.setup()
       const workbenchServices = services()
       const onOpenRuntimeTask = vi.fn()
       const assignment = {
@@ -2757,27 +2759,27 @@ describe('CloudTodoWorkspace', () => {
                 localProjects={[]}
                 services={workbenchServices}
                 onOpenRuntimeTask={onOpenRuntimeTask}
+                activeProjectRef={{ projectStore: 'backend', projectId: String(project.id) }}
               />
             </WorkbenchContext.Provider>
           </WorkbenchPaneContext.Provider>
         </RuntimeTaskLifecycleProvider>
       )
-      await userEvent.click((await screen.findAllByText('Wegent V4'))[0])
       await screen.findByTestId('cloud-todo-card-WEG-1')
       await openIssueFromBoard()
       if (entry === 'reply') {
-        await userEvent.click(
+        await user.click(
           await screen.findByTestId('cloud-task-activity-reply-toggle-human-dispatch')
         )
-        await userEvent.type(screen.getByTestId('cloud-task-activity-composer'), 'Received')
-        await userEvent.click(
+        await user.type(screen.getByTestId('cloud-task-activity-composer'), 'Received')
+        await user.click(
           within(screen.getByTestId('cloud-task-activity-composer').closest('form')!).getByRole(
             'button',
             { name: '发送消息' }
           )
         )
       } else {
-        await userEvent.click(screen.getByTestId('cloud-todo-create-task'))
+        await user.click(screen.getByTestId('cloud-todo-create-task'))
       }
       const composer = await screen.findByTestId('ai-chat-modal')
       expect(JSON.parse(composer.getAttribute('data-task-request')!)).toEqual(
@@ -2802,7 +2804,7 @@ describe('CloudTodoWorkspace', () => {
       )
       expect(composer.getAttribute('data-initial-task-input')).not.toContain('Received')
       expect(onOpenRuntimeTask).not.toHaveBeenCalled()
-      await userEvent.click(screen.getByTestId('mock-create-runtime-task'))
+      await user.click(screen.getByTestId('mock-create-runtime-task'))
       await waitFor(() =>
         expect(workbenchServices.deliveryApi!.bindTask).toHaveBeenCalledWith(
           item.id,
@@ -4035,6 +4037,7 @@ describe('CloudTodoWorkspace', () => {
     await waitFor(() => expect(screen.getByTestId('cloud-project-add')).toBeInTheDocument())
     await userEvent.click(screen.getByTestId('cloud-project-add'))
     expect(screen.getByTestId('cloud-project-name')).toBeInTheDocument()
+    expect(screen.getByTestId('collaboration-project-create-add-collaborator')).toBeInTheDocument()
     expect(screen.getByTestId('cloud-project-location-cloud')).toHaveAttribute(
       'aria-pressed',
       'true'
@@ -4082,6 +4085,162 @@ describe('CloudTodoWorkspace', () => {
       expect.objectContaining({ id: '12', name: 'Wegent Test', location: 'cloud' })
     )
     expect(screen.queryByTestId('cloud-project-name')).not.toBeInTheDocument()
+  })
+
+  it('persists selected members from ordinary project creation and shows the refreshed roster', async () => {
+    const workbenchServices = services()
+    const owner = { id: 1, user_id: 1, user_name: 'local', email: null, role: 'Owner' as const }
+    const members: import('@/api/deliveries').CloudProjectMember[] = [owner]
+    workbenchServices.deliveryApi!.listCloudProjectMembers = vi.fn(async () => [...members])
+    workbenchServices.deliveryApi!.searchCloudProjectUsers = vi.fn(async () => ({
+      users: [
+        { id: 1, user_name: 'local', email: null },
+        { id: 2, user_name: 'alice', email: null },
+        { id: 3, user_name: 'bob', email: null },
+      ],
+      total: 3,
+    }))
+    workbenchServices.deliveryApi!.addCloudProjectMember = vi.fn(async (_id, userId, role) => {
+      const member = {
+        ...owner,
+        id: userId,
+        user_id: userId,
+        user_name: userId === 2 ? 'alice' : 'bob',
+        role: role!,
+      }
+      members.push(member)
+      return member
+    })
+    render(
+      <CloudTodoWorkspace
+        user={{ id: 1, user_name: 'local' } as User}
+        localProjects={[]}
+        services={workbenchServices}
+      />
+    )
+    await userEvent.click(await screen.findByTestId('cloud-project-add'))
+    await userEvent.type(screen.getByTestId('cloud-project-name'), 'Member project')
+    await userEvent.click(screen.getByTestId('collaboration-project-create-add-collaborator'))
+    fireEvent.change(screen.getByTestId('collaboration-project-create-member-search'), {
+      target: { value: 'member' },
+    })
+    await userEvent.click(await screen.findByTestId('collaboration-project-create-member-2'))
+    await userEvent.click(screen.getByTestId('collaboration-project-create-member-3'))
+    expect(screen.queryByTestId('collaboration-project-create-member-1')).not.toBeInTheDocument()
+    fireEvent.keyDown(screen.getByTestId('collaboration-project-create-member-search'), {
+      key: 'Escape',
+    })
+    await userEvent.click(screen.getByTestId('cloud-project-create-confirm'))
+    await waitFor(() => expect(screen.queryByTestId('cloud-project-name')).not.toBeInTheDocument())
+    expect(screen.getByTestId('transient-notice')).toHaveTextContent('alice, bob')
+    expect(workbenchServices.deliveryApi!.addCloudProjectMember).toHaveBeenCalledTimes(2)
+    expect(workbenchServices.deliveryApi!.addCloudProjectMember).toHaveBeenCalledWith(
+      '12',
+      2,
+      'Developer'
+    )
+    expect(workbenchServices.deliveryApi!.addCloudProjectMember).toHaveBeenCalledWith(
+      '12',
+      3,
+      'Developer'
+    )
+    fireEvent.click(screen.getByTestId('cloud-project-manage-view'))
+    fireEvent.click(screen.getByTestId('cloud-project-settings-members'))
+    expect(await screen.findByTestId('cloud-project-member-2')).toHaveTextContent('alice')
+    expect(screen.getByTestId('cloud-project-member-3')).toHaveTextContent('bob')
+  })
+
+  it('retries failed members on the created ordinary project without duplicating successful additions', async () => {
+    const workbenchServices = services()
+    const owner = { id: 1, user_id: 1, user_name: 'local', email: null, role: 'Owner' as const }
+    const members: import('@/api/deliveries').CloudProjectMember[] = [owner]
+    let memberAddDenied = true
+    workbenchServices.deliveryApi!.listCloudProjectMembers = vi.fn(async () => [...members])
+    workbenchServices.deliveryApi!.searchCloudProjectUsers = vi.fn(async () => ({
+      users: [
+        { id: 2, user_name: 'alice', email: null },
+        { id: 3, user_name: 'bob', email: null },
+      ],
+      total: 2,
+    }))
+    workbenchServices.deliveryApi!.addCloudProjectMember = vi.fn(async (_id, userId, role) => {
+      if (userId === 3 && memberAddDenied) throw new Error('Permission denied')
+      const member = {
+        ...owner,
+        id: userId,
+        user_id: userId,
+        user_name: userId === 2 ? 'alice' : 'bob',
+        role: role!,
+      }
+      members.push(member)
+      return member
+    })
+    render(
+      <CloudTodoWorkspace
+        user={{ id: 1, user_name: 'local' } as User}
+        localProjects={[]}
+        services={workbenchServices}
+      />
+    )
+    await userEvent.click(await screen.findByTestId('cloud-project-add'))
+    await userEvent.type(screen.getByTestId('cloud-project-name'), 'Recoverable project')
+    await userEvent.click(screen.getByTestId('collaboration-project-create-add-collaborator'))
+    fireEvent.change(screen.getByTestId('collaboration-project-create-member-search'), {
+      target: { value: 'member' },
+    })
+    await userEvent.click(await screen.findByTestId('collaboration-project-create-member-2'))
+    await userEvent.click(screen.getByTestId('collaboration-project-create-member-3'))
+    fireEvent.keyDown(screen.getByTestId('collaboration-project-create-member-search'), {
+      key: 'Escape',
+    })
+    await userEvent.click(screen.getByTestId('cloud-project-create-confirm'))
+    expect(await screen.findByText(/Permission denied/)).toBeInTheDocument()
+    expect(screen.getByTestId('cloud-project-name')).toHaveValue('Recoverable project')
+    expect(screen.getByTestId('collaboration-project-create-selected-member-3')).toHaveTextContent(
+      'bob'
+    )
+    expect(workbenchServices.deliveryApi!.createCloudProject).toHaveBeenCalledTimes(1)
+    memberAddDenied = false
+    await userEvent.click(screen.getByTestId('cloud-project-create-confirm'))
+    await waitFor(() => expect(screen.queryByTestId('cloud-project-name')).not.toBeInTheDocument())
+    expect(workbenchServices.deliveryApi!.createCloudProject).toHaveBeenCalledTimes(1)
+    expect(
+      vi
+        .mocked(workbenchServices.deliveryApi!.addCloudProjectMember)
+        .mock.calls.map(call => call[1])
+    ).toEqual([2, 3, 3])
+  })
+
+  it('hides member selection for local projects and when the creation member flag is off', async () => {
+    const workbenchServices = services()
+    const { unmount } = render(
+      <CloudTodoWorkspace
+        user={{ id: 1, user_name: 'local' } as User}
+        localProjects={[]}
+        services={workbenchServices}
+      />
+    )
+    await userEvent.click(await screen.findByTestId('cloud-project-add'))
+    await userEvent.click(screen.getByTestId('cloud-project-location-local'))
+    expect(
+      screen.queryByTestId('collaboration-project-create-add-collaborator')
+    ).not.toBeInTheDocument()
+    expect(
+      screen.getByTestId('collaboration-project-create-members-unavailable')
+    ).toBeInTheDocument()
+    unmount()
+    vi.stubEnv('VITE_COLLAB_PROJECT_CREATE_MEMBERS_V1', 'false')
+    render(
+      <CloudTodoWorkspace
+        user={{ id: 1, user_name: 'local' } as User}
+        localProjects={[]}
+        services={workbenchServices}
+      />
+    )
+    await userEvent.click(await screen.findByTestId('cloud-project-add'))
+    expect(
+      screen.queryByTestId('collaboration-project-create-add-collaborator')
+    ).not.toBeInTheDocument()
   })
 
   it('requires only a project-space name before creating', async () => {

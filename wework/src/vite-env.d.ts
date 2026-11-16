@@ -4,6 +4,7 @@ declare const __WEWORK_APP_VERSION__: string
 declare const __WEWORK_COMMIT_SHA__: string
 
 interface ImportMetaEnv {
+  readonly VITE_COLLAB_PROJECT_CREATE_MEMBERS_V1?: string
   readonly VITE_WEWORK_POSTHOG_HOST?: string
   readonly VITE_WEWORK_POSTHOG_KEY?: string
   readonly VITE_WEWORK_RELEASE_CHANNEL?: string

@@ -6,7 +6,10 @@ import { createProjectOnlyNavigationRegression } from '../modules/project-only-n
 import { createProjectSpacePickerRegression } from '../modules/project-space-picker.mjs'
 import { verifyIssueConversationDrawers } from '../modules/issue-conversation-drawers.mjs'
 import { verifyCollaborationIssueHome } from '../modules/collaboration-issue-home.mjs'
-import { verifyCollaborationMemberSettings } from '../modules/collaboration-member-settings.mjs'
+import {
+  selectProjectCreateMembers,
+  verifyCollaborationMemberSettings,
+} from '../modules/collaboration-member-settings.mjs'
 import {
   assertFullscreenIssueComposerColumn,
   assertFullscreenIssueComposerColumnAtWindowSize,
@@ -166,6 +169,7 @@ export function createDesktopScenario({
   let backendUrl = ''
   let authToken = ''
   let owner = null
+  const selectedMembers = []
   let workspace = null
   let project = null
   let issue = null
@@ -230,6 +234,19 @@ export function createDesktopScenario({
       authToken = cloud.authToken
       owner = await request('/api/users/me')
       await request('/api/admin/setup-complete', { method: 'POST' })
+      for (const index of [1, 2]) {
+        selectedMembers.push(
+          await request('/api/admin/users', {
+            method: 'POST',
+            body: JSON.stringify({
+              user_name: `project-create-member-${index}-${process.pid}`,
+              password: `project-create-member-${index}-e2e`,
+              role: 'user',
+              auth_source: 'password',
+            }),
+          })
+        )
+      }
       await projectOnlyNavigation.prepare(cloud, owner)
       await projectSpacePicker.prepare()
     },
@@ -372,6 +389,7 @@ export function createDesktopScenario({
         await control.command('fill', scoped('[data-testid="collaboration-project-name-input"]'), {
           value: projectName,
         })
+        await selectProjectCreateMembers(control, { members: selectedMembers, owner })
         await control.command(
           'click',
           scoped('[data-testid="collaboration-project-create-advanced"]')
@@ -415,7 +433,13 @@ export function createDesktopScenario({
           timeoutMs: uiTimeoutMs,
         })
         await capture(control, 'collaboration-shared-core-03-project-created.png')
-        await verifyCollaborationMemberSettings(control, { scoped, owner, request, project })
+        await verifyCollaborationMemberSettings(control, {
+          scoped,
+          owner,
+          request,
+          project,
+          members: selectedMembers,
+        })
 
         // Creation authorizes the current runner; this recovery case needs an unassigned project.
         const initialEnvironments = await request(
@@ -922,6 +946,7 @@ export function createDesktopScenario({
         fixtureArchived,
         issueId: issue?.id ?? null,
         projectId: project?.id ?? null,
+        selectedMemberIds: selectedMembers.map(member => member.id),
         workspaceId: workspace?.id ?? null,
       }
     },

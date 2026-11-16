@@ -5271,7 +5271,10 @@ describe("CollaborationPlatformApp real component flow", () => {
       initialProjects: [],
       initialGroups: [collaborationGroup],
     });
-    api.members.list = emptyAsync([]);
+    api.members.list = vi
+      .fn()
+      .mockResolvedValueOnce([])
+      .mockResolvedValue([{ ...member, role: "Developer" }]);
     api.agents.create = vi.fn(async () => agent);
     await render(
       <PlatformHarness
@@ -5323,6 +5326,9 @@ describe("CollaborationPlatformApp real component flow", () => {
     expect(api.agents.create).toHaveBeenCalledWith(
       project.id,
       createSharedAgentBindingInput(agent),
+    );
+    expect(api.members.list.mock.invocationCallOrder[1]).toBeLessThan(
+      api.agents.create.mock.invocationCallOrder[0],
     );
     expect(api.projects.createCollaborationGroup).toHaveBeenCalledWith(
       project.id,
@@ -5522,6 +5528,77 @@ describe("CollaborationPlatformApp real component flow", () => {
 
     expect(api.agents.create).not.toHaveBeenCalled();
     expect(container.querySelector('[role="alert"]')).not.toBeNull();
+  });
+
+  it("keeps the created project open when the server has not persisted a selected member", async () => {
+    const { api } = createApi({
+      initialProjects: [],
+      initialGroups: [collaborationGroup],
+    });
+    api.members.list = emptyAsync([]);
+    api.members.add = vi.fn(async () => ({ ...member, role: "Developer" }));
+    api.agents.create = vi.fn(async () => agent);
+    await render(
+      <PlatformHarness
+        api={api}
+        start={{ ...initialLocation, workspaceId: workspace.id }}
+      />,
+    );
+
+    await chooseBlankProjectCreation("collaboration-workspace-project-create");
+    await change(
+      byTestId("collaboration-project-name-input") as HTMLInputElement,
+      project.name,
+    );
+    await click(byTestId("collaboration-project-create-add-collaborator"));
+    await click(portalButtonWithText(collaborationGroup.name));
+    await click(byTestId("collaboration-project-create-confirm"));
+
+    expect(api.members.add).toHaveBeenCalledWith(
+      project.id,
+      member.user_id,
+      "Developer",
+    );
+    expect(api.agents.create).not.toHaveBeenCalled();
+    expect(container.querySelector('[role="alert"]')?.textContent).toContain(
+      member.user_name,
+    );
+  });
+
+  it("recovers the project collaborator directory without clearing the project draft", async () => {
+    const { api } = createApi({ initialProjects: [] });
+    await render(
+      <PlatformHarness
+        api={api}
+        start={{ ...initialLocation, workspaceId: workspace.id }}
+      />,
+    );
+    api.workspaces!.listMembers = vi
+      .fn()
+      .mockRejectedValueOnce(new Error("Directory access denied"))
+      .mockResolvedValue([member]);
+
+    await chooseBlankProjectCreation("collaboration-workspace-project-create");
+    await change(
+      byTestId("collaboration-project-name-input") as HTMLInputElement,
+      "Keep this draft",
+    );
+    await click(byTestId("collaboration-project-create-add-collaborator"));
+    expect(document.body.textContent).toContain("Directory access denied");
+
+    await click(
+      portalByTestId("collaboration-project-create-member-search-retry"),
+    );
+
+    expect(api.workspaces!.listMembers).toHaveBeenCalledTimes(2);
+    expect(
+      byTestId<HTMLInputElement>("collaboration-project-name-input").value,
+    ).toBe("Keep this draft");
+    expect(
+      portalByTestId(`collaboration-project-create-member-${member.user_id}`)
+        .textContent,
+    ).toContain(member.user_name);
+    expect(document.body.textContent).not.toContain("Directory access denied");
   });
 
   it("loads table assignments by issue id and renders the real target name", async () => {

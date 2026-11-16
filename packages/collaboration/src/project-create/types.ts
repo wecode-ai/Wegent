@@ -12,6 +12,7 @@ import type {
   CollaborationWorkspaceMember,
   CollaborationOwnedAgent,
   CollaborationProject,
+  CollaborationUser,
 } from "../types";
 
 export type ProjectCreateLocation = "local" | "cloud";
@@ -112,6 +113,10 @@ export interface ProjectCreateResourceSetup {
     name: string;
   };
   members: CollaborationWorkspaceMember[];
+  membersLoading?: boolean;
+  membersError?: string | null;
+  reloadMembers?(): void;
+  searchMembers?(query: string): Promise<CollaborationUser[]>;
   agents: CollaborationOwnedAgent[];
   defaultAgentResourceIds?: string[];
   groups: CollaborationGroup[];
@@ -205,6 +210,16 @@ export interface ProjectCreateLabels {
   availableAgents: string;
   availableGroups: string;
   noAvailableCollaborators: string;
+  availableMembers: string;
+  searchMembers: string;
+  searchingMembers: string;
+  noMatchingMembers: string;
+  memberSearchFailed: string;
+  membersUnavailable: string;
+  retry: string;
+  retrySetup: string;
+  projectCreatedSetupPending: string;
+  confirmedMembers: string;
   groupRecommendationTitle: string;
   groupRecommendationDescription: string;
   keepDirectCollaboration: string;

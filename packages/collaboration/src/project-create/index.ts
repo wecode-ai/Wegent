@@ -6,6 +6,10 @@ export {
 export { projectCreateLabels } from "./labels";
 export { repositoryProviderConfig } from "./projectProviderConfig";
 export { useProjectCreateController } from "./useProjectCreateController";
+export {
+  configureProjectMembers,
+  ProjectCreateMembersError,
+} from "./configureProjectMembers";
 export type {
   DingTalkAITableLink,
   ProjectCreateDialogProps,

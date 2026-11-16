@@ -3876,6 +3876,8 @@
     "cloud_todo_status_in_review": "待评审",
     "cloud_todo_status_completed": "已完成",
     "cloud_project_bind_failed": "关联项目空间失败",
+    "project_create_members_verification_failed": "尚未确认成员已加入项目，请重试。",
+    "project_create_members_confirmed": "已加入项目：{{members}}（Developer）",
     "task_board_change": "更改看板关联",
     "task_board_association_title": "加入「{{name}}」",
     "task_board_association_create": "新建看板任务",

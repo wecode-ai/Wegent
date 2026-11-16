@@ -4,7 +4,12 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 
-import type { CollaborationExecutionEnvironment } from "../types";
+import type {
+  CollaborationExecutionEnvironment,
+  CollaborationProject,
+  CollaborationMember,
+} from "../types";
+import { ProjectCreateMembersError } from "./configureProjectMembers";
 
 import {
   RepositoryProviderError,
@@ -17,6 +22,8 @@ import type {
   ProjectCreateProvider,
   ProjectCreateHostAdapter,
   ProjectCreateLabels,
+  ProjectCreateResourceSelection,
+  ProjectCreateResourceSetup,
 } from "./types";
 
 type ProjectVisibility = NonNullable<
@@ -106,6 +113,20 @@ export function useProjectCreateController({
     import("./types").ProjectCreateCollaborationGroupDraft | null
   >(null);
   const [saving, setSaving] = useState(false);
+  const submissionInFlight = useRef(false);
+  const pendingSetup = useRef<{
+    project: CollaborationProject;
+    location: ProjectCreateLocation;
+    selection: ProjectCreateResourceSelection;
+    setup?: ProjectCreateResourceSetup;
+  } | null>(null);
+  const [projectCreated, setProjectCreated] = useState(false);
+  const [memberFailures, setMemberFailures] = useState<
+    ProjectCreateMembersError["failures"]
+  >([]);
+  const [confirmedMembers, setConfirmedMembers] = useState<
+    CollaborationMember[]
+  >([]);
   const [error, setError] = useState<string | null>(null);
   const repositoryProvider =
     taskProvider === "github" || taskProvider === "gitlab";
@@ -118,9 +139,10 @@ export function useProjectCreateController({
     [aitableUrl, host, isAITableProvider],
   );
   const canSubmit = Boolean(
-    name.trim() &&
-    (!repositoryProvider || repositoryAddress.trim()) &&
-    (!isAITableProvider || aitableLink) &&
+    (projectCreated ||
+      (name.trim() &&
+        (!repositoryProvider || repositoryAddress.trim()) &&
+        (!isAITableProvider || aitableLink))) &&
     !saving,
   );
 
@@ -133,64 +155,86 @@ export function useProjectCreateController({
     );
   }, [resourceSetup?.executionEnvironments]);
 
+  async function createPendingProject() {
+    const setup =
+      resourceSetup?.location === location ? resourceSetup : undefined;
+    const target = targets.find((candidate) => candidate.location === location);
+    if (!target) throw new Error(labels.unavailableLocation);
+    const providerConfig = isAITableProvider
+      ? {
+          base_id: aitableLink!.baseId,
+          table_id: aitableLink!.tableId,
+          source_url: aitableLink!.url,
+          ...(aitableLink!.viewId ? { view_id: aitableLink!.viewId } : {}),
+        }
+      : repositoryProvider
+        ? {
+            ...repositoryProviderConfig(repositoryAddress, taskProvider),
+            ...(token.trim() ? { token: token.trim() } : {}),
+          }
+        : {};
+    const project = await target.create({
+      name: name.trim(),
+      description: description.trim(),
+      taskProvider,
+      providerConfig,
+      ...(location === "cloud"
+        ? {
+            visibility,
+            ...(visibility === "public"
+              ? { publicAccess: { role: publicAccessRole } }
+              : {}),
+            ...(!isAITableProvider ? { defaultIssueSecurity } : {}),
+          }
+        : {}),
+      ...(location === "local" && setup
+        ? {
+            includeDefaultAgent: defaultAgentResourceIds.some((id) =>
+              agentResourceIds.includes(id),
+            ),
+          }
+        : {}),
+    });
+    return {
+      project,
+      location,
+      setup,
+      selection: {
+        memberUserIds: [...new Set(memberUserIds)].filter(
+          (userId) => userId !== setup?.currentUser.id,
+        ),
+        agentResourceIds,
+        executionEnvironmentDeviceIds,
+        collaborationGroupDraft,
+      },
+    };
+  }
+
   async function submit() {
-    if (!canSubmit) return;
+    if (submissionInFlight.current || (!canSubmit && !pendingSetup.current))
+      return;
+    submissionInFlight.current = true;
     setSaving(true);
     setError(null);
+    setMemberFailures([]);
     try {
-      const target = targets.find(
-        (candidate) => candidate.location === location,
-      );
-      if (!target) throw new Error(labels.unavailableLocation);
-      const providerConfig = isAITableProvider
-        ? {
-            base_id: aitableLink!.baseId,
-            table_id: aitableLink!.tableId,
-            source_url: aitableLink!.url,
-            ...(aitableLink!.viewId ? { view_id: aitableLink!.viewId } : {}),
-          }
-        : repositoryProvider
-          ? {
-              ...repositoryProviderConfig(repositoryAddress, taskProvider),
-              ...(token.trim() ? { token: token.trim() } : {}),
-            }
-          : {};
-      const project = await target.create({
-        name: name.trim(),
-        description: description.trim(),
-        taskProvider,
-        providerConfig,
-        ...(location === "cloud"
-          ? {
-              visibility,
-              ...(visibility === "public"
-                ? { publicAccess: { role: publicAccessRole } }
-                : {}),
-              ...(!isAITableProvider ? { defaultIssueSecurity } : {}),
-            }
-          : {}),
-        ...(location === "local" && resourceSetup
-          ? {
-              includeDefaultAgent: defaultAgentResourceIds.some((id) =>
-                agentResourceIds.includes(id),
-              ),
-            }
-          : {}),
-      });
-      if (resourceSetup) {
-        await resourceSetup.configure(project, {
-          memberUserIds,
-          agentResourceIds,
-          executionEnvironmentDeviceIds,
-          collaborationGroupDraft,
-        });
+      if (!pendingSetup.current) {
+        pendingSetup.current = await createPendingProject();
+        setProjectCreated(true);
       }
+      const pending = pendingSetup.current;
+      await pending.setup?.configure(pending.project, pending.selection);
       host?.track?.("created");
-      onCreated(project, location);
+      onCreated(pending.project, pending.location);
     } catch (cause) {
+      if (cause instanceof ProjectCreateMembersError) {
+        setMemberFailures(cause.failures);
+        setConfirmedMembers(cause.members);
+      }
       host?.track?.("failed");
       setError(projectCreateErrorMessage(cause, labels, host));
     } finally {
+      submissionInFlight.current = false;
       setSaving(false);
     }
   }
@@ -211,6 +255,9 @@ export function useProjectCreateController({
       repositoryProvider,
       isAITableProvider,
       saving,
+      projectCreated,
+      memberFailures,
+      confirmedMembers,
       error,
       canSubmit,
       memberUserIds,

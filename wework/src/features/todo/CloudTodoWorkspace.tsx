@@ -3,6 +3,7 @@ import { issueDraftFromText, RuntimeConfigurationProvider } from '@wegent/collab
 import { useAssignmentNotificationChoice } from '@/features/notifications/useAssignmentNotificationChoice'
 import { runtimeTaskBindingAddress } from './runtimeTaskBindingAddress'
 import { createWeworkProjectAgentConfigurationHost } from '@/features/collaboration/WeworkProjectAgentConfigurationHost'
+import { createProjectResourceSetup } from '@/features/collaboration/createProjectResourceSetup'
 import {
   useCallback,
   useContext,
@@ -618,6 +619,8 @@ export function CloudTodoWorkspace({
       : null
   const changeRequestMonitor = changeRequestStatusEnabled ? issueChangeRequestMonitor : null
   const cloudWorkspaceApi = services.sharedWorkspaceApi
+  const [projectCreationNotice, setProjectCreationNotice] = useState<string | null>(null)
+  const clearProjectCreationNotice = useCallback(() => setProjectCreationNotice(null), [])
   const deviceNamesById = useMemo(() => getRuntimeWorkDeviceNamesById(runtimeWork), [runtimeWork])
   const runtimeTaskExecutionStatusByAddress = useMemo(
     () => runtimeTaskConversationStatusesByAddress(runtimeWork, runtimeTaskLifecycle),
@@ -685,6 +688,28 @@ export function CloudTodoWorkspace({
       eager: false,
     },
   })
+  const projectCreateResourceSetup = useMemo(
+    () =>
+      createProjectResourceSetup(
+        cloudWorkspaceApi,
+        { id: Number(user.id), name: user.user_name },
+        async (projectId, members) => {
+          await cloudWorkspace.commands.loadProjectSnapshot(projectId, {
+            invalidate: true,
+            throwOnError: true,
+          })
+          if (members.length) {
+            setProjectCreationNotice(
+              t('workbench.project_create_members_confirmed', {
+                members: members.map(member => member.user_name).join(', '),
+              })
+            )
+          }
+        },
+        t('workbench.project_create_members_verification_failed')
+      ),
+    [cloudWorkspace.commands, cloudWorkspaceApi, t, user.id, user.user_name]
+  )
   const projectSpaceApis = useMemo(() => {
     if (services.projectSpaceApis) return services.projectSpaceApis
     return {
@@ -3934,6 +3959,7 @@ export function CloudTodoWorkspace({
           tone="error"
           onClear={clearTaskDispatchError}
         />
+        <TransientNotice message={projectCreationNotice} onClear={clearProjectCreationNotice} />
         {(selectedProject?.location === 'cloud'
           ? cloudWorkspace.state.project?.id === String(selectedProject.id)
           : selectedProjectKey === itemTaskBindingsProjectKey) &&
@@ -5542,6 +5568,7 @@ export function CloudTodoWorkspace({
           <ProjectCreateDialog
             targets={availableProjectSpaceApis}
             defaultLocation={projectSpaceApis.defaultLocation}
+            resourceSetup={projectCreateResourceSetup}
             allowDingTalkAITable
             labels={projectCreateLabels[i18n.language.startsWith('zh') ? 'zh-CN' : 'en']}
             host={{

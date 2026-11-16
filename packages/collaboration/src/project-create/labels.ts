@@ -70,6 +70,17 @@ export const projectCreateLabels: Record<
     availableAgents: "已有智能体",
     availableGroups: "协作小组",
     noAvailableCollaborators: "暂无其他可添加项",
+    availableMembers: "成员 · Developer",
+    searchMembers: "按用户名或邮箱搜索成员",
+    searchingMembers: "正在搜索成员…",
+    noMatchingMembers: "没有匹配的成员",
+    memberSearchFailed: "搜索成员失败，请重试",
+    membersUnavailable: "本地项目暂不支持从云端账号目录选择成员。",
+    retry: "重试",
+    retrySetup: "重试项目配置",
+    projectCreatedSetupPending:
+      "项目已创建，部分配置未完成。重试会继续配置该项目。",
+    confirmedMembers: "已确认的项目成员",
     groupRecommendationTitle: "建议组织成协作小组",
     groupRecommendationDescription:
       "多个智能体独立协作时需要你逐个分配任务。转为协作小组后，由一个负责人拆解、分派、验收并汇总，执行工作由小组成员完成。",
@@ -190,6 +201,18 @@ export const projectCreateLabels: Record<
     availableAgents: "Existing Agents",
     availableGroups: "Collaboration groups",
     noAvailableCollaborators: "Nothing else is available to add",
+    availableMembers: "Members · Developer",
+    searchMembers: "Search members by name or email",
+    searchingMembers: "Searching members…",
+    noMatchingMembers: "No matching members",
+    memberSearchFailed: "Member search failed. Please retry.",
+    membersUnavailable:
+      "Local projects cannot select members from the cloud account directory yet.",
+    retry: "Retry",
+    retrySetup: "Retry project setup",
+    projectCreatedSetupPending:
+      "The project was created, but some setup is incomplete. Retry continues setting up this project.",
+    confirmedMembers: "Confirmed project members",
     groupRecommendationTitle: "Organize these Agents as a group",
     groupRecommendationDescription:
       "Independent Agents need separate task assignments. A group gives one working lead responsibility for delegation and synthesis.",
