@@ -127,4 +127,35 @@ describe('IssueDetailSearchableSelect', () => {
     const tabbableOptions = document.querySelectorAll('[role="option"][tabindex="0"]')
     expect(tabbableOptions).toHaveLength(1)
   })
+
+  it.each([
+    ['ArrowDown', true, 0],
+    ['ArrowUp', true, 0],
+    ['Enter', true, 0],
+    ['Escape', true, 0],
+    ['ArrowDown', false, 229],
+    ['ArrowUp', false, 229],
+    ['Enter', false, 229],
+    ['Escape', false, 229],
+  ] as const)(
+    'keeps composing %s inside search (isComposing=%s)',
+    async (key, isComposing, keyCode) => {
+      await renderSelect()
+      await click(container.querySelector('[data-testid="assignee"]')!)
+      const search = portalByTestId('assignee-search')!
+      const event = new KeyboardEvent('keydown', {
+        key,
+        isComposing,
+        keyCode,
+        bubbles: true,
+        cancelable: true,
+      })
+      await act(async () => {
+        search.dispatchEvent(event)
+      })
+      expect(portalByTestId('assignee-menu')).not.toBeNull()
+      expect(document.activeElement).toBe(search)
+      if (key !== 'Escape') expect(event.defaultPrevented).toBe(false)
+    }
+  )
 })

@@ -582,6 +582,8 @@ Connect a cloud account and choose **Collaboration → New Issue**. Enter a titl
 
 Project and assignee pickers focus a search field when opened. Search projects by name, key or group; group names and project keys distinguish duplicate names. Assignees are grouped as People, Agents and Teams. Use Up/Down to browse candidates, Home/End to reach the first or last, and Enter on a focused candidate to select it. Enter in search does not submit the Issue. Escape closes the picker and restores trigger focus.
 
+If the connection fails during saving, the current form keeps its contents and reports that the save result is unconfirmed. Check whether the Issue already exists before retrying. Closing the form does not delete an Issue that was saved.
+
 The creator searches for colleagues under **Edit → Participants**, adds invitations or removes existing participants. Participants can read, edit, comment and work on the Issue, but cannot change invitations or delete it. Removing a participant also clears their assignment. Every subsequent read and write rechecks the current invitation. Assignment grants no access; assignees must be the creator or an invited participant.
 
 Open an Issue to discuss, edit or archive it. **Show archived independent issues** lists archived records for restoration. Only the creator can confirm deletion. Saves require the observed version; a concurrent change preserves the draft and reports a conflict so the current content can be reviewed before resubmitting.

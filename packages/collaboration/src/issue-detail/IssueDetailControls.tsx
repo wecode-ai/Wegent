@@ -9,6 +9,7 @@ import { Check, Search } from 'lucide-react'
 import type { CollaborationPriority, CollaborationStatus } from '../types'
 import { useCollaborationPortalTheme } from '../theme'
 import { useEscapeKey } from '../markdown/useEscapeKey'
+import { isImeComposingEvent } from '@wegent/chat-core/ime'
 
 export interface IssueDetailSelectProps<TValue extends string> {
   value: TValue
@@ -250,9 +251,13 @@ export function IssueDetailSearchableSelect<TValue extends string>({
           onEscapeKeyDown={event => {
             event.preventDefault()
             event.stopPropagation()
-            setOpen(false)
+            if (!isImeComposingEvent(event)) setOpen(false)
           }}
           onKeyDown={event => {
+            if (isImeComposingEvent(event)) {
+              event.stopPropagation()
+              return
+            }
             const searching = event.target === searchInputRef.current
             if (searching && event.key === 'Enter') {
               event.preventDefault()

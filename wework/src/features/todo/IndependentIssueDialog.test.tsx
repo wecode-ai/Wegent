@@ -9,6 +9,70 @@ vi.mock('@/hooks/useTranslation', () => ({ useTranslation: () => ({ t: (key: str
 vi.mock('./IndependentIssueTaskButton', () => ({ IndependentIssueTaskButton: () => null }))
 afterEach(cleanup)
 
+it('keeps IME confirmation and cancellation inside participant search without submitting the draft', async () => {
+  const api = {
+    projects: vi.fn().mockResolvedValue({ items: [] }),
+    create: vi.fn(),
+  } as unknown as PersonalIssuesApi
+  render(
+    <IndependentIssueDialog
+      api={api}
+      userId={7}
+      issueId={null}
+      onClose={vi.fn()}
+      onSaved={vi.fn()}
+    />
+  )
+  fireEvent.change(screen.getByTestId('independent-issue-title'), {
+    target: { value: '输入中的事项' },
+  })
+  await userEvent.click(screen.getByTestId('issue-participant-add'))
+  const search = screen.getByTestId('independent-issue-search-people')
+  await waitFor(() => expect(search).toHaveFocus())
+  expect(fireEvent.keyDown(search, { key: 'Enter', isComposing: true, keyCode: 229 })).toBe(true)
+  fireEvent.keyDown(search, { key: 'Escape', isComposing: true, keyCode: 229 })
+  expect(screen.getByTestId('issue-participant-picker')).toBeInTheDocument()
+  expect(search).toHaveFocus()
+  expect(screen.queryByTestId('independent-issue-discard-dialog')).not.toBeInTheDocument()
+  expect(api.create).not.toHaveBeenCalled()
+  await userEvent.keyboard('{Escape}')
+  await waitFor(() =>
+    expect(screen.queryByTestId('issue-participant-picker')).not.toBeInTheDocument()
+  )
+  expect(screen.getByTestId('independent-issue-title')).toHaveValue('输入中的事项')
+})
+
+it('explains an unconfirmed save without losing the draft or exposing transport errors', async () => {
+  const api = {
+    projects: vi.fn().mockResolvedValue({ items: [] }),
+    create: vi.fn().mockRejectedValue(new TypeError('Failed to fetch')),
+  } as unknown as PersonalIssuesApi
+  const close = vi.fn()
+  render(
+    <IndependentIssueDialog api={api} userId={7} issueId={null} onClose={close} onSaved={vi.fn()} />
+  )
+  fireEvent.change(screen.getByTestId('independent-issue-title'), {
+    target: { value: 'Preserved title' },
+  })
+  fireEvent.change(screen.getByTestId('independent-issue-description'), {
+    target: { value: 'Preserved description' },
+  })
+  fireEvent.click(screen.getByTestId('independent-issue-save'))
+  expect(await screen.findByRole('alert')).toHaveTextContent('issue_creation.save_unconfirmed')
+  expect(screen.queryByText('Failed to fetch')).not.toBeInTheDocument()
+  expect(screen.getByTestId('independent-issue-title')).toHaveValue('Preserved title')
+  expect(screen.getByTestId('independent-issue-description')).toHaveValue('Preserved description')
+  expect(screen.getByTestId('independent-issue-save')).toBeEnabled()
+  expect(close).not.toHaveBeenCalled()
+  expect(api.create).toHaveBeenCalledOnce()
+  fireEvent.click(screen.getByTestId('independent-issue-editor-cancel'))
+  expect(screen.getByText('issue_creation.unconfirmed_discard_title')).toBeVisible()
+  expect(screen.getByText('issue_creation.unconfirmed_discard_hint')).toBeVisible()
+  fireEvent.click(screen.getByTestId('independent-issue-discard-confirm-cancel-button'))
+  expect(screen.getByTestId('independent-issue-title')).toHaveValue('Preserved title')
+  expect(close).not.toHaveBeenCalled()
+})
+
 it.each(['cancel', 'escape', 'discard'] as const)(
   'returns focus to the new-Issue opener after %s',
   async dismissal => {

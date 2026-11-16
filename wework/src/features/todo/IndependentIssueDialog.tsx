@@ -49,7 +49,9 @@ export function IndependentIssueDialog({
   const [comments, setComments] = useState<IndependentIssueComment[]>([])
   const [loading, setLoading] = useState(Boolean(issueId))
   const [error, setError] = useState('')
-  const [conflicted, setConflicted] = useState(false)
+  const [errorKind, setErrorKind] = useState<'default' | 'conflict' | 'unconfirmed'>('default')
+  const conflicted = errorKind === 'conflict'
+  const saveUnconfirmed = errorKind === 'unconfirmed'
   const [reloadIssueId, setReloadIssueId] = useState<string | null>(null)
   const loadId = issueId ?? reloadIssueId
   const [commentError, setCommentError] = useState('')
@@ -73,7 +75,7 @@ export function IndependentIssueDialog({
     setLoading(true)
     setDirty(false)
     setError('')
-    setConflicted(false)
+    setErrorKind('default')
     setAssociationPending(false)
     setRetry(value => value + 1)
   }
@@ -101,7 +103,7 @@ export function IndependentIssueDialog({
           if (active) {
             setIssue(row)
             setError('')
-            setConflicted(false)
+            setErrorKind('default')
           }
         },
         reason => {
@@ -137,12 +139,25 @@ export function IndependentIssueDialog({
     if (busy) return
     setBusy(true)
     setError('')
-    setConflicted(false)
+    setErrorKind('default')
     try {
       await operation()
     } catch (reason) {
-      setError(reason instanceof Error ? reason.message : String(reason))
-      setConflicted(editing && reason instanceof ApiError && reason.status === 409)
+      const unconfirmed = reason instanceof TypeError && editing
+      setError(
+        unconfirmed
+          ? t('issue_creation.save_unconfirmed')
+          : reason instanceof Error
+            ? reason.message
+            : String(reason)
+      )
+      setErrorKind(
+        unconfirmed
+          ? 'unconfirmed'
+          : editing && reason instanceof ApiError && reason.status === 409
+            ? 'conflict'
+            : 'default'
+      )
     } finally {
       setBusy(false)
     }
@@ -492,14 +507,20 @@ export function IndependentIssueDialog({
       <ConfirmDialog
         open={Boolean(discarding)}
         title={t(
-          discarding === 'reload' ? 'issue_creation.reload_latest' : 'issue_creation.discard_title'
+          discarding === 'reload'
+            ? 'issue_creation.reload_latest'
+            : saveUnconfirmed
+              ? 'issue_creation.unconfirmed_discard_title'
+              : 'issue_creation.discard_title'
         )}
         description={t(
           discarding === 'reload'
             ? 'issue_creation.reload_hint'
             : associationPending
               ? 'issue_creation.saved_issue_discard_hint'
-              : 'issue_creation.discard_hint'
+              : saveUnconfirmed
+                ? 'issue_creation.unconfirmed_discard_hint'
+                : 'issue_creation.discard_hint'
         )}
         cancelLabel={t('issue_creation.keep_editing')}
         confirmLabel={t(

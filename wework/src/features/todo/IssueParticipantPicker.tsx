@@ -5,6 +5,7 @@ import type { SharedWorkspaceApi } from '@wegent/collaboration'
 import type { PersonalIssuesApi } from '@/api/personalIssues'
 import { useTranslation } from '@/hooks/useTranslation'
 import { useEscapeKey } from '@/hooks/useEscapeKey'
+import { isImeComposingEvent } from '@wegent/chat-core/ime'
 
 import type { IssueParticipant } from './issueParticipants'
 
@@ -202,7 +203,7 @@ export function IssueParticipantPicker({
             onEscapeKeyDown={event => {
               event.preventDefault()
               event.stopPropagation()
-              setOpen(false)
+              if (!isImeComposingEvent(event)) setOpen(false)
             }}
             className="z-system-popover grid max-h-[var(--radix-popover-content-available-height)] w-[min(374px,calc(100vw-16px))] gap-2 overflow-y-auto rounded-xl border border-border bg-popover p-3 text-text-primary shadow-lg"
             data-testid="issue-participant-picker"
@@ -263,6 +264,10 @@ export function IssueParticipantPicker({
                 placeholder={t('issue_creation.search_participants')}
                 onChange={event => setQuery(event.target.value)}
                 onKeyDown={event => {
+                  if (isImeComposingEvent(event)) {
+                    event.stopPropagation()
+                    return
+                  }
                   if (event.key === 'Enter') event.preventDefault()
                 }}
                 className="min-h-11 min-w-0 flex-1 bg-transparent text-base outline-none placeholder:text-text-secondary md:min-h-8"
