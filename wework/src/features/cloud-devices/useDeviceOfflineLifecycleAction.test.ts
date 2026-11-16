@@ -63,29 +63,28 @@ describe('useDeviceOfflineLifecycleAction', () => {
     expect(result.current.phase).toBe('recovered')
   })
 
-  test('waits for an action-specific recovery condition after reconnection', async () => {
+  test('recognizes a new runtime even when the offline transition falls between polls', async () => {
     vi.useFakeTimers()
+    const requestAction = vi.fn().mockResolvedValue({ message: 'accepted' })
     const { result, rerender } = renderHook(
-      ({ status, recoveryReady }) =>
+      ({ runtimeInstanceId }) =>
         useDeviceOfflineLifecycleAction({
-          status,
-          recoveryReady,
-          requestAction: vi.fn().mockResolvedValue({ message: 'accepted' }),
+          status: 'online',
+          runtimeInstanceId,
+          requestAction,
           refreshDevices: vi.fn(),
         }),
-      { initialProps: { status: 'online' as const, recoveryReady: false } }
+      { initialProps: { runtimeInstanceId: 'before' } }
     )
 
     await act(async () => {
-      await result.current.run()
+      expect(await result.current.run()).toBe(true)
+      expect(await result.current.run()).toBe(false)
     })
-    rerender({ status: 'offline', recoveryReady: false })
-    await act(async () => vi.advanceTimersByTimeAsync(0))
-    rerender({ status: 'online', recoveryReady: false })
-    await act(async () => vi.advanceTimersByTimeAsync(0))
-    expect(result.current.phase).toBe('waiting-online')
+    expect(requestAction).toHaveBeenCalledTimes(1)
+    expect(result.current.phase).toBe('waiting-offline')
 
-    rerender({ status: 'online', recoveryReady: true })
+    rerender({ runtimeInstanceId: 'after' })
     await act(async () => vi.advanceTimersByTimeAsync(0))
     expect(result.current.phase).toBe('recovered')
   })

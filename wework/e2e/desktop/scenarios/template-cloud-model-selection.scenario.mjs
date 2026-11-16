@@ -55,7 +55,7 @@ export function createDesktopScenario(options) {
         `${selector('template-runtime-configuration')} > summary`,
         {
           visible: true,
-          timeoutMs: uiTimeoutMs,
+          timeoutMs: options.uiTimeoutMs,
         }
       )
       const field = selector('template-model-codex')

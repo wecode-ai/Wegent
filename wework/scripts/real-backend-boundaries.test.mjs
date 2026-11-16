@@ -1,10 +1,68 @@
 import assert from 'node:assert/strict'
 import { createServer, request as httpRequest } from 'node:http'
 import test from 'node:test'
+import { spawn } from 'node:child_process'
+import { once } from 'node:events'
 import { BackendFaultGate } from '../e2e/desktop/modules/backend-fault-gate.mjs'
 import { SitesProtocolFixture } from '../e2e/desktop/modules/sites-protocol-fixture.mjs'
 import { TransportFaultProxy } from '../e2e/desktop/modules/transport-fault-proxy.mjs'
 import { startCloudLoginProxyFixture } from '../e2e/desktop/modules/cloud-login-proxy-fixtures.mjs'
+import { LocalSandboxProcessController } from '../e2e/desktop/modules/sandbox-process-controller.mjs'
+
+test('the public sandbox provider restarts an actual process without serving Nevis replies', async () => {
+  const launch = async () => {
+    const child = spawn(
+      process.execPath,
+      ['-e', "process.send('ready'); setInterval(() => {}, 1000)"],
+      {
+        stdio: ['ignore', 'ignore', 'ignore', 'ipc'],
+      }
+    )
+    await once(child, 'message')
+    return child
+  }
+  let child = await launch()
+  let transition
+  const controller = await new LocalSandboxProcessController(sandboxId => {
+    assert.equal(sandboxId, 'owned-test-sandbox')
+    transition = (async () => {
+      const exited = once(child, 'exit')
+      child.kill()
+      await exited
+      child = await launch()
+    })()
+  }).start()
+  try {
+    const previousPid = child.pid
+    for (const path of [
+      '/metrics/raw_query',
+      '/apis/sandboxes/v1/managers/test/sandboxes/test/restart',
+    ]) {
+      assert.equal((await fetch(controller.endpoint + path, { method: 'POST' })).status, 404)
+    }
+    assert.equal(controller.requests.length, 0)
+    assert.equal(
+      (
+        await fetch(controller.endpoint + '/e2e/sandboxes/owned-test-sandbox/restart', {
+          method: 'POST',
+        })
+      ).status,
+      202
+    )
+    await transition
+    assert.notEqual(child.pid, previousPid)
+    assert.equal(child.exitCode, null)
+    assert.deepEqual(await controller.waitForRestartRequest(0), { sandboxId: 'owned-test-sandbox' })
+  } finally {
+    await transition
+    if (child.exitCode === null) {
+      const exited = once(child, 'exit')
+      child.kill()
+      await exited
+    }
+    await controller.stop()
+  }
+})
 
 test('cloud login proxy forwards Backend replies and approves the actual observed session once', async () => {
   let approvals = 0

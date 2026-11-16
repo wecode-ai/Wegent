@@ -10,6 +10,8 @@ Wework 支持启动隔离的开发验证会话，让 AI 在真实 Electron 应�
 
 桌面检查点统一使用真实 Backend、数据库和 MinIO；通过真实网络代理注入阻塞、断连及恢复，不生成假的 Backend 响应。模型服务可以使用协议替身。经明确授权，外部 Sites 和 GitHub/GitLab 协议（含 Git CLI 返回）也可以使用替身；Wework、Backend、插件发布/安装/激活和设备凭据同步仍为真实实现。相关检查点及报告标为“协议集成测试”，记录 `verificationType: protocol-integration`，并在 `externalServiceProtocols` 中列出 `sites` 或 `git-hosting`；不代表真实外部服务兼容性已验证，也不允许替换其他服务。需要 Nevis 重启能力的扩展场景必须配置真实隔离服务。
 
+公开 CI 的云设备重启用例使用独立进程控制器实际停止并重启同一沙箱的两个 Executor，保留 main 的重启授权、忙碌拒绝、离线与恢复验证。控制器不提供 Nevis 或指标协议的假响应；该用例验证真实进程生命周期，不代表 Nevis 服务兼容性已验证。
+
 共享桌面 runner 在启动应用前创建 `errors.jsonl`，并通过 `control.errors` 和场景工厂参数 `errors` 提供查询与断言。记录不轮转、不截断堆栈，使用进程 PID、采集实例 ID、实例内递增序号、时间、来源、类型和严重程度关联错误；应用重启会创建新的实例 ID。日志在写入前复用现有脱敏规则。截图、日志及该记录均为测试产物，不提交仓库。
 
 当前接入点与验证如下。表格描述已接入的边界，不代表任意代码路径都已经运行验证。

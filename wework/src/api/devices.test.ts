@@ -105,7 +105,7 @@ describe('createDeviceApi', () => {
     await expect(api.createDirectory('device/1', '/repo')).rejects.toThrow('File not found')
   })
 
-  test('uses cloud device endpoints for restart and delete actions', async () => {
+  test('routes a confirmed cloud restart through the registered device action', async () => {
     const client = {
       delete: vi.fn().mockResolvedValue({ message: 'deleted' }),
       post: vi.fn().mockResolvedValue({ message: 'restart sent' }),
@@ -118,7 +118,9 @@ describe('createDeviceApi', () => {
     await api.deleteDevice('device/1')
     await api.upgradeDevice('device/1', { auto_confirm: true })
 
-    expect(client.post).toHaveBeenCalledWith('/cloud-devices/device%2F1/restart')
+    expect(client.post).toHaveBeenCalledWith('/devices/device%2F1/upgrade', {
+      force_stop_tasks: true,
+    })
     expect(client.delete).toHaveBeenCalledWith('/cloud-devices/device%2F1')
     expect(client.delete).toHaveBeenCalledWith('/devices/device%2F1')
     expect(client.post).toHaveBeenCalledWith('/devices/device%2F1/upgrade', { auto_confirm: true })
