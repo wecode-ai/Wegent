@@ -42,8 +42,8 @@ function Harness(props: ProjectCreateDialogProps) {
   controller = useProjectCreateController(props);
   return null;
 }
-const render = (props: ProjectCreateDialogProps) =>
-  act(async () => root.render(createElement(Harness, props)));
+const render = (props: ProjectCreateDialogProps, key?: string) =>
+  act(async () => root.render(createElement(Harness, { ...props, key })));
 
 beforeEach(() => {
   globalThis.IS_REACT_ACT_ENVIRONMENT = true;
@@ -92,37 +92,47 @@ function fixture(location: ProjectCreateLocation, initialTemplate = template) {
   return { props, project, create, configure };
 }
 
-it("waits for cloud template device discovery before capturing the authorization selection", async () => {
+it("creates a template without waiting for optional device discovery", async () => {
   const { props, project, create, configure } = fixture("cloud");
   await render(props);
-  expect(controller.state.canSubmit).toBe(false);
+  expect(controller.state.canSubmit).toBe(true);
   await act(async () => controller.commands.submit());
-  expect(create).not.toHaveBeenCalled();
-  expect(configure).not.toHaveBeenCalled();
-  await render({
-    ...props,
-    resourceSetup: {
-      ...props.resourceSetup,
-      executionEnvironmentLoading: false,
-      executionEnvironments: [
-        {
-          id: "42",
-          device_id: 42,
-          device_key: "app-record-42",
-          app_device_id: "current-app",
-          name: "Current App",
-          kind: "local_device",
-          coding_tools: ["codex"],
-          owner_type: "user",
-          owner_id: "1",
-          owner_name: "Owner",
-          status: "online",
-          is_current_device: true,
-          updated_at: "",
-        },
-      ],
+  expect(create).toHaveBeenCalledOnce();
+  expect(configure).toHaveBeenCalledWith(
+    project,
+    expect.objectContaining({ executionEnvironmentDeviceIds: [] }),
+  );
+  expect(props.onCreated).toHaveBeenCalledWith(project, "cloud");
+  create.mockClear();
+  configure.mockClear();
+  // A successful dialog closes; the ready-catalog case starts a new creation.
+  await render(
+    {
+      ...props,
+      resourceSetup: {
+        ...props.resourceSetup,
+        executionEnvironmentLoading: false,
+        executionEnvironments: [
+          {
+            id: "42",
+            device_id: 42,
+            device_key: "app-record-42",
+            app_device_id: "current-app",
+            name: "Current App",
+            kind: "local_device",
+            coding_tools: ["codex"],
+            owner_type: "user",
+            owner_id: "1",
+            owner_name: "Owner",
+            status: "online",
+            is_current_device: true,
+            updated_at: "",
+          },
+        ],
+      },
     },
-  });
+    "after-device-discovery",
+  );
   expect(controller.state.canSubmit).toBe(true);
   await act(async () => controller.commands.submit());
   expect(create).toHaveBeenCalledTimes(1);

@@ -11,15 +11,10 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog'
 import { WebAgentResourceForm } from './WebAgentResourceForm'
-import {
-  listWebTemplateAgentEnvironments,
-  resolveWebTemplateAgentRouting,
-} from './templateAgentRouting'
+import { listWebTemplateAgentEnvironments } from './templateAgentRouting'
 import { collaborationLocationPath } from './routes'
 
 export const webProjectAgentConfigurationHost: ProjectAgentConfigurationHost = {
-  requiresTemplateEnvironmentSelection: true,
-  resolveTemplateAgentRouting: resolveWebTemplateAgentRouting,
   listTemplateAgentEnvironments: listWebTemplateAgentEnvironments,
   templateAgentEnvironmentSettingsHref: project =>
     collaborationLocationPath({

@@ -111,19 +111,22 @@ export function useProjectCreateController({
     defaultExecutionEnvironmentDeviceIds(
       resourceSetup?.executionEnvironments ?? [],
     );
-  const [collaborationGroupDrafts, setCollaborationGroupDrafts] = useState<
+  const [templateGroupDrafts, setTemplateGroupDrafts] = useState<
     import("./types").ProjectCreateCollaborationGroupDraft[]
   >([]);
+  const [collaborationGroupDraft, setCollaborationGroupDraft] = useState<
+    import("./types").ProjectCreateCollaborationGroupDraft | null
+  >(null);
+  const collaborationGroupDrafts = [
+    ...templateGroupDrafts,
+    ...(collaborationGroupDraft ? [collaborationGroupDraft] : []),
+  ];
   const [templatePending, setTemplatePending] = useState(
     Boolean(initialTemplate?.spec.resources.collaboration.groups.length),
   );
   const [templateDocument, setTemplateDocument] = useState(
     initialTemplate ?? null,
   );
-  const collaborationGroupDraft = collaborationGroupDrafts[0] ?? null;
-  const setCollaborationGroupDraft = (
-    draft: import("./types").ProjectCreateCollaborationGroupDraft | null,
-  ) => setCollaborationGroupDrafts(draft ? [draft] : []);
   const [createdProject, setCreatedProject] = useState<
     import("../types").CollaborationProject | null
   >(null);
@@ -155,17 +158,11 @@ export function useProjectCreateController({
         : null,
     [aitableUrl, host, isAITableProvider],
   );
-  const templateEnvironmentUnavailable =
-    location === "cloud" &&
-    (templateDocument?.spec.resources.collaboration.agents?.length ?? 0) > 0 &&
-    (resourceSetup?.executionEnvironmentLoading ||
-      resourceSetup?.executionEnvironmentError);
   const canSubmit =
     Boolean(
       createdProject ||
       (name.trim() &&
         !templatePending &&
-        !templateEnvironmentUnavailable &&
         (!repositoryProvider || repositoryAddress.trim()) &&
         (!isAITableProvider || aitableLink) &&
         !saving),
@@ -206,11 +203,31 @@ export function useProjectCreateController({
               ...(token.trim() ? { token: token.trim() } : {}),
             }
           : {};
+      const participants = collaborationGroupDrafts.flatMap((group) => [
+        group.leader,
+        ...group.members,
+      ]);
       const selection: ProjectCreateResourceSelection = pending?.selection ?? {
-        memberUserIds: [...new Set(memberUserIds)].filter(
-          (userId) => userId !== setup?.currentUser.id,
-        ),
-        agentResourceIds,
+        memberUserIds: [
+          ...new Set([
+            ...memberUserIds,
+            ...participants
+              .filter(
+                (member) =>
+                  member.kind === "human" &&
+                  member.id !== String(setup?.currentUser.id),
+              )
+              .map((member) => Number(member.id)),
+          ]),
+        ].filter((userId) => userId !== setup?.currentUser.id),
+        agentResourceIds: [
+          ...new Set([
+            ...agentResourceIds,
+            ...participants
+              .filter((member) => member.kind === "agent")
+              .map((member) => member.id),
+          ]),
+        ],
         executionEnvironmentDeviceIds,
         collaborationGroupDrafts,
         ...(templateDocument ? { template: templateDocument } : {}),
@@ -235,7 +252,7 @@ export function useProjectCreateController({
           ...(location === "local" && setup
             ? {
                 includeDefaultAgent: defaultAgentResourceIds.some((id) =>
-                  agentResourceIds.includes(id),
+                  selection.agentResourceIds.includes(id),
                 ),
               }
             : {}),
@@ -336,7 +353,7 @@ export function useProjectCreateController({
       setAgentResourceIds,
       setExecutionEnvironmentDeviceIds,
       setCollaborationGroupDraft,
-      setCollaborationGroupDrafts,
+      setTemplateGroupDrafts,
       setTemplatePending,
       clearError: () => setError(null),
       submit,

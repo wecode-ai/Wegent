@@ -218,7 +218,7 @@ pub fn resolve_pending(
             Some("fixed") => {
                 return Err(invalid(
                     "RUNNER_ENVIRONMENT_UNAVAILABLE: runner is not authorized by this policy",
-                ))
+                ));
             }
             _ => return Err(invalid("RUNNER_SELECTION_REQUIRED: select an environment")),
         }
@@ -239,7 +239,10 @@ pub fn resolve_pending(
     }
     if let Some(config) = payload.get("runnerPolicy") {
         let model = &payload["runnerRouting"]["model"];
-        if model["source"] == "native" && config["execution_policy"]["mode"] != "fixed" {
+        if model["source"] == "native"
+            && (payload["runnerRouting"]["execution_policy"]["mode"] != "fixed"
+                || config["execution_policy"]["mode"] == "project_pool")
+        {
             return Err(invalid(
                 "RUNNER_MODEL_UNAVAILABLE: local models require a fixed environment",
             ));
@@ -435,6 +438,26 @@ mod tests {
             Some(&json!({"mode":"user_select"}))
         )
         .is_ok());
+    }
+
+    #[test]
+    fn deferred_native_execution_requires_an_explicit_fixed_runner() {
+        let model =
+            json!({"runtime":"codex","provider":"test","model_id":"chosen","source":"native"});
+        let catalog = json!({"models":[{"runtime":"codex","provider":"test","model_id":"chosen","local_model_id":"upstream"}]});
+        let mut payload = json!({"runnerPolicy":{"runtime":"codex","execution_policy":{"mode":"user_select"},"model_policy":{"mode":"user_select"}},"runnerSelection":{"execution_policy":{"mode":"fixed","environment_id":"runner-a"},"model":model}});
+        resolve_pending(&mut payload, Some(&catalog), "runner-a").unwrap();
+        assert_eq!(
+            payload["runnerRouting"]["execution_policy"]["mode"],
+            "fixed"
+        );
+        assert!(resolve_pending(&mut payload.clone(), Some(&catalog), "runner-b").is_err());
+        let mut reused = payload.clone();
+        reused["runnerPolicy"]["execution_policy"] = json!({"mode":"project_pool"});
+        assert!(resolve_pending(&mut reused, Some(&catalog), "runner-a").is_err());
+        let mut pooled = payload;
+        pooled["runnerRouting"]["execution_policy"] = json!({"mode":"project_pool"});
+        assert!(resolve_pending(&mut pooled, Some(&catalog), "runner-a").is_err());
     }
 
     #[test]

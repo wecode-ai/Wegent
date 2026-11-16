@@ -4,6 +4,7 @@
 
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { X } from "lucide-react";
+import { ConfirmationDialog } from "../controls/ConfirmationDialog";
 import { createCollaborationTranslator } from "../i18n";
 import { GroupTemplateActions } from "../templates/GroupTemplateActions";
 import { GroupTemplateCreator } from "../templates/GroupTemplateCreator";
@@ -174,6 +175,7 @@ const copy = {
     deleteProjectGroup: "删除",
     deleteGroup: "删除协作小组",
     deleteGroupConfirm: "删除后无法恢复。确认删除这个协作小组吗？",
+    removeGroupConfirm: "确认移除此协作小组关联吗？小组源资源会保留。",
     deleting: "删除中…",
     operationFailed: "操作失败，请稍后重试",
     createAgent: "新建智能体",
@@ -213,6 +215,8 @@ const copy = {
     removeFromProject: "Remove from project",
     deleteProjectGroup: "Delete",
     deleteGroup: "Delete team",
+    removeGroupConfirm:
+      "Remove this team association? The source team will be retained.",
     deleteGroupConfirm:
       "This cannot be undone. Delete this collaboration team?",
     deleting: "Deleting…",
@@ -292,7 +296,10 @@ export function WorkspaceCollaborationGroupsConfiguration({
   const [selectedGroupId, setSelectedGroupId] = useState<string | null>(
     initialSelectedGroupId,
   );
-  const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
+  const [pendingRemoval, setPendingRemoval] = useState<{
+    group: CollaborationGroup;
+    prefix: string;
+  } | null>(null);
   const participants = usePanelData(
     loadParticipants,
     Boolean(formOpen || selectedGroupId),
@@ -460,7 +467,7 @@ export function WorkspaceCollaborationGroupsConfiguration({
   ];
 
   useEffect(() => {
-    setDeleteConfirmOpen(false);
+    setPendingRemoval(null);
   }, [selectedGroupId]);
 
   useEffect(() => {
@@ -667,6 +674,40 @@ export function WorkspaceCollaborationGroupsConfiguration({
 
   const content = (
     <>
+      {pendingRemoval && (
+        <ConfirmationDialog
+          key={`${pendingRemoval.prefix}:${pendingRemoval.group.id}`}
+          title={
+            workspace || pendingRemoval.group.owner_type === "project"
+              ? messages.deleteGroup
+              : messages.removeFromProject
+          }
+          subject={pendingRemoval.group.name}
+          description={
+            workspace || pendingRemoval.group.owner_type === "project"
+              ? messages.deleteGroupConfirm
+              : messages.removeGroupConfirm
+          }
+          labels={{
+            cancel: messages.cancel,
+            confirm:
+              workspace || pendingRemoval.group.owner_type === "project"
+                ? messages.deleteProjectGroup
+                : messages.remove,
+            pending: messages.deleting,
+            failed: messages.operationFailed,
+          }}
+          testIdPrefix={pendingRemoval.prefix}
+          onClose={() => setPendingRemoval(null)}
+          onConfirm={async () => {
+            await commands.removeCollaborationGroup(pendingRemoval.group.id);
+            if (selectedGroupId === pendingRemoval.group.id) {
+              setSelectedGroupId(null);
+              onDetailClose?.();
+            }
+          }}
+        />
+      )}
       {selectedGroup ? (
         <div
           className={`collaboration-group-detail${
@@ -1207,49 +1248,20 @@ export function WorkspaceCollaborationGroupsConfiguration({
               <ErrorMessage message={error} />
               {canManage && commands.updateCollaborationGroup ? (
                 <div className="collaboration-resource-form-actions collaboration-group-save-actions">
-                  {deleteConfirmOpen ? (
-                    <>
-                      <span>{messages.deleteGroupConfirm}</span>
-                      <button
-                        type="button"
-                        className="collaboration-secondary-button"
-                        disabled={saving}
-                        onClick={() => setDeleteConfirmOpen(false)}
-                      >
-                        {messages.cancel}
-                      </button>
-                      <button
-                        type="button"
-                        className="collaboration-link-button collaboration-resource-remove"
-                        data-testid="collaboration-group-detail-delete-confirm"
-                        disabled={saving}
-                        onClick={() => {
-                          setSaving(true);
-                          setError(null);
-                          void commands
-                            .removeCollaborationGroup(selectedGroup.id)
-                            .then(() => {
-                              setSelectedGroupId(null);
-                              onDetailClose?.();
-                            })
-                            .catch(() => setError(messages.operationFailed))
-                            .finally(() => setSaving(false));
-                        }}
-                      >
-                        {saving ? messages.deleting : messages.deleteGroup}
-                      </button>
-                    </>
-                  ) : (
-                    <button
-                      type="button"
-                      className="collaboration-link-button collaboration-resource-remove"
-                      data-testid="collaboration-group-detail-delete"
-                      disabled={saving}
-                      onClick={() => setDeleteConfirmOpen(true)}
-                    >
-                      {messages.deleteGroup}
-                    </button>
-                  )}
+                  <button
+                    type="button"
+                    className="collaboration-link-button collaboration-resource-remove"
+                    data-testid="collaboration-group-detail-delete"
+                    disabled={saving}
+                    onClick={() =>
+                      setPendingRemoval({
+                        group: selectedGroup,
+                        prefix: "collaboration-group-detail-delete",
+                      })
+                    }
+                  >
+                    {messages.deleteGroup}
+                  </button>
                   <button
                     type="submit"
                     className="collaboration-primary-button"
@@ -1601,14 +1613,12 @@ export function WorkspaceCollaborationGroupsConfiguration({
                               type="button"
                               className="collaboration-link-button collaboration-resource-remove"
                               data-testid={`collaboration-group-remove-${group.id}`}
-                              onClick={() => {
-                                setError(null);
-                                void commands
-                                  .removeCollaborationGroup(group.id)
-                                  .catch(() =>
-                                    setError(messages.operationFailed),
-                                  );
-                              }}
+                              onClick={() =>
+                                setPendingRemoval({
+                                  group,
+                                  prefix: "collaboration-group-delete",
+                                })
+                              }
                             >
                               {workspace
                                 ? messages.remove

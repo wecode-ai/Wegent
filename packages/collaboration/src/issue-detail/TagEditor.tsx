@@ -1,13 +1,7 @@
-import {
-  forwardRef,
-  useImperativeHandle,
-  useRef,
-  useState,
-  type ForwardedRef,
-  type KeyboardEvent,
-} from "react";
+import { useRef, useState, type KeyboardEvent } from "react";
 import { X } from "lucide-react";
 import { isTagNameTooLong } from "../tagging";
+import { useOutsideClick } from "../composer/useOutsideClick";
 function cn(...values: Array<string | false | null | undefined>): string {
   return values.filter(Boolean).join(" ");
 }
@@ -26,30 +20,25 @@ interface TagEditorProps {
   testIdPrefix: string;
 }
 
-export interface TagEditorHandle {
-  commitDraft(): void;
-}
-
 // Inline chip-style tag editor: Enter or comma commits, Backspace on an empty
 // input removes the last tag, and existing tags are offered as suggestions.
-function TagEditorField(
-  {
-    tags,
-    onChange,
-    disabled = false,
-    placeholder = "添加标签",
-    removeLabel = (tag) => `移除标签 ${tag}`,
-    lengthErrorLabel,
-    tagLimit,
-    suggestions = [],
-    testIdPrefix,
-  }: TagEditorProps,
-  ref: ForwardedRef<TagEditorHandle>,
-) {
+export function TagEditor({
+  tags,
+  onChange,
+  disabled = false,
+  placeholder = "添加标签",
+  removeLabel = (tag) => `移除标签 ${tag}`,
+  lengthErrorLabel,
+  tagLimit,
+  suggestions = [],
+  testIdPrefix,
+}: TagEditorProps) {
   const [draft, setDraft] = useState("");
   const [open, setOpen] = useState(false);
   const [highlight, setHighlight] = useState(0);
   const inputRef = useRef<HTMLInputElement>(null);
+  const containerRef = useRef<HTMLSpanElement>(null);
+  const composingRef = useRef(false);
 
   const normalizedDraft = draft.trim().toLowerCase();
   const tooLong = isTagNameTooLong(draft.replace(/,/g, ""));
@@ -87,7 +76,12 @@ function TagEditorField(
     if (tag) add(tag);
   }
 
-  useImperativeHandle(ref, () => ({ commitDraft: () => commit(draft) }));
+  useOutsideClick(containerRef, !disabled && Boolean(draft.trim()), () => {
+    // Native composition must publish its final text before blur commits it.
+    if (composingRef.current) return;
+    commit(draft);
+    setOpen(false);
+  });
 
   function handleKeyDown(event: KeyboardEvent<HTMLInputElement>) {
     if (event.nativeEvent.isComposing || event.keyCode === 229) return;
@@ -103,8 +97,10 @@ function TagEditorField(
       );
       return;
     }
-    if (event.key === "Escape" && showSuggestions) {
+    if (event.key === "Escape" && (showSuggestions || draft.trim())) {
       event.stopPropagation();
+      event.preventDefault();
+      commit(draft);
       setOpen(false);
       return;
     }
@@ -121,6 +117,7 @@ function TagEditorField(
 
   return (
     <span
+      ref={containerRef}
       className="task-detail-tag-editor relative flex min-w-0 flex-1 flex-wrap items-center gap-1.5"
       onClick={() => inputRef.current?.focus()}
     >
@@ -165,6 +162,12 @@ function TagEditorField(
             }
           }}
           onFocus={() => setOpen(true)}
+          onCompositionStart={() => {
+            composingRef.current = true;
+          }}
+          onCompositionEnd={() => {
+            composingRef.current = false;
+          }}
           onKeyDown={handleKeyDown}
           onBlur={() => {
             setOpen(false);
@@ -211,5 +214,3 @@ function TagEditorField(
     </span>
   );
 }
-
-export const TagEditor = forwardRef(TagEditorField);

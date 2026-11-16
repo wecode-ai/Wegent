@@ -8,7 +8,7 @@ import { projectCreateLabels } from "./labels";
 import type { ProjectCreateDialogProps } from "./types";
 
 it.each(["loading", "error"] as const)(
-  "does not persist a template project while execution environments are %s",
+  "allows a template project while optional execution environments are %s",
   async (state) => {
     const project = { id: "created-project", name: "Product" };
     const create = vi.fn(async () => project);
@@ -58,11 +58,17 @@ it.each(["loading", "error"] as const)(
           builtinCollaborationTemplates()[0].document,
         );
       });
-      expect(current.state.canSubmit).toBe(false);
+      expect(current.state.canSubmit).toBe(true);
       await act(async () => current.commands.submit());
-      expect(validate).not.toHaveBeenCalled();
-      expect(create).not.toHaveBeenCalled();
-      expect(configure).not.toHaveBeenCalled();
+      expect(validate).toHaveBeenCalledOnce();
+      expect(create).toHaveBeenCalledOnce();
+      expect(configure).toHaveBeenCalledWith(
+        project,
+        expect.objectContaining({ executionEnvironmentDeviceIds: [] }),
+      );
+      expect(props.onCreated).toHaveBeenCalledWith(project, "cloud");
+      create.mockClear();
+      configure.mockClear();
 
       props.resourceSetup!.executionEnvironmentLoading = false;
       props.resourceSetup!.executionEnvironmentError = undefined;
@@ -83,7 +89,16 @@ it.each(["loading", "error"] as const)(
           is_current_device: true,
         },
       ];
-      await act(async () => root.render(createElement(Harness)));
+      // Start another dialog after the first creation completed successfully.
+      await act(async () =>
+        root.render(createElement(Harness, { key: "after-device-discovery" })),
+      );
+      act(() => {
+        current.commands.setName("Product");
+        current.commands.setTemplateDocument(
+          builtinCollaborationTemplates()[0].document,
+        );
+      });
       expect(readySelections.length).toBeGreaterThan(0);
       for (const selection of readySelections) expect(selection).toEqual([75]);
       expect(current.state.executionEnvironmentDeviceIds).toEqual([75]);
@@ -92,7 +107,9 @@ it.each(["loading", "error"] as const)(
       props.resourceSetup!.executionEnvironments = [
         ...props.resourceSetup!.executionEnvironments!,
       ];
-      await act(async () => root.render(createElement(Harness)));
+      await act(async () =>
+        root.render(createElement(Harness, { key: "after-device-discovery" })),
+      );
       expect(current.state.executionEnvironmentDeviceIds).toEqual([]);
       act(() => current.commands.setExecutionEnvironmentDeviceIds([75]));
       await act(async () => current.commands.submit());
