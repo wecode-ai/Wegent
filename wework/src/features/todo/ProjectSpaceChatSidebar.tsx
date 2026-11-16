@@ -2,11 +2,13 @@ import { Check, ChevronDown, MessageSquare, Plus, Undo2, X } from 'lucide-react'
 import {
   useCallback,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
   type PointerEvent as ReactPointerEvent,
   type CSSProperties,
+  type ComponentProps,
 } from 'react'
 
 import { TemporaryChatPanel } from '@/components/layout/workspace-panels/TemporaryChatPanel'
@@ -97,6 +99,31 @@ function lastConversationStorageKey(project: CloudProject): string {
   return `wework-project-space-chat:${project.project_store}:${project.id}`
 }
 
+function ProjectSpaceConversationFrame(props: ComponentProps<typeof TemporaryChatPanel>) {
+  const { projectChat } = useWorkbenchPaneContext()
+  // Runtime discovery binds the same frame to its new task; it does not replace the composer.
+  const [instanceId] = useState(props.instanceId)
+  const draftKey = `pane:${props.instanceId}`
+  const draftKeyRef = useRef(draftKey)
+  const [value, setValue] = useState(() => projectChat.inputByScope[draftKey] ?? '')
+  const writeDraft = projectChat.setInputForScope
+  useLayoutEffect(() => {
+    const previousKey = draftKeyRef.current
+    if (previousKey === draftKey) return
+    draftKeyRef.current = draftKey
+    writeDraft(draftKey, value)
+    writeDraft(previousKey, '')
+  }, [draftKey, value, writeDraft])
+  const onChange = useCallback(
+    (value: string) => {
+      setValue(value)
+      writeDraft(draftKeyRef.current, value)
+    },
+    [writeDraft]
+  )
+  return <TemporaryChatPanel {...props} instanceId={instanceId} draft={{ value, onChange }} />
+}
+
 export function ProjectSpaceChatSidebar({
   project,
   localProjects,
@@ -181,13 +208,10 @@ export function ProjectSpaceChatSidebar({
   )
 
   const startNewConversation = useCallback(() => {
-    setCreatingNew(current => {
-      if (current) return false
-      setSelectedConversationKey(null)
-      setChatInstance(instance => instance + 1)
-      return true
-    })
-  }, [])
+    setCreatingNew(current => !current)
+    if (!creatingNew) setSelectedConversationKey(null)
+    setChatInstance(instance => instance + 1)
+  }, [creatingNew])
 
   const rememberAddress = useCallback(
     (address: RuntimeTaskAddress | null) => {
@@ -451,11 +475,11 @@ export function ProjectSpaceChatSidebar({
         {t('workbench.project_space_chat.capabilities', { name: project.name })}
       </p>
 
-      <TemporaryChatPanel
+      <ProjectSpaceConversationFrame
         key={`${project.project_store}:${project.id}:${chatInstance}`}
         currentProject={selectedLocalProject}
         source={null}
-        instanceId={`project-space:${project.project_store}:${project.id}:${selectedConversation?.key ?? 'new'}`}
+        instanceId={`project-space:${project.project_store}:${project.id}:${selectedConversationKey ?? selectedConversation?.key ?? 'new'}`}
         testId="project-space-chat-panel"
         initialAddress={selectedConversation?.address ?? null}
         createTask={createConversation}

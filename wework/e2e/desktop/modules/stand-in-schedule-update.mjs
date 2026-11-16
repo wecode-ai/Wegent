@@ -2,7 +2,6 @@ import assert from 'node:assert/strict'
 import { requestExecutor } from './executor-rpc.mjs'
 import { isNativeApprovalReviewRequest } from './native-approval-model.mjs'
 import { readMcpToolOutput } from './mcp-tool-results.mjs'
-import { sendStandInNotificationFollowUp } from './stand-in-flows.mjs'
 import {
   assistantMessage,
   createSse,
@@ -120,11 +119,16 @@ export function withScheduleUpdate(scenario, options) {
           await control.command('waitFor', profile, { visible: false })
         }
         await control.command('clickWhenEnabled', '[data-testid="personal-stand-in-button"]')
-        await sendStandInNotificationFollowUp(
-          control,
-          '[data-testid="stand-in-conversation"]',
-          `${MARKER}：将日报补充为“${MESSAGE}”，保留原来的时间、启用状态和安排。`
+        await control.command('clickWhenEnabled', '[data-testid="stand-in-primary-open"]')
+        const chat = '[data-testid="stand-in-conversation"]'
+        await control.command(
+          'fill',
+          `${chat} [data-testid="chat-message-input"][contenteditable="true"]`,
+          {
+            value: `${MARKER}：将日报补充为“${MESSAGE}”，保留原来的时间、启用状态和安排。`,
+          }
         )
+        await control.command('clickWhenEnabled', `${chat} [data-testid="send-message-button"]`)
         await control.command('waitFor', '[data-testid="stand-in-conversation"]', {
           text: RESULT,
           timeoutMs: options.modelResponseTimeoutMs,
