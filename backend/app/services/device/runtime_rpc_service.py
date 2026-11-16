@@ -456,7 +456,10 @@ class RuntimeRpcService:
             if projected.get(key) == runtime_device_id:
                 projected[key] = logical_device_id
 
-        if not method.startswith("runtime.worktrees."):
+        if not (
+            method.startswith("runtime.worktrees.")
+            or method == "runtime.archived_conversations.list"
+        ):
             return projected
 
         return cls._project_nested_device_ids(

@@ -73,6 +73,12 @@ def test_pending_runtime_work_endpoint_keeps_authenticated_user_scope(
         ),
         (
             "post",
+            "/api/runtime-work/worktrees/preflight",
+            "runtime.worktrees.preflight",
+            {"deviceId": "device-1", "sourcePath": "/repo", "includeBranches": True},
+        ),
+        (
+            "post",
             "/api/runtime-work/worktrees/settings",
             "runtime.worktrees.settings.get",
             {"deviceId": "device-1"},
@@ -1222,3 +1228,52 @@ def test_llm_responses_proxy_endpoint_rejects_missing_authorization(
     )
 
     assert response.status_code == 401
+
+
+@pytest.mark.parametrize("path", ["archive", "archived-conversations/archive"])
+def test_task_bound_archive_cleanup_survives_http_projection(
+    path,
+    test_client,
+    test_token,
+    monkeypatch,
+):
+    from app.api.endpoints import runtime_work
+
+    service = AsyncMock(
+        return_value={
+            "accepted": True,
+            "taskId": "task-1",
+            "cleanupError": "Snapshot unavailable",
+        }
+    )
+    monkeypatch.setattr(
+        runtime_work.runtime_work_service, "archive_runtime_task", service
+    )
+    response = test_client.post(
+        f"/api/runtime-work/{path}",
+        headers=_auth_headers(test_token),
+        json={"deviceId": "device-1", "taskId": "task-1", "cleanupWorktree": True},
+    )
+    assert response.status_code == 200
+    assert service.await_args.kwargs["address"].cleanup_worktree is True
+    assert response.json()["accepted"] is True
+    assert response.json()["cleanupError"] == "Snapshot unavailable"
+
+
+@pytest.mark.parametrize("cleanup", ["true", "false", 1, 0])
+def test_archive_runtime_task_rejects_non_boolean_cleanup(
+    test_client, test_token, monkeypatch, cleanup
+):
+    from app.api.endpoints import runtime_work
+
+    service = AsyncMock()
+    monkeypatch.setattr(
+        runtime_work.runtime_work_service, "archive_runtime_task", service
+    )
+    response = test_client.post(
+        "/api/runtime-work/archive",
+        headers=_auth_headers(test_token),
+        json={"deviceId": "device-1", "taskId": "task-1", "cleanupWorktree": cleanup},
+    )
+    assert response.status_code == 422
+    service.assert_not_awaited()

@@ -226,3 +226,20 @@ fn url_path_trims_the_gateway_suffix() {
     );
     assert_eq!(url_path("https://host").as_deref(), Some(""));
 }
+
+#[test]
+fn archived_items_keep_the_selected_installation_route() {
+    let result = json!({"items":[{"deviceId":"shared-host", "runtimeHandle":{"device_id":"shared-host"}}, {"deviceId":"another-host"}]});
+    let projected = project_response_device_ids(
+        result.as_object().unwrap(),
+        "runtime.archived_conversations.list",
+        "shared-host",
+        "app-record-11",
+    );
+    assert_eq!(projected["items"][0]["deviceId"], "app-record-11");
+    assert_eq!(
+        projected["items"][0]["runtimeHandle"]["device_id"],
+        "app-record-11"
+    );
+    assert_eq!(projected["items"][1]["deviceId"], "another-host");
+}

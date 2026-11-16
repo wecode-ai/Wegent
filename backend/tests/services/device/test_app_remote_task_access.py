@@ -97,6 +97,18 @@ def test_device_schema_preserves_task_creation_capability():
         "runtime.tasks.cancel",
         "runtime.tasks.goal.get",
         "runtime.tasks.goal.set",
+        "runtime.worktrees.capabilities",
+        "runtime.worktrees.preflight",
+        "runtime.projects.upsert_local",
+        "runtime.workspaces.rename",
+        "runtime.workspaces.remove",
+        "runtime.sidebar.projects.pin",
+        "runtime.sidebar.tasks.pin",
+        "runtime.tasks.rename",
+        "runtime.tasks.archive",
+        "runtime.archived_conversations.list",
+        "runtime.archived_conversations.unarchive",
+        "runtime.archived_conversations.delete",
     ],
 )
 async def test_consent_is_checked_on_each_target_and_request(monkeypatch, method):
@@ -154,6 +166,9 @@ async def test_consent_is_checked_on_each_target_and_request(monkeypatch, method
         "runtime.codex.app_server.request",
         "runtime.workspaces.open",
         "device.execute_command",
+        "runtime.worktrees.settings.update",
+        "runtime.worktrees.prepare",
+        "runtime.worktrees.delete",
     ],
 )
 async def test_enabled_task_access_never_grants_configuration_or_other_operations(
@@ -242,3 +257,16 @@ async def test_task_list_uses_unique_app_route_and_removes_revoked_installation(
     )
     assert response.total_tasks == 0
     calls.assert_not_awaited()
+
+
+def test_archive_item_routes_stay_on_the_exact_installation():
+    result = rpc.RuntimeRpcService._project_response_device_ids(
+        {"items": [{"deviceId": "shared-host"}, {"deviceId": "other-host"}]},
+        method="runtime.archived_conversations.list",
+        runtime_device_id="shared-host",
+        logical_device_id="app-record-11",
+    )
+    assert result["items"] == [
+        {"deviceId": "app-record-11"},
+        {"deviceId": "other-host"},
+    ]

@@ -454,7 +454,8 @@ fn project_response_device_ids(
 ) -> Map<String, Value> {
     let mut projected = result.clone();
     project_flat_device_ids(&mut projected, runtime_device_id, logical_device_id);
-    if !method.starts_with("runtime.worktrees.") {
+    if !method.starts_with("runtime.worktrees.") && method != "runtime.archived_conversations.list"
+    {
         return projected;
     }
     for value in projected.values_mut() {
