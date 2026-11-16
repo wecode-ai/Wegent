@@ -8,7 +8,7 @@ import { projectCreateLabels } from "./labels";
 import type { ProjectCreateDialogProps } from "./types";
 
 it.each(["loading", "error"] as const)(
-  "does not persist a template project while execution environments are %s",
+  "allows a template project while optional execution environments are %s",
   async (state) => {
     const project = { id: "created-project", name: "Product" };
     const create = vi.fn(async () => project);
@@ -53,11 +53,16 @@ it.each(["loading", "error"] as const)(
           builtinCollaborationTemplates()[0].document,
         );
       });
-      expect(current.state.canSubmit).toBe(false);
+      expect(current.state.canSubmit).toBe(true);
       await act(async () => current.commands.submit());
-      expect(validate).not.toHaveBeenCalled();
-      expect(create).not.toHaveBeenCalled();
-      expect(configure).not.toHaveBeenCalled();
+      expect(validate).toHaveBeenCalledOnce();
+      expect(create).toHaveBeenCalledOnce();
+      expect(configure).toHaveBeenCalledWith(
+        project,
+        expect.objectContaining({ executionEnvironmentDeviceIds: [] }),
+      );
+      create.mockClear();
+      configure.mockClear();
 
       props.resourceSetup!.executionEnvironmentLoading = false;
       props.resourceSetup!.executionEnvironmentError = undefined;

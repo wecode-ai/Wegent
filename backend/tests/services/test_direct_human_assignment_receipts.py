@@ -289,6 +289,27 @@ def test_ordinary_issues_and_disabled_feature_do_not_read_presence(
     receipt_environment.assert_not_called()
 
 
+def test_rollback_hides_existing_receipt_and_preserves_assignment_history(
+    test_db, test_user, receipt_environment, monkeypatch
+):
+    _, item, _, execution = _setup(test_db, test_user)
+    before = loop_item_service.response_values(test_db, item, test_user.id)
+    assert before["direct_human_assignment_receipt"]["executionId"] == str(execution.id)
+    assignments = issue_assignment_service.active_for_issues(test_db, [item.id])
+    original = deepcopy(assignments[item.id][0].metadata)
+
+    monkeypatch.setattr(settings, "HUMAN_ASSIGNMENT_RECEIPTS_ENABLED", False)
+    receipt_environment.reset_mock()
+    after = loop_item_service.response_values(test_db, item, test_user.id)
+    after_assignments = issue_assignment_service.active_for_issues(test_db, [item.id])
+
+    assert after["direct_human_assignment_receipt"] is None
+    assert after["human_task_binding"] == before["human_task_binding"]
+    assert after_assignments[item.id][0].metadata == original
+    assert test_db.get(LoopItemExecution, execution.id) is execution
+    receipt_environment.assert_not_called()
+
+
 def test_presence_batch_decodes_json_and_propagates_connection_errors():
     cache = RedisCache("redis://unused")
     client = MagicMock()

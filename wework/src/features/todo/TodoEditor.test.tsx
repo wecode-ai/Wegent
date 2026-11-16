@@ -47,6 +47,29 @@ const baseItem = {
 const project = { id: '11', name: 'Wework' } as unknown as CloudProject
 
 describe('TodoEditor external item sync', () => {
+  it.each([true, false])('shows an empty description hint with can_edit=%s', async canEdit => {
+    const item = { ...baseItem, description: '', can_edit: canEdit }
+    render(
+      <TodoEditor
+        mode="edit"
+        presentation="workspace-panel"
+        readFirst
+        item={item}
+        project={project}
+        allItems={[item]}
+        onUpdated={vi.fn()}
+        onClose={vi.fn()}
+        api={api}
+      />
+    )
+    const hint = canEdit ? '添加描述，说明背景、目标或处理要求…' : '暂无描述'
+    expect(await screen.findByText(hint)).toBeVisible()
+    if (canEdit) {
+      await userEvent.click(screen.getByTestId('cloud-todo-detail-description'))
+      expect(screen.queryByTestId('cloud-todo-detail-description-empty')).not.toBeInTheDocument()
+    }
+  })
+
   beforeEach(() => {
     vi.stubGlobal(
       'IntersectionObserver',
@@ -325,7 +348,7 @@ describe('TodoEditor external item sync', () => {
     await user.type(title, 'Keep my title')
     await user.selectOptions(screen.getByTestId('cloud-todo-detail-status'), 'in_progress')
     expect(await screen.findByTestId('cloud-todo-save-error')).toHaveTextContent(
-      '机器人没有符合配置且获项目授权的执行环境'
+      '请到项目设置 → 执行环境添加或授权设备'
     )
     expect(screen.getByTestId('cloud-todo-detail-status')).toHaveValue('inbox')
     expect(title).toHaveValue('Keep my title')
@@ -386,7 +409,7 @@ describe('TodoEditor external item sync', () => {
     )
   })
 
-  it('offers unused view tags and saves priority and tag edits from the properties menu', async () => {
+  it('offers unused view tags and saves inline priority and tag edits', async () => {
     const user = userEvent.setup()
     const updateLoopItem = vi.fn(async (_itemId: string, values: Record<string, unknown>) => ({
       ...baseItem,
@@ -469,11 +492,38 @@ describe('TodoEditor external item sync', () => {
     )
 
     await user.click(screen.getByTestId('cloud-todo-more-properties'))
-    expect(screen.getByRole('dialog', { name: '更多信息' })).toBeInTheDocument()
+    expect(screen.getByRole('region', { name: '更多信息' })).toBeVisible()
     expect(screen.getByTestId('cloud-todo-detail-priority')).toBeDisabled()
     expect(screen.getByTestId('cloud-todo-add-collaborator')).toBeDisabled()
     expect(screen.queryByTestId('cloud-todo-detail-tag-input')).not.toBeInTheDocument()
     expect(screen.queryByTestId('cloud-todo-detail-delete')).not.toBeInTheDocument()
+  })
+
+  it('keeps the archive action in its menu and metadata in the title area', async () => {
+    const user = userEvent.setup()
+    const onDelete = vi.fn()
+    render(
+      <TodoEditor
+        mode="edit"
+        presentation="workspace-panel"
+        item={baseItem}
+        project={project}
+        allItems={[baseItem]}
+        onUpdated={vi.fn()}
+        onClose={vi.fn()}
+        onDelete={onDelete}
+        api={api}
+        currentUserId={1}
+      />
+    )
+    await user.click(screen.getByRole('button', { name: '操作' }))
+    const actions = screen.getByTestId('cloud-todo-issue-actions-popover')
+    expect(within(actions).queryByText('标签')).not.toBeInTheDocument()
+    expect(within(actions).queryByText('参与者')).not.toBeInTheDocument()
+    expect(within(actions).queryByText('优先级')).not.toBeInTheDocument()
+    await user.click(within(actions).getByTestId('cloud-todo-detail-delete'))
+    expect(onDelete).toHaveBeenCalledOnce()
+    expect(screen.getByTestId('issue-primary-metadata')).toBeVisible()
   })
 
   it('fails closed for cloud Issue editing when can_edit is missing', async () => {
@@ -1261,7 +1311,7 @@ describe('TodoEditor assignment chain', () => {
       expect(history).toBeVisible()
       expect(screen.getByTestId('cloud-todo-more-properties-popover')).toBe(properties)
       expect(moreTrigger).toHaveAttribute('aria-expanded', 'true')
-      expect(screen.getAllByRole('dialog')).toHaveLength(1)
+      expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
       expect(history).toHaveAttribute('role', 'region')
       expect(await within(history).findByText('张三')).toBeVisible()
       expect(history).toHaveTextContent('李四')
@@ -1661,6 +1711,24 @@ it.each(['modal', 'workspace-panel'] as const)(
     expect(screen.getByTestId('issue-title-properties').contains(picker)).toBe(true)
     expect(picker.closest('header')).toBeNull()
     if (presentation === 'workspace-panel') {
+      const metadata = screen.getByTestId('issue-primary-metadata')
+      expect(within(metadata).getByText('标签')).toBeVisible()
+      expect(within(metadata).getByText('参与者')).toBeVisible()
+      expect(within(metadata).getByTestId('cloud-todo-collaborators')).toBeVisible()
+      expect(screen.getByTestId('cloud-todo-more-properties')).toHaveAttribute(
+        'aria-expanded',
+        'false'
+      )
+      expect(screen.getByTestId('cloud-todo-more-properties-popover')).not.toBeVisible()
+      await userEvent.click(screen.getByRole('button', { name: '展开更多属性' }))
+      expect(screen.getByTestId('cloud-todo-more-properties-popover')).toBeVisible()
+      expect(screen.getByTestId('issue-title-properties')).toContainElement(
+        screen.getByTestId('cloud-todo-more-properties-popover')
+      )
+      await userEvent.click(screen.getByRole('button', { name: '收起更多属性' }))
+      expect(screen.getByTestId('cloud-todo-more-properties-popover')).not.toBeVisible()
+      expect(within(metadata).getByText('标签')).toBeVisible()
+      expect(within(metadata).getByTestId('cloud-todo-collaborators')).toBeVisible()
       const grid = screen.getByTestId('issue-property-grid')
       expect(Array.from(grid.querySelectorAll('dt')).map(label => label.textContent)).toEqual([
         '状态',

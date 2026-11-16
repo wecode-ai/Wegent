@@ -42,7 +42,7 @@ const environmentLabel = (environment: EnvironmentIdentity) =>
 /** Translate the routing denial without treating it as an authentication error. */
 export function runnerEnvironmentError(
   error: unknown,
-  translate: CollaborationTranslate,
+  translate: CollaborationTranslate
 ): string | null {
   if (!error || typeof error !== 'object') return null
   const value = error as {
@@ -50,7 +50,11 @@ export function runnerEnvironmentError(
     error_code?: string
     detail?: { error_code?: string; routing_context?: RoutingContext }
   }
-  const code = value.errorCode ?? value.error_code ?? value.detail?.error_code
+  const code =
+    value.errorCode ??
+    value.error_code ??
+    value.detail?.error_code ??
+    (error instanceof Error ? error.message.split(':', 1)[0] : undefined)
   if (
     !code ||
     ![
@@ -65,7 +69,7 @@ export function runnerEnvironmentError(
     translate(
       code === 'RUNNER_ENVIRONMENT_UNAVAILABLE'
         ? 'todo.runner_environment_not_authorized'
-        : 'todo.runner_issue_conflict',
+        : 'todo.runner_issue_conflict'
     ),
   ]
   if (context) {
@@ -73,13 +77,13 @@ export function runnerEnvironmentError(
       parts.push(
         translate('todo.runner_diagnostic_group', undefined, {
           name: context.group_name || context.group_id || '',
-        }),
+        })
       )
     if (context.agent_name || context.agent_id)
       parts.push(
         translate('todo.runner_diagnostic_agent', undefined, {
           name: context.agent_name || context.agent_id || '',
-        }),
+        })
       )
     if (context.reason && reasons.has(context.reason))
       parts.push(translate(`todo.runner_reason_${context.reason}`))
@@ -87,26 +91,22 @@ export function runnerEnvironmentError(
       parts.push(
         translate('todo.runner_diagnostic_bound', undefined, {
           environment: environmentLabel(context.bound_environment),
-        }),
+        })
       )
     if (context.policy_environment)
       parts.push(
         translate('todo.runner_diagnostic_fixed', undefined, {
           environment: environmentLabel(context.policy_environment),
-        }),
+        })
       )
     if (context.authorized_environments?.length)
       parts.push(
         translate('todo.runner_diagnostic_authorized', undefined, {
-          environments: context.authorized_environments
-            .map(environmentLabel)
-            .join(', '),
-        }),
+          environments: context.authorized_environments.map(environmentLabel).join(', '),
+        })
       )
     for (const member of context.members ?? [])
-      parts.push(
-        `${member.agent_name || member.agent_id}: ${member.environment_ids.join(', ')}`,
-      )
+      parts.push(`${member.agent_name || member.agent_id}: ${member.environment_ids.join(', ')}`)
   }
   return `${parts.join(' ')} [${code}]`
 }

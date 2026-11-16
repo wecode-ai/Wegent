@@ -411,7 +411,13 @@ pub(super) async fn handle_runtime_event<T: MysqlTransaction>(
     {
         return Ok(None);
     }
-    let terminal = terminal_status(identity.event_name, identity.payload);
+    let terminal = terminal_status(identity.event_name, identity.payload).filter(|_| {
+        !super::human_assistant_execution::is_personal(&row)
+            || !super::human_assistant_execution::waiting_exit(
+                identity.event_name,
+                identity.payload,
+            )
+    });
     let seq = event_seq(identity.payload);
     // The socket projection calls `handle_runtime_event` with
     // `allow_unsequenced_terminal=False`, so any event without an event
@@ -495,7 +501,14 @@ pub(super) async fn handle_runtime_event<T: MysqlTransaction>(
             } else {
                 None
             };
-            let updated = accept_observation(transaction, &row, seq.unwrap_or(0), now).await?;
+            let observed_state = super::human_assistant_execution::observation_state(
+                &row,
+                identity.event_name,
+                identity.payload,
+            );
+            let updated =
+                accept_observation(transaction, &row, seq.unwrap_or(0), now, observed_state)
+                    .await?;
             if updated != 1 {
                 return Ok(None);
             }
@@ -529,6 +542,7 @@ pub(super) async fn handle_runtime_event<T: MysqlTransaction>(
                 version: row.version.map(|version| version + 1),
                 last_event_seq: seq,
                 started_at: Some(row.observed_start(now)),
+                observed_state: Some(observed_state.to_owned()),
                 ..row
             }));
         }

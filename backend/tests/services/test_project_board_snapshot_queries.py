@@ -8,6 +8,7 @@ from fastapi import HTTPException
 from sqlalchemy import event
 from sqlalchemy.orm import Session
 
+from app.core.config import settings
 from app.models.delivery import (
     CloudProject,
     LoopItem,
@@ -158,8 +159,15 @@ def _snapshot(db: Session, project_id: str, user_id: int):
 
 @pytest.mark.parametrize("assistant_dispatch", [False, True])
 def test_board_query_count_does_not_grow_with_issues_or_members(
-    test_db: Session, test_user: User, record_property, assistant_dispatch: bool
+    test_db: Session,
+    test_user: User,
+    record_property,
+    assistant_dispatch: bool,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    monkeypatch.setattr(
+        settings, "HUMAN_ASSIGNMENT_RECEIPTS_ENABLED", assistant_dispatch
+    )
     owner_id = test_user.id
     small_id, _ = _project(test_db, owner_id, 2)
     large_id, large_items = _project(test_db, owner_id, 30)

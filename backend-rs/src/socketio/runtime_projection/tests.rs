@@ -133,6 +133,7 @@ fn the_final_text_prefers_the_runtime_value() {
 #[derive(Clone, Default)]
 struct RecordingTransaction {
     queries: Arc<Mutex<Vec<(String, usize)>>>,
+    writes: Arc<Mutex<Vec<(String, usize)>>>,
 }
 
 impl RecordingTransaction {
@@ -151,11 +152,15 @@ impl RecordingTransaction {
 }
 
 impl MysqlTransaction for RecordingTransaction {
-    async fn execute<S, A>(&mut self, _: S, _: A) -> MysqlResult<MysqlExecution>
+    async fn execute<S, A>(&mut self, sql: S, args: A) -> MysqlResult<MysqlExecution>
     where
         S: AsRef<str> + Send,
         A: MysqlArgs + Send,
     {
+        self.writes
+            .lock()
+            .unwrap()
+            .push((sql.as_ref().to_owned(), args.len()));
         Ok(MysqlExecution {
             rows_affected: 0,
             last_insert_id: 0,
@@ -404,6 +409,33 @@ fn execution_row(runtime_task_id: Option<&str>, payload: &str) -> ExecutionRow {
         execution_payload: Some(payload.to_owned()),
         version: Some(1),
     }
+}
+
+#[tokio::test]
+async fn blocking_interactions_are_persisted_in_the_existing_execution_observation() {
+    let mut tx = RecordingTransaction::default();
+    let row = execution_row(
+        Some("reused-task"),
+        r#"{"runtime_selection":{"executor_kind":"human_assistant"}}"#,
+    );
+    let payload = json!({"executionId":"41","data":{"state":"waiting_user"}});
+    let observed = crate::socketio::human_assistant_execution::observation_state(
+        &row,
+        "runtime.interaction.updated",
+        &payload,
+    );
+    assert_eq!(observed, "waiting_user");
+    accept_observation(&mut tx, &row, 7, Utc::now().naive_utc(), observed)
+        .await
+        .unwrap();
+    let writes = tx.writes.lock().unwrap();
+    assert_eq!(writes.len(), 1);
+    let (sql, count) = &writes[0];
+    assert!(sql.contains("observed_state=?"));
+    assert!(!sql.contains("observed_state='running'"));
+    assert!(sql.contains("WHERE id=? AND version=?"));
+    assert!(sql.contains("AND last_event_seq < ?"));
+    assert_eq!(*count, 11);
 }
 
 #[tokio::test]

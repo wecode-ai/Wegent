@@ -6,7 +6,6 @@ import { createIssueTaskBindingApi } from '@wegent/chat-core/issue-task-binding-
 import {
   createAutomationExecutionCatalogApi,
   createSharedWorkspaceHttpApi,
-  mapCollaborationExecutionEnvironmentDto,
   mapCollaborationExecutionDto,
   mapCollaborationIssueDto,
   mapWorkspaceDeliveryAssetDto,
@@ -551,25 +550,6 @@ export function createWebSharedWorkspaceApi(
       },
       archive(projectId, version) {
         return client.delete(`/v1/cloud-projects/${encoded(projectId)}?version=${version}`)
-      },
-      async listExecutionEnvironments(projectId) {
-        const response = await client.get<{ items: Array<Record<string, unknown>> }>(
-          `/v1/cloud-projects/${encoded(projectId)}/execution-environments`
-        )
-        return response.items.map(mapCollaborationExecutionEnvironmentDto)
-      },
-      async addExecutionEnvironment(projectId, deviceId) {
-        return mapCollaborationExecutionEnvironmentDto(
-          await client.post<Record<string, unknown>>(
-            `/v1/cloud-projects/${encoded(projectId)}/execution-environments`,
-            { device_id: deviceId }
-          )
-        )
-      },
-      removeExecutionEnvironment(projectId, deviceId) {
-        return client.delete(
-          `/v1/cloud-projects/${encoded(projectId)}/execution-environments/${encoded(deviceId)}`
-        )
       },
       initializeExecutionEnvironment(projectId, input) {
         return client.post(

@@ -1,3 +1,4 @@
+import { DefaultRunnerSetting } from '@/components/settings/DefaultRunnerSetting'
 import { IndependentIssuesProvider } from './IndependentIssuesProvider'
 import { createPersonalIssuesApi } from '@/api/personalIssues'
 import { PersonalIssuesView } from './PersonalIssuesView'
@@ -2199,6 +2200,7 @@ function WeworkCollaborationPlatformContent(props: WeworkCollaborationPlatformPr
               authenticated: cloudConnection.isConnected,
               requestLogin: () => setCloudLoginOpen(true),
             },
+            renderExecutionEnvironmentPreferences: () => <DefaultRunnerSetting />,
             renderIssueComposer: composerProps => (
               <WeworkIssueHomeComposer
                 {...composerProps}

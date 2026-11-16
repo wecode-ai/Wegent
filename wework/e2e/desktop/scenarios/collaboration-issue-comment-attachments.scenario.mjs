@@ -75,6 +75,7 @@ export function createDesktopScenario({ executorHome, uiTimeoutMs, workbenchRead
       `${CONTENT} [data-testid="cloud-task-activity-${item.id}"] [data-testid="cloud-task-activity-list"] [role="status"]`,
       { visible: false, stableMs: 200 }
     )
+    await control.command('scrollIntoView', COMPOSER)
     await control.command('waitFor', COMPOSER, { visible: true })
   }
 

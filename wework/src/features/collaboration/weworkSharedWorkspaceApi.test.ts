@@ -781,7 +781,7 @@ describe('createWeworkDeliverySharedWorkspaceApi', () => {
         'setProjectDefault',
         'selectExecution',
       ],
-      agents: ['list', 'create', 'update'],
+      agents: ['list', 'create', 'update', 'remove'],
     })
     expect('comments' in api).toBe(false)
   })

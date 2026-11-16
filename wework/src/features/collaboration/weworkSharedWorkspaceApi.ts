@@ -5,7 +5,6 @@
 import {
   createSharedWorkspaceHttpApi,
   createAutomationExecutionCatalogApi,
-  mapCollaborationExecutionEnvironmentDto,
   mapCollaborationExecutionDto,
   mapCollaborationIssueDto,
   mapWorkspaceDeliveryAssetDto,
@@ -155,7 +154,7 @@ export const WEWORK_DELIVERY_SHARED_WORKSPACE_MISSING_METHODS = {
     'setProjectDefault',
     'selectExecution',
   ],
-  agents: ['list', 'create', 'update'],
+  agents: ['list', 'create', 'update', 'remove'],
 } as const satisfies {
   projects: readonly (keyof SharedWorkspaceApi['projects'])[]
   comments: readonly (keyof SharedWorkspaceApi['comments'])[]
@@ -929,25 +928,6 @@ export function createWeworkSharedWorkspaceApi<
       },
       get(projectId) {
         return client.get<CloudProject>(`/v1/cloud-projects/${encodeURIComponent(projectId)}`)
-      },
-      async listExecutionEnvironments(projectId) {
-        const response = await client.get<{ items: Array<Record<string, unknown>> }>(
-          `/v1/cloud-projects/${encodeURIComponent(projectId)}/execution-environments`
-        )
-        return response.items.map(mapCollaborationExecutionEnvironmentDto)
-      },
-      async addExecutionEnvironment(projectId, deviceId) {
-        return mapCollaborationExecutionEnvironmentDto(
-          await client.post<Record<string, unknown>>(
-            `/v1/cloud-projects/${encodeURIComponent(projectId)}/execution-environments`,
-            { device_id: deviceId }
-          )
-        )
-      },
-      removeExecutionEnvironment(projectId, deviceId) {
-        return client.delete(
-          `/v1/cloud-projects/${encodeURIComponent(projectId)}/execution-environments/${encodeURIComponent(deviceId)}`
-        )
       },
       async initializeExecutionEnvironment(projectId, input) {
         return toProject(

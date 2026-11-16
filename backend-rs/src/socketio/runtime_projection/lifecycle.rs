@@ -24,7 +24,13 @@ pub(super) async fn effects(
             .is_some_and(|(current, previous)| current != previous))
         || matched.as_ref().is_some_and(|row| {
             crate::socketio::human_assistant_execution::is_personal(row)
-                && row.status.as_deref() != previous_status
+                && (row.status.as_deref() != previous_status
+                    || identity.event_name == "runtime.interaction.updated"
+                    || identity.event_name == "response.created"
+                    || crate::socketio::human_assistant_execution::waiting_exit(
+                        identity.event_name,
+                        identity.payload,
+                    ))
         });
     let detail = final_text(identity.payload)
         .or_else(|| {

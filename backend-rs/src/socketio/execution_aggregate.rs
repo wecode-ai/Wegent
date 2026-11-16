@@ -192,6 +192,7 @@ pub(super) async fn accept_observation<T: MysqlTransaction>(
     row: &ExecutionRow,
     seq: i64,
     now: NaiveDateTime,
+    observed_state: &str,
 ) -> MysqlResult<u64> {
     let next_status = if row.status_or_empty() == "cancel_requested" {
         "cancel_requested"
@@ -202,7 +203,7 @@ pub(super) async fn accept_observation<T: MysqlTransaction>(
     let lease_expires_at = now + chrono::Duration::seconds(DEFAULT_LEASE_SECONDS);
     let execution = transaction
         .execute(
-            "UPDATE loop_item_executions SET status=?, observed_state='running', \
+            "UPDATE loop_item_executions SET status=?, observed_state=?, \
              sync_state='in_sync', error_message='', termination_reason='', observed_at=?, \
              started_at=?, heartbeat_at=?, lease_expires_at=?, last_event_seq=?, \
              version=version+1, updated_at=? \
@@ -210,6 +211,7 @@ pub(super) async fn accept_observation<T: MysqlTransaction>(
              ('running', 'claimed', 'cancel_requested') AND last_event_seq < ?",
             (
                 next_status,
+                observed_state,
                 now,
                 started_at,
                 now,

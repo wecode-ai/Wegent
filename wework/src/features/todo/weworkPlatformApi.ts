@@ -316,6 +316,11 @@ export function createWeworkPlatformApi(
     },
     agents: {
       ...cloudApi.agents,
+      async remove(projectId, agentId, version) {
+        return (await projectLocation(projectId)) === 'local'
+          ? localApi.agents.remove(projectId, agentId, version)
+          : cloudApi.agents.remove(projectId, agentId, version)
+      },
       async list(projectId, options) {
         const api = (await projectLocation(projectId)) === 'local' ? localApi : cloudApi
         return options ? api.agents.list(projectId, options) : api.agents.list(projectId)

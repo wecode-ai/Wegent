@@ -263,6 +263,15 @@ where
     }
 }
 
+fn executor_dispatch_http_client() -> brz_http::Result<HttpClient> {
+    // The source creates a client per non-idempotent queue submission. Reusing
+    // an idle socket can lose the submission when the receiver expires it.
+    HttpClient::builder()
+        .read_timeout(DISPATCH_TIMEOUT)
+        .pool_max_idle_per_host(0)
+        .build()
+}
+
 /// The supervisor loop: reap finished local tasks and admit new jobs under the
 /// bounded consumer permits.
 async fn supervise<M, R>(mut receiver: mpsc::Receiver<DispatchJob<M, R>>)
@@ -273,7 +282,7 @@ where
     // The source's OpenAI/httpx client keeps a 300-second per-read timeout for
     // the executor acknowledgement; the chat-shell consumer builds its own
     // client with the same policy.
-    let http = match HttpClient::builder().read_timeout(DISPATCH_TIMEOUT).build() {
+    let http = match executor_dispatch_http_client() {
         Ok(http) => http,
         Err(error) => {
             tracing::error!(%error, "failed to build the responses dispatch client");
@@ -527,7 +536,7 @@ async fn send_executor(
         .timeout(DISPATCH_TIMEOUT)
         .send()
         .await
-        .map_err(|error| error.to_string())?;
+        .map_err(|error| format!("{error:?}"))?;
     if !response.status().is_success() {
         return Err(format!("Executor returned HTTP {}", response.status()));
     }

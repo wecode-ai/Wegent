@@ -1853,5 +1853,6 @@ export {
   LocalNevisSandboxService,
   RealCloudEnvironment,
   startRedisServer,
+  startMysqlServer,
   verifyLocalExecutorUsesCloudSocketUrl,
 }

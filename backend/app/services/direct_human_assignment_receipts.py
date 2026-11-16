@@ -25,7 +25,11 @@ from app.services.device.identity import (
     matching_online_info,
 )
 from app.services.device.local_provider import LocalDeviceProvider
-from app.services.human_assistant_dispatch import device_role, dispatch_resources
+from app.services.human_assistant_dispatch import (
+    device_role,
+    dispatch_resources,
+    enabled,
+)
 
 if TYPE_CHECKING:
     from app.services.issue_assignments import AssignmentEvent
@@ -66,6 +70,8 @@ def current_receipts(
     assignments: dict[str, list[AssignmentEvent]],
     executions: dict[str, LoopItemExecution],
 ) -> dict[str, dict]:
+    if not enabled():
+        return {}
     dispatches, executions = dispatch_resources(
         db, items, assignments=assignments, executions=executions
     )

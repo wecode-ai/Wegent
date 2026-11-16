@@ -265,6 +265,38 @@ def test_six_policy_combinations(test_db, routing_setup, environment_mode, model
     assert result.candidates
 
 
+@pytest.mark.parametrize("mode", ["fixed", "project_pool"])
+def test_deferred_agent_admits_native_model_only_with_fixed_execution_choice(
+    test_db, routing_setup, mode
+):
+    user, devices, issue = routing_setup
+    selected_policy = {"mode": mode}
+    if mode == "fixed":
+        selected_policy["environment_id"] = str(devices[0].id)
+    kwargs = dict(
+        config={
+            "runtime": "codex",
+            "execution_policy": {"mode": "user_select"},
+            "model_policy": {"mode": "user_select"},
+        },
+        project_id="1000000000001",
+        issue_id=issue.id,
+        user_id=user.id,
+        selection={
+            "execution_policy": selected_policy,
+            "model": {**MODEL, "source": "native"},
+        },
+    )
+    if mode == "fixed":
+        result = resolve_routing(test_db, **kwargs)
+        assert [device.id for device in result.candidates] == [devices[0].id]
+        assert result.source == "execution_selection"
+    else:
+        with pytest.raises(HTTPException) as failure:
+            resolve_routing(test_db, **kwargs)
+        assert failure.value.detail["error_code"] == "RUNNER_MODEL_UNAVAILABLE"
+
+
 def test_revoked_project_access_blocks_claim(test_db, routing_setup, monkeypatch):
     user, devices, issue = routing_setup
     snapshot = resolve(test_db, user, issue).snapshot()

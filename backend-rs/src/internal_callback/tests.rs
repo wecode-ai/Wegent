@@ -187,10 +187,7 @@ mod block_read_tests;
 /// and only log a warning (`session.py:1251-1282`, `:1288-1318`), so a failed
 /// dependency read must not abort the caller's following data write.
 ///
-/// `session_manager.add_tool_block` also finalizes the current text and
-/// thinking blocks itself (`session.py:930-931`) before `add_block` repeats
-/// the pair (`session.py:1041-1042`); the recorded tool-start traffic is two
-/// consecutive text/thinking `GET`s before the block `LRANGE`.
+/// Tool starts finalize through the unified block upsert exactly once.
 mod session_finalize_tests {
     use super::session;
     use brz_redis::{EncodeRedisArg, EncodeRedisArgs, FromRedisBulk, FromRedisValue, RedisValues};
@@ -236,6 +233,29 @@ mod session_finalize_tests {
     }
 
     impl brz_redis::Redis for RecordingRedis {
+        async fn eval<S, K, A, R>(&self, _script: S, keys: K, _args: A) -> brz_redis::RedisResult<R>
+        where
+            S: EncodeRedisArg + Send,
+            K: EncodeRedisArgs + Send,
+            A: EncodeRedisArgs + Send,
+            R: FromRedisValue + Send,
+        {
+            let mut command = brz_redis::cmd("EVAL");
+            keys.encode_args(&mut command)?;
+            self.record("EVAL", &command.arg_at(1).unwrap());
+            R::from_redis_value(&brz_redis::Value::Array(Vec::new()))
+        }
+
+        async fn hset<K, F, V>(&self, key: K, _field: F, _value: V) -> brz_redis::RedisResult<i64>
+        where
+            K: EncodeRedisArg + Send,
+            F: EncodeRedisArg + Send,
+            V: EncodeRedisArg + Send,
+        {
+            self.record("HSET", &key);
+            Ok(1)
+        }
+
         async fn get<K, R>(&self, key: K) -> brz_redis::RedisResult<Option<R>>
         where
             K: EncodeRedisArg + Send,
@@ -364,13 +384,11 @@ mod session_finalize_tests {
 
         let calls = redis.calls();
         assert_eq!(
-            &calls[..6],
+            &calls[..4],
             [
                 "GET chat:streaming:text_block:5",
                 "GET chat:streaming:thinking_block:5",
-                "GET chat:streaming:text_block:5",
-                "GET chat:streaming:thinking_block:5",
-                "LRANGE chat:streaming:blocks:5",
+                "EVAL chat:streaming:blocks:5",
                 "RPUSH chat:streaming:blocks:5",
             ],
             "{calls:?}"
