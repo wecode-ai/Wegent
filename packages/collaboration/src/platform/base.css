@@ -346,6 +346,12 @@
   font-weight: 400;
 }
 
+.collaboration-project-create-dialog input::placeholder,
+.collaboration-project-create-dialog textarea::placeholder {
+  color: rgb(var(--color-text-secondary));
+  opacity: 1;
+}
+
 .collaboration-project-create-field select {
   height: 40px;
   border: 1px solid rgb(var(--color-border));
@@ -751,6 +757,7 @@
 
 .collaboration-project-create-group-summary-header {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   justify-content: space-between;
   gap: 8px;
@@ -763,12 +770,25 @@
   gap: 6px;
 }
 
+.collaboration-project-create-group-summary-header > span {
+  flex: 1 1 180px;
+  min-width: 0;
+}
+
+.collaboration-project-create-group-summary-header > button {
+  flex: none;
+  white-space: nowrap;
+}
+
 .collaboration-project-create-group-summary-header svg {
+  flex: none;
   width: 16px;
   height: 16px;
 }
 
 .collaboration-project-create-group-summary-header strong {
+  min-width: 0;
+  overflow-wrap: anywhere;
   font-size: 13px;
   font-weight: 500;
 }
@@ -998,8 +1018,8 @@
 }
 
 .collaboration-project-create-generation-progress.is-complete {
-  background: rgb(var(--color-bg-base));
-  box-shadow: inset 0 0 0 1px rgb(var(--color-border));
+  padding: 0;
+  background: transparent;
 }
 
 .collaboration-project-create-squad-formation {
@@ -1009,8 +1029,7 @@
   gap: 8px;
 }
 
-.collaboration-project-create-squad-formation > .collaboration-project-create-assignment-queue,
-.collaboration-project-create-squad-formation > div.is-squad {
+.collaboration-project-create-squad-formation > .collaboration-project-create-assignment-queue {
   display: grid;
   min-height: 68px;
   align-content: start;
@@ -1055,8 +1074,9 @@
 }
 
 .collaboration-project-create-squad-formation > div.is-squad {
-  border-style: solid;
-  background: rgb(var(--color-bg-base));
+  display: grid;
+  min-width: 0;
+  gap: 8px;
 }
 
 .collaboration-project-create-squad-formation > div.is-squad .collaboration-group-roster {
@@ -1064,16 +1084,25 @@
 }
 
 .collaboration-project-create-squad-formation > div.is-squad .collaboration-group-roster-item {
-  display: flex;
+  display: grid;
   position: relative;
   min-width: 0;
-  align-items: center;
-  gap: 8px;
+  gap: 6px;
+  border-bottom: 1px solid rgb(var(--color-border));
+  padding-bottom: 10px;
+}
+
+.collaboration-project-create-squad-formation
+  > div.is-squad
+  .collaboration-group-roster-item:last-child {
+  border-bottom: 0;
+  padding-bottom: 0;
 }
 
 .collaboration-project-create-squad-formation > div.is-squad .collaboration-group-roster-heading {
   display: flex;
   flex: none;
+  flex-wrap: wrap;
   align-items: center;
   gap: 6px;
 }
@@ -1147,34 +1176,10 @@
   font-weight: 500;
 }
 
-.collaboration-project-create-duty-bubble {
-  position: relative;
-  max-width: min(420px, calc(100% - 120px));
-  border: 1px solid rgb(var(--color-border));
-  border-radius: 10px;
-  padding: 6px 9px;
+.collaboration-project-create-responsibility {
+  min-width: 0;
   color: rgb(var(--color-text-secondary));
-  background: rgb(var(--color-bg-base));
-  font-size: 12px;
-  line-height: 18px;
-}
-
-.collaboration-project-create-duty-bubble:focus-within {
-  border-color: rgb(var(--color-text-primary) / 0.42);
-  box-shadow: 0 0 0 2px rgb(var(--color-text-primary) / 0.06);
-}
-
-.collaboration-project-create-duty-bubble::before {
-  position: absolute;
-  top: 9px;
-  left: -5px;
-  width: 8px;
-  height: 8px;
-  border-bottom: 1px solid rgb(var(--color-border));
-  border-left: 1px solid rgb(var(--color-border));
-  background: rgb(var(--color-bg-base));
-  content: '';
-  transform: rotate(45deg);
+  overflow-wrap: anywhere;
 }
 
 .collaboration-project-create-hover-editable {
@@ -1185,8 +1190,10 @@
 }
 
 .collaboration-project-create-hover-editable > span {
+  flex: 1;
   min-width: 0;
   white-space: pre-wrap;
+  overflow-wrap: anywhere;
 }
 
 .collaboration-project-create-hover-editable > span.is-placeholder {
@@ -1232,7 +1239,7 @@
   font-size: 12px;
 }
 
-.collaboration-project-create-duty-bubble:hover
+.collaboration-project-create-responsibility:hover
   .collaboration-project-create-hover-editable
   > button,
 .collaboration-project-create-hover-editable:focus-within > button,
@@ -1260,26 +1267,9 @@
   resize: vertical;
 }
 
-.collaboration-project-create-duty-bubble .collaboration-project-create-inline-textarea {
+.collaboration-project-create-responsibility .collaboration-project-create-inline-textarea {
   min-height: 36px;
-  max-height: 126px;
-  overflow-y: auto;
   field-sizing: content;
-  border: 0;
-  border-radius: 0;
-  padding: 0;
-  background: transparent;
-  outline: none;
-  box-shadow: none;
-  resize: none;
-}
-
-.collaboration-project-create-dialog
-  .collaboration-project-create-duty-bubble
-  .collaboration-project-create-inline-textarea:focus {
-  border-color: transparent;
-  outline: none;
-  box-shadow: none;
 }
 
 .collaboration-project-create-generated-details {
@@ -1297,17 +1287,9 @@
   line-height: 18px;
 }
 
-.collaboration-project-create-generated-footer {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  border-top: 1px solid rgb(var(--color-border));
-  padding-top: 10px;
-}
-
-.collaboration-project-create-generated-footer > small {
-  max-width: 480px;
+.collaboration-project-create-group-settings-hint {
+  margin: 0;
+  color: rgb(var(--color-text-secondary));
 }
 
 .collaboration-project-create-squad-formation

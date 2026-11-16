@@ -259,7 +259,7 @@ export function ProjectCreateDialog(props: ProjectCreateDialogProps) {
     loading: generationModelsLoading,
     error: generationModelsError,
     reload: reloadGenerationModels,
-    setKey: setSelectedGenerationModelKey,
+    selectModel: selectGenerationModel,
     setOptions: setSelectedGenerationModelOptions,
   } = useProjectGenerationModels(
     groupModelPickerOpen,
@@ -847,6 +847,27 @@ export function ProjectCreateDialog(props: ProjectCreateDialogProps) {
       backLabel={labels.backToProject}
       testId="collaboration-project-create-model-picker"
       restoreFocus='[data-testid="collaboration-project-create-edit-group"], [data-testid="collaboration-project-create-add-collaborator"]'
+      footer={
+        groupEditorDraft ? (
+          <button
+            type="button"
+            className="collaboration-primary-button"
+            data-testid="collaboration-project-create-apply-group"
+            disabled={!groupEditorDraft.name.trim()}
+            onClick={() => {
+              commands.setCollaborationGroupDraft({
+                ...groupEditorDraft,
+                name: groupEditorDraft.name.trim(),
+              });
+              setGroupEditorDraft(null);
+              setGroupModelPickerOpen(false);
+              setGroupRecommendationDismissed(true);
+            }}
+          >
+            {labels.applyGroup}
+          </button>
+        ) : undefined
+      }
     >
       <div className="collaboration-project-create-group-editor is-generator">
         {generationModelsLoading ? (
@@ -987,27 +1008,25 @@ export function ProjectCreateDialog(props: ProjectCreateDialogProps) {
                   menuPlacement="above"
                   onSelectModel={(model) => {
                     if (!model) return false;
-                    const key = generationModelKey({
+                    const applied = selectGenerationModel({
                       modelName: model.name,
                       modelType: model.type,
                     });
-                    const source = generationModels.find(
-                      (candidate) => generationModelKey(candidate) === key,
-                    );
-                    setSelectedGenerationModelKey(key);
-                    setSelectedGenerationModelOptions(source?.options ?? {});
+                    if (!applied) return false;
                     setGroupGenerationError(null);
                     return true;
                   }}
                   onSelectModelAndOptions={(model, options) => {
-                    setSelectedGenerationModelKey(
-                      generationModelKey({
+                    const applied = selectGenerationModel(
+                      {
                         modelName: model.name,
                         modelType: model.type,
-                      }),
+                      },
+                      options,
                     );
-                    setSelectedGenerationModelOptions(options);
+                    if (!applied) return false;
                     setGroupGenerationError(null);
+                    return true;
                   }}
                   onSelectModelOption={(optionId, value) =>
                     setSelectedGenerationModelOptions((current) => ({
@@ -1146,7 +1165,7 @@ export function ProjectCreateDialog(props: ProjectCreateDialogProps) {
                     (participant.draftParticipant ||
                       participant.responsibility) ? (
                       <span
-                        className="collaboration-project-create-duty-bubble"
+                        className="collaboration-project-create-responsibility"
                         role="status"
                       >
                         {participant.draftParticipant ? (
@@ -1195,26 +1214,9 @@ export function ProjectCreateDialog(props: ProjectCreateDialogProps) {
                     stages={groupEditorDraft.stages}
                   />
                 ) : null}
-                <footer className="collaboration-project-create-generated-footer">
-                  <small>{labels.groupSettingsHint}</small>
-                  <button
-                    type="button"
-                    className="collaboration-primary-button"
-                    data-testid="collaboration-project-create-apply-group"
-                    disabled={!groupEditorDraft.name.trim()}
-                    onClick={() => {
-                      commands.setCollaborationGroupDraft({
-                        ...groupEditorDraft,
-                        name: groupEditorDraft.name.trim(),
-                      });
-                      setGroupEditorDraft(null);
-                      setGroupModelPickerOpen(false);
-                      setGroupRecommendationDismissed(true);
-                    }}
-                  >
-                    {labels.applyGroup}
-                  </button>
-                </footer>
+                <p className="collaboration-project-create-group-settings-hint">
+                  {labels.groupSettingsHint}
+                </p>
               </div>
             ) : (
               <div className="collaboration-project-create-live-output">

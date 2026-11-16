@@ -12,6 +12,11 @@ let container: HTMLDivElement
 
 beforeEach(() => {
   globalThis.IS_REACT_ACT_ENVIRONMENT = true
+  // jsdom omits text-range layout APIs used by the focused ProseMirror editor.
+  Object.defineProperties(Range.prototype, {
+    getClientRects: { configurable: true, value: () => [] },
+    getBoundingClientRect: { configurable: true, value: () => new DOMRect() },
+  })
   container = document.createElement('div')
   document.body.append(container)
   root = createRoot(container)
@@ -105,6 +110,8 @@ it('returns from group configuration without closing creation or losing its part
   expect(configuration.contains(document.activeElement), document.activeElement?.outerHTML).toBe(
     true
   )
+  expect(document.activeElement).toBe(get('collaboration-project-create-generation-instructions'))
+  await act(async () => document.dispatchEvent(new Event('selectionchange')))
   expect(document.querySelectorAll('[role="dialog"][aria-modal="true"]')).toHaveLength(1)
   expect(get('cloud-project-name').closest('form')?.hidden).toBe(true)
   await act(async () =>

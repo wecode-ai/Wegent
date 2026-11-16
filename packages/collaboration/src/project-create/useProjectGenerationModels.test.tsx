@@ -122,8 +122,7 @@ it('retains the selected model and its options when refresh fails or succeeds', 
     .mockResolvedValueOnce(catalog)
   await act(async () => root.render(<Harness active loader={loader} />))
   await act(async () => {
-    current.setKey(generationModelKey(second))
-    current.setOptions({ reasoning: 'low' })
+    current.selectModel(second, { reasoning: 'low' })
   })
   await act(async () => {
     await current.reload()
@@ -138,4 +137,18 @@ it('retains the selected model and its options when refresh fails or succeeds', 
   expect(current.error).toBeNull()
   expect(current.key).toBe(generationModelKey(second))
   expect(current.options).toEqual({ reasoning: 'low' })
+})
+
+it('rejects selections outside the current catalog without changing the current model', async () => {
+  const loader = vi.fn(async () => catalog)
+  await act(async () => root.render(<Harness active loader={loader} />))
+  const initialKey = current.key
+  const initialOptions = current.options
+  await act(async () => {
+    expect(
+      current.selectModel({ modelName: 'unlisted', modelType: 'public' }, { reasoning: 'low' })
+    ).toBe(false)
+  })
+  expect(current.key).toBe(initialKey)
+  expect(current.options).toEqual(initialOptions)
 })

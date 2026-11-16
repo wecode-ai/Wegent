@@ -1,5 +1,9 @@
 import { useCallback, useEffect, useRef, useState, type SetStateAction } from 'react'
-import type { ProjectCreateGenerationModel, ProjectCreateGenerationModelCatalog } from './types'
+import type {
+  ProjectCreateGenerationModel,
+  ProjectCreateGenerationModelCatalog,
+  ProjectCreateGenerationModelSelection,
+} from './types'
 
 export function generationModelKey(model: { modelName: string; modelType?: string | null }) {
   return `${model.modelType ?? ''}:${model.modelName}`
@@ -82,11 +86,25 @@ export function useProjectGenerationModels(
   useEffect(() => {
     if (active && loader && !requested.current) void reload()
   }, [active, loader, reload])
-  const setKey = (key: string) => setState(current => ({ ...current, key }))
+  const selectModel = (
+    selection: ProjectCreateGenerationModelSelection,
+    options?: Record<string, string>
+  ) => {
+    const model = state.models.find(
+      candidate => generationModelKey(candidate) === generationModelKey(selection)
+    )
+    if (!model) return false
+    setState(current => ({
+      ...current,
+      key: generationModelKey(model),
+      options: { ...model.options, ...options },
+    }))
+    return true
+  }
   const setOptions = (options: SetStateAction<Record<string, string>>) =>
     setState(current => ({
       ...current,
       options: typeof options === 'function' ? options(current.options) : options,
     }))
-  return { ...state, reload, setKey, setOptions }
+  return { ...state, reload, selectModel, setOptions }
 }
