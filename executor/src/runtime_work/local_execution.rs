@@ -101,12 +101,6 @@ impl PersistedLocalExecution {
                 "idle"
             }
             .into();
-            if task.runtime_handle["startupFailure"]["failedAt"].as_i64() == self.completed_at {
-                task.runtime_handle["lastError"] =
-                    task.runtime_handle["startupFailure"]["message"].clone();
-                task.runtime_handle["lastErrorCode"] =
-                    task.runtime_handle["startupFailure"]["code"].clone();
-            }
             return;
         }
         if task.runtime != "claude_code" {

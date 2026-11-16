@@ -54,7 +54,7 @@ async fn asynchronous_startup_error_survives_restart_without_credentials() {
     let restored = handler.local_task_link("failed-issue").unwrap();
     assert_eq!(restored.status, "failed");
     assert_eq!(
-        restored.runtime_handle["lastError"],
+        restored.runtime_handle["startupFailure"]["message"],
         "Native startup failed: Authorization: Bearer [redacted]"
     );
     let queried = handler.get_task(&json!({"taskId":"failed-issue"})).unwrap();
@@ -76,7 +76,7 @@ async fn failed_issue_start_retries_in_place_after_restart_without_replaying_the
     let failed = handler.local_task_link("failed-issue").unwrap();
     assert_eq!(failed.status, "failed");
     assert_eq!(
-        failed.runtime_handle["lastErrorCode"],
+        failed.runtime_handle["startupFailure"]["code"],
         "runtime_start_failed"
     );
     let failure = failed.runtime_handle["startupFailure"].clone();
