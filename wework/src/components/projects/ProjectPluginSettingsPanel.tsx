@@ -15,6 +15,7 @@ interface ProjectPluginSettingsPanelProps {
   pluginsPending: boolean
   pluginsDisabled: boolean
   searchDisabled: boolean
+  cloudDevice: boolean
   pluginSupport: ProjectPluginSupport
   aiSettingsSupported: boolean
   offline: boolean
@@ -33,6 +34,7 @@ export function ProjectPluginSettingsPanel({
   pluginsPending,
   pluginsDisabled,
   searchDisabled,
+  cloudDevice,
   pluginSupport,
   aiSettingsSupported,
   offline,
@@ -47,7 +49,11 @@ export function ProjectPluginSettingsPanel({
     <div data-testid="local-project-settings-plugins-panel">
       {!offline && (pluginSupport === 'unsupported' || !aiSettingsSupported) && (
         <p data-testid="project-plugins-upgrade-hint" className="mt-3 text-sm text-text-secondary">
-          {t('workbench.project_plugins_upgrade_required')}
+          {t(
+            cloudDevice
+              ? 'workbench.project_cloud_device_plugins_restart_hint'
+              : 'workbench.project_plugins_upgrade_required'
+          )}
         </p>
       )}
       {pluginSupport === 'unknown' && pluginsPending && (

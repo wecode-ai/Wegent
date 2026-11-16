@@ -608,8 +608,12 @@ function deviceOptionLabel(
   }
   if (isDeviceBelowWeWorkVersion(device)) {
     return `${name} · ${t(
-      'workbench.remote_host_upgrade_required',
-      `需升级到 v${WEWORK_MIN_EXECUTOR_VERSION}`,
+      isCloudDevice(device)
+        ? 'workbench.cloud_host_version_required'
+        : 'workbench.remote_host_upgrade_required',
+      isCloudDevice(device)
+        ? `需要 v${WEWORK_MIN_EXECUTOR_VERSION} 或以上`
+        : `需升级到 v${WEWORK_MIN_EXECUTOR_VERSION}`,
       { version: WEWORK_MIN_EXECUTOR_VERSION }
     )}`
   }

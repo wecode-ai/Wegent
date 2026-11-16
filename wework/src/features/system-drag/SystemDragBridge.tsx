@@ -300,6 +300,8 @@ export function SystemDragBridge() {
 
   useEffect(() => {
     let cancelled = false
+    let pollTimer: number | undefined
+    let pollingFailed = false
     const handlePayload = (payload: SystemDropPayload) => {
       if (payload.action === 'stash') {
         void getAppPreferences().then(preferences => {
@@ -338,15 +340,25 @@ export function SystemDragBridge() {
     const reportTransferError = (error: unknown) => {
       latest.current.setWorkbenchError(error instanceof Error ? error.message : String(error))
     }
-    const takePending = () =>
-      invokeDesktopHost<SystemDropPayload[]>('systemDrag.takePending').then(payloads => {
-        if (!cancelled) payloads.forEach(handlePayload)
-      })
+    const takePending = async () => {
+      try {
+        const payloads = await invokeDesktopHost<SystemDropPayload[]>('systemDrag.takePending')
+        if (cancelled) return
+        pollingFailed = false
+        payloads.forEach(handlePayload)
+      } catch (error) {
+        if (!cancelled && !pollingFailed) {
+          console.error('[Wework] Failed to receive system drag drops:', error)
+          pollingFailed = true
+        }
+      } finally {
+        if (!cancelled) pollTimer = window.setTimeout(takePending, 250)
+      }
+    }
     void takePending()
-    const poll = window.setInterval(() => void takePending(), 250)
     return () => {
       cancelled = true
-      window.clearInterval(poll)
+      window.clearTimeout(pollTimer)
     }
   }, [])
 

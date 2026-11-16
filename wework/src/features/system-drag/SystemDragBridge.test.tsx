@@ -1,6 +1,6 @@
 import '@/i18n'
 import { publishSelectedTextSelection, SELECTED_TEXT_DRAG_TYPE } from '@/lib/selected-text-drag'
-import { act, render, screen, waitFor } from '@testing-library/react'
+import { act, cleanup, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
 import { SystemDragBridge } from './SystemDragBridge'
 
@@ -58,6 +58,16 @@ function emitDrop(payload: { action: string; text: string | null; paths: string[
   })
 }
 
+function pendingDropRequest() {
+  let resolve!: (payloads: typeof mocks.pending) => void
+  let reject!: (error: Error) => void
+  const promise = new Promise<typeof mocks.pending>((resolvePromise, rejectPromise) => {
+    resolve = resolvePromise
+    reject = rejectPromise
+  })
+  return { promise, resolve, reject }
+}
+
 describe('SystemDragBridge', () => {
   afterEach(() => {
     vi.restoreAllMocks()
@@ -67,6 +77,7 @@ describe('SystemDragBridge', () => {
     mocks.pending = []
     mocks.invoke.mockReset()
     mocks.setInput.mockReset()
+    mocks.setWorkbenchError.mockReset()
     mocks.handleFileSelect.mockReset()
     mocks.startNewChat.mockReset()
     mocks.getAppPreferences.mockReset()
@@ -86,6 +97,115 @@ describe('SystemDragBridge', () => {
     mocks.invoke.mockImplementation(command =>
       Promise.resolve(command === 'systemDrag.takePending' ? mocks.pending.splice(0) : undefined)
     )
+  })
+
+  describe('pending drop polling', () => {
+    beforeEach(() => {
+      vi.useFakeTimers()
+    })
+
+    afterEach(() => {
+      cleanup()
+      vi.useRealTimers()
+    })
+
+    test('waits for the pending request before polling again and consumes its result', async () => {
+      const request = pendingDropRequest()
+      const takePending = vi.fn().mockReturnValueOnce(request.promise).mockResolvedValue([])
+      mocks.invoke.mockImplementation(command =>
+        command === 'systemDrag.takePending' ? takePending() : Promise.resolve(undefined)
+      )
+      render(<SystemDragBridge />)
+
+      await act(async () => vi.advanceTimersByTimeAsync(10_000))
+      expect(takePending).toHaveBeenCalledTimes(1)
+
+      await act(async () => {
+        request.resolve([{ action: 'new-chat', text: 'queued drop', paths: [] }])
+      })
+      expect(mocks.startNewChat).toHaveBeenCalledTimes(1)
+      expect(mocks.setInput).toHaveBeenCalledWith('queued drop')
+
+      await act(async () => vi.advanceTimersByTimeAsync(249))
+      expect(takePending).toHaveBeenCalledTimes(1)
+      await act(async () => vi.advanceTimersByTimeAsync(1))
+      expect(takePending).toHaveBeenCalledTimes(2)
+    })
+
+    test('reports one error per failure period and resumes consuming drops after recovery', async () => {
+      const error = new Error('host unavailable')
+      const consoleError = vi.spyOn(console, 'error').mockImplementation(() => undefined)
+      const takePending = vi.fn().mockRejectedValue(error)
+      mocks.invoke.mockImplementation(command =>
+        command === 'systemDrag.takePending' ? takePending() : Promise.resolve(undefined)
+      )
+      render(<SystemDragBridge />)
+
+      await act(async () => vi.advanceTimersByTimeAsync(1_000))
+      expect(takePending).toHaveBeenCalledTimes(5)
+      expect(consoleError).toHaveBeenCalledExactlyOnceWith(
+        '[Wework] Failed to receive system drag drops:',
+        error
+      )
+      expect(mocks.setWorkbenchError).not.toHaveBeenCalled()
+
+      takePending.mockResolvedValueOnce([{ action: 'new-chat', text: 'recovered drop', paths: [] }])
+      await act(async () => vi.advanceTimersByTimeAsync(250))
+      expect(mocks.setInput).toHaveBeenCalledWith('recovered drop')
+      await act(async () => vi.advanceTimersByTimeAsync(250))
+      expect(consoleError).toHaveBeenCalledTimes(2)
+    })
+
+    test('cancels the next poll when unmounted after a completed request', async () => {
+      const takePending = vi.fn().mockResolvedValue([])
+      mocks.invoke.mockImplementation(command =>
+        command === 'systemDrag.takePending' ? takePending() : Promise.resolve(undefined)
+      )
+      const { unmount } = render(<SystemDragBridge />)
+      await act(async () => vi.advanceTimersByTimeAsync(0))
+      expect(takePending).toHaveBeenCalledTimes(1)
+
+      unmount()
+      await act(async () => vi.advanceTimersByTimeAsync(1_000))
+      expect(takePending).toHaveBeenCalledTimes(1)
+    })
+
+    test('ignores a pending result after unmount and does not restart polling', async () => {
+      const request = pendingDropRequest()
+      const takePending = vi.fn().mockReturnValue(request.promise)
+      mocks.invoke.mockImplementation(command =>
+        command === 'systemDrag.takePending' ? takePending() : Promise.resolve(undefined)
+      )
+      const { unmount } = render(<SystemDragBridge />)
+      unmount()
+
+      await act(async () => {
+        request.resolve([{ action: 'new-chat', text: 'late drop', paths: [] }])
+      })
+      await act(async () => vi.advanceTimersByTimeAsync(1_000))
+      expect(takePending).toHaveBeenCalledTimes(1)
+      expect(mocks.startNewChat).not.toHaveBeenCalled()
+      expect(mocks.setInput).not.toHaveBeenCalled()
+    })
+
+    test('ignores a pending failure after unmount and does not restart polling', async () => {
+      const request = pendingDropRequest()
+      const consoleError = vi.spyOn(console, 'error').mockImplementation(() => undefined)
+      const takePending = vi.fn().mockReturnValue(request.promise)
+      mocks.invoke.mockImplementation(command =>
+        command === 'systemDrag.takePending' ? takePending() : Promise.resolve(undefined)
+      )
+      const { unmount } = render(<SystemDragBridge />)
+      unmount()
+
+      await act(async () => {
+        request.reject(new Error('late failure'))
+      })
+      await act(async () => vi.advanceTimersByTimeAsync(1_000))
+      expect(takePending).toHaveBeenCalledTimes(1)
+      expect(consoleError).not.toHaveBeenCalled()
+      expect(mocks.setWorkbenchError).not.toHaveBeenCalled()
+    })
   })
 
   test('handles rejected panel dismissal after a drag ends', async () => {
