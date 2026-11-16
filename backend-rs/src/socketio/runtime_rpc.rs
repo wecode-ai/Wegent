@@ -99,9 +99,22 @@ pub(crate) enum CallFailure {
 pub(crate) struct Route {
     pub(crate) logical_device_id: String,
     pub(crate) runtime_device_id: String,
+    pub(crate) app_device_id: Option<String>,
     pub(crate) device_type: DeviceType,
     pub(crate) socket_id: String,
     pub(crate) online: Map<String, Value>,
+}
+
+impl Route {
+    fn response_device_id(&self) -> &str {
+        if self.device_type == DeviceType::App {
+            self.app_device_id
+                .as_deref()
+                .unwrap_or(&self.runtime_device_id)
+        } else {
+            &self.runtime_device_id
+        }
+    }
 }
 
 fn rpc_error(code: &str, message: impl Into<String>) -> RuntimeRpcError {
@@ -203,6 +216,7 @@ pub(crate) async fn resolve_route(
     Ok(Route {
         logical_device_id: identity.logical_device_id,
         runtime_device_id: identity.runtime_device_id,
+        app_device_id: identity.app_device_id,
         device_type: identity.device_type,
         socket_id: socket_id.to_string(),
         online,
@@ -299,7 +313,7 @@ pub(crate) async fn call(
     Ok(Value::Object(project_response_device_ids(
         result,
         method,
-        &route.runtime_device_id,
+        route.response_device_id(),
         &route.logical_device_id,
     )))
 }

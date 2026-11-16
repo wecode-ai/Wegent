@@ -80,6 +80,7 @@ mod tests {
         Route {
             logical_device_id: "app-record-72".into(),
             runtime_device_id: "app-record-72".into(),
+            app_device_id: Some("shared-host".into()),
             device_type: DeviceType::App,
             socket_id: "current-socket".into(),
             online: json!({"runtime_features": {"remoteTaskAccess": access}})

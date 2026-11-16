@@ -121,7 +121,15 @@ impl RuntimeWorkRpcHandler {
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
             Err(_) => errors.push("claude_catalog_unreadable"),
         }
-        models.extend(self.public_local_runner_models());
+        let local_models = self.public_local_runner_models();
+        models.retain(|model| {
+            !local_models.iter().any(|local| {
+                ["runtime", "provider", "model_id"]
+                    .iter()
+                    .all(|key| local[*key] == model[*key])
+            })
+        });
+        models.extend(local_models);
         if models.iter().any(|model| model["runtime"] == "codex") && !runtimes.contains(&"codex") {
             runtimes.push("codex");
         }
@@ -134,9 +142,15 @@ impl RuntimeWorkRpcHandler {
             .expect("local runner models lock")
             .iter()
             .map(|model| {
-                json!({"runtime":model["runtime"],"provider":model["provider"],
+                let mut public = json!({"runtime":model["runtime"],"provider":model["provider"],
                 "model_id":model["model_id"],"local_model_id":model["local_model_id"],
-                "label":model["label"],"account_label":model["account_label"],"is_default":false})
+                "label":model["label"],"account_label":model["account_label"],"is_default":false});
+                for key in ["default_reasoning_effort", "supported_reasoning_efforts"] {
+                    if let Some(value) = model.get(key) {
+                        public[key] = value.clone();
+                    }
+                }
+                public
             })
             .collect()
     }
@@ -340,6 +354,25 @@ fn claude_endpoint_provider(env: &Value) -> Result<String, AppIpcError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn public_local_catalog_preserves_reasoning_metadata_without_secrets() {
+        let handler = RuntimeWorkRpcHandler::new("device", "unused");
+        let mut model = local_model("private-key");
+        model["default_reasoning_effort"] = json!("high");
+        model["supported_reasoning_efforts"] = json!(["low", "high", "xhigh"]);
+        handler
+            .replace_local_runner_models(json!({"models":[model]}))
+            .unwrap();
+        let catalog = handler.public_local_runner_models();
+        assert_eq!(catalog[0]["default_reasoning_effort"], "high");
+        assert_eq!(
+            catalog[0]["supported_reasoning_efforts"],
+            json!(["low", "high", "xhigh"])
+        );
+        assert!(catalog[0].get("modelConfig").is_none());
+        assert!(!catalog[0].to_string().contains("private-key"));
+    }
 
     fn local_model(secret: &str) -> Value {
         json!({"runtime":"codex","provider":"local-company","model_id":"local-model:company",

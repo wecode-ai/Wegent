@@ -35,7 +35,7 @@ export function findModelForSelection(
       return (
         (!codexProviderId || configuredProviderId === codexProviderId) &&
         (!runnerModelProvider ||
-          (model.runtime?.provider ?? configuredProviderId) ===
+          (configuredProviderId ?? model.runtime?.provider) ===
             runnerModelProvider) &&
         (!modelNamespace || model.namespace === modelNamespace) &&
         (!resourceUserId ||

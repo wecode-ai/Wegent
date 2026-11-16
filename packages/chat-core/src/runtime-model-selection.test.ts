@@ -6,6 +6,24 @@ import {
 import type { UnifiedModel } from "./models";
 
 describe("runtime task model identity", () => {
+  it("matches desktop Codex providers independently of the local transport", () => {
+    const model = (provider: string): UnifiedModel => ({
+      name: "gpt",
+      type: "runtime",
+      provider: "local",
+      config: { codexProviderId: provider },
+      runtime: { family: "openai.openai-responses", provider: "local" },
+    });
+    const models = [model("other-account"), model("pc-account")];
+    const selection = {
+      modelName: "gpt",
+      modelType: "runtime" as const,
+      options: { runnerModelProvider: "pc-account" },
+    };
+    expect(findModelForSelection(models, selection)).toBe(models[1]);
+    expect(findModelForSelection(models.slice(0, 1), selection)).toBeNull();
+  });
+
   it("distinguishes same-name native models with the saved runner provider", () => {
     const model = (provider: string): UnifiedModel => ({
       name: "gpt",
