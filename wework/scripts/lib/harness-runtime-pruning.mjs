@@ -17,6 +17,7 @@ export async function pruneHarnessRuntime(root, target) {
   if (!nativeArtifacts) throw new Error(`Unsupported Harness runtime prune target: ${target}`)
   const removed = { directories: 0, files: 0 }
   await visit(root, nativeArtifacts, removed)
+  await removeDanglingLinks(root, removed)
   return removed
 }
 
@@ -40,9 +41,7 @@ async function visit(directory, nativeArtifacts, removed) {
   await Promise.all(
     entries.map(async entry => {
       const child = join(directory, entry.name)
-      if (entry.isSymbolicLink()) {
-        await removeBrokenLink(child, removed)
-      } else if (entry.isDirectory()) {
+      if (entry.isDirectory()) {
         await visit(child, nativeArtifacts, removed)
       } else if (
         entry.isFile() &&
@@ -73,12 +72,22 @@ async function removeOtherDirectories(directory, retained, removed, prefix = '')
   )
 }
 
-async function removeBrokenLink(path, removed) {
-  try {
-    await realpath(path)
-  } catch (error) {
-    if (!['ENOENT', 'ELOOP'].includes(error.code)) throw error
-    await rm(path, { force: true })
-    removed.files += 1
-  }
+async function removeDanglingLinks(directory, removed) {
+  const entries = await readdir(directory, { withFileTypes: true })
+  await Promise.all(
+    entries.map(async entry => {
+      const child = join(directory, entry.name)
+      if (entry.isDirectory()) {
+        await removeDanglingLinks(child, removed)
+      } else if (entry.isSymbolicLink()) {
+        try {
+          await realpath(child)
+        } catch (error) {
+          if (!['ENOENT', 'ELOOP'].includes(error.code)) throw error
+          await rm(child, { force: true })
+          removed.files += 1
+        }
+      }
+    })
+  )
 }

@@ -1,6 +1,6 @@
 // @vitest-environment node
 
-import { access, mkdir, mkdtemp, rm, symlink, writeFile } from 'node:fs/promises'
+import { access, lstat, mkdir, mkdtemp, rm, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, test } from 'vitest'
@@ -53,8 +53,24 @@ describe('pruneHarnessRuntime', () => {
 
     await pruneHarnessRuntime(root, 'macos-arm64')
 
-    await expectMissing(join(packageDependencies, 'missing-optional'))
+    await expectLinkMissing(join(packageDependencies, 'missing-optional'))
     await expectExists(join(root, 'node_modules', 'package'))
+  })
+
+  test('removes dependency links whose target is pruned', async () => {
+    const root = await runtimeFixture()
+    const packageDependencies = join(root, 'node_modules', '.pnpm', 'package@1.0.0', 'node_modules')
+    await mkdir(join(packageDependencies, 'optional-package'), { recursive: true })
+    await symlink('optional-package', join(packageDependencies, 'present-optional'))
+    await symlink('pruned-package', join(packageDependencies, 'pruned-optional'))
+    const prunedDirectory = join(root, 'node_modules', 'pruned-package')
+    await mkdir(prunedDirectory, { recursive: true })
+    await writeFile(join(prunedDirectory, 'index.d.ts'), '')
+
+    await pruneHarnessRuntime(root, 'macos-arm64')
+
+    await expectLinkMissing(join(packageDependencies, 'pruned-optional'))
+    await expectExists(join(packageDependencies, 'present-optional'))
   })
 })
 
@@ -103,4 +119,8 @@ async function expectExists(path) {
 
 async function expectMissing(path) {
   await expect(access(path)).rejects.toMatchObject({ code: 'ENOENT' })
+}
+
+async function expectLinkMissing(path) {
+  await expect(lstat(path)).rejects.toMatchObject({ code: 'ENOENT' })
 }
