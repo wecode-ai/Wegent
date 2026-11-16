@@ -291,6 +291,8 @@ export function TaskDescriptionEditor({
   // Tracks the markdown value the editor state is currently mirrored from, so
   // external value updates replace content only when they are real changes.
   const lastEmittedMarkdownRef = useRef<string | null>(null)
+  // Compare edits with the parsed document, whose Markdown may differ from the source.
+  const lastSerializedMarkdownRef = useRef<string | null>(null)
   // Guards onChange while an external value is being applied, so opening an
   // item never rewrites its stored description just because the editor's
   // markdown round-trip normalizes line breaks.
@@ -349,6 +351,7 @@ export function TaskDescriptionEditor({
     }
     applyingExternalRef.current = false
     lastEmittedMarkdownRef.current = next
+    lastSerializedMarkdownRef.current = taskDescriptionMarkdown(editor)
     onInlineAttachmentIdsChangeRef.current?.(inlineAttachmentIds(editor))
   }, [editor, value])
 
@@ -356,7 +359,8 @@ export function TaskDescriptionEditor({
     const markdown = taskDescriptionMarkdown(editor)
     onInlineAttachmentIdsChangeRef.current?.(inlineAttachmentIds(editor))
     if (applyingExternalRef.current) return
-    if (markdown === lastEmittedMarkdownRef.current) return
+    if (markdown === lastSerializedMarkdownRef.current) return
+    lastSerializedMarkdownRef.current = markdown
     lastEmittedMarkdownRef.current = markdown
     onChangeRef.current(markdown)
   }, [editor])

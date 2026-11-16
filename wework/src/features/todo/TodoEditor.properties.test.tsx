@@ -91,6 +91,25 @@ function setup(assignmentError?: Error) {
 }
 
 describe('immediate Issue properties', () => {
+  it('marks a retained invalid date range as unsaved after a successful save', async () => {
+    const { updateLoopItem } = setup()
+    const title = screen.getByTestId('cloud-todo-detail-title')
+    fireEvent.change(title, { target: { value: 'Saved title' } })
+    fireEvent.blur(title)
+    await waitFor(() => expect(screen.getByTestId('issue-save-status')).toHaveTextContent('已保存'))
+    fireEvent.click(screen.getByRole('button', { name: '时间范围' }))
+    fireEvent.change(await screen.findByTestId('cloud-todo-detail-due-date'), {
+      target: { value: '2026-11-20' },
+    })
+    await waitFor(() => expect(screen.getByTestId('issue-save-status')).toHaveTextContent('已保存'))
+    const savedCalls = updateLoopItem.mock.calls.length
+    fireEvent.change(screen.getByTestId('cloud-todo-detail-start-date'), {
+      target: { value: '2026-11-21' },
+    })
+    expect(screen.getByTestId('issue-save-status')).toHaveTextContent('有未保存的修改')
+    expect(updateLoopItem).toHaveBeenCalledTimes(savedCalls)
+  })
+
   it('announces unsaved, pending, failed and retried title saves without losing the draft', async () => {
     const { updateLoopItem } = setup()
     expect(screen.queryByTestId('issue-save-status')).toBeNull()

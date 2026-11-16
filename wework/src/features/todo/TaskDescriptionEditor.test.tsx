@@ -6,6 +6,19 @@ import { normalizeTaskDescription } from './taskDescription'
 import { TaskDescriptionEditor } from './TaskDescriptionEditor'
 
 describe('TaskDescriptionEditor', () => {
+  it('keeps loaded markdown clean when enabling editing normalizes its representation', async () => {
+    const onChange = vi.fn()
+    const value = '## 目标\n正文\n\n### 验收标准\n- 第一项\n- 第二项'
+    const view = render(<TaskDescriptionEditor value={value} onChange={onChange} disabled />)
+    view.rerender(<TaskDescriptionEditor value={value} onChange={onChange} />)
+    const editor = await screen.findByTestId('cloud-todo-detail-description')
+    await userEvent.click(editor)
+    expect(onChange).not.toHaveBeenCalled()
+    await userEvent.keyboard('实际修改')
+    await waitFor(() => expect(onChange).toHaveBeenCalled())
+    expect(onChange.mock.lastCall?.[0]).toContain('实际修改')
+  })
+
   it('shows the empty hint without saving it and removes it when editing starts', async () => {
     const onChange = vi.fn()
     const placeholder = '添加描述，说明背景、目标或处理要求…'

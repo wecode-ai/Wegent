@@ -763,6 +763,7 @@ export function TodoEditor(props: TodoEditorProps) {
   const {
     draft: issueDraft,
     setField: setIssueDraftField,
+    dirty: issueDirty,
     restoredContentDirty,
   } = useIssueDetailDraft({
     source: item,
@@ -1008,7 +1009,6 @@ export function TodoEditor(props: TodoEditorProps) {
         item.description ?? "",
       ),
   );
-  const titleDirty = Boolean(item && title.trim() !== item.title);
   async function saveTitle() {
     if (!item || !editable || !title.trim()) return;
     const next = title.trim();
@@ -2934,8 +2934,7 @@ export function TodoEditor(props: TodoEditorProps) {
             </button>
           )}
           {!isCreate &&
-          (titleDirty ||
-            descriptionDirty ||
+          (issueDirty ||
             fieldSaves.pending ||
             fieldSaves.saved ||
             fieldSaves.error) ? (
@@ -2948,7 +2947,7 @@ export function TodoEditor(props: TodoEditorProps) {
                 ? t("todo.saving")
                 : fieldSaves.error
                   ? t("todo.save_failed")
-                  : titleDirty || descriptionDirty
+                  : issueDirty
                     ? t("todo.unsaved_changes")
                     : t("todo.saved")}
             </span>

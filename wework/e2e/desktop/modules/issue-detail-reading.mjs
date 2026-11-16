@@ -26,6 +26,34 @@ function luminance(color) {
   }, 0)
 }
 
+async function verifyComposerVisible(control) {
+  const selectors = [
+    '[data-testid="cloud-todo-detail-scroll"]',
+    '[data-testid="task-comment-form"]',
+    '[data-testid="task-comment-form"] [data-testid="send-message-button"]',
+  ]
+    .map(scope)
+    .join(', ')
+  const metrics = JSON.parse(
+    await control.command('getElementMetrics', selectors, { value: 'includeText' })
+  )
+  const scroll = metrics.find(row => row.testId === 'cloud-todo-detail-scroll')
+  const form = metrics.find(row => row.testId === 'task-comment-form')
+  const send = metrics.find(row => row.testId === 'send-message-button')
+  assert.ok(
+    scroll && form && send,
+    'The Issue must expose its scroll viewport, composer and send action'
+  )
+  assert.ok(
+    form.top >= scroll.top && form.bottom <= scroll.bottom - 15,
+    `The entire composer must remain inside the viewport and bottom inset: ${JSON.stringify({ scroll, form })}`
+  )
+  assert.ok(
+    send.top >= form.top && send.bottom <= form.bottom,
+    'The send action must stay inside its composer'
+  )
+}
+
 export async function verifyIssueDetailReading(control, { captureScreenshot, uiTimeoutMs }) {
   await control.command('click', scope('[data-testid="cloud-todo-detail-close"]'))
   await control.command('waitFor', scope('[data-testid="cloud-todo-detail"]'), { visible: false })
@@ -53,6 +81,7 @@ export async function verifyIssueDetailReading(control, { captureScreenshot, uiT
     goal.top >= preview.top && goal.bottom <= preview.bottom + 1,
     'The collapsed description must include the goal body, not only its heading'
   )
+  await verifyComposerVisible(control)
   const toggle = scope('[data-testid="issue-description-toggle"]')
   await control.command('waitFor', `${toggle}[aria-expanded="false"]`)
   await control.command('click', toggle)
@@ -60,6 +89,21 @@ export async function verifyIssueDetailReading(control, { captureScreenshot, uiT
   await control.command('click', toggle)
   await control.command('waitFor', `${toggle}[aria-expanded="false"]`)
   await captureScreenshot(control, 'issue-detail-reading-01-description.png')
+
+  await control.command('click', description)
+  const save = scope('[data-testid="cloud-todo-save"]')
+  await control.command('waitFor', `${save}:disabled`, { visible: true, stableMs: 300 })
+  assert.doesNotMatch(
+    await control.command('getText', detail),
+    /有未保存的修改/,
+    'Entering description editing must not turn Markdown normalization into an unsaved edit'
+  )
+  await control.command('fill', scope('[data-testid="cloud-todo-detail-description"]'), {
+    value: DESCRIPTION + '\n\n已核对描述保存。',
+  })
+  await control.command('clickWhenEnabled', save)
+  await control.command('waitFor', description, { text: '已核对描述保存。' })
+  await control.command('waitFor', scope('[data-testid="issue-save-status"]'), { text: '已保存' })
 
   const title = scope('[data-testid="cloud-todo-detail-title"]')
   await control.command('fill', title, { value: `${TITLE}已更新` })
