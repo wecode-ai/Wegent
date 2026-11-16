@@ -194,6 +194,7 @@ pub async fn dispatch_create(
             executor_namespace: input.executor_namespace,
             executor_deleted: input.setup.assistant_executor_deleted,
             new_session: false,
+            allow_new_session_fallback: false,
         },
     )
     .await

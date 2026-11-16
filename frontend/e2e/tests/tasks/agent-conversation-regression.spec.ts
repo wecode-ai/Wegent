@@ -9,6 +9,9 @@
  */
 
 import { APIRequestContext, Page, expect, test, type Route } from '@playwright/test'
+import { execFile } from 'node:child_process'
+import { resolve } from 'node:path'
+import { promisify } from 'node:util'
 import { createAuthenticatedSocketClient } from '../../../../packages/chat-core/src/socket/authenticatedSocketClient'
 import { ADMIN_USER } from '../../config/test-users'
 import { ApiClient, createApiClient } from '../../utils/api-client'
@@ -39,6 +42,7 @@ const RESPONSE_TIMEOUT_MS = 120_000
 // Mock control requests can race with Node closing an idle keep-alive socket.
 // Playwright retries only ECONNRESET here and still surfaces HTTP failures.
 const MOCK_MODEL_CONTROL_REQUEST_OPTIONS = { maxRetries: 3 } as const
+const execFileAsync = promisify(execFile)
 
 type CreatedTeam = {
   name: string
@@ -511,6 +515,49 @@ test.describe('Agent conversation regression', () => {
     )
     expect(extractText(secondRequest.body)).toContain(contextToken)
     expect(extractText(secondRequest.body)).toContain(firstPrompt)
+  })
+
+  test('legacy ClaudeCode completion without session proof starts a new session', async ({
+    page,
+    request,
+  }) => {
+    const contextToken = makeContextToken('claude_legacy_proof')
+    const firstPrompt = `Remember this context token for the next turn: ${contextToken}`
+    const followUpPrompt = 'Continue without asking for the previous turn.'
+
+    await openTaskPage(page, '/chat', claudeChatTeam.id, 'chat')
+
+    await sendMessage(page, firstPrompt)
+    const taskId = await waitForTaskId(page)
+    createdTaskIds.add(taskId)
+    await waitForBackendTerminal(request, taskId)
+    const firstRequest = await waitForCapturedModelRequest(
+      request,
+      capture =>
+        isAnthropicMessagesRequest(capture) && extractText(capture.body).includes(firstPrompt),
+      `ClaudeCode model request containing ${firstPrompt}`
+    )
+    expect(extractText(firstRequest.body)).toContain(contextToken)
+    const user = await getCurrentUser(request)
+    await removePersistedExecutorSessionProof(taskId, user.id)
+
+    // The real Socket.IO continuation, request builder, executor, native Home
+    // marker, and model service all run. Removing only the persisted proof
+    // reproduces a historical successful completion from before proof saving.
+    await sendMessage(page, followUpPrompt)
+    await expect(page.getByTestId('messages-container')).toContainText(
+      'I can see the image you uploaded.',
+      { timeout: RESPONSE_TIMEOUT_MS }
+    )
+    await waitForBackendTerminal(request, taskId)
+
+    const followUpRequest = await waitForCapturedModelRequest(
+      request,
+      capture =>
+        isAnthropicMessagesRequest(capture) && extractText(capture.body).includes(followUpPrompt),
+      `ClaudeCode model request containing ${followUpPrompt}`
+    )
+    expect(extractText(followUpRequest.body)).not.toContain(contextToken)
   })
 
   test('ClaudeCode clarification submits the selected option to the resumed model turn', async ({
@@ -2744,6 +2791,31 @@ test.describe('Agent conversation regression', () => {
         }
       )
       .toBe('COMPLETED')
+  }
+
+  async function getCurrentUser(request: APIRequestContext): Promise<{ id: number }> {
+    const response = await request.get(`${API_BASE_URL}/api/users/me`, { headers: authHeaders() })
+    expect(response.status()).toBe(200)
+    const payload = (await response.json()) as { user_id?: number; id?: number }
+    const id = payload.user_id ?? payload.id
+    expect(id, 'The current user response should contain an id').toBeTruthy()
+    return { id: id! }
+  }
+
+  async function removePersistedExecutorSessionProof(
+    taskId: number,
+    userId: number
+  ): Promise<void> {
+    await execFileAsync(
+      'uv',
+      ['run', '--no-sync', 'python', 'tests/e2e_remove_executor_session.py'],
+      {
+        cwd: resolve(process.cwd(), '../backend'),
+        env: { ...process.env, PYTHONPATH: '.:..' },
+        input: JSON.stringify({ task_id: taskId, user_id: userId }),
+        timeout: 30_000,
+      }
+    )
   }
 
   async function waitForCapturedModelRequest(

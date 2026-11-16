@@ -276,6 +276,7 @@ async fn prepare_retry(
             team_id: team.id,
             bot_ids,
             new_session: false,
+            allow_new_session_fallback: true,
             message,
             interactive_form_answer: None,
             additional_skills: Vec::new(),

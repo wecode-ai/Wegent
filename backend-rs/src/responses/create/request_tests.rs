@@ -171,6 +171,7 @@ fn chat_input<'a>(team: &'a KindRow, bot: &'a KindRow) -> BuildExecutionRequestI
         executor_namespace: "",
         executor_deleted: false,
         new_session: false,
+        allow_new_session_fallback: false,
         knowledge_base_refs: &[],
         knowledge_base_names: &[],
         web_runtime_guidance: false,
