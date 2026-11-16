@@ -61,7 +61,10 @@ writeFileSync(join(root, 'package.json'), JSON.stringify({ version }))
 writeFileSync(join(root, 'lib', 'bin.js'), '')
 if (version === '0.2.0-rc.2') {
   const optionalDirectory = join('node_modules', '.pnpm', 'package@0.2.0', 'node_modules')
-  mkdirSync(optionalDirectory, { recursive: true })
+  mkdirSync(join(optionalDirectory, 'package'), { recursive: true })
+  writeFileSync(join(optionalDirectory, 'package', 'package.json'), JSON.stringify({
+    optionalDependencies: { 'missing-optional': '1.0.0' },
+  }))
   symlinkSync('../missing-target', join(optionalDirectory, 'missing-optional'), 'junction')
 }
 `

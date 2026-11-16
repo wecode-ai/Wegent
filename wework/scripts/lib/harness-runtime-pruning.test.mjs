@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, test } from 'vitest'
 import { pruneHarnessRuntime } from './harness-runtime-pruning.mjs'
+import { assertPortableHarnessRuntime } from './portable-runtime.mjs'
 
 const roots = []
 
@@ -45,6 +46,10 @@ describe('pruneHarnessRuntime', () => {
     const root = await runtimeFixture()
     const packageDependencies = join(root, 'node_modules', '.pnpm', 'package@1.0.0', 'node_modules')
     await mkdir(join(packageDependencies, 'package'), { recursive: true })
+    await writeFile(
+      join(packageDependencies, 'package', 'package.json'),
+      JSON.stringify({ optionalDependencies: { 'missing-optional': '1.0.0' } })
+    )
     await symlink('../missing-optional', join(packageDependencies, 'missing-optional'))
     await symlink(
       join('.pnpm', 'package@1.0.0', 'node_modules', 'package'),
@@ -69,6 +74,68 @@ describe('pruneHarnessRuntime', () => {
 
     await expectLinkMissing(join(packageDependencies, 'pruned-optional'))
     await expectExists(join(packageDependencies, 'present-optional'))
+  })
+
+  test('rejects a broken required entry instead of packaging an incomplete runtime', async () => {
+    const root = await runtimeFixture()
+    await mkdir(join(root, 'node_modules', '@deepseek-ai'))
+    await writeFile(
+      join(root, 'package.json'),
+      JSON.stringify({ dependencies: { '@deepseek-ai/dsh': '0.2.0-rc.2' } })
+    )
+    const link = join(root, 'node_modules', '@deepseek-ai', 'dsh')
+    await symlink('../missing-dsh', link)
+
+    await expect(pruneHarnessRuntime(root, 'macos-arm64')).rejects.toThrow('broken symlink')
+    expect((await lstat(link)).isSymbolicLink()).toBe(true)
+    await expect(assertPortableHarnessRuntime(root)).rejects.toThrow('broken symlink')
+  })
+
+  test('retains a missing shared dependency when another package requires it', async () => {
+    const root = await runtimeFixture()
+    const modules = join(root, 'node_modules')
+    for (const name of ['optional-owner', 'required-owner']) await mkdir(join(modules, name))
+    await writeFile(
+      join(modules, 'optional-owner', 'package.json'),
+      JSON.stringify({ optionalDependencies: { shared: '1.0.0' } })
+    )
+    await writeFile(
+      join(modules, 'required-owner', 'package.json'),
+      JSON.stringify({ dependencies: { shared: '1.0.0' } })
+    )
+    await symlink('missing', join(modules, 'shared'))
+
+    await expect(pruneHarnessRuntime(root, 'macos-arm64')).rejects.toThrow('broken symlink')
+  })
+
+  test('removes a missing scoped optional dependency from its owning package', async () => {
+    const root = await runtimeFixture()
+    const modules = join(root, 'node_modules', '.pnpm', 'owner@1.0.0', 'node_modules')
+    await mkdir(join(modules, '@scope', 'owner'), { recursive: true })
+    await writeFile(
+      join(modules, '@scope', 'owner', 'package.json'),
+      JSON.stringify({ optionalDependencies: { '@scope/native': '1.0.0' } })
+    )
+    const link = join(modules, '@scope', 'native')
+    await symlink('../../missing-native', link)
+
+    await pruneHarnessRuntime(root, 'macos-arm64')
+
+    await expectLinkMissing(link)
+    await expect(assertPortableHarnessRuntime(root)).resolves.toBeUndefined()
+  })
+
+  test('rejects cyclic links even when their package is optional', async () => {
+    const root = await runtimeFixture()
+    await writeFile(
+      join(root, 'package.json'),
+      JSON.stringify({ optionalDependencies: { cyclic: '1.0.0' } })
+    )
+    const link = join(root, 'node_modules', 'cyclic')
+    await symlink('cyclic', link)
+
+    await expect(pruneHarnessRuntime(root, 'macos-arm64')).rejects.toThrow('broken symlink')
+    expect((await lstat(link)).isSymbolicLink()).toBe(true)
   })
 })
 
