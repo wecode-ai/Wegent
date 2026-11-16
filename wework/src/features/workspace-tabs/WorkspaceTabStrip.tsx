@@ -185,7 +185,7 @@ function WorkspaceTabButton({
         if (event.button === 1 && !tab.fixed) closeTab(tab.id)
       }}
       className={cn(
-        'group relative flex h-8 w-36 min-w-0 max-w-[min(188px,var(--workspace-tab-viewport-width,188px))] flex-none items-center rounded-md text-sm transition-[background-color,color,opacity] duration-150',
+        'group relative flex h-12 w-36 min-w-0 max-w-[min(188px,var(--workspace-tab-viewport-width,188px))] flex-none items-center rounded-md text-sm transition-[background-color,color,opacity] duration-150 md:h-8',
         pendingCount !== null && 'w-40',
         tab.contentRoute.startsWith('/app/harness-') && 'smart-app-workspace-tab-enter',
         active
@@ -247,7 +247,7 @@ function WorkspaceTabButton({
             tab.id
           )
         }}
-        className="flex h-full min-w-0 flex-1 items-center gap-1.5 px-2.5 text-left outline-none keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-inset keyboard:focus-visible:ring-focus wework:keyboard:focus-visible:ring-blue-500"
+        className="flex h-full min-w-11 flex-1 items-center gap-1.5 px-2.5 text-left outline-none keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-inset keyboard:focus-visible:ring-focus md:min-w-0 wework:keyboard:focus-visible:ring-blue-500"
         title={tabTitle}
       >
         {tabKindIcon(tab, unavailable)}
@@ -279,10 +279,10 @@ function WorkspaceTabButton({
             closeTab(tab.id)
           }}
           className={cn(
-            'mr-1.5 flex h-5 w-5 shrink-0 items-center justify-center rounded outline-none transition-[background-color,color,opacity] hover:bg-muted keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-focus wework:hover:bg-black/[0.06] wework:keyboard:focus-visible:ring-blue-500 wework:dark:hover:bg-white/[0.08]',
+            'flex h-11 w-11 shrink-0 items-center justify-center rounded outline-none transition-[background-color,color,opacity] hover:bg-muted keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-focus md:mr-1.5 md:h-6 md:w-6 wework:hover:bg-black/[0.06] wework:keyboard:focus-visible:ring-blue-500 wework:dark:hover:bg-white/[0.08]',
             active
               ? 'text-text-secondary'
-              : 'opacity-0 text-text-muted group-hover:opacity-100 group-hover:text-text-secondary group-focus-within:opacity-100'
+              : 'text-text-secondary md:opacity-0 group-hover:opacity-100 group-hover:text-text-secondary group-focus-within:opacity-100'
           )}
           aria-label={closeLabel}
           title={closeLabel}
@@ -558,7 +558,7 @@ export function WorkspaceTabStrip({
           role="tablist"
           data-testid="workspace-tab-strip"
           aria-label={t('workbench.workspace_tabs', '工作区标签页')}
-          className="workspace-tab-strip-scrollbar flex h-full min-w-0 max-w-[calc(100%-2rem)] flex-none items-center gap-0.5 overflow-x-auto overflow-y-hidden"
+          className="workspace-tab-strip-scrollbar flex h-full min-w-0 max-w-[calc(100%-3rem)] flex-none items-center gap-0.5 overflow-x-auto overflow-y-hidden md:max-w-[calc(100%-2rem)]"
           onFocusCapture={event => {
             if (
               event.target instanceof HTMLElement &&
@@ -628,7 +628,7 @@ export function WorkspaceTabStrip({
             setContextMenu(null)
             setAddMenuPosition(current => (current ? null : menuPosition(trigger, 220)))
           }}
-          className="ml-1 flex h-7 w-7 shrink-0 items-center justify-center rounded-lg text-text-secondary outline-none transition-colors hover:bg-muted hover:text-text-primary keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-focus wework:hover:bg-black/[0.04] wework:keyboard:focus-visible:ring-blue-500"
+          className="ml-1 flex h-11 w-11 shrink-0 items-center justify-center rounded-lg text-text-secondary outline-none transition-colors hover:bg-muted hover:text-text-primary keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-focus md:h-7 md:w-7 wework:hover:bg-black/[0.04] wework:keyboard:focus-visible:ring-blue-500"
           aria-label={t('workbench.workspace_tab_new', '新建标签页')}
           title={t('workbench.workspace_tab_new', '新建标签页')}
         >

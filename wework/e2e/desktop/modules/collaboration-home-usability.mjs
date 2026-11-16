@@ -394,6 +394,18 @@ export async function verifyCollaborationHomeUsability(
 
     await resizeHome(control, home, 390, 900, timeoutMs)
     await verifyCompactNavigation(control, home, timeoutMs)
+    for (const selector of [
+      '[data-testid="workspace-tab-strip"] [role="tab"][aria-selected="true"]',
+      '[data-testid="workspace-tab-add"]',
+      '[data-testid="wework-notifications-button"]',
+      '[data-testid="topnav-feedback-button"]',
+    ]) {
+      const [target] = JSON.parse(await control.command('getElementMetrics', selector))
+      assert.ok(
+        target?.width >= 44 && target?.height >= 44,
+        `Narrow titlebar control must provide a 44px target: ${selector}`
+      )
+    }
     const record = `${home} [data-testid="collaboration-home-issue-content"]`
     const savedRecord = await control.command('getValue', record)
     const narrowIssue = 'Narrow creation reveals the resulting Issue'

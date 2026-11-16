@@ -12,7 +12,7 @@ import { MacOSTitleBarDragRegion } from '@/components/layout/MacOSTitleBarDragRe
 import { WindowFrameControls } from '@/components/layout/WindowFrameControls'
 import { ApplicationMenuButton } from './ApplicationMenuButton'
 import { GlobalFeedbackButton } from '@/features/feedback/GlobalFeedbackButton'
-import type { ReactNode } from 'react'
+import { useLayoutEffect, useRef, type ReactNode } from 'react'
 import { WorkspaceTabStrip } from '@/features/workspace-tabs/WorkspaceTabStrip'
 import type { WorkspaceTabKind } from '@/features/workspace-tabs/workspaceTabs'
 
@@ -35,19 +35,30 @@ export function ChromeTitlebar({
   const isDesktop = isDesktopRuntime()
   const platform = getPlatform()
   const feedbackSlotVisible = isDesktop
-  const fixedActionsWidth = showWorkspacePortals
-    ? feedbackSlotVisible
-      ? '9rem'
-      : '7.25rem'
-    : feedbackSlotVisible
-      ? '4rem'
-      : '2.25rem'
+  const titlebarRef = useRef<HTMLDivElement>(null)
+  const actionsRef = useRef<HTMLDivElement>(null)
+  const fixedActionsWidth = 'var(--titlebar-fixed-actions-width, 0px)'
+  useLayoutEffect(() => {
+    const actions = actionsRef.current
+    if (!actions) return
+    const measure = () => {
+      titlebarRef.current?.style.setProperty(
+        '--titlebar-fixed-actions-width',
+        `${actions.getBoundingClientRect().width}px`
+      )
+    }
+    measure()
+    const observer = new ResizeObserver(measure)
+    observer.observe(actions)
+    return () => observer.disconnect()
+  }, [])
 
   return (
     <div
+      ref={titlebarRef}
       data-testid="chrome-titlebar"
       className={cn(
-        'relative z-titlebar flex h-[38px] shrink-0 items-center bg-[rgb(var(--color-titlebar))] pr-2 select-none',
+        'relative z-titlebar flex h-12 shrink-0 items-center bg-[rgb(var(--color-titlebar))] pr-2 select-none md:h-[38px]',
         className
       )}
     >
@@ -111,20 +122,20 @@ export function ChromeTitlebar({
       )}
       {
         <div
+          ref={actionsRef}
           data-testid="titlebar-fixed-actions"
           className="relative z-chrome flex h-full shrink-0 items-center"
-          style={{ width: fixedActionsWidth }}
         >
           {showWorkspacePortals && (
             <div
               id={TITLEBAR_ACTIONS_PORTAL_ID}
               data-testid="titlebar-actions"
-              className="electron-titlebar-interactive-region pointer-events-auto flex h-full w-[5rem] shrink-0 items-center justify-end gap-1"
+              className="electron-titlebar-interactive-region pointer-events-auto flex h-full shrink-0 items-center justify-end gap-1"
             />
           )}
           <div
             data-testid="titlebar-notifications"
-            className="electron-titlebar-interactive-region flex h-full w-9 shrink-0 items-center justify-center"
+            className="electron-titlebar-interactive-region flex h-full w-11 shrink-0 items-center justify-center md:w-9"
           >
             <NotificationCenter />
           </div>
@@ -132,7 +143,7 @@ export function ChromeTitlebar({
             <div
               id={TITLEBAR_FEEDBACK_PORTAL_ID}
               data-testid="titlebar-feedback"
-              className="electron-titlebar-interactive-region pointer-events-auto flex h-full w-7 shrink-0 items-center justify-center"
+              className="electron-titlebar-interactive-region pointer-events-auto flex h-full w-11 shrink-0 items-center justify-center md:w-7"
             >
               <GlobalFeedbackButton />
             </div>

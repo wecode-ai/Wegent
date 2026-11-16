@@ -31,7 +31,7 @@ Process attribution and collection have the following limits:
 
 ## Use top-level tabs
 
-In narrow windows, the strip reveals the current tab and fits each tab within the available width. Arrow keys, Home and End move focus; Enter or Space activates the focused tab. Moving focus does not automatically open a sign-in flow.
+In narrow windows, the strip reveals the current tab and fits each tab within the available width. Mobile tabs, new-tab, notification and feedback controls provide targets of at least 44px; empty workspace action slots leave their width available to tabs. Arrow keys, Home and End move focus; Enter or Space activates the focused tab. Moving focus does not automatically open a sign-in flow.
 
 The Wework desktop app uses top-level tabs for tasks, project spaces, agents, and other product pages. Sidebar links navigate within the active tab. A new tab is created only when you select the top-bar **+** or another explicit new-tab action from a tab menu.
 

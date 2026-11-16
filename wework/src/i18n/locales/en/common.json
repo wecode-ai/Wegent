@@ -2021,6 +2021,7 @@
     },
     "attach_chrome": "Attach Google Chrome",
     "plan_mode": "Plan mode",
+    "enable_plan_mode": "Enable plan mode",
     "permission_mode": "Permission mode",
     "permission_mode_read_only": "Read only",
     "permission_mode_workspace": "Workspace",

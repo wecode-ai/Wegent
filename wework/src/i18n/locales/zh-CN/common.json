@@ -2020,6 +2020,7 @@
     },
     "attach_chrome": "Attach Google Chrome",
     "plan_mode": "计划模式",
+    "enable_plan_mode": "开启计划模式",
     "permission_mode": "权限模式",
     "permission_mode_read_only": "只读",
     "permission_mode_workspace": "工作区",
