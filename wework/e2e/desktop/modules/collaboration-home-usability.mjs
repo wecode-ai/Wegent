@@ -322,7 +322,7 @@ async function verifyCompactNavigation(control, home, timeoutMs) {
   )
   assert.ok(
     active.left >= viewport.left - 1 && active.right <= viewport.right + 1,
-    'The selected workspace tab must remain fully visible in a narrow window'
+    `The selected workspace tab must remain fully visible in a narrow window: ${JSON.stringify({ viewport, active })}`
   )
   const current = await control.command('getAttribute', selected, { value: 'data-testid' })
   await control.command('nativePress', selected, { key: 'ArrowLeft' })

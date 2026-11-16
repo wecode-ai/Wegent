@@ -59,6 +59,7 @@ export function ChromeTitlebar({
       data-testid="chrome-titlebar"
       className={cn(
         'relative z-titlebar flex h-12 shrink-0 items-center bg-[rgb(var(--color-titlebar))] pr-2 select-none md:h-[38px]',
+        isDesktop && platform !== 'mac' && 'max-md:h-24 max-md:pb-12',
         className
       )}
     >
@@ -72,6 +73,14 @@ export function ChromeTitlebar({
       {/* Windows/Linux: the frameless window hides the OS menu bar, so the
           application menu is exposed through a native button instead. */}
       {isDesktop && (platform === 'win' || platform === 'linux') && <ApplicationMenuButton />}
+      {isDesktop && platform !== 'mac' && (
+        <div
+          data-testid="compact-titlebar-drag-region"
+          className="min-w-0 flex-1 self-stretch md:hidden"
+        >
+          <MacOSTitleBarDragRegion />
+        </div>
+      )}
 
       {beforeTabs && (
         <div
@@ -82,7 +91,14 @@ export function ChromeTitlebar({
         </div>
       )}
 
-      <WorkspaceTabStrip availableKinds={availableWorkspaceTabKinds} />
+      <WorkspaceTabStrip
+        availableKinds={availableWorkspaceTabKinds}
+        className={
+          isDesktop && platform !== 'mac'
+            ? 'max-md:absolute max-md:inset-x-0 max-md:bottom-0 max-md:h-12 max-md:w-full'
+            : undefined
+        }
+      />
       {afterTabs && (
         <div
           data-testid="chrome-titlebar-after-tabs"
@@ -96,7 +112,7 @@ export function ChromeTitlebar({
       {showWorkspacePortals && (
         <div
           data-testid="titlebar-right-workspace-zone"
-          className="pointer-events-none absolute top-0 z-chrome flex h-full items-center"
+          className="pointer-events-none absolute top-0 z-chrome flex h-12 items-center md:h-full"
           style={{
             right:
               isDesktop && platform === 'win'
@@ -151,16 +167,8 @@ export function ChromeTitlebar({
         </div>
       }
 
-      {/* Linux: right spacer for native window controls */}
-      {isDesktop && platform === 'linux' && (
-        <div className="electron-titlebar-drag-region w-[138px] shrink-0 self-stretch">
-          <MacOSTitleBarDragRegion />
-        </div>
-      )}
-
-      {/* Windows: custom window frame controls */}
-      {((isDesktop && platform === 'win') ||
-        (isElectron && (platform === 'win' || platform === 'linux'))) && (
+      {/* Windows and Linux share the Electron window controls. */}
+      {isElectron && (platform === 'win' || platform === 'linux') && (
         <div className="electron-titlebar-interactive-region relative z-chrome w-[138px] shrink-0 self-stretch">
           <WindowFrameControls className="h-full justify-end" />
         </div>

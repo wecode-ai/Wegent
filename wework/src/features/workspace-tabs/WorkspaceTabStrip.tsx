@@ -63,6 +63,7 @@ const DEFAULT_AVAILABLE_KINDS: WorkspaceTabKind[] = ['task', 'board', 'agent', '
 
 interface WorkspaceTabStripProps {
   availableKinds?: readonly WorkspaceTabKind[]
+  className?: string
 }
 
 function tabKindIcon(tab: WorkspaceTab, unavailable = false) {
@@ -296,6 +297,7 @@ function WorkspaceTabButton({
 
 export function WorkspaceTabStrip({
   availableKinds = DEFAULT_AVAILABLE_KINDS,
+  className,
 }: WorkspaceTabStripProps) {
   const { t } = useTranslation('common')
   const cloud = useOptionalCloudConnection()
@@ -551,7 +553,7 @@ export function WorkspaceTabStrip({
     <>
       <div
         data-testid="workspace-tab-strip-container"
-        className="flex h-full min-w-0 flex-1 items-center px-2"
+        className={cn('flex h-full min-w-0 flex-1 items-center px-2', className)}
       >
         <div
           ref={tabStripRef}
