@@ -149,6 +149,31 @@ async function verifyProjectDialogKeyboard(control, home, timeoutMs) {
     assert.ok(focused, 'Every project-dialog tab stop must remain identifiable')
     await control.command('waitFor', `${dialog} [data-testid="${focused}"]`)
   }
+  const name = '[data-testid="collaboration-project-name-input"]'
+  const projectDraft = 'Keep the project draft when leaving template previews'
+  await control.command('fill', name, { value: projectDraft })
+  await control.command('click', '[data-testid="project-create-choose-template"]')
+  await control.command('click', '[data-testid="template-details-product-lifecycle"]')
+  await control.command('waitFor', '[data-testid="template-detail-cancel"]', { visible: true })
+  await control.command('nativePress', ':focus', { key: 'Escape' })
+  await until(
+    async () =>
+      JSON.parse(
+        await control.command('getElementMetrics', '[data-testid="template-detail-cancel"]')
+      ),
+    metrics => metrics.length === 0,
+    'Escape must close only the template preview',
+    timeoutMs
+  )
+  assert.equal(await control.command('getValue', name), projectDraft)
+  await control.command('nativePress', ':focus', { key: 'Escape' })
+  await until(
+    async () => JSON.parse(await control.command('getElementMetrics', 'dialog[open]')),
+    metrics => metrics.length === 0,
+    'A second Escape must close template discovery while retaining project creation',
+    timeoutMs
+  )
+  assert.equal(await control.command('getValue', name), projectDraft)
   await control.command('nativePress', ':focus', { key: 'Escape' })
   await until(
     async () => JSON.parse(await control.command('getElementMetrics', dialog)),
@@ -234,11 +259,18 @@ export async function verifyCollaborationHomeUsability(
     const record = `${home} [data-testid="collaboration-home-issue-content"]`
     const savedRecord = await control.command('getValue', record)
     const narrowIssue = 'Narrow creation reveals the resulting Issue'
-    await control.command('fill', record, { value: narrowIssue })
+    await control.command('fill', record, {
+      value: `# ${narrowIssue}\n\nCheck directional navigation, filters, and empty-state recovery.`,
+    })
     await control.command('click', `${home} [data-testid="collaboration-home-create-issue"]`)
     await control.command('waitFor', `${home} [data-testid="cloud-todo-detail-title"]`, {
       text: narrowIssue,
     })
+    assert.equal(
+      await control.command('getText', `${home} [data-testid="cloud-todo-detail-title"]`),
+      narrowIssue,
+      'The Issue title must use its first semantic Markdown line, preserving the body separately'
+    )
     await waitForNarrowIssue(control, home, timeoutMs)
     await control.command('click', `${home} [data-testid="personal-home-back-to-issues"]`)
     await control.command('fill', record, { value: savedRecord })

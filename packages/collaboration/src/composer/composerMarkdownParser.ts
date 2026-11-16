@@ -8,8 +8,12 @@ import { isHttpUrl } from "@wegent/chat-core/http-url";
 const parser = unified().use(remarkParse).use(remarkGfm);
 
 /** Read the same Markdown grammar as the editor without exposing its source syntax. */
-export function composerMarkdownText(value: string): string {
+export function composerMarkdownText(
+  value: string,
+  options?: { firstLine?: boolean },
+): string {
   const read = (node: Nodes): string => {
+    if (node.type === "break") return "\n";
     if (node.type === "image" || node.type === "imageReference")
       return node.alt ?? "";
     if ("value" in node) return node.value;
@@ -24,9 +28,13 @@ export function composerMarkdownText(value: string): string {
       "link",
       "linkReference",
     ].includes(node.type);
-    return node.children.map(read).join(inline ? "" : " ");
+    return node.children.map(read).join(inline ? "" : "\n");
   };
-  return read(parser.parse(value)).trim().replace(/\s+/g, " ");
+  const text = read(parser.parse(value)).trim();
+  const selected = options?.firstLine
+    ? (text.split(/\r?\n/).find((line) => line.trim()) ?? "")
+    : text;
+  return selected.replace(/\s+/g, " ").trim();
 }
 
 export function findComposerMarkdownLinks(value: string) {

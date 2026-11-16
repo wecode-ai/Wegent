@@ -53,6 +53,7 @@ import { useProjectExecutionEnvironmentReadiness } from "../execution-environmen
 import { ProjectArchiveDialog } from "./ProjectArchiveDialog";
 import { WorkspaceCreateDialog } from "./WorkspaceCreateDialog";
 import { truncateRuntimeTaskTitle } from "@wegent/chat-core/runtime-task-title";
+import { composerMarkdownText } from "../composer/composerMarkdownParser";
 import { IssueHomeComposer } from "./IssueHomeComposer";
 import type { IssueHomeOwner } from "./issueHomeOwners";
 import type { ComposerInputHandle } from "../composer";
@@ -1837,7 +1838,9 @@ function CollaborationPlatformAppContent({
     setRootIssueLoading(true);
     try {
       const created = await api.issues.create(rootIssueProject.id, {
-        title: truncateRuntimeTaskTitle(content.replace(/\s+/g, " "))!,
+        title: truncateRuntimeTaskTitle(
+          composerMarkdownText(content, { firstLine: true }) || content.trim(),
+        )!,
         description: content,
         ...(standInDeviceId
           ? {}

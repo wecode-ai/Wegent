@@ -172,10 +172,15 @@ export function PersonalIssueList({
           </h3>
           {items.map(item => {
             const description = composerMarkdownText(item.description ?? '')
-            const titlePrefix = item.title.trim().replace(/\s+/g, ' ').replace(/…$/, '')
-            const summary = description.startsWith(titlePrefix)
-              ? description.slice(titlePrefix.length).trim()
-              : description
+            const titlePrefix = item.title.trim().replace(/\s+/g, ' ')
+            const completeTitle = !titlePrefix.endsWith('…')
+            const following = description.slice(titlePrefix.length, titlePrefix.length + 1)
+            const summary =
+              completeTitle &&
+              description.startsWith(titlePrefix) &&
+              (!following || /\s/.test(following))
+                ? description.slice(titlePrefix.length).trim()
+                : description
             const viewerIds =
               project.project_store === 'local'
                 ? (localUserIds ?? [userId])

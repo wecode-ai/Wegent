@@ -635,6 +635,16 @@ it.each([
   ],
   ['Investigate timeout', 'Investigate timeout', null],
   [
+    'Review keyboard navigation Check directional navigation, fi…',
+    'Review keyboard navigation\n\nCheck directional navigation, filters, and empty-state recovery.',
+    'Review keyboard navigation Check directional navigation, filters, and empty-state recovery.',
+  ],
+  [
+    'Review',
+    'Reviewer feedback remains useful context.',
+    'Reviewer feedback remains useful context.',
+  ],
+  [
     'Investigate timeout',
     'Investigate timeout\\\n**Only Windows** clients: [collect logs](https://example.com/logs).',
     'Only Windows clients: collect logs.',

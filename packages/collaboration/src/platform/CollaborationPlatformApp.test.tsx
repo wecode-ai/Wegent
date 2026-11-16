@@ -2150,6 +2150,35 @@ describe("CollaborationPlatformApp real component flow", () => {
     expect(api.projects.list).toHaveBeenCalledTimes(2);
   });
 
+  it("records a Markdown heading as the Issue title without flattening its body", async () => {
+    const { api } = createApi();
+    const content =
+      "# 客户反馈处理流程\n\n本周需要整理反馈。\n\n## 验收结果\n- 保留草稿";
+    await render(
+      <PlatformHarness
+        api={api}
+        currentUser={{ id: 7, name: "李明" }}
+        renderPersonalHome={({ createIssue }) => <>{createIssue}</>}
+        renderIssueComposer={(props) => (
+          <button
+            data-testid="record-markdown"
+            onClick={() => props.onSubmit(content)}
+          >
+            Record
+          </button>
+        )}
+      />,
+    );
+    await click(byTestId("record-markdown"));
+    expect(api.issues.create).toHaveBeenCalledWith(
+      project.id,
+      expect.objectContaining({
+        title: "客户反馈处理流程",
+        description: content,
+      }),
+    );
+  });
+
   it.each([false, true])(
     "shows project load failure and retries all sources from a cached workspace: %s",
     async (insideWorkspace) => {
