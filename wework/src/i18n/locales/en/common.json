@@ -6014,7 +6014,7 @@
       "calendar_event": "Event details",
       "processing_settings": "Processing",
       "processing_more": "Additional settings: {{count}}. Configure to review each one.",
-      "work_sources_more": "Additional sources: {{count}}. Manage to view all.",
+      "work_sources_count": "{{count}} work sources in total. Manage to view all.",
       "tag_draft_help": "Press Enter to add the tag, or clear the unfinished input before saving.",
       "processing_summary": "{{name}}: {{mode}}",
       "processing_manual": "Automatic handling is off",

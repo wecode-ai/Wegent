@@ -71,6 +71,18 @@ function fixture(overrides: Partial<PersonalStandInSettings> = {}) {
 const userSetup = () => userEvent.setup({ delay: null })
 
 describe('Personal stand-in settings', () => {
+  it('keeps configured project scope visible when receiving is paused', async () => {
+    const role = newStandInRole('mac', 'default')
+    role.collaboration.enabled = false
+    role.collaboration.allProjects = true
+    const { props, personalSave } = fixture({ roles: [role] })
+    render(<StandInSettingsPage {...props} />)
+    const summary = await screen.findByTestId('stand-in-source-summary')
+    expect(summary).toHaveTextContent('未开启接收')
+    expect(screen.queryByTestId('stand-in-sources-empty')).not.toBeInTheDocument()
+    expect(personalSave).not.toHaveBeenCalled()
+  })
+
   it('saves the role device while keeping draft text and leaving old workspace settings at the source', async () => {
     const role = {
       ...newStandInRole('mac', 'review'),
@@ -646,7 +658,7 @@ describe('Personal stand-in settings', () => {
     expect(await screen.findByRole('textbox', { name: '助理名称' })).toHaveValue('代码审查')
   })
 
-  it('discards connection drafts on Back and does not change saved configuration', async () => {
+  it('retains connection drafts on Back and persists them only after Save', async () => {
     const { props, personalSave } = fixture()
     const user = userSetup()
     render(<StandInSettingsPage {...props} />)
@@ -657,8 +669,22 @@ describe('Personal stand-in settings', () => {
     expect(screen.getAllByTestId('stand-in-connections-back')).toHaveLength(1)
     await user.click(screen.getByTestId('stand-in-connections-back'))
     await user.click(screen.getByTestId('stand-in-back'))
-    expect(screen.getByTestId('stand-in-sources-empty')).toBeInTheDocument()
+    expect(screen.getByTestId('stand-in-source-summary')).toHaveTextContent('协作项目')
+    expect(screen.queryByTestId('stand-in-sources-empty')).not.toBeInTheDocument()
     expect(personalSave).not.toHaveBeenCalled()
+    await user.click(screen.getByTestId('stand-in-save'))
+    await waitFor(() => expect(personalSave).toHaveBeenCalledOnce())
+    expect(personalSave).toHaveBeenCalledWith(
+      7,
+      expect.objectContaining({
+        roles: expect.arrayContaining([
+          expect.objectContaining({
+            collaboration: expect.objectContaining({ enabled: true }),
+          }),
+        ]),
+      }),
+      'mac'
+    )
   })
 
   it('applies instructions only after Save and preserves a failed-save draft', async () => {

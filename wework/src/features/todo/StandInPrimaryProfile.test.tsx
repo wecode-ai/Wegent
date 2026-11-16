@@ -77,6 +77,37 @@ function fixture() {
   }
 }
 
+it('keeps the editor default scope without treating an unsaved default as configured', async () => {
+  const props = fixture()
+  props.settings.primary!.connections = []
+  const user = userEvent.setup({ delay: null })
+  render(<StandInPrimaryProfile {...props} />)
+  await user.click(screen.getByTestId('stand-in-primary-connections-open'))
+  expect(await screen.findByTestId('stand-in-connection-configured-filter')).toHaveTextContent('0')
+  await user.click(screen.getByTestId('stand-in-add-projects-connection'))
+  const all = screen.getByTestId('stand-in-all-projects')
+  expect(all).toBeChecked()
+  expect(all).toBeDisabled()
+  await user.click(screen.getByTestId('stand-in-source-collaboration'))
+  await user.click(screen.getByTestId('stand-in-source-collaboration'))
+  expect(all).toBeChecked()
+  expect(all).toBeDisabled()
+  expect(screen.getByTestId('stand-in-primary-save')).toBeDisabled()
+})
+
+it('does not persist a default source scope when saving only preferences', async () => {
+  const props = fixture()
+  const user = userEvent.setup({ delay: null })
+  render(<StandInPrimaryProfile {...props} />)
+  await user.type(screen.getByTestId('stand-in-preferences'), ' Additional preferences')
+  await user.click(screen.getByTestId('stand-in-primary-save'))
+  expect(props.onSave).toHaveBeenCalledWith(
+    expect.objectContaining({
+      primary: expect.objectContaining({ collaboration: undefined }),
+    })
+  )
+})
+
 it('protects an unfinished invalid project tag and permits saving after explicit recovery', async () => {
   const props = fixture()
   const user = userEvent.setup()

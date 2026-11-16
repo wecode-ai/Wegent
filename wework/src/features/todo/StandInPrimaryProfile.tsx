@@ -12,7 +12,7 @@ import {
 import { dequal } from 'dequal'
 import {
   connectionChangeEnablesIdentity,
-  newStandInPrimaryRole,
+  newStandInRole,
   type PersonalStandInSettings,
 } from '@/api/personalStandIn'
 import type { StandInExecutorApi } from '@/api/standIn'
@@ -77,7 +77,7 @@ export function StandInPrimaryProfile({
 }) {
   const { t } = useTranslation('common')
   const saved = settings.primary ?? { enabled: true, prompt: '', preferences: '' }
-  const defaultRole = newStandInPrimaryRole(settings.executionDeviceId)
+  const defaultRole = newStandInRole(settings.executionDeviceId, '@primary')
   // Consolidate the old two-field profile without dropping either saved value.
   const original = {
     ...saved,
@@ -251,6 +251,9 @@ export function StandInPrimaryProfile({
             onDetailViewChange={setConnectionDetailOpen}
             onDetailTitleChange={setConnectionTitle}
             role={role}
+            projectScopeConfigured={Boolean(
+              saved.collaboration || !dequal(draft.collaboration, original.collaboration)
+            )}
             savedConfiguration={{
               connections: original.connections,
               collaboration: original.collaboration,
@@ -362,7 +365,18 @@ export function StandInPrimaryProfile({
           disabled={saving}
           saveDisabled={saving || !dirty || scheduleDirty || connectionDraftDirty}
           onCancel={close}
-          onSave={() => void onSave({ ...settings, primary: draft })}
+          onSave={() =>
+            void onSave({
+              ...settings,
+              primary: {
+                ...draft,
+                collaboration:
+                  saved.collaboration || !dequal(draft.collaboration, original.collaboration)
+                    ? draft.collaboration
+                    : undefined,
+              },
+            })
+          }
         >
           {error && (
             <div role="alert" className="w-full text-sm text-destructive">

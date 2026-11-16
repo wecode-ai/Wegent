@@ -11,7 +11,7 @@ import {
   type Ref,
   type ReactNode,
 } from 'react'
-import { ChevronRight, Folder, Plus, Trash2 } from 'lucide-react'
+import { Folder, Plus, Trash2 } from 'lucide-react'
 import { dequal } from 'dequal'
 import type {
   CollaborationProject,
@@ -192,9 +192,6 @@ function StandInSettingsEditor({
     setRoleNameError(false)
     if (view !== (initialProject ? 'project' : 'main')) {
       const entry = history.at(-1)
-      const previous = entry?.draft ?? saved
-      if (previous) setDraft(previous)
-      setSelectedId(previous?.roles.some(row => row.id === selectedId) ? selectedId : '')
       setHistory(current => current.slice(0, -1))
       setView(entry?.view ?? (initialProject ? 'project' : 'main'))
     } else if (dirty) setConfirmDiscard(true)
@@ -215,6 +212,23 @@ function StandInSettingsEditor({
   const close = () =>
     connectionRef.current ? connectionRef.current.requestLeave(closeView) : closeView()
   const closeSettings = () => requestLeave(() => onCancel?.())
+  const cancelView = () => {
+    if (onCancel || view === (initialProject ? 'project' : 'main')) {
+      closeSettings()
+      return
+    }
+    const cancelChanges = () => {
+      const entry = history.at(-1)
+      const previous = entry?.draft ?? saved
+      if (previous) setDraft(previous)
+      setSelectedId(previous?.roles.some(row => row.id === selectedId) ? selectedId : '')
+      setRoleNameError(false)
+      setHistory(current => current.slice(0, -1))
+      setView(entry?.view ?? (initialProject ? 'project' : 'main'))
+    }
+    if (connectionRef.current) connectionRef.current.requestLeave(cancelChanges)
+    else cancelChanges()
+  }
   const dialogRef = useDialogKeyboard<HTMLElement>(
     close,
     Boolean(initialCreate || initialProfileId) && !confirmDiscard
@@ -347,6 +361,8 @@ function StandInSettingsEditor({
       )
     : []
   const title = view === 'main' ? 'personal.settings_title' : `personal.${view}_title`
+  const projectConfigured =
+    role && (role.collaboration.allProjects || role.collaboration.projects.length > 0)
 
   return (
     <section
@@ -431,7 +447,7 @@ function StandInSettingsEditor({
                 data-testid="stand-in-list-configure"
                 disabled={saving || loading}
                 onClick={createRole}
-                className="inline-flex min-h-8 shrink-0 items-center gap-1 rounded-md px-2 text-xs text-text-muted hover:bg-muted disabled:opacity-40"
+                className="inline-flex min-h-11 shrink-0 items-center gap-1 rounded-md px-2 text-sm text-text-secondary hover:bg-muted disabled:opacity-40 md:min-h-8"
               >
                 <Plus className="h-4 w-4" />
                 {t('standIn.personal.add_role')}
@@ -440,7 +456,7 @@ function StandInSettingsEditor({
           }
         />
         {loading ? (
-          <p role="status" className="px-5 py-8 text-text-muted">
+          <p role="status" className="px-5 py-8 text-text-secondary">
             {t('standIn.loading')}
           </p>
         ) : draft && role ? (
@@ -493,7 +509,7 @@ function StandInSettingsEditor({
                       setRoleNameError(false)
                       changeRole({ ...role, name: event.target.value })
                     }}
-                    className="min-h-9 rounded-md border border-border bg-background px-2"
+                    className="min-h-11 rounded-md border border-border bg-background px-2 placeholder:text-text-secondary md:min-h-9"
                     placeholder={
                       view === 'create'
                         ? t('standIn.personal.role_name_placeholder')
@@ -542,17 +558,17 @@ function StandInSettingsEditor({
                       disabled={saving}
                       onClick={() => openView('connections')}
                     />
-                    {role.collaboration.enabled || role.connections?.length ? (
+                    {projectConfigured || role.connections?.length ? (
                       <div
                         className="flex items-start gap-3 py-2 text-sm text-text-secondary"
                         data-testid="stand-in-source-summary"
                       >
                         <Folder className="mt-0.5 h-4 w-4 shrink-0" />
                         <div>
-                          {role.collaboration.enabled && (
+                          {projectConfigured && (
                             <>
                               <p>{t('standIn.personal.collaboration')}</p>
-                              <p className="mt-1 text-xs text-text-muted">
+                              <p className="mt-1 text-xs text-text-secondary">
                                 {t(
                                   role.collaboration.allProjects
                                     ? 'standIn.personal.connected_all'
@@ -560,10 +576,15 @@ function StandInSettingsEditor({
                                   { count: included.length }
                                 )}
                               </p>
+                              {!role.collaboration.enabled && (
+                                <p className="mt-1 text-xs text-text-secondary">
+                                  {t('standIn.workspace.connection_receiving_paused')}
+                                </p>
+                              )}
                             </>
                           )}
                           {!!role.connections?.length && (
-                            <p className="mt-1 text-xs text-text-muted">
+                            <p className="mt-1 text-xs text-text-secondary">
                               {t('standIn.workspace.source_connections', {
                                 count: role.connections.length,
                               })}
@@ -572,7 +593,10 @@ function StandInSettingsEditor({
                         </div>
                       </div>
                     ) : (
-                      <p className="text-sm text-text-muted" data-testid="stand-in-sources-empty">
+                      <p
+                        className="text-sm text-text-secondary"
+                        data-testid="stand-in-sources-empty"
+                      >
                         {t('standIn.personal.no_sources')}
                       </p>
                     )}
@@ -581,19 +605,13 @@ function StandInSettingsEditor({
               )}
               {(view === 'main' || view === 'create') && (
                 <>
-                  <button
-                    type="button"
-                    data-testid="stand-in-advanced-open"
+                  <StandInSettingsEntry
+                    testId="stand-in-advanced-open"
                     disabled={saving}
                     onClick={() => openView('advanced')}
-                    className="flex w-full items-center gap-2 border-t border-border pt-4 text-left"
-                  >
-                    <span className="flex-1 font-medium">{t('standIn.personal.more')}</span>
-                    <span className="text-xs text-text-muted">
-                      {t('standIn.personal.more_summary')}
-                    </span>
-                    <ChevronRight className="h-4 w-4" />
-                  </button>
+                    label={t('standIn.personal.more')}
+                    description={t('standIn.personal.more_summary')}
+                  />
                 </>
               )}
               {view === 'connections' && (
@@ -641,7 +659,7 @@ function StandInSettingsEditor({
                       }))
                     }}
                   />
-                  <span className="text-xs text-text-muted">
+                  <span className="text-xs text-text-secondary">
                     {t('standIn.personal.device_change_help')}
                   </span>
                 </label>
@@ -683,7 +701,11 @@ function StandInSettingsEditor({
                 </div>
               )}
               {notice && (
-                <p role="status" data-testid="stand-in-saved" className="text-sm text-text-muted">
+                <p
+                  role="status"
+                  data-testid="stand-in-saved"
+                  className="text-sm text-text-secondary"
+                >
                   {t('standIn.saved')}
                 </p>
               )}
@@ -702,6 +724,8 @@ function StandInSettingsEditor({
                 }}
                 onConfirm={() => {
                   setDraft(saved)
+                  setSelectedId(saved?.roles.some(row => row.id === selectedId) ? selectedId : '')
+                  setRoleNameError(false)
                   setConfirmDiscard(false)
                   navigation.confirmLeave(() => onCancel?.())
                 }}
@@ -720,7 +744,7 @@ function StandInSettingsEditor({
                   connectionDraftDirty ||
                   (view === 'project' && !projectRoleId)
                 }
-                onCancel={close}
+                onCancel={cancelView}
                 onSave={() => void save(view === 'project' && projectEnabled)}
                 saveLabel={t(
                   saving
@@ -745,13 +769,13 @@ function StandInSettingsEditor({
                       data-testid="stand-in-role-delete"
                       disabled={saving || loading}
                       onClick={() => setConfirmDelete(true)}
-                      className="inline-flex min-h-9 items-center gap-2 rounded-md px-2 text-sm text-error hover:bg-muted"
+                      className="inline-flex min-h-11 items-center gap-2 rounded-md px-2 text-sm text-error hover:bg-muted md:min-h-9"
                     >
                       <Trash2 className="h-4 w-4" />
                       {t('standIn.personal.delete_role')}
                     </button>
                   )}
-                <span className="mr-auto text-xs text-text-muted">
+                <span className="mr-auto text-xs text-text-secondary">
                   {view === 'connections' ? (
                     t('standIn.personal.connections_only')
                   ) : initialProject && view === 'create' ? (
@@ -781,7 +805,7 @@ function StandInSettingsEditor({
                     data-testid="stand-in-role-delete-cancel"
                     disabled={saving}
                     onClick={() => setConfirmDelete(false)}
-                    className="min-h-8 rounded-md px-3 hover:bg-muted"
+                    className="min-h-11 rounded-md px-3 hover:bg-muted md:min-h-8"
                   >
                     {t('standIn.cancel')}
                   </button>
@@ -800,7 +824,7 @@ function StandInSettingsEditor({
                         onCancel?.()
                       }
                     }}
-                    className="min-h-8 rounded-md bg-text-primary px-3 text-background disabled:opacity-50"
+                    className="min-h-11 rounded-md bg-text-primary px-3 text-background disabled:opacity-50 md:min-h-8"
                   >
                     {t('standIn.personal.confirm_delete_role')}
                   </button>

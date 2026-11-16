@@ -8,7 +8,7 @@ import { StandInOverviewPage } from './StandInOverviewPage'
 
 vi.mock('./StandInConversation', () => ({ StandInConversation: () => null }))
 
-it('returns keyboard focus to details after closing settings opened from work sources', async () => {
+function renderOverview() {
   const settings = { userId: 7, executionDeviceId: 'device', version: 1, roles: [] }
   const services = {
     getLocalRuntimeSidebarIdentity: async () => ({ deviceId: 'device' }),
@@ -35,6 +35,10 @@ it('returns keyboard focus to details after closing settings opened from work so
       projects={[]}
     />
   )
+}
+
+it('returns keyboard focus to details after closing settings opened from work sources', async () => {
+  renderOverview()
   const user = userEvent.setup()
   const trigger = await screen.findByTestId('stand-in-details-open')
   await waitFor(() => expect(trigger).toBeEnabled())
@@ -46,4 +50,20 @@ it('returns keyboard focus to details after closing settings opened from work so
     expect(screen.queryByTestId('stand-in-profile-panel')).not.toBeInTheDocument()
   )
   expect(trigger).toHaveFocus()
+})
+
+it('returns focus to the create-role entry after discarding a new role', async () => {
+  renderOverview()
+  const user = userEvent.setup()
+  const trigger = await screen.findByTestId('stand-in-create-role')
+  await waitFor(() => expect(trigger).toBeEnabled())
+  await user.click(trigger)
+  await screen.findByTestId('stand-in-role-name')
+  await user.click(screen.getByTestId('stand-in-close'))
+  await user.click(await screen.findByTestId('stand-in-discard'))
+  await waitFor(() =>
+    expect(screen.queryByTestId('stand-in-profile-panel')).not.toBeInTheDocument()
+  )
+  expect(trigger).toHaveFocus()
+  expect(screen.getByTestId('stand-in-details-open')).not.toHaveFocus()
 })

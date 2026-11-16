@@ -262,9 +262,9 @@ export function StandInDetailsPopover({
                     })
                   : t('standIn.workspace.work_sources_empty')}
               </span>
-              {workSources.length > 2 && (
+              {workSources.length > 1 && (
                 <span className="block text-text-secondary">
-                  {t('standIn.workspace.work_sources_more', { count: workSources.length - 2 })}
+                  {t('standIn.workspace.work_sources_count', { count: workSources.length })}
                 </span>
               )}
             </button>

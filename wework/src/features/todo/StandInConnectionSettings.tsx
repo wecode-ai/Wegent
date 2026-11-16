@@ -43,6 +43,7 @@ export function StandInConnectionSettings({
   onDetailTitleChange,
   hideHeading = false,
   savedConfiguration,
+  projectScopeConfigured,
   ref,
   onNavigate,
 }: {
@@ -63,6 +64,7 @@ export function StandInConnectionSettings({
   onDetailTitleChange?(title: string | null): void
   hideHeading?: boolean
   savedConfiguration?: Pick<StandInRole, 'connections' | 'collaboration' | 'calendar'>
+  projectScopeConfigured?: boolean
   ref?: Ref<StandInConnectionNavigationHandle>
   onNavigate?(action: () => void): void
 }) {
@@ -320,6 +322,7 @@ export function StandInConnectionSettings({
           {!hideHeading && <h3 className="font-medium">{t('standIn.workspace.connections')}</h3>}
           <StandInConnectionCatalog
             role={role}
+            projectScopeConfigured={projectScopeConfigured}
             projects={projects}
             providers={providers}
             loading={loading}

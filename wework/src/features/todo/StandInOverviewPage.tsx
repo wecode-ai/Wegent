@@ -45,13 +45,14 @@ import { StandInOnboarding } from './StandInOnboarding'
 import { StandInProposalCard } from './StandInProposalCard'
 import { StandInReviewDialog } from './StandInReviewDialog'
 import { useStandInProcessingStatus } from './useStandInProcessingStatus'
+import { useStableEvent } from '@/features/workbench/useStableEvent'
 import { useStandInInbox } from './useStandInInbox'
 import type { StandInRoleLocation } from './useStandInRoleDirectory'
 
 type SettingsProps = ComponentProps<typeof StandInSettingsPage>
 
 function roleTabClass(selected: boolean) {
-  return `inline-flex min-h-8 shrink-0 items-center gap-2 rounded-lg px-3 text-sm focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus ${selected ? 'bg-text-primary font-medium text-background' : 'text-text-secondary hover:bg-muted'}`
+  return `inline-flex min-h-11 shrink-0 items-center gap-2 rounded-lg px-3 text-sm focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus md:min-h-8 ${selected ? 'bg-text-primary font-medium text-background' : 'text-text-secondary hover:bg-muted'}`
 }
 
 /** Hosts personal conversations, work and settings on the selected Executor. */
@@ -122,9 +123,25 @@ export function StandInOverviewPage({
   )
   const [proposal, setProposal] = useState<StandInProposal | null>(null)
   const previousProfile = useRef(profile)
+  const profileTrigger = useRef<HTMLElement | null>(null)
+  const openProfile = useStableEvent(
+    (target: NonNullable<typeof profile>, trigger?: HTMLElement) => {
+      if (trigger) profileTrigger.current = trigger
+      else if (profile === null)
+        profileTrigger.current =
+          document.activeElement instanceof HTMLElement && document.activeElement !== document.body
+            ? document.activeElement
+            : null
+      setProfile(target)
+    }
+  )
   useEffect(() => {
-    if (active && previousProfile.current !== null && profile === null)
-      detailsTrigger.current?.focus()
+    if (active && previousProfile.current !== null && profile === null) {
+      const trigger = profileTrigger.current
+      if (trigger?.isConnected) trigger.focus()
+      else detailsTrigger.current?.focus()
+      profileTrigger.current = null
+    }
     previousProfile.current = profile
   }, [active, profile])
   const [resolvedProposal, setResolvedProposal] = useState<{
@@ -158,11 +175,11 @@ export function StandInOverviewPage({
     if (profile === targetPanel && roleId === targetRole) return
     const openSettings = () => {
       setRoleId(targetRole)
-      setProfile(targetPanel)
+      openProfile(targetPanel)
     }
     if (panelRef.current) panelRef.current.requestLeave(openSettings)
     else openSettings()
-  }, [settingsRequestKey, props.initialProfileId, profile, roleId])
+  }, [settingsRequestKey, props.initialProfileId, profile, roleId, openProfile])
   const deviceId = state.loadedDeviceId ?? props.initialDeviceId ?? saved?.executionDeviceId
   const requestNavigation = useCallback(
     (route: string) => {
@@ -187,13 +204,13 @@ export function StandInOverviewPage({
       if (new URLSearchParams(search).get('view') !== 'scheduled') return
       const openView = () => {
         setCalendarRequest(value => value + 1)
-        setProfile(roleId ? 'role' : 'primary')
+        openProfile(roleId ? 'role' : 'primary')
       }
       // Preserve settings drafts and guard every request, including the same URL.
       if (panelRef.current) panelRef.current.requestLeave(openView)
       else openView()
     },
-    [roleId, reload, primaryDeviceId, deviceId, onSelectLocation]
+    [roleId, reload, primaryDeviceId, deviceId, onSelectLocation, openProfile]
   )
   const previousEntryRequest = useRef(entryRequestKey)
   useEffect(() => {
@@ -383,7 +400,7 @@ export function StandInOverviewPage({
           testId="stand-in-memory-open"
           label={t('standIn.memory.title')}
           disabled={false}
-          onClick={() => leavePanel(() => setProfile('memory'))}
+          onClick={() => leavePanel(() => openProfile('memory'))}
         />
       )}
     </section>
@@ -459,13 +476,14 @@ export function StandInOverviewPage({
                   type="button"
                   data-testid="stand-in-create-role"
                   aria-label={t('standIn.workspace.create_role')}
-                  onClick={() =>
+                  onClick={event => {
+                    const trigger = event.currentTarget
                     leavePanel(() => {
                       setCalendarRequest(0)
                       setSelectedScheduleId(undefined)
-                      setProfile('create')
+                      openProfile('create', trigger)
                     })
-                  }
+                  }}
                   className="flex h-11 w-11 shrink-0 items-center justify-center rounded-md text-text-secondary hover:bg-muted md:h-8 md:w-8"
                 >
                   <Plus aria-hidden="true" className="h-4 w-4" />
@@ -595,7 +613,7 @@ export function StandInOverviewPage({
               setDetailsAnchor(null)
               setCalendarRequest(0)
               setSelectedScheduleId(undefined)
-              setProfile(role ? 'role' : 'primary')
+              openProfile(role ? 'role' : 'primary')
             }}
             onGuide={() => {
               setDetailsAnchor(null)
@@ -718,7 +736,7 @@ export function StandInOverviewPage({
               deviceId={deviceId}
               onOpen={() => {
                 setReview(null)
-                setProfile('primary')
+                openProfile('primary')
               }}
               onOpenTask={
                 onOpenTask
@@ -831,7 +849,7 @@ export function StandInOverviewPage({
                         saved.executionDeviceId === state.currentDeviceId
                     )}
                     onClose={() => setProfile(null)}
-                    onBack={() => setProfile(roleId ? 'role' : 'primary')}
+                    onBack={() => openProfile(roleId ? 'role' : 'primary')}
                     parentLabel={t(
                       roleId
                         ? 'standIn.workspace.role_profile'

@@ -79,6 +79,26 @@ it('retains the paused intake state when historical activity exists', async () =
   expect(screen.queryByText('接收工作中')).not.toBeInTheDocument()
 })
 
+it('shows the complete source count even when long names require a shortened preview', async () => {
+  fixture({
+    configuration: {
+      connections: [
+        'Long source name '.repeat(8),
+        'Second long source '.repeat(8),
+        'Third source',
+      ].map((name, index) => ({
+        providerId: 'provider',
+        id: String(index),
+        name,
+        kind: 'group',
+        policy: { automatic: true, askBeforeAct: true },
+      })),
+    } as ComponentProps<typeof StandInDetailsPopover>['configuration'],
+  })
+  expect(await screen.findByText('共 3 个来源，进入管理查看全部。')).toBeVisible()
+  expect(screen.queryByText(/另有 1 个来源/)).not.toBeInTheDocument()
+})
+
 it('shows configured source names without claiming they are online or enabled', async () => {
   fixture({
     enabled: false,

@@ -27,6 +27,7 @@ export function StandInConnectionCatalog({
   disabled,
   scheduling,
   local = true,
+  projectScopeConfigured = true,
   onSelect,
 }: {
   role: StandInRole
@@ -36,13 +37,15 @@ export function StandInConnectionCatalog({
   disabled: boolean
   scheduling: boolean
   local?: boolean
+  projectScopeConfigured?: boolean
   onSelect(view: string): void
 }) {
   const { t } = useTranslation('common')
   const [query, setQuery] = useState('')
   const [configuredOnly, setConfiguredOnly] = useState(false)
   const source = role.collaboration
-  const projectConfigured = source.allProjects || source.projects.length > 0
+  const projectConfigured =
+    projectScopeConfigured && (source.allProjects || source.projects.length > 0)
   const connections = role.connections ?? []
   const providerIds = [
     ...new Set([...providers.map(item => item.id), ...connections.map(row => row.providerId)]),

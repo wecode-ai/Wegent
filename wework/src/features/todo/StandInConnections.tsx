@@ -88,7 +88,7 @@ export function StandInConnections({
           aria-label={t('standIn.personal.collaboration')}
         />
       </label>
-      <fieldset disabled={disabled || !source.enabled} className="space-y-4">
+      <fieldset disabled={disabled || !source.enabled} className="min-w-0 max-w-full space-y-4">
         <legend className="mb-2 text-sm font-medium">
           {t('standIn.workspace.connection_scope')}
         </legend>
@@ -109,7 +109,7 @@ export function StandInConnections({
           </span>
         </label>
         <div
-          className="max-h-64 overflow-y-auto divide-y divide-border/50"
+          className="min-w-0 max-w-full max-h-64 overflow-y-auto divide-y divide-border/50"
           data-testid="stand-in-source-projects"
         >
           {/* Remote all-project scope uses that Executor's catalog, not this computer's. */}
@@ -123,9 +123,9 @@ export function StandInConnections({
             .map(project => (
               <div
                 key={`${project.project_store}:${project.id}`}
-                className={`flex min-h-11 items-center gap-3 rounded-md px-2 md:min-h-9 ${project.id === focusedProjectId ? 'bg-muted' : ''}`}
+                className={`flex min-h-11 min-w-0 items-center gap-3 rounded-md px-2 md:min-h-9 ${project.id === focusedProjectId ? 'bg-muted' : ''}`}
               >
-                <label className="flex min-w-0 flex-1 items-center gap-3">
+                <label className="flex min-h-11 min-w-0 flex-1 items-center gap-3 md:min-h-9">
                   <input
                     type="checkbox"
                     className="accent-text-primary"
@@ -140,8 +140,8 @@ export function StandInConnections({
                     }
                     onChange={event => toggleProject(project, event.target.checked)}
                   />
-                  <span className="min-w-0 flex-1 truncate">{project.name}</span>
-                  <span className="text-xs text-text-secondary">
+                  <span className="min-w-0 flex-1 break-words">{project.name}</span>
+                  <span className="shrink-0 text-xs text-text-secondary">
                     {t(
                       project.project_store === 'local'
                         ? 'standIn.personal.local'

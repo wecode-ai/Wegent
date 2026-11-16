@@ -90,6 +90,31 @@ export function createDesktopScenario({ uiTimeoutMs, captureScreenshot }) {
       await control.command('clickWhenEnabled', selector('stand-in-project-tags-discard'))
       await control.command('waitFor', selector('stand-in-profile-panel'), { visible: false })
       assert.deepEqual(await rpc('runtime.stand_in.personal.get', { userId: USER_ID }), before)
+      await control.command('clickWhenEnabled', selector('stand-in-create-role'))
+      await control.command('fill', selector('stand-in-role-name'), { value: 'UI draft review role' })
+      await control.command('clickWhenEnabled', selector('stand-in-connections-open'))
+      await control.command('clickWhenEnabled', selector('stand-in-add-projects-connection'))
+      await control.command('clickWhenEnabled', selector('stand-in-source-collaboration'))
+      await control.command('clickWhenEnabled', selector('stand-in-connections-back'))
+      await control.command('clickWhenEnabled', selector('stand-in-back'))
+      await control.command('waitFor', selector('stand-in-source-summary'), {
+        text: '协作项目',
+        visible: true,
+      })
+      await captureScreenshot(control, 'stand-in-role-source-draft-retained.png')
+      await control.command('clickWhenEnabled', selector('stand-in-connections-open'))
+      await control.command('clickWhenEnabled', selector('stand-in-add-projects-connection'))
+      assert.equal(
+        await control.command('getAttribute', selector('stand-in-source-collaboration'), {
+          value: 'aria-checked',
+        }),
+        'true'
+      )
+      await control.command('clickWhenEnabled', selector('stand-in-cancel'))
+      await control.command('clickWhenEnabled', selector('stand-in-discard'))
+      await control.command('waitFor', selector('stand-in-profile-panel'), { visible: false })
+      assert.equal(await control.command('getActiveElementTestId', 'body'), 'stand-in-create-role')
+      assert.deepEqual(await rpc('runtime.stand_in.personal.get', { userId: USER_ID }), before)
     },
   }
 }

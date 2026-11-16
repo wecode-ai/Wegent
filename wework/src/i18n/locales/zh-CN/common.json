@@ -6010,7 +6010,7 @@
       "calendar_event": "事项说明",
       "processing_settings": "处理方式",
       "processing_more": "另有 {{count}} 项独立设置，配置中可逐项查看。",
-      "work_sources_more": "另有 {{count}} 个来源，进入管理查看全部。",
+      "work_sources_count": "共 {{count}} 个来源，进入管理查看全部。",
       "tag_draft_help": "请按 Enter 添加标签，或清空未完成的输入后再保存。",
       "processing_summary": "{{name}}：{{mode}}",
       "processing_manual": "未开启自动处理",
