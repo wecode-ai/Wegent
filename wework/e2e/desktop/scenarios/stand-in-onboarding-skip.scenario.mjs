@@ -48,6 +48,10 @@ export function createDesktopScenario({ uiTimeoutMs, captureScreenshot }) {
       await control.command('clickWhenEnabled', selector('stand-in-details-open'))
       await control.command('clickWhenEnabled', selector('stand-in-details-work-sources'))
       await control.command('clickWhenEnabled', selector('stand-in-primary-connections-open'))
+      await control.command('waitFor', selector('stand-in-connection-configured-filter'), {
+        text: '已配置 0',
+        visible: true,
+      })
       await control.command('clickWhenEnabled', selector('stand-in-add-projects-connection'))
       await control.command('waitFor', selector('stand-in-processing-settings-toggle'), {
         text: '配置',
@@ -81,10 +85,11 @@ export function createDesktopScenario({ uiTimeoutMs, captureScreenshot }) {
       await captureScreenshot(control, 'stand-in-tag-draft-protected.png')
       await control.command('fill', tagInput, { value: '' })
       await control.command('waitFor', `${selector('stand-in-primary-save')}:enabled`)
-      await control.command('clickWhenEnabled', selector('stand-in-source-collaboration'))
-      assert.deepEqual(await rpc('runtime.stand_in.personal.get', { userId: USER_ID }), before)
+      await control.command('fill', tagInput, { value: invalidTag })
       await control.command('clickWhenEnabled', selector('stand-in-primary-profile-close'))
+      await control.command('clickWhenEnabled', selector('stand-in-project-tags-discard'))
       await control.command('waitFor', selector('stand-in-profile-panel'), { visible: false })
+      assert.deepEqual(await rpc('runtime.stand_in.personal.get', { userId: USER_ID }), before)
     },
   }
 }

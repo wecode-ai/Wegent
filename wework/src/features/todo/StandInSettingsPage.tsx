@@ -207,7 +207,9 @@ function StandInSettingsEditor({
   )
   const requestLeave = useStableEvent((action: () => void) => {
     if (connectionRef.current)
-      connectionRef.current.requestLeave(() => navigation.requestLeave(action))
+      connectionRef.current.requestLeave(discarded =>
+        discarded ? action() : navigation.requestLeave(action)
+      )
     else navigation.requestLeave(action)
   })
   const close = () =>

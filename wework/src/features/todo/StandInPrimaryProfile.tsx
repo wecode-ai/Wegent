@@ -12,7 +12,7 @@ import {
 import { dequal } from 'dequal'
 import {
   connectionChangeEnablesIdentity,
-  newStandInRole,
+  newStandInPrimaryRole,
   type PersonalStandInSettings,
 } from '@/api/personalStandIn'
 import type { StandInExecutorApi } from '@/api/standIn'
@@ -77,14 +77,11 @@ export function StandInPrimaryProfile({
 }) {
   const { t } = useTranslation('common')
   const saved = settings.primary ?? { enabled: true, prompt: '', preferences: '' }
-  const defaultCollaboration = {
-    ...newStandInRole(settings.executionDeviceId).collaboration,
-    policy: { automatic: true, askBeforeAct: true, immediate: false },
-  }
+  const defaultRole = newStandInPrimaryRole(settings.executionDeviceId)
   // Consolidate the old two-field profile without dropping either saved value.
   const original = {
     ...saved,
-    collaboration: saved.collaboration ?? defaultCollaboration,
+    collaboration: saved.collaboration ?? defaultRole.collaboration,
     calendar: saved.calendar,
     connections: saved.connections ?? [],
     prompt: '',
@@ -138,7 +135,7 @@ export function StandInPrimaryProfile({
   const dirty = !dequal(original, draft) || scheduleDirty || connectionDraftDirty
 
   const role = {
-    ...newStandInRole(settings.executionDeviceId, '@primary'),
+    ...defaultRole,
     ...draft,
   }
   const navigation = useStandInPanelNavigation(!dequal(original, draft), saving, () =>
@@ -147,7 +144,9 @@ export function StandInPrimaryProfile({
   const connectionRef = useRef<StandInConnectionNavigationHandle>(null)
   const requestLeave = (action: () => void) => {
     if (connectionRef.current)
-      connectionRef.current.requestLeave(() => navigation.requestLeave(action))
+      connectionRef.current.requestLeave(discarded =>
+        discarded ? action() : navigation.requestLeave(action)
+      )
     else navigation.requestLeave(action)
   }
   const close = () => requestLeave(onClose)

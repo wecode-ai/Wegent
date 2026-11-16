@@ -70,7 +70,7 @@ export function StandInConnections({
         title={t('standIn.personal.collaboration')}
         description={t('standIn.workspace.project_connection_help')}
       />
-      <label className="flex min-h-9 items-center justify-between gap-3 text-sm">
+      <label className="flex min-h-11 items-center justify-between gap-3 text-sm md:min-h-9">
         <span>{t('standIn.workspace.receive_project_items')}</span>
         <SettingsSwitch
           data-testid="stand-in-source-collaboration"
@@ -84,7 +84,7 @@ export function StandInConnections({
         <legend className="mb-2 text-sm font-medium">
           {t('standIn.workspace.connection_scope')}
         </legend>
-        <label className="flex items-start gap-3">
+        <label className="flex min-h-11 items-start gap-3 md:min-h-9">
           <input
             type="checkbox"
             className="mt-1 accent-text-primary"

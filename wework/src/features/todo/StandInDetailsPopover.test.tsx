@@ -72,6 +72,13 @@ it('distinguishes an unconfigured work scope from device availability', async ()
   expect(props.onSettings).toHaveBeenCalledOnce()
 })
 
+it('retains the paused intake state when historical activity exists', async () => {
+  fixture({ enabled: false, items: [runtimeItem] })
+  expect(await screen.findByText('已暂停接收')).toBeVisible()
+  expect(screen.getByText(/上次活跃/)).toBeVisible()
+  expect(screen.queryByText('接收工作中')).not.toBeInTheDocument()
+})
+
 it('shows configured source names without claiming they are online or enabled', async () => {
   fixture({
     enabled: false,

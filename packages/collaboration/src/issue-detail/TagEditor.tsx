@@ -209,7 +209,7 @@ export function TagEditor({
               onClick={() => add(candidate)}
               onMouseEnter={() => setHighlight(index)}
               className={cn(
-                "flex w-full items-center px-3 py-1.5 text-left text-xs text-text-primary transition",
+                "flex min-h-11 w-full items-center px-3 py-1.5 text-left text-sm text-text-primary transition md:min-h-6",
                 index === highlight ? "bg-muted" : "hover:bg-muted",
               )}
             >

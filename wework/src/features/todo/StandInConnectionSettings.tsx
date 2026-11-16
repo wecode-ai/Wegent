@@ -1,6 +1,6 @@
 import { dequal } from 'dequal'
 import { getStandInErrorMessage } from '@/lib/stand-in-error-message'
-import { useEffect, useImperativeHandle, useRef, useState, type Ref } from 'react'
+import { useCallback, useEffect, useImperativeHandle, useRef, useState, type Ref } from 'react'
 import { MessageSquare } from 'lucide-react'
 import type { CollaborationProject } from '@wegent/collaboration'
 import type { StandInRole } from '@/api/personalStandIn'
@@ -20,6 +20,8 @@ import { Clock } from 'lucide-react'
 import { StandInConnectionCatalog } from './StandInConnectionCatalog'
 
 export interface StandInConnectionNavigationHandle extends AutomationNavigationHandle {
+  /** True means the source editor already confirmed discarding unsaved changes. */
+  requestLeave(action: (discarded?: boolean) => void): void
   back(): void
 }
 
@@ -73,14 +75,23 @@ export function StandInConnectionSettings({
   )
   const [scheduleDirty, setScheduleDirty] = useState(false)
   const [emailDirty, setEmailDirty] = useState(false)
+  const [projectDraftDirty, setProjectDraftDirty] = useState(false)
+  const projectDraftChanged = useCallback(
+    (dirty: boolean) => {
+      setProjectDraftDirty(dirty)
+      onDraftDirtyChange?.(dirty)
+    },
+    [onDraftDirtyChange]
+  )
   const [view, setView] = useState<string | null>(initialCalendar ? 'time' : null)
   const calendarRef = useRef<AutomationNavigationHandle>(null)
   const emailRef = useRef<AutomationNavigationHandle>(null)
   const projectRef = useRef<AutomationNavigationHandle>(null)
-  const requestLeave = (action: () => void) => {
+  const requestLeave = (action: (discarded?: boolean) => void) => {
     const editor = calendarRef.current ?? emailRef.current ?? projectRef.current
-    if (editor) editor.requestLeave(action)
-    else action()
+    const projectDiscard = editor === projectRef.current && projectDraftDirty
+    if (editor) editor.requestLeave(() => action(projectDiscard))
+    else action(false)
   }
   useImperativeHandle(ref, () => ({
     back() {
@@ -235,7 +246,7 @@ export function StandInConnectionSettings({
           ) : view === 'projects' ? (
             <StandInConnections
               ref={projectRef}
-              onDraftDirtyChange={onDraftDirtyChange}
+              onDraftDirtyChange={projectDraftChanged}
               role={role}
               projects={projects}
               allowLocalProjects={deviceId === localDeviceId}

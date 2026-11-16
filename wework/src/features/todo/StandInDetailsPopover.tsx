@@ -136,14 +136,14 @@ export function StandInDetailsPopover({
     .sort()
     .at(-1)
   const activityTime = latestActivity ? new Date(latestActivity) : undefined
-  const identityStatus =
+  const lastActivity =
     activityTime && Number.isFinite(activityTime.getTime())
       ? t('standIn.workspace.details_last_active', {
           time: new Intl.DateTimeFormat(i18n.language, { month: 'short', day: 'numeric' }).format(
             activityTime
           ),
         })
-      : t(enabled ? 'standIn.workspace.receiving' : 'standIn.workspace.paused')
+      : null
   const rowClass =
     'flex min-h-11 w-full items-center gap-2 rounded-md px-2 py-1 text-left text-base hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50 md:min-h-9'
   return (
@@ -219,7 +219,12 @@ export function StandInDetailsPopover({
               <h2 className={`truncate font-medium ${compact ? 'text-base' : 'text-lg'}`}>
                 {name}
               </h2>
-              <p className="mt-1 text-sm text-text-secondary">{identityStatus}</p>
+              <p className="mt-1 text-sm text-text-secondary">
+                {t(enabled ? 'standIn.workspace.receiving' : 'standIn.workspace.paused')}
+              </p>
+              {lastActivity && !compact && (
+                <p className="text-sm text-text-secondary">{lastActivity}</p>
+              )}
             </div>
             {onGuide && (
               <button

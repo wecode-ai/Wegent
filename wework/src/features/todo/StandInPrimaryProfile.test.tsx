@@ -131,6 +131,55 @@ it('requires confirmation before disabling intake with an unfinished tag', async
   expect(screen.queryByTestId('stand-in-project-tags-draft-help')).not.toBeInTheDocument()
 })
 
+it('confirms closing a changed profile with an unfinished tag only once', async () => {
+  const props = fixture()
+  const user = userEvent.setup()
+  render(<StandInPrimaryProfile {...props} />)
+  await user.click(screen.getByTestId('stand-in-primary-connections-open'))
+  await user.click(await screen.findByTestId('stand-in-add-projects-connection'))
+  await user.click(screen.getByTestId('stand-in-source-collaboration'))
+  await user.click(screen.getByTestId('stand-in-source-tags-toggle'))
+  await user.type(screen.getByTestId('stand-in-connection-tags-input'), 'x'.repeat(33))
+  await user.click(screen.getByTestId('stand-in-primary-profile-close'))
+  await user.click(await screen.findByTestId('stand-in-project-tags-discard'))
+  expect(props.onClose).toHaveBeenCalledOnce()
+  expect(screen.queryByTestId('stand-in-primary-discard')).not.toBeInTheDocument()
+  expect(props.onSave).not.toHaveBeenCalled()
+})
+
+it.each([false, true])(
+  'distinguishes an empty primary scope from a saved paused scope: %s',
+  async savedScope => {
+    const props = fixture()
+    props.settings.primary = {
+      ...props.settings.primary!,
+      connections: [],
+      ...(savedScope
+        ? {
+            collaboration: {
+              enabled: false,
+              allProjects: true,
+              projects: [],
+              excludedProjects: [],
+              tags: [],
+            },
+          }
+        : {}),
+    }
+    const user = userEvent.setup()
+    render(<StandInPrimaryProfile {...props} />)
+    await user.click(screen.getByTestId('stand-in-primary-connections-open'))
+    expect(await screen.findByTestId('stand-in-connection-configured-filter')).toHaveTextContent(
+      `已配置 ${savedScope ? 1 : 0}`
+    )
+    if (savedScope)
+      expect(screen.getByTestId('stand-in-add-projects-connection-status')).toHaveTextContent(
+        '未开启接收'
+      )
+    expect(props.onSave).not.toHaveBeenCalled()
+  }
+)
+
 it('explains an environment load failure and recovers without losing profile edits', async () => {
   const props = fixture()
   const listRuntimeWork = vi.mocked(props.services.runtimeWorkApi!.listRuntimeWork)

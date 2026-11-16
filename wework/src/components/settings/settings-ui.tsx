@@ -116,7 +116,7 @@ export function SettingsSwitch({
       data-state={state}
       disabled={disabled}
       onClick={() => onCheckedChange(!checked)}
-      className={`inline-flex items-center rounded-full focus-visible:outline-none keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-primary disabled:cursor-not-allowed disabled:opacity-60 ${className}`.trim()}
+      className={`inline-flex min-h-11 min-w-11 items-center justify-center rounded-full focus-visible:outline-none keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-primary disabled:cursor-not-allowed disabled:opacity-60 md:min-h-6 md:min-w-8 ${className}`.trim()}
       {...props}
     >
       <span
