@@ -33,8 +33,8 @@ export async function seedInstalledRelease({ data, appBinary, version, id = 'ins
 /** Exercise the delivered bootstrap, real IPC/preload, and recovery window. */
 export async function verifyStartupFaultIsolation(input) {
   if (process.platform === 'linux') await verifyStartupGdbContract({ resultDir: input.resultDir })
-  // Temporary Linux stress diagnosis: stop on the first failing native shutdown.
-  const iterations = process.platform === 'linux' ? 10 : 1
+  // Temporary Linux diagnostics: at most 300 native shutdowns; stop on the first failure.
+  const iterations = process.platform === 'linux' ? 100 : 1
   const ptraceScope =
     process.platform === 'linux'
       ? await readFile('/proc/sys/kernel/yama/ptrace_scope', 'utf8').then(
