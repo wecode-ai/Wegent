@@ -579,6 +579,47 @@ jobs:
             }
           }
 
+      - name: Restore real object storage for desktop E2E
+        id: issue-mcp-minio
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830
+        with:
+          path: ${{ runner.temp }}/wework-minio/bin
+          key: ${{ runner.os }}-minio-9e49d5e7a648f00e26f2246f4dc28e6b07f8c84a-go-1.25.9-v1
+
+      - name: Set up Go for real object storage
+        if: steps.issue-mcp-minio.outputs.cache-hit != 'true'
+        uses: actions/setup-go@v6
+        with:
+          go-version: "1.25.9"
+          cache: false
+
+      - name: Build real object storage
+        if: steps.issue-mcp-minio.outputs.cache-hit != 'true'
+        shell: pwsh
+        run: |
+          $env:GOBIN = Join-Path $env:RUNNER_TEMP "wework-minio\bin"
+          New-Item -ItemType Directory -Force -Path $env:GOBIN | Out-Null
+          go install github.com/minio/minio@9e49d5e7a648f00e26f2246f4dc28e6b07f8c84a
+          if ($LASTEXITCODE -ne 0) {
+            throw "Failed to build the MinIO binary for desktop E2E"
+          }
+
+      - name: Save real object storage for desktop E2E
+        if: github.ref == 'refs/heads/main' && steps.issue-mcp-minio.outcome == 'success' && steps.issue-mcp-minio.outputs.cache-hit != 'true'
+        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830
+        with:
+          path: ${{ runner.temp }}/wework-minio/bin
+          key: ${{ steps.issue-mcp-minio.outputs.cache-primary-key }}
+
+      - name: Upload Windows real object storage
+        uses: actions/upload-artifact@v4
+        with:
+          name: wework-desktop-windows-minio-e2e
+          path: ${{ runner.temp }}/wework-minio/bin/minio.exe
+          if-no-files-found: error
+          retention-days: 1
+          compression-level: 0
+
       - name: Upload Windows Wework desktop Core E2E build
         uses: actions/upload-artifact@v4
         with:
@@ -719,37 +760,11 @@ jobs:
           "WEWORK_E2E_MYSQLD_BIN=$mysqlServerPath" |
             Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
 
-      - name: Restore real object storage for desktop E2E
-        id: issue-mcp-minio
-        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830
+      - name: Download Windows real object storage
+        uses: actions/download-artifact@v6
         with:
+          name: wework-desktop-windows-minio-e2e
           path: ${{ runner.temp }}/wework-minio/bin
-          key: ${{ runner.os }}-minio-9e49d5e7a648f00e26f2246f4dc28e6b07f8c84a-go-1.25.9-v1
-
-      - name: Set up Go for real object storage
-        if: steps.issue-mcp-minio.outputs.cache-hit != 'true'
-        uses: actions/setup-go@v6
-        with:
-          go-version: "1.25.9"
-          cache: false
-
-      - name: Build real object storage
-        if: steps.issue-mcp-minio.outputs.cache-hit != 'true'
-        shell: pwsh
-        run: |
-          $env:GOBIN = Join-Path $env:RUNNER_TEMP "wework-minio\bin"
-          New-Item -ItemType Directory -Force -Path $env:GOBIN | Out-Null
-          go install github.com/minio/minio@9e49d5e7a648f00e26f2246f4dc28e6b07f8c84a
-          if ($LASTEXITCODE -ne 0) {
-            throw "Failed to build the MinIO binary for desktop E2E"
-          }
-
-      - name: Save real object storage for desktop E2E
-        if: github.ref == 'refs/heads/main' && steps.issue-mcp-minio.outcome == 'success' && steps.issue-mcp-minio.outputs.cache-hit != 'true'
-        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830
-        with:
-          path: ${{ runner.temp }}/wework-minio/bin
-          key: ${{ steps.issue-mcp-minio.outputs.cache-primary-key }}
 
       - name: Enable real object storage
         shell: pwsh

@@ -103,7 +103,7 @@ export function balanceWindowsMatrix(matrix, seconds = measurements.seconds) {
   const shards = matrix.include.map(entry => ({
     ...entry,
     segments: [],
-    seconds: measurements.preparationSeconds['object-storage'],
+    seconds: 0,
   }))
   // Never add new measured work to a shard whose remaining cost is unknown.
   const ordinary = shards.filter(entry => !fixed.has(entry.id) && !unmeasured.has(entry.id))

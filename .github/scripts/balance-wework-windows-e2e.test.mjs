@@ -249,19 +249,22 @@ test('duplicate selection is rejected rather than silently losing coverage', () 
 })
 
 test('balancing never multiplies expensive conditional preparation from the original workflow', () => {
-  const steps = JSON.parse(
+  const jobs = JSON.parse(
     execFileSync(
       'ruby',
       [
         '-ryaml',
         '-rjson',
         '-e',
-        "puts JSON.generate(YAML.load_file(ARGV[0])['jobs']['wework-desktop-windows-core-e2e']['steps'])",
+        "puts JSON.generate(YAML.load_file(ARGV[0])['jobs'])",
         '.github/workflows/wework-e2e.yml',
       ],
       { cwd: root, encoding: 'utf8' }
     )
   )
+  const worker = jobs['wework-desktop-windows-core-e2e']
+  const steps = worker.steps
+  const producerSteps = jobs['build-wework-desktop-windows-core-e2e'].steps
   const balanced = balanceWindowsMatrix(original)
   const completeBalanced = balanceWindowsMatrix(completeMatrix)
   const evidence = JSON.parse(
@@ -272,15 +275,34 @@ test('balancing never multiplies expensive conditional preparation from the orig
     'Prepare DingTalk protocol fixture for the standard account':
       evidence.preparationSeconds['dingtalk-protocol-fixture'],
   }
-  const objectStorage = steps.find(step => step.name === 'Build real object storage')
+  const objectStorage = producerSteps.find(step => step.name === 'Build real object storage')
   assert.equal(objectStorage?.if, "steps.issue-mcp-minio.outputs.cache-hit != 'true'")
-  const restoreObjectStorage = steps.find(
+  const restoreObjectStorage = producerSteps.find(
     step => step.name === 'Restore real object storage for desktop E2E'
   )
   assert.ok(restoreObjectStorage)
   assert.equal(restoreObjectStorage.if, undefined)
-  const preparationLoads = matrix =>
-    matrix.include.map(shard => measuredLoad(shard) + evidence.preparationSeconds['object-storage'])
+  assert.equal(
+    steps.some(step => step.name === 'Build real object storage'),
+    false
+  )
+  assert.equal(producerSteps.filter(step => step.name === 'Build real object storage').length, 1)
+  assert.ok(worker.needs.includes('build-wework-desktop-windows-core-e2e'))
+  const storageDownload = steps.find(step => step.name === 'Download Windows real object storage')
+  const storageUpload = producerSteps.find(
+    step => step.name === 'Upload Windows real object storage'
+  )
+  assert.ok(storageDownload)
+  assert.ok(storageUpload)
+  assert.equal(storageDownload.if, undefined)
+  assert.equal(storageUpload.if, undefined)
+  assert.equal(storageDownload.with.name, storageUpload.with.name)
+  assert.equal(storageDownload.with.path, '${{ runner.temp }}/wework-minio/bin')
+  assert.equal(storageUpload.with.path, '${{ runner.temp }}/wework-minio/bin/minio.exe')
+  assert.equal(storageUpload.with['if-no-files-found'], 'error')
+  const preparationLoads = matrix => matrix.include.map(measuredLoad)
+  const totalCost = loads =>
+    evidence.preparationSeconds['object-storage'] + loads.reduce((a, b) => a + b)
   const originalLoads = preparationLoads(original)
   const balancedLoads = preparationLoads(balanced)
   const completeOriginalLoads = preparationLoads(completeMatrix)
@@ -314,15 +336,9 @@ test('balancing never multiplies expensive conditional preparation from the orig
     assert.equal(count(balanced), count(original), name)
     assert.equal(count(completeBalanced), count(completeMatrix), name)
   }
-  assert.equal(
-    balancedLoads.reduce((a, b) => a + b),
-    originalLoads.reduce((a, b) => a + b)
-  )
+  assert.equal(totalCost(balancedLoads), totalCost(originalLoads))
   assert.ok(Math.max(...balancedLoads) < Math.max(...originalLoads))
-  assert.equal(
-    completeBalancedLoads.reduce((a, b) => a + b),
-    completeOriginalLoads.reduce((a, b) => a + b)
-  )
+  assert.equal(totalCost(completeBalancedLoads), totalCost(completeOriginalLoads))
   assert.ok(Math.max(...completeBalancedLoads) <= Math.max(...completeOriginalLoads))
   const testStep = steps.find(step => step.name === 'Run Windows Wework desktop Core shard E2E')
   assert.ok(testStep?.['timeout-minutes'] > 0)
