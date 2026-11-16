@@ -136,6 +136,7 @@ import {
   replaceRuntimeConversationFromUserMessage,
   runtimeConversationSnapshotSettlesLatestTurn,
   runtimeConversationKey,
+  settleOptimisticallyInterruptedRuntimeConversation,
   subscribeRuntimeConversation,
   restoreOptimisticallyInterruptedRuntimeConversation,
   takeInterruptedRuntimeConversationGuidance,
@@ -1269,6 +1270,9 @@ export function useWorkbenchPaneSession({
           })
         }
         return false
+      }
+      if (interruptedTurn) {
+        settleOptimisticallyInterruptedRuntimeConversation(currentRuntimeTask, interruptedTurn)
       }
 
       if (deferLocalMessage && !queued) {
@@ -2822,6 +2826,8 @@ export function useWorkbenchPaneSession({
         if (interruptedTurn) {
           restoreOptimisticallyInterruptedRuntimeConversation(currentRuntimeTask, interruptedTurn)
         }
+      } else if (interruptedTurn) {
+        settleOptimisticallyInterruptedRuntimeConversation(currentRuntimeTask, interruptedTurn)
       }
       logRuntimeQueueStage(currentRuntimeTask, 'queue-stop-result', {
         source: 'composer',

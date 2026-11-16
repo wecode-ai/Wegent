@@ -1654,6 +1654,67 @@ describe('composer cancellation rollback', () => {
     )
   })
 
+  test('a rejected cancellation does not reopen a turn that completed while stopping', async () => {
+    const { result } = await renderSession()
+    let resolveCancellation!: (accepted: boolean) => void
+    mocks.cancel.mockImplementation(
+      () =>
+        new Promise<boolean>(resolve => {
+          resolveCancellation = resolve
+        })
+    )
+    let stopping!: Promise<void>
+    act(() => {
+      applyRuntimeConversationAction(address, {
+        type: 'assistant_started',
+        subtaskId: 'completed-during-cancel',
+      })
+      applyRuntimeConversationAction(address, {
+        type: 'assistant_chunk',
+        subtaskId: 'completed-during-cancel',
+        itemId: 'completed-answer',
+        content: 'The runtime completed before the acknowledgement.',
+      })
+      stopping = result.current.pauseCurrentResponse()
+    })
+
+    await act(async () => {
+      applyRuntimeConversationAction(address, {
+        type: 'assistant_done',
+        subtaskId: 'completed-during-cancel',
+        itemId: 'completed-answer',
+        content: 'The runtime completed before the acknowledgement.',
+      })
+    })
+
+    expect(getRuntimeConversationMessages(address)).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          subtaskId: 'completed-during-cancel',
+          status: 'done',
+          runtimeStatus: 'done',
+          content: 'The runtime completed before the acknowledgement.',
+        }),
+      ])
+    )
+
+    await act(async () => {
+      resolveCancellation(false)
+      await stopping
+    })
+
+    expect(getRuntimeConversationMessages(address)).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          subtaskId: 'completed-during-cancel',
+          status: 'done',
+          runtimeStatus: 'done',
+          content: 'The runtime completed before the acknowledgement.',
+        }),
+      ])
+    )
+  })
+
   test.each([true, false])(
     'settles an optimistic prompt before a native turn starts (accepted=%s)',
     async accepted => {

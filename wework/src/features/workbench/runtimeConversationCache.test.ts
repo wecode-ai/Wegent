@@ -26,6 +26,7 @@ import {
   isRuntimeGoalSnapshotCurrent,
   markRuntimeConversationGuidanceInterrupted,
   optimisticallyInterruptRuntimeConversation,
+  settleOptimisticallyInterruptedRuntimeConversation,
   reconcileRuntimeConversationSnapshot,
   removeOptimisticRuntimeConversationGuidance,
   reconcileRuntimeConversationQueueAfterTransportReplacement,
@@ -1561,7 +1562,7 @@ describe('runtimeConversationCache', () => {
     })
   })
 
-  test('keeps a cancelled optimistic turn stopped when late stream events bind it', () => {
+  test('keeps an acknowledged cancelled turn stopped when late stream events bind it', () => {
     applyRuntimeConversationAction(address, {
       type: 'user_added',
       message: {
@@ -1578,6 +1579,7 @@ describe('runtimeConversationCache', () => {
       clientUserMessageId: 'client-user-cancelled',
       status: 'pending',
     })
+    settleOptimisticallyInterruptedRuntimeConversation(address, interruption!)
 
     applyRuntimeConversationAction(address, {
       type: 'assistant_started',
@@ -1608,6 +1610,45 @@ describe('runtimeConversationCache', () => {
         runtimeStatus: 'cancelled',
         stoppedNotice: true,
         content: '',
+      }),
+    ])
+  })
+
+  test('records terminal completion while an optimistic cancellation awaits acknowledgement', () => {
+    applyRuntimeConversationAction(address, {
+      type: 'user_added',
+      message: {
+        id: 'client-user-completes',
+        role: 'user',
+        content: 'Finish before the cancellation acknowledgement',
+        status: 'done',
+      },
+    })
+
+    const interruption = optimisticallyInterruptRuntimeConversation(address)
+    applyRuntimeConversationAction(address, {
+      type: 'assistant_started',
+      taskId: address.taskId,
+      subtaskId: 'turn-completes',
+      clientUserMessageId: 'client-user-completes',
+    })
+    applyRuntimeConversationAction(address, {
+      type: 'assistant_done',
+      subtaskId: 'turn-completes',
+      itemId: 'assistant-completes',
+      content: 'Completed response',
+    })
+
+    expect(interruption).toMatchObject({ terminalObserved: true })
+    expect(getRuntimeConversationMessages(address)).toEqual([
+      expect.objectContaining({
+        id: 'client-user-completes',
+        role: 'user',
+      }),
+      expect.objectContaining({
+        role: 'assistant',
+        runtimeStatus: 'done',
+        content: 'Completed response',
       }),
     ])
   })

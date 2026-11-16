@@ -87,6 +87,10 @@ const pendingConversationOperations = new Set<{
   current: boolean
   requestUserInputKey?: string | null
 }>()
+const activeOptimisticInterruptionsByConversation = new Map<
+  string,
+  OptimisticRuntimeTurnInterruption
+>()
 let nextRuntimeGoalSnapshotVersion = 1
 export const EMPTY_RUNTIME_QUEUED_MESSAGES: RuntimePaneQueuedMessage[] = []
 
@@ -207,6 +211,7 @@ export function adoptRuntimeConversationThread(
   threadIdsByConversation.set(key, threadId)
   if (!previous || previous === threadId) return false
   supersededTurnIdsByConversation.delete(key)
+  activeOptimisticInterruptionsByConversation.delete(key)
   cacheRuntimeConversationTurns(key, [])
   projectedMessagesByConversation.delete(key)
   return true
@@ -397,7 +402,32 @@ export function applyRuntimeConversationAction(
   if (hydration) {
     hydration.bufferedActions.push(action)
   }
-  const currentTurns = turnsByConversation.get(key) ?? []
+  let currentTurns = turnsByConversation.get(key) ?? []
+  const interruption = activeOptimisticInterruptionsByConversation.get(key)
+  if (
+    interruption &&
+    (action.type === 'assistant_done' ||
+      action.type === 'assistant_error' ||
+      action.type === 'assistant_cancelled') &&
+    currentTurns.some(turn => runtimeTurnMatchesInterruptionIdentity(turn, interruption))
+  ) {
+    // updateTurn intentionally ignores late terminal events after a real cancellation.
+    // Allow them through only while an optimistic interruption is awaiting its ack so
+    // a rejected cancellation cannot reopen an already completed native turn.
+    interruption.terminalObserved = true
+    if (action.type !== 'assistant_cancelled') {
+      currentTurns = currentTurns.map(turn =>
+        runtimeTurnMatchesInterruption(turn, interruption)
+          ? {
+              ...turn,
+              status: interruption.status,
+              completedAt: interruption.completedAt,
+              stoppedNotice: interruption.stoppedNotice,
+            }
+          : turn
+      )
+    }
+  }
   const superseded = supersededTurnIdsByConversation.get(key)
   const nextTurns = reduceRuntimeConversationTurns(currentTurns, action).filter(
     turn => !turn.id || !superseded?.has(turn.id)
@@ -651,6 +681,8 @@ export interface OptimisticRuntimeTurnInterruption {
   status: RuntimeConversationTurn['status']
   completedAt?: RuntimeConversationTurn['completedAt']
   stoppedNotice?: RuntimeConversationTurn['stoppedNotice']
+  optimisticCompletedAt: string
+  terminalObserved: boolean
 }
 
 export function optimisticallyInterruptRuntimeConversation(
@@ -663,24 +695,30 @@ export function optimisticallyInterruptRuntimeConversation(
     )
     if (index < 0) return turns
     const turn = turns[index]
+    const optimisticCompletedAt = new Date().toISOString()
     interrupted = {
       turnId: turn.id,
       clientUserMessageId: turn.clientUserMessageId,
       status: turn.status,
       completedAt: turn.completedAt,
       stoppedNotice: turn.stoppedNotice,
+      optimisticCompletedAt,
+      terminalObserved: false,
     }
     return turns.map((current, currentIndex) =>
       currentIndex === index
         ? {
             ...current,
             status: 'cancelled',
-            completedAt: new Date().toISOString(),
+            completedAt: optimisticCompletedAt,
             stoppedNotice: true,
           }
         : current
     )
   })
+  if (interrupted) {
+    activeOptimisticInterruptionsByConversation.set(runtimeConversationKey(address), interrupted)
+  }
   return interrupted
 }
 
@@ -688,6 +726,16 @@ export function restoreOptimisticallyInterruptedRuntimeConversation(
   address: RuntimeTaskAddress,
   interruption: OptimisticRuntimeTurnInterruption
 ): WorkbenchMessage[] {
+  const key = runtimeConversationKey(address)
+  if (activeOptimisticInterruptionsByConversation.get(key) === interruption) {
+    activeOptimisticInterruptionsByConversation.delete(key)
+  }
+  if (interruption.terminalObserved) {
+    return projectRuntimeConversationMessages(
+      key,
+      turnsByConversation.get(key) ?? EMPTY_RUNTIME_CONVERSATION_TURNS
+    )
+  }
   return updateRuntimeConversationTurns(address, turns =>
     turns.map(turn =>
       runtimeTurnMatchesInterruption(turn, interruption)
@@ -702,16 +750,36 @@ export function restoreOptimisticallyInterruptedRuntimeConversation(
   )
 }
 
+export function settleOptimisticallyInterruptedRuntimeConversation(
+  address: RuntimeTaskAddress,
+  interruption: OptimisticRuntimeTurnInterruption
+): void {
+  const key = runtimeConversationKey(address)
+  if (activeOptimisticInterruptionsByConversation.get(key) === interruption) {
+    activeOptimisticInterruptionsByConversation.delete(key)
+  }
+}
+
 function runtimeTurnMatchesInterruption(
   turn: RuntimeConversationTurn,
   interruption: OptimisticRuntimeTurnInterruption
 ): boolean {
-  if (interruption.turnId !== null) return turn.id === interruption.turnId
   return (
-    turn.id === null &&
-    Boolean(interruption.clientUserMessageId) &&
-    turn.clientUserMessageId === interruption.clientUserMessageId
+    runtimeTurnMatchesInterruptionIdentity(turn, interruption) &&
+    turn.status === 'cancelled' &&
+    turn.completedAt === interruption.optimisticCompletedAt &&
+    turn.stoppedNotice === true
   )
+}
+
+function runtimeTurnMatchesInterruptionIdentity(
+  turn: RuntimeConversationTurn,
+  interruption: OptimisticRuntimeTurnInterruption
+): boolean {
+  return interruption.turnId !== null
+    ? turn.id === interruption.turnId
+    : Boolean(interruption.clientUserMessageId) &&
+        turn.clientUserMessageId === interruption.clientUserMessageId
 }
 
 export function markRuntimeConversationGuidanceInterrupted(
@@ -884,6 +952,7 @@ export function evictRuntimeConversation(address: RuntimeTaskAddress) {
     operation.current = false
     pendingConversationOperations.delete(operation)
   }
+  activeOptimisticInterruptionsByConversation.delete(key)
   evictRuntimeConversationKey(key)
 }
 
@@ -904,6 +973,7 @@ export function clearRuntimeConversationCacheForTests() {
     operation.current = false
   })
   pendingConversationOperations.clear()
+  activeOptimisticInterruptionsByConversation.clear()
   clearRuntimeConversationCacheStore()
   nextRuntimeGoalSnapshotVersion = 1
 }
