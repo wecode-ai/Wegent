@@ -313,6 +313,18 @@ function encryptedReasoningItem(id, encryptedContent) {
   }
 }
 
+function reasoningTextItem(id, text) {
+  return {
+    type: 'response.output_item.done',
+    item: {
+      type: 'reasoning',
+      id,
+      summary: [],
+      content: [{ type: 'reasoning_text', text }],
+    },
+  }
+}
+
 function streamingMarkdownReport() {
   const sectionCount = readPositiveInteger(
     process.env.WEWORK_E2E_MEMORY_SECTION_COUNT,
@@ -948,6 +960,7 @@ export {
   assistantMessageSequence,
   assistantMessage,
   encryptedReasoningItem,
+  reasoningTextItem,
   streamingMarkdownReport,
   streamingTextEvents,
   localProtocolCase,

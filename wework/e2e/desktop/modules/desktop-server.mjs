@@ -60,6 +60,7 @@ import {
   matrixToolPrompt,
   namespacedFunctionCall,
   parseTelemetryPayload,
+  reasoningTextItem,
   readRawRequestBody,
   readRequestBody,
   requestAdvertisesProgrammaticExec,
@@ -228,6 +229,7 @@ import {
   PLUGIN_REFINEMENT_COMPLETION_TEXT,
   PLUGIN_REFINEMENT_PROMPT,
   PROVIDER_SWITCH_COMPLETION,
+  PROVIDER_SWITCH_FOREIGN_REASONING,
   PROVIDER_SWITCH_FAILURE,
   PROVIDER_SWITCH_LUNA_MODEL_ID,
   PROVIDER_SWITCH_OFFICIAL_LABEL,
@@ -235,8 +237,12 @@ import {
   PROVIDER_SWITCH_OFFICIAL_MODEL_LABEL,
   PROVIDER_SWITCH_OFFICIAL_OPTION_ID,
   PROVIDER_SWITCH_PROMPT,
+  PROVIDER_SWITCH_REASONING_COMPLETION,
+  PROVIDER_SWITCH_REASONING_PROMPT,
   PROVIDER_SWITCH_RESUME_COMPLETION,
   PROVIDER_SWITCH_RESUME_PROMPT,
+  PROVIDER_SWITCH_SUBSCRIPTION_ACCOUNT_ID,
+  PROVIDER_SWITCH_SUBSCRIPTION_ACCESS_TOKEN,
   QUALIFIED_SKILL_MENTION_COMPLETION_TEXT,
   QUALIFIED_SKILL_MENTION_PROMPT,
   QUEUE_CLEAR_INITIAL,
@@ -1400,6 +1406,24 @@ class DesktopE2EServer {
       return
     }
 
+    if (request.method === 'GET' && url.pathname === '/backend-api/wham/accounts/check') {
+      assert.equal(
+        request.headers.authorization,
+        `Bearer ${PROVIDER_SWITCH_SUBSCRIPTION_ACCESS_TOKEN}`,
+        'The official Codex account check did not use the synthetic subscription token'
+      )
+      json(response, 200, {
+        accounts: [
+          {
+            id: PROVIDER_SWITCH_SUBSCRIPTION_ACCOUNT_ID,
+            workspace_backend_origin: 'https://chatgpt.com',
+            account_routing_override: 'NO_CONSTRAINT',
+          },
+        ],
+      })
+      return
+    }
+
     if (request.method === 'GET' && (url.pathname === '/v1/models' || url.pathname === '/models')) {
       this.catalogRequests.push({
         authorization: request.headers.authorization ?? null,
@@ -1437,8 +1461,9 @@ class DesktopE2EServer {
       return
     }
 
+    const officialCodexResponses = url.pathname === '/backend-api/codex/responses'
     const modelProtocol =
-      url.pathname === '/v1/responses' || url.pathname === '/responses'
+      url.pathname === '/v1/responses' || url.pathname === '/responses' || officialCodexResponses
         ? 'responses'
         : url.pathname === '/v1/chat/completions' || url.pathname === '/chat/completions'
           ? 'chat'
@@ -1446,7 +1471,16 @@ class DesktopE2EServer {
             ? 'anthropic'
             : null
     if (request.method === 'POST' && modelProtocol) {
-      await this.handleModelResponse(request, response, modelProtocol)
+      if (officialCodexResponses) {
+        assert.match(
+          String(request.headers.authorization ?? ''),
+          /^Bearer /,
+          'The official Codex request did not forward its native bearer token'
+        )
+      }
+      await this.handleModelResponse(request, response, modelProtocol, {
+        acceptAnyBearer: officialCodexResponses,
+      })
       return
     }
 
@@ -1666,8 +1700,8 @@ class DesktopE2EServer {
     this.modelRequests.push(modelRequest)
     const authenticated =
       authorization === `Bearer ${MODEL_API_KEY}` ||
-      authorization === options.acceptedAuthorization ||
-      request.headers['x-api-key'] === MODEL_API_KEY
+      request.headers['x-api-key'] === MODEL_API_KEY ||
+      (options.acceptAnyBearer === true && authorization?.startsWith('Bearer '))
     if (!authenticated) {
       json(response, 401, { error: 'The Desktop E2E model API key was not forwarded by Codex' })
       return
@@ -4570,7 +4604,7 @@ class DesktopE2EServer {
       )
       assert.equal(
         body.model,
-        PROVIDER_SWITCH_OFFICIAL_OPTION_ID,
+        PROVIDER_SWITCH_OFFICIAL_MODEL_ID,
         `The provider-switch retry was routed to ${String(body.model)} instead of official GPT`
       )
       const responseId = 'provider-switch-gpt-complete'
@@ -4594,7 +4628,53 @@ class DesktopE2EServer {
       const responseId = 'provider-switch-resume-luna-complete'
       this.writeSse(response, [
         responseCreated(responseId),
+        reasoningTextItem('provider-switch-foreign-reasoning', PROVIDER_SWITCH_FOREIGN_REASONING),
         assistantMessage(PROVIDER_SWITCH_RESUME_COMPLETION),
+        responseCompleted(responseId),
+      ])
+      return
+    }
+    if (promptRequestCount === 4) {
+      assert.ok(
+        serialized.includes(PROVIDER_SWITCH_REASONING_PROMPT),
+        'The official follow-up lost its prompt'
+      )
+      assert.equal(
+        body.model,
+        PROVIDER_SWITCH_OFFICIAL_MODEL_ID,
+        'The follow-up was routed to the wrong official model'
+      )
+      const reasoning = (body.input ?? []).find(
+        item =>
+          item.type === 'reasoning' &&
+          item.summary?.some(
+            part => part.type === 'summary_text' && part.text === PROVIDER_SWITCH_FOREIGN_REASONING
+          )
+      )
+      assert.ok(
+        reasoning,
+        'The official follow-up did not replay the third-party reasoning summary'
+      )
+      assert.deepEqual(
+        reasoning.content,
+        [],
+        'Official GPT received a non-empty reasoning content array'
+      )
+      assert.equal(
+        reasoning.summary?.[0]?.text,
+        PROVIDER_SWITCH_FOREIGN_REASONING,
+        'Official GPT lost the promoted reasoning summary'
+      )
+      assert.equal(
+        'encrypted_content' in reasoning,
+        false,
+        'Official GPT received foreign reasoning state'
+      )
+      assert.equal('id' in reasoning, false, 'Official GPT received a foreign reasoning item id')
+      const responseId = 'provider-switch-reasoning-complete'
+      this.writeSse(response, [
+        responseCreated(responseId),
+        assistantMessage(PROVIDER_SWITCH_REASONING_COMPLETION),
         responseCompleted(responseId),
       ])
       return
