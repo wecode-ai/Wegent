@@ -49,12 +49,21 @@ it.each(['localStorage', 'disk'])(
       Object.assign(disk, storageSnapshot())
     })
     const original = Storage.prototype.setItem
-    vi.spyOn(Storage.prototype, 'setItem').mockImplementation(function (key, value) {
+    const write = vi.spyOn(Storage.prototype, 'setItem').mockImplementation(function (key, value) {
       if (failure === 'localStorage' && !available && key === prefix + 'drafts')
         throw new Error('Quota exceeded')
       return original.call(this, key, value)
     })
     await act(async () => queue.send(item.id))
+    await waitFor(() =>
+      expect(write).toHaveBeenCalledWith(prefix + 'drafts', expect.stringContaining('disk-receipt'))
+    )
+    if (failure === 'disk') {
+      await waitFor(() => expect(harness.flushStorage).toHaveBeenCalled())
+      await expect(harness.flushStorage.mock.results.at(-1)!.value).rejects.toThrow(
+        'Disk unavailable'
+      )
+    }
     expect(queue.get()).toHaveLength(1)
     expect(localStorage.getItem(prefix + 'native-replies') ?? '').not.toContain('disk-receipt')
     expect(disk[prefix + 'drafts']).toBe(persistedDrafts)

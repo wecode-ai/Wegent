@@ -5224,6 +5224,10 @@ describe('PluginsWorkspace', () => {
         )
       }
       expect(authorizeWegentConnector).not.toHaveBeenCalled()
+      expect(requestLocalExecutor).toHaveBeenCalledWith(
+        'runtime.local_connector_auth.health',
+        expect.objectContaining({ pluginKey: 'dingtalk', connectorSlug: 'dingtalk-access' })
+      )
     }
   )
 
