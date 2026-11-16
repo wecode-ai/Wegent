@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict'
 import { randomUUID } from 'node:crypto'
+import { reloadMainWindow } from './workspace-flows.mjs'
 import {
   installFixture,
   materializedPlugin,
@@ -76,6 +77,29 @@ export async function verifyPluginHttpReinstall({
     assert.equal(current[0].state, 'installed')
     assert.equal(current[0].actual_release_id, installed.spec.releaseId)
     assert.equal(current[0].desired_release_id, installed.spec.releaseId)
+    const persisted = JSON.parse(
+      await control.command('getLocalStorageItem', 'body', { value: 'wework.plugins.inventory.v2' })
+    )
+    const cached = Object.values(persisted.entries).find(entry =>
+      entry.installedPlugins.some(plugin => Number(plugin.metadata.labels?.id) === item.installedId)
+    )
+    assert.ok(cached, 'The accepted reinstall was not durably saved')
+    assert.equal(
+      typeof cached.marketplaceItems,
+      'string',
+      'Directory encoding was not separated from installation state'
+    )
+    await reloadMainWindow(control, 'The plugin cache did not reconnect after reload')
+    await control.command('waitFor', testId('plugins-button'), { visible: true })
+    await openPlugin(control, item)
+    await control.command('waitFor', testId(`plugin-marketplace-actions-${item.pluginId}`))
+    assert.equal((await rows())[0].state, 'installed', 'Reload lost the confirmed reinstall')
+    await until(
+      () => invoke({ probeOnly: true }),
+      response => response.result?.sourceDeviceId === source,
+      'The source device did not reconnect after cache restoration',
+      timeoutMs
+    )
     const reconciled = await invoke({ full: true })
     assert.equal(reconciled.error, undefined, JSON.stringify(reconciled.error))
     assert.equal(reconciled.result.localCompleted, true)

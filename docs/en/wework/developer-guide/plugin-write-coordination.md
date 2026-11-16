@@ -51,6 +51,10 @@ The explicitly accepted residual risk is an unresolved database COMMIT or suspen
 
 V2 synchronization and account HTTP local operations remain in use. The desktop prepares plugins independently and shares only short manifest publication work. Equivalent HTTP/Socket deliveries share preparation and validate their own generations; target changes, updates, and removal end the old equivalence range.
 
+The durable desktop cache separates encoded directory metadata from per-plugin installation state. Unchanged directories reuse their encoding; installation, removal, and acceptance receipts are still saved together in one synchronous storage write. The directory uses chunks of 256 entries, so only chunks with changed metadata need re-encoding; cold reads reuse the saved encoding. Initial loading or an actual large directory update still incurs encoding work.
+
+Package digests and activation content scans use the existing `ring` dependency for SHA256, reducing publication-lock waits caused by software hashing in Debug builds. Digest formats, complete file reads, file identity and timestamp checks, and tamper detection remain unchanged.
+
 Foreground plugin operations do not join the full reconciliation queue. Full checks serialize scan evidence without holding the short journal lease while waiting, and revalidate plans after foreground activity. Refresh retains bounded deferral for `plugin_local_sync_busy` while foreground installation, update, and removal continue.
 
 Automatic authentication retains startup, reconnect, inventory-change, and local login/logout events plus a 300-second audit with per-process jitter of ±30 seconds. Preparation and read-only status queries do not acquire batch installation leases; credential writes acquire their target installation.
