@@ -135,7 +135,7 @@ export async function verifyIssueAssociationRecovery(control, { request, reopen 
     'POST',
     {
       name: title,
-      task_provider: 'backend',
+      task_provider: 'local',
       visibility: 'private',
     },
     undefined,
@@ -186,7 +186,10 @@ export async function verifyIssueAssociationRecovery(control, { request, reopen 
 }
 
 /** Verify draft safety and bounded layout without creating an Issue. */
-export async function verifyIndependentIssueDraft(control, { request, reopen, captureScreenshot }) {
+export async function verifyIndependentIssueDraft(
+  control,
+  { request, reopen, opener, captureScreenshot }
+) {
   const before = await request('/api/v1/personal-issues?scope=created')
   const previousSize = await control.command('setMainWindowSize', 'body', {
     value: JSON.stringify({ width: 1100, height: 700 }),
@@ -195,6 +198,10 @@ export async function verifyIndependentIssueDraft(control, { request, reopen, ca
   const description = 'Keep the draft until an explicit discard.'
   const metrics = async id => JSON.parse(await control.command('getElementMetrics', testId(id)))[0]
   try {
+    await control.command('clickWhenEnabled', testId('independent-issue-editor-cancel'))
+    await control.command('waitFor', testId('independent-issue-dialog'), { visible: false })
+    await reopen()
+    await control.command('waitFor', testId('independent-issue-title'), { visible: true })
     await control.command('fill', testId('independent-issue-title'), { value: title })
     await control.command('fill', testId('independent-issue-description'), { value: description })
     await control.command('waitFor', `${testId('independent-issue-save')}:not(:disabled)`)
@@ -247,6 +254,12 @@ export async function verifyIndependentIssueDraft(control, { request, reopen, ca
     await control.command('waitFor', testId('independent-issue-discard-dialog'), { visible: true })
     await control.command('clickWhenEnabled', testId('independent-issue-discard-confirm'))
     await control.command('waitFor', testId('independent-issue-dialog'), { visible: false })
+    await control.command('waitFor', `${opener}:focus`, { visible: true })
+    assert.equal(
+      await control.command('getActiveElementTestId', 'body'),
+      'collaboration-primary-create-issue',
+      'Discarding the draft must return keyboard focus to the opener'
+    )
     const after = await request('/api/v1/personal-issues?scope=created')
     assert.deepEqual(
       after.items.map(row => row.id),

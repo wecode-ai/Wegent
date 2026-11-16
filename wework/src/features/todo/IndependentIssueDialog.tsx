@@ -292,6 +292,7 @@ export function IndependentIssueDialog({
               <p role="status">{t('independentIssues.loading')}</p>
             ) : editing ? (
               <IndependentIssueEditor
+                autoFocus={presentation === 'drawer' || Boolean(issue)}
                 api={api}
                 collaborationApi={collaborationApi}
                 allowProjectSelection={!issueId}

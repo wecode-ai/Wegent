@@ -173,7 +173,12 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
       })
       await verifyIndependentIssueDraft(control, {
         request,
-        reopen: () => navigate(control, 'collaboration-primary-create-issue'),
+        opener: sidebar('collaboration-primary-create-issue'),
+        reopen: async () => {
+          const target = sidebar('collaboration-primary-create-issue')
+          await revealCollaborationSidebarElement(control, target)
+          await control.command('nativePress', target, { key: 'Enter', timeoutMs: uiTimeoutMs })
+        },
         captureScreenshot,
       })
       await control.command('fill', '[data-testid="independent-issue-title"]', { value: title })

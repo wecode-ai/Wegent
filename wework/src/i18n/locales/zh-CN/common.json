@@ -6473,7 +6473,7 @@
     "close": "关闭",
     "retry": "重试",
     "loading": "正在加载事项…",
-    "noProject": "独立事项 · 无需关联项目或协作分组",
+    "noProject": "独立事项",
     "edit": "编辑",
     "archive": "归档",
     "restore": "恢复",

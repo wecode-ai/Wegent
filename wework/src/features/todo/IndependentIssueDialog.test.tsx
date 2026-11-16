@@ -1,12 +1,60 @@
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, expect, it, vi } from 'vitest'
 import userEvent from '@testing-library/user-event'
+import { useState } from 'react'
 import type { PersonalIssuesApi } from '@/api/personalIssues'
 import { ApiError } from '@/api/http'
 import { IndependentIssueDialog } from './IndependentIssueDialog'
 vi.mock('@/hooks/useTranslation', () => ({ useTranslation: () => ({ t: (key: string) => key }) }))
 vi.mock('./IndependentIssueTaskButton', () => ({ IndependentIssueTaskButton: () => null }))
 afterEach(cleanup)
+
+it.each(['cancel', 'escape', 'discard'] as const)(
+  'returns focus to the new-Issue opener after %s',
+  async dismissal => {
+    const api = {
+      projects: vi.fn().mockResolvedValue({ items: [] }),
+    } as unknown as PersonalIssuesApi
+    function Harness() {
+      const [open, setOpen] = useState(false)
+      return (
+        <>
+          <button data-testid="new-issue-opener" onClick={() => setOpen(true)}>
+            New Issue
+          </button>
+          {open && (
+            <IndependentIssueDialog
+              api={api}
+              userId={7}
+              issueId={null}
+              onClose={() => setOpen(false)}
+              onSaved={vi.fn()}
+            />
+          )}
+        </>
+      )
+    }
+    render(<Harness />)
+    const opener = screen.getByTestId('new-issue-opener')
+    await userEvent.click(opener)
+    const title = screen.getByTestId('independent-issue-title')
+    await waitFor(() => expect(title).toHaveFocus())
+    if (dismissal === 'discard') {
+      await userEvent.type(title, 'Protected draft')
+      await userEvent.keyboard('{Escape}')
+      await userEvent.click(screen.getByTestId('independent-issue-discard-confirm-cancel-button'))
+      expect(title).toHaveValue('Protected draft')
+      await userEvent.keyboard('{Escape}')
+      await userEvent.click(screen.getByTestId('independent-issue-discard-confirm'))
+    } else if (dismissal === 'cancel') {
+      await userEvent.click(screen.getByTestId('independent-issue-editor-cancel'))
+    } else await userEvent.keyboard('{Escape}')
+    await waitFor(() =>
+      expect(screen.queryByTestId('independent-issue-dialog')).not.toBeInTheDocument()
+    )
+    expect(opener).toHaveFocus()
+  }
+)
 
 it('keeps a conflicted draft until confirmed reload and saves with the latest version afterward', async () => {
   const initial = {

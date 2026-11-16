@@ -32,6 +32,7 @@ export function IndependentIssueEditor({
   onSave,
   onCancel,
   onDirtyChange,
+  autoFocus = true,
 }: {
   api: PersonalIssuesApi
   collaborationApi?: SharedWorkspaceApi
@@ -42,6 +43,7 @@ export function IndependentIssueEditor({
   onSave(input: IssueCreationInput): Promise<void>
   onCancel(): void
   onDirtyChange?(dirty: boolean): void
+  autoFocus?: boolean
 }) {
   const { t } = useTranslation('common')
   const canSelectProject = allowProjectSelection ?? !issue
@@ -177,7 +179,7 @@ export function IndependentIssueEditor({
           <label className="grid gap-1">
             <span className="text-sm text-text-secondary">{t('independentIssues.title')}</span>
             <input
-              autoFocus
+              autoFocus={autoFocus}
               required
               maxLength={255}
               data-testid="independent-issue-title"
