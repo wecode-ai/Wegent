@@ -57,7 +57,7 @@ fn assert_window(sql: &RecordedSql, limit: i64, before: Option<i64>) {
     assert_eq!(*route, RouteKey::Task(123));
     assert!(statement.starts_with("SELECT id, message_id, created_at FROM subtasks"));
     assert!(statement.contains("SELECT id FROM tasks WHERE id = ? AND user_id = ?"));
-    assert!(statement.ends_with("ORDER BY message_id DESC, created_at DESC, id DESC LIMIT ?"));
+    assert!(statement.ends_with("ORDER BY message_id DESC, id DESC LIMIT ?"));
     assert_eq!(statement.contains("AND message_id < ?"), before.is_some());
     let expected: Vec<_> = [123, 123, 7]
         .into_iter()
