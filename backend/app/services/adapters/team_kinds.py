@@ -47,6 +47,7 @@ from app.schemas.namespace import GroupRole
 from app.schemas.quick_launch import normalize_quick_phrases
 from app.schemas.team import BotInfo, TeamCreate, TeamUpdate
 from app.schemas.user import UserInDB
+from app.services.adapters.bot_edit_access import can_reference_bot
 from app.services.adapters.pipeline_context import normalize_context_passing
 from app.services.adapters.public_model import is_public_model_allowed_for_user_id
 from app.services.adapters.shell_utils import (
@@ -1399,12 +1400,11 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
 
         if "bots" in update_data:
             # Validate bots
-            self._validate_bots(db, update_data["bots"], user_id)
+            self._validate_bots(db, update_data["bots"], user_id, team=team)
 
             # Convert bots to members format
             from app.schemas.kind import BotTeamRef, TeamMember
 
-            members = []
             members = []
             for bot_info in update_data["bots"]:
                 bot_id = (
@@ -1630,7 +1630,14 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
         db.delete(team)
         db.commit()
 
-    def _validate_bots(self, db: Session, bots: List[BotInfo], user_id: int) -> None:
+    def _validate_bots(
+        self,
+        db: Session,
+        bots: List[BotInfo],
+        user_id: int,
+        *,
+        team: Optional[Kind] = None,
+    ) -> None:
         """
         Validate bots and check if bots belong to user and are active
         Also validates Dify runtime constraint: Dify Teams must have exactly one bot
@@ -1661,20 +1668,26 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
                 detail=f"Invalid or inactive bot_ids: {', '.join(map(str, missing_bot_ids))}",
             )
 
+        if any(not can_reference_bot(db, bot, user_id, team) for bot in bots_in_db):
+            raise HTTPException(status_code=403, detail="Bot access denied")
+
         # Validate external API shell constraint: must have exactly one bot
         for bot in bots_in_db:
             bot_crd = Bot.model_validate(bot.json)
 
             # Get shell type using utility function
             shell_type = get_shell_type(
-                db, bot_crd.spec.shellRef.name, bot_crd.spec.shellRef.namespace, user_id
+                db,
+                bot_crd.spec.shellRef.name,
+                bot_crd.spec.shellRef.namespace,
+                bot.user_id,
             )
 
             if shell_type == "external_api":
                 # Get shell for error message (with public fallback)
                 shell = kindReader.get_by_name_and_namespace(
                     db,
-                    user_id,
+                    bot.user_id,
                     KindType.SHELL,
                     bot_crd.spec.shellRef.namespace,
                     bot_crd.spec.shellRef.name,
@@ -1729,29 +1742,18 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
         bots = []
         shell_types = set()
 
-        # Determine if this is a group resource
-        is_group_resource = team.namespace and team.namespace != "default"
-
         for member in team_crd.spec.members:
-            # Find bot in kinds table
-            # For group resources, use get_group; otherwise use get_by_name_and_namespace
-            if is_group_resource:
-                bot = kindReader.get_group(
-                    db, KindType.BOT, member.botRef.namespace, member.botRef.name
-                )
-            else:
-                bot = kindReader.get_by_name_and_namespace(
-                    db,
-                    team.user_id,
-                    KindType.BOT,
-                    member.botRef.namespace,
-                    member.botRef.name,
-                )
+            # A group Team may retain an owner-private Bot in default scope.
+            bot = kindReader.get_by_name_and_namespace(
+                db,
+                team.user_id,
+                KindType.BOT,
+                member.botRef.namespace,
+                member.botRef.name,
+            )
 
             if bot:
-                # For group resources, use bot's user_id to find related components
-                summary_user_id = bot.user_id if is_group_resource else user_id
-                bot_summary = self._get_bot_summary(bot, db, summary_user_id)
+                bot_summary = self._get_bot_summary(bot, db, bot.user_id)
                 bot_info = {
                     "bot_id": bot.id,
                     "bot_prompt": member.prompt or "",

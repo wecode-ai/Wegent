@@ -6,7 +6,7 @@
 from datetime import datetime
 from typing import Any, Literal, Self
 
-from pydantic import ConfigDict, Field, model_validator
+from pydantic import ConfigDict, Field, StrictBool, model_validator
 
 from app.schemas.issue_workflow import ProjectWorkflowDefinition
 from app.schemas.project_chat import ProjectChatSchema
@@ -50,6 +50,7 @@ class ProjectAutomationCreate(ProjectAutomationAssignmentSchema):
     event_config: dict[str, Any] = Field(default_factory=dict)
     cron_expression: str | None = Field(default=None, min_length=1, max_length=100)
     timezone: str = Field(default="Asia/Shanghai", min_length=1, max_length=64)
+    workday_only: StrictBool = False
     runner_selection: RunnerSelection | None = None
     execution_device_id: str | None = Field(default=None, max_length=100)
     target_kind: AutomationTargetKind
@@ -72,6 +73,7 @@ class ProjectAutomationUpdate(ProjectAutomationAssignmentSchema):
     event_config: dict[str, Any] | None = None
     cron_expression: str | None = Field(default=None, min_length=1, max_length=100)
     timezone: str | None = Field(default=None, min_length=1, max_length=64)
+    workday_only: StrictBool | None = None
     runner_selection: RunnerSelection | None = None
     execution_device_id: str | None = Field(default=None, max_length=100)
     target_kind: AutomationTargetKind | None = None
@@ -108,6 +110,7 @@ class ProjectAutomationView(ProjectChatSchema):
     event_config: dict[str, Any]
     cron_expression: str | None
     timezone: str
+    workday_only: bool = False
     runner_selection: RunnerSelection | None = None
     execution_device_id: str | None
     target_kind: AutomationTargetKind

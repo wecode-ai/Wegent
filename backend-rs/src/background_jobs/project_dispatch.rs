@@ -38,6 +38,16 @@ async fn dispatch(state: &AppState, rule: &Node, run: &Node) -> Result<()> {
         .await?
         .context("Automation owner or project is unavailable")?;
     authority::require(state, &project.id, rule.created_by_user_id).await?;
+    let trigger = run.metadata.0["trigger"].as_str().unwrap_or(&run.source);
+    if !super::due::permits_scheduled_run(&run.metadata.0, trigger, Utc::now().naive_utc())? {
+        let note = "Scheduled execution skipped: not a China statutory workday";
+        if let Some(redis) = state.redis.as_ref() {
+            super::completion::dispatch_skipped(&state.mysql, redis, &run.id, note).await?;
+        } else {
+            state.mysql.execute("UPDATE loop_items SET status='skipped',description=?,completed_at=UTC_TIMESTAMP(6),version=version+1,updated_at=UTC_TIMESTAMP(6) WHERE id=? AND status IN ('pending','queued')",(note,run.id.as_str())).await?;
+        }
+        return Ok(());
+    }
     let mut run = run.clone();
     let mut metadata = run.meta();
     if metadata["task_origin"].as_str().unwrap_or("").is_empty() {

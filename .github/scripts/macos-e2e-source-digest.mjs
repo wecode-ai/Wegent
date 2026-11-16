@@ -25,7 +25,7 @@ const groups = [
         "shared/assets",
         "shared/protocol",
       ]
-    : []),
+    : ["shared/assets/calendars"]),
   ".github/ci/rust-toolchain",
   ".github/actions/setup-rust-cache/action.yml",
   ".github/scripts/build-macos-e2e-runtimes.sh",

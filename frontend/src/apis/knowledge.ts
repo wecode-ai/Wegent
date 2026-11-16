@@ -6,6 +6,7 @@
  * Knowledge base and document API client
  */
 
+import type { ContentDeletionOutcome, BatchDocumentDeletionOutcome } from './knowledge-deletion'
 import { apiClient } from './client'
 import type {
   AccessibleKnowledgeResponse,
@@ -82,8 +83,13 @@ export async function updateKnowledgeBase(
 /**
  * Delete a knowledge base
  */
-export async function deleteKnowledgeBase(id: number): Promise<void> {
-  return apiClient.delete(`/knowledge-bases/${id}`)
+export async function deleteKnowledgeBase(
+  id: number,
+  continueOnExternalFailure = false
+): Promise<ContentDeletionOutcome> {
+  return apiClient.delete<ContentDeletionOutcome>(
+    `/knowledge-bases/${id}?include_cleanup_result=true&continue_on_external_engine_failure=${continueOnExternalFailure}`
+  )
 }
 
 /**
@@ -252,8 +258,13 @@ export async function updateDocument(
 /**
  * Delete a document
  */
-export async function deleteDocument(documentId: number): Promise<void> {
-  return apiClient.delete(`/knowledge-documents/${documentId}`)
+export async function deleteDocument(
+  documentId: number,
+  continueOnExternalFailure = false
+): Promise<ContentDeletionOutcome> {
+  return apiClient.delete<ContentDeletionOutcome>(
+    `/knowledge-documents/${documentId}?include_cleanup_result=true&continue_on_external_engine_failure=${continueOnExternalFailure}`
+  )
 }
 
 /**
@@ -375,13 +386,24 @@ export interface BatchOperationResult {
   message: string
 }
 
+export interface BatchDeletionResult extends BatchOperationResult {
+  items: BatchDocumentDeletionOutcome[]
+  unconfirmed_count: number
+}
+
 /**
  * Batch delete multiple documents
  */
-export async function batchDeleteDocuments(documentIds: number[]): Promise<BatchOperationResult> {
-  return apiClient.post<BatchOperationResult>('/knowledge-documents/batch/delete', {
-    document_ids: documentIds,
-  })
+export async function batchDeleteDocuments(
+  documentIds: number[],
+  continueOnExternalFailure = false
+): Promise<BatchDeletionResult> {
+  return apiClient.post<BatchDeletionResult>(
+    `/knowledge-documents/batch/delete?include_cleanup_result=true&continue_on_external_engine_failure=${continueOnExternalFailure}`,
+    {
+      document_ids: documentIds,
+    }
+  )
 }
 
 // ============== Accessible Knowledge API ==============

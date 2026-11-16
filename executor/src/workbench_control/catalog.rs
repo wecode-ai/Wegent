@@ -14,7 +14,7 @@ fn integer(min: u64, max: u64) -> Value {
 fn schedule() -> Value {
     json!({"type":"object","description":"Examples: {type:interval,value:5,unit:minutes}, {type:cron,expression:0 9 * * *}, or {type:one_time,execute_at:RFC3339 timestamp}.","oneOf":[
         {"properties":{"type":{"const":"interval"},"value":{"type":"integer","minimum":1},"unit":{"enum":["minutes","hours","days"]}},"required":["type","value","unit"],"additionalProperties":false},
-        {"properties":{"type":{"const":"cron"},"expression":{"type":"string","minLength":1}},"required":["type","expression"],"additionalProperties":false},
+        {"properties":{"type":{"const":"cron"},"expression":{"type":"string","minLength":1},"workdayOnly":{"type":"boolean","description":"Run only on China statutory workdays, including adjusted weekend workdays. Defaults to false; use a daily cron to include adjusted weekends."}},"required":["type","expression"],"additionalProperties":false},
         {"properties":{"type":{"const":"one_time"},"execute_at":{"type":"string","format":"date-time"}},"required":["type","execute_at"],"additionalProperties":false}
     ]})
 }
