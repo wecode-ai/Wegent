@@ -431,7 +431,6 @@ async function prepareProfile(options: {
     })
   )
   const {
-    profileRoot,
     managedDependencyNames,
     removedDependencies,
     stampIsCurrent,
