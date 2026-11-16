@@ -136,6 +136,38 @@ def test_flag_disabled_reproduces_notification_only_assignment(test_db, test_use
     assert test_db.query(LoopItemExecution).filter_by(loop_item_id=item.id).count() == 0
 
 
+@pytest.mark.parametrize(
+    "declaration",
+    [
+        '{"version":1,"roles":[]}',
+        None,
+        [],
+        {"version": 1, "roles": None},
+        {"version": 1, "roles": "invalid"},
+        {"version": 1, "roles": [None]},
+    ],
+)
+def test_malformed_declaration_preserves_assignment_without_assistant_authority(
+    test_db, test_user, dispatch_enabled, declaration
+):
+    project = _make_project(test_db, test_user)
+    item = _make_item(test_db, project, test_user)
+    device = _device(test_db, test_user)
+    device.json = {"spec": {"personalAssistantDispatch": declaration}}
+    test_db.commit()
+
+    _assign(test_db, project, item, test_user, test_user)
+
+    receipt = loop_item_service.response_values(test_db, item, test_user.id)[
+        "direct_human_assignment_receipt"
+    ]
+    assert item.assignee_user_id == test_user.id
+    assert receipt["state"] == "blocked_policy"
+    assert receipt["reasonCode"] == "no_authorized_assistant"
+    assert receipt["executionId"] is None
+    assert test_db.query(LoopItemExecution).filter_by(loop_item_id=item.id).count() == 0
+
+
 @pytest.mark.parametrize("workspace_owner", [7, "0", None, 0])
 def test_workspace_devices_do_not_inherit_personal_assistant_consent(
     test_db, test_user, dispatch_enabled, workspace_owner

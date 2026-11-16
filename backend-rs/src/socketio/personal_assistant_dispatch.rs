@@ -111,7 +111,7 @@ async fn persist_on(
     }
     let result = tx
         .execute(
-            "UPDATE kinds SET json=JSON_SET(json,'$.spec.personalAssistantDispatch',?), \
+            "UPDATE kinds SET json=JSON_SET(json,'$.spec.personalAssistantDispatch',CAST(? AS JSON)), \
          updated_at=UTC_TIMESTAMP(6) WHERE id=? AND user_id=? AND name=? \
          AND namespace='default' AND kind='Device' AND is_active=true",
             (
@@ -218,7 +218,7 @@ async fn refresh_issue_on(
     if before != dispatch {
         dispatch["updatedAt"] = json!(Utc::now().to_rfc3339());
         tx.execute(
-            "UPDATE loop_items SET metadata=JSON_SET(metadata,?,?),updated_at=CURRENT_TIMESTAMP(6) \
+            "UPDATE loop_items SET metadata=JSON_SET(metadata,?,CAST(? AS JSON)),updated_at=CURRENT_TIMESTAMP(6) \
              WHERE id=? AND loop_item_id=? AND resource_type='comment'",
             (
                 DISPATCH_PATH,

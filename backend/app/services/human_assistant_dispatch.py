@@ -73,9 +73,16 @@ def device_role(device: Kind, item: LoopItem) -> tuple[dict | None, str]:
     """Apply the same consent contract to persisted and projected endpoints."""
     spec = (device.json or {}).get("spec", {})
     declaration = spec.get("personalAssistantDispatch", {})
-    if spec.get("workspaceOwnerId") or declaration.get("version") != 1:
+    if (
+        spec.get("workspaceOwnerId")
+        or not isinstance(declaration, dict)
+        or declaration.get("version") != 1
+    ):
         return None, "no_authorized_assistant"
-    for role in declaration.get("roles", []):
+    roles = declaration.get("roles", [])
+    if not isinstance(roles, list) or any(not isinstance(role, dict) for role in roles):
+        return None, "no_authorized_assistant"
+    for role in roles:
         if role.get("id") == "@primary" and role.get("userId") == device.user_id:
             reason = _policy_denial(role, item)
             return (None, reason) if reason else (role, "")

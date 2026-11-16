@@ -96,6 +96,7 @@ async fn device_heartbeat_refreshes_presence_for_string_task_ids() {
         async move {
             timeout(Duration::from_secs(20), async {
                 let client = assert_heartbeats(&address, &token, &redis, &device_id, &key).await;
+                assert_personal_dispatch_json(&client, &mysql, &device_id).await;
                 assert_terminal_delivery(&client, &redis, &mysql, &device_id).await;
                 assert_offline_timeout(&state, &redis, &mysql).await;
             })
@@ -128,7 +129,8 @@ async fn assert_heartbeats(
             &client,
             1,
             "device:register",
-            json!({"device_id": device_id, "name": "Heartbeat E2E", "device_type": "local"}),
+            json!({"device_id": device_id, "name": "Heartbeat E2E", "device_type": "local",
+                "runtime_features":{"personalAssistantDispatch":{"version":1,"roles":[]}}}),
         )
         .await,
         json!({"success": true, "device_id": device_id, "device_route_id": device_id})
@@ -173,6 +175,94 @@ async fn assert_heartbeats(
         assert!((1..=30_000).contains(&pttl(redis, key).await));
     }
     client
+}
+
+async fn declaration_object(mysql: &MysqlService, device_id: &str) -> Value {
+    let (kind, document): (String, brz_mysql::Json<Value>) = mysql
+        .fetch_one(
+            "SELECT JSON_TYPE(JSON_EXTRACT(json,'$.spec.personalAssistantDispatch')), \
+             JSON_EXTRACT(json,'$.spec.personalAssistantDispatch') FROM kinds \
+             WHERE user_id=? AND name=? AND namespace='default' AND kind='Device' AND is_active=true",
+            (USER_ID, device_id),
+        )
+        .await
+        .unwrap();
+    assert_eq!(kind, "OBJECT");
+    assert_eq!(document.0["version"], 1);
+    assert!(document.0["roles"].is_array());
+    document.0
+}
+
+async fn seed_closed_personal_assignment(mysql: &MysqlService) {
+    mysql.execute(
+        "INSERT INTO loop_items (id,resource_type,cloud_project_id,status,assignee_user_id,metadata,version) \
+         VALUES ('heartbeat-personal-issue','task','heartbeat-project','cancelled',?,JSON_OBJECT(),1)",
+        (USER_ID,),
+    ).await.unwrap();
+    let dispatch = json!({"dispatchId":"heartbeat-personal-dispatch","projectId":"heartbeat-project",
+        "issueId":"heartbeat-personal-issue","ownerUserId":USER_ID,
+        "assignmentId":"heartbeat-personal-assignment","assignmentVersion":1,
+        "executionId":null,"dispatchState":"queued"});
+    let metadata = json!({"event_type":"assignment","action":"assign","target_type":"human",
+        "target_id":USER_ID.to_string(),"assignment_version":1,"human_assistant_dispatch":dispatch});
+    mysql.execute(
+        "INSERT INTO loop_items (id,resource_type,loop_item_id,created_by_user_id,metadata,version) \
+         VALUES ('heartbeat-personal-assignment','comment','heartbeat-personal-issue',?,?,1)",
+        (USER_ID, brz_mysql::Json(metadata)),
+    ).await.unwrap();
+}
+
+async fn assert_personal_dispatch_json(client: &PollClient, mysql: &MysqlService, device_id: &str) {
+    assert_eq!(
+        declaration_object(mysql, device_id).await["roles"],
+        json!([])
+    );
+    seed_closed_personal_assignment(mysql).await;
+    let declaration = json!({"version":1,"roles":[{"id":"@primary","userId":USER_ID,
+        "enabled":false,"collaboration":{"enabled":false}}]});
+    let mut previous = None;
+    for id in [5, 6] {
+        assert_eq!(
+            event_ack(
+                client,
+                id,
+                "device:heartbeat",
+                json!({"device_id":device_id,
+                "runtime_features":{"personalAssistantDispatch":declaration}})
+            )
+            .await,
+            json!({"success":true})
+        );
+        let stored = declaration_object(mysql, device_id).await;
+        assert_eq!(stored["roles"][0]["id"], "@primary");
+        assert_eq!(stored["roles"][0]["userId"], USER_ID);
+        let (kind, metadata): (String, brz_mysql::Json<Value>) = mysql
+            .fetch_one(
+                "SELECT JSON_TYPE(JSON_EXTRACT(metadata,'$.human_assistant_dispatch')),metadata \
+             FROM loop_items WHERE id='heartbeat-personal-assignment' AND resource_type='comment'",
+                (),
+            )
+            .await
+            .unwrap();
+        assert_eq!(kind, "OBJECT");
+        assert_eq!(
+            metadata.0["human_assistant_dispatch"]["dispatchState"],
+            "cancelled"
+        );
+        assert_eq!(
+            metadata.0["human_assistant_dispatch"]["reasonCode"],
+            "issue_closed"
+        );
+        if let Some(previous) = previous {
+            assert_eq!(metadata.0, previous);
+        }
+        previous = Some(metadata.0);
+    }
+    let (executions,): (i64,) = mysql.fetch_one(
+        "SELECT COUNT(*) FROM loop_item_executions WHERE loop_item_id='heartbeat-personal-issue'",
+        (),
+    ).await.unwrap();
+    assert_eq!(executions, 0);
 }
 
 async fn assert_terminal_delivery(
