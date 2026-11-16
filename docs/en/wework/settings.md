@@ -72,6 +72,12 @@ If saving the first choice fails, a notice at the top of the workbench offers **
 
 Saving a UI preference, changing scheduler limits and replacing an executable have different activation rules. Follow restart prompts for Node.js and coding tools; saved preferences do not imply that existing processes have already changed.
 
+### Voice input model
+
+<a id="voice-input-model"></a>
+
+Open **bottom-left account menu → Settings → Personal → General**, then find **Voice input** below the basic preferences. This section appears when the official voice plugin has loaded; Experimental features is not required. Choose a recognition model and follow the preparation prompts, then return to the task composer microphone to record. Opening settings does not download a model or start recording. See [Voice input](./tasks.md#voice-input) for model choices and transcription controls.
+
 ### System drag panel and stash
 
 <a id="system-drag-controls"></a>
