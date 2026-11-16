@@ -1,5 +1,6 @@
 import { appendAcceptedRuntimeConversationUser } from "./runtime-turn-updates";
 import { projectRuntimePaneTranscript } from "./runtime-transcript-page";
+import { getLatestRuntimeLiveActivityFromTurns } from "./runtime-thinking";
 import { describe, expect, it, vi } from "vitest";
 import type {
   RuntimeConversationItem,
@@ -28,6 +29,40 @@ const ids = (turns: RuntimeConversationTurn[]) =>
   turns[0].items.map((item) => item.id);
 
 describe("native conversation ordering contract", () => {
+  it("keeps streamed commentary after a late native user without persisted positions", () => {
+    const live = turn([
+      {
+        id: "commentary",
+        type: "block",
+        block: {
+          id: "commentary",
+          type: "text",
+          content: "Reply is running",
+          status: "done",
+          createdAt: "2026-11-16T07:00:30Z",
+        },
+      },
+    ]);
+    const snapshot = turn([
+      {
+        id: "native-reply-user",
+        type: "user_message",
+        message: {
+          id: "native-reply-user",
+          role: "user",
+          content: "Continue the task",
+          status: "done",
+          createdAt: "2026-11-16T07:00:29Z",
+        },
+      },
+    ]);
+    const merged = mergeRuntimeConversationTurns([live], [snapshot]);
+    expect(ids(merged)).toEqual(["native-reply-user", "commentary"]);
+    expect(getLatestRuntimeLiveActivityFromTurns(merged)).toMatchObject({
+      active: true,
+      processText: "Reply is running",
+    });
+  });
   const recovery: RuntimePaneMessageAction = {
     type: "block_created",
     subtaskId: "turn",

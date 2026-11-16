@@ -2908,6 +2908,7 @@ dependencies = [
  "serde_json",
  "tempfile",
  "uuid",
+ "wegent-protocol",
 ]
 
 [[package]]

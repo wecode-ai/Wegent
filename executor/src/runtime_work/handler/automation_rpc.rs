@@ -160,6 +160,14 @@ impl RuntimeWorkRpcHandler {
         let operation_gate =
             self.task_send_gate(&format!("automation-operation:{}", automation.id));
         let _operation_guard = operation_gate.lock().await;
+        if !self
+            .automation_store
+            .allow_dispatch(&automation, &run, Utc::now())
+            .unwrap_or(false)
+        {
+            self.emit_automation_runs_changed(&automation.id, &run.id);
+            return;
+        }
         let payload = if automation.task_request["type"] == "wework_control" {
             self.control_automation_payload(&automation).await
         } else {
@@ -218,6 +226,14 @@ impl RuntimeWorkRpcHandler {
         }
         set_payload_string(&mut payload, "message", &automation.prompt);
         add_automation_context(&mut payload, &automation.id, &run.id, run.scheduled_for);
+        if !self
+            .automation_store
+            .allow_dispatch(&automation, &run, Utc::now())
+            .unwrap_or(false)
+        {
+            self.emit_automation_runs_changed(&automation.id, &run.id);
+            return;
+        }
         let _ = self.automation_store.mark_running(&run.id, task_id.clone());
 
         let result = match automation.conversation_mode {
