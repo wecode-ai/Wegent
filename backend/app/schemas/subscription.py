@@ -13,7 +13,7 @@ from datetime import datetime
 from enum import Enum
 from typing import Any, Dict, List, Optional
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, Field, StrictBool, model_validator
 
 from app.schemas.kind import ModelRef
 
@@ -95,6 +95,10 @@ class CronTriggerConfig(BaseModel):
 
     expression: str = Field(..., description="Cron expression (e.g., '0 9 * * *')")
     timezone: str = Field("UTC", description="Timezone for cron execution")
+    workday_only: StrictBool = Field(
+        False,
+        description="Run only on mainland China statutory workdays, including makeup workdays",
+    )
 
 
 class IntervalTriggerConfig(BaseModel):

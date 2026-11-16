@@ -1,6 +1,6 @@
 // @vitest-environment node
 
-import { mkdtemp, mkdir, writeFile, readFile, realpath, rename, rm } from 'node:fs/promises'
+import { mkdtemp, mkdir, open, writeFile, readFile, realpath, rename, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { EventEmitter } from 'node:events'
@@ -109,7 +109,7 @@ test.each(checkouts.flatMap(checkout => ['directory', 'file'].map(input => [chec
     onTestFinished(async () => {
       await watcher.close()
       await rm(temporary, { recursive: true, force: true })
-      console.info('[development-build-watch-phases]', { checkout, input, phases })
+      console.info('[development-build-watch-phases]', { checkout, input, phases, snapshots })
     })
     expect(published).toBe('one')
     record('write-invalid')
@@ -131,11 +131,16 @@ test.each(checkouts.flatMap(checkout => ['directory', 'file'].map(input => [chec
     expect(snapshots).toEqual(['one', 'invalid', 'two'])
     await saveSource('three')
     await expect.poll(() => published).toBe('three')
-    // Hold the truncated revision so an in-place save may publish both states.
-    await writeFile(source, '')
-    await expect.poll(() => published).toBe('')
-    await writeFile(source, 'four')
-    await expect.poll(() => published).toBe('four')
+    // Use one handle so completing the save does not truncate the file again.
+    const handle = await open(source, 'r+')
+    try {
+      await handle.truncate(0)
+      await expect.poll(() => published).toBe('')
+      await handle.writeFile('four')
+      await expect.poll(() => published).toBe('four')
+    } finally {
+      await handle.close()
+    }
     expect(build).toHaveBeenCalledTimes(6)
     expect(snapshots).toEqual(['one', 'invalid', 'two', 'three', '', 'four'])
   }

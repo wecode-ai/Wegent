@@ -231,6 +231,7 @@ def build_trigger_config(
             cron=CronTriggerConfig(
                 expression=trigger_config.get("expression", "0 9 * * *"),
                 timezone=trigger_config.get("timezone", "UTC"),
+                workday_only=trigger_config.get("workday_only", False),
             ),
         )
     elif trigger_type_enum == SubscriptionTriggerType.INTERVAL:
@@ -298,6 +299,7 @@ def extract_trigger_config(trigger: SubscriptionTriggerConfig) -> Dict[str, Any]
         return {
             "expression": trigger.cron.expression,
             "timezone": trigger.cron.timezone,
+            "workday_only": trigger.cron.workday_only,
         }
     elif trigger.type == SubscriptionTriggerType.INTERVAL and trigger.interval:
         return {
@@ -378,6 +380,21 @@ def calculate_next_execution_time(
             iter = croniter(cron_expr, now_user_tz)
             next_user_tz = iter.get_next(datetime)
 
+            if trigger_config.get("workday_only", False):
+                from app.services.subscription.workday import is_china_workday
+
+                while not is_china_workday(next_user_tz):
+                    # Skip the rest of this China calendar day in one step.
+                    china_next = next_user_tz.astimezone(ZoneInfo("Asia/Shanghai"))
+                    next_day = (china_next + timedelta(days=1)).replace(
+                        hour=0, minute=0, second=0, microsecond=0
+                    )
+                    iter = croniter(
+                        cron_expr,
+                        (next_day - timedelta(microseconds=1)).astimezone(user_tz),
+                    )
+                    next_user_tz = iter.get_next(datetime)
+
             # Ensure the result has timezone info
             if next_user_tz.tzinfo is None:
                 next_user_tz = next_user_tz.replace(tzinfo=user_tz)
@@ -394,6 +411,10 @@ def calculate_next_execution_time(
             # Return naive UTC datetime for database storage
             return next_utc.replace(tzinfo=None)
         except Exception as e:
+            from app.services.subscription.workday import WorkdayCalendarError
+
+            if isinstance(e, WorkdayCalendarError):
+                raise
             logger.warning(f"Failed to parse cron expression: {e}")
             return None
 

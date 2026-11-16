@@ -828,13 +828,6 @@ const route = await app.route();
 
 ## CI 建议
 
-桌面共享产物通过 `build-desktop-e2e-client.mjs` 预编译手机本地执行请求所用的生产
-payload、模型选择和模型接口构造器，随现有 `e2e-client` 一起交付。
-`native-lifecycle` 在配置了共享产物时直接读取该 bundle，不能在消费端导入 Vite
-或重新编译源码。未配置共享产物的本地源码运行仍使用本地 Vite 加载器；显式配置的
-产物缺失必须报错，不能退回工作区依赖。无 `node_modules` 的隔离消费测试验证真实
-构造器生成的任务、设备、消息和模型身份，原有桌面检查点与业务断言保持不变。
-
 Backend Rust E2E 镜像同时包含 `wegent-backend-rs` 和 `attachment-s3-e2e`。生产者、桌面消费者及预热任务共享 `resolve-backend-rs-e2e-runtime.sh` 的 `v2` 镜像命名规则，哈希输入必须一致，并包含 Rust manifest、锁文件、源码、examples 和 `.github/runtime-images/backend-rs-e2e.Dockerfile`。镜像配方变化会生成新标签，不能复用只包含主程序的旧 `v1` 镜像。缓存命中仍必须恢复完整产物；构建、发布、恢复和上传的路径一致性由 CI 调用的 runtime handoff 单测验证，不以跳过缺失文件或临时回退掩盖缓存错误。
 
 平台 E2E 基础镜像 `docker/wework-e2e/browser.Dockerfile` 通过 `docker.io` 预装 Docker CLI，并在构建时执行 `docker --version`。各分片准备远程工作区 Executor 时直接使用镜像内的 CLI，不再运行 apt 更新和安装。Dockerfile 的内容哈希决定镜像标签，修改后 CI 会构建新镜像并在后续运行中复用。

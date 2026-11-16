@@ -17,7 +17,7 @@ const entries = [
   ['tiktoken', createRequire(import.meta.url).resolve('tiktoken')],
   [
     'mobile-local-payload',
-    fileURLToPath(new URL('./desktop-e2e-mobile-builders.ts', import.meta.url)),
+    fileURLToPath(new URL('./desktop-e2e-mobile-builders.mjs', import.meta.url)),
   ],
 ]
 for (const [name, entry] of entries) {

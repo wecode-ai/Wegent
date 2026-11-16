@@ -1015,16 +1015,6 @@ New E2E tests should prefer this helper and `data-testid` locators instead of un
 
 ## CI Guidance
 
-The shared desktop artifact precompiles the production mobile execution payload,
-model selection, and model-interface builders through `build-desktop-e2e-client.mjs`
-and ships them with the existing `e2e-client` bundle. When a shared artifact is
-configured, `native-lifecycle` loads that bundle without importing Vite or compiling
-sources on the consumer. Local source runs without a shared artifact still use
-the local Vite loader; a missing explicitly configured artifact must fail rather
-than use workspace dependencies. An isolated consumer without `node_modules`
-checks the real builders' task, device, message, and model identities. The desktop
-checkpoint and its business assertions remain unchanged.
-
 The Backend Rust E2E image contains both `wegent-backend-rs` and `attachment-s3-e2e`. Its producer, desktop consumers, and warmup use the shared `v2` image naming rule in `resolve-backend-rs-e2e-runtime.sh`. Their identical hash inputs include the Rust manifest, lockfile, sources, examples, and `.github/runtime-images/backend-rs-e2e.Dockerfile`. Recipe changes generate a new tag; old `v1` images containing only the API server cannot be reused. Cache hits must still restore the complete payload. CI invokes runtime handoff unit tests that verify matching build, publication, restoration, and upload paths instead of skipping missing files or hiding cache defects behind a fallback.
 
 The platform E2E base image, `docker/wework-e2e/browser.Dockerfile`, preinstalls the Docker CLI through `docker.io` and checks `docker --version` during its build. Shards use that CLI when preparing the remote workspace Executor without running apt update or installation. The Dockerfile content hash determines the image tag, so CI builds a new image after changes and reuses it in subsequent runs.
