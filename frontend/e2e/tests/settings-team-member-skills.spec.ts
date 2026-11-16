@@ -79,7 +79,10 @@ const test = base.extend<{ memberSkills: MemberSkills }>({
         file: await zip.generateAsync({ type: 'nodebuffer' }),
       })
       expect(upload.status, JSON.stringify(upload.data)).toBe(201)
-      skillId = (upload.data as { id: number }).id
+      const uploadedSkill = upload.data as { metadata: { labels: { id: string } } }
+      skillId = Number(uploadedSkill.metadata.labels.id)
+      expect(Number.isInteger(skillId)).toBe(true)
+      expect(skillId).toBeGreaterThan(0)
       expect(
         (
           await admin.post('/api/v1/kinds/skills/' + skillId + '/bindings/groups', {
@@ -152,7 +155,7 @@ const test = base.extend<{ memberSkills: MemberSkills }>({
         expect((await admin.delete('/api/v1/kinds/skills/' + skillId)).status).toBe(200)
       for (const group of groups)
         expect([200, 204]).toContain((await admin.deleteGroup(group)).status)
-      expect((await admin.adminDeleteUser(userId)).status).toBe(200)
+      expect((await admin.adminDeleteUser(userId)).status).toBe(204)
     }
   },
 })
