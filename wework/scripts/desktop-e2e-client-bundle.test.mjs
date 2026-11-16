@@ -165,6 +165,49 @@ test('the shared build counts complete model requests without node_modules', asy
   )
 }, 30_000)
 
+test('the shared build loads native payload scenarios and real builders without node_modules', async () => {
+  const fixture = await isolatedConsumer('native-payload')
+  const script = `
+    import assert from 'node:assert/strict'
+    import { createRequire } from 'node:module'
+    import { pathToFileURL } from 'node:url'
+    const scene = await import(pathToFileURL(process.argv[1]))
+    assert.equal(typeof scene.createDesktopScenario, 'function')
+    const builders = createRequire(import.meta.url)(process.argv[2])
+    const provider = builders.modelInterfaceProviderId('fixture')
+    assert.equal(provider, 'local-fixture')
+    const configured = builders.modelInterfaceRuntimeConfig({
+      id: 'fixture', modelId: 'fixture-model', displayName: 'Fixture',
+      baseUrl: 'http://127.0.0.1:1234/v1', apiFormat: 'openai-responses'
+    })
+    assert.equal(configured.api_format, 'responses')
+    const modelConfig = builders.resolveLocalRuntimeModelConfig({
+      runtime: 'codex', modelName: 'local-model:fixture', modelType: 'runtime',
+      modelOptions: { runnerModelProvider: provider }
+    })
+    const payload = builders.buildLocalRuntimeExecutionRequest({
+      taskId: 'fixture-task', runtime: 'codex', title: 'Fixture', message: 'Review',
+      turnSeed: 1, newSession: true, localDeviceId: 'fixture-device', modelConfig,
+      reasoningConfig: null, workspaceSource: 'local_path', workspacePath: '/workspace',
+      user: { id: 0, user_name: 'local', email: 'local@wework.local' }
+    })
+    assert.equal(payload.task_id, 'fixture-task')
+    assert.equal(payload.model_config.model_provider, provider)
+    assert.equal(payload.prompt, 'Review')
+  `
+  await run(
+    process.execPath,
+    [
+      '--input-type=module',
+      '-e',
+      script,
+      join(fixture.desktop, 'scenarios/mobile-local-payload.scenario.mjs'),
+      join(fixture.client, 'local-runtime-payload.cjs'),
+    ],
+    fixture.options
+  )
+}, 30_000)
+
 test('an explicitly configured incomplete artifact never falls back to workspace dependencies', async () => {
   const fixture = await isolatedConsumer('incomplete')
   await rm(join(fixture.client, 'lz-string.cjs'))
