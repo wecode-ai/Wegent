@@ -56,7 +56,6 @@ async function openEditor(
       onClose={onClose}
     />
   )
-  await userEvent.click(screen.getByTestId('cloud-todo-more-properties'))
   return { updateLoopItem, onUpdated, onClose }
 }
 
@@ -97,7 +96,19 @@ describe('workspace Issue tag editing', () => {
     expect(screen.getByTestId('cloud-todo-detail-tag-tag-验证')).toBeVisible()
   })
 
-  it('preserves a tag entered through desktop control when properties dismiss', async () => {
+  it('saves a pending tag once when an outside click also blurs the input', async () => {
+    const { updateLoopItem } = await openEditor({ readFirst: true })
+    await userEvent.type(screen.getByTestId('cloud-todo-detail-tag-input'), '点击保存')
+    await userEvent.click(screen.getByTestId('cloud-todo-detail-title'))
+    await waitFor(() => expect(updateLoopItem).toHaveBeenCalledTimes(1))
+    expect(updateLoopItem).toHaveBeenCalledWith(
+      item.id,
+      expect.objectContaining({ tags: ['点击保存'] })
+    )
+    expect(screen.getByTestId('cloud-todo-detail-tag-tag-点击保存')).toBeVisible()
+  })
+
+  it('preserves a desktop-control tag when clicking outside without native blur', async () => {
     await openEditor({ readFirst: true })
     await act(async () => {
       await fillDesktopControlElement(screen.getByTestId('cloud-todo-detail-tag-input'), '待保存')
@@ -108,20 +119,25 @@ describe('workspace Issue tag editing', () => {
       title.dispatchEvent(new PointerEvent('pointerup', { bubbles: true, pointerType: 'mouse' }))
       title.click()
     })
-    fireEvent.click(screen.getByTestId('cloud-todo-more-properties'))
     expect(screen.getByTestId('cloud-todo-detail-tag-tag-待保存')).toBeVisible()
   })
 
   it('commits the property draft even when the inactive window does not emit blur', async () => {
-    await openEditor({ readFirst: true })
+    const { onClose, updateLoopItem } = await openEditor({ readFirst: true })
     const input = screen.getByTestId('cloud-todo-detail-tag-input')
     await userEvent.type(input, '后台标签')
     const blur = vi.spyOn(input, 'blur').mockImplementation(() => {})
     try {
       fireEvent.keyDown(input, { key: 'Escape' })
-      expect(screen.queryByTestId('cloud-todo-more-properties-popover')).not.toBeInTheDocument()
-      fireEvent.click(screen.getByTestId('cloud-todo-more-properties'))
+      expect(screen.getByTestId('cloud-todo-more-properties-popover')).not.toBeVisible()
+      expect(onClose).not.toHaveBeenCalled()
       expect(screen.getByTestId('cloud-todo-detail-tag-tag-后台标签')).toBeVisible()
+      await waitFor(() =>
+        expect(updateLoopItem).toHaveBeenCalledWith(
+          item.id,
+          expect.objectContaining({ tags: ['后台标签'] })
+        )
+      )
     } finally {
       blur.mockRestore()
     }
