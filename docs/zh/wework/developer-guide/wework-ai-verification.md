@@ -70,7 +70,7 @@ await control.errors.assertCollectedErrors(
 - `renders`：已接入组件函数的调用次数，包括 StrictMode 重复调用及未提交的渲染尝试。默认接入 `app`、`workbench-provider`、`desktop-sidebar`、`desktop-workbench-main`、`workbench-conversation`、`right-workspace-panel`；同类组件的多个实例在当前渲染器内合计。可在更细的边界复用 `recordUiRender(id)`。
 - 区域的 `mutationBatches`／`mutationRecords`：该 CSS 选择器覆盖范围内观察到的 DOM 写入批次／记录数，不是浏览器绘制帧数。批次包含 MutationObserver 回调及显式排空；嵌套区域分别统计，不能相加当作全局刷新次数。
 - `rootRemovals`：匹配区域根节点被移除的次数；`maxAddedSubtreeElements`／`maxRemovedSubtreeElements` 是回调观察时新增／移除子树的最大元素规模，用于发现“一次更新就替换大片节点”。它们不是历史插入元素的精确累计值，也不代表像素重绘范围。
-- `reactCommits`：复用 `wework-root` Profiler，保留快速提交的次数及 actualDuration 合计，不受原来慢提交阈值过滤。该范围为 App 的 Profiler 子树。标准生产构建不会启用 React profiling，未观察到有效回调时返回 `null`，不会用 DOM 批次冒充提交次数；本功能不修改生产 React 构建。
+- `reactCommits`：复用 `wework-root` Profiler，保留快速提交的次数及 actualDuration 合计，不受原来慢提交阈值过滤。该范围为 App 的 Profiler 子树。以 `VITE_WEWORK_E2E=true` 构建的验证产物使用 React profiling 入口，记录真实提交次数；普通发布产物不启用该入口。对于未启用 profiling 的产物，未观察到有效回调时仍返回 `null`，不会用 DOM 批次冒充提交次数。
 
 例如，已有测试中的 `operationAndWaitForResult` 可以包含多个操作及其业务等待。只有明确要求不影响侧栏的场景，才采用下例的零更新预算；其他预算应依据需求及实际测量制定，不设置通用猜测阈值。
 
@@ -111,7 +111,7 @@ async function verifyLocalOperation(control, operationAndWaitForResult) {
 
 `observations` 保留每个控制命令开始／回执时的非零计数增量、命令 ID 和动作名，以便区分操作期间与命令之间的后台工作。该关联不证明因果关系。只保存类型名、标识和数值，不保存请求参数、事件正文或凭据。方法名相同也可能对应不同资源，不能直接视为重复请求。按需使用 `control.refreshes` 选择更细的区域和业务等待。
 
-测量从控制连接建立持续到最后一次已接收回执；清理前补读活动客户端。接入之前的启动工作、关闭或重载窗口最后回执之后的工作不能由该性能窗口证明完整。缺失数据、计数重置和不可用指标必须标记为不完整，不能补零通过。标准生产 React Profiler 不可用时提交指标为 null。错误落盘完整性有独立契约。
+测量从控制连接建立持续到最后一次已接收回执；清理前补读活动客户端。接入之前的启动工作、关闭或重载窗口最后回执之后的工作不能由该性能窗口证明完整。缺失数据、计数重置和不可用指标必须标记为不完整，不能补零通过。E2E 验证构建启用 production profiling；普通发布产物的 React Profiler 不可用时，提交指标仍为 null。错误落盘完整性有独立契约。
 
 建立基线前先分析相同操作的实际波动，区分启动、周期轮询、业务动作和生命周期终止。机器争用会改变耗时和轮询次数；组件 render、DOM 写入、绘制帧数必须分开解释。后续启用 main 基线仍需一次显式建立阶段，首份可信基线产生后强制门禁，不允许丢失产物时静默重新初始化。
 
