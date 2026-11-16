@@ -2,7 +2,9 @@ import type { InstalledPluginComponents } from '@/types/api'
 
 type Connector = NonNullable<InstalledPluginComponents['connectors']>[number]
 
-/** Account connections are configured after installation in the account panel. */
+/** Bearer snapshots share their source login; managed account flows stay separate. */
 export function requiresInstallConnectorAuth(connector: Connector): boolean {
-  return connector.authPolicy === 'on_install' && !connector.accountAuth
+  const localSnapshot =
+    connector.accountAuth?.credentialType === 'bearer' && Boolean(connector.localAuth)
+  return connector.authPolicy === 'on_install' && (!connector.accountAuth || localSnapshot)
 }

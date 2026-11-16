@@ -593,6 +593,7 @@ function mockSystemSkillsFetch(
     marketplaceConnectorAuthPolicy: 'on_install' | 'on_use' | 'optional'
     marketplaceConnectorLocal: boolean
     marketplaceConnectorAccountAuth: boolean
+    marketplaceConnectorCredentialType: 'oauth2' | 'bearer'
     installedMarketplaceConnectors: InstalledPluginComponents['connectors']
     marketplaceHasSkill: boolean
     marketplaceVisibility: 'personal' | 'workspace' | 'public'
@@ -877,7 +878,7 @@ function mockSystemSkillsFetch(
                 ? {
                     accountAuth: {
                       protocolVersion: 1,
-                      credentialType: 'oauth2',
+                      credentialType: overrides.marketplaceConnectorCredentialType ?? 'oauth2',
                       adapter: 'scripts/account-auth.py',
                     },
                   }
@@ -5181,31 +5182,46 @@ describe('PluginsWorkspace', () => {
     }
   )
 
-  test('installs an account-managed plugin without opening a second local login', async () => {
-    window.__WEWORK_RUNTIME_CONFIG__ = { desktopHost: 'electron' }
-    mockSystemSkillsFetch({
-      marketplaceName: 'dingtalk',
-      marketplaceDisplayName: '钉钉',
-      marketplaceConnectorSlug: 'dingtalk',
-      marketplaceConnectorLocal: true,
-      marketplaceConnectorAccountAuth: true,
-    })
-    mockCodexAppServerInvoke({
-      deviceId: 'current-device',
-      localConnectorAuthHealth: () => Promise.resolve({ status: 'need_login' }),
-    })
-    render(<PluginsWorkspace cloudApiBaseUrl="/api" cloudToken="cloud-token" />)
-    await screen.findByTestId('plugin-marketplace-install-101')
-    await installPluginFromMarketCard('plugin-marketplace-install-101')
-    await waitFor(() =>
-      expect(screen.getByTestId('plugin-operation-notice')).toHaveTextContent('钉钉 已安装')
-    )
-    expect(screen.queryByTestId('local-connector-auth-dialog')).not.toBeInTheDocument()
-    expect(requestLocalExecutor).not.toHaveBeenCalledWith(
-      'runtime.local_connector_auth.start',
-      expect.anything()
-    )
-  })
+  test.each(['ok', 'need_login'] as const)(
+    'reuses or requests the combined DingTalk login when local health is %s',
+    async status => {
+      window.__WEWORK_RUNTIME_CONFIG__ = { desktopHost: 'electron' }
+      mockSystemSkillsFetch({
+        marketplaceName: 'dingtalk',
+        marketplaceDisplayName: '钉钉',
+        marketplaceConnectorSlug: 'dingtalk-access',
+        marketplaceConnectorLocal: true,
+        marketplaceConnectorAccountAuth: true,
+        marketplaceConnectorCredentialType: 'bearer',
+      })
+      mockCodexAppServerInvoke({
+        deviceId: 'current-device',
+        localConnectorAuthHealth: () => Promise.resolve({ status }),
+      })
+      render(<PluginsWorkspace cloudApiBaseUrl="/api" cloudToken="cloud-token" />)
+      await screen.findByTestId('plugin-marketplace-install-101')
+      await installPluginFromMarketCard('plugin-marketplace-install-101')
+      if (status === 'ok') {
+        await waitFor(() =>
+          expect(screen.getByTestId('plugin-operation-notice')).toHaveTextContent('钉钉 已安装')
+        )
+        expect(screen.queryByTestId('local-connector-auth-dialog')).not.toBeInTheDocument()
+        expect(requestLocalExecutor).not.toHaveBeenCalledWith(
+          'runtime.local_connector_auth.start',
+          expect.anything()
+        )
+      } else {
+        expect(await screen.findByTestId('local-connector-auth-dialog')).toBeInTheDocument()
+        await waitFor(() =>
+          expect(requestLocalExecutor).toHaveBeenCalledWith(
+            'runtime.local_connector_auth.start',
+            expect.objectContaining({ pluginKey: 'dingtalk', connectorSlug: 'dingtalk-access' })
+          )
+        )
+      }
+      expect(authorizeWegentConnector).not.toHaveBeenCalled()
+    }
+  )
 
   test.each(['install', 'manage'] as const)(
     'does not restart Python preparation through login after a %s failure',
