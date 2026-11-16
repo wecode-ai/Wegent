@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import { mkdir, readFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { currentExecutorPid, waitForRestartedExecutor } from './executor-restart-readiness.mjs'
+import { waitForLogPattern } from './shared.mjs'
 
 /** Fail a real native startup, retain its diagnosis, then retry the same Issue. */
 export async function verifyStandInStartupRecovery({
@@ -86,11 +87,10 @@ export async function verifyStandInStartupRecovery({
     )
     assert.equal(failed.task.threadId ?? null, null)
     const executorLogPath = join(resultDir, 'executor.log')
-    assert.ok(
-      (await readFile(executorLogPath, 'utf8')).includes(
-        `required Skill deployment failed: ${requiredSkill}`
-      ),
-      'The failure must come from real required Skill deployment'
+    // Task state can settle before the supervisor forwards its failure log.
+    await waitForLogPattern(
+      executorLogPath,
+      new RegExp(`required Skill deployment failed: ${requiredSkill}`)
     )
     const failure = failed.task.runtimeHandle.startupFailure
     if (restart) {
