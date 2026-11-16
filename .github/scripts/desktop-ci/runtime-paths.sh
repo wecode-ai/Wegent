@@ -499,6 +499,10 @@ classify_path() {
         select_target "core:collaboration-delivery-editing"
       fi
       ;;
+    packages/chat-core/src/workspace-file-paths* | \
+      packages/chat-core/src/workspace-file-types*)
+      select_all_platform_suites
+      ;;
     executor/crates/model-proxy/src/codex_model_catalog*.rs)
       select_target "core:codex-native-catalog"
       ;;
