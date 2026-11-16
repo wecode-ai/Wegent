@@ -1,10 +1,17 @@
-import { appendFileSync, readFileSync, readdirSync, writeFileSync } from 'node:fs'
+import { appendFileSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 'node:fs'
 import { join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 /** Read numeric checkpoint evidence only; never inspect profiles or request payloads. */
 export function readPerformanceReports(directory) {
-  return readdirSync(directory, { withFileTypes: true }).flatMap(entry => {
+  let entries
+  try {
+    entries = readdirSync(directory, { withFileTypes: true })
+  } catch (error) {
+    if (error.code === 'ENOENT') return []
+    throw error
+  }
+  return entries.flatMap(entry => {
     if (!entry.isDirectory()) return []
     const path = join(directory, entry.name, 'performance.json')
     try {
@@ -63,9 +70,11 @@ if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.ur
   const directory = resolve(process.argv[2])
   const reports = readPerformanceReports(directory)
   const markdown = renderPerformanceReport(reports)
+  mkdirSync(directory, { recursive: true })
   writeFileSync(join(directory, 'performance-report.md'), markdown)
   if (process.env.GITHUB_STEP_SUMMARY) appendFileSync(process.env.GITHUB_STEP_SUMMARY, markdown)
   console.log(
     `Collected ${reports.length} checkpoint performance reports; baseline not established`
   )
+  if (!reports.length) process.exitCode = 1
 }

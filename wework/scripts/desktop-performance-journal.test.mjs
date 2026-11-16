@@ -1,7 +1,48 @@
 import assert from 'node:assert/strict'
+import { spawnSync } from 'node:child_process'
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import test from 'node:test'
+import { fileURLToPath } from 'node:url'
 import { DesktopPerformanceJournal } from '../e2e/desktop/performance-journal.mjs'
-import { renderPerformanceReport } from '../e2e/desktop/performance-report.mjs'
+import {
+  readPerformanceReports,
+  renderPerformanceReport,
+} from '../e2e/desktop/performance-report.mjs'
+
+test('a failed preflight preserves a missing-evidence report and a failing exit status', () => {
+  const root = mkdtempSync(join(tmpdir(), 'desktop-performance-preflight-'))
+  try {
+    const directory = join(root, 'never-started')
+    const result = spawnSync(
+      process.execPath,
+      [fileURLToPath(new URL('../e2e/desktop/performance-report.mjs', import.meta.url)), directory],
+      { encoding: 'utf8', env: { ...process.env, GITHUB_STEP_SUMMARY: join(root, 'summary.md') } }
+    )
+    assert.equal(result.status, 1)
+    assert.equal(result.stderr, '')
+    assert.match(
+      readFileSync(join(directory, 'performance-report.md'), 'utf8'),
+      /No checkpoint evidence was produced/
+    )
+    assert.match(readFileSync(join(root, 'summary.md'), 'utf8'), /not a performance pass/)
+  } finally {
+    rmSync(root, { recursive: true, force: true })
+  }
+})
+
+test('missing directories contain no evidence while invalid result paths remain errors', () => {
+  const root = mkdtempSync(join(tmpdir(), 'desktop-performance-path-'))
+  try {
+    assert.deepEqual(readPerformanceReports(join(root, 'absent')), [])
+    const invalid = join(root, 'file')
+    writeFileSync(invalid, 'not a directory')
+    assert.throws(() => readPerformanceReports(invalid), { code: 'ENOTDIR' })
+  } finally {
+    rmSync(root, { recursive: true, force: true })
+  }
+})
 
 function snapshot() {
   return {
