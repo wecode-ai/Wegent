@@ -51,7 +51,16 @@ import { issueExecutionApprovalCreator } from './issueExecutionApproval'
 import { LOCAL_USER } from '@/api/local/localSession'
 import { copyTextToClipboard } from '@/lib/clipboard'
 import { createTaskCommentPreparer } from './prepareTaskComment'
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import {
+  useCallback,
+  useContext,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+} from 'react'
+import { CloudConnectionContext } from '@/features/cloud-connection/CloudConnectionContext'
 import type {
   ProjectChatClient,
   ProjectChatMention,
@@ -266,6 +275,7 @@ export function TaskActivityView({
   onStartHumanTaskFromReply,
 }: TaskActivityViewProps) {
   const { t, i18n } = useTranslation('common')
+  const cloud = useContext(CloudConnectionContext)
   const activityTranslate = createCollaborationTranslator(
     i18n.language.startsWith('zh') ? 'zh-CN' : 'en'
   )
@@ -287,6 +297,7 @@ export function TaskActivityView({
   const commentDraftScope = JSON.stringify([
     'issue-comment',
     workspaceTabId,
+    cloud?.apiBaseUrl ?? '',
     state.user?.id ?? currentUserId ?? LOCAL_USER.id,
     projectLocation,
     project.id,
