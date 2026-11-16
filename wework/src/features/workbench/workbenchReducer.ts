@@ -695,7 +695,7 @@ function removeOptimisticRuntimeTask(
 function findRuntimeTaskAddressByTaskId(
   runtimeWork: RuntimeWorkListResponse | null | undefined,
   taskId: string,
-  deviceId?: string
+  deviceId: string
 ): RuntimeTaskAddress | null {
   if (!runtimeWork) return null
 
@@ -706,7 +706,7 @@ function findRuntimeTaskAddressByTaskId(
   ]
 
   for (const workspace of workspaces) {
-    if (deviceId && workspace.deviceId !== deviceId) continue
+    if (workspace.deviceId !== deviceId) continue
     const task = workspace.tasks.find(task => task.taskId === taskId)
     if (!task) continue
 
@@ -719,9 +719,6 @@ function findRuntimeTaskAddressByTaskId(
       ...(task.threadId ? { threadId: task.threadId } : {}),
       ...(task.runtimeHandle ? { runtimeHandle: task.runtimeHandle } : {}),
     }
-    if (match && match.deviceId !== address.deviceId) {
-      return null
-    }
     match = address
   }
 
@@ -730,7 +727,6 @@ function findRuntimeTaskAddressByTaskId(
 
 function reconcileCurrentRuntimeTaskAddress(
   currentRuntimeTask: RuntimeTaskAddress | null,
-  devices: DeviceInfo[],
   runtimeWork: RuntimeWorkListResponse | null | undefined
 ): RuntimeTaskAddress | null {
   if (!currentRuntimeTask) return null
@@ -756,12 +752,8 @@ function reconcileCurrentRuntimeTaskAddress(
       ...(runtimeHandle ? { runtimeHandle } : {}),
     }
   }
-  if (devices.some(device => device.device_id === currentRuntimeTask.deviceId)) {
-    return currentRuntimeTask
-  }
-  return (
-    findRuntimeTaskAddressByTaskId(runtimeWork, currentRuntimeTask.taskId) ?? currentRuntimeTask
-  )
+  // Inventory cannot transfer ownership; accepted addresses are reconciled explicitly.
+  return currentRuntimeTask
 }
 
 function resolveCurrentProjectAfterRefresh(
@@ -1074,7 +1066,6 @@ function reduceWorkbenchState(state: WorkbenchState, action: WorkbenchAction): W
       const runtimeWork = action.runtimeWork === undefined ? state.runtimeWork : action.runtimeWork
       const currentRuntimeTask = reconcileCurrentRuntimeTaskAddress(
         state.currentRuntimeTask,
-        devices,
         runtimeWork
       )
       const currentProject =
@@ -1115,7 +1106,6 @@ function reduceWorkbenchState(state: WorkbenchState, action: WorkbenchAction): W
       const runtimeWork = mergedRuntimeWork
       const currentRuntimeTask = reconcileCurrentRuntimeTaskAddress(
         state.currentRuntimeTask,
-        devices,
         runtimeWork
       )
       const refreshedState = {
@@ -1159,7 +1149,6 @@ function reduceWorkbenchState(state: WorkbenchState, action: WorkbenchAction): W
         devices,
         currentRuntimeTask: reconcileCurrentRuntimeTaskAddress(
           state.currentRuntimeTask,
-          devices,
           state.runtimeWork
         ),
         standaloneDeviceId:
@@ -1180,7 +1169,6 @@ function reduceWorkbenchState(state: WorkbenchState, action: WorkbenchAction): W
       const runtimeWork = mergedRuntimeWork
       const currentRuntimeTask = reconcileCurrentRuntimeTaskAddress(
         state.currentRuntimeTask,
-        state.devices,
         runtimeWork
       )
       debugRuntimeSidebarState('reducer-runtime-work-refreshed', {

@@ -64,14 +64,27 @@ describe('project task restoration', () => {
     }
   )
 
-  test('recovers ownership after startup reconciles an obsolete local device identity', () => {
-    const hydrated = workbenchReducer(
+  test('recovers ownership after explicitly reconciling an obsolete local device identity', () => {
+    const previousAddress = { ...address, deviceId: 'previous-local-device' }
+    const pending = workbenchReducer(
       {
         ...initialWorkbenchState,
-        currentRuntimeTask: { ...address, deviceId: 'previous-local-device' },
+        currentRuntimeTask: previousAddress,
       },
       { type: 'runtime_work_refreshed', runtimeWork }
     )
+    expect(pending.currentRuntimeTask).toEqual(previousAddress)
+    expect(pending.currentProject).toBeNull()
+
+    const reconciled = workbenchReducer(pending, {
+      type: 'runtime_task_address_reconciled',
+      previousAddress,
+      address,
+    })
+    const hydrated = workbenchReducer(reconciled, {
+      type: 'runtime_work_refreshed',
+      runtimeWork,
+    })
 
     expect(hydrated.currentRuntimeTask?.deviceId).toBe(address.deviceId)
     expect(hydrated.currentProject?.name).toBe('Repo')
