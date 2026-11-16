@@ -2,7 +2,7 @@
 set -euo pipefail
 
 repository="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-stage="$(mktemp -d "${RUNNER_TEMP:-${TMPDIR:-/tmp}}/native-goal-archive.XXXXXX")"
+stage="$(mktemp -d "${RUNNER_TEMP:-${TMPDIR:-/tmp}}/native-event-goal.XXXXXX")"
 trap 'rm -rf "$stage"' EXIT
 
 # Reuse the managed binary downloader and its checked-in integrity lock.
@@ -35,7 +35,7 @@ console.log(binaries[0])
 NODE
 )"
 cd "$repository/executor"
-WEWORK_GOAL_TEST_CODEX_BINARY="$native_goal_binary" cargo test -p wegent-executor --all-features --lib native_goal_archive_protocol -- --ignored --nocapture
+WEWORK_GOAL_TEST_CODEX_BINARY="$native_goal_binary" cargo test -p wegent-executor --all-features --lib native_event_goal -- --ignored --nocapture
 
 # The persistent device image currently pins its own CLI version. Verify that
 # delivered version too, until both delivery channels use the same pin.
@@ -52,5 +52,5 @@ if [ "$device_codex_version" != "$managed_codex_version" ]; then
     npm install --prefix "$stage/device" --no-save --package-lock=false --ignore-scripts "@openai/codex@$device_codex_version"
     device_native_binary="$(rg --files --hidden --no-ignore "$stage/device/node_modules" | rg '/bin/codex(\.exe)?$')"
     test -f "$device_native_binary"
-    WEWORK_GOAL_TEST_CODEX_BINARY="$device_native_binary" cargo test -p wegent-executor --all-features --lib native_goal_archive_protocol -- --ignored --nocapture
+    WEWORK_GOAL_TEST_CODEX_BINARY="$device_native_binary" cargo test -p wegent-executor --all-features --lib native_event_goal -- --ignored --nocapture
 fi

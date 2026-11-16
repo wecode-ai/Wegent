@@ -4,7 +4,7 @@ assert_case "docs only" "$all_false" "docs/zh/index.md"
 
 assert_case "Native Goal archive harness changes run Executor contracts" \
   "${all_false/executor=false/executor=true}" \
-  ".github/scripts/verify-native-goal-archive.sh"
+  ".github/scripts/verify-native-event-goal.sh"
 
 electron_cache_expected="${all_false/wework=false/wework=true}"
 for path in .github/scripts/prime-ci-electron-installer-cache.mjs \

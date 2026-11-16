@@ -12,7 +12,6 @@ use wegent_workspace::cargo_cache;
 mod claude_code;
 use wegent_claude_harness::claude_options;
 mod codex;
-pub(crate) mod codex_goal_state;
 #[cfg(test)]
 pub(crate) use codex::turn_context_for_test;
 pub(crate) use codex::{

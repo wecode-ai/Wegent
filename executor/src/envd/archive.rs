@@ -35,7 +35,6 @@ pub struct RuntimeArchive {
     pub bytes: Vec<u8>,
     pub session_file_included: bool,
     pub git_included: bool,
-    pub receipt: wegent_protocol::session_archive::SessionArchiveReceipt,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -43,13 +42,10 @@ pub struct RestoreResult {
     pub success: bool,
     pub session_restored: bool,
     pub git_restored: bool,
-    pub restored_sessions: Vec<wegent_protocol::session_archive::ArchivedSession>,
 }
 
 #[derive(Debug, Error)]
 pub enum ArchiveError {
-    #[error("archive integrity verification failed")]
-    IntegrityMismatch,
     #[error("workspace not found: {0}")]
     MissingWorkspace(PathBuf),
     #[error("no archive roots found: {workspace_path}, {home_path}")]
@@ -135,20 +131,12 @@ pub fn create_runtime_archive_with_roots(
         roots.legacy_executor.clone(),
     ];
     archive_stage(&options.task_id, "pack_sessions", || {
-        for (member, source) in &sessions.files {
+        for (member, source) in &sessions {
             builder.append_path_with_name(source, member)?;
             member_count += 1;
             if member.starts_with("executor-state") {
                 contents.session_file_included = true;
             }
-        }
-        for (member, bytes) in &sessions.goals {
-            let mut header = tar::Header::new_gnu();
-            header.set_size(bytes.len() as u64);
-            header.set_mode(0o600);
-            header.set_cksum();
-            builder.append_data(&mut header, member, bytes.as_slice())?;
-            member_count += 1;
         }
         Ok(())
     })?;
@@ -211,10 +199,7 @@ pub fn create_runtime_archive_with_roots(
         &[
             ("task_id", options.task_id.clone()),
             ("entries", member_count.to_string()),
-            (
-                "session_entries",
-                (sessions.files.len() + sessions.goals.len()).to_string(),
-            ),
+            ("session_entries", sessions.len().to_string()),
             ("compressed_bytes", bytes.len().to_string()),
         ],
     );
@@ -225,18 +210,10 @@ pub fn create_runtime_archive_with_roots(
         });
     }
 
-    use sha2::{Digest, Sha256};
-    let receipt = wegent_protocol::session_archive::SessionArchiveReceipt {
-        version: 1,
-        task_id: options.task_id,
-        sha256: format!("{:x}", Sha256::digest(&bytes)),
-        sessions: sessions.bindings,
-    };
     Ok(RuntimeArchive {
         bytes,
         session_file_included: contents.session_file_included,
         git_included: contents.git_included,
-        receipt,
     })
 }
 
@@ -265,7 +242,6 @@ pub fn restore_runtime_archive_with_roots(
     home_path: &Path,
     roots: &SessionArchiveRoots,
 ) -> Result<RestoreResult, ArchiveError> {
-    let _session_leases = roots.lock_task_homes(task_id)?;
     fs::create_dir_all(workspace_path)?;
     fs::create_dir_all(home_path)?;
 
@@ -274,7 +250,6 @@ pub fn restore_runtime_archive_with_roots(
     let mut session_restored = false;
     let mut git_restored = false;
     let mut repository = None;
-    let mut goals = Vec::new();
 
     for (index, entry) in archive.entries()?.enumerate() {
         let mut entry = entry?;
@@ -368,26 +343,6 @@ pub fn restore_runtime_archive_with_roots(
         {
             return Err(std::io::Error::other("Refusing to restore over a symlink").into());
         }
-        if super::archive_sessions::is_goal_snapshot_member(&path) {
-            let mut bytes = Vec::new();
-            entry.read_to_end(&mut bytes)?;
-            let snapshot = crate::agents::codex_goal_state::Snapshot::decode(&bytes)?;
-            if destination.path.file_stem().and_then(|name| name.to_str())
-                != Some(snapshot.thread_id.as_str())
-            {
-                return Err(
-                    std::io::Error::other("Goal archive member identity does not match").into(),
-                );
-            }
-            let home = destination
-                .path
-                .parent()
-                .and_then(Path::parent)
-                .ok_or_else(|| std::io::Error::other("Goal archive home is missing"))?
-                .to_path_buf();
-            goals.push((home, snapshot));
-            continue;
-        }
         entry.unpack(&destination.path)?;
         if session_member {
             if is_valid_session_marker_file(&destination.path) {
@@ -398,20 +353,8 @@ pub fn restore_runtime_archive_with_roots(
         }
     }
 
-    if session_restored || !goals.is_empty() {
-        let restored = roots.collect(task_id)?;
-        for (home, snapshot) in goals {
-            if !restored
-                .codex_bindings
-                .contains(&(home.clone(), snapshot.thread_id.clone()))
-            {
-                return Err(std::io::Error::other(
-                    "Goal recovery has no native conversation in this task archive",
-                )
-                .into());
-            }
-            crate::agents::codex_goal_state::stage(&home, &snapshot)?;
-        }
+    if session_restored {
+        roots.collect(task_id)?;
     }
     if let Some(binding) = &repository {
         archive_repository::publish(binding, workspace_path, task_id)?;
@@ -431,16 +374,10 @@ pub fn restore_runtime_archive_with_roots(
             ],
         );
     }
-    let restored_sessions = if session_restored {
-        roots.collect(task_id)?.bindings
-    } else {
-        Vec::new()
-    };
     Ok(RestoreResult {
         success: true,
         session_restored,
         git_restored,
-        restored_sessions,
     })
 }
 

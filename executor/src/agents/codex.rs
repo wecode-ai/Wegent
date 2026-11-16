@@ -121,6 +121,8 @@ const IMAGE_MIME_TYPES: &[&str] = &[
 #[path = "codex/debug_stdout.rs"]
 mod debug_stdout;
 mod external_work;
+#[cfg(test)]
+mod native_event_tests;
 mod reply_prediction;
 mod request_recovery;
 use request_recovery::CodexTurnRequestContext;
@@ -917,14 +919,6 @@ impl CodexAppServerClient {
             state.next_id = next_id;
         }
 
-        let goal_home = state
-            .process_environment
-            .get(CODEX_HOME_ENV)
-            .or_else(|| state.process_environment.get(WEGENT_CODEX_HOME_ENV))
-            .map(PathBuf::from)
-            .unwrap_or_else(wework_codex_home);
-        super::codex_goal_state::before_request(&goal_home, method, params)
-            .map_err(|error| error.to_string())?;
         let request_id = state.next_id;
         state.next_id += 1;
         let handle = state
@@ -2902,13 +2896,6 @@ async fn run_codex_app_server_turn_with_runtime(
                 let mut thread_fields = task_fields(&request.task_id, &request.subtask_id);
                 thread_fields.push(("operation", operation.to_owned()));
                 log_executor_event("codex thread request started", &thread_fields);
-                let goal_home = launch_config
-                    .env
-                    .get(CODEX_HOME_ENV)
-                    .map(PathBuf::from)
-                    .unwrap_or_else(wework_codex_home);
-                super::codex_goal_state::before_request(&goal_home, operation, &params)
-                    .map_err(|error| error.to_string())?;
                 let response = with_rpc_timeout(
                     operation,
                     timeout_seconds,

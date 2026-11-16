@@ -519,8 +519,8 @@ jobs:
         working-directory: ./executor
         run: cargo test --all-features
 
-      - name: Verify Goal archives with the managed native Codex binary
-        run: bash .github/scripts/verify-native-goal-archive.sh
+      - name: Verify event Goal activation with the managed native Codex binary
+        run: bash .github/scripts/verify-native-event-goal.sh
 
       - name: Run executor Rust clippy
         working-directory: ./executor

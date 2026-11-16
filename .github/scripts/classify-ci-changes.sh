@@ -27,7 +27,7 @@ classify_path() {
   local path="$1"
 
   case "$path" in
-    .github/scripts/verify-native-goal-archive.sh)
+    .github/scripts/verify-native-event-goal.sh)
       changed[executor]=true
       return
       ;;

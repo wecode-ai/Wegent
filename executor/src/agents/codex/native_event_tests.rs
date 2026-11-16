@@ -49,13 +49,13 @@ async fn respond(
 
 #[tokio::test]
 #[ignore = "requires the repository-pinned Codex binary; invoked by the Executor CI job"]
-async fn native_goal_archive_protocol_injected_event_accounts_from_first_request() {
+async fn native_event_goal_injected_event_accounts_from_first_request() {
     run_native_event_case(false).await;
 }
 
 #[tokio::test]
 #[ignore = "requires the repository-pinned Codex binary; invoked by the Executor CI job"]
-async fn native_goal_archive_protocol_event_recovers_injection_without_repeating_work() {
+async fn native_event_goal_event_recovers_injection_without_repeating_work() {
     run_native_event_case(true).await;
 }
 

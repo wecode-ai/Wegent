@@ -38,8 +38,10 @@ use crate::{
     agents::runtime_capabilities,
     agents::{AgentCommandPlanner, AgentProcessEngine},
     callback::CallbackSink,
-    envd::archive::{create_runtime_archive_with_roots, ArchiveError, ArchiveMode, ArchiveOptions},
-    envd::archive_integrity::{restore_checked, RestorePaths},
+    envd::archive::{
+        create_runtime_archive_with_roots, restore_runtime_archive_with_roots, ArchiveError,
+        ArchiveMode, ArchiveOptions,
+    },
     envd::archive_sessions::SessionArchiveRoots,
     heartbeat::{RuntimeHeartbeatActivationError, RuntimeHeartbeatController},
     local::session::terminal_metrics_snapshot,
@@ -956,7 +958,6 @@ async fn archive_workspace(
         size_bytes,
         session_file_included,
         git_included,
-        receipt: archive.receipt,
     }))
 }
 
@@ -1014,31 +1015,28 @@ async fn restore_workspace(
         .await
         .map_err(|error| HttpError {
             status: StatusCode::BAD_GATEWAY,
-            detail: format!("failed to download archive: {}", error.without_url()),
+            detail: format!("failed to download archive: {error}"),
         })?
         .error_for_status()
         .map_err(|error| HttpError {
             status: StatusCode::BAD_GATEWAY,
-            detail: format!("archive download failed: {}", error.without_url()),
+            detail: format!("archive download failed: {error}"),
         })?
         .bytes()
         .await
         .map_err(|error| HttpError {
             status: StatusCode::BAD_GATEWAY,
-            detail: format!("failed to read archive response: {}", error.without_url()),
+            detail: format!("failed to read archive response: {error}"),
         })?;
 
-    let (result, verified_sha256) = tokio::task::spawn_blocking(move || {
-        restore_checked(
+    let result = tokio::task::spawn_blocking(move || {
+        restore_runtime_archive_with_roots(
             &bytes,
-            request.expected_sha256.as_deref(),
-            RestorePaths {
-                mode,
-                task: &request.task_id.to_string(),
-                workspace: &task_workspace_dir(&request.task_id.to_string()),
-                home: &runtime_home_path(mode),
-                roots: &roots,
-            },
+            mode,
+            &request.task_id.to_string(),
+            &task_workspace_dir(&request.task_id.to_string()),
+            &runtime_home_path(mode),
+            &roots,
         )
     })
     .await
@@ -1054,21 +1052,10 @@ async fn restore_workspace(
         ],
     );
 
-    // Newer local Goal ownership can differ from the archived state.
-    let restored_receipt = verified_sha256.as_ref().map(|digest| {
-        wegent_protocol::session_archive::SessionArchiveReceipt {
-            version: 1,
-            task_id: request.task_id.to_string(),
-            sha256: digest.clone(),
-            sessions: result.restored_sessions,
-        }
-    });
     Ok(Json(RestoreResponse {
         success: result.success,
         session_restored: result.session_restored,
         git_restored: result.git_restored,
-        verified_sha256,
-        restored_receipt,
     }))
 }
 
@@ -1244,7 +1231,6 @@ struct ArchiveResponse {
     size_bytes: u64,
     session_file_included: bool,
     git_included: bool,
-    receipt: wegent_protocol::session_archive::SessionArchiveReceipt,
 }
 
 #[derive(Debug, Deserialize)]
@@ -1253,7 +1239,6 @@ struct RestoreRequest {
     download_url: String,
     #[serde(default = "default_runtime_type")]
     runtime_type: String,
-    expected_sha256: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -1261,10 +1246,6 @@ struct RestoreResponse {
     success: bool,
     session_restored: bool,
     git_restored: bool,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    verified_sha256: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    restored_receipt: Option<wegent_protocol::session_archive::SessionArchiveReceipt>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -1772,7 +1753,6 @@ fn archive_error_to_http(error: ArchiveError) -> HttpError {
             StatusCode::NOT_FOUND
         }
         ArchiveError::TooLarge { .. } => StatusCode::PAYLOAD_TOO_LARGE,
-        ArchiveError::IntegrityMismatch => StatusCode::CONFLICT,
         ArchiveError::Io(_) => StatusCode::INTERNAL_SERVER_ERROR,
     };
     HttpError {
