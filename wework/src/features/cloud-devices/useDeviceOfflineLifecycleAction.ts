@@ -16,7 +16,7 @@ export type DeviceLifecyclePhase =
 
 interface UseDeviceOfflineLifecycleActionOptions {
   status: DeviceInfo['status']
-  recoveryReady?: boolean
+  runtimeInstanceId?: string | null
   requestAction: () => Promise<unknown>
   refreshDevices: () => void | Promise<void>
   pollIntervalMs?: number
@@ -30,7 +30,7 @@ function isConnectedStatus(status: DeviceInfo['status']): boolean {
 
 export function useDeviceOfflineLifecycleAction({
   status,
-  recoveryReady = true,
+  runtimeInstanceId,
   requestAction,
   refreshDevices,
   pollIntervalMs = DEVICE_LIFECYCLE_POLL_INTERVAL_MS,
@@ -40,20 +40,30 @@ export function useDeviceOfflineLifecycleAction({
   const [phase, setPhase] = useState<DeviceLifecyclePhase>('idle')
   const [error, setError] = useState<string | null>(null)
   const deadlineRef = useRef(0)
+  const startingInstanceRef = useRef<string | null | undefined>(null)
+  const pendingRef = useRef(false)
+  const timedOutPhaseRef = useRef<'waiting-offline' | 'waiting-online'>('waiting-offline')
 
   useEffect(() => {
+    const instanceChanged = Boolean(
+      startingInstanceRef.current &&
+      runtimeInstanceId &&
+      startingInstanceRef.current !== runtimeInstanceId
+    )
     const nextPhase =
-      phase === 'waiting-offline' && status === 'offline'
-        ? 'waiting-online'
-        : phase === 'waiting-online' && isConnectedStatus(status) && recoveryReady
-          ? 'recovered'
+      (phase === 'waiting-online' || (phase === 'waiting-offline' && instanceChanged)) &&
+      isConnectedStatus(status)
+        ? 'recovered'
+        : phase === 'waiting-offline' && status === 'offline'
+          ? 'waiting-online'
           : null
     if (!nextPhase) return
     const timer = window.setTimeout(() => {
+      if (nextPhase === 'recovered') pendingRef.current = false
       setPhase(currentPhase => (currentPhase === phase ? nextPhase : currentPhase))
     }, 0)
     return () => window.clearTimeout(timer)
-  }, [phase, recoveryReady, status])
+  }, [phase, runtimeInstanceId, status])
 
   useEffect(() => {
     if (phase !== 'waiting-offline' && phase !== 'waiting-online') return
@@ -62,6 +72,8 @@ export function useDeviceOfflineLifecycleAction({
     let timer = 0
     const poll = async () => {
       if (Date.now() >= deadlineRef.current) {
+        pendingRef.current = false
+        timedOutPhaseRef.current = phase
         setPhase('timeout')
         return
       }
@@ -89,6 +101,9 @@ export function useDeviceOfflineLifecycleAction({
   }, [phase, recoveredNoticeMs])
 
   const run = useCallback(async (): Promise<boolean> => {
+    if (pendingRef.current) return false
+    pendingRef.current = true
+    startingInstanceRef.current = runtimeInstanceId
     setPhase('submitting')
     setError(null)
     try {
@@ -100,31 +115,26 @@ export function useDeviceOfflineLifecycleAction({
       })
       return true
     } catch (actionError) {
+      pendingRef.current = false
       console.error('Device lifecycle action failed:', actionError)
       setError(actionError instanceof Error ? actionError.message : String(actionError))
       setPhase('error')
       return false
     }
-  }, [refreshDevices, requestAction, status, timeoutMs])
+  }, [refreshDevices, requestAction, runtimeInstanceId, status, timeoutMs])
 
   const refreshAfterTimeout = useCallback(async () => {
+    pendingRef.current = true
     deadlineRef.current = Date.now() + timeoutMs
-    setPhase('waiting-online')
+    setPhase(timedOutPhaseRef.current)
     await refreshDevices()
   }, [refreshDevices, timeoutMs])
-
-  const reset = useCallback(() => {
-    deadlineRef.current = 0
-    setError(null)
-    setPhase('idle')
-  }, [])
 
   return {
     error,
     isPending: phase === 'submitting' || phase === 'waiting-offline' || phase === 'waiting-online',
     phase,
     refreshAfterTimeout,
-    reset,
     run,
   }
 }

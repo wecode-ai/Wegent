@@ -394,7 +394,7 @@ The more menu contains lower-frequency management actions:
 
 ### System Administration Device Monitor
 
-Administrators can open **System Administration** -> **Device Monitor** to view devices across all users. The page supports filtering by status, device type, shell type, version, and keyword, and it includes single-device actions such as upgrade and cloud-device restart.
+Administrators can open **System Administration** -> **Device Monitor** to view devices across all users. The page supports filtering by status, device type, shell type, version, and keyword, and offers cloud-device restart and upgrades for other supported device types.
 
 The page header provides two bulk actions:
 

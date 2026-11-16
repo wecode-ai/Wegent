@@ -24,7 +24,10 @@ from app.services.device.admin_device_batch import (
     AdminDeviceBatchTarget,
     admin_device_batch_manager,
 )
-from app.services.device.admin_device_restart import restart_admin_device
+from app.services.device.cloud_device_restart import (
+    restart_cloud_device,
+    restart_cloud_device_for_upgrade,
+)
 from app.services.device.identity import device_connection_route_id
 from app.services.device.local_provider import (
     local_device_provider,
@@ -45,11 +48,11 @@ VersionFilterOperator = Literal["gt", "gte", "eq", "lt", "lte"]
 
 
 class AdminDeviceUpgradeRequest(BaseModel):
-    """Request schema for admin device upgrade."""
+    """Request schema for admin device upgrade or cloud restart."""
 
     user_id: int = Field(..., description="Device owner user ID")
     force_stop_tasks: bool = Field(
-        False, description="Force stop running tasks before upgrade"
+        False, description="Allow the operation to interrupt running tasks"
     )
 
 
@@ -601,30 +604,8 @@ async def get_device_stats(
 # ==================== Device Action Endpoints ====================
 
 
-async def _get_device_for_action(
-    db: Session, device_id: str, user_id: int
-) -> tuple[Kind, Dict[str, Any]]:
-    """Get device and validate it exists and is online.
-
-    Args:
-        db: Database session
-        device_id: Device unique identifier
-        user_id: Device owner user ID
-
-    Returns:
-        Tuple of (device Kind, online_info dict)
-
-    Raises:
-        HTTPException: If device not found, offline, or socket_id missing
-    """
-    # Get device from database
-    device_kind = device_service.get_device_by_device_id(db, user_id, device_id)
-    if not device_kind:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Device not found: device_id={device_id}, user_id={user_id}",
-        )
-
+async def _get_online_upgrade_device(user_id: int, device_id: str) -> Dict[str, Any]:
+    """Load the WebSocket address and task state for a device upgrade."""
     # Get online info from Redis
     online_info = await device_service.get_device_online_info(user_id, device_id)
     if not online_info:
@@ -639,7 +620,7 @@ async def _get_device_for_action(
             detail="Device socket information not found",
         )
 
-    return device_kind, online_info
+    return online_info
 
 
 def _get_device_id(kind: Kind) -> str:
@@ -704,7 +685,7 @@ async def upgrade_device(
     db: Session = Depends(get_db),
     current_user: User = Depends(security.get_admin_user),
 ):
-    """Trigger device upgrade for any user's device (admin only).
+    """Upgrade a user's device or restart it if it is a cloud device (admin only).
 
     Args:
         device_id: Device unique identifier
@@ -717,8 +698,22 @@ async def upgrade_device(
     """
     user_id = request.user_id
 
-    # Validate device exists and is online
-    device_kind, online_info = await _get_device_for_action(db, device_id, user_id)
+    # Get device from database
+    device_kind = device_service.get_device_by_device_id(db, user_id, device_id)
+    if not device_kind:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Device not found: device_id={device_id}, user_id={user_id}",
+        )
+
+    spec = (device_kind.json or {}).get("spec", {})
+    if spec.get("deviceType") == DeviceType.CLOUD.value:
+        result = await restart_cloud_device_for_upgrade(
+            db, device_kind, request.force_stop_tasks
+        )
+        return AdminDeviceActionResponse(success=result.success, message=result.message)
+
+    online_info = await _get_online_upgrade_device(user_id, device_id)
 
     # Check for running tasks
     running_task_ids = online_info.get("running_task_ids", [])
@@ -804,7 +799,7 @@ async def restart_device(
     db: Session = Depends(get_db),
     current_user: User = Depends(security.get_admin_user),
 ):
-    """Restart a cloud device (admin only). Currently not implemented.
+    """Restart a cloud device (admin only).
 
     Args:
         device_id: Device unique identifier
@@ -813,7 +808,7 @@ async def restart_device(
         current_user: Must be admin
 
     Returns:
-        AdminDeviceActionResponse indicating the feature is not implemented
+        AdminDeviceActionResponse indicating whether the request was accepted
     """
     user_id = request.user_id
 
@@ -835,7 +830,7 @@ async def restart_device(
         )
 
     try:
-        result = await restart_admin_device(db, user_id, device_id)
+        result = await restart_cloud_device(db, user_id, device_id)
     except HTTPException:
         raise
     except Exception as e:
