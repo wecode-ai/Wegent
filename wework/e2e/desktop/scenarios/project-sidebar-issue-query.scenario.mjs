@@ -4,6 +4,7 @@ import { readMcpToolOutput } from '../modules/mcp-tool-results.mjs'
 import { modelRequestTexts } from '../modules/model-tool-output.mjs'
 import { createLocalCollaborationProject } from '../modules/workspace-flows.mjs'
 import { selectE2EModel } from '../modules/shared.mjs'
+import { waitForRuntimePaneReadyToSend } from '../modules/streaming-text-fixture.mjs'
 import {
   assistantMessage,
   createSse,
@@ -152,6 +153,7 @@ export function createDesktopScenario({ uiTimeoutMs, modelResponseTimeoutMs }) {
           text: query.reply,
           timeoutMs: modelResponseTimeoutMs,
         })
+        await waitForRuntimePaneReadyToSend(control, uiTimeoutMs)
         assert.equal(completed, true, `${query.name} must finish its real tool call`)
       }
       assert.deepEqual(observed, ['issues', 'empty', 'personal'])
