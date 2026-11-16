@@ -993,6 +993,19 @@ export function TodoEditor(props: TodoEditorProps) {
   );
   const [wegentTeams, setWegentTeams] = useState<SharedEditorTeam[]>([]);
   const [addingCollaborator, setAddingCollaborator] = useState(false);
+  const collaboratorAvailabilityId = useId();
+  const collaboratorEditingSupported =
+    editorPort.collaborators.editingSupported !== false;
+  const canEditCollaborators = editable && collaboratorEditingSupported;
+  const collaboratorAvailabilityNote = !collaboratorEditingSupported ? (
+    <span
+      id={collaboratorAvailabilityId}
+      data-testid="issue-collaborators-unavailable"
+      className="text-xs text-text-secondary"
+    >
+      {t("todo.collaborators_unavailable", "此项目暂不支持编辑参与者")}
+    </span>
+  ) : null;
   const [selectedCollaboratorId, setSelectedCollaboratorId] = useState<
     number | null
   >(null);
@@ -1869,7 +1882,7 @@ export function TodoEditor(props: TodoEditorProps) {
 
   async function addCollaborator() {
     if (
-      !editable ||
+      !canEditCollaborators ||
       !editItemId ||
       selectedCollaboratorId === null ||
       collaboratorBusy
@@ -1897,7 +1910,7 @@ export function TodoEditor(props: TodoEditorProps) {
   }
 
   async function removeCollaborator(collaborator: CloudLoopItemCollaborator) {
-    if (!editable || !editItemId || collaboratorBusy) return;
+    if (!canEditCollaborators || !editItemId || collaboratorBusy) return;
     setCollaboratorBusy(true);
     setCollaboratorError(null);
     try {
@@ -2682,7 +2695,7 @@ export function TodoEditor(props: TodoEditorProps) {
               aria-label={t("todo.remove_collaborator", "移除参与者 {{name}}", {
                 name: collaborator.user_name,
               })}
-              disabled={!editable || collaboratorBusy}
+              disabled={!canEditCollaborators || collaboratorBusy}
               onClick={() => void removeCollaborator(collaborator)}
               className={cn(index > 0 && "-ml-2")}
             >
@@ -2702,19 +2715,26 @@ export function TodoEditor(props: TodoEditorProps) {
             type="button"
             data-testid="cloud-todo-add-collaborator"
             aria-label={t("todo.add_collaborator", "添加参与者")}
-            disabled={!editable}
+            aria-describedby={
+              !collaboratorEditingSupported
+                ? collaboratorAvailabilityId
+                : undefined
+            }
+            disabled={!canEditCollaborators}
             onClick={() => {
               setAddingCollaborator((current) => !current);
               setCollaboratorError(null);
             }}
             className={cn(
-              "flex h-6 w-6 shrink-0 items-center justify-center rounded-full border border-border bg-background text-text-muted transition hover:bg-muted hover:text-text-primary",
+              "flex h-6 w-6 shrink-0 items-center justify-center rounded-full border border-border bg-background text-text-muted transition hover:bg-muted hover:text-text-primary disabled:cursor-not-allowed disabled:opacity-40",
               collaboratorPreview.length > 0 && "-ml-2",
             )}
           >
             <Plus className="h-3.5 w-3.5" />
           </button>
-          {collaborators.length === 0 &&
+          {collaboratorAvailabilityNote}
+          {collaboratorEditingSupported &&
+          collaborators.length === 0 &&
           !item?.resource_participants?.length ? (
             <span className="ml-2 text-text-muted">
               {t("todo.none", "暂无")}
@@ -2723,7 +2743,7 @@ export function TodoEditor(props: TodoEditorProps) {
         </span>
         {resourceParticipants}
       </RailProp>
-      {editable && addingCollaborator ? (
+      {canEditCollaborators && addingCollaborator ? (
         <IssueDetailCollaboratorPicker
           {...collaboratorPickerProps}
           compact
@@ -3956,18 +3976,25 @@ export function TodoEditor(props: TodoEditorProps) {
                           <button
                             type="button"
                             data-testid="cloud-todo-add-collaborator"
+                            disabled={!collaboratorEditingSupported}
+                            aria-describedby={
+                              !collaboratorEditingSupported
+                                ? collaboratorAvailabilityId
+                                : undefined
+                            }
                             onClick={() => {
                               setAddingCollaborator((current) => !current);
                               setCollaboratorError(null);
                             }}
-                            className="ml-auto flex h-7 items-center gap-1 rounded-md px-2 text-xs text-text-muted transition hover:text-text-primary"
+                            className="ml-auto flex h-7 items-center gap-1 rounded-md px-2 text-xs text-text-muted transition hover:text-text-primary disabled:cursor-not-allowed disabled:opacity-40"
                           >
                             <Plus className="h-3 w-3" />
                             {t("todo.add_collaborator", "添加参与者")}
                           </button>
                         ) : null}
                       </div>
-                      {addingCollaborator && (
+                      {collaboratorAvailabilityNote}
+                      {canEditCollaborators && addingCollaborator && (
                         <IssueDetailCollaboratorPicker
                           {...collaboratorPickerProps}
                           className="mt-2"
@@ -4003,7 +4030,7 @@ export function TodoEditor(props: TodoEditorProps) {
                                   {t("todo.auto_joined", "自动加入")}
                                 </span>
                               )}
-                              {editable ? (
+                              {canEditCollaborators ? (
                                 <button
                                   type="button"
                                   aria-label={t(

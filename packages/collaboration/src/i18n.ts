@@ -636,6 +636,7 @@ const sharedMessages: Record<
     "todo.add_collaborator": "添加参与者",
     "todo.none": "暂无",
     "todo.select_project_member": "选择项目空间成员",
+    "todo.collaborators_unavailable": "此项目暂不支持编辑参与者",
     "todo.new_issue": "新建任务",
     "todo.issue_markdown_hint": "支持 Markdown，可拖拽文件到编辑器添加附件",
     "todo.created_at_short": "创建于 {{date}}",
@@ -1237,6 +1238,8 @@ const sharedMessages: Record<
     "todo.add_collaborator": "Add participant",
     "todo.none": "None",
     "todo.select_project_member": "Select a project member",
+    "todo.collaborators_unavailable":
+      "Editing participants is not available for this project yet",
     "todo.new_issue": "New issue",
     "todo.issue_markdown_hint":
       "Markdown supported. Drop files into the editor to attach them.",

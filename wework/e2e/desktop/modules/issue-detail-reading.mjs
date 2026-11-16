@@ -257,29 +257,20 @@ async function verifyNarrowProperties(control) {
   await control.command('click', more)
   const add = scope('[data-testid="cloud-todo-add-collaborator"]')
   await control.command('scrollIntoViewAsUser', add)
-  await control.command('click', add)
-  const select = scope('[data-testid="cloud-todo-collaborator-select"]')
-  const confirm = scope('[data-testid="cloud-todo-confirm-collaborator"]')
-  await control.command('waitFor', `${select}:has(option:not([value=""]))`, { visible: true })
-  await verifyTouchTargets(control, `${select}, ${confirm}`)
-  assert.equal(
-    await control.command('getAttribute', select, { value: 'aria-label' }),
-    '选择项目空间成员'
-  )
-  const member = await control.command('getAttribute', `${select} option:not([value=""])`, {
-    value: 'value',
+  await control.command('waitFor', add + ':disabled', { visible: true })
+  await verifyTouchTargets(control, add)
+  const availability = scope('[data-testid="issue-collaborators-unavailable"]')
+  await control.command('waitFor', availability, {
+    text: '此项目暂不支持编辑参与者',
+    visible: true,
   })
-  assert.notEqual(member, null, 'The fixture must offer its current member')
-  await control.command('select', select, { value: member })
-  assert.equal(await control.command('getValue', select), member)
-  await control.command('clickWhenEnabled', confirm)
-  const participant = scope(
-    '[data-testid="cloud-todo-collaborators"] > button:not([data-testid="cloud-todo-add-collaborator"])'
+  assert.equal(
+    await control.command('getAttribute', add, { value: 'aria-describedby' }),
+    await control.command('getAttribute', availability, { value: 'id' })
   )
-  await control.command('waitFor', participant, { visible: true })
-  await verifyTouchTargets(control, participant)
-  await control.command('click', participant)
-  await control.command('waitFor', participant, { visible: false })
+  await control.command('waitFor', scope('[data-testid="cloud-todo-collaborator-select"]'), {
+    visible: false,
+  })
 }
 
 async function verifyTallReplyReading(

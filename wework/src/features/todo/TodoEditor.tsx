@@ -150,6 +150,7 @@ function canCreatePersonalTask(props: TodoEditorProps): boolean {
 export function TodoEditor(props: TodoEditorProps) {
   const { t, i18n } = useTranslation('common')
   const taskOwnerUserId = props.project?.project_store === 'local' ? 0 : props.currentUserId
+  const collaboratorEditingSupported = props.project?.project_store !== 'local'
   const showPersonalTaskAction = canCreatePersonalTask(props)
   const [previewAttachment, setPreviewAttachment] = useState<{
     filename: string
@@ -209,6 +210,10 @@ export function TodoEditor(props: TodoEditorProps) {
     )
     return {
       ...detailPort,
+      collaborators: {
+        ...detailPort.collaborators,
+        editingSupported: collaboratorEditingSupported,
+      },
       taskBindings: {
         async list(...args: Parameters<typeof detailPort.taskBindings.list>) {
           const tasks = await detailPort.taskBindings.list(...args)
@@ -219,7 +224,13 @@ export function TodoEditor(props: TodoEditorProps) {
         },
       },
     }
-  }, [workspaceApi, taskOwnerUserId, props.getRuntimeTranscript, attachmentContext])
+  }, [
+    workspaceApi,
+    taskOwnerUserId,
+    props.getRuntimeTranscript,
+    attachmentContext,
+    collaboratorEditingSupported,
+  ])
   const openIssueAttachment = useCallback(
     (id: string, filename: string, contentType: string | null, sizeBytes: number) => {
       setPreviewAttachment({

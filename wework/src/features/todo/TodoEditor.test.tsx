@@ -48,7 +48,44 @@ const project = { id: '11', name: 'Wework' } as unknown as CloudProject
 
 describe('TodoEditor external item sync', () => {
   it.each([false, true])(
-    'accepts the local zero-id participant (workspace panel: %s)',
+    'explains local participant availability (workspace panel: %s)',
+    async workspacePanel => {
+      const add = vi.fn()
+      render(
+        <TodoEditor
+          mode="edit"
+          item={baseItem}
+          project={{ ...project, project_store: 'local' }}
+          allItems={[baseItem]}
+          {...(workspacePanel ? { presentation: 'workspace-panel' as const, readFirst: true } : {})}
+          onUpdated={vi.fn()}
+          onClose={vi.fn()}
+          api={{ ...(api as object), addLoopItemCollaborator: add } as never}
+        />
+      )
+      const button = screen.getByTestId('cloud-todo-add-collaborator')
+      expect(button).toBeDisabled()
+      expect(button).toHaveAccessibleDescription('此项目暂不支持编辑参与者')
+      expect(screen.getByTestId('issue-collaborators-unavailable')).toBeVisible()
+      await userEvent.click(button)
+      expect(screen.queryByTestId('cloud-todo-collaborator-select')).not.toBeInTheDocument()
+      expect(add).not.toHaveBeenCalled()
+      await act(async () => {
+        await i18n.changeLanguage('en')
+      })
+      try {
+        expect(button).toHaveAccessibleDescription(
+          'Editing participants is not available for this project yet'
+        )
+      } finally {
+        await act(async () => {
+          await i18n.changeLanguage('zh-CN')
+        })
+      }
+    }
+  )
+  it.each([false, true])(
+    'accepts a zero-id participant when editing is supported (workspace panel: %s)',
     async workspacePanel => {
       const add = vi.fn(async () => ({ id: 1, user_id: 0, user_name: 'Local owner' }))
       const memberApi = {
