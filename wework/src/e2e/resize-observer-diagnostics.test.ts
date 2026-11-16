@@ -124,3 +124,72 @@ test('retains deferred DOM commits between native deliveries without attributing
   diagnostics.stop()
   target.remove()
 })
+
+test('records observation changes inside and outside delivery while forwarding native calls', () => {
+  let deliver!: ResizeObserverCallback
+  const calls: unknown[][] = []
+  class NativeObserver {
+    constructor(callback: ResizeObserverCallback) {
+      deliver = callback
+    }
+    observe(...args: unknown[]) {
+      calls.push(['observe', this, ...args])
+    }
+    unobserve(...args: unknown[]) {
+      calls.push(['unobserve', this, ...args])
+    }
+    disconnect() {
+      calls.push(['disconnect', this])
+    }
+  }
+  const scope = { ResizeObserver: NativeObserver } as unknown as Window & typeof globalThis
+  const diagnostics = installResizeObserverDiagnostics(scope)
+  const target = document.createElement('div')
+  target.dataset.testid = 'observed-content'
+  target.textContent = 'private content'
+  const options: ResizeObserverOptions = { box: 'border-box' }
+  const observer = new scope.ResizeObserver(() => observer.observe(target, options))
+  observer.observe(target, options)
+  deliver([], observer)
+  observer.unobserve(target)
+  observer.disconnect()
+  expect(calls).toEqual([
+    ['observe', observer, target, options],
+    ['observe', observer, target, options],
+    ['unobserve', observer, target],
+    ['disconnect', observer],
+  ])
+  expect(
+    diagnostics.snapshot().observationChanges.map(({ action, duringObserverId, succeeded }) => ({
+      action,
+      duringObserverId,
+      succeeded,
+    }))
+  ).toEqual([
+    { action: 'observe', duringObserverId: null, succeeded: true },
+    { action: 'observe', duringObserverId: 1, succeeded: true },
+    { action: 'unobserve', duringObserverId: null, succeeded: true },
+    { action: 'disconnect', duringObserverId: null, succeeded: true },
+  ])
+  for (let i = 0; i < 40; i++) observer.observe(target)
+  expect(diagnostics.snapshot().observationChanges).toHaveLength(32)
+  expect(JSON.stringify(diagnostics.snapshot())).not.toContain('private content')
+  diagnostics.stop()
+})
+
+test('preserves a native observation failure even when diagnostic target reading fails', () => {
+  const failure = new TypeError('Native observe failed')
+  class NativeObserver {
+    observe() {
+      throw failure
+    }
+  }
+  const scope = { ResizeObserver: NativeObserver } as unknown as Window & typeof globalThis
+  const diagnostics = installResizeObserverDiagnostics(scope)
+  const observer = new scope.ResizeObserver(() => {})
+  expect(() => observer.observe(document.createElement('div'))).toThrow(failure)
+  expect(diagnostics.snapshot().observationChanges[0].succeeded).toBe(false)
+  expect(() => observer.observe({} as Element)).toThrow(failure)
+  expect(diagnostics.snapshot().failed).toBe(true)
+  diagnostics.stop()
+})

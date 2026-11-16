@@ -20,6 +20,21 @@ interface ResizeDelivery {
   writes: DomWrite[]
 }
 
+interface ObservationChange {
+  observerId: number
+  creationStack: string | undefined
+  action: 'observe' | 'unobserve' | 'disconnect'
+  duringObserverId: number | null
+  atMs: number
+  succeeded: boolean
+  target: { tag: string; testId: string | null } | null
+}
+
+function appendRecent<T>(entries: T[], entry: T) {
+  entries.push(entry)
+  if (entries.length > 32) entries.shift()
+}
+
 function mutationWrites(records: MutationRecord[]): DomWrite[] {
   return records.slice(0, 8).flatMap(record => {
     if (!(record.target instanceof Element)) return []
@@ -39,19 +54,20 @@ export function installResizeObserverDiagnostics(target: Window) {
   const NativeObserver = scope.ResizeObserver
   const recent: ResizeDelivery[] = []
   const betweenCallbacks: MutationBatch[] = []
+  const observationChanges: ObservationChange[] = []
+  let activeObserverId: number | null = null
   let nextId = 0
   let failed = false
   if (typeof NativeObserver !== 'function')
-    return { snapshot: () => ({ recent, betweenCallbacks, failed }), stop() {} }
+    return { snapshot: () => ({ recent, betweenCallbacks, observationChanges, failed }), stop() {} }
   const recordBetweenCallbacks = (records: MutationRecord[]) => {
     if (!records.length) return
     try {
-      betweenCallbacks.push({
+      appendRecent(betweenCallbacks, {
         atMs: performance.now(),
         writeCount: records.length,
         writes: mutationWrites(records),
       })
-      if (betweenCallbacks.length > 32) betweenCallbacks.shift()
     } catch {
       failed = true
     }
@@ -66,6 +82,9 @@ export function installResizeObserverDiagnostics(target: Window) {
     attributeFilter: ['style', 'class'],
   })
   class ObservedResizeObserver extends NativeObserver {
+    private readonly diagnosticId: number
+    private readonly diagnosticStack: string | undefined
+
     constructor(callback: ResizeObserverCallback) {
       const observerId = ++nextId
       const creationStack = new Error('ResizeObserver created').stack
@@ -87,14 +106,16 @@ export function installResizeObserverDiagnostics(target: Window) {
             writeCount: 0,
             writes: [],
           }
-          recent.push(delivery)
-          if (recent.length > 32) recent.shift()
+          appendRecent(recent, delivery)
         } catch {
           failed = true
         }
+        const previousObserverId = activeObserverId
+        activeObserverId = observerId
         try {
           callback.call(observer, entries, observer)
         } finally {
+          activeObserverId = previousObserverId
           try {
             const mutations = writes?.takeRecords() ?? []
             if (delivery) {
@@ -106,11 +127,69 @@ export function installResizeObserverDiagnostics(target: Window) {
           }
         }
       })
+      this.diagnosticId = observerId
+      this.diagnosticStack = creationStack
+    }
+
+    private recordChange(
+      action: ObservationChange['action'],
+      target: Element | null,
+      succeeded: boolean
+    ) {
+      try {
+        appendRecent(observationChanges, {
+          observerId: this.diagnosticId,
+          creationStack: this.diagnosticStack,
+          action,
+          duringObserverId: activeObserverId,
+          atMs: performance.now(),
+          succeeded,
+          target: target
+            ? {
+                tag: target.tagName,
+                testId: target.closest('[data-testid]')?.getAttribute('data-testid') ?? null,
+              }
+            : null,
+        })
+      } catch {
+        failed = true
+      }
+    }
+
+    private invokeChange(
+      action: ObservationChange['action'],
+      target: Element | null,
+      invoke: () => void
+    ) {
+      let succeeded = false
+      try {
+        invoke()
+        succeeded = true
+      } finally {
+        this.recordChange(action, target, succeeded)
+      }
+    }
+
+    override observe(target: Element, options?: ResizeObserverOptions) {
+      this.invokeChange('observe', target, () => super.observe(target, options))
+    }
+
+    override unobserve(target: Element) {
+      this.invokeChange('unobserve', target, () => super.unobserve(target))
+    }
+
+    override disconnect() {
+      this.invokeChange('disconnect', null, () => super.disconnect())
     }
   }
   scope.ResizeObserver = ObservedResizeObserver
   return {
-    snapshot: () => ({ recent: [...recent], betweenCallbacks: [...betweenCallbacks], failed }),
+    snapshot: () => ({
+      recent: [...recent],
+      betweenCallbacks: [...betweenCallbacks],
+      observationChanges: [...observationChanges],
+      failed,
+    }),
     stop: () => {
       writes?.disconnect()
       if (scope.ResizeObserver === ObservedResizeObserver) scope.ResizeObserver = NativeObserver
