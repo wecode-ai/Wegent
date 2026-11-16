@@ -19,6 +19,7 @@ import {
   CloudConnectionContext,
   DISCONNECTED_STATE,
 } from '@/features/cloud-connection/CloudConnectionContext'
+import { WorkbenchCloudDeviceRestarts } from '@/features/cloud-devices/WorkbenchCloudDeviceRestarts'
 import '@/i18n'
 import { openExternalUrl } from '@/lib/external-links'
 import { preloadDefaultDshUiTestModules } from '@/test/setup.dom'
@@ -874,11 +875,19 @@ describe('ConnectionsSettingsPage', () => {
     expect(toggle).toHaveAttribute('aria-checked', 'true')
   })
 
-  test('warns about active work and disables sessions while a cloud device restarts', async () => {
-    api.getAllDevices.mockResolvedValue([cloudDevice({ slot_used: 1 })])
+  test('uses the workbench restart state for all devices in the same sandbox', async () => {
+    const target = cloudDevice({ slot_used: 1 })
+    const sibling = cloudDevice({ id: 2, device_id: 'device-2', name: 'Sibling' })
+    const devices = [target, sibling]
+    const refreshWorkbenchDevices = vi.fn().mockResolvedValue(undefined)
+    api.getAllDevices.mockResolvedValue(devices)
     api.restartCloudDevice.mockResolvedValue({ message: 'restart sent' })
 
-    render(<ConnectionsSettingsPage onBack={vi.fn()} />)
+    render(
+      <WorkbenchCloudDeviceRestarts devices={devices} refreshDevices={refreshWorkbenchDevices}>
+        <ConnectionsSettingsPage onBack={vi.fn()} />
+      </WorkbenchCloudDeviceRestarts>
+    )
 
     await screen.findByTestId('connection-device-device-1')
     await userEvent.click(screen.getByTestId('connection-more-button-device-1'))
@@ -897,6 +906,10 @@ describe('ConnectionsSettingsPage', () => {
     expect(screen.getByTestId('connection-code-server-button-device-1')).toBeDisabled()
     expect(screen.getByTestId('connection-device-surface-button-device-1')).toBeDisabled()
     expect(screen.getByTestId('connection-more-button-device-1')).toBeDisabled()
+    expect(screen.getByTestId('connection-more-button-device-2')).toBeDisabled()
+    expect(screen.getByTestId('connection-terminal-button-device-2')).toBeDisabled()
+    expect(refreshWorkbenchDevices).toHaveBeenCalled()
+    expect(api.restartCloudDevice).toHaveBeenCalledExactlyOnceWith('device-1')
     expect(
       within(screen.getByTestId('connection-device-device-1')).getByText('重启中')
     ).toBeVisible()

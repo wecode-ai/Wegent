@@ -56,7 +56,7 @@ In the desktop app, **left sidebar → Cloud work** includes local recovery guid
 When the cloud connection is available, select **Cloud work** in the sidebar to open its dedicated page instead of General settings. The page combines:
 
 - Cloud and remote device status, executor version, terminal, IDE, and other device actions.
-- CPU, memory, and disk usage for cloud devices, plus connection details, restart, and delete actions. During a restart, the device briefly goes offline and the page reports progress until it reconnects. Check the Executor version reported after reconnection. Restart requires a deployment-provided implementation. The app reports when restart is unavailable.
+- CPU, memory, and disk usage for cloud devices, plus connection details, restart, and delete actions. During a restart, the device briefly goes offline and running tasks may be interrupted, including tasks on other devices in the same sandbox. The page reports progress until the device reconnects. Check the Executor version reported after reconnection. Restart requires a deployment-provided implementation. The app reports when restart is unavailable.
 - Projects associated with cloud or remote devices. Selecting a project returns to the standard task workbench with that project active.
 
 Use **Connection settings** in the page header to open **Settings → Connections**. **Add device** opens the same settings page and starts the add-device flow. **New project** returns to the standard project creation flow, where the user chooses a device and a project directory on that device.

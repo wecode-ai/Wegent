@@ -3640,7 +3640,6 @@
     "connection_restart_confirm_description": "{{device}} 将短暂离线，期间终端、IDE 等设备连接不可用，进行中的任务或连接可能中断。",
     "connection_restart_confirm_busy_description": "{{device}} 当前有任务运行。重启会使设备短暂离线并中断进行中的任务和连接，期间终端、IDE 等设备连接不可用。",
     "connection_restart_confirm_action": "确认重启",
-    "connection_restart_sending": "正在发送…",
     "connection_restart_submitting": "正在发送重启请求…",
     "connection_restart_waiting_offline": "重启命令已发送，设备将短暂离线；终端、IDE 等设备连接暂不可用。",
     "connection_restart_waiting_online": "设备正在重启并处于离线状态，重新连接后状态会自动更新。",

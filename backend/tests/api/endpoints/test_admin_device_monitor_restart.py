@@ -37,8 +37,16 @@ def _build_client(db):
     return TestClient(app)
 
 
-def test_cloud_device_restart_defaults_to_unimplemented(monkeypatch):
-    """The open-source endpoint should stay generic unless an extension registers."""
+@pytest.mark.parametrize(
+    ("provider_configured", "status_code", "message"),
+    [
+        (False, 501, "Device restart is not configured in this deployment"),
+        (True, 502, "Provider temporarily unavailable"),
+    ],
+)
+def test_cloud_device_restart_failure(
+    monkeypatch, provider_configured, status_code, message
+):
     db = SimpleNamespace()
     device_kind = SimpleNamespace(
         user_id=7,
@@ -46,7 +54,16 @@ def test_cloud_device_restart_defaults_to_unimplemented(monkeypatch):
         json={"spec": {"deviceType": DeviceType.CLOUD.value}},
     )
 
-    monkeypatch.setattr(cloud_device_restart, "_restart_handler", None)
+    restart = (
+        AsyncMock(
+            return_value=cloud_device_restart.CloudDeviceRestartResult(
+                success=False, message=message
+            )
+        )
+        if provider_configured
+        else None
+    )
+    monkeypatch.setattr(cloud_device_restart, "_restart_handler", restart)
     monkeypatch.setattr(
         device_monitor.device_service,
         "get_device_by_device_id",
@@ -61,14 +78,14 @@ def test_cloud_device_restart_defaults_to_unimplemented(monkeypatch):
     assert response.status_code == 200
     assert response.json() == {
         "success": False,
-        "message": "Device restart is not configured in this deployment",
+        "message": message,
     }
 
     user_response = client.post(
         "/devices/device-1/upgrade", json={"force_stop_tasks": True}
     )
-    assert user_response.status_code == 501
-    assert user_response.json()["detail"] == response.json()["message"]
+    assert user_response.status_code == status_code
+    assert user_response.json()["detail"] == message
 
 
 @pytest.mark.parametrize(

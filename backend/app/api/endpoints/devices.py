@@ -352,7 +352,12 @@ async def trigger_device_upgrade(
         )
         if not result.success:
             raise HTTPException(
-                status_code=status.HTTP_501_NOT_IMPLEMENTED, detail=result.message
+                status_code=(
+                    status.HTTP_502_BAD_GATEWAY
+                    if result.provider_configured
+                    else status.HTTP_501_NOT_IMPLEMENTED
+                ),
+                detail=result.message,
             )
         return DeviceUpgradeResponse(success=True, message=result.message)
 

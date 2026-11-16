@@ -26,8 +26,14 @@ import { ExperimentalBadge } from '@/features/experimental-features/Experimental
 import { useExperimentalFeaturesEnabled } from '@/features/experimental-features/useExperimentalFeaturesEnabled'
 import { useTranslation } from '@/hooks/useTranslation'
 import { ActionMenu } from '@/components/common/ActionMenu'
-import { CloudDeviceRestartDialog } from '@/features/cloud-devices/CloudDeviceRestartDialog'
-import { CloudDeviceRestartNotice } from '@/features/cloud-devices/CloudDeviceRestartNotice'
+import {
+  CloudDeviceRestartProgress,
+  WorkbenchCloudDeviceRestarts,
+} from '@/features/cloud-devices/WorkbenchCloudDeviceRestarts'
+import {
+  cloudDeviceRestartKey,
+  useWorkbenchCloudDeviceRestarts,
+} from '@/features/cloud-devices/useWorkbenchCloudDeviceRestarts'
 import { SettingsPage, SettingsPageHeader } from './settings-ui'
 import { openExternalUrl } from '@/lib/external-links'
 import { isImeEnterEvent } from '@/lib/ime'
@@ -47,7 +53,6 @@ import {
   supportsDeviceMetrics,
   supportsRemoteSessions,
 } from '@/lib/device-capabilities'
-import { useDeviceOfflineLifecycleAction } from '@/features/cloud-devices/useDeviceOfflineLifecycleAction'
 import type { DeviceInfo as RuntimeDeviceInfo, RuntimeTaskAddress, UnifiedModel } from '@/types/api'
 import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
 import type { CloudDeviceMetricsResponse, DeviceInfo, DeviceSessionResponse } from '@/types/devices'
@@ -201,36 +206,20 @@ function deviceDisplayName(device: DeviceInfo): string {
   return device.client_ip?.trim() || name || device.device_id
 }
 
-type ConfirmDeviceAction = 'restart' | 'delete'
-
-function ConfirmDeviceActionDialog({
+function ConfirmDeleteDeviceDialog({
   device,
-  action,
   loading,
   onCancel,
   onConfirm,
 }: {
   device: DeviceInfo
-  action: ConfirmDeviceAction
   loading: boolean
   onCancel: () => void
   onConfirm: () => void
 }) {
-  const isDelete = action === 'delete'
   const isCloud = isCloudDevice(device)
   const isRemote = isRemoteDevice(device)
   const displayName = deviceDisplayName(device)
-
-  if (!isDelete) {
-    return (
-      <CloudDeviceRestartDialog
-        devices={[device]}
-        pending={loading}
-        onCancel={onCancel}
-        onConfirm={onConfirm}
-      />
-    )
-  }
 
   const title = isCloud ? '删除云设备' : isRemote ? '删除远程设备' : '删除本地设备'
   const description = isCloud
@@ -419,6 +408,7 @@ function DeviceCard({
 }) {
   const { t } = useTranslation('common')
   const cloudConnection = useOptionalCloudConnection()
+  const cloudRestarts = useWorkbenchCloudDeviceRestarts()
   const remoteTerminalClientFactory = useMemo(
     () =>
       cloudConnection.isConnected &&
@@ -434,7 +424,7 @@ function DeviceCard({
   const [editName, setEditName] = useState(device.name)
   const [saving, setSaving] = useState(false)
   const [deleting, setDeleting] = useState(false)
-  const [confirmAction, setConfirmAction] = useState<ConfirmDeviceAction | null>(null)
+  const [confirmDelete, setConfirmDelete] = useState(false)
   const [connectionInfoOpen, setConnectionInfoOpen] = useState(false)
   const [terminalSession, setTerminalSession] = useState<DeviceSessionResponse | null>(null)
   const [sessionError, setSessionError] = useState<string | null>(null)
@@ -443,16 +433,12 @@ function DeviceCard({
     value: CloudDeviceMetricsResponse | null
   } | null>(null)
   const inputRef = useRef<HTMLInputElement>(null)
-  const requestRestart = useCallback(
-    () => createSettingsDeviceApi(cloudConnection).restartCloudDevice(device.device_id),
-    [cloudConnection, device.device_id]
-  )
-  const restartState = useDeviceOfflineLifecycleAction({
-    status: device.status,
-    runtimeInstanceId: device.runtime_instance_id,
-    requestAction: requestRestart,
-    refreshDevices: onChanged,
-  })
+  const restart = cloudRestarts?.progress[cloudDeviceRestartKey(device)]
+  const isRestartTarget = restart?.device.device_id === device.device_id
+  const restartRecovered = isRestartTarget && restart?.phase === 'recovered'
+  useEffect(() => {
+    if (restartRecovered) void onChanged()
+  }, [onChanged, restartRecovered])
   useEffect(() => {
     if (!supportsDeviceMetrics(device) || device.status === 'offline') {
       return
@@ -574,11 +560,6 @@ function DeviceCard({
     }
   }
 
-  const handleRestartDevice = async () => {
-    await restartState.run()
-    setConfirmAction(null)
-  }
-
   const handleDeleteDevice = async () => {
     setDeleting(true)
     try {
@@ -588,17 +569,13 @@ function DeviceCard({
       } else {
         await deviceApi.deleteDevice(device.device_id)
       }
-      setConfirmAction(null)
+      setConfirmDelete(false)
       onChanged()
     } catch (e) {
       console.error('Failed to delete cloud device:', e)
     } finally {
       setDeleting(false)
     }
-  }
-
-  const openConfirmAction = (action: ConfirmDeviceAction) => {
-    setConfirmAction(action)
   }
 
   const openConnectionInfo = () => {
@@ -612,7 +589,8 @@ function DeviceCard({
   const displayName = deviceDisplayName(device)
   const canUseCloudLifecycleActions = supportsCloudLifecycleActions(device)
   const canDeleteOfflineRemoteDevice = isRemote && device.status === 'offline'
-  const lifecyclePending = restartState.isPending
+  const lifecyclePending = isCloudDevice(device) && cloudRestarts?.isRestarting(device)
+  const requestRestart = () => cloudRestarts?.requestRestart([device])
   const lifecyclePendingLabel = lifecyclePending
     ? t('workbench.connection_status_restarting')
     : null
@@ -680,7 +658,7 @@ function DeviceCard({
             <DeviceVersionBadge
               device={device}
               disabled={lifecyclePending || !isOnline}
-              onRestart={() => openConfirmAction('restart')}
+              onRestart={requestRestart}
             />
             <StatusPill status={device.status} pendingLabel={lifecyclePendingLabel} />
           </div>
@@ -753,14 +731,14 @@ function DeviceCard({
                     testId: `connection-restart-menu-item-${device.device_id}`,
                     label: t('workbench.connection_restart_action'),
                     icon: RotateCcw,
-                    onSelect: () => openConfirmAction('restart'),
+                    onSelect: requestRestart,
                   },
                   {
                     testId: `connection-delete-menu-item-${device.device_id}`,
                     label: t('workbench.connection_delete_action'),
                     icon: Trash2,
                     danger: true,
-                    onSelect: () => openConfirmAction('delete'),
+                    onSelect: () => setConfirmDelete(true),
                   },
                 ]}
               />
@@ -770,7 +748,7 @@ function DeviceCard({
                 testId={`connection-delete-button-${device.device_id}`}
                 icon={Trash2}
                 label="删除设备"
-                onClick={() => setConfirmAction('delete')}
+                onClick={() => setConfirmDelete(true)}
                 disabled={deleting}
               />
             )}
@@ -784,15 +762,7 @@ function DeviceCard({
             {t('workbench.connection_remote_upgrade_hint')}
           </p>
         )}
-        {isCloudDevice(device) && restartState.phase !== 'idle' ? (
-          <CloudDeviceRestartNotice
-            deviceId={device.device_id}
-            error={restartState.error}
-            phase={restartState.phase}
-            onRetry={() => void restartState.run()}
-            onRefresh={() => void restartState.refreshAfterTimeout()}
-          />
-        ) : null}
+        {isRestartTarget && <CloudDeviceRestartProgress device={device} />}
         {sessionError && (
           <div
             data-testid={`connection-session-error-${device.device_id}`}
@@ -873,13 +843,12 @@ function DeviceCard({
         </section>
       )}
 
-      {confirmAction && (
-        <ConfirmDeviceActionDialog
+      {confirmDelete && (
+        <ConfirmDeleteDeviceDialog
           device={device}
-          action={confirmAction}
-          loading={confirmAction === 'delete' ? deleting : restartState.phase === 'submitting'}
-          onCancel={() => setConfirmAction(null)}
-          onConfirm={confirmAction === 'delete' ? handleDeleteDevice : handleRestartDevice}
+          loading={deleting}
+          onCancel={() => setConfirmDelete(false)}
+          onConfirm={handleDeleteDevice}
         />
       )}
       {connectionInfoOpen && (
@@ -1040,6 +1009,7 @@ export function ConnectionsDeviceSettingsPage({
 }) {
   const { t } = useTranslation('common')
   const cloudConnection = useOptionalCloudConnection()
+  const cloudRestarts = useWorkbenchCloudDeviceRestarts()
   const [allDevices, setAllDevices] = useState<DeviceInfo[]>([])
   const [loading, setLoading] = useState(true)
   const [connectDialogOpen, setConnectDialogOpen] = useState(false)
@@ -1196,7 +1166,7 @@ export function ConnectionsDeviceSettingsPage({
     )
   }
 
-  return (
+  const content = (
     <>
       <SettingsPage data-testid="connections-device-settings-page">
         {showHeader ? (
@@ -1334,6 +1304,14 @@ export function ConnectionsDeviceSettingsPage({
         onCreatingChange={setCreating}
       />
     </>
+  )
+
+  return cloudRestarts ? (
+    content
+  ) : (
+    <WorkbenchCloudDeviceRestarts devices={allDevices} refreshDevices={refreshDevices}>
+      {content}
+    </WorkbenchCloudDeviceRestarts>
   )
 }
 

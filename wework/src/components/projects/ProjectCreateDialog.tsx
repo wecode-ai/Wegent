@@ -269,7 +269,7 @@ function ProjectCreateDialogContent({
 
   const dialogRef = useDialogKeyboard<HTMLFormElement>(() => {
     if (!submitting) onClose()
-  })
+  }, !cloudRestarts?.isConfirming)
 
   const selectDevice = (deviceId: string) => {
     setActiveDeviceId(deviceId)
@@ -579,6 +579,8 @@ function ProjectCreateDialogContent({
     }
     return t('workbench.project_device_status_unavailable', '不可用')
   }
+
+  if (cloudRestarts?.isConfirming) return null
 
   return createPortal(
     <div

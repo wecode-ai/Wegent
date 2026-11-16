@@ -3644,7 +3644,6 @@
     "connection_restart_confirm_description": "{{device}} will temporarily go offline. Terminal, IDE, and other device sessions will be unavailable, and active tasks or connections may be interrupted.",
     "connection_restart_confirm_busy_description": "{{device}} has active work. Restarting will temporarily take it offline, interrupt active tasks and connections, and make terminal, IDE, and other device sessions unavailable.",
     "connection_restart_confirm_action": "Restart",
-    "connection_restart_sending": "Sending…",
     "connection_restart_submitting": "Sending the restart request…",
     "connection_restart_waiting_offline": "Restart requested. The device will briefly go offline; terminal, IDE, and desktop are temporarily unavailable.",
     "connection_restart_waiting_online": "The device is restarting and offline. Its status will update automatically when it reconnects.",

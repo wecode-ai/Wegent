@@ -12,6 +12,7 @@ export interface DeviceRestartProgress {
 interface RestartActions {
   requestRestart: (devices: DeviceInfo[]) => void
   progress: Record<string, DeviceRestartProgress>
+  isConfirming: boolean
   isRestarting: (device: DeviceInfo) => boolean
 }
 

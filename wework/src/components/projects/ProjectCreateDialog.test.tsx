@@ -92,7 +92,7 @@ describe('ProjectCreateDialog', () => {
     expect(onOpenCloudDeviceSettings).toHaveBeenCalledTimes(1)
   })
 
-  test('opens cloud restart confirmation without closing the project form', async () => {
+  test('suspends the project dialog during cloud restart confirmation and restores its draft', async () => {
     const cloud = { ...devices[0], executor_version: '1.8.4' }
     const onClose = vi.fn()
     const onUpgradeDevice = vi.fn()
@@ -101,6 +101,7 @@ describe('ProjectCreateDialog', () => {
         <ProjectCreateDialog
           open
           mode="scratch"
+          project={{ id: 7, name: 'Project', tasks: [] }}
           devices={[cloud]}
           onClose={onClose}
           onCreateProject={vi.fn()}
@@ -113,11 +114,14 @@ describe('ProjectCreateDialog', () => {
       </WorkbenchCloudDeviceRestarts>
     )
 
+    await userEvent.type(screen.getByTestId('project-name-input'), ' draft')
     await userEvent.click(screen.getByTestId('restart-project-device-cloud-device'))
     expect(screen.getByTestId('confirm-restart-device-dialog')).toBeVisible()
-    await userEvent.click(screen.getByTestId('cancel-restart-device-button'))
+    expect(screen.queryByTestId('project-create-dialog')).not.toBeInTheDocument()
+    await userEvent.keyboard('{Escape}')
 
     expect(screen.getByTestId('project-create-dialog')).toBeVisible()
+    expect(screen.getByTestId('project-name-input')).toHaveValue('Project draft')
     expect(onClose).not.toHaveBeenCalled()
     expect(onUpgradeDevice).not.toHaveBeenCalled()
   })

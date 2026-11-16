@@ -76,7 +76,7 @@ export function CloudDeviceRestartNotice({
           type="button"
           data-testid={`connection-device-restart-${isError ? 'retry' : 'refresh'}-${deviceId}`}
           onClick={isError ? onRetry : onRefresh}
-          className="shrink-0 rounded-md border border-current/30 px-2 py-1 font-medium hover:bg-background/50"
+          className="min-h-11 min-w-11 shrink-0 rounded-md border border-current/30 px-2 py-1 font-medium hover:bg-background/50 md:min-h-0 md:min-w-0"
         >
           {isError ? t(`${keyPrefix}_retry`) : t(`${keyPrefix}_refresh`)}
         </button>

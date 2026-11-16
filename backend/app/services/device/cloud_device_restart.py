@@ -26,6 +26,7 @@ class CloudDeviceRestartResult:
 
     success: bool
     message: str
+    provider_configured: bool = True
 
 
 CloudDeviceRestartHandler = Callable[
@@ -54,6 +55,7 @@ async def restart_cloud_device(
         return CloudDeviceRestartResult(
             success=False,
             message="Device restart is not configured in this deployment",
+            provider_configured=False,
         )
 
     return await _restart_handler(db, user_id, device_id)

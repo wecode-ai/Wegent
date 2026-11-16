@@ -123,12 +123,13 @@ export function WorkbenchCloudDeviceRestarts({
     () => ({
       requestRestart,
       progress,
+      isConfirming: confirmation.length > 0,
       isRestarting: (device: DeviceInfo) =>
         ['submitting', 'waiting-offline', 'waiting-online'].includes(
           progress[cloudDeviceRestartKey(device)]?.phase ?? 'idle'
         ),
     }),
-    [requestRestart, progress]
+    [requestRestart, progress, confirmation.length]
   )
 
   return (

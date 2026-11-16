@@ -5,13 +5,11 @@ import type { DeviceInfo } from '@/types/api'
 
 export function CloudDeviceRestartDialog({
   devices,
-  pending = false,
   overlayClassName,
   onCancel,
   onConfirm,
 }: {
   devices: DeviceInfo[]
-  pending?: boolean
   overlayClassName?: string
   onCancel: () => void
   onConfirm: () => void
@@ -47,16 +45,11 @@ export function CloudDeviceRestartDialog({
       )}
       description={[description, versionDetails].filter(Boolean).join(' ')}
       cancelLabel={t('common.cancel')}
-      confirmLabel={t(
-        pending
-          ? 'workbench.connection_restart_sending'
-          : 'workbench.connection_restart_confirm_action'
-      )}
+      confirmLabel={t('workbench.connection_restart_confirm_action')}
       confirmTestId="confirm-restart-device-button"
       dialogTestId="confirm-restart-device-dialog"
       cancelTestId="cancel-restart-device-button"
       overlayClassName={overlayClassName}
-      pending={pending}
       onClose={onCancel}
       onConfirm={onConfirm}
     />
