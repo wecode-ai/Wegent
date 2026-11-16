@@ -56,6 +56,7 @@ export function AutomaticProcessingTriggerFields({
     if (!cronError) return
     if (cronDetails.current) cronDetails.current.open = true
     cronInput.current?.focus()
+    cronInput.current?.scrollIntoView({ block: 'center', inline: 'nearest' })
   }, [cronError])
   const schedule = parseSchedule(draft.cronExpression)
   const selectedHook = hooks.find(hook => hook.id === draft.hookId)

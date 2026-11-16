@@ -1,6 +1,6 @@
 import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { expect, it, vi } from 'vitest'
+import { beforeEach, expect, it, vi } from 'vitest'
 import { ProjectAutomaticProcessing } from '@wegent/collaboration/project-manage'
 import { createCollaborationTranslator } from '@wegent/collaboration'
 import type {
@@ -8,6 +8,11 @@ import type {
   CollaborationProject,
   WorkspaceAutomationRule,
 } from '@wegent/collaboration'
+
+beforeEach(() => {
+  // jsdom has no layout scrolling; real visibility is covered by desktop E2E.
+  HTMLElement.prototype.scrollIntoView = vi.fn()
+})
 
 const rule: WorkspaceAutomationRule = {
   id: 'rule',

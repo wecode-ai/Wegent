@@ -173,6 +173,7 @@ async function createDisabledSchedule(control, scoped) {
   await control.command('clickWhenEnabled', find('automatic-processing-save'))
   await control.command('waitFor', scoped('#automatic-processing-cron-error'), {
     text: 'Cron 表达式无效',
+    visible: true,
   })
   await assertKeyboardFocus(control, 'automatic-processing-cron')
   assert.equal(
