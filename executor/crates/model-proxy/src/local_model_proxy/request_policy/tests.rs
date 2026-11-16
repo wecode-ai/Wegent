@@ -93,6 +93,7 @@ async fn official_chatgpt_normalizes_foreign_reasoning_before_forwarding() {
         &Default::default(),
         false,
         false,
+        &Default::default(),
     )
     .await
     .unwrap();
@@ -144,6 +145,7 @@ async fn official_chatgpt_passthrough_still_removes_old_provider_state_on_switch
         &Default::default(),
         true,
         false,
+        &Default::default(),
     )
     .await
     .unwrap();
@@ -166,6 +168,7 @@ async fn passthrough_preserves_every_field_except_the_routed_model() {
         &Default::default(),
         true,
         true,
+        &Default::default(),
     )
     .await
     .expect("passthrough request");
@@ -185,9 +188,17 @@ async fn passthrough_without_model_mapping_preserves_request_bytes() {
     let mut config = upstream("passthrough");
     config.model_id = None;
     let original = b"{ \"model\": \"actual-model\", \"input\": [], \"store\": true }";
-    let prepared = prepare(&config, original, None, &Default::default(), true, true)
-        .await
-        .unwrap();
+    let prepared = prepare(
+        &config,
+        original,
+        None,
+        &Default::default(),
+        true,
+        true,
+        &Default::default(),
+    )
+    .await
+    .unwrap();
     assert_eq!(prepared.body, original);
 }
 
@@ -200,6 +211,7 @@ async fn standard_mode_bridges_client_tools_and_omits_hosted_tools() {
         &Default::default(),
         false,
         false,
+        &Default::default(),
     )
     .await
     .expect("standard request");
@@ -239,6 +251,7 @@ async fn standard_mode_rejects_forced_hosted_tools_before_sending() {
             &Default::default(),
             false,
             false,
+            &Default::default(),
         )
         .await
         .err()

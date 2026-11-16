@@ -270,6 +270,21 @@ pub(super) fn commit_model_request(token: &str, routing: &ModelRequestRouting) {
     }
 }
 
+pub(super) fn remember_foreign_history(token: &str, foreign_history_keys: &HashSet<String>) {
+    if foreign_history_keys.is_empty() {
+        return;
+    }
+    let mut registry = registry()
+        .lock()
+        .expect("local model proxy registry should not be poisoned");
+    let Some(registered) = registry.routes.get_mut(token) else {
+        return;
+    };
+    registered
+        .foreign_history_keys
+        .extend(foreign_history_keys.iter().cloned());
+}
+
 pub(super) fn prepare_model_switch_request(
     upstream: &LocalModelProxyUpstream,
     body: Vec<u8>,

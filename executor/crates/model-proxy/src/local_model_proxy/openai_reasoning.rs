@@ -2,7 +2,10 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
+use std::collections::HashSet;
+
 use serde_json::{Map, Value};
+use sha2::{Digest, Sha256};
 
 use super::HttpError;
 
@@ -13,7 +16,9 @@ use super::HttpError;
 /// so promote readable text into `summary` and strip provider-bound fields.
 pub(super) fn normalize_official_reasoning_history(
     body: Vec<u8>,
-) -> Result<(Vec<u8>, usize), HttpError> {
+    known_foreign_keys: &HashSet<String>,
+    model_switched: bool,
+) -> Result<(Vec<u8>, usize, HashSet<String>), HttpError> {
     let mut request = serde_json::from_slice::<Value>(&body).map_err(|error| HttpError {
         status: axum::http::StatusCode::BAD_REQUEST,
         detail: format!("Invalid Codex Responses request: {error}"),
@@ -22,26 +27,86 @@ pub(super) fn normalize_official_reasoning_history(
         .get("store")
         .and_then(Value::as_bool)
         .unwrap_or(false);
-    let Some(items) = request.get_mut("input").and_then(Value::as_array_mut) else {
-        return Ok((body, 0));
-    };
-
     let mut changed = 0usize;
-    for item in items {
-        if item.get("type").and_then(Value::as_str) != Some("reasoning") {
-            continue;
+    let mut normalized_reasoning_items = 0usize;
+    let mut new_foreign_keys = HashSet::new();
+    let previous_response_key = request
+        .get("previous_response_id")
+        .and_then(Value::as_str)
+        .map(foreign_previous_response_key);
+    if model_switched
+        || previous_response_key
+            .as_ref()
+            .is_some_and(|key| known_foreign_keys.contains(key))
+    {
+        let removed = request
+            .as_object_mut()
+            .is_some_and(|object| object.remove("previous_response_id").is_some());
+        changed += usize::from(removed);
+        if let Some(key) = previous_response_key {
+            new_foreign_keys.insert(key);
         }
-        changed += normalize_reasoning_item(item, strip_orphan_reasoning_ids);
+    }
+    if let Some(items) = request.get_mut("input").and_then(Value::as_array_mut) {
+        let original = std::mem::take(items);
+        let mut retained = Vec::with_capacity(original.len());
+        for mut item in original {
+            let key = history_item_key(&item);
+            let known_foreign = known_foreign_keys.contains(&key);
+            let encrypted_state = super::request_identity::has_encrypted_model_state(&item);
+            if item.get("type").and_then(Value::as_str) == Some("reasoning") {
+                let content_has_text = item
+                    .get("content")
+                    .and_then(Value::as_array)
+                    .is_some_and(|content| !content.is_empty());
+                if known_foreign || content_has_text || (model_switched && encrypted_state) {
+                    normalized_reasoning_items += sanitize_foreign_reasoning_item(&mut item);
+                    new_foreign_keys.insert(key);
+                    changed += 1;
+                } else {
+                    let item_changed =
+                        normalize_reasoning_item(&mut item, strip_orphan_reasoning_ids);
+                    normalized_reasoning_items += item_changed;
+                    changed += item_changed;
+                }
+                retained.push(item);
+            } else if encrypted_state && (known_foreign || model_switched) {
+                new_foreign_keys.insert(key);
+                changed += 1;
+            } else {
+                retained.push(item);
+            }
+        }
+        *items = retained;
     }
     if changed == 0 {
-        return Ok((body, 0));
+        return Ok((body, 0, new_foreign_keys));
     }
 
     let body = serde_json::to_vec(&request).map_err(|error| HttpError {
         status: axum::http::StatusCode::INTERNAL_SERVER_ERROR,
         detail: format!("Failed to encode normalized Responses request: {error}"),
     })?;
-    Ok((body, changed))
+    Ok((body, normalized_reasoning_items, new_foreign_keys))
+}
+
+fn sanitize_foreign_reasoning_item(item: &mut Value) -> usize {
+    let Some(object) = item.as_object_mut() else {
+        return 0;
+    };
+    let content = object
+        .get("content")
+        .and_then(Value::as_array)
+        .cloned()
+        .unwrap_or_default();
+    let summary = reasoning_summary(&content);
+    if !summary.is_empty() && summary_is_empty(object.get("summary")) {
+        object.insert("summary".to_owned(), Value::Array(summary));
+    }
+    object.insert("content".to_owned(), Value::Array(Vec::new()));
+    object.remove("encrypted_content");
+    object.remove("id");
+    1
 }
 
 fn normalize_reasoning_item(item: &mut Value, strip_orphan_reasoning_ids: bool) -> usize {
@@ -82,6 +147,27 @@ fn normalize_reasoning_item(item: &mut Value, strip_orphan_reasoning_ids: bool) 
         changed = true;
     }
     usize::from(changed)
+}
+
+fn history_item_key(item: &Value) -> String {
+    if let Some(id) = item
+        .get("id")
+        .and_then(Value::as_str)
+        .filter(|value| !value.is_empty())
+    {
+        return format!("id:{id}");
+    }
+    let mut normalized = item.clone();
+    if let Some(object) = normalized.as_object_mut() {
+        object.remove("encrypted_content");
+        object.remove("status");
+    }
+    let bytes = serde_json::to_vec(&normalized).unwrap_or_default();
+    format!("hash:{:x}", Sha256::digest(bytes))
+}
+
+fn foreign_previous_response_key(response_id: &str) -> String {
+    format!("previous_response_id:{response_id}")
 }
 
 fn reasoning_summary(content: &[Value]) -> Vec<Value> {
@@ -134,7 +220,8 @@ mod tests {
         }))
         .unwrap();
 
-        let (body, changed) = normalize_official_reasoning_history(body).unwrap();
+        let (body, changed, _) =
+            normalize_official_reasoning_history(body, &Default::default(), false).unwrap();
         let request = serde_json::from_slice::<serde_json::Value>(&body).unwrap();
 
         assert_eq!(changed, 1);
@@ -158,7 +245,8 @@ mod tests {
         }))
         .unwrap();
 
-        let (normalized, changed) = normalize_official_reasoning_history(body.clone()).unwrap();
+        let (normalized, changed, _) =
+            normalize_official_reasoning_history(body.clone(), &Default::default(), false).unwrap();
 
         assert_eq!(changed, 0);
         assert_eq!(normalized, body);
@@ -175,7 +263,8 @@ mod tests {
         }))
         .unwrap();
 
-        let (body, changed) = normalize_official_reasoning_history(body).unwrap();
+        let (body, changed, _) =
+            normalize_official_reasoning_history(body, &Default::default(), false).unwrap();
         let request = serde_json::from_slice::<serde_json::Value>(&body).unwrap();
 
         assert_eq!(changed, 1);
@@ -197,7 +286,8 @@ mod tests {
         }))
         .unwrap();
 
-        let (normalized, changed) = normalize_official_reasoning_history(body.clone()).unwrap();
+        let (normalized, changed, _) =
+            normalize_official_reasoning_history(body.clone(), &Default::default(), false).unwrap();
 
         assert_eq!(changed, 0);
         assert_eq!(normalized, body);
@@ -216,7 +306,8 @@ mod tests {
         }))
         .unwrap();
 
-        let (body, changed) = normalize_official_reasoning_history(body).unwrap();
+        let (body, changed, _) =
+            normalize_official_reasoning_history(body, &Default::default(), false).unwrap();
         let request = serde_json::from_slice::<serde_json::Value>(&body).unwrap();
 
         assert_eq!(changed, 1);
@@ -237,7 +328,8 @@ mod tests {
         }))
         .unwrap();
 
-        let (body, changed) = normalize_official_reasoning_history(body).unwrap();
+        let (body, changed, _) =
+            normalize_official_reasoning_history(body, &Default::default(), false).unwrap();
         let request = serde_json::from_slice::<serde_json::Value>(&body).unwrap();
 
         assert_eq!(changed, 1);

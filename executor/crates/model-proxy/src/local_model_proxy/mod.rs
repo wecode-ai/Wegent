@@ -172,6 +172,7 @@ pub fn register_harness(route_scope: &str, mut upstream: LocalModelProxyUpstream
             thread_ids: HashSet::new(),
             last_routed_model: None,
             pending_model_switch_cleanup: false,
+            foreign_history_keys: HashSet::new(),
             last_used: Instant::now(),
             active_references: 1,
         },
@@ -214,6 +215,10 @@ impl LocalModelProxyUpstream {
     pub fn is_official_chatgpt_codex(&self) -> bool {
         self.api_format == "openai-responses"
             && is_official_chatgpt_codex_endpoint(&self.resolved_request_url())
+    }
+
+    fn uses_native_chatgpt_auth(&self) -> bool {
+        self.is_official_chatgpt_codex() && self.api_key.is_empty()
     }
 
     fn responses_tool_capabilities(&self) -> ResponsesToolCapabilities {
@@ -414,6 +419,7 @@ struct RegisteredUpstream {
     thread_ids: HashSet<String>,
     last_routed_model: Option<String>,
     pending_model_switch_cleanup: bool,
+    foreign_history_keys: HashSet<String>,
     last_used: Instant,
     active_references: usize,
 }
@@ -500,6 +506,11 @@ pub fn register_with_vision_sidecar(
         .routes
         .get(&token)
         .is_some_and(|registered| registered.pending_model_switch_cleanup);
+    let foreign_history_keys = registry
+        .routes
+        .get(&token)
+        .map(|registered| registered.foreign_history_keys.clone())
+        .unwrap_or_default();
     registry.routes.insert(
         token.clone(),
         RegisteredUpstream {
@@ -510,6 +521,7 @@ pub fn register_with_vision_sidecar(
             thread_ids,
             last_routed_model,
             pending_model_switch_cleanup,
+            foreign_history_keys,
             last_used: Instant::now(),
             active_references,
         },
@@ -815,6 +827,7 @@ use request_identity::begin_model_request;
 use request_identity::commit_model_request;
 use request_identity::log_stale_requested_model;
 use request_identity::prepare_model_switch_request;
+use request_identity::remember_foreign_history;
 use request_identity::request_thread_identity;
 use request_identity::request_tool_diagnostic_fields;
 use request_identity::rewrite_request_model;

@@ -89,7 +89,7 @@ pub(super) async fn send_upstream_request_with_rate_limit_retry(
         // Official subscription rate limits are durable quota events owned by
         // the Executor. Retrying them here hides the reset window and turns a
         // quota error into an immediate model continuation.
-        if upstream.is_official_chatgpt_codex()
+        if upstream.uses_native_chatgpt_auth()
             || response.status() != reqwest::StatusCode::TOO_MANY_REQUESTS
             || retry_count == MAX_RATE_LIMIT_RETRIES
         {
@@ -122,13 +122,13 @@ pub(super) fn build_upstream_request(
     request_body: &[u8],
     incoming_headers: &HeaderMap,
 ) -> reqwest::RequestBuilder {
-    let official_chatgpt = upstream.is_official_chatgpt_codex();
+    let native_chatgpt_auth = upstream.uses_native_chatgpt_auth();
     let mut request = client
         .post(request_url)
         .header(reqwest::header::CONTENT_TYPE, "application/json")
         .header(reqwest::header::ACCEPT, "text/event-stream")
         .body(request_body.to_vec());
-    if !official_chatgpt {
+    if !native_chatgpt_auth {
         request = request.bearer_auth(&upstream.api_key);
     }
     if upstream.api_format == "anthropic-messages" {
@@ -136,7 +136,7 @@ pub(super) fn build_upstream_request(
             .header("x-api-key", &upstream.api_key)
             .header("anthropic-version", "2023-06-01");
     }
-    if official_chatgpt {
+    if native_chatgpt_auth {
         for name in FORWARDED_OFFICIAL_AUTH_HEADERS {
             if let Some(value) = incoming_headers.get(name) {
                 request = request.header(name, value);
@@ -261,6 +261,36 @@ mod tests {
             "Bearer native-oauth"
         );
         assert_eq!(request.headers()["chatgpt-account-id"], "account-1");
+    }
+
+    #[test]
+    fn official_chatgpt_with_explicit_api_key_uses_bearer_auth() {
+        let upstream = upstream(
+            crate::local_model_proxy::OFFICIAL_CHATGPT_CODEX_BASE_URL,
+            "explicit-key",
+        );
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            header::AUTHORIZATION,
+            HeaderValue::from_static("Bearer native-oauth"),
+        );
+        headers.insert("chatgpt-account-id", HeaderValue::from_static("account-1"));
+
+        let request = build_upstream_request(
+            &reqwest::Client::new(),
+            &upstream,
+            &upstream.resolved_request_url(),
+            b"{}",
+            &headers,
+        )
+        .build()
+        .unwrap();
+
+        assert_eq!(
+            request.headers()[header::AUTHORIZATION],
+            "Bearer explicit-key"
+        );
+        assert!(request.headers().get("chatgpt-account-id").is_none());
     }
 
     #[test]

@@ -223,6 +223,208 @@ async fn official_subscription_quota_errors_are_not_retried() {
 }
 
 #[tokio::test]
+async fn forwards_official_response_headers() {
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("upstream listener");
+    let address = listener.local_addr().expect("upstream address");
+    let server = tokio::spawn(async move {
+        axum::serve(
+            listener,
+            Router::new().route(
+                "/backend-api/codex/responses",
+                post(|| async {
+                    let mut headers = HeaderMap::new();
+                    headers.insert(
+                        "x-codex-turn-state",
+                        HeaderValue::from_static("turn-1"),
+                    );
+                    headers.insert(
+                        "x-codex-window-id",
+                        HeaderValue::from_static("window-1"),
+                    );
+                    headers.insert(
+                        "x-ratelimit-remaining-tokens",
+                        HeaderValue::from_static("42"),
+                    );
+                    headers.insert(
+                        header::SET_COOKIE,
+                        HeaderValue::from_static("upstream_session=secret"),
+                    );
+                    headers.insert(
+                        header::CONTENT_TYPE,
+                        HeaderValue::from_static("text/event-stream"),
+                    );
+                    (
+                        headers,
+                        "event: response.completed\ndata: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp-1\"}}\n\n",
+                    )
+                }),
+            ),
+        )
+        .await
+        .expect("upstream server");
+    });
+    let token = register(
+        "official-response-headers",
+        LocalModelProxyUpstream {
+            base_url: format!("http://{address}/backend-api/codex"),
+            request_url: Some(format!("http://{address}/backend-api/codex/responses")),
+            api_format: "openai-responses".to_owned(),
+            convert_custom_tools: false,
+            native_tool_search: true,
+            native_namespace_tools: true,
+            api_key: String::new(),
+            default_headers: Vec::new(),
+            proxy_url: None,
+            model_id: None,
+            routing_model_id: None,
+            codex_request_mode: CodexRequestMode::Passthrough,
+            max_output_tokens: None,
+            model_context_window: None,
+        },
+    );
+
+    let response = handle(
+        proxy_headers(&token),
+        Bytes::from_static(br#"{"model":"gpt-6.1-sol","input":"hi","stream":true}"#),
+    )
+    .await
+    .expect("proxy response");
+
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(response.headers()["x-codex-turn-state"], "turn-1");
+    assert_eq!(response.headers()["x-codex-window-id"], "window-1");
+    assert_eq!(response.headers()["x-ratelimit-remaining-tokens"], "42");
+    assert!(!response.headers().contains_key(header::SET_COOKIE));
+
+    unregister(&token);
+    server.abort();
+}
+
+#[tokio::test]
+async fn keeps_foreign_encrypted_history_sanitized_after_the_switch_request() {
+    let captured = Arc::new(tokio::sync::Mutex::new(Vec::new()));
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("upstream listener");
+    let address = listener.local_addr().expect("upstream address");
+    let server = tokio::spawn({
+        let captured = captured.clone();
+        async move {
+            axum::serve(
+                listener,
+                Router::new().route(
+                    "/backend-api/codex/responses",
+                    post(move |body: Bytes| {
+                        let captured = captured.clone();
+                        async move {
+                            captured.lock().await.push(
+                                serde_json::from_slice::<Value>(&body)
+                                    .expect("captured request body"),
+                            );
+                            (
+                                [(header::CONTENT_TYPE, "text/event-stream")],
+                                "event: response.completed\ndata: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp-1\"}}\n\n",
+                            )
+                        }
+                    }),
+                ),
+            )
+            .await
+            .expect("upstream server");
+        }
+    });
+    let token = register(
+        "official-repeated-foreign-history",
+        LocalModelProxyUpstream {
+            base_url: format!("http://{address}/backend-api/codex"),
+            request_url: Some(format!("http://{address}/backend-api/codex/responses")),
+            api_format: "openai-responses".to_owned(),
+            convert_custom_tools: false,
+            native_tool_search: true,
+            native_namespace_tools: true,
+            api_key: String::new(),
+            default_headers: Vec::new(),
+            proxy_url: None,
+            model_id: None,
+            routing_model_id: Some("gpt-6.1-sol".to_owned()),
+            codex_request_mode: CodexRequestMode::Passthrough,
+            max_output_tokens: None,
+            model_context_window: None,
+        },
+    );
+    mark_model_switch(&token);
+    let request = serde_json::to_vec(&json!({
+        "model": "gpt-6.1-sol",
+        "stream": true,
+        "previous_response_id": "resp_foreign",
+        "input": [
+            {
+                "type": "reasoning",
+                "id": "rs_foreign",
+                "summary": [],
+                "content": [{"type": "reasoning_text", "text": "foreign thought"}],
+                "encrypted_content": "foreign-seal"
+            },
+            {
+                "type": "reasoning",
+                "id": "rs_foreign_state_only",
+                "summary": [{"type": "summary_text", "text": "foreign summary"}],
+                "content": [],
+                "encrypted_content": "foreign-state-seal"
+            },
+            {
+                "type": "context_compaction",
+                "encrypted_content": "foreign-compaction"
+            },
+            {
+                "type": "message",
+                "role": "user",
+                "content": [{"type": "input_text", "text": "continue"}]
+            }
+        ]
+    }))
+    .expect("request body");
+
+    for _ in 0..2 {
+        let response = handle(proxy_headers(&token), Bytes::from(request.clone()))
+            .await
+            .expect("proxy response");
+        assert_eq!(response.status(), StatusCode::OK);
+        to_bytes(response.into_body(), usize::MAX)
+            .await
+            .expect("response body");
+    }
+
+    let requests = captured.lock().await;
+    assert_eq!(requests.len(), 2);
+    for forwarded in requests.iter() {
+        assert!(forwarded.get("previous_response_id").is_none());
+        assert_eq!(forwarded["input"].as_array().unwrap().len(), 3);
+        assert_eq!(forwarded["input"][0]["content"], json!([]));
+        assert_eq!(
+            forwarded["input"][0]["summary"][0]["text"],
+            "foreign thought"
+        );
+        assert!(forwarded["input"][0].get("id").is_none());
+        assert!(forwarded["input"][0].get("encrypted_content").is_none());
+        assert_eq!(forwarded["input"][1]["content"], json!([]));
+        assert_eq!(
+            forwarded["input"][1]["summary"][0]["text"],
+            "foreign summary"
+        );
+        assert!(forwarded["input"][1].get("id").is_none());
+        assert!(forwarded["input"][1].get("encrypted_content").is_none());
+        assert_eq!(forwarded["input"][2]["role"], "user");
+    }
+
+    drop(requests);
+    unregister(&token);
+    server.abort();
+}
+
+#[tokio::test]
 async fn failed_model_switch_remains_pending_for_retry() {
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
         .await
