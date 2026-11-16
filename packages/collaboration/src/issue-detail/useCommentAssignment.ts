@@ -75,12 +75,19 @@ export function useCommentAssignment(
     setError(null)
     setSelectedTarget(next)
     if (next && actions?.assigneeMoves?.includes(moveTarget)) setMoveTarget('')
+    if (!next && !moveTarget && pendingToggle === null) clearCommittedComment()
   }
 
   function setMove(next: string) {
     setError(null)
     setMoveTarget(next)
     if (actions?.assigneeMoves?.includes(next)) setSelectedTarget('')
+    if (!next && !target && pendingToggle === null) clearCommittedComment()
+  }
+
+  function clearCommittedComment() {
+    committedBody.current = null
+    setCommentCommitted(false)
   }
 
   function setMode(next: 'current' | 'child') {
@@ -136,6 +143,7 @@ export function useCommentAssignment(
         setPendingChild(null)
         setSelectedTarget('')
         setSentSuggestion('')
+        clearCommittedComment()
         return
       }
       if (body && committedBody.current !== body) {
@@ -165,8 +173,7 @@ export function useCommentAssignment(
         await actions.toggle(toggle)
         setPendingToggle(null)
       }
-      committedBody.current = null
-      setCommentCommitted(false)
+      clearCommittedComment()
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : String(cause))
     } finally {
