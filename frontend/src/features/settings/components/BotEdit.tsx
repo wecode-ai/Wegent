@@ -63,6 +63,7 @@ import {
   isMcpCapableShellType,
   isValidAgentType,
 } from '../utils/mcpTypeAdapter'
+import { migrateLegacyProviderMcpConfig } from '../utils/providerMcpConfig'
 import { buildSkillRefsFromSelection } from '../utils/skillRefResolver'
 import { filterVisibleSkills } from '@/utils/skillVisibility'
 import { shellSupportsPreloadSkills } from './team-edit/simple-team-edit-utils'
@@ -141,7 +142,7 @@ interface BotEditProps {
   allowGenerationPrimaryModel?: boolean
 }
 
-const EMPTY_TARGET_GROUP_NAMES: string[] = []
+const EMPTY_TARGET_GROUP_NAMES: readonly string[] = []
 
 const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
   {
@@ -607,7 +608,8 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
     normalizedMcpKeyRef.current = ''
 
     if (baseBot?.mcp_servers) {
-      setMcpConfig(JSON.stringify(baseBot.mcp_servers, null, 2))
+      const mcpServers = migrateLegacyProviderMcpConfig(baseBot.mcp_servers)
+      setMcpConfig(JSON.stringify(mcpServers, null, 2))
     } else {
       setMcpConfig('')
     }
@@ -644,7 +646,8 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
     if (normalizedMcpKeyRef.current === key) return
 
     normalizedMcpKeyRef.current = key
-    setMcpConfig(JSON.stringify(adaptMcpConfigForShell(baseBot.mcp_servers, agentType), null, 2))
+    const mcpServers = migrateLegacyProviderMcpConfig(baseBot.mcp_servers)
+    setMcpConfig(JSON.stringify(adaptMcpConfigForShell(mcpServers, agentType), null, 2))
   }, [baseBot, editingBotId, shells])
 
   // Initialize model-related data after agents and models are loaded
@@ -832,7 +835,6 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
       )
       parsedAgentConfig = modelConfig ?? {}
     }
-
     let parsedMcpConfig: Record<string, unknown> = {}
     if (!isDifyAgent && mcpConfig.trim()) {
       parsedMcpConfig = JSON.parse(mcpConfig)
@@ -1006,13 +1008,13 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
       return
     }
 
-    let parsedAgentConfig: unknown = undefined
+    let parsedAgentConfig: Record<string, unknown> = {}
 
     // For Dify agent, always use custom model configuration
     if (isDifyAgent) {
       const trimmedConfig = agentConfig.trim()
       try {
-        parsedAgentConfig = JSON.parse(trimmedConfig)
+        parsedAgentConfig = JSON.parse(trimmedConfig) as Record<string, unknown>
         setAgentConfigError(false)
       } catch {
         setAgentConfigError(true)
@@ -1049,7 +1051,6 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
       )
       parsedAgentConfig = modelConfig ?? {}
     }
-
     let parsedMcpConfig: Record<string, unknown> | null = null
 
     // Skip MCP config for Dify agent

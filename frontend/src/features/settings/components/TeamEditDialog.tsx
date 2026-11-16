@@ -465,6 +465,7 @@ export default function TeamEditDialog(props: TeamEditDialogProps) {
     initializeNewDraft,
     normalizeExecutor,
   } = useSimpleTeamDraft()
+  const [showFinalAnswerOnly, setShowFinalAnswerOnly] = useState(false)
 
   // Ref for BotEdit in solo mode
   const botEditRef = useRef<BotEditRef | null>(null)
@@ -649,6 +650,7 @@ export default function TeamEditDialog(props: TeamEditDialogProps) {
           shellType: fullLeaderBot?.shell_type || '',
         })
       initializeBotFields(fullLeaderBot, usesAutomaticBindMode ? [] : initialBindMode)
+      setShowFinalAnswerOnly(formTeam.display_config?.show_final_answer_only === true)
       // Initialize requireConfirmationMap from existing team data
       const confirmMap: Record<number, boolean> = {}
       const passingMap: Record<number, PipelineContextPassing> = {}
@@ -695,6 +697,7 @@ export default function TeamEditDialog(props: TeamEditDialogProps) {
       setRequireConfirmationMap({})
       setContextPassingMap({})
       initializeNewDraft(DEFAULT_NEW_AGENT_BIND_MODE)
+      setShowFinalAnswerOnly(false)
       // Default to true for new teams (requires workspace by default)
       setRequiresWorkspace(true)
     }
@@ -1102,6 +1105,7 @@ export default function TeamEditDialog(props: TeamEditDialogProps) {
           quickPhrases,
           inputPlaceholder,
           bindMode: resolvedBindMode,
+          showFinalAnswerOnly,
           icon,
           requiresWorkspace,
           namespace: teamNamespace,
@@ -1239,6 +1243,9 @@ export default function TeamEditDialog(props: TeamEditDialogProps) {
     const displayNamePayload = trimmedDisplayName || (formTeam?.displayName ? null : undefined)
     const quickPhrasePayload = getQuickPhrasePayload(quickPhrases)
     const inputPlaceholderPayload = normalizeInputPlaceholder(inputPlaceholder)
+    const displayConfigPayload = {
+      show_final_answer_only: showFinalAnswerOnly === true,
+    }
 
     if (leaderBotId == null) {
       toast({
@@ -1305,6 +1312,7 @@ export default function TeamEditDialog(props: TeamEditDialogProps) {
                 bots: botsData,
                 quick_phrases: quickPhrasePayload,
                 inputPlaceholder: inputPlaceholderPayload,
+                display_config: displayConfigPayload,
                 namespace:
                   isEditing && editingPublishTarget === 'personal'
                     ? 'default'
@@ -1325,6 +1333,7 @@ export default function TeamEditDialog(props: TeamEditDialogProps) {
               bots: botsData,
               quick_phrases: quickPhrasePayload,
               inputPlaceholder: inputPlaceholderPayload,
+              display_config: displayConfigPayload,
               namespace: scope === 'group' && groupName ? groupName : undefined,
               icon: icon || undefined,
               requires_workspace: requiresWorkspace ?? undefined,
@@ -1505,6 +1514,8 @@ export default function TeamEditDialog(props: TeamEditDialogProps) {
                   preloadSkills={simplePreloadSkills}
                   onPreloadSkillsChange={value => setSimpleField('simplePreloadSkills', value)}
                   supportsPreloadSkills={simpleSupportsPreloadSkills}
+                  showFinalAnswerOnly={showFinalAnswerOnly}
+                  setShowFinalAnswerOnly={setShowFinalAnswerOnly}
                   availableSkills={simpleAvailableSkills}
                   allSkills={simpleAllSkills}
                   loadingSkills={simpleLoadingSkills}
@@ -1555,6 +1566,8 @@ export default function TeamEditDialog(props: TeamEditDialogProps) {
                   setBindMode={setBindMode}
                   icon={icon}
                   setIcon={setIcon}
+                  showFinalAnswerOnly={showFinalAnswerOnly}
+                  setShowFinalAnswerOnly={setShowFinalAnswerOnly}
                   requiresWorkspace={requiresWorkspace}
                   setRequiresWorkspace={setRequiresWorkspace}
                 />

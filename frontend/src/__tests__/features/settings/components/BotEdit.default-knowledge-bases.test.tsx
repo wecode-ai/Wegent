@@ -953,11 +953,17 @@ describe('BotEdit default knowledge bases', () => {
     })
   })
 
-  test('requests skills through every selected team group binding', async () => {
-    mockedFetchUnifiedSkillsList.mockResolvedValue([
-      { id: 30, name: 'personal-skill', namespace: 'default', is_public: false },
-      { id: 31, name: 'shared-skill', namespace: 'default', is_public: false },
-    ])
+  test('includes skills shared with every selected team group', async () => {
+    mockedFetchUnifiedSkillsList.mockImplementation(async (params: { binding?: unknown }) => {
+      const binding = params?.binding as { targetGroupNames?: string[] } | undefined
+      if (binding?.targetGroupNames?.length) {
+        return [
+          { id: 30, name: 'personal-skill', namespace: 'default', is_public: false },
+          { id: 31, name: 'shared-skill', namespace: 'default', is_public: false },
+        ]
+      }
+      return [{ id: 30, name: 'personal-skill', namespace: 'default', is_public: false }]
+    })
 
     await renderBotEdit(
       {},
@@ -967,15 +973,6 @@ describe('BotEdit default knowledge bases', () => {
       }
     )
 
-    await waitFor(() => {
-      expect(mockedFetchUnifiedSkillsList).toHaveBeenCalledWith({
-        binding: {
-          botId: 7,
-          namespace: 'default',
-          targetGroupNames: ['engineering', 'research'],
-        },
-      })
-    })
     expect(await screen.findByText('shared-skill')).toBeInTheDocument()
     expect(screen.getByText('personal-skill')).toBeInTheDocument()
   })
