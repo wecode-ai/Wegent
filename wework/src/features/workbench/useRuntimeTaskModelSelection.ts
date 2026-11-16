@@ -37,6 +37,12 @@ interface UseRuntimeTaskModelSelectionOptions {
   userId: number
   resolveTask: (address: RuntimeTaskAddress) => RuntimeTaskSummary | null
   modelStore: RuntimeTaskModelStore
+  /**
+   * The model store validates the active task's saved selection, including a
+   * persisted cloud reference that the discovery catalog no longer lists.
+   * Return its readiness for the addressed task, or null for another task.
+   */
+  resolveActiveTaskSelectionReady?: (address: RuntimeTaskAddress) => boolean | null
 }
 
 function runtimeTaskModelScopeKey(userId: number, address: RuntimeTaskAddress): string {
@@ -65,6 +71,7 @@ export function useRuntimeTaskModelSelection({
   userId,
   resolveTask,
   modelStore,
+  resolveActiveTaskSelectionReady,
 }: UseRuntimeTaskModelSelectionOptions) {
   const {
     getSelectedModelForScope,
@@ -128,14 +135,18 @@ export function useRuntimeTaskModelSelection({
           ? !catalogTaskModel.compatibilityDisabled
           : Boolean(automaticModel)
       const scopedModelOptions = hasScopedOptions ? getSelectedModelOptionsForScope(scopeKey) : null
+      // The provider validates the focused task's persisted selection, which can
+      // resolve a hidden cloud model that the discovery catalog omits. Reuse that
+      // validation instead of treating the absent catalog entry as unavailable.
+      const activeTaskSelectionReady = resolveActiveTaskSelectionReady?.(address) === true
       return {
         // A model chosen in this pane is authoritative even before the task
         // summary arrives. An empty scoped entry is not.
-        selectionResolved: hasUsableSelection,
+        selectionResolved: hasUsableSelection || activeTaskSelectionReady,
         // A resolved conversation whose saved model was deleted is not ready
         // to send, but it must stay recoverable: the selector remains usable
         // so the user can choose a replacement.
-        selectionReady: hasUsableSelection && selectedModelAvailable,
+        selectionReady: activeTaskSelectionReady || (hasUsableSelection && selectedModelAvailable),
         taskSelection,
         activeModel: taskModel,
         ...((resolveTask(address)?.runtimeHandle ?? address.runtimeHandle)?.modelProviderRouting ===
@@ -157,6 +168,7 @@ export function useRuntimeTaskModelSelection({
       getSelectedModelOptionsForScope,
       hasSelectionForScope,
       models,
+      resolveActiveTaskSelectionReady,
       resolveTask,
       resolveTaskModelConfig,
       userId,

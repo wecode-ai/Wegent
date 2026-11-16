@@ -77,6 +77,48 @@ describe('bound remote task model selection', () => {
     })
   })
 
+  it('uses the provider-validated readiness for a hidden persisted model on the active task', () => {
+    const store = modelStore([])
+    const { result } = renderHook(() =>
+      useRuntimeTaskModelSelection({
+        userId: 7,
+        resolveTask: target =>
+          target.taskId === address.taskId
+            ? ({ modelSelection: selection } as RuntimeTaskSummary)
+            : null,
+        modelStore: store,
+        resolveActiveTaskSelectionReady: target => (target.taskId === address.taskId ? true : null),
+      })
+    )
+
+    expect(result.current.resolveRuntimeTaskModelSelection(address)).toMatchObject({
+      selectionResolved: true,
+      selectionReady: true,
+      selectedModel: { name: selection.modelName, type: 'public' },
+    })
+    // Only the focused task is covered by the provider's persisted-reference
+    // validation; another pane keeps the catalog-based readiness.
+    expect(
+      result.current.resolveRuntimeTaskModelSelection({ ...address, taskId: 'other-task' })
+    ).toMatchObject({ selectionReady: false })
+  })
+
+  it('keeps a provider-rejected active task model unsendable', () => {
+    const store = modelStore([])
+    const { result } = renderHook(() =>
+      useRuntimeTaskModelSelection({
+        userId: 7,
+        resolveTask: () => ({ modelSelection: selection }) as RuntimeTaskSummary,
+        modelStore: store,
+        resolveActiveTaskSelectionReady: () => false,
+      })
+    )
+
+    expect(result.current.resolveRuntimeTaskModelSelection(address)).toMatchObject({
+      selectionReady: false,
+    })
+  })
+
   it('keeps a loaded task without a model selection authoritative over a stale handle', () => {
     const store = modelStore([])
     const { result } = renderHook(() =>

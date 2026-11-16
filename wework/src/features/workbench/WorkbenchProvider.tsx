@@ -189,6 +189,7 @@ import { initialWorkbenchState, workbenchReducer } from './workbenchReducer'
 import {
   findProjectDeviceWorkspace,
   findProjectMetadataDeviceWorkspace,
+  isSameRuntimeTaskIdentity,
   readLastProjectId,
   resolveComposerProjectPluginNames,
 } from './workbenchRuntimeHelpers'
@@ -632,6 +633,12 @@ function OwnedWorkbenchProvider({
     userId: user.id,
     resolveTask: resolveRuntimeTaskSummary,
     modelStore: modelSelection,
+    // The model store restores the focused task's saved selection, including a
+    // persisted cloud reference that the discovery catalog does not list.
+    resolveActiveTaskSelectionReady: address =>
+      state.currentRuntimeTask && isSameRuntimeTaskIdentity(state.currentRuntimeTask, address)
+        ? modelSelection.isSelectionReady
+        : null,
   })
   const conversationModels = modelSelection.models
   const skillSelection = useWorkbenchSkills({
