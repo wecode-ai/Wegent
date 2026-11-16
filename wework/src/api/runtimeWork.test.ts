@@ -2,11 +2,15 @@
 
 import { createHash } from 'node:crypto'
 import { gzipSync } from 'node:zlib'
-import { describe, expect, test, vi } from 'vitest'
-import type { HttpClient } from './http'
+import { afterEach, describe, expect, test, vi } from 'vitest'
+import { ApiError, type HttpClient } from './http'
 import { createRuntimeWorkApi } from './runtimeWork'
 
 describe('createRuntimeWorkApi', () => {
+  afterEach(() => {
+    vi.useRealTimers()
+  })
+
   test('lists only the explicitly addressed computer and preserves cancellation', async () => {
     const get = vi.fn().mockResolvedValue({ projects: [], chats: [], totalTasks: 0 })
     const api = createRuntimeWorkApi({ get } as unknown as HttpClient)
@@ -30,6 +34,54 @@ describe('createRuntimeWorkApi', () => {
       { signal: controller.signal }
     )
   })
+
+  test('retries a busy transcript read until it recovers', async () => {
+    vi.useFakeTimers()
+    const transcript = { messages: [], turns: [] }
+    const post = vi
+      .fn()
+      .mockRejectedValueOnce(new ApiError('Transcript processing is busy', 502))
+      .mockResolvedValueOnce(transcript)
+    const api = createRuntimeWorkApi({ post } as unknown as HttpClient)
+    const request = { deviceId: 'cloud-device', taskId: 'task-1' }
+
+    const result = api.getRuntimeTranscript(request)
+    await vi.runAllTimersAsync()
+
+    await expect(result).resolves.toEqual(transcript)
+    expect(post).toHaveBeenCalledTimes(2)
+  })
+
+  test('stops retrying a busy transcript read after the backoff budget is exhausted', async () => {
+    vi.useFakeTimers()
+    const error = new ApiError('Transcript processing is busy', 502)
+    const post = vi.fn().mockRejectedValue(error)
+    const api = createRuntimeWorkApi({ post } as unknown as HttpClient)
+    const request = { deviceId: 'cloud-device', taskId: 'task-1' }
+
+    const result = api.getRuntimeTranscript(request)
+    const rejection = expect(result).rejects.toBe(error)
+    await vi.runAllTimersAsync()
+    await rejection
+
+    expect(post).toHaveBeenCalledTimes(4)
+  })
+
+  test.each([
+    ['non-busy status', new ApiError('Transcript processing is busy', 503)],
+    ['non-busy message', new ApiError('Executor unavailable', 502)],
+  ])('does not retry a transcript read with a %s', async (_description, error) => {
+    vi.useFakeTimers()
+    const post = vi.fn().mockRejectedValue(error)
+    const api = createRuntimeWorkApi({ post } as unknown as HttpClient)
+    const request = { deviceId: 'cloud-device', taskId: 'task-1' }
+
+    await expect(api.getRuntimeTranscript(request)).rejects.toBe(error)
+
+    expect(post).toHaveBeenCalledOnce()
+    expect(vi.getTimerCount()).toBe(0)
+  })
+
   test('assembles canonical HTTP history while preserving project scope on every chunk', async () => {
     const content = Array.from({ length: 18_000 }, (_, index) =>
       createHash('sha256').update(String(index)).digest('hex')
