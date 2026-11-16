@@ -17,7 +17,7 @@ Titles and properties save immediately; description edits use Save. A shared hea
 Replies to ordinary human discussions say they continue the discussion. Only discussions with execution records promise execution continuation; stand-in conversations and human work assignments retain their own reply explanations.
 Comment editors expose accessible names. Property labels, input hints, and timestamps use the readable secondary text color.
 The scroll viewport reserves the composer's measured footprint so keyboard focus and automatic positioning remain visible. Description Save and Cancel wait for an in-flight write; cancelling a failed edit also discards that description's retry operation.
-While a human question awaits an answer, the comment composer follows document flow so the question and submission controls remain readable. Retries apply only to the latest submission for that field and cannot restore values superseded by later edits.
+While a pending human question is visible in the reading viewport, the comment composer follows document flow so the question and submission controls remain readable. After scrolling past the question, the composer resumes sticking to the bottom. Retries apply only to the latest submission for that field and cannot restore values superseded by later edits.
 
 Opening an Issue from the Collaboration board shows creation, status changes, and comments in time order in the right detail drawer. An execution belongs to the comment that started it: the comment shows its run status, and its task entry opens the linked transcript, workspace, Terminal, and files. The execution page is read-only and does not expose a second reply composer. Return to the source Issue and reply in the corresponding discussion to add instructions.
 

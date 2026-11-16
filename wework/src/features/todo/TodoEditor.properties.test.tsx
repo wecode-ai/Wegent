@@ -48,7 +48,8 @@ const project = {
   access_role: 'Owner',
 } as CloudProject
 
-function setup(assignmentError?: Error, workspacePanel = false) {
+function setup(assignmentError?: Error, workspacePanel = false, backend = false) {
+  let replaceIssue!: (item: CloudLoopItem) => void
   let persisted = initial
   const updateLoopItem = vi.fn(async (_id: string, values: Partial<CloudLoopItem>) => {
     persisted = { ...persisted, ...values, version: persisted.version + 1 }
@@ -74,13 +75,14 @@ function setup(assignmentError?: Error, workspacePanel = false) {
   }
   function Editor() {
     const [item, setItem] = useState(initial)
+    replaceIssue = setItem
     return (
       <TodoEditor
         mode="edit"
         presentation={workspacePanel ? 'workspace-panel' : 'modal'}
         readFirst={workspacePanel}
         item={item}
-        project={project}
+        project={backend ? { ...project, project_store: 'backend' } : project}
         allItems={[item]}
         api={api as never}
         onUpdated={setItem}
@@ -89,10 +91,113 @@ function setup(assignmentError?: Error, workspacePanel = false) {
     )
   }
   render(<Editor />)
-  return { updateLoopItem, read: () => persisted }
+  return {
+    updateLoopItem,
+    read: () => persisted,
+    replaceIssue: (item: CloudLoopItem) => act(() => replaceIssue(item)),
+  }
 }
 
 describe('immediate Issue properties', () => {
+  it('isolates pending security writes when switching Issues', async () => {
+    const { updateLoopItem, replaceIssue } = setup(undefined, true, true)
+    const pending = Promise.withResolvers<CloudLoopItem>()
+    updateLoopItem.mockImplementationOnce(() => pending.promise)
+    fireEvent.change(screen.getByTestId('cloud-issue-security-level'), {
+      target: { value: 'related' },
+    })
+    expect(screen.getByTestId('cloud-issue-security-level')).toBeDisabled()
+    replaceIssue({ ...initial, id: 'PROPS-2', security_level: 'open' })
+    expect(screen.getByTestId('cloud-issue-security-level')).not.toBeDisabled()
+    await act(async () => pending.resolve({ ...initial, security_level: 'related', version: 2 }))
+    expect(screen.getByTestId('cloud-issue-security-level')).toHaveValue('open')
+    fireEvent.change(screen.getByTestId('cloud-issue-security-level'), {
+      target: { value: 'related' },
+    })
+    await waitFor(() => expect(updateLoopItem).toHaveBeenCalledTimes(2))
+    expect(updateLoopItem.mock.calls[1]).toEqual([
+      'PROPS-2',
+      { security_level: 'related', version: 1 },
+    ])
+  })
+
+  it('does not close another Issue editor when an earlier description write finishes', async () => {
+    const { updateLoopItem, replaceIssue } = setup(undefined, true)
+    fireEvent.click(screen.getByTestId('issue-description-edit'))
+    fireEvent.change(screen.getByTestId('test-description'), { target: { value: 'Same text' } })
+    const pending = Promise.withResolvers<CloudLoopItem>()
+    updateLoopItem.mockImplementationOnce(() => pending.promise)
+    fireEvent.click(screen.getByTestId('cloud-todo-save'))
+    replaceIssue({ ...initial, id: 'PROPS-2', description: 'Same text' })
+    fireEvent.click(await screen.findByTestId('issue-description-edit'))
+    expect(screen.getByTestId('cloud-todo-cancel-content-edit')).toBeVisible()
+    await act(async () => pending.resolve({ ...initial, description: 'Same text', version: 2 }))
+    expect(screen.getByTestId('cloud-todo-cancel-content-edit')).toBeVisible()
+    expect(screen.getByTestId('test-description')).toHaveValue('Same text')
+  })
+
+  it('preserves a cleared date through an older acknowledgement, a newer failure and retry', async () => {
+    const { updateLoopItem } = setup()
+    const first = Promise.withResolvers<CloudLoopItem>()
+    const latest = Promise.withResolvers<CloudLoopItem>()
+    updateLoopItem
+      .mockImplementationOnce(() => first.promise)
+      .mockImplementationOnce(() => latest.promise)
+      .mockResolvedValueOnce({ ...initial, due_at: null, version: 3 })
+    fireEvent.click(screen.getByRole('button', { name: '时间范围' }))
+    const due = await screen.findByTestId('cloud-todo-detail-due-date')
+    fireEvent.change(due, { target: { value: '2026-11-20' } })
+    fireEvent.change(due, { target: { value: '' } })
+    await act(async () => first.resolve({ ...initial, due_at: '2026-11-20', version: 2 }))
+    expect(due).toHaveValue('')
+    await waitFor(() => expect(updateLoopItem).toHaveBeenCalledTimes(2))
+    await act(async () => latest.reject(new Error('Latest date save failed')))
+    await screen.findByTestId('cloud-todo-field-retry')
+    expect(due).toHaveValue('')
+    fireEvent.click(screen.getByTestId('cloud-todo-field-retry'))
+    await waitFor(() => expect(screen.getByTestId('issue-save-status')).toHaveTextContent('已保存'))
+    expect(updateLoopItem.mock.lastCall?.[1]).toMatchObject({ version: 2, due_at: null })
+    expect(due).toHaveValue('')
+  })
+
+  it('discards a failed title when the user restores the persisted title', async () => {
+    const { updateLoopItem } = setup()
+    updateLoopItem.mockRejectedValueOnce(new Error('Offline'))
+    const title = screen.getByTestId('cloud-todo-detail-title')
+    fireEvent.change(title, { target: { value: 'Abandoned' } })
+    fireEvent.blur(title)
+    await screen.findByTestId('cloud-todo-field-retry')
+    fireEvent.change(title, { target: { value: initial.title } })
+    fireEvent.blur(title)
+    expect(screen.queryByTestId('cloud-todo-field-retry')).toBeNull()
+    expect(title).toHaveValue(initial.title)
+    expect(updateLoopItem).toHaveBeenCalledOnce()
+  })
+
+  it('keeps a restored title visible while older writes finish and persists the latest intent', async () => {
+    const { updateLoopItem } = setup()
+    const first = Promise.withResolvers<CloudLoopItem>()
+    const latest = Promise.withResolvers<CloudLoopItem>()
+    updateLoopItem
+      .mockImplementationOnce(() => first.promise)
+      .mockImplementationOnce(() => latest.promise)
+    const title = screen.getByTestId('cloud-todo-detail-title')
+    fireEvent.change(title, { target: { value: 'Abandoned' } })
+    fireEvent.blur(title)
+    fireEvent.change(title, { target: { value: initial.title } })
+    fireEvent.blur(title)
+    await act(async () => first.resolve({ ...initial, title: 'Abandoned', version: 2 }))
+    expect(title).toHaveValue(initial.title)
+    await waitFor(() => expect(updateLoopItem).toHaveBeenCalledTimes(2))
+    expect(updateLoopItem).toHaveBeenLastCalledWith(initial.id, {
+      version: 2,
+      title: initial.title,
+    })
+    await act(async () => latest.resolve({ ...initial, version: 3 }))
+    expect(title).toHaveValue(initial.title)
+    expect(screen.getByTestId('issue-save-status')).toHaveTextContent('已保存')
+  })
+
   it('keeps description save and cancel disabled while its write is pending', async () => {
     const { updateLoopItem } = setup(undefined, true)
     fireEvent.click(screen.getByTestId('issue-description-edit'))

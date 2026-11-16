@@ -49,7 +49,7 @@ function createFieldSaves<T extends VersionedIssue>(initial: T | null) {
     failures.delete(key)
     publish()
     try {
-      return await queue.enqueue(
+      const updated = await queue.enqueue(
         async (version) => {
           if (!source) throw new Error('Issue unavailable')
           const updated = await operation({ ...source, version })
@@ -63,6 +63,7 @@ function createFieldSaves<T extends VersionedIssue>(initial: T | null) {
         },
         (issue) => issue.version,
       )
+      return active ? updated : undefined
     } catch (error) {
       if (submissions.get(key) === submission) {
         failures.set(key, { operation, error, submission })
@@ -86,6 +87,7 @@ function createFieldSaves<T extends VersionedIssue>(initial: T | null) {
     discardFailure(key: string) {
       if (failures.delete(key)) publish()
     },
+    getSource: () => source,
     synchronize(next: T | null, onSaved: (issue: T) => void, onError?: (error: unknown) => void) {
       if (next && (!source || next.version >= source.version)) source = next
       queue.synchronize(next?.version ?? 0)
@@ -124,5 +126,11 @@ export function useIssueFieldSaves<T extends VersionedIssue>(
     return () => saves.activate(false)
   }, [saves])
   const snapshot = useSyncExternalStore(saves.subscribe, saves.getSnapshot, saves.getSnapshot)
-  return { ...snapshot, save: saves.save, retry: saves.retry, discardFailure: saves.discardFailure }
+  return {
+    ...snapshot,
+    save: saves.save,
+    retry: saves.retry,
+    discardFailure: saves.discardFailure,
+    getSource: saves.getSource,
+  }
 }

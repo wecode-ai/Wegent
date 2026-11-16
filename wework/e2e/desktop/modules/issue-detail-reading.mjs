@@ -96,6 +96,24 @@ async function verifyConstrainedDiscussion(control, captureScreenshot, replySele
     )
     await control.command('waitFor', `${replySelector}:focus`, { visible: true, stableMs: 300 })
     const [focusedReply] = JSON.parse(await control.command('getElementMetrics', replySelector))
+    assert.ok(focusedReply.width >= 44 && focusedReply.height >= 44)
+    const [participant] = JSON.parse(
+      await control.command(
+        'getElementMetrics',
+        scope('[data-testid="cloud-todo-add-collaborator"]')
+      )
+    )
+    assert.ok(participant.width >= 44 && participant.height >= 44)
+    const tools = JSON.parse(
+      await control.command('getElementMetrics', scope('.task-detail-new-comment-actions > button'))
+    )
+    assert.ok(tools.length > 0, 'The composer must expose its tool actions')
+    for (const tool of tools) {
+      assert.ok(
+        tool.width >= 44 && tool.height >= 44,
+        `Narrow composer actions must remain at least 44px: ${JSON.stringify(tool)}`
+      )
+    }
     assert.equal(
       focusedReply.hitTestVisible,
       true,

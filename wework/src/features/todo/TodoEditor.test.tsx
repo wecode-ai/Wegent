@@ -1,6 +1,6 @@
 import type { CloudLoopItem, CloudProject, LoopItemTaskBinding } from '@/api/deliveries'
 import i18n from '@/i18n'
-import { act, render, screen, waitFor, within } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { startTransition, Suspense, useState } from 'react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -47,6 +47,28 @@ const baseItem = {
 const project = { id: '11', name: 'Wework' } as unknown as CloudProject
 
 describe('TodoEditor external item sync', () => {
+  it('shows the persisted none priority without relabelling it as medium', () => {
+    const item = { ...baseItem, priority: 'none' as const }
+    render(
+      <TodoEditor
+        mode="edit"
+        presentation="workspace-panel"
+        readFirst
+        item={item}
+        project={project}
+        allItems={[item]}
+        onUpdated={vi.fn()}
+        onClose={vi.fn()}
+        api={api}
+      />
+    )
+    const priority = screen.getByTestId('cloud-todo-detail-priority')
+    expect(priority).toHaveValue('none')
+    expect(
+      priority.closest('.task-detail-rail-value')?.querySelector('.task-detail-workspace-tag')
+    ).toHaveTextContent(/^无$/)
+  })
+
   it('uses English accessible names throughout Issue reading controls', async () => {
     const language = i18n.language
     await act(async () => {
@@ -562,6 +584,15 @@ describe('TodoEditor external item sync', () => {
   })
 
   it('shows only the linked-task create button until that section scrolls above the viewport', async () => {
+    let anchorBottom = 1000
+    vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(function (
+      this: HTMLElement
+    ) {
+      return {
+        top: 0,
+        bottom: this.dataset.testid === 'cloud-todo-create-task' ? anchorBottom : 0,
+      } as DOMRect
+    })
     let onIntersection!: IntersectionObserverCallback
     const observe = vi.fn()
     const disconnect = vi.fn()
@@ -612,6 +643,7 @@ describe('TodoEditor external item sync', () => {
 
     const reportPosition = (bottom: number) =>
       act(() => {
+        anchorBottom = bottom
         onIntersection(
           [
             {
@@ -624,7 +656,11 @@ describe('TodoEditor external item sync', () => {
       })
     reportPosition(1000)
     expect(screen.queryByTestId('issue-persistent-task-action')).not.toBeInTheDocument()
-    reportPosition(-1)
+    // Jump from below to above without an intersection notification.
+    act(() => {
+      anchorBottom = -1
+      fireEvent.scroll(screen.getByTestId('cloud-todo-detail-scroll'))
+    })
     expect(screen.getByTestId('cloud-todo-personal-task-start')).toHaveAccessibleName('创建任务')
     expect(screen.getByTestId('cloud-todo-personal-task-start')).toHaveAttribute(
       'title',

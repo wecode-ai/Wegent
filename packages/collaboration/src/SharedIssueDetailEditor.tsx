@@ -716,7 +716,6 @@ export function TodoEditor(props: TodoEditorProps) {
   const latestItemRef = useRef(item);
   latestItemRef.current = item;
   const creation = useIssueCreation(editorPort);
-  const [securityBusy, setSecurityBusy] = useState(false);
   const isAITableEdit =
     item !== null && editProps?.project?.task_provider === "dingtalk_aitable";
   const project = createProps?.project ?? editProps?.project;
@@ -760,6 +759,23 @@ export function TodoEditor(props: TodoEditorProps) {
     draft ? draft.milestoneId : (createProps?.initialMilestoneId ?? null),
   );
 
+  const fieldSaves = useIssueFieldSaves(
+    item,
+    (updated) => {
+      if (props.mode === "edit") props.onUpdated(updated);
+    },
+    extensions?.onSaveError,
+  );
+  const pendingDraftFields = useMemo(
+    () =>
+      new Set([
+        ...fieldSaves.pendingFields,
+        ...(fieldSaves.pendingFields.has("schedule")
+          ? ["startDate", "dueDate"]
+          : []),
+      ]),
+    [fieldSaves.pendingFields],
+  );
   const {
     draft: issueDraft,
     setField: setIssueDraftField,
@@ -767,6 +783,7 @@ export function TodoEditor(props: TodoEditorProps) {
     restoredContentDirty,
   } = useIssueDetailDraft({
     source: item,
+    pendingFields: pendingDraftFields,
     initial: {
       title: createProps?.initialTitle ?? draft?.title ?? "",
       description: draft?.markdown ?? "",
@@ -992,16 +1009,7 @@ export function TodoEditor(props: TodoEditorProps) {
     Record<string, boolean>
   >({});
   const [saving, setSaving] = useState(false);
-  const persistedIssueRef = useRef<CloudLoopItem | null>(null);
   const [saveError, setSaveError] = useState<string | null>(null);
-  const fieldSaves = useIssueFieldSaves(
-    item,
-    (updated) => {
-      persistedIssueRef.current = updated;
-      if (props.mode === "edit") props.onUpdated(updated);
-    },
-    extensions?.onSaveError,
-  );
   const descriptionDirty = Boolean(
     item &&
     description !==
@@ -1015,13 +1023,12 @@ export function TodoEditor(props: TodoEditorProps) {
     const next = title.trim();
     setTitle(next);
     if (
-      next ===
-      (persistedIssueRef.current?.id === item.id
-        ? persistedIssueRef.current
-        : item
-      ).title
-    )
+      next === (fieldSaves.getSource() ?? item).title &&
+      !fieldSaves.pendingFields.has("title")
+    ) {
+      fieldSaves.discardFailure("title");
       return;
+    }
     await fieldSaves.save("title", (source) =>
       persistIssueDetailFields(source, { title: next }, editorPort.issues),
     );
@@ -1053,15 +1060,20 @@ export function TodoEditor(props: TodoEditorProps) {
     const anchor = personalTaskActionRef.current;
     const root = detailScrollRef.current;
     if (!canPinPersonalTaskAction || !anchor || !root) return;
-    const observer = new IntersectionObserver(
-      ([entry]) => {
-        const top = entry.rootBounds?.top ?? root.getBoundingClientRect().top;
-        setPersonalTaskActionPinned(entry.boundingClientRect.bottom <= top);
-      },
-      { root, threshold: 0 },
-    );
+    const update = () => {
+      setPersonalTaskActionPinned(
+        anchor.getBoundingClientRect().bottom <=
+          root.getBoundingClientRect().top,
+      );
+    };
+    const observer = new IntersectionObserver(update, { root, threshold: 0 });
     observer.observe(anchor);
-    return () => observer.disconnect();
+    root.addEventListener("scroll", update, { passive: true });
+    update();
+    return () => {
+      observer.disconnect();
+      root.removeEventListener("scroll", update);
+    };
   }, [item?.id, canPinPersonalTaskAction]);
   const titleRef = useRef<HTMLTextAreaElement>(null);
   const descriptionCollapseRef = useRef<HTMLDivElement>(null);
@@ -1842,10 +1854,7 @@ export function TodoEditor(props: TodoEditorProps) {
   function cancelContentEditing() {
     if (!item || savingDescription) return;
     fieldSaves.discardFailure("description");
-    const source =
-      persistedIssueRef.current?.id === item.id
-        ? persistedIssueRef.current
-        : item;
+    const source = fieldSaves.getSource() ?? item;
     setDescription(
       (extensions?.normalizeDescription ?? ((value: string) => value))(
         source.description ?? "",
@@ -2513,9 +2522,7 @@ export function TodoEditor(props: TodoEditorProps) {
         priorityBadgeClasses[priority],
       )}
     >
-      {priority === "none"
-        ? t("todo.priority_medium", "普通")
-        : t(`todo.priority_${priority}`, priority)}
+      {t(`todo.priority_${priority}`, priority)}
     </span>
   );
   const collaboratorPreview = collaborators.slice(0, 2);
@@ -2770,9 +2777,7 @@ export function TodoEditor(props: TodoEditorProps) {
             control={prioritySelect}
           >
             <span className="task-detail-workspace-tag">
-              {priority === "none"
-                ? t("todo.priority_medium", "普通")
-                : t(`todo.priority_${priority}`, priority)}
+              {t(`todo.priority_${priority}`, priority)}
               <ChevronDown className="h-3 w-3" />
             </span>
           </RailProp>
@@ -3299,10 +3304,11 @@ export function TodoEditor(props: TodoEditorProps) {
                               )}
                               className={overlayControlClass}
                               value={item.security_level ?? "open"}
-                              disabled={securityBusy}
+                              disabled={fieldSaves.pendingFields.has(
+                                "security",
+                              )}
                               onChange={async (event) => {
                                 if (!editProps) return;
-                                setSecurityBusy(true);
                                 setSaveError(null);
                                 try {
                                   const security = event.target.value as
@@ -3324,8 +3330,6 @@ export function TodoEditor(props: TodoEditorProps) {
                                           "保存任务失败",
                                         ),
                                   );
-                                } finally {
-                                  setSecurityBusy(false);
                                 }
                               }}
                             >

@@ -774,6 +774,19 @@
 }
 
 @media (max-width: 767px) {
+  .task-detail-primary-metadata .task-detail-property-collaborators {
+    gap: 4px;
+  }
+
+  .task-detail-primary-metadata .task-detail-property-collaborators > button {
+    display: inline-flex;
+    min-width: 44px;
+    min-height: 44px;
+    align-items: center;
+    justify-content: center;
+    margin-left: 0;
+  }
+
   .task-detail-property,
   .task-detail-primary-metadata .task-detail-rail-prop,
   .task-detail-expanded-properties .task-detail-rail-prop,
@@ -3047,8 +3060,7 @@
   margin: 0;
 }
 
-.task-detail-workspace-panel:has(.task-detail-human-requests)
-  .task-detail-comment-bar {
+.task-detail-comment-bar[data-human-request-visible="true"] {
   position: static;
 }
 
@@ -3062,12 +3074,14 @@
     max-height: 48px;
   }
 
-  .task-detail-workspace-panel .task-detail-new-comment-actions > button {
-    min-width: 28px;
+  .task-detail-workspace-panel .task-detail-comment-reply-context-row {
     min-height: 28px;
   }
+}
 
-  .task-detail-workspace-panel .task-detail-comment-reply-context-row {
+@media (min-width: 768px) and (max-height: 600px) and (pointer: fine) {
+  .task-detail-workspace-panel .task-detail-new-comment-actions > button {
+    min-width: 28px;
     min-height: 28px;
   }
 }
@@ -3212,6 +3226,14 @@
 
 .task-detail-workspace-panel .task-detail-thread-actions > button:hover {
   color: rgb(var(--color-text-primary));
+}
+
+@media (max-width: 767px) {
+  .task-detail-workspace-panel .task-detail-thread-actions > button {
+    min-width: 44px;
+    min-height: 44px;
+    justify-content: center;
+  }
 }
 
 :where(html:not([data-input-modality="pointer"]))

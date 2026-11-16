@@ -1,4 +1,4 @@
-import { act, render, screen } from '@testing-library/react'
+import { act, fireEvent, render, screen } from '@testing-library/react'
 import { afterEach, expect, it, vi } from 'vitest'
 import { useIssueComposerViewport } from '../../../../packages/collaboration/src/issue-detail/useIssueComposerViewport'
 
@@ -52,15 +52,30 @@ it('releases the inset while an inline human question owns the reading surface',
       disconnect = vi.fn()
     }
   )
-  vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockReturnValue({
-    height: 94,
-  } as DOMRect)
+  let questionBottom = 200
+  let viewportBottom = 440
+  vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(function (
+    this: HTMLElement
+  ) {
+    if (this.classList.contains('task-detail-human-requests'))
+      return { top: questionBottom - 100, bottom: questionBottom } as DOMRect
+    return { top: 0, bottom: viewportBottom, height: 94 } as DOMRect
+  })
+  const computed = window.getComputedStyle.bind(window)
+  vi.spyOn(window, 'getComputedStyle').mockImplementation(element => {
+    if (element instanceof HTMLElement && element.tagName === 'FOOTER')
+      return {
+        position: element.dataset.humanRequestVisible === 'true' ? 'static' : 'sticky',
+        bottom: '16px',
+      } as CSSStyleDeclaration
+    return computed(element)
+  })
   function Fixture({ question }: { question: boolean }) {
     const ref = useIssueComposerViewport(true)
     return (
       <div data-testid="viewport" style={{ overflowY: 'auto', scrollPaddingBottom: 12 }}>
         {question && <section className="task-detail-human-requests">Question</section>}
-        <footer ref={ref} style={{ position: question ? 'static' : 'sticky', bottom: 16 }} />
+        <footer ref={ref} />
       </div>
     )
   }
@@ -68,6 +83,18 @@ it('releases the inset while an inline human question owns the reading surface',
   const viewport = screen.getByTestId('viewport')
   expect(viewport.style.scrollPaddingBottom).toBe('110px')
   await act(async () => rerender(<Fixture question />))
+  expect(viewport.style.scrollPaddingBottom).toBe('12px')
+  questionBottom = -10
+  fireEvent.scroll(viewport)
+  expect(viewport.style.scrollPaddingBottom).toBe('110px')
+  questionBottom = 200
+  fireEvent.scroll(viewport)
+  expect(viewport.style.scrollPaddingBottom).toBe('12px')
+  viewportBottom = 50
+  fireEvent(window, new Event('resize'))
+  expect(viewport.style.scrollPaddingBottom).toBe('110px')
+  viewportBottom = 440
+  fireEvent(window, new Event('resize'))
   expect(viewport.style.scrollPaddingBottom).toBe('12px')
   await act(async () => rerender(<Fixture question={false} />))
   expect(viewport.style.scrollPaddingBottom).toBe('110px')
