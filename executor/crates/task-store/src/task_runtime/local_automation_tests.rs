@@ -69,6 +69,135 @@ fn runs(store: &LocalTaskStore, project: &LoopItem, id: &str) -> Vec<Value> {
     store.list_project_automation_runs(&project.id, id).unwrap()
 }
 
+fn workday_rule() -> Value {
+    json!({"id":"workdays","version":1,"name":"Workdays","triggerType":"schedule","cronExpression":"0 9 * * *","timezone":"Asia/Shanghai","workdayOnly":true,"targetKind":"human","targetId":"7","enabled":true})
+}
+
+fn set_due(store: &LocalTaskStore, project: &LoopItem, at: &str) {
+    store.connection().unwrap().execute("UPDATE loop_items SET metadata=json_set(metadata,'$.automation_schedule',json(?1)) WHERE id=?2", params![json!({"workdays:1":at}).to_string(), project.id]).unwrap();
+}
+
+#[test]
+fn scheduled_workday_rules_survive_reload_skip_holidays_and_run_adjusted_weekends() {
+    let (directory, store, project) = setup();
+    set_rules(&store, &project, json!([workday_rule()]));
+    let task = issue(&store, &project, "inbox");
+    set_due(&store, &project, "2026-09-30T01:00:00Z");
+    drop(store);
+    let store = LocalTaskStore::open(directory.path().join("automations.sqlite")).unwrap();
+    store
+        .tick_project_automations_at("2026-10-01T01:00:00Z".parse().unwrap())
+        .unwrap();
+    assert!(runs(&store, &project, "workdays").is_empty());
+    assert_eq!(
+        store.get_project(&project.id).unwrap().metadata["automation_schedule"]["workdays:1"],
+        "2026-10-08T01:00:00+00:00"
+    );
+    set_due(&store, &project, "2026-10-10T01:00:00Z");
+    store
+        .tick_project_automations_at("2026-10-10T01:00:00Z".parse().unwrap())
+        .unwrap();
+    assert_eq!(runs(&store, &project, "workdays").len(), 1);
+    assert_eq!(
+        store
+            .get_task(&project.id, &task.id)
+            .unwrap()
+            .assignee_user_id,
+        Some(7)
+    );
+}
+
+#[test]
+fn unknown_local_calendar_is_visible_isolated_and_recovers() {
+    let (_directory, store, project) = setup();
+    let mut ordinary = workday_rule();
+    ordinary["id"] = json!("ordinary");
+    ordinary["workdayOnly"] = json!(false);
+    set_rules(&store, &project, json!([workday_rule(), ordinary]));
+    issue(&store, &project, "inbox");
+    set_due(&store, &project, "2026-11-16T01:00:00Z");
+    store
+        .tick_project_automations_at("2028-01-01T01:00:00Z".parse().unwrap())
+        .unwrap();
+    let current = store.get_project(&project.id).unwrap();
+    assert!(current.metadata["automation_schedule_errors"]["workdays:1"]
+        .as_str()
+        .unwrap()
+        .contains("2028"));
+    assert!(current.metadata["automation_schedule"]["ordinary:1"].is_string());
+    store
+        .tick_project_automations_at("2026-11-16T01:00:00Z".parse().unwrap())
+        .unwrap();
+    assert_eq!(runs(&store, &project, "workdays").len(), 1);
+    assert!(
+        store.get_project(&project.id).unwrap().metadata["automation_schedule_errors"]
+            ["workdays:1"]
+            .is_null()
+    );
+}
+
+#[test]
+fn queued_workday_execution_revalidates_actual_dispatch_and_manual_runs_bypass() {
+    let (_directory, store, project) = setup();
+    let agent = agent(&store, &project);
+    let mut rule = workday_rule();
+    rule["targetKind"] = json!("agent");
+    rule["targetId"] = json!(agent.id);
+    set_rules(&store, &project, json!([rule]));
+    let task = issue(&store, &project, "inbox");
+    set_due(&store, &project, "2026-09-30T01:00:00Z");
+    store
+        .tick_project_automations_at("2026-09-30T01:00:00Z".parse().unwrap())
+        .unwrap();
+    let execution = store
+        .list_executions(&project.id, None, None, true)
+        .unwrap()
+        .pop()
+        .unwrap();
+    assert_eq!(execution.loop_item_id, task.id);
+    let connection = store.connection().unwrap();
+    assert!(!local_automation::enforce_execution_workday(
+        &connection,
+        &execution,
+        "2028-01-01T01:00:00Z".parse().unwrap()
+    )
+    .unwrap());
+    let waiting = execution_row(&connection, execution.id).unwrap();
+    assert_eq!(waiting.status, "queued");
+    assert!(waiting.error_message.contains("2028"));
+    assert!(local_automation::enforce_execution_workday(
+        &connection,
+        &execution,
+        "2026-10-10T01:00:00Z".parse().unwrap()
+    )
+    .unwrap());
+    assert!(!local_automation::enforce_execution_workday(
+        &connection,
+        &execution,
+        "2026-10-01T01:00:00Z".parse().unwrap()
+    )
+    .unwrap());
+    assert_eq!(
+        execution_row(&connection, execution.id).unwrap().status,
+        "cancelled"
+    );
+    let run_id = execution.execution_payload.as_ref().unwrap()["automation_run_id"]
+        .as_str()
+        .unwrap();
+    connection
+        .execute(
+            "UPDATE loop_items SET metadata=json_set(metadata,'$.trigger','manual') WHERE id=?1",
+            [run_id],
+        )
+        .unwrap();
+    assert!(local_automation::enforce_execution_workday(
+        &connection,
+        &execution,
+        "2028-01-01T01:00:00Z".parse().unwrap()
+    )
+    .unwrap());
+}
+
 #[test]
 fn target_status_triggers_only_on_entry_and_survives_restart() {
     let (directory, store, project) = setup();

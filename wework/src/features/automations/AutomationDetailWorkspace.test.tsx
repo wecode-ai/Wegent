@@ -118,6 +118,25 @@ const savedAutomation: Automation = {
 }
 
 describe('AutomationDetailWorkspace', () => {
+  test('edits and saves the workday filter separately from Monday–Friday recurrence', async () => {
+    const user = userEvent.setup()
+    const onSaveDraft = vi.fn()
+    await renderTranslated(<AutomationDetailHarness onSaveDraft={onSaveDraft} />)
+    const checkbox = screen.getByRole('checkbox', { name: '仅中国大陆法定工作日执行' })
+    expect(checkbox).not.toBeChecked()
+    expect(checkbox).toHaveAccessibleDescription(/按北京时间日期/)
+    await user.click(checkbox)
+    await user.click(screen.getByTestId('automation-save-button'))
+    expect(onSaveDraft).toHaveBeenCalledWith(
+      expect.objectContaining({ workdayOnly: true, cronPreset: 'weekdays' })
+    )
+    await user.click(screen.getByTestId('automation-repeat-menu'))
+    await user.click(screen.getByTestId('automation-repeat-menu-option-one_time'))
+    expect(screen.queryByTestId('automation-workday-only')).not.toBeInTheDocument()
+    await user.click(screen.getByTestId('automation-repeat-menu'))
+    await user.click(screen.getByTestId('automation-repeat-menu-option-daily'))
+    expect(screen.getByTestId('automation-workday-only')).toBeChecked()
+  })
   test.each(['cron', 'interval'] as const)(
     'edits the saved %s time zone only after opening frequency settings',
     async scheduleType => {

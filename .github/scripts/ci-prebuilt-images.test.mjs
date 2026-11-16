@@ -64,6 +64,17 @@ test("dependency keys follow build inputs and survive application-only changes",
     assert.notEqual(key("backend-rs-deps"), backend);
     writeFileSync(sharedSource, originalSource);
     for (const input of [
+      "shared/assets/calendars/china-workdays.json",
+      "shared/assets/calendars/LICENSE.chinesecalendar",
+    ]) {
+      const source = join(directory, input);
+      const original = readFileSync(source, "utf8");
+      writeFileSync(source, `${original}\nChanged calendar build input\n`);
+      assert.notEqual(key(), executor, input);
+      assert.notEqual(key("backend-rs-deps"), backend, input);
+      writeFileSync(source, original);
+    }
+    for (const input of [
       "shared/assets/codex-models/openai.json",
       "shared/assets/codexDiscoveryInstructions.md",
       "sdk/plugin-auth/tool.py",
@@ -240,6 +251,23 @@ test("fork and trusted PRs reuse image hits while missing images build exactly o
   }
 });
 
+test("Fork Executor consumers do not require a registry login for public images", () => {
+  const consumer = workflow("e2e-tests").jobs["executor-e2e-tests"];
+  const login = consumer.steps.find((step) => step.name === "Log in to GHCR");
+  const enabled = (eventName, headRepository) =>
+    login.if === undefined || runInNewContext(login.if, {
+      github: {
+        event_name: eventName,
+        repository: "wecode-ai/Wegent",
+        event: { pull_request: { head: { repo: { full_name: headRepository } } } },
+      },
+    });
+  assert.equal(enabled("pull_request", "fork-owner/Wegent"), false);
+  assert.equal(enabled("pull_request", "wecode-ai/Wegent"), true);
+  assert.equal(enabled("workflow_dispatch"), true);
+  assert.equal(enabled("merge_group"), true);
+});
+
 test("Executor consumers pull public pins anonymously and propagate either image pull failure", () => {
   const consumer = workflow("e2e-tests").jobs["executor-e2e-tests"];
   const pull = consumer.steps.find((step) => step.name === "Pull E2E images");
@@ -271,26 +299,31 @@ if (image.includes(process.env.TEST_PULL_FAILURE || 'no-failure')) process.exit(
     const log = join(directory, "docker.log");
     const run = (archive, pinned, failure = "") => {
       writeFileSync(log, "");
-      const result = spawnSync("bash", ["-e", "-c", pull.run], {
-        encoding: "utf8",
-        env: {
-          ...process.env,
-          PATH: `${directory}:${process.env.PATH}`,
-          TMPDIR: directory,
-          PLATFORM_E2E_IMAGE: "ghcr.io/example/platform:source",
-          EXECUTOR_E2E_IMAGE: pinned
-            ? pinnedBase
-            : "ghcr.io/example/executor:source",
-          USE_EXECUTOR_ARTIFACT: String(archive),
-          TEST_DOCKER_LOG: log,
-          TEST_PULL_FAILURE: failure,
+      // Host shell startup files must not put the real Docker ahead of this fixture.
+      const result = spawnSync(
+        "bash",
+        ["--noprofile", "--norc", "-e", "-c", pull.run],
+        {
+          encoding: "utf8",
+          env: {
+            ...process.env,
+            PATH: `${directory}:${process.env.PATH}`,
+            TMPDIR: directory,
+            PLATFORM_E2E_IMAGE: "ghcr.io/example/platform:source",
+            EXECUTOR_E2E_IMAGE: pinned
+              ? pinnedBase
+              : "ghcr.io/example/executor:source",
+            USE_EXECUTOR_ARTIFACT: String(archive),
+            TEST_DOCKER_LOG: log,
+            TEST_PULL_FAILURE: failure,
+          },
         },
-      });
+      );
+      assert.equal(result.status, failure ? 37 : 0, result.stderr);
       const calls = readFileSync(log, "utf8")
         .trim()
         .split("\n")
         .map(JSON.parse);
-      assert.equal(result.status, failure ? 37 : 0, result.stderr);
       for (const call of calls) {
         if (call.args[0] === "--config") {
           assert.deepEqual(call.config, { auths: {} });

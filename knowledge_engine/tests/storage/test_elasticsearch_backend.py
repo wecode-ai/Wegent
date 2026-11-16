@@ -663,8 +663,21 @@ class TestDeleteDocument:
         assert result["deleted_parent_nodes"] == 1
         assert result["index_name"] == "test_kb_kb_1"
         assert result["status"] == "deleted"
-        mock_store.delete_nodes.assert_called_once()
-        mock_client.delete_by_query.assert_called_once_with(
+        mock_store_class.assert_not_called()
+        assert mock_client.delete_by_query.call_count == 2
+        mock_client.delete_by_query.assert_any_call(
+            index="test_kb_kb_1",
+            query={
+                "bool": {
+                    "filter": [
+                        {"term": {"metadata.knowledge_id.keyword": "kb_1"}},
+                        {"term": {"metadata.doc_ref.keyword": "doc_1"}},
+                    ]
+                }
+            },
+            refresh=True,
+        )
+        mock_client.delete_by_query.assert_any_call(
             index="test_kb_kb_1__parents",
             query={
                 "bool": {

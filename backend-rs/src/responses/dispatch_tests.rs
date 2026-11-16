@@ -553,3 +553,122 @@ async fn executor_failure_does_not_write_or_publish_after_cancellation() {
         assert_eq!(redis.count("PUBLISH "), 0);
     }
 }
+
+#[tokio::test]
+async fn pipeline_duplicate_observes_acceptance_without_a_second_consumer_or_cleanup() {
+    let redis = RecordingRedis::default();
+    let mysql = RecordingMysql::default();
+    let mut server = spawn_server(200, vec![CREATED], vec![COMPLETED]).await;
+    let job = chat_job(&server.url, mysql.clone(), redis.clone());
+    let (sender, receiver) = oneshot::channel();
+    let owner = tokio::spawn(run_chat_shell(job, Some(sender)));
+    tokio::time::timeout(Duration::from_secs(5), receiver)
+        .await
+        .unwrap()
+        .unwrap()
+        .unwrap();
+    server.started.await.unwrap();
+    assert!(!owner.is_finished(), "the real owner is still streaming");
+    let cleanup_before = redis.count("DEL");
+    let registrations_before = redis.count("EVAL chat:cancel:");
+    let sql_before = mysql.statements().len();
+    let (sender, receiver) = oneshot::channel();
+    tokio::time::timeout(
+        Duration::from_secs(1),
+        run_chat_shell(
+            chat_job(&server.url, mysql.clone(), redis.clone()),
+            Some(sender),
+        ),
+    )
+    .await
+    .unwrap()
+    .unwrap();
+    assert_eq!(receiver.await.unwrap(), Ok(()));
+    assert_eq!(
+        redis.count("DEL"),
+        cleanup_before,
+        "observer does not clear owner's stream"
+    );
+    assert_eq!(redis.count("EVAL chat:cancel:"), registrations_before);
+    assert_eq!(
+        mysql.statements().len(),
+        sql_before,
+        "observer does not touch terminal state"
+    );
+    assert_eq!(redis.count("LEASE-ACCEPT"), 1);
+    assert_eq!(redis.count("LEASE-RENEW"), 0);
+    assert_eq!(redis.count("LEASE-RELEASE"), 0);
+    redis
+        .fail_receipt
+        .store(true, std::sync::atomic::Ordering::SeqCst);
+    let (sender, receiver) = oneshot::channel();
+    assert!(
+        run_chat_shell(
+            chat_job(&server.url, mysql.clone(), redis.clone()),
+            Some(sender)
+        )
+        .await
+        .is_err()
+    );
+    assert!(
+        receiver.await.unwrap().is_err(),
+        "an unreadable receipt is not success"
+    );
+    assert_eq!(redis.count("DEL"), cleanup_before);
+    redis
+        .fail_receipt
+        .store(false, std::sync::atomic::Ordering::SeqCst);
+    server.release.take().unwrap().send(()).unwrap();
+    // This focused fixture deliberately retains no AppState. The owner must
+    // report the terminal recovery failure and still release its own lease.
+    assert_eq!(
+        owner.await.unwrap().unwrap_err(),
+        "Chat Shell dispatch lost application state"
+    );
+    assert_eq!(redis.count("LEASE-RELEASE"), 1);
+}
+
+#[tokio::test]
+async fn pipeline_unknown_and_invalid_first_events_do_not_create_an_acceptance_receipt() {
+    for event in [
+        r#"{"type":"unknown.event"}"#,
+        r#"{"type":"response.output_item.added","item":{"type":"function_call","call_id":"","name":"x"}}"#,
+    ] {
+        let redis = RecordingRedis::default();
+        let server = spawn_server(200, vec![event], vec![]).await;
+        let (sender, receiver) = oneshot::channel();
+        assert!(
+            run_chat_shell(
+                chat_job(&server.url, RecordingMysql::default(), redis.clone()),
+                Some(sender)
+            )
+            .await
+            .is_err()
+        );
+        assert!(receiver.await.unwrap().is_err());
+        assert_eq!(
+            redis.count("LEASE-ACCEPT"),
+            0,
+            "only a parsed event proves acceptance"
+        );
+    }
+}
+
+#[tokio::test]
+async fn pipeline_receipt_redis_failure_is_not_acknowledged_as_success() {
+    let redis = RecordingRedis::default();
+    redis
+        .fail_receipt
+        .store(true, std::sync::atomic::Ordering::SeqCst);
+    let server = spawn_server(200, vec![CREATED], vec![]).await;
+    let (sender, receiver) = oneshot::channel();
+    assert!(
+        run_chat_shell(
+            chat_job(&server.url, RecordingMysql::default(), redis),
+            Some(sender)
+        )
+        .await
+        .is_err()
+    );
+    assert!(receiver.await.unwrap().is_err());
+}

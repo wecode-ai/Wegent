@@ -102,6 +102,30 @@ def test_conversion_start_moves_a_waiting_document_into_converting(
     assert conversion_document.index_status == DocumentIndexStatus.CONVERTING
 
 
+def test_late_conversion_and_index_callbacks_do_not_restore_a_deleted_document(
+    test_db: Session, conversion_document: KnowledgeDocument
+) -> None:
+    document_id = conversion_document.id
+    test_db.delete(conversion_document)
+    test_db.commit()
+
+    started = mark_document_conversion_started(
+        db=test_db, document_id=document_id, generation=3
+    )
+    converted = mark_document_conversion_succeeded(
+        db=test_db, document_id=document_id, generation=3
+    )
+    indexed = mark_document_index_succeeded(
+        db=test_db, document_id=document_id, generation=3
+    )
+
+    assert started.should_execute is False
+    assert started.reason == "document_not_found"
+    assert converted is False
+    assert indexed is False
+    assert test_db.get(KnowledgeDocument, document_id) is None
+
+
 def test_duplicate_conversion_start_is_refused(
     test_db: Session, conversion_document: KnowledgeDocument
 ) -> None:

@@ -13,6 +13,7 @@ import {
   X,
 } from 'lucide-react'
 import { SettingsSwitch } from '@/components/settings/settings-ui'
+import { WorkdayOnlyField } from '@wegent/collaboration/project-manage'
 import { useTranslation } from '@/hooks/useTranslation'
 import { isCurrentAppDevice } from '@/lib/app-device-registration'
 import {
@@ -48,6 +49,7 @@ import {
   buildAutomationProjectOptions,
   buildAutomationTaskOptions,
   automationTaskKey,
+  scheduleFromAutomationDraft,
   type AutomationDraft,
   type CronPreset,
   type CustomFrequency,
@@ -628,7 +630,7 @@ function FrequencySettings({
 }) {
   const { t } = useTranslation('common')
   const repeatOptions = [
-    { value: 'weekdays', label: t('todo.weekdays', '工作日') },
+    { value: 'weekdays', label: t('todo.weekdays', '周一至周五') },
     { value: 'daily', label: t('todo.daily', '每天') },
     { value: 'weekly', label: t('todo.weekly', '每周') },
     { value: 'custom', label: t('todo.custom', '自定义') },
@@ -749,6 +751,15 @@ function FrequencySettings({
             onChange={value => onChange('cronTime', value)}
           />
         </SettingsRow>
+      ) : null}
+      {draft.scheduleType === 'cron' && scheduleFromAutomationDraft(draft).type === 'cron' ? (
+        <WorkdayOnlyField
+          checked={draft.workdayOnly}
+          onChange={value => onChange('workdayOnly', value)}
+          label={t('todo.automation_workday_only')}
+          description={t('todo.automation_workday_only_hint')}
+          testId="automation-workday-only"
+        />
       ) : null}
       {showAdvanced && draft.scheduleType !== 'one_time' ? (
         <SettingsRow

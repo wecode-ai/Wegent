@@ -251,7 +251,7 @@ pub(crate) fn new_run(
         "assignee_agent_id":rule.assignee_agent_id,"source":trigger,"status":"pending",
         "created_by_user_id":rule.created_by_user_id,"metadata":{"trigger":trigger,
         "timezone":rule.metadata.0["timezone"].as_str().unwrap_or("Asia/Shanghai"),
-        "scheduled_for":iso(scheduled_for),"error":null}})
+        "scheduled_for":iso(scheduled_for),"workday_only":trigger=="scheduled" && rule.metadata.0["workday_only"]==true,"error":null}})
 }
 
 #[cfg(test)]
