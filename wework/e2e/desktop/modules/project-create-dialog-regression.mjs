@@ -175,7 +175,9 @@ async function verifyProjectCreateFocusRestoration(control, scoped) {
   const nameInput = scoped(testId('collaboration-project-name-input'))
   const opener = scoped(testId('collaboration-workspace-project-create'))
   const draftName = await control.command('getValue', nameInput)
-  await control.command('nativePress', nameInput, { key: 'Escape' })
+  await control.command('nativePress', scoped(testId('collaboration-project-create-close')), {
+    key: 'Escape',
+  })
   await control.command('waitFor', DIALOG, { visible: false })
   await control.command('nativePress', opener, { key: 'Enter' })
   await control.command('waitFor', DIALOG, { visible: true })
@@ -648,7 +650,18 @@ async function verifyGroupConfigurationDraft(control, scoped, workspace, agents)
   await control.command('waitFor', configuration, { visible: true })
   await control.command('nativePress', back, { key: 'Escape' })
   await control.command('waitFor', configuration, { visible: false })
-  await control.command('waitFor', nameInput, { visible: true })
+  await control.command('waitFor', DIALOG, { visible: true })
+  // Returning restores the collaborator trigger and its scroll position, not the name field.
+  assert.equal(
+    Number(
+      await control.command(
+        'getElementCount',
+        `${DIALOG} form:not([hidden]) ${testId('collaboration-project-name-input')}`
+      )
+    ),
+    1,
+    'Returning from group configuration must restore the project form'
+  )
   assert.equal(await control.command('getValue', nameInput), draftName)
   for (const agent of agents) {
     await control.command('waitFor', scoped('.collaboration-project-create-collaborator-tokens'), {
@@ -663,7 +676,9 @@ async function verifyGroupConfigurationDraft(control, scoped, workspace, agents)
   await control.command('nativePress', opener, { key: 'Enter' })
   await control.command('waitFor', configuration, { visible: true })
   await verifyGeneratedGroupDraft(control, scoped, configuration, agents, draftName)
-  await control.command('nativePress', nameInput, { key: 'Escape' })
+  await control.command('nativePress', scoped(testId('collaboration-project-create-close')), {
+    key: 'Escape',
+  })
   await control.command('waitFor', DIALOG, { visible: false })
 }
 
