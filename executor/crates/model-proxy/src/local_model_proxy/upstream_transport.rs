@@ -86,7 +86,11 @@ pub(super) async fn send_upstream_request_with_rate_limit_retry(
             status: StatusCode::BAD_GATEWAY,
             detail: format!("Local model proxy request failed: {error:#}"),
         })?;
-        if response.status() != reqwest::StatusCode::TOO_MANY_REQUESTS
+        // Official subscription rate limits are durable quota events owned by
+        // the Executor. Retrying them here hides the reset window and turns a
+        // quota error into an immediate model continuation.
+        if upstream.is_official_chatgpt_codex()
+            || response.status() != reqwest::StatusCode::TOO_MANY_REQUESTS
             || retry_count == MAX_RATE_LIMIT_RETRIES
         {
             return Ok(response);

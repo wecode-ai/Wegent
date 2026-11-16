@@ -149,6 +149,80 @@ async fn returns_last_rate_limit_response_after_retry_budget_is_exhausted() {
 }
 
 #[tokio::test]
+async fn official_subscription_quota_errors_are_not_retried() {
+    let request_count = Arc::new(AtomicUsize::new(0));
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("upstream listener");
+    let address = listener.local_addr().expect("upstream address");
+    let server = tokio::spawn({
+        let request_count = request_count.clone();
+        async move {
+            axum::serve(
+                listener,
+                Router::new().route(
+                    "/backend-api/codex/responses",
+                    post(move || {
+                        request_count.fetch_add(1, Ordering::SeqCst);
+                        async {
+                            (
+                                StatusCode::TOO_MANY_REQUESTS,
+                                Json(json!({
+                                    "error": {
+                                        "type": "usage_limit_reached",
+                                        "code": "usage_limit_reached",
+                                        "message": "quota exhausted",
+                                        "resets_at": 1_794_825_600
+                                    }
+                                })),
+                            )
+                        }
+                    }),
+                ),
+            )
+            .await
+            .expect("upstream server");
+        }
+    });
+    let token = register(
+        "official-subscription-quota-no-retry",
+        LocalModelProxyUpstream {
+            base_url: format!("http://{address}/backend-api/codex"),
+            request_url: Some(format!("http://{address}/backend-api/codex/responses")),
+            api_format: "openai-responses".to_owned(),
+            convert_custom_tools: false,
+            native_tool_search: true,
+            native_namespace_tools: true,
+            api_key: String::new(),
+            default_headers: Vec::new(),
+            proxy_url: None,
+            model_id: None,
+            routing_model_id: None,
+            codex_request_mode: CodexRequestMode::Passthrough,
+            max_output_tokens: None,
+            model_context_window: None,
+        },
+    );
+
+    let response = handle(
+        proxy_headers(&token),
+        Bytes::from_static(br#"{"model":"gpt-6.1-sol","input":"hi","stream":true}"#),
+    )
+    .await
+    .expect("proxy response");
+
+    assert_eq!(response.status(), StatusCode::TOO_MANY_REQUESTS);
+    assert_eq!(request_count.load(Ordering::SeqCst), 1);
+    let body = to_bytes(response.into_body(), usize::MAX)
+        .await
+        .expect("response body");
+    assert!(String::from_utf8_lossy(&body).contains("usage_limit_reached"));
+
+    unregister(&token);
+    server.abort();
+}
+
+#[tokio::test]
 async fn failed_model_switch_remains_pending_for_retry() {
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
         .await
