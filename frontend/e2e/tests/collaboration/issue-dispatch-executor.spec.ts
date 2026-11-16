@@ -108,6 +108,7 @@ test.describe('Collaboration group Executor coordination', () => {
         await page.getByTestId('template-details-product-lifecycle').click()
         await page.getByTestId('template-use').click()
         await page.getByTestId(`template-project-${fixture.projectId}`).click()
+        await page.getByTestId('template-runtime-configuration').locator('summary').click()
         const environment = page.getByTestId('template-project-environment-select')
         await expect(environment).toBeEnabled()
         await expect(environment).toHaveValue(
@@ -134,6 +135,12 @@ test.describe('Collaboration group Executor coordination', () => {
           'href',
           `${fixture.projectPath}?view=manage&section=environments`
         )
+        const modelField = page.getByTestId('template-model-codex')
+        const availableModel = modelField.locator('option:not([value=""])').first()
+        await expect(availableModel).toBeAttached()
+        const modelValue = await availableModel.getAttribute('value')
+        expect(modelValue).toBeTruthy()
+        await modelField.selectOption(modelValue!)
         await page.getByTestId('template-bindings-apply').click()
         await expect(page).toHaveURL(new RegExp(`${fixture.projectPath}$`))
         await page.reload()

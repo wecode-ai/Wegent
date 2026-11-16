@@ -10,7 +10,7 @@ use super::{BackgroundJobRegistry, JobContext, with_lock_watchdog};
 use crate::{AppState, task_store_maintenance::MaintenanceScan};
 
 const JOB: &str = "device_heartbeat_monitor";
-const RETENTION_JOB: &str = "device_registration_retention";
+pub(super) const RETENTION_JOB: &str = "device_registration_retention";
 
 pub(super) fn register(registry: &mut BackgroundJobRegistry, state: Arc<AppState>) -> Result<()> {
     let retention_state = state.clone();

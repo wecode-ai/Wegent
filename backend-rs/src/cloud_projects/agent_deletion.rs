@@ -91,7 +91,7 @@ pub(super) async fn remove<M: Mysql>(
         let groups: Vec<GroupRow> = tx.fetch_all(
             "SELECT kinds.json AS definition FROM kinds INNER JOIN resource_members ON resource_members.resource_id=kinds.id AND resource_members.resource_type='CollaborationGroup' WHERE kinds.kind='CollaborationGroup' AND kinds.is_active=1 AND resource_members.entity_type='project' AND resource_members.entity_id=? AND resource_members.status='approved' FOR UPDATE", (project_id,)
         ).await?;
-        if groups.iter().any(|group| group_references_agent(&group.definition.0["spec"], agent_id)) { return Ok(Outcome::Referenced); }
+        if groups.iter().any(|group| group_references_agent(&group.definition.0["spec"], agent_id, agent.metadata.as_ref().and_then(|metadata| metadata.0["wegent_team_id"].as_i64()))) { return Ok(Outcome::Referenced); }
         let changed = tx.execute(
             "UPDATE loop_items SET status='archived',deleted_at=UTC_TIMESTAMP(),updated_at=UTC_TIMESTAMP(),version=version+1 WHERE id=? AND cloud_project_id=? AND resource_type='chat_agent' AND version=?", (agent_id, project_id, version)
         ).await?;

@@ -401,6 +401,7 @@ test.describe('Collaboration cloud capabilities', () => {
       await openBlankProjectCreation(page)
       await page.getByTestId('collaboration-project-name-input').fill(projectName)
       await page.getByTestId('collaboration-project-create-add-collaborator').click()
+      await page.getByTestId('collaboration-project-create-collaborator-tab-groups').click()
       await page
         .getByTestId('collaboration-project-create-collaborator-menu')
         .getByRole('button', { name: new RegExp(workspaceGroupName) })

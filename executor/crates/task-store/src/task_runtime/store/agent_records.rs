@@ -266,7 +266,11 @@ impl LocalTaskStore {
             .as_array()
             .is_some_and(|groups| {
                 groups.iter().any(|group| {
-                    wegent_protocol::collaboration::group_references_agent(group, agent_id)
+                    wegent_protocol::collaboration::group_references_agent(
+                        group,
+                        agent_id,
+                        agent.metadata["wegent_team_id"].as_i64(),
+                    )
                 })
             })
         {

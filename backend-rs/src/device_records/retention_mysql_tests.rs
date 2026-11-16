@@ -51,7 +51,7 @@ async fn verify(mysql: &MysqlService, redis: &RedisService, user: i64) {
         .unwrap();
     mysql
         .execute(
-            "INSERT INTO subtasks VALUES (1,?,'app-record-5','RUNNING')",
+            "INSERT INTO subtasks VALUES (1,?,'device-app-record-5','RUNNING')",
             (user,),
         )
         .await
@@ -80,14 +80,18 @@ async fn verify(mysql: &MysqlService, redis: &RedisService, user: i64) {
         .await
         .unwrap();
     assert_eq!(active, (2..=8).map(|id| (id,)).collect::<Vec<_>>());
-    let unknown: (String,) = mysql
-        .fetch_one(
-            "SELECT JSON_UNQUOTE(JSON_EXTRACT(json,'$.status.offlineSince')) FROM kinds WHERE id=4",
-            (),
-        )
+    let unknown: (Json<Value>,) = mysql
+        .fetch_one("SELECT json FROM kinds WHERE id=4", ())
         .await
         .unwrap();
-    assert!(crate::device_presence::parse_observed_time(&unknown.0).is_some());
+    assert!(
+        unknown.0.0["status"]["offlineSince"]
+            .as_str()
+            .and_then(crate::device_presence::parse_observed_time)
+            .is_some(),
+        "Unknown presence must start a retention clock: {}",
+        unknown.0.0
+    );
     // Rechecking an unknown registration starts its retention clock, never deletes it immediately.
     assert!(
         !mysql

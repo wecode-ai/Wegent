@@ -97,12 +97,19 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
     })
   }
 
-  const disableCreationRule = async control => {
+  const verifyDeferredCreationRule = async control => {
     await click(control, 'collaboration-project-settings-automatic-processing')
     const enabled = scoped('[data-testid^="automatic-processing-enabled-"][aria-checked="true"]')
-    await control.command('waitFor', enabled, { timeoutMs: uiTimeoutMs })
-    await control.command('clickWhenEnabled', enabled, { timeoutMs: uiTimeoutMs })
-    await control.command('waitFor', enabled, { visible: false, timeoutMs: uiTimeoutMs })
+    await control.command(
+      'waitFor',
+      scoped('[data-testid^="automatic-processing-enabled-"][aria-checked="false"]'),
+      { timeoutMs: uiTimeoutMs }
+    )
+    assert.equal(
+      Number(await control.command('getElementCount', enabled)),
+      0,
+      'Templates with deferred native Agent configuration must keep automatic execution disabled'
+    )
     await click(control, 'collaboration-project-settings-sharing')
   }
 
@@ -404,7 +411,7 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
       await wait(control, 'collaboration-template-dialog', '模板已发布')
       await capture(control, '07-published')
       await click(control, 'template-save-close')
-      await disableCreationRule(control)
+      await verifyDeferredCreationRule(control)
       await control.command('clickWhenEnabled', testId('project-template-import'), {
         timeoutMs: uiTimeoutMs,
       })
@@ -423,7 +430,7 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
       await click(control, 'collaboration-project-settings-groups')
       await wait(control, 'collaboration-project-groups-page', '调研分析小组')
       await capture(control, '10-persisted')
-      await disableCreationRule(control)
+      await verifyDeferredCreationRule(control)
       await click(control, 'collaboration-project-settings-groups')
       await click(control, 'collaboration-group-open-create')
       await click(control, 'group-template-create')

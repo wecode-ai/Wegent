@@ -5,26 +5,36 @@ fn delete_chat_agent_blocks_group_references_and_preserves_other_records() {
     let (directory, store, mut project) = chat_agent_store();
     let agent = make_local_agent(&store, &project.id, "auto");
     let retained = make_local_agent(&store, &project.id, "auto");
-    for group in [
-        json!({"leader":{"kind":"agent","id":agent.id}}),
-        json!({"members":[{"kind":"agent","id":agent.id}]}),
-        json!({"stages":[{"assignee":{"kind":"agent","id":agent.id}}]}),
-    ] {
-        project = store
-            .update_project(
-                &project.id,
-                ProjectUpdate {
-                    version: project.version,
-                    collaboration_groups: Some(json!([group])),
-                    ..Default::default()
-                },
-            )
-            .unwrap();
-        let error = store
-            .delete_chat_agent(&project.id, &agent.id, agent.version)
-            .unwrap_err();
-        assert!(error.to_string().contains("PROJECT_AGENT_IN_USE"));
-        assert_eq!(store.list_chat_agents(&project.id).unwrap().len(), 2);
+    store
+        .connection()
+        .unwrap()
+        .execute(
+            "UPDATE loop_items SET metadata=json_set(metadata,'$.wegent_team_id',42) WHERE id=?1",
+            [&agent.id],
+        )
+        .unwrap();
+    for reference in [agent.id.as_str(), "42"] {
+        for group in [
+            json!({"leader":{"kind":"agent","id":reference}}),
+            json!({"members":[{"kind":"agent","id":reference}]}),
+            json!({"stages":[{"assignee":{"kind":"agent","id":reference}}]}),
+        ] {
+            project = store
+                .update_project(
+                    &project.id,
+                    ProjectUpdate {
+                        version: project.version,
+                        collaboration_groups: Some(json!([group])),
+                        ..Default::default()
+                    },
+                )
+                .unwrap();
+            let error = store
+                .delete_chat_agent(&project.id, &agent.id, agent.version)
+                .unwrap_err();
+            assert!(error.to_string().contains("PROJECT_AGENT_IN_USE"));
+            assert_eq!(store.list_chat_agents(&project.id).unwrap().len(), 2);
+        }
     }
     store
         .update_project(

@@ -78,27 +78,31 @@ async fn verify(mysql: &MysqlService) {
         StatusCode::FORBIDDEN
     );
     mysql.execute("UPDATE loop_items SET metadata=JSON_SET(metadata,'$.visibility','public') WHERE id='agent'",()).await.unwrap();
-    for field in ["leader", "member", "stage"] {
-        let spec = match field {
-            "leader" => serde_json::json!({"leader":{"kind":"agent","id":"agent"}}),
-            "member" => serde_json::json!({"members":[{"kind":"agent","id":"agent"}]}),
-            _ => serde_json::json!({"stages":[{"assignee":{"kind":"agent","id":"agent"}}]}),
-        };
-        mysql
-            .execute(
-                "UPDATE kinds SET json=JSON_OBJECT('spec',CAST(? AS JSON)) WHERE id=3001",
-                (spec.to_string(),),
-            )
-            .await
-            .unwrap();
-        let error = remove(mysql, "1001", "agent", 7, 1).await.unwrap_err();
-        assert_eq!(error.status(), StatusCode::CONFLICT);
-        assert!(
-            error
-                .detail_message()
-                .unwrap()
-                .starts_with("PROJECT_AGENT_IN_USE")
-        );
+    for reference_id in ["agent", "4001"] {
+        for field in ["leader", "member", "stage"] {
+            let spec = match field {
+                "leader" => serde_json::json!({"leader":{"kind":"agent","id":reference_id}}),
+                "member" => serde_json::json!({"members":[{"kind":"agent","id":reference_id}]}),
+                _ => {
+                    serde_json::json!({"stages":[{"assignee":{"kind":"agent","id":reference_id}}]})
+                }
+            };
+            mysql
+                .execute(
+                    "UPDATE kinds SET json=JSON_OBJECT('spec',CAST(? AS JSON)) WHERE id=3001",
+                    (spec.to_string(),),
+                )
+                .await
+                .unwrap();
+            let error = remove(mysql, "1001", "agent", 7, 1).await.unwrap_err();
+            assert_eq!(error.status(), StatusCode::CONFLICT);
+            assert!(
+                error
+                    .detail_message()
+                    .unwrap()
+                    .starts_with("PROJECT_AGENT_IN_USE")
+            );
+        }
     }
     mysql
         .execute(
