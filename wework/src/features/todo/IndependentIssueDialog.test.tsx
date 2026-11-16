@@ -179,6 +179,32 @@ it('closes an unchanged form without a discard decision', async () => {
   expect(screen.queryByTestId('independent-issue-discard-dialog')).not.toBeInTheDocument()
 })
 
+it('keeps a dirty draft open when Escape closes its searchable project picker', async () => {
+  const user = userEvent.setup()
+  const close = vi.fn()
+  const api = { projects: vi.fn().mockResolvedValue({ items: [] }) } as unknown as PersonalIssuesApi
+  render(
+    <IndependentIssueDialog api={api} userId={7} issueId={null} onClose={close} onSaved={vi.fn()} />
+  )
+  await user.type(screen.getByTestId('independent-issue-title'), 'Keep this draft')
+  const trigger = screen.getByTestId('independent-issue-project')
+  await waitFor(() => expect(trigger).toBeEnabled())
+  await user.click(trigger)
+  const search = screen.getByTestId('independent-issue-project-search')
+  await waitFor(() => expect(search).toHaveFocus())
+  await user.keyboard('{Tab}')
+  expect(screen.getByTestId('independent-issue-project-option-empty')).toHaveFocus()
+  await user.keyboard('{Tab}')
+  expect(search).toHaveFocus()
+  await user.keyboard('{Shift>}{Tab}{/Shift}')
+  expect(screen.getByTestId('independent-issue-project-option-empty')).toHaveFocus()
+  await user.keyboard('{Escape}')
+  await waitFor(() => expect(trigger).toHaveFocus())
+  expect(screen.queryByTestId('independent-issue-discard-dialog')).not.toBeInTheDocument()
+  expect(screen.getByTestId('independent-issue-title')).toHaveValue('Keep this draft')
+  expect(close).not.toHaveBeenCalled()
+})
+
 it('retains the saved Issue on association failure so retry cannot create a second Issue', async () => {
   const row = {
     id: 'i1',
@@ -227,12 +253,13 @@ it('retains the saved Issue on association failure so retry cannot create a seco
     />
   )
   fireEvent.change(screen.getByTestId('independent-issue-title'), { target: { value: 'Work' } })
-  await screen.findByRole('option', { name: 'Project' })
-  fireEvent.change(screen.getByTestId('independent-issue-project'), { target: { value: 'p1' } })
+  await waitFor(() => expect(screen.getByTestId('independent-issue-project')).toBeEnabled())
+  fireEvent.click(screen.getByTestId('independent-issue-project'))
+  fireEvent.click(await screen.findByTestId('independent-issue-project-option-p1'))
   fireEvent.click(screen.getByTestId('independent-issue-save'))
   await screen.findByText('Project changed')
   expect(screen.getByText('issue_creation.association_pending')).toBeVisible()
-  expect(screen.getByTestId('independent-issue-project')).toHaveValue('p1')
+  expect(screen.getByTestId('independent-issue-project')).toHaveAttribute('data-value', 'p1')
   expect(close).not.toHaveBeenCalled()
   fireEvent.click(screen.getByTestId('independent-issue-save'))
   await waitFor(() => expect(open).toHaveBeenCalledWith('p1', 'i1'))
@@ -280,8 +307,9 @@ it.each(['independent-issue-close', 'independent-issue-editor-cancel'])(
     fireEvent.change(screen.getByTestId('independent-issue-title'), {
       target: { value: row.title },
     })
-    await screen.findByRole('option', { name: 'Project' })
-    fireEvent.change(screen.getByTestId('independent-issue-project'), { target: { value: 'p' } })
+    await waitFor(() => expect(screen.getByTestId('independent-issue-project')).toBeEnabled())
+    fireEvent.click(screen.getByTestId('independent-issue-project'))
+    fireEvent.click(await screen.findByTestId('independent-issue-project-option-p'))
     fireEvent.click(screen.getByTestId('independent-issue-save'))
     await screen.findByText('issue_creation.association_pending')
     fireEvent.click(screen.getByTestId(dismissal))

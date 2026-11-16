@@ -2,6 +2,22 @@ import assert from 'node:assert/strict'
 
 const testId = id => `[data-testid="${id}"]`
 
+/** Exercise the shared searchable property picker with real keyboard input. */
+export async function chooseIssueProperty(control, id, value, query = '') {
+  await control.command('clickWhenEnabled', testId(id))
+  const search = testId(`${id}-search`)
+  await control.command('waitFor', search, { visible: true })
+  assert.equal(await control.command('getActiveElementTestId', 'body'), `${id}-search`)
+  await control.command('fill', search, { value: query })
+  const optionId = `${id}-option-${value || 'empty'}`
+  await control.command('waitFor', testId(optionId), { visible: true })
+  await control.command('nativePress', search, { key: 'ArrowDown' })
+  assert.equal(await control.command('getActiveElementTestId', 'body'), optionId)
+  await control.command('nativePress', testId(optionId), { key: 'Enter' })
+  await control.command('waitFor', testId(`${id}-menu`), { visible: false })
+  await control.command('waitFor', `${testId(id)}:focus`, { visible: true })
+}
+
 /** Resolve a real optimistic-lock conflict without overwriting a concurrent edit. */
 export async function verifyIssueConflictRecovery(control, { request, reopen, captureScreenshot }) {
   const title = `Version conflict recovery ${process.pid}`
@@ -143,13 +159,7 @@ export async function verifyIssueAssociationRecovery(control, { request, reopen 
   )
   await reopen()
   await control.command('fill', testId('independent-issue-title'), { value: title })
-  await control.command(
-    'waitFor',
-    `${testId('independent-issue-project')} option[value="${project.id}"]`
-  )
-  await control.command('select', testId('independent-issue-project'), {
-    value: String(project.id),
-  })
+  await chooseIssueProperty(control, 'independent-issue-project', String(project.id), title)
   await request(
     `/api/v1/cloud-projects/${project.id}?version=${project.version}`,
     'DELETE',
@@ -165,7 +175,7 @@ export async function verifyIssueAssociationRecovery(control, { request, reopen 
     row => row.title === title
   )
   assert.equal(saved.length, 1, 'A failed association must retain exactly one saved Issue')
-  await control.command('select', testId('independent-issue-project'), { value: '' })
+  await chooseIssueProperty(control, 'independent-issue-project', '')
   await control.command('fill', testId('independent-issue-title'), { value: `${title} recovered` })
   await control.command('clickWhenEnabled', testId('independent-issue-save'))
   await control.command('waitFor', testId('independent-issue-edit'), { visible: true })

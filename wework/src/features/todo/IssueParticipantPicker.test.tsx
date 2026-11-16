@@ -8,6 +8,35 @@ import { IssueParticipantPicker } from './IssueParticipantPicker'
 vi.mock('@/hooks/useTranslation', () => ({ useTranslation: () => ({ t: (key: string) => key }) }))
 afterEach(cleanup)
 
+it('shows a localized participant failure and retries the same search without changing invitations', async () => {
+  const searchUsers = vi
+    .fn()
+    .mockRejectedValueOnce(new TypeError('Failed to fetch'))
+    .mockResolvedValue({ users: [{ id: 8, user_name: 'Alice' }] })
+  const onChange = vi.fn()
+  render(
+    <IssueParticipantPicker
+      api={{ searchUsers } as unknown as PersonalIssuesApi}
+      userId={7}
+      selected={[]}
+      onChange={onChange}
+      disabled={false}
+    />
+  )
+  fireEvent.click(screen.getByTestId('issue-participant-add'))
+  fireEvent.change(screen.getByTestId('independent-issue-search-people'), {
+    target: { value: 'Alice' },
+  })
+  expect(await screen.findByRole('alert')).toHaveTextContent(
+    'issue_creation.participants_load_failed'
+  )
+  expect(screen.queryByText('Failed to fetch')).not.toBeInTheDocument()
+  fireEvent.click(screen.getByTestId('issue-participant-retry'))
+  await screen.findByTestId('independent-issue-invite-8')
+  expect(searchUsers).toHaveBeenLastCalledWith('Alice')
+  expect(onChange).not.toHaveBeenCalled()
+})
+
 it('supports keyboard tab navigation and restores the trigger when the popover closes', async () => {
   render(
     <IssueParticipantPicker

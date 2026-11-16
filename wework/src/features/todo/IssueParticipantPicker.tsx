@@ -270,7 +270,7 @@ export function IssueParticipantPicker({
             </label>
             {error ? (
               <div role="alert" className="text-sm text-error">
-                {error}
+                {t('issue_creation.participants_load_failed')}
                 <button
                   type="button"
                   data-testid="issue-participant-retry"

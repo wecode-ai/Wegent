@@ -28,7 +28,6 @@ export function IssueProjectEnvironmentPicker({
   useEscapeKey(() => setOpen(false), open, popoverRef)
   const load = useCallback(() => api.projects.get(projectId), [api, projectId])
   const { data: project, error: cause, refresh } = usePanelData(load, open)
-  const error = cause instanceof Error ? cause.message : cause ? String(cause) : ''
   const translate = createCollaborationTranslator(i18n?.language === 'en' ? 'en' : 'zh-CN')
   return (
     <Popover.Root
@@ -72,9 +71,9 @@ export function IssueProjectEnvironmentPicker({
           data-testid="issue-environment-picker"
           className="z-system-popover max-h-[var(--radix-popover-content-available-height)] w-[min(480px,calc(100vw-16px))] overflow-y-auto rounded-xl border border-border bg-popover p-4 text-text-primary shadow-lg"
         >
-          {error ? (
+          {cause ? (
             <div role="alert" className="space-y-2 text-sm text-destructive">
-              {error}
+              {t('issue_creation.project_devices_load_failed')}
               <button
                 type="button"
                 data-testid="issue-environment-retry"

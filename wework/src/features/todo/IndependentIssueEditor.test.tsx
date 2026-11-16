@@ -3,9 +3,71 @@ import { afterEach, expect, it, vi } from 'vitest'
 import type { SharedWorkspaceApi } from '@wegent/collaboration'
 import type { PersonalIssuesApi } from '@/api/personalIssues'
 import { IndependentIssueEditor } from './IndependentIssueEditor'
+import userEvent from '@testing-library/user-event'
 
 vi.mock('@/hooks/useTranslation', () => ({ useTranslation: () => ({ t: (key: string) => key }) }))
 afterEach(cleanup)
+
+it('searches and distinguishes same-name projects while keeping keyboard navigation inside the draft', async () => {
+  const personal = api()
+  vi.mocked(personal.projects).mockResolvedValue({
+    items: [
+      {
+        id: 'one',
+        name: 'Release',
+        project_key: 'WEB',
+        workspace_context: { name: 'Web team' },
+        task_provider: 'local',
+        access_role: 'Developer',
+      },
+      {
+        id: 'two',
+        name: 'Release',
+        project_key: 'APP',
+        workspace_context: { name: 'App team' },
+        task_provider: 'local',
+        access_role: 'Developer',
+      },
+    ],
+  } as never)
+  const save = vi.fn()
+  const user = userEvent.setup()
+  render(
+    <IndependentIssueEditor
+      api={personal}
+      userId={7}
+      issue={null}
+      busy={false}
+      onSave={save}
+      onCancel={vi.fn()}
+    />
+  )
+  await user.type(screen.getByTestId('independent-issue-title'), 'Keep this draft')
+  const trigger = screen.getByTestId('independent-issue-project')
+  await waitFor(() => expect(trigger).toBeEnabled())
+  await user.click(trigger)
+  const search = screen.getByTestId('independent-issue-project-search')
+  await waitFor(() => expect(search).toHaveFocus())
+  await user.type(search, '  app team  ')
+  expect(screen.queryByTestId('independent-issue-project-option-one')).not.toBeInTheDocument()
+  expect(screen.getByTestId('independent-issue-project-option-two')).toHaveTextContent(
+    /Release.*APP/
+  )
+  await user.keyboard('{Enter}')
+  expect(save).not.toHaveBeenCalled()
+  await user.keyboard('{ArrowDown}')
+  expect(screen.getByTestId('independent-issue-project-option-two')).toHaveFocus()
+  await user.keyboard('{Enter}')
+  await waitFor(() => expect(trigger).toHaveFocus())
+  expect(trigger).toHaveTextContent('App team / Release · APP')
+  expect(trigger).toHaveAccessibleDescription('App team · Release · APP')
+  await user.click(trigger)
+  await user.keyboard('{Escape}')
+  await waitFor(() => expect(trigger).toHaveFocus())
+  expect(screen.getByTestId('independent-issue-title')).toHaveValue('Keep this draft')
+  await user.click(screen.getByTestId('independent-issue-save'))
+  expect(save).toHaveBeenCalledWith(expect.objectContaining({ project_id: 'two' }))
+})
 
 const api = () =>
   ({
@@ -59,8 +121,9 @@ it('creates one draft with an optional project, invited people, Agents and teams
   fireEvent.change(screen.getByTestId('independent-issue-title'), {
     target: { value: 'Ship the new flow' },
   })
-  await screen.findByRole('option', { name: 'Project one' })
-  fireEvent.change(screen.getByTestId('independent-issue-project'), { target: { value: 'p1' } })
+  await waitFor(() => expect(screen.getByTestId('independent-issue-project')).toBeEnabled())
+  fireEvent.click(screen.getByTestId('independent-issue-project'))
+  fireEvent.click(await screen.findByTestId('independent-issue-project-option-p1'))
   fireEvent.click(screen.getByTestId('issue-participant-add'))
   fireEvent.change(screen.getByTestId('independent-issue-search-people'), {
     target: { value: 'Alice' },
@@ -70,9 +133,9 @@ it('creates one draft with an optional project, invited people, Agents and teams
   fireEvent.click(await screen.findByTestId('issue-participant-invite-agent:12'))
   fireEvent.click(screen.getByTestId('issue-participant-tab-group'))
   fireEvent.click(await screen.findByTestId('issue-participant-invite-group:15'))
-  fireEvent.change(screen.getByTestId('independent-issue-assignee'), {
-    target: { value: 'agent:12' },
-  })
+  fireEvent.click(screen.getByTestId('issue-participant-done'))
+  fireEvent.click(screen.getByTestId('independent-issue-assignee'))
+  fireEvent.click(await screen.findByTestId('independent-issue-assignee-option-agent:12'))
   fireEvent.click(screen.getByTestId('independent-issue-save'))
   await waitFor(() => expect(save).toHaveBeenCalledOnce())
   expect(save).toHaveBeenCalledWith(
@@ -124,7 +187,8 @@ it('allows independent creation when the optional project catalog fails and clea
       onCancel={vi.fn()}
     />
   )
-  await screen.findByText('Project catalog unavailable')
+  await screen.findByText('issue_creation.projects_load_failed')
+  expect(screen.queryByText('Project catalog unavailable')).not.toBeInTheDocument()
   fireEvent.change(screen.getByTestId('independent-issue-title'), {
     target: { value: 'Independent' },
   })

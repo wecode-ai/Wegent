@@ -86,6 +86,10 @@
     "working": "正在处理…"
   },
   "issue_creation": {
+    "projects_load_failed": "项目列表加载失败，请重试。",
+    "participants_load_failed": "参与者列表加载失败，请重试。",
+    "project_devices_load_failed": "项目设备设置加载失败，请重试。",
+    "personal_runner_save_failed": "个人默认设备保存失败，请重试。",
     "save_personal_runner": "保存个人默认设备",
     "unavailable_runner_option": "{{name}} · 当前不可用",
     "personal_runner_hint": "用于之后启动的任务；选择或清除后，点击“保存个人默认设备”才会生效。不会自动执行事项。",

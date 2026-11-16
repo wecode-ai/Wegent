@@ -105,7 +105,7 @@ export function DefaultRunnerSetting({
       )}
       {error && (
         <p className="text-xs text-destructive" role="alert">
-          {error}
+          {t('issue_creation.personal_runner_save_failed')}
         </p>
       )}
     </div>

@@ -1,8 +1,8 @@
 import { DefaultRunnerSetting } from '@/components/settings/DefaultRunnerSetting'
 import { IssueProjectEnvironmentPicker } from './IssueProjectEnvironmentPicker'
 import { useEffect, useState, type ReactNode } from 'react'
-import { ChevronRight, Folder } from 'lucide-react'
-import type { SharedWorkspaceApi } from '@wegent/collaboration'
+import { ChevronDown, ChevronRight, Folder } from 'lucide-react'
+import { IssueDetailSearchableSelect, type SharedWorkspaceApi } from '@wegent/collaboration'
 import type { CloudProject } from '@/api/deliveries'
 import { DialogForm } from '@/components/common/DialogForm'
 import { useTranslation } from '@/hooks/useTranslation'
@@ -13,6 +13,7 @@ import {
   type PersonalIssuesApi,
 } from '@/api/personalIssues'
 import { IssueParticipantPicker } from './IssueParticipantPicker'
+import { IssueProjectSelect } from './IssueProjectSelect'
 import { participantKey, resourceInvitations, type IssueParticipant } from './issueParticipants'
 
 export interface IssueCreationInput extends IndependentIssueInput {
@@ -153,6 +154,29 @@ export function IndependentIssueEditor({
     : draft.assignee_id
       ? `human:${draft.assignee_id}`
       : ''
+  const assigneeOptions = [
+    { value: '', label: t('independentIssues.unassigned') },
+    ...(['human', 'agent', 'group'] as const).flatMap(kind =>
+      people
+        .filter(person => person.kind === kind)
+        .map(person => ({
+          value: person.key,
+          label: people.some(
+            other => other.key !== person.key && other.kind === kind && other.name === person.name
+          )
+            ? `${person.name} · #${person.id}`
+            : person.name,
+          group: t(`issue_creation.participant_${kind}`),
+          searchText: String(person.id),
+        }))
+    ),
+  ]
+  const selection = (label: string) => (
+    <>
+      <span className="min-w-0 flex-1 truncate">{label}</span>
+      <ChevronDown aria-hidden="true" className="h-4 w-4 shrink-0 text-text-secondary" />
+    </>
+  )
   const field = (label: string, children: ReactNode) => (
     <label className="flex min-w-0 items-center gap-2 text-sm">
       <span className="w-16 shrink-0 text-text-secondary">{label}</span>
@@ -212,25 +236,17 @@ export function IndependentIssueEditor({
                   <span className="shrink-0 text-text-secondary">
                     {t('issue_creation.project_label')}
                   </span>
-                  <select
-                    data-testid="independent-issue-project"
-                    aria-label={t('issue_creation.project_label')}
+                  <IssueProjectSelect
+                    projects={projects}
                     className={`${control} flex-1`}
                     disabled={loadingProjects}
                     value={projectId}
-                    onChange={event => {
-                      setProjectId(event.target.value)
-                      const target = projects.find(row => String(row.id) === event.target.value)
+                    onChange={value => {
+                      setProjectId(value)
+                      const target = projects.find(row => String(row.id) === value)
                       setProjectStatus(target?.board_config?.statuses[0]?.id ?? '')
                     }}
-                  >
-                    <option value="">{t('issue_creation.independent_option')}</option>
-                    {projects.map(project => (
-                      <option key={project.id} value={project.id}>
-                        {project.name}
-                      </option>
-                    ))}
-                  </select>
+                  />
                 </label>
                 {projectId && (
                   <p className="text-sm text-text-secondary">
@@ -239,7 +255,7 @@ export function IndependentIssueEditor({
                 )}
                 {projectError && (
                   <p role="alert" className="text-sm text-error">
-                    {projectError}
+                    {t('issue_creation.projects_load_failed')}
                     <button
                       type="button"
                       data-testid="issue-project-retry"
@@ -316,12 +332,21 @@ export function IndependentIssueEditor({
             )}
             {field(
               t('independentIssues.assignee'),
-              <select
-                data-testid="independent-issue-assignee"
-                className={control}
+              <IssueDetailSearchableSelect
+                modal
+                testId="independent-issue-assignee"
+                accessibleLabel={t('independentIssues.assignee')}
+                className={`${control} flex items-center gap-2 text-left`}
                 value={assignee}
-                onChange={event => {
-                  const target = people.find(person => person.key === event.target.value)
+                options={assigneeOptions}
+                searchPlaceholder={t('todo.search_assignee')}
+                emptyLabel={t('todo.no_matching_assignee')}
+                triggerContent={selection(
+                  assigneeOptions.find(option => option.value === assignee)?.label ??
+                    t('independentIssues.unassigned')
+                )}
+                onChange={value => {
+                  const target = people.find(person => person.key === value)
                   setDraft(previous => ({
                     ...previous,
                     assignee_id: target?.kind === 'human' ? target.id : null,
@@ -331,14 +356,7 @@ export function IndependentIssueEditor({
                         : null,
                   }))
                 }}
-              >
-                <option value="">{t('independentIssues.unassigned')}</option>
-                {people.map(person => (
-                  <option key={person.key} value={person.key}>
-                    {person.name}
-                  </option>
-                ))}
-              </select>
+              />
             )}
             {field(
               t('independentIssues.due'),

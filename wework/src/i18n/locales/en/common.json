@@ -86,6 +86,10 @@
     "working": "Working…"
   },
   "issue_creation": {
+    "projects_load_failed": "Could not load projects. Please retry.",
+    "participants_load_failed": "Could not load participants. Please retry.",
+    "project_devices_load_failed": "Could not load project device settings. Please retry.",
+    "personal_runner_save_failed": "Could not save the personal default device. Please retry.",
     "save_personal_runner": "Save personal default device",
     "unavailable_runner_option": "{{name}} · Unavailable",
     "personal_runner_hint": "Used for tasks you start later. Select or clear a device, then save your personal default to apply it. This does not run the Issue.",

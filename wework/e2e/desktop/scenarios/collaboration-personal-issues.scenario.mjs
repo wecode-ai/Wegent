@@ -4,6 +4,7 @@ import {
   verifyIssueConflictRecovery,
   verifyIssueDeviceLayout,
   verifyIssueAssociationRecovery,
+  chooseIssueProperty,
 } from '../modules/independent-issue-draft.mjs'
 import assert from 'node:assert/strict'
 import { waitForBoardValue } from '../modules/collaboration-board-flows.mjs'
@@ -220,9 +221,12 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
       await wait(control, `[data-testid="independent-issue-invite-${participant.id}"]`)
       await click(control, `independent-issue-invite-${participant.id}`)
       await click(control, 'issue-participant-done')
-      await control.command('select', '[data-testid="independent-issue-assignee"]', {
-        value: `human:${participant.id}`,
-      })
+      await chooseIssueProperty(
+        control,
+        'independent-issue-assignee',
+        `human:${participant.id}`,
+        participant.user_name
+      )
       await click(control, 'independent-issue-save')
       await wait(control, '[data-testid="independent-issue-edit"]')
       const invited = await request(
@@ -292,21 +296,12 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
       await click(control, 'independent-issue-archive')
       await wait(control, '[data-testid="independent-issue-archive"]', { text: '归档' })
       await click(control, 'independent-issue-associate')
-      await waitForBoardValue(
-        async () =>
-          Number(
-            await control.command(
-              'getElementCount',
-              `[data-testid="independent-issue-project"] option[value="${project.id}"]`
-            )
-          ),
-        1,
-        'Project choices did not load',
-        uiTimeoutMs
+      await chooseIssueProperty(
+        control,
+        'independent-issue-project',
+        String(project.id),
+        project.name
       )
-      await control.command('select', '[data-testid="independent-issue-project"]', {
-        value: String(project.id),
-      })
       await click(control, 'independent-issue-project-confirm')
       await wait(control, '[data-testid="independent-issue-dialog"]', { visible: false })
       const moved = await request(`/api/v1/loop-items/${issue.id}`)
@@ -395,9 +390,12 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
       await wait(control, `[data-testid="issue-participant-invite-group:${group.id}"]`)
       await click(control, `issue-participant-invite-group:${group.id}`)
       await click(control, 'issue-participant-done')
-      await control.command('select', '[data-testid="independent-issue-assignee"]', {
-        value: `agent:${agent.id}`,
-      })
+      await chooseIssueProperty(
+        control,
+        'independent-issue-assignee',
+        `agent:${agent.id}`,
+        agent.name
+      )
       await click(control, 'independent-issue-save')
       await wait(control, '[data-testid="independent-issue-edit"]')
       const typed = (await request('/api/v1/personal-issues?scope=created')).items.find(
@@ -423,10 +421,12 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
       await control.command('fill', '[data-testid="independent-issue-title"]', {
         value: `Project selection ${process.pid}`,
       })
-      await wait(control, `[data-testid="independent-issue-project"] option[value="${project.id}"]`)
-      await control.command('select', '[data-testid="independent-issue-project"]', {
-        value: String(project.id),
-      })
+      await chooseIssueProperty(
+        control,
+        'independent-issue-project',
+        String(project.id),
+        project.name
+      )
       await click(control, 'independent-issue-execution-settings')
       await click(control, 'issue-environment-picker-trigger')
       await wait(control, '[data-testid="issue-environment-picker"]')
