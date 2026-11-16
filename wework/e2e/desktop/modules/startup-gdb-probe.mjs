@@ -4,6 +4,7 @@ import { readFileSync } from 'node:fs'
 import { mkdir, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { parseStartupGdbReady } from './startup-gdb-handshake.mjs'
 
 import {
   logDesktopE2eSignal,
@@ -112,6 +113,7 @@ export function spawnStartupGdbProbe(appBinary, args, spawnOptions) {
   const owned = new Map()
   const markers = []
   const identityRecords = []
+  const readyRecords = []
   const pending = { stdout: '', stderr: '' }
   const closedPromise = new Promise(resolve => child.once('close', resolve))
   child.once('close', () => {
@@ -159,6 +161,18 @@ export function spawnStartupGdbProbe(appBinary, args, spawnOptions) {
 
   function acceptLine(line) {
     if (line.startsWith(EXIT_PREFIX)) markers.push(line.slice(EXIT_PREFIX.length))
+    try {
+      const ready = parseStartupGdbReady(line)
+      if (ready) {
+        readyRecords.push(ready)
+        assert.equal(readyRecords.length, 1, 'Expected one GDB smoke ready marker')
+        assert.equal(ready.pid, identity?.pid, 'The ready marker must belong to the owned inferior')
+        return
+      }
+    } catch (error) {
+      ownershipError ??= error
+      return
+    }
     if (!line.startsWith(IDENTITY_PREFIX)) return
     try {
       const reported = JSON.parse(line.slice(IDENTITY_PREFIX.length))
@@ -296,6 +310,10 @@ export function spawnStartupGdbProbe(appBinary, args, spawnOptions) {
       if (ownershipError) throw ownershipError
       return identity
     },
+    get ready() {
+      if (ownershipError) throw ownershipError
+      return readyRecords[0] ?? null
+    },
     get exit() {
       return exit
     },
@@ -310,6 +328,7 @@ export async function verifyStartupGdbContract({ resultDir }) {
   assert.equal(process.platform, 'linux', 'The startup GDB contract requires Linux')
   await mkdir(resultDir, { recursive: true })
   for (const mode of ['normal', 'trap', 'interrupt']) {
+    const handshakeDeadline = Date.now() + SMOKE_TIMEOUT_MS
     // GDB reconstructs --args before its shell-free launch. Keep source code and
     // even a whitespace-containing fixture directory out of that argument string.
     const probe = spawnStartupGdbProbe(process.execPath, ['startup-gdb-smoke.mjs', mode], {
@@ -331,11 +350,26 @@ export async function verifyStartupGdbContract({ resultDir }) {
           if (probe.exit) throw new Error(`GDB ${mode} exited before its ownership handshake`)
           return probe.identity !== null
         },
-        SMOKE_TIMEOUT_MS,
+        Math.max(0, handshakeDeadline - Date.now()),
         `GDB ${mode} did not report its owned inferior\n${probe.output}`
       )
       inferiorPid = probe.identity.pid
       probe.child.stdio[3].end(Buffer.from([1]))
+      await waitUntil(
+        () => {
+          if (handshakeError) throw handshakeError
+          if (probe.ready) {
+            assert.deepEqual(probe.ready, { pid: inferiorPid, mode })
+            return true
+          }
+          if (probe.exit?.error) throw probe.exit.error
+          if (probe.exit && probe.closed)
+            throw new Error(`GDB ${mode} exited before consuming its acknowledgement`)
+          return false
+        },
+        Math.max(0, handshakeDeadline - Date.now()),
+        `GDB ${mode} did not finish its acknowledgement handshake\n${probe.output}`
+      )
       if (mode === 'interrupt') await probe.captureFailure()
       await waitUntil(
         () => {

@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict'
-import { readFileSync, readSync, writeSync } from 'node:fs'
+import { readFileSync, writeSync } from 'node:fs'
+import { completeStartupGdbHandshake } from './startup-gdb-handshake.mjs'
 
 assert.equal(process.platform, 'linux', 'The startup GDB smoke requires Linux')
 const mode = process.argv[2]
@@ -21,9 +22,7 @@ writeSync(
 
 // Only the contract fixture uses FD3: no signal or exit occurs before the
 // parent has verified this process's real ownership and acknowledged it.
-const acknowledgement = Buffer.alloc(1)
-assert.equal(readSync(3, acknowledgement, 0, 1, null), 1, 'Missing GDB smoke acknowledgement')
-assert.equal(acknowledgement[0], 1, 'Invalid GDB smoke acknowledgement')
+completeStartupGdbHandshake(mode)
 if (mode === 'normal') process.exit(0)
 if (mode === 'trap') process.kill(process.pid, 'SIGTRAP')
 setInterval(() => {}, 1_000)
