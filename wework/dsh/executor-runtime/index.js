@@ -270,6 +270,10 @@ export async function handleExecutorRpc(req, res, client) {
   const startedAt = Date.now()
   let requestId = requestIdFromRequest(req)
   let method = '<invalid>'
+  console.info('[wework-executor-runtime] RPC HTTP request received', {
+    request_id: requestId,
+    received_at: new Date(startedAt).toISOString(),
+  })
   const controller = new AbortController()
   const disconnect = () => {
     if (!res.writableEnded) controller.abort()
@@ -287,6 +291,7 @@ export async function handleExecutorRpc(req, res, client) {
     console.info('[wework-executor-runtime] RPC request started', {
       request_id: requestId,
       method,
+      body_read_ms: Date.now() - startedAt,
     })
     observeRpcResponse(res, requestId, method, startedAt)
     if (req.aborted || res.destroyed) controller.abort()
@@ -548,7 +553,12 @@ function sendJson(res, status, value, head = false, requestId) {
     'content-type': 'application/json; charset=utf-8',
     'cache-control': 'no-store',
     'content-length': Buffer.byteLength(body),
-    ...(requestId ? { 'x-request-id': requestId } : {}),
+    ...(requestId
+      ? {
+          'x-request-id': requestId,
+          'server-timing': `wework-rpc;desc="${encodeURIComponent(requestId)}"`,
+        }
+      : {}),
   })
   res.end(head ? undefined : body)
 }

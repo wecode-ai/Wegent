@@ -198,6 +198,28 @@ test('builds the macOS installer without unused DMG update metadata', () => {
   expect(config.dmg.writeUpdateInfo).toBe(false)
 })
 
+test('lets Windows users choose a different installation directory', () => {
+  const config = JSON.parse(
+    execFileSync(
+      process.execPath,
+      ['-e', 'process.stdout.write(JSON.stringify(require(process.argv[1])))', builderConfigPath],
+      {
+        encoding: 'utf8',
+        env: { ...process.env, WEWORK_ONLINE_UPDATE_BUILD: '' },
+      }
+    )
+  )
+
+  expect(config.win.target).toEqual(['nsis'])
+  expect(config.nsis).toEqual({
+    oneClick: false,
+    allowElevation: false,
+    allowToChangeInstallationDirectory: true,
+    createDesktopShortcut: true,
+    createStartMenuShortcut: true,
+  })
+})
+
 test('builds a compressed slim Host update without managed components', () => {
   const config = JSON.parse(
     execFileSync(

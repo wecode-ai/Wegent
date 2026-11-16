@@ -1,5 +1,45 @@
 # Sourced by test-classify-ci-changes.sh; all assertions share its helpers.
 
+assert_installer_e2e_selected() {
+  local path="$1"
+  local output
+  output="$(GITHUB_OUTPUT=/dev/stdout "$desktop_classifier" "$path")"
+  if [[ "$output" != *"wework_windows_installer_e2e=true"* ]] ||
+    [[ "$output" != *"release-package-startup"* ]]; then
+    printf 'Installer change must select real Windows validation: %s\n%s\n' \
+      "$path" "$output" >&2
+    exit 1
+  fi
+}
+
+assert_installer_e2e_not_selected() {
+  local path="$1"
+  local output
+  output="$(GITHUB_OUTPUT=/dev/stdout "$desktop_classifier" "$path")"
+  if [[ "$output" == *"wework_windows_installer_e2e=true"* ]]; then
+    printf 'Shared packaging change must not trigger installer E2E: %s\n%s\n' \
+      "$path" "$output" >&2
+    exit 1
+  fi
+}
+
+for installer_path in \
+  wework/electron/electron-builder.config.cjs \
+  wework/e2e/desktop/windows-installer.e2e.mjs \
+  wework/e2e/desktop/modules/windows-installer-ui.ps1; do
+  assert_installer_e2e_selected "$installer_path"
+done
+
+for shared_packaging_path in \
+  wework/electron/package.json \
+  wework/electron/pnpm-lock.yaml \
+  wework/electron/src/build-identity.test.ts \
+  wework/electron/scripts/build-identity.cjs \
+  .github/actions/build-wework-windows-e2e/action.yml \
+  .github/scripts/run-windows-standard-user-process.ps1; do
+  assert_installer_e2e_not_selected "$shared_packaging_path"
+done
+
 for path in \
   wework/e2e/desktop/catalog/component-update.json \
   wework/e2e/desktop/scenarios/component-update.scenario.mjs; do

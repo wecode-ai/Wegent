@@ -44,6 +44,7 @@ export function getAssistantReferences(
       ...explicitReferences,
       ...extractFileChangeReferences(fileChanges),
       ...extractAssistantFileReferences(content),
+      ...extractBareFileReferences(content),
     ]),
   );
   for (const citation of citations) {
@@ -92,6 +93,25 @@ function extractFileChangeReferences(
       path: file.path,
       title: basename(file.path),
     }));
+}
+
+/** Codex often names changed documents as bare paths instead of markdown links. */
+function extractBareFileReferences(content: string): CodexReference[] {
+  const references: CodexReference[] = [];
+  for (const rawToken of content.split(/\s+/)) {
+    const token = rawToken.replace(/^[`"'([{]+/, "").replace(/[`"',.;:)\]}]+$/, "");
+    if (!token || token.includes("://")) continue;
+    const parsed = splitMarkdownFileLineSuffix(token);
+    if (!isCodexDocumentReferencePath(parsed.path)) continue;
+    if (!/^[\w./@-]+$/.test(parsed.path)) continue;
+    references.push({
+      title: basename(parsed.path),
+      path: parsed.path,
+      lineStart: parsed.lineStart,
+      lineEnd: parsed.lineEnd,
+    });
+  }
+  return references;
 }
 
 function normalizeCodexReference(

@@ -11,6 +11,18 @@ classify_path() {
     return
   fi
 
+  # Reserve the Windows packaging and standard-user verification cost for
+  # changes that can alter installer behavior. Shared packaging, build identity
+  # and helper-script changes stay covered by the existing release-startup
+  # checkpoint instead of triggering a full Windows build.
+  case "$path" in
+    wework/electron/electron-builder.config.cjs | \
+      wework/e2e/desktop/modules/windows-installer-ui.ps1 | \
+      wework/e2e/desktop/windows-installer*)
+      windows_installer_e2e=true
+      ;;
+  esac
+
   case "$path" in
     # Reuse real subagent isolation and restored-history coverage, not native Mobile UI.
     wework-mobile/src/components/ConversationAgentsPill* | \
@@ -486,6 +498,10 @@ classify_path() {
         select_target "core:collaboration-deliveries"
         select_target "core:collaboration-delivery-editing"
       fi
+      ;;
+    packages/chat-core/src/workspace-file-paths* | \
+      packages/chat-core/src/workspace-file-types*)
+      select_all_platform_suites
       ;;
     executor/crates/model-proxy/src/codex_model_catalog*.rs)
       select_target "core:codex-native-catalog"

@@ -51,3 +51,22 @@ test('finishes dismissal and observes its history before reloading to check pers
   await verification
   expect(reloadMainWindow).toHaveBeenCalledOnce()
 })
+
+test('does not replay a stale inbox refresh when history never settles', async () => {
+  const command = vi.fn(async (action: string, selector: string) => {
+    if (action === 'getElementCount') return '0'
+    if (action === 'getAttribute') return '3'
+    if (action === 'waitFor' && selector.includes('interactions-pending-count')) {
+      throw new Error('stale inbox')
+    }
+    return ''
+  })
+
+  await expect(verifyInteractionArchiving({ command }, 1000, 'task')).rejects.toThrow('stale inbox')
+
+  const refreshClicks = command.mock.calls.filter(
+    ([action, selector]) =>
+      action === 'clickWhenEnabled' && selector.includes('interactions-refresh')
+  )
+  expect(refreshClicks).toHaveLength(1)
+})

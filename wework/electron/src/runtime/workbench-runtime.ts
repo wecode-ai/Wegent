@@ -7,6 +7,7 @@ const FORBIDDEN_ENVIRONMENT_PREFIXES = [
   'WEWORK_EXECUTOR_',
   'WEGENT_APP_IPC_',
 ] as const
+const WORKBENCH_RUNTIME_START_TIMEOUT_MS = 60_000
 
 export interface WorkbenchRuntimeLaunch {
   tabId: string
@@ -63,6 +64,7 @@ export class WorkbenchRuntimeManager {
       env: workbenchEnvironment(launch),
       logDirectory: launch.logDirectory,
       logFileName: `dsh-workbench-${safeName(tabId)}.log`,
+      startTimeoutMs: WORKBENCH_RUNTIME_START_TIMEOUT_MS,
       ...(launch.hostPipe ? { hostPipe: launch.hostPipe } : {}),
     })
     this.runtimes.set(tabId, runtime)

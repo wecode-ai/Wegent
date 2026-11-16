@@ -176,7 +176,10 @@ raise SystemExit(adapter.main(sys.argv[1:]))
     .unwrap();
     let adapter = NativeAdapter::load(root.path(), "mail", &declaration).unwrap();
     let started = std::time::Instant::now();
-    let exported = adapter.export(&python(), Duration::from_secs(10)).await;
+    // This fixture verifies configuration isolation rather than startup latency.
+    // Windows runners can spend several seconds scanning Python imports on their
+    // first process launch, while production authentication allows a 40s bootstrap.
+    let exported = adapter.export(&python(), Duration::from_secs(40)).await;
     // Keep sanitized bootstrap timings visible for successful CI runs too.
     let _ = writeln!(
         std::io::stderr(),
@@ -200,7 +203,7 @@ raise SystemExit(adapter.main(sys.argv[1:]))
             exported.credential,
             &["read".into()],
             None,
-            Duration::from_secs(10),
+            Duration::from_secs(60),
         )
         .await
         .unwrap();

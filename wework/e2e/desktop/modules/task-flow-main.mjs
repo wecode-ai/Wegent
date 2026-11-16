@@ -205,6 +205,7 @@ import {
   LOCAL_MODEL_SWITCH_FOLLOW_UP_PROMPT,
   LOCAL_MODEL_SWITCH_INITIAL_COMPLETE,
   LOCAL_MODEL_SWITCH_INITIAL_PROMPT,
+  LOCAL_PROJECT_READY_TIMEOUT_MS,
   LOCAL_VISION_SIDECAR_CASE,
   LATE_BOUND_PROJECT_SPACE_COMPLETION_TEXT,
   LATE_BOUND_PROJECT_SPACE_PROMPT,
@@ -2621,7 +2622,14 @@ source = ${JSON.stringify(staleBundledMarketplacePath)}`
         testId.startsWith('project-menu-')
       )
     )
-    await createSingleRootLocalProject(control, secondaryProjectPath, 'secondary-project')
+    // Windows logs show the secondary project's sidebar registration can exceed
+    // the ordinary UI budget while project state is reconciled.
+    await createSingleRootLocalProject(
+      control,
+      secondaryProjectPath,
+      'secondary-project',
+      LOCAL_PROJECT_READY_TIMEOUT_MS
+    )
     const secondaryProjectSnapshot = await waitForSnapshot(
       control,
       snapshot =>
@@ -2639,7 +2647,7 @@ source = ${JSON.stringify(staleBundledMarketplacePath)}`
     const secondaryProjectRowSelector = `[data-testid="project-row-${secondaryProjectId}"]`
     await control.command('waitFor', secondaryProjectRowSelector, {
       text: 'secondary-project',
-      timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+      timeoutMs: LOCAL_PROJECT_READY_TIMEOUT_MS,
     })
 
     phase = 'codex-directory-project-reload'
@@ -2652,11 +2660,11 @@ source = ${JSON.stringify(staleBundledMarketplacePath)}`
     )
     await control.command('waitFor', secondaryProjectRowSelector, {
       text: 'secondary-project',
-      timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+      timeoutMs: LOCAL_PROJECT_READY_TIMEOUT_MS,
     })
     await control.command('waitFor', '[data-testid="project-work-button"]', {
       text: 'secondary-project',
-      timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+      timeoutMs: LOCAL_PROJECT_READY_TIMEOUT_MS,
     })
 
     phase = 'composer-project-folder-select'
@@ -2757,7 +2765,7 @@ source = ${JSON.stringify(staleBundledMarketplacePath)}`
     })
     await control.command('waitFor', secondaryProjectRowSelector, {
       text: 'secondary-project',
-      timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+      timeoutMs: LOCAL_PROJECT_READY_TIMEOUT_MS,
     })
     await captureVerificationScreenshot(control, 'project-shared-root-both-visible.png')
 
@@ -2807,7 +2815,7 @@ source = ${JSON.stringify(staleBundledMarketplacePath)}`
     )
     await control.command('waitFor', secondaryProjectRowSelector, {
       text: 'secondary-project',
-      timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+      timeoutMs: LOCAL_PROJECT_READY_TIMEOUT_MS,
     })
 
     phase = 'project-folder-reopen'
@@ -2900,7 +2908,7 @@ source = ${JSON.stringify(staleBundledMarketplacePath)}`
     })
     await control.command('waitFor', secondaryProjectRowSelector, {
       text: 'secondary-project',
-      timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+      timeoutMs: LOCAL_PROJECT_READY_TIMEOUT_MS,
     })
 
     let associatedTaskTabTestId = null

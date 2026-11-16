@@ -84,6 +84,7 @@ validate_registered_checkpoint_coverage
 declare -A selected=()
 desktop_runner_changed=false
 macos_inspector_e2e=false
+windows_installer_e2e=false
 
 select_target() {
   selected["$1"]=true
@@ -194,6 +195,11 @@ select_all_desktop_suites() {
   macos_inspector_e2e=true
 }
 
+select_all_platform_suites() {
+  select_all_desktop_suites
+  windows_installer_e2e=true
+}
+
 # Keep path precedence explicit; feature rules live outside the shared runner.
 source "$script_dir/desktop-ci/wework-paths.sh"
 source "$script_dir/desktop-ci/workbench-paths.sh"
@@ -288,7 +294,7 @@ build_matrix() {
 }
 
 if [[ "${1:-}" == "--all" ]]; then
-  select_all_desktop_suites
+  select_all_platform_suites
 elif (($# > 0)); then
   for path in "$@"; do
     classify_path "$path"
@@ -342,4 +348,5 @@ output_file="${GITHUB_OUTPUT:-/dev/stdout}"
   printf 'wework_desktop_other_e2e=%s\n' "$run_other"
   printf 'wework_desktop_other_e2e_matrix=%s\n' "$other_matrix_json"
   printf 'wework_desktop_macos_inspector_e2e=%s\n' "$macos_inspector_e2e"
+  printf 'wework_windows_installer_e2e=%s\n' "$windows_installer_e2e"
 } >> "$output_file"

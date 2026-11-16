@@ -43,6 +43,7 @@ describe('WorkbenchRuntimeManager', () => {
     ])
     expect(options).toHaveLength(2)
     expect(options[0].hostPipe).toBeUndefined()
+    expect(options[0].startTimeoutMs).toBe(60_000)
   })
 
   test('reuses one process for repeated opens of the same tab and stops it on close', async () => {

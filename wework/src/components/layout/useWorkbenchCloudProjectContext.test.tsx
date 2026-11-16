@@ -509,6 +509,61 @@ describe('useWorkbenchCloudProjectContext', () => {
     expect(result.current.pendingCloudProject).toBeNull()
   })
 
+  test('passes the bound default Issue identity to a continued runtime task', async () => {
+    const defaultBoard = {
+      ...project(DEFAULT_WORK_ITEM_PROJECT_ID, 'local'),
+      project_key: DEFAULT_WORK_ITEM_PROJECT_KEY,
+      name: '我的任务',
+    }
+    const boundItem = {
+      ...loopItem(defaultBoard.id),
+      has_additional_context: true,
+    }
+    const runtimeTask = {
+      deviceId: 'device-1',
+      taskId: 'runtime-1',
+    }
+    const localApi = {
+      listCloudProjects: vi.fn().mockResolvedValue({ items: [defaultBoard] }),
+      listCloudFiles: vi.fn().mockResolvedValue({ items: [] }),
+      listLoopItems: vi.fn().mockResolvedValue({ items: [] }),
+      listDeliveries: vi.fn().mockResolvedValue({ items: [] }),
+      findCloudContextForTask: vi.fn().mockResolvedValue({
+        project: defaultBoard,
+        loop_item: boundItem,
+      }),
+    }
+    const services = {
+      projectSpaceApis: {
+        local: localApi,
+        defaultLocation: 'local',
+      },
+    } as unknown as WorkbenchServices
+    const { result } = renderHook(() =>
+      useWorkbenchCloudProjectContext({
+        active: true,
+        currentRuntimeTask: runtimeTask,
+        currentProjectId: 42,
+        defaultProjectSpace: null,
+        paneKey: 'project:42',
+        runtimeTaskTitle: null,
+        services,
+        userId: 1,
+      })
+    )
+
+    await waitFor(() => expect(result.current.boundCloudItem).toEqual(boundItem))
+
+    const submission = await result.current.prepareSubmission('Continue the bound Issue')
+
+    expect(submission.origin).toEqual({
+      type: 'board_task',
+      projectStore: 'local',
+      cloudProjectId: defaultBoard.id,
+      loopItemId: boundItem.id,
+    })
+  })
+
   test('reloads project spaces when a retained workbench becomes active again', async () => {
     const defaultProject = project('space-default')
     let projects: CloudProject[] = []

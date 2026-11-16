@@ -47,7 +47,9 @@ export function assertStartupSplashHandoff(snapshot) {
   assert.deepEqual(
     names.filter(name => name !== 'animation-ready'),
     STARTUP_SPLASH_HANDOFF_EVENTS.filter(name => name !== 'animation-ready'),
-    'The startup splash did not complete its painted-completion and fade lifecycle'
+    `The startup splash did not complete its painted-completion and fade lifecycle: ${names.join(
+      ','
+    )}`
   )
   assert.ok(
     snapshot.events.every(

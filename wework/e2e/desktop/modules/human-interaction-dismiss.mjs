@@ -60,16 +60,32 @@ export async function verifyInteractionArchiving(control, timeoutMs, taskId) {
       timeoutMs,
     })
     await control.command('click', '[data-testid="workspace-tab-select-pending-interactions"]')
-    await control.command('click', `${PAGE} [data-testid="interactions-history"]`)
-    await control.command('waitFor', `${PAGE} [data-testid="interactions-pending-count"]`, {
-      text: '1',
-    })
-    await control.command('waitFor', `${PAGE} [data-testid="interaction-source-group-task"]`, {
-      text: item.question,
-    })
-    await control.command('waitFor', `${PAGE} [data-testid="interaction-list-item"]`, {
-      text: item.question,
-    })
+    const waitForHistoryItem = async () => {
+      const attemptTimeoutMs = Math.min(timeoutMs, 20_000)
+      await control.command('click', `${PAGE} [data-testid="interactions-history"]`)
+      const revision = Number(
+        await control.command('getAttribute', PAGE, { value: 'data-refresh-revision' })
+      )
+      await control.command('clickWhenEnabled', `${PAGE} [data-testid="interactions-refresh"]`, {
+        timeoutMs: attemptTimeoutMs,
+      })
+      await control.command('waitFor', `${PAGE}[data-refresh-revision="${revision + 1}"]`, {
+        timeoutMs: attemptTimeoutMs,
+      })
+      await control.command('waitFor', `${PAGE} [data-testid="interactions-pending-count"]`, {
+        text: '1',
+        timeoutMs: attemptTimeoutMs,
+      })
+      await control.command('waitFor', `${PAGE} [data-testid="interaction-source-group-task"]`, {
+        text: item.question,
+        timeoutMs: attemptTimeoutMs,
+      })
+      await control.command('waitFor', `${PAGE} [data-testid="interaction-list-item"]`, {
+        text: item.question,
+        timeoutMs: attemptTimeoutMs,
+      })
+    }
+    await waitForHistoryItem()
     await control.command('click', `${PAGE} [data-testid="interaction-list-item"]`)
     if (item.mode === 'external') {
       await control.command('click', `${PAGE} [data-testid="interaction-open-original"]`)

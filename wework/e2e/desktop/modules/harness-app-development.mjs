@@ -397,8 +397,9 @@ export async function verifyHarnessDevelopment(
     }
   )
   await control.command(
-    'click',
-    `[data-testid="smart-app-remove-local-${CREATED_INSTALLATION_ID}"]`
+    'clickWhenEnabled',
+    `[data-testid="smart-app-remove-local-${CREATED_INSTALLATION_ID}"]`,
+    { timeoutMs: uiTimeoutMs }
   )
   await control.command('waitFor', '[data-testid="smart-app-remove-local-confirm"]', {
     timeoutMs: uiTimeoutMs,

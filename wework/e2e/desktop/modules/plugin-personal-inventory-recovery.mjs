@@ -145,7 +145,7 @@ export async function verifyPersonalInventoryRecovery({
     }
     assert.equal(report.transport.codexDelivered, 1)
     await control.command('click', testId('plugins-button'))
-    await refreshPluginInventory(control)
+    await refreshPluginInventory(control, workbenchReadyTimeoutMs)
     await assertInventory(control, NAME, false)
 
     // Lose renderer memory without changing the real source, config or installed cache.
@@ -163,7 +163,7 @@ export async function verifyPersonalInventoryRecovery({
     await assertInventory(control, NAME, false)
     await control.command('click', testId('composer-plugin-picker-button'), { visible: true })
     await control.command('click', testId('plugins-button'))
-    await refreshPluginInventory(control)
+    await refreshPluginInventory(control, workbenchReadyTimeoutMs)
     await assertInventory(control, NAME, false)
 
     await rename(fixture.backup, fixture.source)
@@ -172,7 +172,7 @@ export async function verifyPersonalInventoryRecovery({
     await catalog()
     report.afterRestore = await inventory(control)
     assertMembership(report.afterRestore, true)
-    await refreshPluginInventory(control)
+    await refreshPluginInventory(control, workbenchReadyTimeoutMs)
     await assertInventory(control, NAME, true)
     report.passed = true
     return { reportPath }
@@ -194,7 +194,7 @@ export async function verifyPersonalInventoryRecovery({
           value: `${NAME}@wework-personal`,
         })
         await control.command('click', testId('plugins-button'))
-        await refreshPluginInventory(control)
+        await refreshPluginInventory(control, workbenchReadyTimeoutMs)
         await assertInventory(control, NAME, false)
       }
     } catch (error) {

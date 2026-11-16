@@ -1167,10 +1167,7 @@ export function useWorkbenchCloudProjectContext({
           ? runtimeCloudProjectId(submissionProject)
           : undefined,
         origin:
-          submissionHasModelContext &&
-          submissionProject &&
-          submissionItem &&
-          !isDefaultWorkItemProject(submissionProject)
+          submissionHasModelContext && submissionProject && submissionItem
             ? {
                 type: 'board_task',
                 projectStore: submissionProject.project_store,

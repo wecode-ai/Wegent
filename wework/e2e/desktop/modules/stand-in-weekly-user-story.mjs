@@ -4,7 +4,7 @@ import { requestExecutor } from './executor-rpc.mjs'
 import { readMcpToolOutput } from './mcp-tool-results.mjs'
 import { until } from './plugin-regression-fixture.mjs'
 import { readStoryTaskEvidence } from './stand-in-private-story-evidence.mjs'
-import { openConnectionTypePicker } from './stand-in-flows.mjs'
+import { openConnectionTypePicker, openStandInArrangement } from './stand-in-flows.mjs'
 import {
   assistantMessage,
   createSse,
@@ -172,7 +172,7 @@ export function createWeeklyUserStory(options) {
       )
       active = true
       try {
-        await control.command('click', `[data-testid="automation-open-${schedule.id}"]`)
+        await openStandInArrangement(control, schedule.id)
         await control.command('click', `[data-testid="automation-detail-actions-${schedule.id}"]`)
         await control.command('clickWhenEnabled', '[data-testid="automation-run-now-button"]')
         await control.command('waitFor', '[data-testid="automation-run-history"]', {
@@ -226,7 +226,7 @@ export function createWeeklyUserStory(options) {
         )
         await openConnectionTypePicker(control)
         await control.command('click', '[data-testid="stand-in-time-connections"]')
-        await control.command('clickWhenEnabled', `[data-testid="automation-open-${schedule.id}"]`)
+        await openStandInArrangement(control, schedule.id)
         await control.command('click', `[data-testid="automation-detail-toggle-${schedule.id}"]`)
         await control.command('waitFor', '[data-testid="automation-detail-panel"]', {
           text: '已暂停',

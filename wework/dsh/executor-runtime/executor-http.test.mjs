@@ -246,6 +246,7 @@ test('preserves one request id across browser, DSH, and executor RPC', async () 
 
   assert.equal(response.status, 200)
   assert.equal(response.headers['x-request-id'], 'wework-local-request-1')
+  assert.equal(response.headers['server-timing'], 'wework-rpc;desc="wework-local-request-1"')
   assert.deepEqual(JSON.parse(response.body), { ok: true, result: { items: [] } })
 })
 
@@ -335,6 +336,45 @@ test('does not forward an unsafe browser request id to the executor', async () =
   assert.equal(response.headers['x-request-id'], receivedRequestId)
 })
 
+test('encodes printable request ids before exposing Server-Timing metadata', async () => {
+  const requestId = 'quoted"\\request;name=value'
+  const response = responseFixture()
+  await handleExecutorRpc(
+    executorRpcRequest({ id: requestId, method: 'runtime.tasks.list', params: {} }),
+    response,
+    { request: async () => ({ items: [] }) }
+  )
+  assert.equal(
+    response.headers['server-timing'],
+    `wework-rpc;desc="${encodeURIComponent(requestId)}"`
+  )
+})
+
+test('records HTTP receipt before awaiting a delayed request body without exposing content', async t => {
+  const log = t.mock.method(console, 'info', () => {})
+  let clock = 1_000
+  t.mock.method(Date, 'now', () => clock)
+  const request = new Readable({ read() {} })
+  request.method = 'POST'
+  request.headers = { 'x-request-id': 'delayed-body' }
+  const response = responseFixture()
+  const completed = handleExecutorRpc(request, response, { request: async () => ({ items: [] }) })
+
+  assert.deepEqual(log.mock.calls[0].arguments, [
+    '[wework-executor-runtime] RPC HTTP request received',
+    { request_id: 'delayed-body', received_at: '1970-01-01T00:00:01.000Z' },
+  ])
+  clock = 8_000
+  request.push(
+    JSON.stringify({ method: 'runtime.tasks.list', params: { private: 'must-not-be-logged' } })
+  )
+  request.push(null)
+  await completed
+
+  assert.equal(log.mock.calls[1].arguments[1].body_read_ms, 7_000)
+  assert.ok(!JSON.stringify(log.mock.calls).includes('must-not-be-logged'))
+})
+
 for (const event of ['finish', 'close']) {
   test(`records HTTP ${event} separately from executor completion without payloads`, async t => {
     const log = t.mock.method(console, 'info', () => {})
@@ -344,12 +384,12 @@ for (const event of ['finish', 'close']) {
       response,
       { request: async () => ({ privateTaskContent: 'must-not-be-logged' }) }
     )
-    assert.equal(log.mock.calls.length, 2)
+    assert.equal(log.mock.calls.length, 3)
 
     response.emit(event)
 
-    assert.equal(log.mock.calls.length, 3)
-    const [label, fields] = log.mock.calls[2].arguments
+    assert.equal(log.mock.calls.length, 4)
+    const [label, fields] = log.mock.calls[3].arguments
     assert.equal(label, '[wework-executor-runtime] RPC HTTP response')
     assert.equal(fields.request_id, 'http-lifecycle')
     assert.equal(fields.event, event === 'finish' ? 'finished' : 'closed')

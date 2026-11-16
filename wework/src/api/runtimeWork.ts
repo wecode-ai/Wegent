@@ -78,7 +78,38 @@ import type {
   RuntimeWorktreeSettings,
   RuntimeWorktreeSettingsPatch,
 } from '@/types/api'
-import type { HttpClient, HttpRequestOptions } from './http'
+import { ApiError, type HttpClient, type HttpRequestOptions } from './http'
+
+const TRANSCRIPT_BUSY_RETRY_DELAYS_MS = [250, 500, 1_000]
+
+function isTranscriptBusyError(error: unknown): boolean {
+  return (
+    error instanceof ApiError &&
+    error.status === 502 &&
+    error.message.includes('Transcript processing is busy')
+  )
+}
+
+async function postRuntimeTranscript<T>(
+  client: HttpClient,
+  query: Record<string, unknown>,
+  options?: Pick<HttpRequestOptions, 'signal'>
+): Promise<T> {
+  for (let attempt = 0; ; attempt += 1) {
+    try {
+      return await (options
+        ? client.post<T>('/runtime-work/transcript', query, options)
+        : client.post<T>('/runtime-work/transcript', query))
+    } catch (error) {
+      if (attempt >= TRANSCRIPT_BUSY_RETRY_DELAYS_MS.length || !isTranscriptBusyError(error)) {
+        throw error
+      }
+      await new Promise(resolvePromise =>
+        setTimeout(resolvePromise, TRANSCRIPT_BUSY_RETRY_DELAYS_MS[attempt])
+      )
+    }
+  }
+}
 import type { KeybindingOverride } from '@/lib/keybindings'
 
 export const REMOTE_TEAM_BACKEND_UNSUPPORTED = 'REMOTE_TEAM_BACKEND_UNSUPPORTED'
@@ -138,10 +169,8 @@ export function createRuntimeWorkApi(client: HttpClient) {
       request: RuntimeTranscriptRequest,
       options?: Pick<HttpRequestOptions, 'signal'>
     ): Promise<RuntimeTranscriptResponse> {
-      return readRuntimeTranscript({ ...request }, query =>
-        options
-          ? client.post('/runtime-work/transcript', query, options)
-          : client.post('/runtime-work/transcript', query)
+      return readRuntimeTranscript<RuntimeTranscriptResponse>({ ...request }, query =>
+        postRuntimeTranscript(client, query, options)
       )
     },
     searchRuntimeTranscript(
