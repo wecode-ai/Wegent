@@ -409,6 +409,8 @@ Consecutive turns within one execution reuse the last durably queued ending tree
 
 The durable outbox uses bounded background execution, preserves per-handler order within a workspace or session and acknowledges each handler independently. Plugin availability is checked when claiming work and before executing commands. Disabled, deleted or unavailable consumers retain pending data without blocking other handlers; re-enabling or reinstalling the same ID resumes delivery. Scheduling deadlines include only available consumers without pending predecessors, preventing paused entries from causing busy loops. Failed jobs remain pending across restarts. Stable `event_id` values and increasing `sequence` values support idempotent plugin handling. Git references are released after generated artifact descriptors are durable; source artifacts are removed after all targets succeed. Plugins that need retention must archive files before returning success. Main-turn completion waits only for the boundary snapshot and durable enqueue; necessary Git reads and persistence still have a cost. Snapshots include subagent, Shell and script changes in the same workspace without relying on editing-tool or child-agent events. Unchanged pre-existing content is excluded and non-Git workspaces do not trigger the hook. Handlers are isolated by event, and `codex_rollout` changes only the source of `PostToolUse`.
 
+The queue persists consumer IDs and command configurations. Immediately before execution, the registry resolves the currently available plugin directory. After a plugin installation moves, pending events retain their original input and command configuration while executing from the new directory, without depending on a removed installation path.
+
 This flow requires Git 2.41+. Background diffs use `--attr-source=<ending tree>` to freeze repository attributes. File lists and line statistics use the same source, so later `.gitattributes` changes do not alter sealed turns.
 
 ```mermaid
@@ -426,7 +428,7 @@ flowchart LR
     J -->|No| K[Retain pending data]
     K -->|Available again| J
     F --> G[Small descriptor event]
-    G --> H[Recheck availability before reading and archiving]
+    G --> H[Resolve the current available plugin directory before archiving]
     H -->|Disabled| K
     H --> I[Reclaim sources after all handlers acknowledge]
 ```

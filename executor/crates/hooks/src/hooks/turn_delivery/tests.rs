@@ -71,7 +71,6 @@ fn target(id: &str) -> Target {
     Target {
         plugin_id: "reporter".to_owned(),
         handler_id: id.to_owned(),
-        directory: "/plugin".into(),
         config: CommandHookConfig {
             handler_type: "command".to_owned(),
             command: "echo frozen".to_owned(),
@@ -595,4 +594,68 @@ fn database_open_failure_releases_new_pins_and_preserves_queued_clones() {
         "restored durable ranges keep their pins"
     );
     queued.release().unwrap();
+}
+
+#[cfg(unix)]
+#[test]
+fn pending_delivery_resolves_the_current_plugin_directory_after_relocation() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let home = tempdir().unwrap();
+    let registry = HookRegistryStore::new(home.path().to_path_buf());
+    let plugin = registry
+        .create(
+            serde_json::from_value(json!({
+                "schemaVersion": 1, "id": "reporter", "name": "Reporter", "version": "1",
+            }))
+            .unwrap(),
+            serde_json::from_value(json!({"TurnCompleted": [{"hooks": [{
+                "type": "command", "command": "./report.sh",
+            }]}]}))
+            .unwrap(),
+        )
+        .unwrap();
+    let script = plugin.install_path.join("report.sh");
+    fs::write(&script, "#!/bin/sh\ncat > received.json\n").unwrap();
+    fs::set_permissions(&script, fs::Permissions::from_mode(0o700)).unwrap();
+    let mut consumer = target("turn-completed-0-0");
+    consumer.config.command = "./report.sh".into();
+    let receipt = Store::enqueue_at(
+        &home.path().join("hooks/turn-completed.sqlite"),
+        input(home.path(), "session", "relocated-turn"),
+        None,
+        vec![consumer],
+        &home.path().join("artifacts"),
+    )
+    .unwrap();
+
+    let current = home.path().join("new-installation/reporter");
+    fs::create_dir_all(current.parent().unwrap()).unwrap();
+    fs::rename(&plugin.install_path, &current).unwrap();
+    let registry_path = home.path().join("hooks/registry.json");
+    let mut state: Value = serde_json::from_slice(&fs::read(&registry_path).unwrap()).unwrap();
+    state["plugins"]["reporter"]["installPath"] = json!(current);
+    fs::write(&registry_path, serde_json::to_vec(&state).unwrap()).unwrap();
+    let installed = registry
+        .list()
+        .into_iter()
+        .find(|plugin| plugin.manifest.id == "reporter")
+        .unwrap();
+    assert_eq!(installed.health, HookHealth::Ready);
+    assert_eq!(installed.install_path, current);
+    let outbox = TurnHookOutbox::new(registry, Arc::new(Mutex::new(None)));
+
+    tokio::runtime::Runtime::new().unwrap().block_on(async {
+        tokio::time::timeout(Duration::from_secs(5), outbox.flush())
+            .await
+            .expect("a relocated healthy consumer must resume its pending delivery")
+            .unwrap();
+    });
+
+    let received: Value =
+        serde_json::from_slice(&fs::read(home.path().join("received.json")).unwrap()).unwrap();
+    assert_eq!(received["event_id"], receipt.event_id);
+    assert_eq!(received["turn_id"], "relocated-turn");
+    assert_eq!(received["sequence"], receipt.sequence);
+    assert!(!plugin.install_path.exists());
 }

@@ -94,7 +94,6 @@ impl TurnHookOutbox {
                     .then(|| Target {
                         plugin_id: plugin.manifest.id.clone(),
                         handler_id: hook.handler_id,
-                        directory: plugin.directory.clone(),
                         config: hook.config,
                     })
                 })
@@ -328,12 +327,16 @@ async fn process_event(inner: Arc<Inner>, mut event: Event, owner: &str) -> Resu
         let started_at = now();
         let started = Instant::now();
         let target = delivery.target;
-        if !active_plugins(&inner).contains(&target.plugin_id) {
+        let Some(plugin) = inner.registry.discover().into_iter().find(|plugin| {
+            plugin.manifest.id == target.plugin_id
+                && plugin.enabled
+                && plugin.health == HookHealth::Ready
+        }) else {
             continue;
-        }
+        };
         let outcome = execute_command_hook(
             &target.config,
-            &target.directory,
+            &plugin.directory,
             &event.input.cwd,
             &event.input,
         )

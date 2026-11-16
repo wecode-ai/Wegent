@@ -36,7 +36,6 @@ const SCHEDULE: &str = "WITH ready_deliveries AS (
 pub(super) struct Target {
     pub plugin_id: String,
     pub handler_id: String,
-    pub directory: PathBuf,
     pub config: CommandHookConfig,
 }
 
