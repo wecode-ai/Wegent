@@ -2862,6 +2862,21 @@ pub(super) fn runtime_model_selection_changed(link: &RuntimeTaskLink, payload: &
     previous.is_some() && next.is_some() && previous != next
 }
 
+pub(super) fn runtime_model_provider_changed(link: &RuntimeTaskLink, payload: &Value) -> bool {
+    let previous = model_selection_identity(
+        link.runtime_handle
+            .get("modelSelection")
+            .or_else(|| link.runtime_handle.get("model_selection")),
+    );
+    let next = model_selection_identity(
+        payload
+            .get("modelSelection")
+            .or_else(|| payload.get("model_selection")),
+    );
+    matches!((previous, next), (Some(previous), Some(next))
+        if previous.model_type != next.model_type || previous.provider != next.provider)
+}
+
 pub(super) fn mark_runtime_model_switch(
     request: &mut ExecutionRequest,
     link: &RuntimeTaskLink,
@@ -2872,9 +2887,22 @@ pub(super) fn mark_runtime_model_switch(
             .extra
             .insert("wework_model_switched".to_owned(), Value::Bool(true));
     }
+    if runtime_model_provider_changed(link, payload) {
+        request.extra.insert(
+            "wework_model_provider_switched".to_owned(),
+            Value::Bool(true),
+        );
+    }
 }
 
-fn model_selection_identity(selection: Option<&Value>) -> Option<(String, Option<String>)> {
+#[derive(Debug, PartialEq, Eq)]
+struct ModelSelectionIdentity {
+    model_name: String,
+    model_type: Option<String>,
+    provider: Option<String>,
+}
+
+fn model_selection_identity(selection: Option<&Value>) -> Option<ModelSelectionIdentity> {
     let selection = selection?.as_object()?;
     let model_name = selection
         .get("modelName")
@@ -2891,7 +2919,28 @@ fn model_selection_identity(selection: Option<&Value>) -> Option<(String, Option
         .map(str::trim)
         .filter(|value| !value.is_empty())
         .map(str::to_owned);
-    Some((model_name.to_owned(), model_type))
+    let provider = selection
+        .get("provider")
+        .and_then(Value::as_str)
+        .or_else(|| {
+            let options = selection.get("options")?;
+            [
+                "runnerModelProvider",
+                "runner_model_provider",
+                "codexProviderId",
+                "codex_provider_id",
+            ]
+            .into_iter()
+            .find_map(|key| options.get(key).and_then(Value::as_str))
+        })
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_owned);
+    Some(ModelSelectionIdentity {
+        model_name: model_name.to_owned(),
+        model_type,
+        provider,
+    })
 }
 
 fn runtime_guidance_failure(
