@@ -110,6 +110,15 @@ export function withScheduleUpdate(scenario, options) {
       const before = await ids()
       active = true
       try {
+        await control.command('clickWhenEnabled', '[data-testid="workspace-tab-select-fixed-task"]')
+        const profile = '[data-testid="stand-in-profile-panel"]'
+        if (Number(await control.command('getElementCount', profile, { visible: true })) > 0) {
+          await control.command(
+            'clickWhenEnabled',
+            '[data-testid="stand-in-primary-profile-close"]'
+          )
+          await control.command('waitFor', profile, { visible: false })
+        }
         await control.command('clickWhenEnabled', '[data-testid="personal-stand-in-button"]')
         await sendStandInNotificationFollowUp(
           control,

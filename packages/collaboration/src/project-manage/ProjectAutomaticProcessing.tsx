@@ -433,9 +433,9 @@ export function ProjectAutomaticProcessing({
       } else {
         await api.automations.create(project.id, input)
       }
+      await load()
       setEditing(false)
       setDraft(EMPTY_DRAFT)
-      await load()
     } catch (saveError) {
       setError(
         saveError instanceof Error
