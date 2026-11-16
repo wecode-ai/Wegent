@@ -85,6 +85,30 @@ struct ReadScope {
 }
 
 impl RuntimeWorkRpcHandler {
+    pub(super) fn context_search_candidates(
+        &self,
+        identity: &StandInMcpIdentity,
+    ) -> Result<Vec<RuntimeTaskLink>, AppIpcError> {
+        let store = LocalTaskStore::open(self.task_store_path.as_ref())
+            .map_err(super::stand_in::settings_error)?;
+        let scope = self.conversation_scope(identity, &store)?;
+        let mut links: Vec<_> = self
+            .local_task_links(true)
+            .into_iter()
+            .filter(|link| {
+                link.local_task_id != identity.task_id
+                    && self.conversation_visible(link, identity, &scope, &store)
+                    && self.memory_review_source_visible(link, identity.user, &store)
+            })
+            .collect();
+        links.sort_by(|a, b| {
+            b.updated_at
+                .cmp(&a.updated_at)
+                .then(a.local_task_id.cmp(&b.local_task_id))
+        });
+        Ok(links)
+    }
+
     fn conversation_scope(
         &self,
         identity: &StandInMcpIdentity,
@@ -183,6 +207,16 @@ impl RuntimeWorkRpcHandler {
             let parent = self
                 .local_task_link(origin["sourceTaskId"].as_str().ok_or_else(denied)?)
                 .ok_or_else(denied)?;
+            if delegation["sourceMessageId"].is_string() {
+                self.source_task_parent(&actor)?;
+                return Ok(ReadScope {
+                    source: None,
+                    role: role.clone(),
+                    coordinator_tasks: Some(HashSet::from([identity.task_id.clone()])),
+                    can_orchestrate: false,
+                    window: None,
+                });
+            }
             let parent_origin = &parent.runtime_handle["origin"];
             if !history_owned(&parent, identity.user)
                 || self.archived_link_is_deleted(&parent)
@@ -335,6 +369,13 @@ impl RuntimeWorkRpcHandler {
             return true;
         };
         let origin = &link.runtime_handle["origin"];
+        if origin["type"] == "stand_in_task"
+            && origin["sourceTaskId"] == identity.task_id
+            && link.runtime_handle["executionRequest"]["standInDelegation"]["sourceMessageId"]
+                .is_string()
+        {
+            return self.source_task_parent(link).is_ok();
+        }
         if !matches!(
             origin["type"].as_str(),
             Some("connection_work" | "dingtalk_work")

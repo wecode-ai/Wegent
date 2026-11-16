@@ -108,7 +108,7 @@ pub(super) async fn terminal_on(
             }
             child.status = status.to_owned();
             child.message_type = "text".to_owned();
-            child.updated_at = at;
+            child.updated_at = crate::socketio::project_chat_messages::database_timestamp(at);
             child.metadata.0["run_status"] = json!(status);
             child.metadata.0["subagent_status"] = json!(status);
             save_message(tx, &child).await?;
@@ -154,7 +154,8 @@ pub(super) async fn requeued_on(
         message.status = "pending".to_owned();
         message.runtime_device_id.clear();
         message.runtime_task_id.clear();
-        message.updated_at = Utc::now().naive_utc();
+        message.updated_at =
+            crate::socketio::project_chat_messages::database_timestamp(Utc::now().naive_utc());
         let key = message_key(&message.message_id, false);
         tx.execute("UPDATE project_chat_messages SET metadata=?,status='pending',runtime_device_id='',runtime_task_id='',runtime_activity_key=?,updated_at=? WHERE id=?",(Json(&message.metadata.0),key,message.updated_at,message.id)).await?;
         output.push(message);

@@ -10,9 +10,10 @@
  * and execution time preview.
  * Supports multi-select for hours and minutes.
  */
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useId, useMemo, useState } from 'react'
 import { useTranslation } from '@/hooks/useTranslation'
 import { Label } from '@/components/ui/label'
+import { Checkbox } from '@/components/ui/checkbox'
 import { Input } from '@/components/ui/input'
 import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group'
 import { Toggle } from '@/components/ui/toggle'
@@ -26,6 +27,8 @@ interface CronSchedulePickerProps {
   onChange: (expression: string) => void
   className?: string
   timezone?: string
+  workdayOnly?: boolean
+  onWorkdayOnlyChange?: (workdayOnly: boolean) => void
 }
 
 type FrequencyType = 'hourly' | 'daily' | 'weekly' | 'monthly' | 'custom'
@@ -279,8 +282,11 @@ export function CronSchedulePicker({
   onChange,
   className,
   timezone = Intl.DateTimeFormat().resolvedOptions().timeZone,
+  workdayOnly = false,
+  onWorkdayOnlyChange,
 }: CronSchedulePickerProps) {
   const { t } = useTranslation('feed')
+  const workdayOnlyId = useId()
   const [schedule, setSchedule] = useState<ScheduleState>(() => parseCronExpression(value))
   const [showAllHours, setShowAllHours] = useState(false)
   const [showAllMinutes, setShowAllMinutes] = useState(false)
@@ -440,6 +446,25 @@ export function CronSchedulePicker({
             {t('frequency_custom')}
           </ToggleGroupItem>
         </ToggleGroup>
+        {onWorkdayOnlyChange && (
+          <div className="space-y-1">
+            <div className="flex min-h-11 items-center gap-2">
+              <Checkbox
+                id={workdayOnlyId}
+                data-testid="cron-workday-only"
+                checked={workdayOnly}
+                onCheckedChange={checked => onWorkdayOnlyChange(checked === true)}
+                aria-describedby={`${workdayOnlyId}-hint`}
+              />
+              <Label htmlFor={workdayOnlyId} className="flex min-h-11 items-center cursor-pointer">
+                {t('workday_only')}
+              </Label>
+            </div>
+            <p id={`${workdayOnlyId}-hint`} className="text-xs text-text-muted">
+              {t('workday_only_hint')}
+            </p>
+          </div>
+        )}
       </div>
 
       {/* Hourly Configuration */}
@@ -911,7 +936,8 @@ export function CronSchedulePicker({
       )}
 
       {/* Execution Preview */}
-      {nextExecutions.length > 0 && (
+      {workdayOnly && <p className="text-xs text-text-muted">{t('workday_preview_hint')}</p>}
+      {!workdayOnly && nextExecutions.length > 0 && (
         <div className="rounded-md bg-surface border border-border p-3 space-y-2">
           <div className="flex items-center gap-2 text-sm font-medium text-text-primary">
             <Calendar className="h-4 w-4" />

@@ -200,7 +200,7 @@ describe('WorkItemComposerGuide', () => {
     await user.click(screen.getByTestId('project-space-picker-clear-search'))
     expect(search).toHaveFocus()
     expect(projectOptions().getAllByRole('option')).toHaveLength(1)
-    await user.click(within(menu).getByRole('button', { name: '全部空间' }))
+    await user.click(within(menu).getByRole('button', { name: '全部分组' }))
     await user.type(search, '研发 report')
     expect(projectOptions().getByRole('option')).toHaveAccessibleName(
       '行业周报 · 产品研发 · REPORT'

@@ -2,7 +2,10 @@ import assert from 'node:assert/strict'
 import { requestExecutor } from '../modules/executor-rpc.mjs'
 import { createLocalCollaborationProject, reloadMainWindow } from '../modules/workspace-flows.mjs'
 import { ensureExperimentalFeaturesEnabled } from '../modules/preferences-automation-flows.mjs'
-import { waitForBoardValue } from '../modules/collaboration-board-flows.mjs'
+import {
+  showAllCollaborationIssues,
+  waitForBoardValue,
+} from '../modules/collaboration-board-flows.mjs'
 import { createDesktopScenario as createParentBoardScenario } from './collaboration-parent-board.scenario.mjs'
 
 const CONTENT = '[data-workspace-tab-content][aria-hidden="false"]'
@@ -41,6 +44,7 @@ export function createDesktopScenario(options) {
       }
       await create('孙任务不累计', children[0].id)
       await reloadMainWindow(control, 'Sub-issue progress fixtures did not reload')
+      await showAllCollaborationIssues(control, CONTENT)
       const progress = test(`collaboration-issue-children-${parent.id}`)
       await wait(progress, '子任务 0/5')
       assert.equal(

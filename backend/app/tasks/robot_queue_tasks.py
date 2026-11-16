@@ -367,7 +367,11 @@ async def reconcile_device_executions(
             needs_confirmation_only=needs_confirmation_only,
         )
         execution_refs = [
-            (execution.id, execution.runtime_task_id) for execution in executions
+            (execution.id, execution.runtime_task_id)
+            for execution in executions
+            # Dispatch envelopes are aggregates, not Runtime conversations.
+            # Manager decisions own completion across successive member rounds.
+            if execution.executor_type != "collaboration_group_dispatch"
         ]
     if not execution_refs:
         return 0

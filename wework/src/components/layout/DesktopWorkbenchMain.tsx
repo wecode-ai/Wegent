@@ -85,8 +85,7 @@ import {
   isClaudeCodeDevice,
   isDeviceBelowWeWorkVersion,
   isWeWorkCompatibleDevice,
-  isCloudDevice,
-  isRemoteDevice,
+  isRemoteTaskDevice,
 } from '@/lib/device-capabilities'
 import {
   applyProjectEnvironmentPatch,
@@ -244,6 +243,7 @@ import {
   type WorkbenchPaneIdentity,
 } from './workbenchPaneIdentity'
 import { SplitWorkbenchPaneStack } from './workbenchPaneStack'
+import styles from './DesktopWorkbenchMain.module.css'
 import { getActiveWorkbenchLayout } from './workbenchSplitGroups'
 import type { WorkbenchSplitGroupsController } from './useWorkbenchSplitGroups'
 import {
@@ -324,6 +324,7 @@ import {
   resolveAutomaticModel,
   selectedModelExecutionFields,
 } from '@/features/workbench/runtimeModelSelection'
+import { runtimeTaskModelControlOverrides } from '@/features/workbench/runtimeTaskModelControls'
 import { titleModelForGeneration } from '@/features/workbench/useWorkbenchRuntimeMessaging'
 import {
   restartHarnessAppDevelopmentRuntime,
@@ -1099,7 +1100,15 @@ export function DesktopWorkbenchMain(props: DesktopWorkbenchMainProps) {
   if (!isDesktop) return mainContent
 
   return (
-    <div className="relative flex min-w-0 flex-1 flex-col overflow-hidden">
+    <div
+      className={cn(
+        'relative flex min-w-0 flex-1 flex-col overflow-hidden',
+        props.presentation !== 'popout' && styles.frame,
+        background.imagePath && (background.inMain || background.inTopBar)
+          ? 'bg-transparent'
+          : 'bg-background'
+      )}
+    >
       {!splitMode && props.presentation !== 'popout' ? (
         <header
           id={WORKBENCH_MAIN_HEADER_PORTAL_ID}
@@ -1216,6 +1225,16 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
   const { t: tChat } = useTranslation('chat')
   const currentRuntimeTask = pane.currentRuntimeTask
   const currentProject = pane.currentProject
+  // Split panes share one workbench provider. Bind model controls to this
+  // pane's conversation so an inactive pane cannot inherit the active model.
+  const paneModelChat = useMemo<ProjectChatControls>(() => {
+    if (!currentRuntimeTask) return projectChat
+    const selection = projectChat.resolveRuntimeTaskModelSelection(currentRuntimeTask)
+    return {
+      ...projectChat,
+      ...runtimeTaskModelControlOverrides(projectChat, currentRuntimeTask, selection),
+    }
+  }, [currentRuntimeTask, projectChat])
   const currentRuntimeProjectWork = state.runtimeWork?.projects.find(
     projectWork => currentProject && runtimeProjectUiId(projectWork.project) === currentProject.id
   )
@@ -2270,9 +2289,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
   const conversationImageDevice = findWorkbenchDevice(devices, conversationImageTarget?.deviceId)
   const remoteImageTarget =
     conversationImageTarget &&
-    (!isElectronRuntime() ||
-      (conversationImageDevice?.device_type !== 'local' &&
-        conversationImageDevice?.device_type !== 'app'))
+    (!isElectronRuntime() || conversationImageDevice?.device_type !== 'local')
       ? conversationImageTarget
       : null
   const selectedFileWorkspaceTarget =
@@ -2301,8 +2318,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
     ? devices.find(device => device.device_id === composerWorkspaceTarget.deviceId)
     : undefined
   const centralHarnessUsesRemoteDevice = Boolean(
-    centralHarnessTargetDevice &&
-    (isCloudDevice(centralHarnessTargetDevice) || isRemoteDevice(centralHarnessTargetDevice))
+    centralHarnessTargetDevice && isRemoteTaskDevice(centralHarnessTargetDevice)
   )
   const centralHarnessUsesRemoteSource = composerWorkspaceTarget?.workspaceSource === 'remote'
   const centralHarnessCwd = composerWorkspaceTarget?.path?.trim() || devWorkspacePath
@@ -2322,11 +2338,11 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
     (harnessId: LocalHarnessId) =>
       listLocalHarnessModelOptions(
         harnessId,
-        projectChat.models,
-        projectChat.selectedModel,
-        projectChat.selectedModelOptions
+        paneModelChat.models,
+        paneModelChat.selectedModel,
+        paneModelChat.selectedModelOptions
       ),
-    [projectChat.models, projectChat.selectedModel, projectChat.selectedModelOptions]
+    [paneModelChat.models, paneModelChat.selectedModel, paneModelChat.selectedModelOptions]
   )
   const getSelectedHarnessModel = useCallback(
     (preference: LocalHarnessPreference): LocalHarnessModelOption | null => {
@@ -2570,7 +2586,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
         ) ?? null)
       : null
   const activeHarnessResumeModelKey = activeLocalHarnessSession?.modelKey?.trim() || null
-  const harnessModelsReady = projectChat.isModelSelectionReady ?? true
+  const harnessModelsReady = paneModelChat.isModelSelectionReady ?? true
   const activeHarnessResumeModel =
     activeLocalHarnessSession && activeHarnessResumePreference
       ? (getHarnessModelOptions(activeHarnessResumePreference.id).find(
@@ -3169,7 +3185,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
   }, [retryFailedMessage])
   const projectChatWithModelSelectorSignal = useMemo<ProjectChatControls>(
     () => ({
-      ...projectChat,
+      ...paneModelChat,
       scopeKey: paneSession.scopeKey,
       attachments: paneSession.attachments,
       uploadingFiles: paneSession.uploadingFiles,
@@ -3179,23 +3195,24 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
       removeAttachment: paneSession.removeAttachment,
       modelSelectorOpenSignal,
       setSelectedModel: model => {
-        projectChat.setSelectedModel(model)
+        paneModelChat.setSelectedModel(model)
         if (model) retryFailedMessageAfterModelSelect()
       },
-      setSelectedModelAndOptions: projectChat.setSelectedModelAndOptions
+      setSelectedModelAndOptions: paneModelChat.setSelectedModelAndOptions
         ? (model, options) => {
-            projectChat.setSelectedModelAndOptions?.(model, options)
+            paneModelChat.setSelectedModelAndOptions?.(model, options)
             retryFailedMessageAfterModelSelect()
           }
         : undefined,
       onModelSelectorOpenChange: (open, closeReason) => {
-        projectChat.onModelSelectorOpenChange?.(open, closeReason)
+        paneModelChat.onModelSelectorOpenChange?.(open, closeReason)
         if (!open && closeReason !== 'selection') pendingModelRetryRef.current = null
       },
       onRefineTrialPrompt: refinePluginTrialPrompt,
     }),
     [
       modelSelectorOpenSignal,
+      paneModelChat,
       paneSession.attachmentErrors,
       paneSession.dismissAttachmentError,
       paneSession.attachments,
@@ -3203,7 +3220,6 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
       paneSession.removeAttachment,
       paneSession.scopeKey,
       paneSession.uploadingFiles,
-      projectChat,
       refinePluginTrialPrompt,
       retryFailedMessageAfterModelSelect,
     ]
@@ -3215,14 +3231,18 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
         throw new Error(t('workbench.environment_branch_generate_failed'))
       }
       const selectedModel =
-        projectChat.getSelectedModel?.() ??
-        projectChat.selectedModel ??
-        resolveAutomaticModel(projectChat.models)
+        paneModelChat.getSelectedModel?.() ??
+        paneModelChat.selectedModel ??
+        resolveAutomaticModel(paneModelChat.models)
       const selectedOptions =
-        projectChat.getSelectedModelOptions?.() ?? projectChat.selectedModelOptions
+        paneModelChat.getSelectedModelOptions?.() ?? paneModelChat.selectedModelOptions
       const executionModel = selectedModelExecutionFields(selectedModel, selectedOptions)
       const generationModel =
-        titleModelForGeneration(appPreferences?.preferences, projectChat.models, executionModel) ??
+        titleModelForGeneration(
+          appPreferences?.preferences,
+          paneModelChat.models,
+          executionModel
+        ) ??
         (executionModel.modelId
           ? {
               modelId: executionModel.modelId,
@@ -3234,7 +3254,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
         selectedModel: selectedModel?.name ?? null,
         configuredTitleModel: appPreferences?.preferences.friendlyTaskTitleModel?.modelName ?? null,
         generationModel: generationModel?.modelId ?? null,
-        availableModelCount: projectChat.models.length,
+        availableModelCount: paneModelChat.models.length,
       })
       if (!generationModel) {
         throw new Error(t('workbench.environment_branch_generate_model_unavailable'))
@@ -3249,7 +3269,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
       appPreferences?.preferences,
       composerWorkspaceTarget?.deviceId,
       currentRuntimeTask?.deviceId,
-      projectChat,
+      paneModelChat,
       branchNameApi,
       t,
     ]
@@ -5742,7 +5762,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
                                 {
                                   source: currentRuntimeConversationSource ?? currentRuntimeTask,
                                   lastTurnId: message.turnId,
-                                  ...runtimeTaskForkModelOptions(projectChat),
+                                  ...runtimeTaskForkModelOptions(paneModelChat),
                                 }
                               )
                             } catch (error) {
@@ -6149,7 +6169,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
           }
         />
         <TaskForkDialog
-          key={forkDialogOpen ? `open-${currentRuntimeTask?.taskId ?? 'none'}` : 'closed'}
+          key={forkDialogOpen ? `fork-open-${currentRuntimeTask?.taskId ?? 'none'}` : 'fork-closed'}
           open={forkDialogOpen}
           source={currentRuntimeTask}
           runtimeWork={runtimeWork}
@@ -6202,8 +6222,8 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
         <TaskBoardAssociationDialog
           key={
             taskBoardAssociation
-              ? `${taskBoardAssociation.project.project_store}:${taskBoardAssociation.project.id}`
-              : 'closed'
+              ? `board-association-${taskBoardAssociation.project.project_store}:${taskBoardAssociation.project.id}`
+              : 'board-association-closed'
           }
           project={taskBoardAssociation?.project ?? null}
           currentProject={boundCloudProject}

@@ -2805,7 +2805,11 @@ class DesktopE2EServer {
         )
         this.resolveToolBlockNodeOutputObserved()
         await this.toolBlockNodeRelease
-        const search = selectToolSearch(body, 'github issue details')
+        const search = selectToolSearch(
+          body,
+          'github issue details',
+          'mcp__github__issues__get_issue_details'
+        )
         this.writeSse(response, [
           responseCreated(responseId),
           ...toolSearchResponseEvents(GENERIC_MCP_TOOL_SEARCH_ID, search),
@@ -6433,4 +6437,9 @@ class DesktopE2EServer {
   }
 }
 
-export { DesktopE2EServer, inputUserMessageTexts, requestContainsSkillLocator }
+export {
+  DesktopE2EServer,
+  hasUserReplyAfterToolOutput,
+  inputUserMessageTexts,
+  requestContainsSkillLocator,
+}

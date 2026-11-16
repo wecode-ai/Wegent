@@ -12,7 +12,7 @@ from app.models.resource_member import MemberStatus, ResourceMember
 from app.models.share_link import ResourceType
 from app.schemas.workspace import WorkspaceResponse
 from app.services.cloud_project_visibility import user_memberships
-from app.services.workspaces import workspace_service
+from app.services.workspaces.service import workspace_service
 
 COUNT_FIELDS = {
     ResourceType.WORKSPACE.value: "member_count",

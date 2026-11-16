@@ -109,6 +109,7 @@ vi.mock('react', async () => ({
 }))
 
 import { createCollaborationTranslator } from '../i18n'
+import { MemberSearchPicker } from '../controls/MemberSearchPicker'
 import { ProjectManageView } from './ProjectManageView'
 import { ProjectMembersSection } from './ProjectMembersSection'
 import { ProjectTagsSection } from './ProjectManageSections'
@@ -221,6 +222,9 @@ function findByTestId(node: unknown, testId: string): any {
   const component = node as { type?: unknown; props?: any }
   if (component.type === ProjectMembersSection) {
     return findByTestId(ProjectMembersSection(component.props), testId)
+  }
+  if (component.type === MemberSearchPicker) {
+    return findByTestId(MemberSearchPicker(component.props), testId)
   }
   if (component.type === ProjectTagsSection) {
     return findByTestId(ProjectTagsSection(component.props), testId)

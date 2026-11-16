@@ -51,10 +51,6 @@ mod stream_diagnostics;
 mod stream_session;
 use claude_resume::follow_up_spec as claude_follow_up_resume_spec;
 use debug_stdout::line as debug_claude_stdout_line;
-#[cfg(test)]
-use debug_stdout::{
-    line_with_timestamp as debug_claude_stdout_line_with_timestamp, ENV as DEBUG_CLAUDE_STDOUT_ENV,
-};
 
 const DEFAULT_STREAM_TEXT_CHUNK_CHARS: usize = 256;
 const DEFAULT_STREAM_REASONING_CHUNK_CHARS: usize = 4_096;

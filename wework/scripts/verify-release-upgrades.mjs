@@ -1,5 +1,5 @@
 import { spawn } from 'node:child_process'
-import { mkdir, mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises'
+import { appendFile, mkdir, mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises'
 import { dirname, join, resolve } from 'node:path'
 import { tmpdir } from 'node:os'
 import { fileURLToPath } from 'node:url'
@@ -75,16 +75,17 @@ if (
   (isUpgradeSourceDiagnostic(diagnosticCheckpoint) && !sourceAssets)
 )
   throw new Error('The update diagnostic requires immutable source artifacts and their version')
+const policy = JSON.parse(await readFile(join(root, 'upgrade-policy.json'), 'utf8'))
+if (policy.schemaVersion !== 1) throw new Error('Invalid authored upgrade policy')
 const releaseChannels = releaseVerificationChannels(
   channel,
   process.env.WEWORK_UPGRADE_VERIFY_CHANNEL || '',
-  sourceVersion
+  sourceVersion,
+  policy
 )
 const diagnostics = resolve(
   process.env.WEWORK_UPGRADE_DIAGNOSTICS_DIR || join(root, 'test-results', 'release-upgrades')
 )
-const policy = JSON.parse(await readFile(join(root, 'upgrade-policy.json'), 'utf8'))
-if (policy.schemaVersion !== 1) throw new Error('Invalid authored upgrade policy')
 const release = JSON.parse(await readFile(join(assets, `release-${platform}-${arch}.json`), 'utf8'))
 if (release.fixture || release.version !== releaseTag.replace(/^wework-v/, ''))
   throw new Error('Release verification cannot promote a regression fixture')
@@ -223,6 +224,15 @@ async function verifyChannel(catalogs, targetChannel) {
     throw error
   } finally {
     await saveReport()
+    if (process.env.GITHUB_STEP_SUMMARY)
+      await appendFile(
+        process.env.GITHUB_STEP_SUMMARY,
+        `### ${platform}/${arch}/${targetChannel}: ${report.status}\n\n` +
+          report.attempts
+            .map(attempt => `- ${attempt.version} → ${release.version}: **${attempt.status}**\n`)
+            .join('') +
+          '\nA completed shard is a compatibility decision; only successful package evidence authorizes publication.\n'
+      )
   }
 }
 

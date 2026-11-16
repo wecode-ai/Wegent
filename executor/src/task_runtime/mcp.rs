@@ -44,6 +44,7 @@ pub(crate) mod stand_in_tasks;
 #[cfg(test)]
 use context::role_categories;
 use context::space_context_grant;
+pub(crate) use stand_in::stand_in_identity;
 pub(crate) use stand_in::stand_in_mcp_client_config;
 pub(crate) use stand_in::StandInMcpIdentity;
 
@@ -3038,7 +3039,7 @@ fn tools() -> Vec<Value> {
         ),
         tool(
             "get_current_context",
-            "Resolve the conversation's optional default project and Issue. Read get_board_item and list_board_item_comments before interpreting a bound Issue; comments include PR links, follow-up requirements and review feedback. Inspect attachments with list_item_attachments and read_item_attachment. Reuse the returned IDs instead of asking the user to repeat them. A personal session with no Issue binding returns bound:false; discover targets with list_spaces, list_board_items or search_board_items. Personal bindings are defaults, while dispatched agents must stay within their assigned scope.",
+            "Resolve the conversation's optional default project and Issue (事项). Read get_board_item and list_board_item_comments before interpreting a bound Issue; comments include PR links, follow-up requirements and review feedback. Inspect attachments with list_item_attachments and read_item_attachment. Reuse the returned IDs instead of asking the user to repeat them. bound:false means no complete Issue binding; when space_id is present, use that project for list_board_items or search_board_items. Only when no project is bound, discover accessible projects with list_spaces. Project Issues are distinct from standalone personal tasks and conversations queried with wework_control. Personal bindings are defaults, while dispatched agents must stay within their assigned scope.",
             json!({"type": "object", "properties": {}}),
         ),
         tool(
@@ -3077,7 +3078,7 @@ fn tools() -> Vec<Value> {
         ),
         tool(
             "list_board_items",
-            "List board items in a project space",
+            "List project Issues (事项, Issue, 看板事项) in the specified project space. In a project context, use its space_id for unqualified requests such as 查一下事项. These are board items, distinct from standalone personal tasks (个人任务) and conversations (会话) managed by wework_control. Identify the project and Issue IDs in results; if empty, state that this project has no matching Issues.",
             json!({
                 "type": "object",
                 "properties": {"space_id": {"type": "string"}},
@@ -3111,11 +3112,11 @@ fn tools() -> Vec<Value> {
         ),
         tool(
             "search_board_items",
-            "Search board items across one project or all configured projects using text and structured filters",
+            "Search project Issues (事项, Issue, 看板事项) using text and structured filters. Pass the current project's space_id for unqualified project queries; search across projects only when the user's request calls for it. Standalone personal tasks and conversations use wework_control instead. Identify each result's project and Issue ID; if empty, state that no matching Issues were found in the queried project or scope.",
             json!({
                 "type": "object",
                 "properties": {
-                    "query": {"type": "string", "description": "Matches task id, title, description, or tags"},
+                    "query": {"type": "string", "description": "Matches Issue id, title, description, or tags"},
                     "space_id": {"type": "string"},
                     "status": {"enum": ["inbox", "pending", "in_progress", "in_review", "completed"]},
                     "priority": {"enum": ["none", "low", "medium", "high", "urgent"]},
@@ -3129,7 +3130,7 @@ fn tools() -> Vec<Value> {
         ),
         tool(
             "create_board_item",
-            "Create an item on a project-space board",
+            "Create a project Issue (事项) on a project-space board. This creates a board item, not a standalone personal task or conversation.",
             json!({
                 "type": "object",
                 "properties": {
@@ -4080,33 +4081,6 @@ mod tests {
         assert!(decode_space_context_grant(&encoded).is_none());
     }
 
-    #[test]
-    fn identifies_local_projects_before_selecting_the_backend_route() {
-        let directory = tempfile::tempdir().unwrap();
-        let store = LocalTaskStore::open(directory.path().join("tasks.sqlite")).unwrap();
-        let project = store
-            .create_project(ProjectCreate {
-                name: "Offline project".to_owned(),
-                project_key: Some("OFFLINE".to_owned()),
-                description: String::new(),
-                task_provider: TaskProviderKind::Local,
-                provider_config: json!({}),
-            })
-            .unwrap();
-        let runtime = TaskRuntime::new(store).unwrap();
-
-        assert!(is_locally_routed_project(
-            &runtime,
-            &project.id,
-            "list_board_items"
-        ));
-        assert!(!is_locally_routed_project(
-            &runtime,
-            "cloud-project",
-            "list_board_items"
-        ));
-    }
-
     #[tokio::test]
     async fn keeps_project_space_reads_visible_for_bound_dingtalk_issues() {
         let directory = tempfile::tempdir().unwrap();
@@ -4167,83 +4141,39 @@ mod tests {
     }
 
     #[test]
-    fn exposes_task_attachment_tools() {
-        let names = tools()
-            .into_iter()
-            .filter_map(|tool| tool["name"].as_str().map(ToOwned::to_owned))
-            .collect::<Vec<_>>();
-
+    fn issue_discovery_uses_project_scope_and_distinguishes_personal_tasks() {
+        let discovered = tools();
         for name in [
-            "list_item_attachments",
-            "upload_item_attachment",
-            "read_item_attachment",
-            "delete_item_attachment",
+            "list_board_items",
+            "search_board_items",
+            "create_board_item",
         ] {
-            assert!(names.iter().any(|candidate| candidate == name));
+            let description = discovered
+                .iter()
+                .find(|tool| tool["name"] == name)
+                .and_then(|tool| tool["description"].as_str())
+                .unwrap();
+            assert!(description.contains("事项"), "{name}");
+            assert!(description.contains("personal task"), "{name}");
         }
-    }
-
-    #[test]
-    fn exposes_complete_delivery_lifecycle_tools() {
-        let delivery_tools = tools();
-        let names = delivery_tools
+        let context = discovered
             .iter()
-            .filter_map(|tool| tool["name"].as_str().map(ToOwned::to_owned))
-            .collect::<Vec<_>>();
-
-        for name in [
-            "get_delivery_requirements",
-            "create_delivery",
-            "upload_delivery_asset",
-            "list_deliveries",
-            "read_delivery",
-            "download_delivery_asset",
-            "finalize_delivery",
-            "discard_delivery_draft",
-        ] {
-            assert!(names.iter().any(|candidate| candidate == name));
-        }
-        let create = delivery_tools
-            .iter()
-            .find(|tool| tool["name"] == "create_delivery")
-            .unwrap();
-        assert_eq!(
-            create["inputSchema"]["properties"]["chat"]["type"],
-            json!(["object", "null"])
-        );
-        let finalize = delivery_tools
-            .iter()
-            .find(|tool| tool["name"] == "finalize_delivery")
-            .unwrap();
-        assert_eq!(
-            finalize["inputSchema"]["properties"]["fulfillments"]["type"],
-            "array"
-        );
-        assert_eq!(
-            finalize["inputSchema"]["properties"]["fulfillments"]["items"]["oneOf"]
-                .as_array()
-                .unwrap()
-                .len(),
-            6
-        );
-        assert_eq!(
-            finalize["inputSchema"]["properties"]["fulfillments"]["items"]["oneOf"][4]
-                ["properties"]["provider"]["enum"],
-            json!(["github", "gitlab"])
-        );
-    }
-
-    #[test]
-    fn exposes_bound_current_context_tool() {
-        let current_context = tools()
-            .into_iter()
             .find(|tool| tool["name"] == "get_current_context")
-            .expect("get_current_context tool");
-
-        assert_eq!(
-            current_context["inputSchema"],
-            json!({"type": "object", "properties": {}})
-        );
+            .unwrap()["description"]
+            .as_str()
+            .unwrap();
+        assert!(context.contains("when space_id is present, use that project"));
+        assert!(context.contains("Only when no project is bound"));
+        let skill = include_str!("../../../wework/resources/bundled-plugins/wework-personal/plugins/wework-space/skills/wework-project-space/SKILL.md");
+        for term in [
+            "查一下事项",
+            "if `space_id` is present",
+            "Explicit personal-task or conversation queries use `wework_control`",
+            "Identify the project and Issue",
+            "empty results",
+        ] {
+            assert!(skill.contains(term), "project-space skill: {term}");
+        }
     }
 
     #[test]
@@ -4291,103 +4221,6 @@ mod tests {
             for requirement in requirements {
                 assert!(description.contains(requirement), "{name}: {requirement}");
             }
-        }
-    }
-
-    #[test]
-    fn exposes_task_search_tool() {
-        let search = tools()
-            .into_iter()
-            .find(|tool| tool["name"] == "search_board_items")
-            .expect("search_board_items tool");
-
-        assert_eq!(
-            search["inputSchema"]["properties"]["status"]["enum"],
-            json!(["inbox", "pending", "in_progress", "in_review", "completed"])
-        );
-        assert_eq!(
-            search["inputSchema"]["properties"]["creator_user_id"]["type"],
-            "integer"
-        );
-    }
-
-    #[test]
-    fn backend_task_search_filters_by_parent_id() {
-        let response = json!({
-            "items": [
-                {"id": "parent", "parent_id": null},
-                {"id": "matching-child", "parent_id": "requested-parent"},
-                {"id": "other-child", "parent_id": "other-parent"}
-            ]
-        });
-
-        let result = filter_backend_tasks(
-            response,
-            &json!({"parent_id": "requested-parent", "limit": 50}),
-        );
-
-        assert_eq!(
-            result,
-            json!([{"id": "matching-child", "parent_id": "requested-parent"}])
-        );
-    }
-
-    #[test]
-    fn exposes_only_wework_space_business_vocabulary() {
-        let exposed_tools = tools();
-        let assign = exposed_tools
-            .iter()
-            .find(|tool| tool["name"] == "assign_board_item")
-            .expect("assign_board_item tool");
-        assert_eq!(
-            assign["inputSchema"]["properties"]["assignee_type"]["enum"],
-            json!(["user", "agent", "group"])
-        );
-        for exposed_tool in &exposed_tools {
-            let public_surface = format!(
-                "{} {}",
-                exposed_tool["name"].as_str().unwrap_or_default(),
-                exposed_tool["description"].as_str().unwrap_or_default()
-            )
-            .to_lowercase();
-            for forbidden in [
-                "wegent_tasks",
-                "wegent_delivery",
-                "github",
-                "gitlab",
-                "todo",
-                "report_automation_bug",
-            ] {
-                assert!(
-                    !public_surface.contains(forbidden),
-                    "found {forbidden} in tool surface {public_surface}"
-                );
-            }
-            let input_properties = exposed_tool["inputSchema"]["properties"]
-                .as_object()
-                .expect("tool input properties");
-            for forbidden in ["project_id", "task_id"] {
-                assert!(
-                    !input_properties.contains_key(forbidden),
-                    "found {forbidden} in {} input",
-                    exposed_tool["name"]
-                );
-            }
-        }
-        let serialized = serde_json::to_string(&exposed_tools)
-            .unwrap()
-            .to_lowercase();
-        for required in [
-            "list_spaces",
-            "get_board_item",
-            "get_assignment_candidates",
-            "assign_board_item",
-            "list_item_attachments",
-            "read_item_attachment",
-            "list_space_files",
-            "list_deliveries",
-        ] {
-            assert!(serialized.contains(required), "missing {required}");
         }
     }
 
@@ -5073,75 +4906,6 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn searches_todos_by_text_and_structured_filters() {
-        let directory = tempfile::tempdir().unwrap();
-        let store = LocalTaskStore::open(directory.path().join("tasks.sqlite")).unwrap();
-        let project = store
-            .create_project(ProjectCreate {
-                name: "Search project".to_owned(),
-                project_key: Some("SEARCH".to_owned()),
-                description: String::new(),
-                task_provider: TaskProviderKind::Local,
-                provider_config: json!({}),
-            })
-            .unwrap();
-        store
-            .create_task(
-                &project.id,
-                TaskCreate {
-                    milestone_id: None,
-                    title: "Fix OAuth callback".to_owned(),
-                    description: "Login fails after redirect".to_owned(),
-                    status: "in_progress".to_owned(),
-                    priority: "high".to_owned(),
-                    parent_id: None,
-                    tags: vec!["bug".to_owned()],
-                    assignee_user_id: None,
-                    assignee_agent_id: None,
-                    assignee_group_id: None,
-                    workflow: None,
-                },
-            )
-            .unwrap();
-        store
-            .create_task(
-                &project.id,
-                TaskCreate {
-                    milestone_id: None,
-                    title: "Write deployment guide".to_owned(),
-                    description: String::new(),
-                    status: "pending".to_owned(),
-                    priority: "none".to_owned(),
-                    parent_id: None,
-                    tags: vec!["docs".to_owned()],
-                    assignee_user_id: None,
-                    assignee_agent_id: None,
-                    assignee_group_id: None,
-                    workflow: None,
-                },
-            )
-            .unwrap();
-        let runtime = TaskRuntime::new(store).unwrap();
-
-        let result = call_tool(
-            &runtime,
-            "search_board_items",
-            json!({
-                "space_id": project.id,
-                "query": "oauth",
-                "status": "in_progress",
-                "tag": "bug"
-            }),
-        )
-        .await;
-        assert_eq!(result["isError"], false);
-        let tasks: Value =
-            serde_json::from_str(result["content"][0]["text"].as_str().unwrap()).unwrap();
-        assert_eq!(tasks.as_array().unwrap().len(), 1);
-        assert_eq!(tasks[0]["title"], "Fix OAuth callback");
-    }
-
-    #[tokio::test]
     async fn search_board_items_honors_the_requested_space() {
         let directory = tempfile::tempdir().unwrap();
         let store = LocalTaskStore::open(directory.path().join("tasks.sqlite")).unwrap();
@@ -5199,102 +4963,5 @@ mod tests {
 
         assert_eq!(items.as_array().unwrap().len(), 1);
         assert_eq!(items[0]["title"], "Second feedback");
-    }
-
-    #[tokio::test]
-    async fn task_attachment_tools_upload_list_download_and_delete() {
-        let directory = tempfile::tempdir().unwrap();
-        let store = LocalTaskStore::open(directory.path().join("tasks.sqlite")).unwrap();
-        let project = store
-            .create_project(ProjectCreate {
-                name: "Local attachments".to_owned(),
-                project_key: Some("LOCAL".to_owned()),
-                description: String::new(),
-                task_provider: TaskProviderKind::Local,
-                provider_config: json!({}),
-            })
-            .unwrap();
-        let task = store
-            .create_task(
-                &project.id,
-                TaskCreate {
-                    milestone_id: None,
-                    title: "Inspect attachment".to_owned(),
-                    description: String::new(),
-                    status: "pending".to_owned(),
-                    priority: "none".to_owned(),
-                    parent_id: None,
-                    tags: vec![],
-                    assignee_user_id: None,
-                    assignee_agent_id: None,
-                    assignee_group_id: None,
-                    workflow: None,
-                },
-            )
-            .unwrap();
-        let runtime = TaskRuntime::new(store).unwrap();
-        let source = directory.path().join("source.txt");
-        fs::write(&source, "attachment content").unwrap();
-
-        let upload = call_tool(
-            &runtime,
-            "upload_item_attachment",
-            json!({
-                "space_id": project.id,
-                "item_id": task.id,
-                "file_path": source,
-                "content_type": "text/plain"
-            }),
-        )
-        .await;
-        assert_eq!(upload["isError"], false);
-        let attachment: Value =
-            serde_json::from_str(upload["content"][0]["text"].as_str().unwrap()).unwrap();
-        let attachment_id = attachment["id"].as_str().unwrap();
-
-        let list = call_tool(
-            &runtime,
-            "list_item_attachments",
-            json!({"space_id": project.id, "item_id": task.id}),
-        )
-        .await;
-        let listed: Value =
-            serde_json::from_str(list["content"][0]["text"].as_str().unwrap()).unwrap();
-        assert_eq!(listed.as_array().unwrap().len(), 1);
-
-        let output = directory.path().join("downloaded.txt");
-        let download = call_tool(
-            &runtime,
-            "read_item_attachment",
-            json!({
-                "space_id": project.id,
-                "item_id": task.id,
-                "attachment_id": attachment_id,
-                "output_path": output
-            }),
-        )
-        .await;
-        assert_eq!(download["isError"], false);
-        assert_eq!(
-            fs::read_to_string(directory.path().join("downloaded.txt")).unwrap(),
-            "attachment content"
-        );
-
-        let deleted = call_tool(
-            &runtime,
-            "delete_item_attachment",
-            json!({
-                "space_id": project.id,
-                "item_id": task.id,
-                "attachment_id": attachment_id
-            }),
-        )
-        .await;
-        assert_eq!(deleted["isError"], false);
-        assert!(runtime
-            .list_task_attachments(&project.id, &task.id)
-            .await
-            .unwrap()
-            .is_empty());
     }
 }

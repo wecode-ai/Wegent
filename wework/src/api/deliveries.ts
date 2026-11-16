@@ -121,6 +121,7 @@ export interface DeliveryFinalizeInput {
 }
 
 export interface CloudLoopItem {
+  resource_participants?: CollaborationIssue['resource_participants']
   human_requests?: CollaborationIssue['human_requests']
   milestone_id?: string | null
   runner_binding?: { environment_id: string } | null
@@ -792,7 +793,7 @@ export function createDeliveryApi(client: HttpClient) {
     listMyWork(options?: {
       cursor?: string
       limit?: number
-      scope?: 'assigned' | 'participating'
+      scope?: 'assigned' | 'created' | 'participating'
       includeCompleted?: boolean
       order?: 'recent' | 'attention' | 'activity' | 'assignment' | 'priority'
       viewerIds?: readonly (string | number)[]
@@ -996,6 +997,7 @@ export function createDeliveryApi(client: HttpClient) {
     createLoopItem(
       projectId: CloudProjectIdInput,
       data: {
+        request_id?: string
         title: string
         milestone_id?: string | null
         description?: string

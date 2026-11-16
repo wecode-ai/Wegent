@@ -153,6 +153,33 @@ def test_management_preview_reads_stored_bodies_without_search_visibility(
 
 
 @pytest.mark.asyncio
+async def test_deleted_document_is_not_read_even_when_attachment_cleanup_failed(
+    visibility_db: Session,
+) -> None:
+    document = visibility_db.get(KnowledgeDocument, 10)
+    visibility_db.delete(document)
+    visibility_db.flush()
+
+    # The original attachment deliberately remains as a failed cleanup would.
+    assert visibility_db.get(SubtaskContext, 10).extracted_text == "body-10"
+    for searchable_only in (True, False):
+        results = DocumentReadService().read_documents(
+            visibility_db,
+            document_ids=[10],
+            knowledge_base_ids=[1],
+            searchable_only=searchable_only,
+        )
+        assert results == [
+            {
+                "id": 10,
+                "error": "Document not found",
+                "error_code": "DOCUMENT_NOT_FOUND",
+            }
+        ]
+    assert await get_original_documents_from_knowledge_base([1], visibility_db) == []
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize(
     "folder_ids, include_subfolders, expected",
     [([0], True, [10]), ([1], False, []), ([1], True, []), ([3], True, [])],

@@ -8,6 +8,7 @@ use std::{
 };
 
 use super::*;
+use wegent_runtime_logging::project_index_diagnostics::trace;
 
 pub(super) fn merge_execution_environment(previous: &Value, mut incoming: Value) -> Value {
     let same_preparation = ["repositories", "setup_steps"]
@@ -184,9 +185,16 @@ impl LocalTaskStore {
 
 fn code_project_execution_environment(roots: &[String]) -> Option<Value> {
     let root = roots.first()?;
-    let repository_root = git_output(root, &["rev-parse", "--show-toplevel"])?;
-    let remote_url = git_output(&repository_root, &["remote", "get-url", "origin"])?;
-    let branch = git_output(&repository_root, &["branch", "--show-current"]).unwrap_or_default();
+    let repository_root = trace("projects_list.git.toplevel", || {
+        git_output(root, &["rev-parse", "--show-toplevel"])
+    })?;
+    let remote_url = trace("projects_list.git.origin", || {
+        git_output(&repository_root, &["remote", "get-url", "origin"])
+    })?;
+    let branch = trace("projects_list.git.branch", || {
+        git_output(&repository_root, &["branch", "--show-current"])
+    })
+    .unwrap_or_default();
     let repository_name = Path::new(&repository_root)
         .file_name()
         .and_then(|value| value.to_str())

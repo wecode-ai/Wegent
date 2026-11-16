@@ -10,6 +10,7 @@ import { registerMcpAppPanel } from './workspacePanels'
 
 interface Entry {
   block: ToolBlock
+  turnId?: string
   container: HTMLDivElement
   anchor: HTMLDivElement | null
   mode: McpUiDisplayMode
@@ -17,7 +18,7 @@ interface Entry {
   removePanel?: () => void
 }
 interface Registry {
-  attach: (block: ToolBlock, anchor: HTMLDivElement) => () => void
+  attach: (block: ToolBlock, anchor: HTMLDivElement, turnId?: string) => () => void
 }
 const Context = createContext<Registry | null>(null)
 
@@ -39,10 +40,10 @@ export function McpAppsProvider({
   const entries = useRef(new Map<string, Entry>())
   const [rendered, setRendered] = useState<Entry[]>([])
   const [registry] = useState<Registry>(() => ({
-    attach(block, anchor) {
+    attach(block, anchor, turnId) {
       let entry = entries.current.get(block.id)
       if (!entry) {
-        entry = { block, container: document.createElement('div'), anchor, mode: 'inline' }
+        entry = { block, turnId, container: document.createElement('div'), anchor, mode: 'inline' }
         entries.current.set(block.id, entry)
         entry.container.className = 'flex min-h-0 flex-1 flex-col'
         anchor.append(entry.container)
@@ -50,7 +51,8 @@ export function McpAppsProvider({
       } else {
         entry.anchor = anchor
         if (entry.mode === 'inline') moveDocument(anchor, entry.container)
-        if (entry.block !== block) {
+        if (entry.block !== block || entry.turnId !== turnId) {
+          entry.turnId = turnId
           entry.block = block
           setRendered([...entries.current.values()])
         }
@@ -82,6 +84,7 @@ export function McpAppsProvider({
         createPortal(
           <McpAppHost
             block={entry.block}
+            turnId={entry.turnId}
             address={address}
             api={api}
             onMessage={onMessage}
@@ -120,6 +123,7 @@ export function McpAppsProvider({
               await api.requestMcpApp({
                 address,
                 callId: entry.block.id,
+                turnId: entry.turnId,
                 sessionId,
                 method: 'ui/update-model-context',
                 params,
@@ -142,11 +146,11 @@ function moveDocument(parent: HTMLElement, child: HTMLElement): void {
   parent.moveBefore(child, null)
 }
 
-export function McpAppSlot({ block }: { block: ToolBlock }) {
+export function McpAppSlot({ block, turnId }: { block: ToolBlock; turnId?: string }) {
   const registry = useContext(Context)
   const anchor = useRef<HTMLDivElement>(null)
   useLayoutEffect(() => {
-    if (anchor.current && registry) return registry.attach(block, anchor.current)
-  }, [block, registry])
+    if (anchor.current && registry) return registry.attach(block, anchor.current, turnId)
+  }, [block, turnId, registry])
   return <div ref={anchor} data-testid="mcp-app-slot" />
 }

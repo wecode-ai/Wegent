@@ -40,6 +40,7 @@ export type BackgroundExecutionStatus =
 export interface CronTriggerConfig {
   expression: string
   timezone?: string
+  workday_only?: boolean
 }
 
 export interface IntervalTriggerConfig {

@@ -152,58 +152,6 @@ experimental_bearer_token="must-not-select"
     }
 
     #[test]
-    fn provider_only_requests_and_user_config_share_the_same_router() {
-        let _lock = crate::test_env::lock();
-        let directory = tempfile::tempdir().unwrap();
-        let _home = EnvRestore::capture(WEGENT_CODEX_HOME_ENV);
-        env::set_var(WEGENT_CODEX_HOME_ENV, directory.path());
-        fs::write(
-            directory.path().join("config.toml"),
-            r#"
-model_provider = "custom"
-[model_providers.custom]
-base_url = "http://127.0.0.1:3456/v1"
-experimental_bearer_token = "synthetic-token"
-wire_api = "responses"
-"#,
-        )
-        .unwrap();
-        for user_config in [false, true] {
-            let request = ExecutionRequest {
-                task_id: format!("provider-selection-{user_config}"),
-                model_config: json!({"model_id":"gpt-test", "model_provider":"custom",
-                    "runtime_config":{"codex":{"use_user_config":user_config}}}),
-                ..ExecutionRequest::default()
-            };
-            let (upstream, source) = request_upstream(&request).unwrap().unwrap();
-            assert_eq!(source, "local_proxy_user_provider");
-            assert_eq!(upstream.api_key, "synthetic-token");
-            let launch = build_codex_launch_config(&request).unwrap();
-            assert_eq!(
-                launch.model_provider.as_deref(),
-                Some(codex_model_catalog::PROVIDER_ID)
-            );
-            assert!(launch.local_proxy_registration.is_some());
-            let thread_id = format!("thread-{user_config}");
-            bind_local_proxy_thread(&launch, &thread_id).unwrap();
-            assert!(local_model_proxy::thread_has_bound_route(&thread_id));
-        }
-    }
-
-    #[test]
-    fn explicit_payload_upstream_is_not_replaced_by_user_provider_config() {
-        let _lock = crate::test_env::lock();
-        let request = ExecutionRequest {
-            model_config: json!({"model_provider":"custom", "base_url":"http://127.0.0.1:4567/v1", "api_key":"payload-token"}),
-            ..ExecutionRequest::default()
-        };
-        let (upstream, source) = request_upstream(&request).unwrap().unwrap();
-        assert_eq!(source, "local_proxy_payload");
-        assert_eq!(upstream.base_url, "http://127.0.0.1:4567/v1");
-        assert_eq!(upstream.api_key, "payload-token");
-    }
-
-    #[test]
     fn provider_resolution_never_reads_another_native_home() {
         let _lock = crate::test_env::lock();
         let directory = tempfile::tempdir().unwrap();

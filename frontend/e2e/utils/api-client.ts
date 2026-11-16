@@ -12,7 +12,9 @@ export interface ApiResponse<T = unknown> {
 export function createBackendRequestHeaders(token?: string): Record<string, string> {
   const headers: Record<string, string> = {
     'Content-Type': 'application/json',
-    // Avoid reusing sockets after the E2E Uvicorn server closes its idle connection.
+    // Every request must opt out of reuse: the shared Playwright agent can
+    // hand a request with this header a socket pooled by an earlier request,
+    // and the E2E Uvicorn server may already have closed that idle socket.
     Connection: 'close',
   }
   if (token) headers.Authorization = `Bearer ${token}`

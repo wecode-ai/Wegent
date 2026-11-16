@@ -20,6 +20,10 @@ from typing import Any, Dict, List, Optional, Tuple, Union
 import httpx
 import requests
 
+from executor_manager.clients.executor_binding import (
+    ObsoleteExecutorDispatch,
+    bind_executor_for_dispatch,
+)
 from executor_manager.config.config import EXECUTOR_ENV, PORT_RANGE_MAX, PORT_RANGE_MIN
 from executor_manager.executors.base import Executor
 from executor_manager.executors.docker.constants import (
@@ -211,6 +215,8 @@ class DockerExecutor(Executor):
                 )
 
                 self._create_new_container(task_dict, task_info, execution_status)
+        except ObsoleteExecutorDispatch:
+            raise
         except Exception as e:
             # Unified exception handling
             self._handle_execution_exception(e, task_id, execution_status)
@@ -536,6 +542,8 @@ class DockerExecutor(Executor):
             raise RuntimeError(
                 f"Ready info for {executor_name} does not contain mapped port"
             )
+        namespace = get_metadata_field(task, "executor_namespace") or ""
+        task = bind_executor_for_dispatch(task, executor_name, namespace)
         return self._dispatch_initial_task_to_new_container(task, executor_name, port)
 
     def _wait_for_container_ready(self, executor_name: str) -> int:

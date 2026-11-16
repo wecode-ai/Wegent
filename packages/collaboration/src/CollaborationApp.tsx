@@ -81,6 +81,7 @@ import {
 } from "./project-manage";
 
 export interface CollaborationIssueDetailRenderContext {
+  commentBoard?: import("./issue-detail/issueCommentActions").IssueCommentBoardContext;
   api: SharedWorkspaceApi;
   project: CollaborationProject;
   issue: CollaborationIssue;
@@ -160,6 +161,11 @@ export function CollaborationApp({
     [locale],
   );
   const [createProjectOpen, setCreateProjectOpen] = useState(false);
+  const issueBoardRef = useRef<{
+    issueId: string;
+    projectId: string;
+    board: import("./issue-detail/issueCommentActions").IssueCommentBoardContext;
+  } | null>(null);
   const [createIssueOpen, setCreateIssueOpen] = useState(false);
   const [createIssueDefaults, setCreateIssueDefaults] =
     useState<BoardIssueCreateDefaults>();
@@ -968,13 +974,16 @@ export function CollaborationApp({
                         unassigned: messages.unassigned,
                         noTag: messages.noTag,
                       }}
-                      onOpen={(issue) =>
+                      onOpen={(issue, board) => {
+                        issueBoardRef.current = board
+                          ? { issueId: issue.id, projectId: project.id, board }
+                          : null;
                         host.navigate({
                           projectId: project.id,
                           issueId: issue.id,
                           view: "board",
-                        })
-                      }
+                        });
+                      }}
                       onMove={async (issue, mutation) => {
                         await executeStandardCloudBoardMutation({
                           item: issue,
@@ -1340,6 +1349,11 @@ export function CollaborationApp({
           {selectedIssue && project ? (
             renderIssueDetail ? (
               renderIssueDetail({
+                commentBoard:
+                  issueBoardRef.current?.issueId === selectedIssue.id &&
+                  issueBoardRef.current.projectId === project.id
+                    ? issueBoardRef.current.board
+                    : undefined,
                 api,
                 project,
                 issue: selectedIssue,
@@ -1395,6 +1409,12 @@ export function CollaborationApp({
               })
             ) : (
               <IssueDetail
+                commentBoard={
+                  issueBoardRef.current?.issueId === selectedIssue.id &&
+                  issueBoardRef.current.projectId === project.id
+                    ? issueBoardRef.current.board
+                    : undefined
+                }
                 api={api}
                 project={project}
                 issue={selectedIssue}

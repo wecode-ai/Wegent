@@ -66,6 +66,10 @@ export function createProjectSpacePickerRegression({
       address.taskId,
       'The project picker task did not finish restoring after navigation'
     )
+    // Restoring a task re-resolves its cloud binding asynchronously: the
+    // composer drops its Issue binding, and with it the change-board control,
+    // until the lookup returns. Wait for the post-restore control instead of
+    // the one rendered before the restore, which the click would no longer hit.
     await control.command('waitFor', CHANGE, {
       visible: true,
       timeoutMs: workbenchReadyTimeoutMs,
@@ -94,7 +98,12 @@ export function createProjectSpacePickerRegression({
     async verify(control, address) {
       const { taskId } = address
       await openTask(control, address)
-      await control.command('clickWhenEnabled', CHANGE, { timeoutMs: uiTimeoutMs })
+      // Match and click in one control round trip so a binding refresh cannot
+      // remove the visible control between a separate wait and the click.
+      await control.command('clickWhenEnabled', CHANGE, {
+        visible: true,
+        timeoutMs: uiTimeoutMs,
+      })
       for (const project of projects) {
         await control.command('waitFor', optionSelector(project), { timeoutMs: uiTimeoutMs })
       }
@@ -206,11 +215,10 @@ export function createProjectSpacePickerRegression({
       await openTask(control, address)
       await control.command('waitFor', boundContext, { timeoutMs: uiTimeoutMs })
       const boundChange = `${boundContext} [data-testid="work-item-change-board"]`
-      await control.command('waitFor', boundChange, {
+      await control.command('clickWhenEnabled', boundChange, {
         visible: true,
         timeoutMs: uiTimeoutMs,
       })
-      await control.command('clickWhenEnabled', boundChange, { timeoutMs: uiTimeoutMs })
       await control.command('waitFor', `${optionSelector(sharedB)}[aria-selected="true"]`)
       assert.equal(
         await control.command('getAttribute', optionSelector(sharedA), { value: 'aria-selected' }),

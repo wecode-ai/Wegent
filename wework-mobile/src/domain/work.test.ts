@@ -7,9 +7,22 @@ import {
   mergeRuntimeWorkForDevices,
   runtimeWorkContainsTask,
   runtimeWorkForDevices,
+  taskAddress,
 } from './work'
 
 describe('flattenConversations', () => {
+  it('preserves worktree identity from both task and workspace ownership', () => {
+    const workspace = projectWork('device', 'task').projects[0].deviceWorkspaces[0]
+    expect(
+      taskAddress({ ...workspace, worktreeId: 'group-tree' }, workspace.tasks[0]).worktreeId
+    ).toBe('group-tree')
+    expect(
+      taskAddress(
+        { ...workspace, worktreeId: 'group-tree' },
+        { ...workspace.tasks[0], worktreeId: 'task-tree' }
+      ).worktreeId
+    ).toBe('task-tree')
+  })
   it('combines project and standalone chats in update order', () => {
     const work: RuntimeWorkListResponse = {
       totalTasks: 2,
@@ -61,6 +74,7 @@ describe('flattenConversations', () => {
 
     expect(result.map(item => item.address.taskId)).toEqual(['new', 'old'])
     expect(result[1]?.projectName).toBe('Wegent')
+    expect(result[1]?.sourceWorkspacePath).toBe('/work/wegent')
   })
 
   it('uses the lifecycle projection instead of a stale work running flag', () => {

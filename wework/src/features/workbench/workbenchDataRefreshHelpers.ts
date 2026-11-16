@@ -8,7 +8,7 @@ import type {
   RuntimeWorkListResponse,
 } from '@/types/api'
 import { getPreferredStandaloneDeviceId } from '@/lib/device-selection'
-import { isCloudDevice, isRemoteDevice } from '@/lib/device-capabilities'
+import { isRemoteTaskDevice } from '@/lib/device-capabilities'
 import { normalizeRuntimeWorkspacePath, runtimeProjectUiId } from '@/lib/runtime-project'
 import {
   EMPTY_CLOUD_RUNTIME_STATE,
@@ -107,7 +107,7 @@ export function resolveStandaloneDeviceIdForRefresh(
 }
 
 export function localDeviceSnapshot(devices: DeviceInfo[]): DeviceInfo[] {
-  return devices.filter(device => !isCloudDevice(device) && !isRemoteDevice(device))
+  return devices.filter(device => !isRemoteTaskDevice(device))
 }
 
 export function createCloudRuntimeStateWithCache(

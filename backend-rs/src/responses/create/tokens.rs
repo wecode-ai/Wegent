@@ -107,7 +107,7 @@ fn skill_identity_claims(
 }
 
 /// Sign a JWT with the configured `SECRET_KEY` / algorithm.
-fn sign(state: &AppState, claims: &Value, what: &str) -> Result<String, FastApiError> {
+pub(crate) fn sign(state: &AppState, claims: &Value, what: &str) -> Result<String, FastApiError> {
     use jsonwebtoken::{Algorithm, EncodingKey, Header};
     let algorithm = match state.auth.algorithm.as_str() {
         "HS384" => Algorithm::HS384,

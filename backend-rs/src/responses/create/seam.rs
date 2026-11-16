@@ -234,13 +234,16 @@ pub async fn dispatch_create(
         input.stream,
         input.background,
     );
-    // Executor recovery runs inside the dispatch job. A callback stream
-    // subscribes before submitting it, and a queued create can return promptly.
+    // Recover queued Executor requests inside the supervised dispatch job.
+    // The callback stream subscribes before submitting the job.
     if branch != CreateBranch::CallbackStream
         && target.mode != routing::CommunicationMode::HttpCallback
     {
         recover_before_dispatch(state, &mut request, None).await?;
-        mark_subtask_running(state, request.subtask_id).await;
+        if let Err(error) = mark_subtask_running(state, &request).await {
+            persist_dispatch_start_failure(state, &request, &error).await;
+            return Err(error);
+        }
     }
     if matches!(branch, CreateBranch::CallbackStream | CreateBranch::Queued) {
         // `openapi_responses.py:1323-1379`: an executor target still streams
@@ -467,10 +470,17 @@ async fn persist_build_failure(state: &AppState, task_id: i64, subtask_id: i64, 
         tables: crate::internal_callback::tables(state),
         executor_manager: &state.executor_manager,
     };
-    let result =
-        completion::collect_completed_result(&ctx, subtask_id, "FAILED", None, Some(message), None)
-            .await;
-    completion::persist_completed_result(
+    let result = completion::collect_completed_result(
+        &ctx,
+        task_id,
+        subtask_id,
+        "FAILED",
+        None,
+        Some(message),
+        None,
+    )
+    .await;
+    let persisted = completion::persist_completed_result(
         &ctx,
         task_id,
         subtask_id,
@@ -479,47 +489,69 @@ async fn persist_build_failure(state: &AppState, task_id: i64, subtask_id: i64, 
         Some(message),
         None,
         None,
+        None,
     )
     .await;
+    if let Err(error) = persisted {
+        tracing::error!(%error, task_id, subtask_id, "request failure could not be saved");
+    }
 }
 
-/// `ExecutionDispatcher._update_subtask_to_running`
-/// (`app/services/execution/dispatcher.py:335-355`): mark the dispatched
-/// assistant subtask RUNNING and re-derive the Task CRD. The source's
-/// `update_subtask_status` commits before the task status update, and its
-/// after-commit hook publishes the run metrics; a store failure only logs.
-pub(crate) async fn mark_subtask_running(state: &AppState, subtask_id: i64) {
-    let Some(redis) = state.redis.as_ref() else {
-        return;
-    };
-    let ctx = completion::Completion {
-        app: Some(state),
-        mysql: &state.mysql,
-        redis,
-        tables: crate::internal_callback::tables(state),
-        executor_manager: &state.executor_manager,
-    };
-    completion::mark_subtask_running(&ctx, subtask_id, false).await;
+const SUBTASK_NOT_DISPATCHABLE: &str = "Assistant subtask is no longer dispatchable";
+
+pub(crate) fn is_subtask_not_dispatchable(error: &FastApiError) -> bool {
+    error.status() == StatusCode::CONFLICT
+        && error.detail_message() == Some(SUBTASK_NOT_DISPATCHABLE)
 }
 
-pub(crate) async fn claim_executor_dispatch(state: &AppState, subtask_id: i64) -> bool {
+async fn persist_dispatch_start_failure(
+    state: &AppState,
+    request: &ExecutionRequest,
+    error: &FastApiError,
+) {
+    if error.status().is_server_error() {
+        persist_build_failure(
+            state,
+            request.task_id,
+            request.subtask_id,
+            build_failure_message(error),
+        )
+        .await;
+    }
+}
+
+/// Require the assistant subtask to be RUNNING on the writer before dispatch.
+pub(crate) async fn mark_subtask_running(
+    state: &AppState,
+    request: &ExecutionRequest,
+) -> Result<(), FastApiError> {
+    let (task_id, subtask_id) = (request.task_id, request.subtask_id);
     let tables = crate::internal_callback::tables(state);
-    let Some(redis) = state.redis.as_ref() else {
-        return completion::claim_running_subtask(&state.mysql, tables, subtask_id)
+    let running = if let Some(redis) = state.redis.as_ref() {
+        let ctx = completion::Completion {
+            app: Some(state),
+            mysql: &state.mysql,
+            redis,
+            tables,
+            executor_manager: &state.executor_manager,
+        };
+        completion::mark_subtask_running(&ctx, task_id, subtask_id).await
+    } else {
+        completion::commit_subtask_running(&state.mysql, tables, task_id, subtask_id)
             .await
-            .inspect_err(
-                |error| tracing::warn!(subtask_id, %error, "executor dispatch claim failed"),
-            )
-            .unwrap_or(false);
+            .map(|row| row.is_some())
     };
-    let ctx = completion::Completion {
-        app: Some(state),
-        mysql: &state.mysql,
-        redis,
-        tables,
-        executor_manager: &state.executor_manager,
-    };
-    completion::mark_subtask_running(&ctx, subtask_id, true).await
+    if running.map_err(|error| {
+        tracing::error!(%error, task_id, subtask_id, "task running transition failed");
+        FastApiError::internal()
+    })? {
+        Ok(())
+    } else {
+        Err(FastApiError::detail(
+            StatusCode::CONFLICT,
+            SUBTASK_NOT_DISPATCHABLE,
+        ))
+    }
 }
 
 /// `ExecutionDispatcher._resolve_device_route_id` (`dispatcher.py:391-415`):
@@ -579,6 +611,7 @@ async fn dispatch_device_turn(
     device_route: &str,
 ) -> Result<(), FastApiError> {
     set_subtask_executor(state, request, device_route).await?;
+    mark_subtask_running(state, request).await?;
     let Some(redis) = state.redis.as_ref() else {
         tracing::error!(task_id = request.task_id, "device dispatch has no Redis");
         return Err(FastApiError::internal());
@@ -635,6 +668,7 @@ async fn set_subtask_executor(
     request: &ExecutionRequest,
     runtime_device_id: &str,
 ) -> Result<(), FastApiError> {
+    let redis = state.redis.as_ref().ok_or_else(FastApiError::internal)?;
     let tables = state.task_store.table_templates();
     let mysql = state
         .mysql
@@ -646,16 +680,6 @@ async fn set_subtask_executor(
         "{} \n LIMIT 1",
         crate::task_store_statements::subtask_by_id_labeled_refresh_statement(tables.subtasks)
     );
-    let row: Option<brz_mysql::MysqlRow> = mysql
-        .fetch_optional(read, (request.subtask_id,))
-        .await
-        .map_err(|error| {
-            tracing::error!(%error, subtask_id = request.subtask_id, "executor subtask read failed");
-            FastApiError::internal()
-        })?;
-    if row.is_none() {
-        return Ok(());
-    }
     // `_set_subtask_executor`'s subtask session also loads the subtask's
     // contexts (`WHERE subtask_id IN (?) ORDER BY id ASC`) before the update.
     let contexts = format!(
@@ -664,22 +688,44 @@ async fn set_subtask_executor(
          ORDER BY subtask_contexts.id ASC",
         crate::task_store_listing::subtask_context_columns()
     );
-    let _rows: Vec<brz_mysql::MysqlRow> = mysql
-        .fetch_all(contexts, (request.subtask_id,))
-        .await
-        .map_err(|error| {
-            tracing::error!(%error, subtask_id = request.subtask_id, "subtask contexts read failed");
-            FastApiError::internal()
-        })?;
     use brz_mysql::MysqlTransaction as _;
     let now = chrono::Local::now().naive_local();
     mysql
         .with_transaction(async |transaction| {
+            let registration = crate::device_records::lock_online_device_for_binding(
+                transaction,
+                redis,
+                request.user_id,
+                runtime_device_id,
+            )
+            .await?;
+            if !registration.is_some_and(|device| {
+                crate::device_identity::device_connection_route_id(&device) == runtime_device_id
+            }) {
+                return Ok(Err(FastApiError::detail(
+                    StatusCode::BAD_REQUEST,
+                    "Selected device is offline",
+                )));
+            }
+            // The turn has just been committed. Read it on the binding writer
+            // after taking the device owner lock that protects registration.
+            let row: Option<brz_mysql::MysqlRow> = transaction
+                .fetch_optional(read, (request.subtask_id,))
+                .await?;
+            if row.is_none() {
+                return Ok(Err(FastApiError::detail(
+                    StatusCode::NOT_FOUND,
+                    "Subtask not found",
+                )));
+            }
+            let _: Vec<brz_mysql::MysqlRow> = transaction
+                .fetch_all(contexts, (request.subtask_id,))
+                .await?;
             transaction
                 .execute(
                     format!(
                         "UPDATE {table} SET executor_namespace=?, executor_name=?, updated_at=? \
-                         WHERE {table}.id=?",
+                         WHERE {table}.id=? AND task_id=? AND status IN ('PENDING', 'RUNNING')",
                         table = tables.subtasks
                     ),
                     (
@@ -687,17 +733,17 @@ async fn set_subtask_executor(
                         format!("device-{runtime_device_id}"),
                         now,
                         request.subtask_id,
+                        request.task_id,
                     ),
                 )
                 .await?;
-            Ok(())
+            Ok(Ok(()))
         })
         .await
         .map_err(|error| {
             tracing::error!(%error, subtask_id = request.subtask_id, "executor update failed");
             FastApiError::internal()
-        })?;
-    Ok(())
+        })?
 }
 
 /// Submit the dispatch after the response stream subscribes to its callbacks.
@@ -710,7 +756,10 @@ pub(super) async fn dispatch_executor_after_subscribe(
     if let Some(url) = target_url {
         if super::package_runtime::is_target(url) {
             recover_before_dispatch(state, request, None).await?;
-            mark_subtask_running(state, request.subtask_id).await;
+            if let Err(error) = mark_subtask_running(state, request).await {
+                persist_dispatch_start_failure(state, request, &error).await;
+                return Err(error);
+            }
             enqueue_chat_shell_dispatch(state, Some(url), request.clone(), request_id);
         } else {
             // The OpenAPI streaming path creates no Task of its own, so its
@@ -726,12 +775,13 @@ pub(crate) async fn recover_before_dispatch(
     request: &mut ExecutionRequest,
     device_id: Option<&str>,
 ) -> Result<bool, FastApiError> {
-    let error = match super::recover_executor::recover_executor_if_needed(state, request, device_id)
-        .await
-    {
-        Ok(recovered) => return Ok(recovered),
-        Err(error) => error,
-    };
+    let error =
+        match super::recover_executor::recover_executor_if_needed(state, request, device_id, false)
+            .await
+        {
+            Ok(recovered) => return Ok(recovered),
+            Err(error) => error,
+        };
     let message = error.to_string();
     tracing::warn!(
         task_id = request.task_id,
@@ -899,7 +949,6 @@ pub(crate) async fn dispatch_chat_turn(
         return Ok(());
     }
     recover_before_dispatch(state, request, device_id).await?;
-    mark_subtask_running(state, request.subtask_id).await;
     if target.mode == routing::CommunicationMode::Websocket {
         let Some(route) = resolved_device.as_deref() else {
             tracing::error!(task_id = request.task_id, "device dispatch has no route");
@@ -907,6 +956,7 @@ pub(crate) async fn dispatch_chat_turn(
         };
         return dispatch_device_turn(state, request, created_task, route).await;
     }
+    mark_subtask_running(state, request).await?;
     if target.mode == routing::CommunicationMode::Polling {
         return crate::background_jobs::video::create::dispatch(state, request)
             .await
@@ -1080,7 +1130,7 @@ mod tests {
             "the collect step must receive the raised message"
         );
         let tail = &source[persist..];
-        let end = tail.find(".await;").expect("persist call end");
+        let end = tail.find(".await").expect("persist call end");
         assert!(
             tail[..end].contains("Some(message)"),
             "the persist step must receive the raised message"
