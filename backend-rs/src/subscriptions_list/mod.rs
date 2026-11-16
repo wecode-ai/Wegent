@@ -508,21 +508,42 @@ mod tests {
         })));
         assert_eq!(
             config,
-            json!({"expression": "0 9 * * *", "timezone": "UTC"})
+            json!({"expression": "0 9 * * *", "timezone": "UTC", "workday_only": false})
         );
         assert!(valid);
         assert!(error.is_none());
     }
 
     #[test]
+    fn list_item_preserves_cron_workday_filter() {
+        for workday_only in [true, false] {
+            let mut stored = subscription_json();
+            stored["spec"]["trigger"]["cron"]["workday_only"] = json!(workday_only);
+
+            let item = convert_to_subscription_in_db(&kind_row(stored), &HashMap::new());
+            let serialized = serde_json::to_value(item).unwrap();
+
+            assert_eq!(
+                serialized["trigger_config"],
+                json!({
+                    "expression": "0 9 * * *",
+                    "timezone": "Asia/Shanghai",
+                    "workday_only": workday_only,
+                })
+            );
+        }
+    }
+
+    #[test]
     fn too_frequent_cron_marks_invalid_and_fixes() {
         let (config, valid, error) = validated_trigger_config(&Some(json!({
             "type": "cron",
-            "cron": {"expression": "*/5 * * * *", "timezone": "UTC"}
+            "cron": {"expression": "*/5 * * * *", "timezone": "UTC", "workday_only": true}
         })));
         assert!(!valid);
         assert_eq!(error.as_deref(), Some("执行间隔太短，不满足最小间隔要求"));
         assert_eq!(config["expression"], json!("*/15 * * * *"));
+        assert_eq!(config["workday_only"], json!(true));
     }
 
     #[test]

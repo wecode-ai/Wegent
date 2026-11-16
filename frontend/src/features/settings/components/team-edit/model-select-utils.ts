@@ -3,6 +3,32 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type { ModelCategoryType, ModelTypeEnum, UnifiedModel } from '@/apis/models'
+import type { Bot } from '@/types/api'
+import {
+  getModelFromConfig,
+  getModelNamespaceFromConfig,
+  getModelTypeFromConfig,
+} from '../../services/bots'
+
+export function isRetainedPrivateModel(
+  bot: Bot | undefined,
+  name: string,
+  type: ModelTypeEnum | undefined,
+  namespace: string | undefined,
+  shellName: string | undefined
+): boolean {
+  const config = bot?.agent_config
+  return Boolean(
+    config &&
+    name &&
+    type === 'user' &&
+    getModelTypeFromConfig(config) === 'user' &&
+    (namespace || 'default') === 'default' &&
+    (getModelNamespaceFromConfig(config) || 'default') === 'default' &&
+    getModelFromConfig(config) === name &&
+    bot.shell_name === shellName
+  )
+}
 
 export function toModelSelectValue(name: string, type?: ModelTypeEnum, namespace?: string): string {
   if (!name) return '__none__'

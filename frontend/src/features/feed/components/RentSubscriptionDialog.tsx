@@ -72,6 +72,7 @@ export function RentSubscriptionDialog({
   const [displayName, setDisplayName] = useState('')
   const [triggerType, setTriggerType] = useState<SubscriptionTriggerType>('interval')
   const [cronExpression, setCronExpression] = useState('0 9 * * *')
+  const [workdayOnly, setWorkdayOnly] = useState(false)
   const cronTimezone = getUserTimezone()
   const [intervalValue, setIntervalValue] = useState(1)
   const [intervalUnit, setIntervalUnit] = useState('hours')
@@ -85,6 +86,7 @@ export function RentSubscriptionDialog({
       setName(`rental-${baseName}-${Date.now().toString(36)}`)
       setDisplayName(`${subscription.display_name} (Rental)`)
       setTriggerType(subscription.trigger_type)
+      setWorkdayOnly(false)
       // Set default trigger config based on trigger type
       if (subscription.trigger_type === 'cron') {
         setCronExpression('0 9 * * *')
@@ -132,7 +134,11 @@ export function RentSubscriptionDialog({
     // Build trigger config
     let triggerConfig: Record<string, unknown> = {}
     if (triggerType === 'cron') {
-      triggerConfig = { expression: cronExpression, timezone: cronTimezone }
+      triggerConfig = {
+        expression: cronExpression,
+        timezone: cronTimezone,
+        workday_only: workdayOnly,
+      }
     } else if (triggerType === 'interval') {
       triggerConfig = { value: intervalValue, unit: intervalUnit }
     } else if (triggerType === 'one_time') {
@@ -162,6 +168,7 @@ export function RentSubscriptionDialog({
     triggerType,
     cronExpression,
     cronTimezone,
+    workdayOnly,
     intervalValue,
     intervalUnit,
     executeAt,
@@ -174,6 +181,7 @@ export function RentSubscriptionDialog({
   const handleTriggerTypeChange = useCallback((value: string) => {
     const type = value as SubscriptionTriggerType
     setTriggerType(type)
+    setWorkdayOnly(false)
     // Set default config for each trigger type
     if (type === 'cron') {
       setCronExpression('0 9 * * *')
@@ -280,6 +288,8 @@ export function RentSubscriptionDialog({
                   value={cronExpression}
                   onChange={setCronExpression}
                   timezone={cronTimezone}
+                  workdayOnly={workdayOnly}
+                  onWorkdayOnlyChange={setWorkdayOnly}
                 />
                 <p className="text-xs text-text-muted">
                   {t('timezone_hint')}: {cronTimezone}

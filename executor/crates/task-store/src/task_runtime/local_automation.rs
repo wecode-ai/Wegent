@@ -1,6 +1,6 @@
 //! Local project rules compile into the existing durable execution/workflow queue.
 use super::*;
-use wegent_automation::{next_run_after, AutomationSchedule};
+use wegent_automation::{next_run_after_checked, scheduled_dispatch_allowed, AutomationSchedule};
 
 #[derive(Clone, Copy)]
 pub(super) enum AutomationEvent<'a> {
@@ -44,6 +44,14 @@ pub(super) fn validate_rules(
         .as_array()
         .ok_or_else(|| TaskRuntimeError::Invalid("automation rules must be an array".into()))?;
     for rule in rules {
+        if rule
+            .get("workdayOnly")
+            .is_some_and(|value| !value.is_boolean())
+        {
+            return Err(TaskRuntimeError::Invalid(
+                "workdayOnly must be a boolean".into(),
+            ));
+        }
         if text(rule, "id").is_empty() || text(rule, "targetId").is_empty() {
             return Err(TaskRuntimeError::Invalid(
                 "automation rule requires an id and target".into(),
@@ -143,14 +151,72 @@ fn next_schedule(
     rule: &Value,
     after: chrono::DateTime<Utc>,
 ) -> Result<chrono::DateTime<Utc>, TaskRuntimeError> {
-    next_run_after(
+    next_run_after_checked(
         &AutomationSchedule::Cron {
             expression: text(rule, "cronExpression").into(),
+            workday_only: rule["enabled"] != false
+                && rule["workdayOnly"].as_bool().unwrap_or(false),
         },
         text(rule, "timezone"),
         after,
     )
+    .map_err(TaskRuntimeError::Invalid)?
     .ok_or_else(|| TaskRuntimeError::Invalid("invalid automation schedule or timezone".into()))
+}
+
+fn rule_dispatch_allowed(
+    rule: &Value,
+    at: chrono::DateTime<Utc>,
+) -> Result<bool, TaskRuntimeError> {
+    scheduled_dispatch_allowed(
+        &AutomationSchedule::Cron {
+            expression: String::new(),
+            workday_only: rule["workdayOnly"] == true,
+        },
+        at,
+    )
+    .map_err(TaskRuntimeError::Invalid)
+}
+
+fn execution_workday_allowed(
+    connection: &Connection,
+    execution: &LocalExecution,
+    at: chrono::DateTime<Utc>,
+) -> Result<bool, TaskRuntimeError> {
+    let Some(run_id) = execution
+        .execution_payload
+        .as_ref()
+        .and_then(|payload| payload["automation_run_id"].as_str())
+    else {
+        return Ok(true);
+    };
+    let Some(run) = get_item_from(connection, run_id, "automation_run")? else {
+        return Ok(true);
+    };
+    if run.metadata["trigger"] == "scheduled" {
+        return rule_dispatch_allowed(&run.metadata, at);
+    }
+    Ok(true)
+}
+
+pub(in crate::task_runtime) fn enforce_execution_workday(
+    connection: &Connection,
+    execution: &LocalExecution,
+    at: chrono::DateTime<Utc>,
+) -> Result<bool, TaskRuntimeError> {
+    match execution_workday_allowed(connection, execution, at) {
+        Ok(true) => Ok(true),
+        Ok(false) => {
+            connection.execute("UPDATE loop_item_executions SET status='cancelled',observed_state='cancelled',sync_state='in_sync',observed_at=?1,termination_reason='cancelled_before_start',error_message='scheduled execution skipped on a China non-workday',completed_at=?1,updated_at=?1,version=version+1 WHERE id=?2", params![now(), execution.id])?;
+            Ok(false)
+        }
+        Err(TaskRuntimeError::Invalid(error)) => {
+            // Preserve pending work until an offline calendar update covers this date.
+            connection.execute("UPDATE loop_item_executions SET status='queued',error_message=?1,updated_at=?2,version=version+1 WHERE id=?3", params![error, now(), execution.id])?;
+            Ok(false)
+        }
+        Err(error) => Err(error),
+    }
 }
 
 pub(super) fn on_event(
@@ -286,6 +352,7 @@ fn run_for_issue(
         "trigger": trigger, "status": "queued", "timezone": rule["timezone"].as_str().unwrap_or("UTC"), "scheduledFor": stamp,
         "taskId": null, "backendTaskId": null, "deviceId": null, "error": null, "startedAt":null, "expiresAt":null,
         "createdAt": stamp, "updatedAt": stamp, "completedAt": null});
+    run["workdayOnly"] = json!(rule["workdayOnly"] == true);
     // A bad rule must be visible as a failed run without losing the user's Issue.
     connection.execute_batch("SAVEPOINT local_automation_dispatch")?;
     match dispatch(connection, project, task_id, rule, &run_id) {
@@ -538,6 +605,13 @@ impl LocalTaskStore {
     }
 
     pub fn tick_project_automations(&self) -> Result<(), TaskRuntimeError> {
+        self.tick_project_automations_at(Utc::now())
+    }
+
+    pub(super) fn tick_project_automations_at(
+        &self,
+        current_time: chrono::DateTime<Utc>,
+    ) -> Result<(), TaskRuntimeError> {
         let projects = self.list_projects()?;
         for project in projects {
             if project.metadata["project_store"] == "backend" {
@@ -560,7 +634,22 @@ impl LocalTaskStore {
                     continue;
                 }
                 let key = format!("{}:{}", text(&rule, "id"), rule["version"]);
-                let current_time = Utc::now();
+                let next = match next_schedule(&rule, current_time) {
+                    Ok(next) => next,
+                    Err(error) => {
+                        if !project.metadata["automation_schedule_errors"].is_object() {
+                            project.metadata["automation_schedule_errors"] = json!({});
+                        }
+                        project.metadata["automation_schedule_errors"][&key] =
+                            json!(error.to_string());
+                        changed = true;
+                        continue;
+                    }
+                };
+                if let Some(errors) = project.metadata["automation_schedule_errors"].as_object_mut()
+                {
+                    changed |= errors.remove(&key).is_some();
+                }
                 let previous = project.metadata["automation_schedule"][&key]
                     .as_str()
                     .map(chrono::DateTime::parse_from_rfc3339)
@@ -571,16 +660,17 @@ impl LocalTaskStore {
                     if due > current_time {
                         continue;
                     }
-                    let ids = local_open_issue_ids(&transaction, &project.id)?;
-                    for id in ids {
-                        run_for_issue(&transaction, &project, &id, &rule, "scheduled")?;
+                    if rule_dispatch_allowed(&rule, current_time)? {
+                        let ids = local_open_issue_ids(&transaction, &project.id)?;
+                        for id in ids {
+                            run_for_issue(&transaction, &project, &id, &rule, "scheduled")?;
+                        }
                     }
                 }
                 if !project.metadata["automation_schedule"].is_object() {
                     project.metadata["automation_schedule"] = json!({});
                 }
-                project.metadata["automation_schedule"][&key] =
-                    json!(next_schedule(&rule, current_time)?.to_rfc3339());
+                project.metadata["automation_schedule"][&key] = json!(next.to_rfc3339());
                 changed = true;
             }
             if changed {

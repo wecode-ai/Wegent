@@ -117,7 +117,15 @@ export function createDingTalkReplyStory(options) {
     })
     await control.command('clickWhenEnabled', '[data-testid="stand-in-work-open-pending"]')
     await control.command('clickWhenEnabled', '[data-testid="interaction-open-original"]')
-    await control.command('waitFor', CARD, { timeoutMs: options.modelResponseTimeoutMs })
+    await control.command('waitFor', CARD, {
+      text: REPLY_STORY_VALUES[phase].reply,
+      visible: true,
+      timeoutMs: options.modelResponseTimeoutMs,
+    })
+    await control.command('waitFor', '[data-testid="user-message-content"]', {
+      text: REPLY_STORY_VALUES[phase].text,
+      visible: true,
+    })
     const preview = await control.command('getText', CARD, { visible: true })
     const source = await control.command('getText', '[data-testid="user-message-content"]', {
       visible: true,

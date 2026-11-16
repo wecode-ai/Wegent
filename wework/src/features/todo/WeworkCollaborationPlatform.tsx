@@ -1230,6 +1230,7 @@ export function WeworkSharedProject({
 
   const renderIssueEditor = (
     {
+      commentBoard,
       api: issueApi,
       issue,
       allIssues,
@@ -1245,6 +1246,7 @@ export function WeworkSharedProject({
     closeDrawers: () => void
   ) => (
     <TodoEditor
+      commentBoard={commentBoard}
       key={issue.id}
       getRuntimeTranscript={services.runtimeWorkApi?.getRuntimeTranscript}
       mode="edit"

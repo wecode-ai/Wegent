@@ -48,6 +48,8 @@ def collect_parent_node_ids(records: list[dict[str, Any]]) -> list[str]:
 def merge_parent_records(
     records: list[dict[str, Any]],
     parent_records: dict[str, dict[str, Any]],
+    *,
+    knowledge_id: str,
 ) -> list[dict[str, Any]]:
     merged_records: list[dict[str, Any]] = []
     hierarchical_positions: dict[str, int] = {}
@@ -56,7 +58,22 @@ def merge_parent_records(
         metadata = dict(record.get("metadata") or {})
         parent_node_id = metadata.get("parent_node_id")
         parent_record = parent_records.get(parent_node_id or "")
-        if metadata.get("chunk_strategy") != "hierarchical" or parent_record is None:
+        if (
+            not isinstance(parent_node_id, str)
+            or not parent_node_id
+            or metadata.get("chunk_strategy") != "hierarchical"
+            or parent_record is None
+        ):
+            merged_records.append(record)
+            continue
+
+        parent_metadata = parent_record.get("metadata") or {}
+        if (
+            not metadata.get("doc_ref")
+            or metadata.get("knowledge_id") != knowledge_id
+            or parent_metadata.get("knowledge_id") != knowledge_id
+            or parent_metadata.get("doc_ref") != metadata["doc_ref"]
+        ):
             merged_records.append(record)
             continue
 

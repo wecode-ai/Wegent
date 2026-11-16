@@ -393,18 +393,34 @@ def update_space(
         return _project_view(updated)
 
 
-@mcp_tool(server="wework_space")
+@mcp_tool(
+    server="wework_space",
+    description=(
+        "List project Issues (事项), distinct from personal tasks and conversations. "
+        "Use the current project's space_id for unqualified Issue requests. "
+        "Identify the project and Issue ID in results; for an empty result, "
+        "state that the queried project has no matching Issues."
+    ),
+)
 def list_board_items(
     token_info: MCPAuthInfo, space_id: str = ""
 ) -> list[dict[str, Any]]:
-    """List board items in the current Backend project space."""
+    """List project Issues (事项), distinct from personal tasks and conversations."""
 
     with SessionLocal() as db:
         project = _project(db, _space_id(db, token_info, space_id), token_info.user_id)
         return _list_items(db, project, token_info.user_id)
 
 
-@mcp_tool(server="wework_space")
+@mcp_tool(
+    server="wework_space",
+    description=(
+        "Search project Issues (事项), distinct from personal tasks and conversations. "
+        "Use the current project's space_id unless the user names another project. "
+        "Identify the project and Issue ID in results; for an empty result, "
+        "state that the queried project has no matching Issues."
+    ),
+)
 def search_board_items(
     token_info: MCPAuthInfo,
     query: str = "",
@@ -417,7 +433,7 @@ def search_board_items(
     has_children: bool | None = None,
     limit: int = 50,
 ) -> list[dict[str, Any]]:
-    """Search board items using text and structured filters."""
+    """Search project Issues (事项), distinct from personal tasks and conversations."""
 
     with SessionLocal() as db:
         project = _project(db, _space_id(db, token_info, space_id), token_info.user_id)

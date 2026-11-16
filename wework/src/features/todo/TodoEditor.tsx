@@ -79,6 +79,7 @@ type TodoEditorApiProps =
     }
 
 export type TodoEditorProps = TodoEditorApiProps & {
+  commentBoard?: import('@wegent/collaboration').IssueCommentBoardContext
   aitableApi?: AITableApi
   projectChatAgentApi?: ReturnType<typeof createProjectChatAgentApi>
   teamApi?: WorkbenchServices['teamApi']
@@ -256,6 +257,7 @@ export function TodoEditor(props: TodoEditorProps) {
         <TaskActivityView
           assignmentReceipts={assignmentReceipts}
           commentAssignment={context.commentAssignment}
+          commentActions={context.commentActions}
           key={context.item.id}
           client={props.projectChatClient}
           project={context.project as CloudProject}
@@ -365,6 +367,7 @@ export function TodoEditor(props: TodoEditorProps) {
     onClose: props.onClose,
     onEscape: props.onEscape,
     presentation: props.presentation,
+    commentBoard: props.commentBoard,
     workspacePanelFill: props.workspacePanelFill,
     readFirst: props.readFirst,
     showPanelControls: props.showPanelControls,

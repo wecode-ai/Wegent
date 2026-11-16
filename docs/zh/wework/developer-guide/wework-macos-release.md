@@ -325,6 +325,12 @@ Executor 启动 Codex 时必须显式启用该工具。桌面 E2E 默认验证�
 
 ## 开发模式热更新
 
+macOS 开发监听每秒检查一次源文件和目录的元数据，避免 FSEvents 或原生目录通知
+未送达时，原子保存、连续编辑和新增目录不再触发构建。只有输入版本发生变化才构建；
+输出目录、`node_modules`、`.git` 和 `dist` 仍排除在监听之外。轮询不读取文件内容。
+Chokidar 3 必须同时设置 `useFsEvents: false` 和 `usePolling: true`；仅设置
+`CHOKIDAR_USEPOLLING=true` 不会关闭已经选中的 FSEvents 后端。其他平台保留原生监听。
+
 文件监听必须等待 Chokidar 的 `ready`，再采集输入快照并启动首次构建。仅创建
 原生 watcher 不代表订阅已经就绪，启动后的首次编辑可能丢失通知。关闭时须等待
 所有监听器释放；失败日志同时保留编辑、通知和构建的时间线。

@@ -9,7 +9,7 @@ use brz_mysql::{Mysql, MysqlResult};
 use brz_redis::{Redis, RedisService, SetExpiration, SetOptions};
 use serde_json::Value;
 
-use super::{Completion, persist};
+use super::{Completion, LeaseReceipt, lease_receipt::accepted_owner, persist};
 
 #[derive(Clone, Copy)]
 pub(crate) enum Delivery {
@@ -87,7 +87,8 @@ where
         redis,
         &delivery_lock_key(subtask_id, delivery),
         dependency,
-        work,
+        None,
+        |_| work,
     )
     .await
 }
@@ -96,14 +97,16 @@ pub(crate) fn delivery_lock_key(subtask_id: i64, delivery: Delivery) -> String {
     format!("wegent:lock:{}", delivery.label(subtask_id))
 }
 
-pub(crate) async fn with_owned_lease<R, T, E, F>(
+pub(crate) async fn with_owned_lease<R, T, E, W, F>(
     redis: &R,
     key: &str,
     dependency: impl Fn() -> E,
-    work: F,
+    accepted: Option<fn() -> T>,
+    work: W,
 ) -> Result<T, E>
 where
     R: Redis,
+    W: FnOnce(LeaseReceipt) -> F,
     F: Future<Output = Result<T, E>>,
 {
     const LEASE_MS: u64 = 30_000;
@@ -115,10 +118,22 @@ where
     loop {
         match redis.set_with(key, token.as_str(), options).await {
             Ok(true) => break,
-            Ok(false) if tokio::time::Instant::now() < deadline => {
+            Ok(false) => {
+                if let Some(accepted) = accepted {
+                    match accepted_owner(redis, key).await {
+                        Ok(true) => return Ok(accepted()),
+                        Ok(false) => {}
+                        Err(error) => {
+                            tracing::warn!(%error, key, "execution acceptance unavailable");
+                            return Err(dependency());
+                        }
+                    }
+                }
+                if tokio::time::Instant::now() >= deadline {
+                    return Err(dependency());
+                }
                 tokio::time::sleep(Duration::from_millis(50)).await;
             }
-            Ok(false) => return Err(dependency()),
             Err(error) => {
                 tracing::warn!(%error, key, "delivery lock unavailable");
                 return Err(dependency());
@@ -129,37 +144,20 @@ where
         tokio::time::Instant::now() + Duration::from_secs(10),
         Duration::from_secs(10),
     );
+    let receipt = LeaseReceipt::new(key, token);
+    let work = work(receipt.clone());
     tokio::pin!(work);
-    let ttl = LEASE_MS.to_string();
     let result = loop {
         tokio::select! {
             result = &mut work => break result,
             _ = renewal.tick() => {
-                let renewed: Result<i64, _> = redis.eval(
-                    "if redis.call('GET', KEYS[1]) == ARGV[1] then
-                        return redis.call('PEXPIRE', KEYS[1], ARGV[2])
-                     end
-                     return 0",
-                    [key],
-                    [token.as_str(), ttl.as_str()],
-                ).await;
-                if !matches!(renewed, Ok(1)) {
+                if !matches!(receipt.renew(redis, LEASE_MS).await, Ok(true)) {
                     break Err(dependency());
                 }
             }
         }
     };
-    let released: Result<i64, _> = redis
-        .eval(
-            "if redis.call('GET', KEYS[1]) == ARGV[1] then
-            return redis.call('DEL', KEYS[1])
-         end
-         return 0",
-            [key],
-            [token.as_str()],
-        )
-        .await;
-    if let Err(error) = released {
+    if let Err(error) = receipt.release(redis).await {
         tracing::warn!(%error, key, "delivery lock release failed");
     }
     result

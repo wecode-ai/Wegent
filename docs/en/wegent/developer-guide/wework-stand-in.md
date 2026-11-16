@@ -4,6 +4,12 @@ sidebar_position: 42
 
 # Wework Stand-in
 
+## IM reply callback routing
+
+DingTalk private messages share a persistent stand-in conversation, but each incoming message registers its own reply card. Python registration and Rust Socket.IO forwarding must use the same callback address: `runtime:{device_id}:{task_id}:{sha256(callback_id)}`, with a lowercase hexadecimal digest of the original UTF-8 bytes. Sources without `callback_id` retain the task address without a digest. Progress, final replies and errors must use the same message address. Looking up only the persistent conversation leaves its card at the initial progress state.
+
+`backend-rs/src/socketio/im_callback_redis_tests.rs` uses real Redis to cover interleaved messages, progress and terminal delivery, stale-message rejection, late events and legacy addresses. The existing Backend Rust CI job explicitly runs these protocol integration tests. Only external DingTalk transport is substituted, all identifiers are synthetic, and compatibility with real DingTalk accounts or services remains unverified.
+
 ## Cross-conversation search and automatic recall
 
 `search_context` searches readable conversations on the current device using the existing `read_task` native history, pagination, long-message chunks and identity checks. This first stage adds no duplicate message database or external-history backfill. External messages absent from Wework conversations and history on other devices are outside its coverage.

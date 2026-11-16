@@ -4017,6 +4017,14 @@ export function DesktopSidebar({
     sidebarWorklistsScrollRef,
   ])
 
+  const runtimeWorkLoadStatus = (
+    <RuntimeWorkLoadStatus
+      load={runtimeWorkLoad}
+      hasSnapshot={runtimeWork != null}
+      onRetry={onRetryRuntimeWork}
+    />
+  )
+
   return (
     <aside
       data-testid={containerTestId}
@@ -4175,11 +4183,6 @@ export function DesktopSidebar({
               setSidebarScrolled(viewport.scrollTop > 0)
             }}
           >
-            <RuntimeWorkLoadStatus
-              load={runtimeWorkLoad}
-              hasSnapshot={runtimeWork != null}
-              onRetry={onRetryRuntimeWork}
-            />
             <nav className="mb-4 space-y-0.5">
               {sidebarNavigation.map(item => {
                 if (item.surface === 'module') {
@@ -4236,6 +4239,7 @@ export function DesktopSidebar({
                 )
               })}
             </nav>
+            {priorityFilterActive && runtimeWorkLoadStatus}
             {priorityFilterActive ? (
               <DesktopSidebarPrioritySection
                 priorityItems={priorityView.priorityItems}
@@ -4738,6 +4742,7 @@ export function DesktopSidebar({
                       </Tooltip>
                     </div>
                   </DesktopSidebarSectionHeader>
+                  {runtimeWorkLoadStatus}
                   {displayedChatsExpanded && (
                     <div className="space-y-0.5 pb-2">
                       {standaloneLocalHarnessSessions.length === 0 &&
