@@ -56,7 +56,10 @@ pub fn history_ids_statement(table: &str, window: SubtaskHistoryWindow) -> Strin
     if window.summary_checkpoint_only {
         statement.push_str(&summary_checkpoint_predicate(table));
     }
-    statement.push_str(" ORDER BY message_id DESC, created_at DESC, id DESC LIMIT ?");
+    // MySQL 8.0 can allocate JSON columns in a multi-column filesort even
+    // when they are not projected. Keep the DB order on the leading message
+    // boundary and finish the deterministic tie-break in Rust after the read.
+    statement.push_str(" ORDER BY message_id DESC, id DESC LIMIT ?");
     statement
 }
 
@@ -95,9 +98,10 @@ pub async fn history_candidates_on(
         args.push(StatementArg::Int(before));
     }
     args.push(StatementArg::Int(window.limit));
-    sql.fetch_all_rows(route, &statement, args)
+    let mut candidates = sql
+        .fetch_all_rows(route, &statement, args)
         .await?
-        .iter()
+        .into_iter()
         .map(|row| {
             Ok(HistoryCandidate {
                 id: row.get_required("id")?,
@@ -105,7 +109,10 @@ pub async fn history_candidates_on(
                 created_at: row.get("created_at")?,
             })
         })
-        .collect()
+        .collect::<MysqlResult<Vec<_>>>()?;
+    candidates.sort_by_key(|row| std::cmp::Reverse(row.key()));
+    candidates.dedup_by_key(|row| row.id);
+    Ok(candidates)
 }
 
 pub async fn history_payloads_on(
@@ -188,7 +195,7 @@ mod tests {
         for query in &queries {
             assert!(query.starts_with("SELECT id FROM subtasks_0001"));
             assert!(query.contains("AND message_id < ?"));
-            assert!(query.ends_with("ORDER BY message_id DESC, created_at DESC, id DESC LIMIT ?"));
+            assert!(query.ends_with("ORDER BY message_id DESC, id DESC LIMIT ?"));
             assert!(!query.split("FROM").next().unwrap().contains("result"));
         }
         assert!(queries[1].contains("JSON_TYPE"));

@@ -503,7 +503,7 @@ pub trait TaskStore:
         let candidates = self
             .list_subtask_history_candidates_on(sql, task_id, owner_user_id, window)
             .await?;
-        let ids: Vec<_> = candidates.iter().rev().map(|row| row.id).collect();
+        let ids: Vec<_> = candidates.into_iter().rev().map(|row| row.id).collect();
         self.load_subtask_history_payloads_on(sql, task_id, owner_user_id, &ids)
             .await
     }
