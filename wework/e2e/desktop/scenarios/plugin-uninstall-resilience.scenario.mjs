@@ -108,6 +108,7 @@ export async function createDesktopScenario({
     // only a committed DELETE whose response was lost is verified, never
     // replayed.
     let attempts = 0
+    let committedDeleteCount = 0
     while (true) {
       attempts += 1
       const attemptStart = deletes(item).length
@@ -119,11 +120,37 @@ export async function createDesktopScenario({
           requests.some(request => request.status === 503 && request.committedResponseHeld),
         'Real DELETE neither committed nor was rejected'
       )
-      if (settled.some(request => request.status === 204 && request.committedResponseHeld)) break
+      if (settled.some(request => request.status === 204 && request.committedResponseHeld)) {
+        // Record every DELETE observed so far. Any later DELETE is a replay of
+        // a destructive action that the backend already committed.
+        committedDeleteCount = deletes(item).length
+        break
+      }
       const rejected = settled.find(
         request => request.status === 503 && request.committedResponseHeld
       )
-      if (attempts === 3 || !rejected) throw new Error('Real DELETE never committed')
+      if (!rejected) throw new Error('The rejected DELETE was not held for inspection')
+      const held = rejected.readHeldResponse()
+      if (!held) throw new Error('The rejected DELETE response was no longer inspectable')
+      assert.equal(held.status, 503, 'The rejected DELETE did not return 503')
+      const body = held.body.toString('utf8')
+      let rejection
+      try {
+        rejection = JSON.parse(body)
+      } catch {
+        throw new Error(`The rejected DELETE returned a non-JSON body: ${body.slice(0, 200)}`)
+      }
+      assert.equal(
+        rejection.detail,
+        'plugin_write_busy',
+        `The uninstall failed for a reason other than the plugin-write lease: ${body.slice(0, 200)}`
+      )
+      // The real rejection must not have changed account state before the retry.
+      assert.ok(
+        await accountPlugin(cloud, item.slug),
+        'A plugin-write lease rejection removed the plugin'
+      )
+      if (attempts === 3) throw new Error('Real DELETE never committed')
       const verificationStart = apiProxy.requests.length
       // The proxy withheld the real rejection; deliver it so the renderer
       // completes this attempt before the next one starts.
@@ -146,7 +173,14 @@ export async function createDesktopScenario({
     assert.equal(
       deletes(item).filter(request => request.status === 204).length,
       1,
-      'Lost response caused a second destructive DELETE'
+      'Lost response caused a second committed DELETE'
+    )
+    // No DELETE may be replayed after the backend committed the uninstall,
+    // whatever status the replay would receive (404, 503, or another 204).
+    assert.equal(
+      deletes(item).length,
+      committedDeleteCount,
+      'The client replayed a DELETE after the backend committed the uninstall'
     )
     assert.ok(
       apiProxy.requests
