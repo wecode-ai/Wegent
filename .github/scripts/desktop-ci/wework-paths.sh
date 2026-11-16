@@ -160,6 +160,13 @@ classify_wework_path() {
       select_account_auth_checkpoints
       return
       ;;
+    wework/e2e/desktop/modules/dingtalk-release-auth.mjs | \
+      wework/e2e/desktop/modules/dingtalk-oauth-protocol.mjs | \
+      wework/e2e/desktop/fixtures/dingtalk-releases.py)
+      select_target "cloud:plugin-account-auth-password"
+      select_target "cloud:plugin-account-auth-dws"
+      return
+      ;;
     wework/e2e/desktop/modules/terminal-compatibility-flows.mjs)
       select_target "cloud:core-task-flow"
       return

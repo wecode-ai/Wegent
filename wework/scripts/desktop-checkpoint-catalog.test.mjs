@@ -203,6 +203,21 @@ test('a feature config selects its existing shard rather than all desktop suites
   assert.equal(result.wework_desktop_other_e2e, 'false')
 })
 
+test('DingTalk release cases reuse the existing password and DWS CI checkpoints', () => {
+  for (const path of [
+    'wework/e2e/desktop/modules/dingtalk-release-auth.mjs',
+    'wework/e2e/desktop/modules/dingtalk-oauth-protocol.mjs',
+    'wework/e2e/desktop/fixtures/dingtalk-releases.py',
+  ]) {
+    const result = classified(path)
+    const segments = JSON.parse(result.wework_desktop_cloud_e2e_matrix).include.flatMap(shard =>
+      shard.segments.split(',')
+    )
+    assert.deepEqual(segments.sort(), ['plugin-account-auth-dws', 'plugin-account-auth-password'])
+    assert.equal(result.wework_desktop_other_e2e, 'false')
+  }
+})
+
 test('plugin cache changes retain the recovery scenario in its existing cloud shard', () => {
   for (const path of [
     'executor/crates/plugin-packages/src/services/workbench.rs',

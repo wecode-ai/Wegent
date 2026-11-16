@@ -119,11 +119,18 @@ export async function verifyDwsCloudAccount({
     () => api('/plugin-connections'),
     list =>
       list.some(
-        item => item.installed_plugin_id === installedId && item.device_ids.includes(sourceDeviceId)
+        item =>
+          item.installed_plugin_id === installedId &&
+          item.connector_slug === 'dingtalk' &&
+          item.device_ids.includes(sourceDeviceId)
       ),
     timeoutMs,
     'The native DWS source-store migration did not enroll and grant the source device'
-  ).then(list => list.find(item => item.installed_plugin_id === installedId))
+  ).then(list =>
+    list.find(
+      item => item.installed_plugin_id === installedId && item.connector_slug === 'dingtalk'
+    )
+  )
   assert.equal(connection.account_id, 'synthetic-corp:synthetic-user')
   assert.ok(connection.device_ids.includes(sourceDeviceId))
   assert.equal(JSON.parse((await store('check')).stdout).verified, true)

@@ -20,6 +20,7 @@ import {
 import { managedRoot } from '../modules/managed-plugin-root.mjs'
 import { verifyPluginNativeAuth } from '../modules/plugin-native-auth.mjs'
 import { localSnapshotChecks } from '../modules/local-snapshot-auth.mjs'
+import { createDingtalkReleaseChecks } from '../modules/dingtalk-release-auth.mjs'
 import { verifyNativeAccountRuntimeIsolation } from '../modules/native-account-runtime-isolation.mjs'
 import {
   inspectManagedPython,
@@ -87,6 +88,7 @@ export async function createDesktopScenario({
   workbenchReadyTimeoutMs,
 }) {
   const dwsSourceRoot = join(resultDir, 'dws-source')
+  const dingtalk = createDingtalkReleaseChecks({ checkpoint, resultDir, sourceRoot: dwsSourceRoot })
   const ghConfigDir = join(resultDir, 'gh-config')
   await mkdir(ghConfigDir, { recursive: true })
   await run('gh', ['--version'])
@@ -191,7 +193,10 @@ export async function createDesktopScenario({
     requiresCloudEnvironment: true,
     requiresNativeCloudAuthorization: checkpoint === 'plugin-account-auth-password',
     requiresPackagedHarnessRuntime: checkpoint === 'plugin-account-auth-password',
-    prepareApp: context => githubProtocol?.prepareApp(context),
+    async prepareApp(context) {
+      await githubProtocol?.prepareApp(context)
+      await dingtalk?.prepareApp(context)
+    },
     cleanup: () => githubProtocol?.cleanup(),
     codexConfigToml: githubConfig,
     appEnvironment: {
@@ -215,6 +220,7 @@ export async function createDesktopScenario({
       restartDesktopApp = restart
     },
     async handleHttp(request, response, url) {
+      if (await dingtalk?.handleHttp(request, response, url)) return true
       if (request.method !== 'POST' || !['/responses', '/v1/responses'].includes(url.pathname))
         return false
       const body = await readRequestBody(request)
@@ -377,6 +383,21 @@ export async function createDesktopScenario({
               signalAutomaticRetry,
             })
           : null
+      const verifyDingtalk = () =>
+        dingtalk.verify({
+          returnPluginKey: slug,
+          cloud,
+          control,
+          executorHome,
+          api,
+          waitForValue,
+          timeoutMs: workbenchReadyTimeoutMs,
+          signalAutomaticRetry,
+          invoke: async (nextCommand, expected) => {
+            command = nextCommand
+            await invokeCloud(expected)
+          },
+        })
       const checks = new Map([
         [
           'plugin-account-auth-coordination',
@@ -397,6 +418,11 @@ export async function createDesktopScenario({
         [
           'plugin-account-auth-password',
           async () => {
+            await verifyDingtalk()
+            await control.command(
+              'click',
+              `[data-testid="plugins-installed-strip-item-${installedId}"]`
+            )
             await waitForPythonRuntimeEvent(
               join(resultDir, 'app.log'),
               'python-runtime-ensure-started'
@@ -705,6 +731,7 @@ export async function createDesktopScenario({
         [
           'plugin-account-auth-dws',
           async () => {
+            await verifyDingtalk()
             await verifyDwsCloudAccount({
               cloud,
               resultDir,

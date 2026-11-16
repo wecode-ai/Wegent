@@ -18,7 +18,7 @@ if action.startswith("local-"):
         source.unlink(missing_ok=True)
     else:
         assert action == "local-health"
-    print(json.dumps({"status":"ok" if source.exists() else "need_login"}))
+    print(json.dumps({"status":"need_login" if action == "local-health" and not source.exists() else "ok"}))
     sys.exit(0)
 adapter = AccountAuthAdapter(connector_slug="snapshot", credential_type="bearer",
     export=lambda:json.loads(source.read_text()), account_id=lambda value:"snapshot@example.test",
