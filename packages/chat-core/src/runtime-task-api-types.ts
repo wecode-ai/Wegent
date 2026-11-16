@@ -165,6 +165,7 @@ export interface RuntimeProjectWork {
 }
 
 export interface RuntimeWorkListResponse {
+  localIssueQuestionsPending?: boolean
   projects: RuntimeProjectWork[]
   chats: RuntimeDeviceWorkspace[]
   totalTasks: number
@@ -175,6 +176,10 @@ export interface RuntimeSendRequest {
   message: string
   clientUserMessageId?: string
   queueIfBusy?: boolean
+  /** Private discussion retains the task identity without automatic Issue writeback. */
+  conversationContext?: 'private_discussion'
+  startNewSession?: boolean
+  expectedThreadId?: string
   retrySourceTurnId?: string
   initialGoal?: RuntimeGoalCreateInput | null
   ephemeral?: boolean
@@ -209,6 +214,7 @@ export interface RuntimeSendResponse {
 export interface RuntimeGuidanceRequest {
   address: RuntimeTaskAddress
   message: string
+  conversationContext?: RuntimeSendRequest['conversationContext']
   attachmentIds?: number[]
   attachments?: Attachment[]
   clientGuidanceId?: string
@@ -241,6 +247,12 @@ export interface RuntimeGoalCreateInput {
 }
 
 export type RuntimeTaskOrigin = {
+  type: 'project_chat'
+  cloudProjectId: string
+  projectStore: 'local' | 'backend'
+  loopItemId?: never
+  [key: string]: unknown
+} | {
   type: 'board_comment' | 'board_task' | 'issue_dispatch' | 'project_automation'
   cloudProjectId: string
   loopItemId: string

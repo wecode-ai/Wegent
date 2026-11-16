@@ -69,9 +69,9 @@ fn missing_config_creates_stable_local_device_identity() {
 }
 
 #[test]
-fn device_id_override_does_not_change_runtime_instance_identity() {
+fn persisted_identity_wins_over_launcher_defaults() {
     let _lock = lock_env();
-    let _runtime_instance_id = EnvGuard::remove("WEGENT_RUNTIME_INSTANCE_ID");
+    let _runtime_instance_id = EnvGuard::set("WEGENT_RUNTIME_INSTANCE_ID", "runtime-launcher");
     let _device_id = EnvGuard::set("DEVICE_ID", "route-device");
     let path = temp_path("runtime-instance-device-config.json");
     fs::write(
@@ -82,12 +82,12 @@ fn device_id_override_does_not_change_runtime_instance_identity() {
 
     let config = load_device_config(Some(path.to_str().unwrap())).unwrap();
 
-    assert_eq!(config.device_id, "route-device");
+    assert_eq!(config.device_id, "stored-device");
     assert_eq!(config.runtime_instance_id, "runtime-stable");
 }
 
 #[test]
-fn runtime_instance_id_has_a_dedicated_environment_override() {
+fn missing_runtime_instance_id_uses_the_environment_seed() {
     let _lock = lock_env();
     let _runtime_instance_id = EnvGuard::set("WEGENT_RUNTIME_INSTANCE_ID", "runtime-env");
     let path = temp_path("runtime-instance-env-config.json");
@@ -96,6 +96,28 @@ fn runtime_instance_id_has_a_dedicated_environment_override() {
     let config = load_device_config(Some(path.to_str().unwrap())).unwrap();
 
     assert_eq!(config.runtime_instance_id, "runtime-env");
+}
+
+#[test]
+fn new_identity_seeds_are_persisted_for_app_and_standalone_executors() {
+    let _lock = lock_env();
+    for device_type in ["app", "local", "remote", "cloud"] {
+        let _type = EnvGuard::set("DEVICE_TYPE", device_type);
+        let path = temp_path(&format!("{device_type}-identity-seed.json"));
+        fs::write(&path, r#"{"device_name":"Existing name"}"#).unwrap();
+        let device_seed = EnvGuard::set("DEVICE_ID", "first-device");
+        let runtime_seed = EnvGuard::set("WEGENT_RUNTIME_INSTANCE_ID", "first-runtime");
+        let first = load_device_config(Some(path.to_str().unwrap())).unwrap();
+        assert_eq!(first.device_id, "first-device");
+        assert_eq!(first.runtime_instance_id, "first-runtime");
+        drop(device_seed);
+        drop(runtime_seed);
+        let _device_seed = EnvGuard::set("DEVICE_ID", "replacement-device");
+        let _runtime_seed = EnvGuard::set("WEGENT_RUNTIME_INSTANCE_ID", "replacement-runtime");
+        let reloaded = load_device_config(Some(path.to_str().unwrap())).unwrap();
+        assert_eq!(reloaded.device_id, first.device_id);
+        assert_eq!(reloaded.runtime_instance_id, first.runtime_instance_id);
+    }
 }
 
 #[test]

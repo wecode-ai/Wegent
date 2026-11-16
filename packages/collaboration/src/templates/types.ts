@@ -8,6 +8,27 @@ export interface TemplateRole {
   name: string
   responsibility: string
   defaultKind?: 'human' | 'agent'
+  agentKey?: string
+}
+
+export interface TemplateAgentRouting {
+  executionPolicy: import('../agent-form/runnerRouting').AgentExecutionPolicy
+  modelPolicy: import('../agent-form/runnerRouting').AgentModelPolicy
+}
+
+export type TemplateRoutingResolver = (
+  runtime: TemplateAgent['runtime']
+) => Promise<TemplateAgentRouting>
+
+export interface TemplateAgent {
+  key: string
+  name: string
+  runtime: 'codex' | 'claude_code'
+  systemPrompt: string
+  capabilityDescription: string
+  executionMode?: 'auto' | 'manual_approval'
+  workspacePolicy?: 'project' | 'git_worktree'
+  maxConcurrentExecutions?: number
 }
 
 export interface TemplateStage {
@@ -53,6 +74,7 @@ export interface CollaborationTemplate {
           }
           board?: { name: string; tags: string[] }
         }
+        agents?: TemplateAgent[]
         groups: TemplateGroup[]
       }
     }
@@ -101,6 +123,7 @@ export interface CollaborationTemplateRemote {
   }>
   get(id: number): Promise<TemplateRecord>
   save(document: CollaborationTemplate, revision: string | null): Promise<TemplateRecord>
+  delete(id: number): Promise<void>
   install(id: number): Promise<void>
   publish(id: number, version: string): Promise<void>
 }

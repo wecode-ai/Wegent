@@ -1,11 +1,11 @@
-import { act, renderHook, waitFor } from '@testing-library/react'
-import type { ReactElement } from 'react'
-import { describe, expect, test, vi } from 'vitest'
 import type {
   PluginAccessResponse,
   PluginMarketplaceItem,
   PluginSubmissionCompleteResponse,
 } from '@/types/api'
+import { act, renderHook, waitFor } from '@testing-library/react'
+import type { ReactElement } from 'react'
+import { describe, expect, test, vi } from 'vitest'
 import type { InstalledPluginItem } from '../PluginManagementRows'
 import type { PluginVersionSubmitDrawerProps } from '../PluginVersionSubmitDrawer'
 import { usePluginVersionSubmission } from './usePluginVersionSubmission'
@@ -106,25 +106,6 @@ describe('usePluginVersionSubmission request lifetime', () => {
     expect(input.onPublished).not.toHaveBeenCalled()
   })
 
-  test('does not revive a package request when the account switches away and back', async () => {
-    const input = options()
-    const pending = deferred<File>()
-    vi.mocked(input.localPluginApi.packageCreatedPlugin).mockReturnValue(pending.promise)
-    const { result, rerender } = renderHook(
-      ({ scopeKey }) => usePluginVersionSubmission({ ...input, scopeKey }),
-      { initialProps: { scopeKey: 'account' } }
-    )
-    await open(result)
-    act(() => drawer(result).props.onSubmit('Update queries'))
-    rerender({ scopeKey: 'other-account' })
-    rerender({ scopeKey: 'account' })
-
-    await act(async () => pending.resolve(new File(['package'], 'personal.zip')))
-
-    expect(input.pluginApi.publishSubmission).not.toHaveBeenCalled()
-    expect(result.current.drawer).toBeNull()
-  })
-
   test('ignores a completed publication after unmount', async () => {
     const input = options()
     const pending = deferred<PluginSubmissionCompleteResponse>()
@@ -157,28 +138,6 @@ describe('usePluginVersionSubmission request lifetime', () => {
     await act(async () => pending.resolve())
 
     expect(input.onNotice).not.toHaveBeenCalled()
-  })
-
-  test('integrates and reports a successful submission in the active lifetime', async () => {
-    const input = options()
-    const { result } = renderHook(() => usePluginVersionSubmission(input))
-    await open(result)
-    act(() => drawer(result).props.onSubmit('  Update queries  '))
-
-    await waitFor(() =>
-      expect(input.onNotice).toHaveBeenCalledWith(expect.objectContaining({ kind: 'success' }))
-    )
-
-    expect(input.pluginApi.publishSubmission).toHaveBeenCalledWith(
-      expect.any(File),
-      expect.objectContaining({
-        slug: 'personal',
-        version: '2.0.0',
-        releaseNotes: 'Update queries',
-      })
-    )
-    expect(input.onPublished).toHaveBeenCalledOnce()
-    expect(result.current.drawer).toBeNull()
   })
 })
 

@@ -10,6 +10,7 @@ import type {
   CollaborationGroupMember,
   CollaborationExecutionEnvironment,
   CollaborationWorkspaceMember,
+  CollaborationUser,
   CollaborationOwnedAgent,
   CollaborationProject,
 } from "../types";
@@ -115,8 +116,13 @@ export interface ProjectCreateResourceSetup {
   members: CollaborationWorkspaceMember[];
   agents: CollaborationOwnedAgent[];
   defaultAgentResourceIds?: string[];
+  searchUsers?(query: string): Promise<CollaborationUser[]>;
   groups: CollaborationGroup[];
   executionEnvironments?: CollaborationExecutionEnvironment[];
+  executionEnvironmentLoading?: boolean;
+  executionEnvironmentError?: string;
+  retryExecutionEnvironments?(): void;
+  validate?(selection: ProjectCreateResourceSelection): Promise<void>;
   loadCollaborationGroupGenerationModels?(): Promise<ProjectCreateGenerationModelCatalog>;
   generateCollaborationGroupDraft?(
     input: ProjectCreateCollaborationGroupDraftInput,
@@ -126,7 +132,7 @@ export interface ProjectCreateResourceSetup {
   configure(
     project: CollaborationProject,
     selection: ProjectCreateResourceSelection,
-  ): Promise<void>;
+  ): Promise<CollaborationProject | void>;
 }
 
 export interface DingTalkAITableLink {
@@ -202,6 +208,10 @@ export interface ProjectCreateLabels {
   collaborators: string;
   currentUser: string;
   addCollaborator: string;
+  searchCollaborators: string;
+  searchingPeople: string;
+  availablePeople: string;
+  peopleSearchFailed: string;
   importGroupDescription: string;
   availableAgents: string;
   availableGroups: string;
@@ -266,6 +276,12 @@ export interface ProjectCreateDialogProps {
   defaultLocation: ProjectCreateLocation;
   allowDingTalkAITable: boolean;
   labels: ProjectCreateLabels;
+  workspaceSelection?: {
+    label: string;
+    value: string;
+    options: Array<{ value: string; label: string }>;
+    onChange(value: string): void;
+  };
   workspaceContext?: {
     name: string;
     owner: string;

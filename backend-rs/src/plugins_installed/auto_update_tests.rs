@@ -474,6 +474,109 @@ fn advancing_a_release_preserves_runtime_preferences_and_legacy_defaults() {
     assert_eq!(payload["spec"]["updatePolicy"], "auto");
 }
 
+#[test]
+fn advancing_historical_release_takes_account_auth_from_target_manifest() {
+    let plugin = plugin_row(1);
+    let mut release = release_row(12, 1);
+    let auth = serde_json::json!({
+        "protocolVersion": 1, "credentialType": "password",
+        "adapter": "scripts/account-auth.py"
+    });
+    release.manifest_json = Json(OpaqueJson::from_serializable(serde_json::json!({
+        "connectors": [{"slug": "gitlab-intra", "accountAuth": auth}]
+    })));
+    release.scan_report_json = Json(OpaqueJson::from_serializable(serde_json::json!({
+        "components": {"connectors": [
+            {"slug": "gitlab-intra", "localAuth": {"kind": "browser_oauth"}},
+            {"slug": "removed", "accountAuth": auth}
+        ]}
+    })));
+    let payload = installed_payload(&plugin, &release, &InstalledSpec::default());
+    let connectors = &payload["spec"]["components"]["connectors"];
+    assert_eq!(connectors[0]["accountAuth"], auth);
+    assert_eq!(connectors[0]["localAuth"]["kind"], "browser_oauth");
+    assert!(connectors[1].get("accountAuth").is_none());
+    assert!(
+        release.scan_report_json.0.to_value()["components"]["connectors"][0]
+            .get("accountAuth")
+            .is_none()
+    );
+
+    release.manifest_json = Json(OpaqueJson::from_serializable(serde_json::json!({
+        "connectors": []
+    })));
+    let payload = installed_payload(&plugin, &release, &InstalledSpec::default());
+    assert!(
+        payload["spec"]["components"]["connectors"][0]
+            .get("accountAuth")
+            .is_none()
+    );
+}
+
+#[test]
+fn advancing_release_matches_the_first_normalized_valid_connector() {
+    let auth = serde_json::json!({
+        "protocolVersion": 1, "credentialType": "password",
+        "adapter": "scripts/account-auth.py"
+    });
+    for (padding, with_auth) in [" ", "\u{1c}", "\u{1d}", "\u{1e}", "\u{1f}"]
+        .into_iter()
+        .flat_map(|padding| [false, true].map(|with_auth| (padding, with_auth)))
+    {
+        let mut release = release_row(12, 1);
+        let mut first = serde_json::json!({
+            "slug": format!("{padding}gitlab-intra{padding}"), "authPolicy": "on_install"
+        });
+        if with_auth {
+            first["accountAuth"] = auth.clone();
+        }
+        release.manifest_json = Json(OpaqueJson::from_serializable(serde_json::json!({
+            "connectors": [
+                {"slug": "gitlab-intra", "authPolicy": "invalid"},
+                first,
+                {"slug": "gitlab-intra", "accountAuth": {"adapter": "../unchecked.py"}}
+            ]
+        })));
+        release.scan_report_json = Json(OpaqueJson::from_serializable(serde_json::json!({
+            "components": {"connectors": [{"slug": "gitlab-intra", "accountAuth": auth}]}
+        })));
+
+        let payload = installed_payload(&plugin_row(1), &release, &InstalledSpec::default());
+
+        assert_eq!(
+            payload["spec"]["components"]["connectors"][0].get("accountAuth"),
+            if with_auth { Some(&auth) } else { None },
+            "padding={padding:?}, with_auth={with_auth}"
+        );
+    }
+}
+
+#[test]
+fn advancing_release_treats_non_list_manifest_connectors_as_empty() {
+    for connectors in [
+        Value::Null,
+        serde_json::json!({}),
+        serde_json::json!("invalid"),
+        serde_json::json!(1),
+    ] {
+        let mut release = release_row(12, 1);
+        release.manifest_json = Json(OpaqueJson::from_serializable(serde_json::json!({
+            "connectors": connectors
+        })));
+        release.scan_report_json = Json(OpaqueJson::from_serializable(serde_json::json!({
+            "components": {"connectors": [{"slug": "gitlab-intra", "accountAuth": {}}]}
+        })));
+
+        let payload = installed_payload(&plugin_row(1), &release, &InstalledSpec::default());
+
+        assert!(
+            payload["spec"]["components"]["connectors"][0]
+                .get("accountAuth")
+                .is_none()
+        );
+    }
+}
+
 #[tokio::test]
 async fn successive_bounded_batches_drain_candidates_without_repeating_updates() {
     let catalog = catalog_for(&[1, 2, 3]);

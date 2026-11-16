@@ -1,0 +1,17 @@
+[package]
+name = "wegent-backend-persistence"
+version = "0.1.0"
+edition = "2024"
+rust-version.workspace = true
+license = "Apache-2.0"
+description = "Request-scoped SQL handles and task routing contracts"
+
+[dependencies]
+async-trait = "0.1"
+brz-mysql = { version = "=0.0.29", features = ["metrics", "slow-log"] }
+chrono = { version = "0.4", default-features = false, features = ["clock", "serde"] }
+wegent-backend-config = { path = "../config" }
+
+[dev-dependencies]
+wegent-backend-test-support = { path = "../test-support" }
+tokio = { version = "1", features = ["macros", "net", "rt-multi-thread", "sync", "time"] }

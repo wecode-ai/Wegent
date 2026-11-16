@@ -1,9 +1,9 @@
-import { describe, expect, test } from 'vitest'
 import { renderHook } from '@testing-library/react'
-import type { RuntimeTaskReminderItem } from './runtimeTaskReminders'
-import { getVisibleRuntimeTaskUnreadKeys, useRuntimeTaskReminders } from './runtimeTaskReminders'
-import { RuntimeTaskMachine } from './runtimeTaskLifecycle/RuntimeTaskMachine'
+import { describe, expect, test } from 'vitest'
 import { RuntimeTaskLifecycleStore } from './runtimeTaskLifecycle/RuntimeTaskLifecycleStore'
+import { RuntimeTaskMachine } from './runtimeTaskLifecycle/RuntimeTaskMachine'
+import type { RuntimeTaskReminderItem } from './runtimeTaskReminders'
+import { useRuntimeTaskReminders } from './runtimeTaskReminders'
 
 function reminderItem(key: string): RuntimeTaskReminderItem {
   return {
@@ -52,10 +52,5 @@ describe('getVisibleRuntimeTaskUnreadKeys', () => {
     expect(result.current.items.map(row => row.address.taskId)).toEqual(['hidden-pending'])
     expect(result.current.unreadCount).toBe(0)
     expect(result.current.unreadTaskKeys.size).toBe(0)
-  })
-  test('excludes unread lifecycle entries that no longer exist in runtime work', () => {
-    expect(
-      getVisibleRuntimeTaskUnreadKeys([reminderItem('visible')], new Set(['visible', 'removed']))
-    ).toEqual(new Set(['visible']))
   })
 })

@@ -1115,8 +1115,9 @@ async def test_project_chat_agent_start_creates_one_streaming_message(monkeypatc
 @pytest.mark.parametrize(
     "outcome", ["success", "forbidden", "configuration", "unexpected"]
 )
+@pytest.mark.parametrize("human_request_id", [None, "assigned-question"])
 async def test_project_comment_execute_acknowledges_identity_and_failures(
-    monkeypatch, outcome
+    monkeypatch, outcome, human_request_id
 ):
     from fastapi import HTTPException
 
@@ -1151,6 +1152,7 @@ async def test_project_comment_execute_acknowledges_identity_and_failures(
             "triggerMessageId": "m",
             "userId": 1,
             "deviceId": "forged-device",
+            **({"humanRequestId": human_request_id} if human_request_id else {}),
         },
     )
     assert execute.call_args.kwargs["user_id"] == 7
@@ -1161,6 +1163,7 @@ async def test_project_comment_execute_acknowledges_identity_and_failures(
         "runner_selection": None,
         "trigger_message_id": "m",
         "attachment_ids": [],
+        "human_request_id": human_request_id,
     }
     if outcome == "success":
         assert result == {"ok": True, "result": []}

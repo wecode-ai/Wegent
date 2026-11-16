@@ -18,7 +18,7 @@ import {
   writeFile,
 } from 'node:fs/promises'
 import { constants } from 'node:fs'
-import { dirname, join, relative, resolve } from 'node:path'
+import { dirname, join, posix, relative, resolve, win32 } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 
 import { DESKTOP_CHECKPOINTS, PLUGIN_SEGMENTS } from '../checkpoints.mjs'
@@ -26,6 +26,7 @@ import { reservePort } from '../port-reservation.mjs'
 import { appendProcessOutput } from '../process-output.mjs'
 import {
   crashOwnedProcessTree,
+  logDesktopE2eSignal,
   processIsAlive,
   stopProcess,
   stopProcessGroup,
@@ -467,15 +468,24 @@ const CLOUD_EXECUTION_MODEL_PROTOCOL_MATRIX_CASES = MODEL_PROTOCOL_MATRIX_CASES.
   ...model,
   execution: 'cloud',
 }))
-const LOCAL_CUSTOM_MODEL_PROTOCOL_MATRIX_CASES = LOCAL_EXECUTION_MODEL_PROTOCOL_MATRIX_CASES.filter(
-  model => model.source === 'local'
-)
+const LOCAL_CUSTOM_MODEL_PROTOCOL_MATRIX_CASES = [
+  ...LOCAL_EXECUTION_MODEL_PROTOCOL_MATRIX_CASES.filter(model => model.source === 'local'),
+  {
+    execution: 'local',
+    source: 'local',
+    protocol: 'responses',
+    providerProfileId: 'deepseek',
+    optionIds: ['local-model:desktop-e2e-vision-main'],
+    labels: ['Desktop E2E DeepSeek Pro Vision Main'],
+    modelId: 'deepseek-v4-pro',
+  },
+]
 const MIXED_TOOL_TURN_MODEL_PROTOCOL_MATRIX_CASES = LOCAL_CUSTOM_MODEL_PROTOCOL_MATRIX_CASES.filter(
   model => model.protocol === 'chat' || model.protocol === 'anthropic'
 )
 const LOCAL_CONNECTED_MODEL_PROTOCOL_MATRIX_CASES =
   LOCAL_EXECUTION_MODEL_PROTOCOL_MATRIX_CASES.filter(model => model.source !== 'local')
-const MODEL_PROTOCOL_MATRIX_TOTAL = MODEL_PROTOCOL_MATRIX_CASES.length * 2
+const MODEL_PROTOCOL_MATRIX_TOTAL = MODEL_PROTOCOL_MATRIX_CASES.length * 2 + 1
 const MODEL_PROTOCOL_MATRIX_TEXT_PREFIX = 'WEWORK_MODEL_PROTOCOL_MATRIX_TEXT'
 const MODEL_PROTOCOL_MATRIX_TOOL_PREFIX = 'WEWORK_MODEL_PROTOCOL_MATRIX_TOOL'
 const LOCAL_MODEL_SWITCH_INITIAL_PROMPT =
@@ -550,6 +560,7 @@ const CLOUD_PUBLIC_MODEL_OPTIONS = {
   weworkCloudModelUpstreamApiFormat: 'openai-responses',
 }
 const CLOUD_DEVICE_ID = 'wework-e2e-cloud-device'
+const CLOUD_DEVICE_LIFECYCLE_LATEST_VERSION = '999.0.0'
 const REMOTE_DOCKER_DEVICE_ID = 'wework-e2e-remote-docker-device'
 const FRESH_CHAT_PROMPT = 'WEWORK_DESKTOP_E2E_FRESH_CHAT: confirm this is a new conversation.'
 const FRESH_CHAT_COMPLETION_TEXT = 'WEWORK_DESKTOP_E2E_FRESH_CHAT_COMPLETE'
@@ -590,6 +601,10 @@ const CLOUD_COMPLETION_TEXT = 'WEWORK_DESKTOP_E2E_CLOUD_COMPLETE'
 const CLOUD_FOLLOW_UP_PROMPT =
   'WEWORK_DESKTOP_E2E_CLOUD_FOLLOW_UP: confirm the cloud task remains available.'
 const CLOUD_FOLLOW_UP_COMPLETION_TEXT = 'WEWORK_DESKTOP_E2E_CLOUD_FOLLOW_UP_COMPLETE'
+const CLOUD_HTML_LINK_PROMPT =
+  'WEWORK_DESKTOP_E2E_CLOUD_HTML_LINK: open the Cloud HTML preview and missing-file links.'
+const CLOUD_HTML_LINK_FILENAME = 'cloud-html-link-preview.html'
+const CLOUD_HTML_LINK_MISSING_FILENAME = 'cloud-html-link-missing.html'
 const CLOUD_ARTIFACT_NAME = 'wework-cloud-e2e-result.txt'
 const CLOUD_ARTIFACT_CONTENT = 'CODEX_EXECUTED_REAL_CLOUD_TOOL'
 const ACTIVE_WORKBENCH_SELECTOR = '[data-testid="desktop-workbench-main"]'
@@ -774,8 +789,13 @@ function shouldStopAfterDesktopCheckpoint(checkpoint) {
 }
 
 function shouldConfigureToolDetailsMcp() {
-  if (TOOL_BLOCK_ORDER_ONLY) return true
-  return getActiveOnlyModes().length === 0 && shouldRunDesktopCheckpoint('rendering-extensions')
+  if (TOOL_BLOCK_ORDER_ONLY || MODEL_SWITCH_ONLY) return true
+  const selectedCheckpointNeedsTools =
+    shouldRunDesktopCheckpoint('rendering-extensions') ||
+    shouldRunDesktopCheckpoint('model-routing')
+  // Cloud model matrices use these tools; unrelated only modes never do.
+  if (CLOUD_ONLY) return selectedCheckpointNeedsTools
+  return getActiveOnlyModes().length === 0 && selectedCheckpointNeedsTools
 }
 
 function shouldRunPluginSegment(segment) {
@@ -1044,6 +1064,18 @@ async function commandOutputAsync(command, args, options = {}) {
   })
 }
 
+function redisCliBinary(
+  serverBinary = process.env.WEWORK_E2E_REDIS_SERVER_BIN?.trim(),
+  platform = process.platform
+) {
+  if (!serverBinary) return 'redis-cli'
+  const paths = platform === 'win32' ? win32 : posix
+  return paths.join(
+    paths.dirname(serverBinary),
+    platform === 'win32' ? 'redis-cli.exe' : 'redis-cli'
+  )
+}
+
 async function stopDesktopAppProcess(app, { forceSnapshot } = {}) {
   if (!app) return
   if (forceSnapshot) {
@@ -1056,12 +1088,18 @@ async function stopDesktopAppProcess(app, { forceSnapshot } = {}) {
     return
   }
 
-  if (processIsAlive(app.pid)) process.kill(app.pid, 'SIGTERM')
+  if (processIsAlive(app.pid)) {
+    logDesktopE2eSignal({ action: 'stop-app', pid: app.pid, signal: 'SIGTERM' })
+    process.kill(app.pid, 'SIGTERM')
+  }
   const startedAt = Date.now()
   while (processIsAlive(app.pid) && Date.now() - startedAt < 10_000) {
     await new Promise(resolvePromise => setTimeout(resolvePromise, 25))
   }
-  if (processIsAlive(app.pid)) process.kill(app.pid, 'SIGKILL')
+  if (processIsAlive(app.pid)) {
+    logDesktopE2eSignal({ action: 'stop-app', pid: app.pid, signal: 'SIGKILL' })
+    process.kill(app.pid, 'SIGKILL')
+  }
   await stopProcess(app.launcher)
 }
 
@@ -1087,22 +1125,59 @@ async function runChecked(command, args, options = {}) {
 class BlockingNetworkProxy {
   constructor() {
     this.requests = []
+    this.requestEvents = []
+    this.connections = []
+    this.generation = 0
     this.sockets = new Set()
     this.released = false
     this.server = createTcpServer(socket => {
+      const acceptedAt = Date.now()
+      const acceptedGeneration = this.generation
+      const connectionId = this.connections.length + 1
+      const acceptedWhileReleased = this.released
+      const connection = { connectionId, acceptedAt, acceptedGeneration, acceptedWhileReleased }
+      this.connections.push(connection)
       this.sockets.add(socket)
-      socket.on('close', () => this.sockets.delete(socket))
-      socket.on('error', () => this.sockets.delete(socket))
-      if (this.released) {
-        socket.end('HTTP/1.1 502 Bad Gateway\r\nConnection: close\r\nContent-Length: 0\r\n\r\n')
-        return
-      }
+      socket.on('close', () => {
+        connection.closedAt = Date.now()
+        this.sockets.delete(socket)
+      })
+      socket.on('error', () => {
+        connection.errorAt = Date.now()
+        this.sockets.delete(socket)
+      })
       let request = ''
       socket.on('data', chunk => {
         if (request) return
         request = chunk.toString('utf8').split(/\r?\n/, 1)[0]?.trim() ?? ''
-        if (request) this.requests.push(request)
+        if (request) {
+          connection.firstDataAt = Date.now()
+          connection.releasedAtFirstData = this.released
+          const [method, destination] = request.split(' ')
+          let host = destination?.split(/[/?#]/)[0] ?? ''
+          try {
+            const absoluteHost = new URL(destination).host
+            if (absoluteHost) host = absoluteHost
+          } catch {
+            // CONNECT targets use authority form instead of an absolute URL.
+          }
+          Object.assign(connection, { method, host })
+          if (acceptedWhileReleased) return
+          this.requests.push(request)
+          this.requestEvents.push({
+            connectionId,
+            acceptedAt,
+            acceptedGeneration,
+            receivedAt: Date.now(),
+            receivedGeneration: this.generation,
+            method,
+            host,
+          })
+        }
       })
+      if (acceptedWhileReleased) {
+        socket.end('HTTP/1.1 502 Bad Gateway\r\nConnection: close\r\nContent-Length: 0\r\n\r\n')
+      }
     })
   }
 
@@ -1138,6 +1213,7 @@ class BlockingNetworkProxy {
   }
 
   block() {
+    this.generation += 1
     this.released = false
   }
 
@@ -1146,6 +1222,10 @@ class BlockingNetworkProxy {
     for (const socket of this.sockets) socket.destroy()
     this.sockets.clear()
     await new Promise(resolvePromise => this.server.close(resolvePromise))
+    await writeFile(
+      join(resultDir, 'blocking-network-proxy-events.json'),
+      JSON.stringify({ connections: this.connections, requests: this.requestEvents }, null, 2)
+    ).catch(error => console.warn('Could not save blocking proxy diagnostics:', error.message))
   }
 }
 
@@ -1459,14 +1539,16 @@ async function createSingleRootLocalProject(
   const createButtonSelector = sidebarSnapshot.testIds.includes('projects-empty-create-button')
     ? '[data-testid="projects-empty-create-button"]'
     : '[data-testid="projects-create-button"]'
+  const createButtonText = await control.command('clickWhenEnabled', createButtonSelector, {
+    timeoutMs,
+  })
   if (createButtonSelector.includes('projects-empty-create-button')) {
     assert.match(
-      await control.command('getText', createButtonSelector),
+      createButtonText,
       /New project|新建项目/,
       'The empty project section did not expose a localized creation action'
     )
   }
-  await control.command('click', createButtonSelector)
   await control.command('click', '[data-testid="project-create-local-option"]')
   await control.command('waitFor', '[data-testid="device-folder-path-input"]', {
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
@@ -1883,6 +1965,7 @@ export {
   CLOUD_PUBLIC_MODEL_LABEL,
   CLOUD_PUBLIC_MODEL_OPTIONS,
   CLOUD_DEVICE_ID,
+  CLOUD_DEVICE_LIFECYCLE_LATEST_VERSION,
   REMOTE_DOCKER_DEVICE_ID,
   FRESH_CHAT_PROMPT,
   FRESH_CHAT_COMPLETION_TEXT,
@@ -1919,6 +2002,9 @@ export {
   CLOUD_COMPLETION_TEXT,
   CLOUD_FOLLOW_UP_PROMPT,
   CLOUD_FOLLOW_UP_COMPLETION_TEXT,
+  CLOUD_HTML_LINK_PROMPT,
+  CLOUD_HTML_LINK_FILENAME,
+  CLOUD_HTML_LINK_MISSING_FILENAME,
   CLOUD_ARTIFACT_NAME,
   CLOUD_ARTIFACT_CONTENT,
   ACTIVE_WORKBENCH_SELECTOR,
@@ -2019,6 +2105,7 @@ export {
   pathExists,
   commandOutput,
   commandOutputAsync,
+  redisCliBinary,
   stopDesktopAppProcess,
   runChecked,
   reservePort,

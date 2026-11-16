@@ -539,6 +539,7 @@ class BackgroundExecutionManager:
         end_date: Optional[datetime] = None,
         include_following: bool = True,
         include_silent: bool = False,
+        preview_chars: Optional[int] = None,
     ) -> Tuple[List[BackgroundExecutionInDB], int]:
         """
         List BackgroundExecution records (timeline view).
@@ -558,6 +559,9 @@ class BackgroundExecutionManager:
             end_date: Optional filter by end date
             include_following: Include executions from followed subscriptions
             include_silent: Include COMPLETED_SILENT executions (default False)
+            preview_chars: When set, cut prompt and result_summary of the user's
+                own executions to this many characters and flag the truncation
+                (default None keeps full text)
 
         Returns:
             Tuple of (list of BackgroundExecutionInDB, total count)
@@ -714,6 +718,19 @@ class BackgroundExecutionManager:
             # Set can_delete: only subscription owner can delete executions
             owner_user_id = sub_info.get("owner_user_id")
             exec_dict["can_delete"] = owner_user_id == user_id
+
+            # Only the viewer's own executions are cut: GET /executions/{id}
+            # serves the owner alone, so that is the only case the caller can
+            # load in full again. Followed and public items stay whole.
+            if preview_chars is not None and exec.user_id == user_id:
+                if len(exec_dict["prompt"]) > preview_chars:
+                    exec_dict["prompt"] = exec_dict["prompt"][:preview_chars]
+                    exec_dict["prompt_truncated"] = True
+
+                result_summary = exec_dict["result_summary"]
+                if result_summary is not None and len(result_summary) > preview_chars:
+                    exec_dict["result_summary"] = result_summary[:preview_chars]
+                    exec_dict["result_summary_truncated"] = True
 
             result.append(BackgroundExecutionInDB(**exec_dict))
 

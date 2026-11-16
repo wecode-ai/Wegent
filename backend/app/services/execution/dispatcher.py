@@ -19,13 +19,16 @@ OpenAI Responses API compatible endpoint.
 
 import asyncio
 import logging
+from collections.abc import Callable
 from typing import Any, List, Optional
 
 from sqlalchemy.orm import Session
 
 from app.core.async_utils import run_in_main_loop
 from app.db.session import SessionLocal
-from app.models.subtask import Subtask
+from app.models.subtask import Subtask, SubtaskStatus
+from app.services.chat.storage.db import TerminalPersistenceError
+from app.services.device.identity import lock_online_device_for_binding
 from app.services.task_status import extract_task_error
 from app.stores.tasks import subtask_store, task_store
 from shared.models import (
@@ -83,6 +86,9 @@ class ExecutionDispatcher:
         request: ExecutionRequest,
         device_id: Optional[str] = None,
         emitter: Optional[ResultEmitter] = None,
+        *,
+        already_running: bool = False,
+        on_accepted: Callable[[bool], None] | None = None,
     ) -> None:
         """Unified dispatch entry point for task execution.
 
@@ -113,6 +119,14 @@ class ExecutionDispatcher:
             emitter: Optional custom emitter, defaults to WebSocketResultEmitter
         """
         wrapped_emitter = None
+        recoverable = on_accepted is not None
+
+        def accept(executor_owns_execution: bool = False) -> None:
+            nonlocal on_accepted
+            if on_accepted is not None:
+                on_accepted(executor_owns_execution)
+                on_accepted = None
+
         try:
             if device_id:
                 user_id = request.user.get("id") if request.user else None
@@ -131,26 +145,14 @@ class ExecutionDispatcher:
             )
             # Create default emitter if not provided
             if emitter is None:
-                # Extract team info from request for task:created event
-                team_id = None
-                team_name = None
-                is_group_chat = False
-                if request.bot and len(request.bot) > 0:
-                    team_id = request.bot[0].get("team_id")
-                    team_name = request.bot[0].get("team_name")
-                    is_group_chat = request.bot[0].get("is_group_chat", False)
-
-                # Extract task title from request
-                task_title = request.task_title
-
                 emitter = WebSocketResultEmitter(
                     task_id=request.task_id,
                     subtask_id=request.subtask_id,
                     user_id=request.user.get("id") if request.user else None,
-                    team_id=team_id,
-                    team_name=team_name,
-                    task_title=task_title,
-                    is_group_chat=is_group_chat,
+                    team_id=request.team_id,
+                    team_name=request.team_name,
+                    task_title=request.task_title,
+                    is_group_chat=request.is_group_chat,
                     project_id=request.project_id,
                 )
 
@@ -161,6 +163,11 @@ class ExecutionDispatcher:
                 wrapped=emitter,
                 task_id=request.task_id,
                 subtask_id=request.subtask_id,
+                expected_status=(
+                    (SubtaskStatus.PENDING.value, SubtaskStatus.RUNNING.value)
+                    if target.mode == CommunicationMode.WEBSOCKET
+                    else None
+                ),
             )
 
             logger.info(
@@ -168,12 +175,21 @@ class ExecutionDispatcher:
                 f"subtask_id={request.subtask_id}, mode={target.mode.value}"
             )
 
-            # Update subtask status to RUNNING before dispatching
-            # This applies to all execution modes (SSE, WebSocket, HTTP+Callback)
-            await self._update_subtask_to_running(request.subtask_id)
+            if not already_running and target.mode != CommunicationMode.WEBSOCKET:
+                await self._update_subtask_to_running(request.subtask_id)
 
             if target.mode == CommunicationMode.SSE:
-                await self._dispatch_sse(request, target, wrapped_emitter)
+                if on_accepted is None:
+                    await self._dispatch_sse(request, target, wrapped_emitter)
+                else:
+                    await dispatch_sse(
+                        request,
+                        target,
+                        wrapped_emitter,
+                        self.event_parser,
+                        self._build_start_event_data(request),
+                        on_accepted=accept,
+                    )
             elif target.mode == CommunicationMode.WEBSOCKET:
                 await self._dispatch_websocket(request, target, wrapped_emitter)
             elif target.mode == CommunicationMode.POLLING:
@@ -181,12 +197,25 @@ class ExecutionDispatcher:
             elif target.mode == CommunicationMode.INPROCESS:
                 await self._dispatch_inprocess(request, target, wrapped_emitter)
             else:
-                await self._dispatch_http_callback(request, target, wrapped_emitter)
+                if on_accepted is None:
+                    await self._dispatch_http_callback(request, target, wrapped_emitter)
+                else:
+                    await self._dispatch_http_callback(
+                        request,
+                        target,
+                        wrapped_emitter,
+                        on_accepted=lambda: accept(True),
+                    )
+            accept()
         except asyncio.CancelledError:
             # A cancelled SSE owner has already closed its stream. Persist the
-            # terminal state before closing the emitter, including lease loss.
-            # Remote dispatch modes retain their executor-owned lifecycle.
-            if wrapped_emitter is not None and target.mode == CommunicationMode.SSE:
+            # terminal state before closing the emitter. Recoverable pipeline
+            # jobs keep their handoff on worker cancellation or lease loss.
+            if (
+                not recoverable
+                and wrapped_emitter is not None
+                and target.mode == CommunicationMode.SSE
+            ):
                 logger.info(
                     "[ExecutionDispatcher] SSE dispatch task cancelled: "
                     "task_id=%s, subtask_id=%s",
@@ -206,13 +235,15 @@ class ExecutionDispatcher:
                         request.subtask_id,
                     )
             raise
+        except TerminalPersistenceError:
+            raise
         except Exception as e:
             logger.exception(
                 f"[ExecutionDispatcher] Dispatch error: task_id={request.task_id}, "
                 f"subtask_id={request.subtask_id}, error={e}"
             )
             # Try to emit error to frontend if emitter is available
-            if wrapped_emitter is not None:
+            if wrapped_emitter is not None and not recoverable:
                 try:
                     from shared.utils.error_classifier import (
                         classify_error,
@@ -226,7 +257,8 @@ class ExecutionDispatcher:
                         error=format_error_message(e),
                         error_code=error_code,
                     )
-                    setattr(e, _FRONTEND_ERROR_EMITTED_ATTR, True)
+                    if wrapped_emitter.failure_handled:
+                        setattr(e, _FRONTEND_ERROR_EMITTED_ATTR, True)
                 except Exception as emit_error:
                     logger.error(
                         f"[ExecutionDispatcher] Failed to emit error: {emit_error}"
@@ -379,7 +411,9 @@ class ExecutionDispatcher:
         storage_key = workspace_archive.get("storageKey")
         return isinstance(storage_key, str) and bool(storage_key.strip())
 
-    async def _update_subtask_to_running(self, subtask_id: int) -> None:
+    async def _update_subtask_to_running(
+        self, subtask_id: int, *, expected_status: str | None = None
+    ) -> None:
         """Update subtask status to RUNNING in database.
 
         This is called before dispatching to any executor type to ensure
@@ -391,7 +425,9 @@ class ExecutionDispatcher:
         from app.services.chat.storage.db import db_handler
 
         try:
-            await db_handler.update_subtask_status(subtask_id, "RUNNING")
+            await db_handler.update_subtask_status(
+                subtask_id, "RUNNING", expected_status=expected_status
+            )
             logger.info(
                 f"[ExecutionDispatcher] Updated subtask {subtask_id} status to RUNNING"
             )
@@ -442,28 +478,42 @@ class ExecutionDispatcher:
             device_id: Device ID
             user_id: User ID
         """
-        db = SessionLocal()
-        try:
-            subtask = subtask_store.get_by_id(db, subtask_id=subtask_id)
-            if subtask:
-                subtask_store.update_executor_info(
+        if user_id is None:
+            raise ValueError("Device dispatch requires an authenticated user")
+
+        def bind() -> None:
+            with SessionLocal() as db:
+                if lock_online_device_for_binding(db, user_id, device_id) != device_id:
+                    raise RuntimeError("Selected device is offline")
+                subtask = subtask_store.get_basic_by_id_for_update(
+                    db, subtask_id=subtask_id, owner_user_id=user_id
+                )
+                if subtask is None or subtask.status not in {
+                    SubtaskStatus.PENDING,
+                    SubtaskStatus.RUNNING,
+                }:
+                    raise RuntimeError("Subtask is no longer dispatchable")
+                updated = subtask_store.update_fields_if_status(
                     db,
                     subtask=subtask,
+                    from_status=subtask.status,
                     executor_name=f"device-{device_id}",
-                    executor_namespace=f"user-{user_id}" if user_id else "",
+                    executor_namespace=f"user-{user_id}",
+                    executor_deleted_at=False,
+                    status=SubtaskStatus.RUNNING,
                 )
+                if not updated:
+                    raise RuntimeError("Subtask is no longer dispatchable")
                 db.commit()
                 logger.info(
                     f"[ExecutionDispatcher] Set executor on subtask {subtask_id}: "
                     f"executor_name=device-{device_id}"
                 )
-        except Exception as e:
-            logger.error(
-                f"[ExecutionDispatcher] Failed to set executor on subtask {subtask_id}: {e}"
-            )
-            db.rollback()
-        finally:
-            db.close()
+
+        await asyncio.to_thread(bind)
+        await self._update_subtask_to_running(
+            subtask_id, expected_status=SubtaskStatus.RUNNING.value
+        )
 
     def supports_streaming(self, request: ExecutionRequest) -> bool:
         """Check if the request supports streaming.
@@ -607,6 +657,8 @@ class ExecutionDispatcher:
                 device_id = parts[2]
                 user_id = request.user.get("id") if request.user else None
                 await self._set_subtask_executor(request.subtask_id, device_id, user_id)
+                request.executor_name = f"device-{device_id}"
+                request.executor_namespace = f"user-{user_id}"
 
         # Send START event to frontend (creates AI message placeholder)
         await emitter.emit_start(
@@ -708,6 +760,8 @@ class ExecutionDispatcher:
         request: ExecutionRequest,
         target: ExecutionTarget,
         emitter: ResultEmitter,
+        *,
+        on_accepted: Callable[[], None] | None = None,
     ) -> None:
         """Dispatch task via HTTP+Callback using OpenAI background mode.
 
@@ -769,6 +823,9 @@ class ExecutionDispatcher:
                     "model_config": openai_request.get("model_config", {}),
                 },
             )
+
+        if on_accepted is not None:
+            on_accepted()
 
         logger.info(
             f"[ExecutionDispatcher] HTTP+Callback dispatch (OpenAI background): "

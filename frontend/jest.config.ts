@@ -37,6 +37,9 @@ const config: Config = {
     // Use the real CommonJS entry; JSDOM otherwise selects YAML's browser ESM export.
     '^yaml$': collaborationRequire.resolve('yaml'),
     '^streamdown$': '<rootDir>/src/__mocks__/streamdown.tsx',
+    // The math plugin exposes an import-only entry; transform it with the Markdown packages below.
+    '^@streamdown/math$':
+      '<rootDir>/../packages/collaboration/node_modules/@streamdown/math/dist/index.js',
     '^@file-viewer/react$': '<rootDir>/src/__mocks__/file-viewer.tsx',
     '^@file-viewer/preset-engineering$': '<rootDir>/src/__mocks__/file-viewer-preset.ts',
     // Mock ESM-only markdown-related packages
@@ -80,7 +83,7 @@ const config: Config = {
 // exclusions after resolution so the real shared Markdown parser runs in Jest,
 // including packages installed through pnpm's virtual store.
 const markdownPackages =
-  '(?:@chenglou[/+]pretext|unified|react-markdown|remark-[^/]+|rehype-[^/]+|mdast-util-[^/]+|micromark[^/]*|unist-util-[^/]+|estree-util-[^/]+|vfile(?:-message|-location)?|bail|devlop|extend|is-plain-obj|trough|zwitch|decode-named-character-reference|character-entities[^/]*|ccount|escape-string-regexp|longest-streak|markdown-table|property-information|comma-separated-tokens|space-separated-tokens|hastscript|hast-util-[^/]+|html-void-elements|html-url-attributes|stringify-entities|trim-lines|web-namespaces)'
+  '(?:@chenglou[/+]pretext|@pierre[/+]highlights|@streamdown[/+]math|unified|react-markdown|remark-[^/]+|rehype-[^/]+|mdast-util-[^/]+|micromark[^/]*|unist-util-[^/]+|estree-util-[^/]+|vfile(?:-message|-location)?|bail|devlop|extend|is-plain-obj|trough|zwitch|decode-named-character-reference|character-entities[^/]*|ccount|escape-string-regexp|longest-streak|markdown-table|property-information|comma-separated-tokens|space-separated-tokens|hastscript|hast-util-[^/]+|html-void-elements|html-url-attributes|stringify-entities|trim-lines|web-namespaces)'
 
 const resolveJestConfig = async () => {
   const resolved = await createJestConfig(config)()

@@ -6,6 +6,10 @@ from unittest.mock import AsyncMock
 import pytest
 
 from app.services.channels.dingtalk import emitter as emitter_module
+from app.services.channels.dingtalk.callback import (
+    DingTalkCallbackInfo,
+    DingTalkCallbackService,
+)
 from app.services.channels.dingtalk.emitter import StreamingResponseEmitter
 from shared.models import EventType, ExecutionEvent
 from tests.services.channels.dingtalk.test_emitter import FakeCache, card_factory
@@ -69,9 +73,11 @@ async def test_callback_keeps_registration_and_recoverable_state_on_failure(
     await emitter.emit_start(1, 2)
     await emitter.emit_chunk(1, 2, "buffered", 0)
     card_factory[0].ai_finish = AsyncMock(side_effect=RuntimeError("delivery failed"))
-    service = FakeCallbackService(emitter)
+    service = DingTalkCallbackService()
     service._active_emitters[1] = emitter
-    service.get_callback_info = AsyncMock(return_value=object())
+    service.get_callback_info = AsyncMock(
+        return_value=DingTalkCallbackInfo(channel_id=77, conversation_id="group-a")
+    )
     service.delete_callback_info = AsyncMock()
 
     sent = await service.send_task_result(1, 2, content="")
@@ -80,6 +86,70 @@ async def test_callback_keeps_registration_and_recoverable_state_on_failure(
     service.delete_callback_info.assert_not_awaited()
     assert emitter._closed
     assert cache.raw["channel:streaming_content:1:card-1"] == b"buffered"
+
+
+@pytest.mark.asyncio
+async def test_terminal_marker_failure_uses_delivered_callback(
+    monkeypatch, card_factory
+):
+    cache = FakeCache()
+    monkeypatch.setattr(emitter_module, "cache_manager", cache)
+    monkeypatch.setattr("app.services.channels.callback.cache_manager", cache)
+    emitter = StreamingResponseEmitter(object(), object(), "card-1")
+    emitter.set_shared_content_key("channel:streaming_content:1")
+    emitter.MIN_UPDATE_INTERVAL = 3600
+    await emitter.emit_start(1, 2)
+    service = DingTalkCallbackService()
+    service._active_emitters[1] = emitter
+    service.get_callback_info = AsyncMock(
+        return_value=DingTalkCallbackInfo(channel_id=77, conversation_id="group-a")
+    )
+    service.delete_callback_info = AsyncMock()
+
+    async def fail_terminal_marker(**_kwargs):
+        raise RuntimeError("terminal marker unavailable")
+
+    monkeypatch.setattr(emitter, "_mark_finished", fail_terminal_marker)
+
+    sent = await service.send_task_result(1, 2, content="")
+
+    assert sent is True
+    service.delete_callback_info.assert_not_awaited()
+    assert service.get_callback_info.await_args_list[-1].args[0] == 1
+    assert service.get_callback_info.return_value.delivered is True
+    assert emitter.terminal_delivery_succeeded is True
+
+
+@pytest.mark.asyncio
+async def test_delivered_callback_does_not_receive_late_terminal_result(
+    monkeypatch, card_factory
+):
+    cache = FakeCache()
+    monkeypatch.setattr(emitter_module, "cache_manager", cache)
+    monkeypatch.setattr("app.services.channels.callback.cache_manager", cache)
+    emitter = StreamingResponseEmitter(object(), object(), "card-1")
+    service = FakeCallbackService(emitter)
+    service._active_emitters[1] = emitter
+    service.get_callback_info = AsyncMock(
+        return_value=DingTalkCallbackInfo(
+            channel_id=77,
+            conversation_id="group-a",
+            card_instance_id="card-1",
+            delivered=True,
+        )
+    )
+    service.delete_callback_info = AsyncMock()
+    create_emitter = AsyncMock()
+    monkeypatch.setattr(service, "_get_or_create_emitter", create_emitter)
+    emit_done = AsyncMock()
+    emitter.emit_done = emit_done
+
+    sent = await service.send_task_result(1, 2, content="")
+
+    assert sent is True
+    create_emitter.assert_not_awaited()
+    emit_done.assert_not_awaited()
+    service.delete_callback_info.assert_awaited_once_with(1)
 
 
 @pytest.mark.asyncio

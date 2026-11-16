@@ -1,8 +1,11 @@
+import './issueCard.css'
 // SPDX-FileCopyrightText: 2026 Weibo, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
 
-import { Bot, Clock3, Flag, UserRound, UsersRound } from 'lucide-react'
+import { Bot, Circle, Clock3, Flag, Ghost, UserRound, UsersRound } from 'lucide-react'
+import { formatIssueTimestamp } from '../issue-detail/issueTimestamp'
+import { issueHumanAssignees, issueParticipation } from '../issueParticipation'
 import {
   useRef,
   type ButtonHTMLAttributes,
@@ -23,6 +26,15 @@ function classNames(...values: Array<string | false | null | undefined>): string
   return values.filter(Boolean).join(' ')
 }
 
+export function WaitingForPersonIcon() {
+  return (
+    <span className="relative inline-block h-3.5 w-3.5 shrink-0" aria-hidden="true">
+      <UserRound className="h-3.5 w-3.5" />
+      <Clock3 className="absolute -bottom-0.5 -right-0.5 h-2 w-2 rounded-full bg-background" />
+    </span>
+  )
+}
+
 const priorityClasses: Record<CollaborationIssueCardItem['priority'], string> = {
   none: 'text-text-secondary',
   low: 'text-text-secondary',
@@ -36,17 +48,22 @@ function collaborationIssueCardClassName({
   dragging = false,
   dropTarget = false,
   unread = false,
+  variant = 'card',
 }: {
   className?: string
   dragging?: boolean
   dropTarget?: boolean
   unread?: boolean
+  variant?: 'card' | 'list'
 }): string {
   return classNames(
-    'group relative h-fit w-full overflow-hidden rounded-xl border text-left transition-colors',
-    unread
-      ? 'border-focus/30 bg-focus/10 hover:border-focus/40 hover:bg-focus/[0.14]'
-      : 'border-border bg-background hover:border-text-primary/15',
+    'group relative h-fit w-full text-left transition-colors',
+    variant === 'card' && 'overflow-hidden rounded-xl border',
+    variant === 'list'
+      ? 'collaboration-issue-card-list border-b border-border/60 bg-background hover:bg-text-primary/[0.025]'
+      : unread
+        ? 'border-focus/30 bg-focus/10 hover:border-focus/40 hover:bg-focus/[0.14]'
+        : 'border-border bg-background hover:border-text-primary/15',
     dragging && 'opacity-25 shadow-none',
     dropTarget && !dragging && 'border-focus ring-1 ring-focus/50',
     className
@@ -88,8 +105,10 @@ export function CollaborationIssueCardContent({
         display={display}
         titleTrailing={titleTrailing}
         unread={unread}
+        participant={<IssueCardParticipation item={item} labels={labels} model={model} />}
       />
       <IssueCardMetadata
+        item={item}
         itemId={item.id}
         model={model}
         display={display}
@@ -100,62 +119,189 @@ export function CollaborationIssueCardContent({
   )
 }
 
+function IssueCardParticipation({
+  item,
+  labels,
+  model,
+}: Pick<CollaborationIssueCardContentProps, 'item' | 'labels'> & {
+  model: CollaborationIssueCardModel
+}) {
+  const state = issueParticipation(item)
+  const text = labels.participation
+  if (!state || !text) return null
+  const names =
+    state === 'human'
+      ? [...new Set(issueHumanAssignees(item).map(person => person.name))].join('、')
+      : item.processing_actor?.name || item.ai_state?.agent_name
+  if (!names) return null
+  const kind =
+    state === 'human' ? 'human' : item.processing_actor?.kind === 'stand_in' ? 'stand_in' : 'agent'
+  const label =
+    kind === 'human'
+      ? text.human(names)
+      : `${kind === 'stand_in' ? text.standIn : text.agent}: ${names}`
+  const Icon = kind === 'stand_in' ? Ghost : Bot
+  return (
+    <span
+      data-testid={`issue-participation-${item.id}`}
+      data-processing-kind={kind}
+      role="img"
+      aria-label={label}
+      title={label}
+      className="inline-flex min-w-0 max-w-full items-center gap-1 text-xs font-normal text-text-secondary"
+    >
+      {kind === 'human' ? (
+        <WaitingForPersonIcon />
+      ) : (
+        <Icon className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
+      )}
+      {names === model.assigneeName ? <span className="sr-only">{labels.assignee}</span> : null}
+      <span
+        className="truncate"
+        data-testid={
+          names === model.assigneeName ? `cloud-todo-card-assignee-${item.id}` : undefined
+        }
+      >
+        {names}
+      </span>
+    </span>
+  )
+}
+
 function IssueCardHeading({
   itemId,
   model,
   display,
   titleTrailing,
   unread,
+  participant,
+  variant = 'card',
+  metadata,
 }: {
   itemId: string
   model: CollaborationIssueCardModel
   display: CollaborationIssueCardDisplay
   titleTrailing?: ReactNode
   unread?: boolean
+  participant?: ReactNode
+  variant?: 'card' | 'list'
+  metadata?: ReactNode
 }) {
   const showPriority =
     display.showPriority && (model.priority === 'high' || model.priority === 'urgent')
   const tags = display.showTags ? model.tags : []
   const statusLabel = model.statusLabel
-  return (
-    <>
-      {statusLabel || display.showReference !== false || tags.length > 0 || showPriority ? (
-        <span className="mb-1.5 flex min-w-0 items-center gap-2 pr-5 text-xs text-text-muted">
-          {display.showReference !== false ? (
+  if (variant === 'list')
+    return (
+      <span
+        data-testid={`cloud-todo-card-header-${itemId}`}
+        className="collaboration-issue-list-heading min-w-0"
+      >
+        <span className="flex min-w-0 flex-1 items-center gap-2">
+          {(unread ?? model.unread) && (
+            <span
+              data-testid={`cloud-todo-card-unread-${itemId}`}
+              aria-hidden="true"
+              className="mt-2 h-1.5 w-1.5 shrink-0 rounded-full bg-primary"
+            />
+          )}
+          <span
+            data-testid={`cloud-todo-card-title-${itemId}`}
+            className="line-clamp-2 min-w-0 break-words text-base font-medium leading-5 text-text-primary"
+          >
+            {model.title}
+          </span>
+          {display.showReference !== false && (
             <span
               data-testid={`cloud-todo-card-reference-${itemId}`}
-              title={model.reference}
-              className="max-w-[50%] shrink-0 truncate"
+              className="shrink-0 pt-1 text-sm text-text-muted"
             >
               {model.shortReference}
             </span>
-          ) : null}
+          )}
+        </span>
+        <span className="collaboration-issue-list-metadata text-sm text-text-muted">
           {statusLabel && (
             <span
               data-testid={`cloud-todo-card-status-${itemId}`}
-              title={statusLabel}
-              className="max-w-[40%] shrink-0 truncate rounded bg-muted px-1.5 py-0.5"
+              className="inline-flex items-center gap-1.5 text-text-secondary"
             >
+              <Circle aria-hidden="true" className="h-3 w-3 text-text-muted" />
               {statusLabel}
             </span>
           )}
-          {tags.length > 0 ? (
-            <span className="min-w-0 truncate" title={tags.join(', ')}>
-              {tags[0]}
-            </span>
-          ) : null}
-          {tags.length > 1 ? <span className="shrink-0">+{tags.length - 1}</span> : null}
-          {showPriority ? (
+          {participant}
+          {titleTrailing}
+          {metadata}
+          {showPriority && (
             <span
               className={classNames(
-                'ml-auto inline-flex shrink-0 items-center gap-1 whitespace-nowrap',
+                'inline-flex items-center gap-1',
                 priorityClasses[model.priority]
               )}
             >
-              <Flag className="h-3 w-3 shrink-0" aria-hidden="true" />
+              <Flag aria-hidden="true" className="h-3 w-3" />
               {model.priorityLabel}
             </span>
-          ) : null}
+          )}
+          {tags.length > 0 && (
+            <span className="min-w-0 truncate" title={tags.join(', ')}>
+              {tags.join(' · ')}
+            </span>
+          )}
+        </span>
+      </span>
+    )
+  return (
+    <>
+      {statusLabel || display.showReference !== false || tags.length > 0 || showPriority ? (
+        <span
+          data-testid={`cloud-todo-card-header-${itemId}`}
+          className="mb-1.5 flex min-w-0 items-center gap-2 pr-5 text-xs text-text-muted"
+        >
+          <span className="flex min-w-0 flex-1 items-center gap-2">
+            {display.showReference !== false ? (
+              <span
+                data-testid={`cloud-todo-card-reference-${itemId}`}
+                title={model.reference}
+                className="max-w-[50%] shrink-0 truncate"
+              >
+                {model.shortReference}
+              </span>
+            ) : null}
+            {statusLabel && (
+              <span
+                data-testid={`cloud-todo-card-status-${itemId}`}
+                title={statusLabel}
+                className="max-w-[40%] shrink-0 truncate rounded bg-muted px-1.5 py-0.5"
+              >
+                {statusLabel}
+              </span>
+            )}
+            {tags.length > 0 ? (
+              <span className="min-w-0 truncate" title={tags.join(', ')}>
+                {tags[0]}
+              </span>
+            ) : null}
+            {tags.length > 1 ? <span className="shrink-0">+{tags.length - 1}</span> : null}
+          </span>
+          <span
+            data-testid={`cloud-todo-card-header-actors-${itemId}`}
+            className="ml-auto inline-flex min-w-0 max-w-[50%] shrink-0 items-center gap-2"
+          >
+            {showPriority ? (
+              <span
+                className={classNames(
+                  'inline-flex shrink-0 items-center gap-1 whitespace-nowrap',
+                  priorityClasses[model.priority]
+                )}
+              >
+                <Flag className="h-3 w-3 shrink-0" aria-hidden="true" />
+                {model.priorityLabel}
+              </span>
+            ) : null}
+            {participant}
+          </span>
         </span>
       ) : null}
       <span className="flex min-w-0 items-start gap-2 pr-5 text-base font-medium leading-5 text-text-primary">
@@ -174,26 +320,47 @@ function IssueCardHeading({
 }
 
 function IssueCardMetadata({
+  item,
   itemId,
   model,
   display,
   labels,
   renderAssigneeTooltip = (_label, child) => child,
+  variant = 'card',
 }: {
+  item: CollaborationIssueCardItem
   itemId: string
   model: CollaborationIssueCardModel
   display: CollaborationIssueCardDisplay
   labels: CollaborationIssueCardLabels
   renderAssigneeTooltip?: CollaborationIssueCardContentProps['renderAssigneeTooltip']
+  variant?: 'card' | 'list'
 }) {
-  if (!display.showAssignee && !(display.showDate && model.date)) return null
-  const dateDescription = model.date ? `${labels.createdAt}: ${model.date.value}` : undefined
+  const state = issueParticipation(item)
+  const actorName =
+    state === 'human'
+      ? [...new Set(issueHumanAssignees(item).map(person => person.name))].join('、')
+      : state === 'ai'
+        ? item.processing_actor?.name || item.ai_state?.agent_name
+        : null
+  const showAssignee =
+    display.showAssignee &&
+    (!labels.participation ||
+      !actorName ||
+      Boolean(model.assigneeName && actorName !== model.assigneeName))
+  if (!showAssignee && !(display.showDate && model.date)) return null
+  const dateDescription = model.date
+    ? `${labels.createdAt}: ${item.created_at ?? model.date.value}`
+    : undefined
   return (
     <span
       data-testid={`cloud-todo-card-metadata-${itemId}`}
-      className="mt-3 grid min-w-0 grid-cols-[minmax(0,1fr)_auto] items-center gap-3 text-xs text-text-muted"
+      className={classNames(
+        'min-w-0 items-center gap-3 text-xs text-text-muted',
+        variant === 'list' ? 'flex flex-wrap' : 'mt-3 grid grid-cols-[minmax(0,1fr)_auto]'
+      )}
     >
-      {display.showAssignee ? (
+      {showAssignee ? (
         model.assigneeName ? (
           renderAssigneeTooltip(
             model.assigneeName,
@@ -223,13 +390,15 @@ function IssueCardMetadata({
       )}
       {display.showDate && model.date ? (
         <time
-          dateTime={model.date.value}
+          dateTime={item.created_at ?? model.date.value}
           title={dateDescription}
           aria-label={dateDescription}
           className="inline-flex items-center gap-1 whitespace-nowrap"
         >
           <Clock3 className="h-3 w-3 shrink-0" aria-hidden="true" />
-          {model.date.label}
+          {variant === 'list' && item.created_at
+            ? formatIssueTimestamp(item.created_at)
+            : model.date.label}
         </time>
       ) : null}
     </span>
@@ -237,8 +406,10 @@ function IssueCardMetadata({
 }
 
 export interface CollaborationIssueCardProps extends CollaborationIssueCardContentProps {
+  variant?: 'card' | 'list'
   afterContent?: ReactNode
   summary?: ReactNode
+  metadata?: ReactNode
   articleProps?: Omit<HTMLAttributes<HTMLElement>, 'children' | 'className' | 'style'>
   articleTestId?: string
   cardClassName?: string
@@ -260,8 +431,10 @@ export interface CollaborationIssueCardProps extends CollaborationIssueCardConte
 }
 
 export function CollaborationIssueCard({
+  variant,
   afterContent,
   summary,
+  metadata,
   articleProps,
   articleTestId,
   cardClassName,
@@ -307,6 +480,7 @@ export function CollaborationIssueCard({
         dragging,
         dropTarget,
         unread: unread ?? Boolean(contentProps.item.is_unread),
+        variant,
       })}
     >
       {menu}
@@ -317,28 +491,60 @@ export function CollaborationIssueCard({
         type="button"
         data-testid={detailButtonTestId}
         className={classNames(
-          'w-full cursor-default px-3.5 pt-3.5 text-left',
+          'w-full cursor-default text-left',
+          variant === 'list' ? 'px-4 pt-3' : 'px-3.5 pt-3.5',
           detailButtonClassName
         )}
       >
         <IssueCardHeading
+          variant={variant}
           itemId={contentProps.item.id}
           model={model}
           display={contentProps.display}
           titleTrailing={contentProps.titleTrailing}
           unread={unread}
+          metadata={
+            variant === 'list' ? (
+              <IssueCardMetadata
+                variant="list"
+                item={contentProps.item}
+                itemId={contentProps.item.id}
+                model={model}
+                display={contentProps.display}
+                labels={contentProps.labels}
+                renderAssigneeTooltip={contentProps.renderAssigneeTooltip}
+              />
+            ) : undefined
+          }
+          participant={
+            <IssueCardParticipation
+              item={contentProps.item}
+              labels={contentProps.labels}
+              model={model}
+            />
+          }
         />
         {afterContent}
       </button>
-      <div className={classNames('px-3.5', detailFlushBottom ? 'pb-0' : 'pb-3.5')}>
+      <div
+        className={classNames(
+          variant === 'list' ? 'px-4' : 'px-3.5',
+          detailFlushBottom ? 'pb-0' : variant === 'list' ? 'pb-3' : 'pb-3.5'
+        )}
+      >
         {summary}
-        <IssueCardMetadata
-          itemId={contentProps.item.id}
-          model={model}
-          display={contentProps.display}
-          labels={contentProps.labels}
-          renderAssigneeTooltip={contentProps.renderAssigneeTooltip}
-        />
+        {metadata}
+        {variant !== 'list' && (
+          <IssueCardMetadata
+            variant={variant}
+            item={contentProps.item}
+            itemId={contentProps.item.id}
+            model={model}
+            display={contentProps.display}
+            labels={contentProps.labels}
+            renderAssigneeTooltip={contentProps.renderAssigneeTooltip}
+          />
+        )}
       </div>
       {childrenAction}
     </article>

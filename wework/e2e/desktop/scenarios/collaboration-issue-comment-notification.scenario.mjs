@@ -1,3 +1,4 @@
+import { showAllCollaborationIssues } from '../modules/collaboration-board-flows.mjs'
 import assert from 'node:assert/strict'
 import { writeFile } from 'node:fs/promises'
 import { createRequire } from 'node:module'
@@ -5,7 +6,14 @@ import { join } from 'node:path'
 
 import { observeCommentNavigation } from '../modules/comment-navigation.mjs'
 import { ensureExperimentalFeaturesEnabled } from '../modules/preferences-automation-flows.mjs'
-import { reloadMainWindow } from '../modules/workspace-flows.mjs'
+import {
+  reloadMainWindow,
+  waitForNativeCollaborationPlatform,
+} from '../modules/workspace-flows.mjs'
+import {
+  collaborationProjectViewSelector,
+  selectCollaborationProjectView,
+} from '../modules/collaboration-project-navigation.mjs'
 
 const PROJECT_NAME = '评论提及通知验收'
 const MENTIONER_NAME = 'desktop-e2e-mentioner'
@@ -502,6 +510,7 @@ export function createDesktopScenario({ captureScreenshot, resultDir, uiTimeoutM
       )
       assert.equal(readEmptyIssue.activity_read_sequence, 0)
       await closeIssue()
+      await showAllCollaborationIssues(control, activeSurface)
       const emptyCard = `${activeSurface} [data-testid="cloud-todo-card-${emptyUnreadIssue.id}"]`
       const unreadDot = `${activeSurface} [data-testid="cloud-todo-card-unread-${emptyUnreadIssue.id}"]`
       await control.command('waitFor', emptyCard)
@@ -554,6 +563,7 @@ export function createDesktopScenario({ captureScreenshot, resultDir, uiTimeoutM
       const navigation = {
         control,
         selector: commentSelectorFor(activeSurface, message.messageId),
+        prepare: () => waitForNativeCollaborationPlatform(control, activeSurface, uiTimeoutMs),
         waitForComment: startedAt =>
           waitForComment(
             control,
@@ -662,8 +672,8 @@ export function createDesktopScenario({ captureScreenshot, resultDir, uiTimeoutM
       await control.command('openWeworkScheme', 'body', {
         value: `wework://boards/${project.id}`,
       })
-      await control.command('waitFor', `${activeSurface} [data-testid="collaboration-tab-board"]`)
-      await control.command('click', `${activeSurface} [data-testid="collaboration-tab-board"]`)
+      await control.command('waitFor', collaborationProjectViewSelector(activeSurface, 'board'))
+      await selectCollaborationProjectView(control, activeSurface, 'board')
       const boardCard = `${activeSurface} [data-testid="cloud-todo-card-drop-${issue.id}"]`
       await control.command('waitFor', boardCard, { text: ISSUE_TITLE, visible: true })
       assert.equal(

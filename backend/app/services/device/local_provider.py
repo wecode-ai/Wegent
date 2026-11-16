@@ -13,7 +13,7 @@ Handles local devices that connect via WebSocket. This provider manages:
 """
 
 import logging
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
 from packaging import version as pkg_version
@@ -52,7 +52,7 @@ def runtime_capacity_slot_values(online_info: Any) -> tuple[int, int]:
     limit = capacity.get("limit")
     if not isinstance(active, int) or isinstance(active, bool) or active < 0:
         return 0, 0
-    if not isinstance(limit, int) or isinstance(limit, bool) or not 1 <= limit <= 20:
+    if not isinstance(limit, int) or isinstance(limit, bool) or not 1 <= limit <= 60:
         return 0, 0
     if (
         not isinstance(active_task_ids, list)
@@ -186,7 +186,7 @@ class LocalDeviceProvider(BaseDeviceProvider):
             "socket_id": socket_id,
             "name": name,
             "status": status,
-            "last_heartbeat": datetime.now().isoformat(),
+            "last_heartbeat": datetime.now(timezone.utc).isoformat(),
             "executor_version": executor_version,
             "client_ip": client_ip,
             "runtime_transfer_host": runtime_transfer_host,
@@ -308,7 +308,7 @@ class LocalDeviceProvider(BaseDeviceProvider):
         """Store sanitized local global capability state reported by heartbeat."""
         key = self.generate_capabilities_key(user_id, device_id)
         payload = dict(capabilities)
-        payload["reported_at"] = datetime.now().isoformat()
+        payload["reported_at"] = datetime.now(timezone.utc).isoformat()
         return await cache_manager.set(key, payload, expire=DEVICE_CAPABILITIES_TTL)
 
     async def get_capabilities_state(
@@ -450,12 +450,18 @@ class LocalDeviceProvider(BaseDeviceProvider):
         runtime_instance_id: Optional[str] = None,
         runtime_capacity: Optional[Dict[str, Any]] = None,
         runtime_features: Optional[Dict[str, Any]] = None,
+        *,
+        socket_id: str | None = None,
     ) -> bool:
         """Refresh device heartbeat in Redis."""
         key = self.generate_online_key(user_id, device_id)
-        data = await cache_manager.get_or_raise(key)
-        if data:
-            data["last_heartbeat"] = datetime.now().isoformat()
+
+        def update(data: dict[str, Any]) -> bool:
+            if not data or (
+                socket_id is not None and data.get("socket_id") != socket_id
+            ):
+                return False
+            data["last_heartbeat"] = datetime.now(timezone.utc).isoformat()
             if running_task_ids is not None:
                 data["running_task_ids"] = running_task_ids
             if executor_version is not None:
@@ -469,18 +475,11 @@ class LocalDeviceProvider(BaseDeviceProvider):
             data["runtime_instance_id"] = runtime_instance_id
             data["runtime_capacity"] = runtime_capacity
             data["runtime_features"] = runtime_features
-            result = await cache_manager.set_or_raise(
-                key, data, expire=DEVICE_ONLINE_TTL
-            )
-            logger.debug(
-                f"[LocalDeviceProvider] refresh_heartbeat: key={key}, "
-                f"running_tasks={len(running_task_ids) if running_task_ids else 0}"
-            )
-            return result
-        logger.warning(
-            f"[LocalDeviceProvider] refresh_heartbeat: key={key} not found in Redis"
+            return True
+
+        return await cache_manager.update_json_if_present(
+            key, update, expire=DEVICE_ONLINE_TTL
         )
-        return False
 
     async def is_online(
         self,
@@ -578,21 +577,22 @@ class LocalDeviceProvider(BaseDeviceProvider):
         user_id: int,
         device_id: str,
         status: str,
+        *,
+        socket_id: str,
     ) -> bool:
-        """Update device status in Redis."""
+        """Update device status for the socket that owns the online record."""
         key = self.generate_online_key(user_id, device_id)
-        data = await cache_manager.get_or_raise(key)
-        if data:
+
+        def update(data: dict[str, Any]) -> bool:
+            if data.get("socket_id") != socket_id:
+                return False
             data["status"] = status
-            data["last_heartbeat"] = datetime.now().isoformat()
-            result = await cache_manager.set_or_raise(
-                key, data, expire=DEVICE_ONLINE_TTL
-            )
-            logger.debug(
-                f"[LocalDeviceProvider] update_status: key={key}, status={status}"
-            )
-            return result
-        return False
+            data["last_heartbeat"] = datetime.now(timezone.utc).isoformat()
+            return True
+
+        return await cache_manager.update_json_if_present(
+            key, update, expire=DEVICE_ONLINE_TTL
+        )
 
     @staticmethod
     def _is_update_available(current: Optional[str], latest: str) -> bool:

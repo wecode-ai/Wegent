@@ -1,0 +1,51 @@
+{
+  "revision": "bd9c871a93d2",
+  "parents": [
+    "e5f6a7b8c9d0"
+  ],
+  "source": "20260731_bd9c871a93d2_add_knowledge_content_origin_and_wiki_.py",
+  "upgrade": [
+    {
+      "sql": [
+        "ALTER TABLE knowledge_documents ADD COLUMN origin VARCHAR(20) NOT NULL COMMENT 'Content ownership: ''generated'' (agent-owned) or ''user''' DEFAULT 'user'"
+      ]
+    },
+    {
+      "sql": [
+        "ALTER TABLE knowledge_folders ADD COLUMN origin VARCHAR(20) NOT NULL COMMENT 'Content ownership: ''generated'' (agent-owned) or ''user''' DEFAULT 'user'"
+      ]
+    },
+    {
+      "sql": [
+        "ALTER TABLE wiki_generations ADD COLUMN kind_id INTEGER NOT NULL COMMENT 'Knowledge base this version line belongs to; 0 = legacy row' DEFAULT '0'"
+      ]
+    },
+    {
+      "sql": [
+        "CREATE INDEX ix_wiki_generations_kind_id ON wiki_generations (kind_id)"
+      ]
+    }
+  ],
+  "downgrade": [
+    {
+      "sql": [
+        "DROP INDEX ix_wiki_generations_kind_id ON wiki_generations"
+      ]
+    },
+    {
+      "sql": [
+        "ALTER TABLE wiki_generations DROP COLUMN kind_id"
+      ]
+    },
+    {
+      "sql": [
+        "ALTER TABLE knowledge_folders DROP COLUMN origin"
+      ]
+    },
+    {
+      "sql": [
+        "ALTER TABLE knowledge_documents DROP COLUMN origin"
+      ]
+    }
+  ]
+}

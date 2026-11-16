@@ -18,8 +18,10 @@ from app.models.delivery import (
     LoopItem,
     LoopItemActiveAssignment,
     LoopItemComment,
+    LoopNode,
     ProjectChatAgent,
     loop_datetime_is_unset,
+    loop_datetime_value_is_unset,
 )
 from app.models.kind import Kind
 from app.models.user import User
@@ -30,6 +32,7 @@ from app.services.cloud_projects.access import (
     require_cloud_project_role,
     require_issue_action,
 )
+from app.services.loop_item_history_actor import automation_history_actor
 from app.services.loop_items.access import can_view_item
 
 ASSIGNMENT_EVENT_TYPE = "assignment"
@@ -151,6 +154,7 @@ class IssueAssignmentService:
         comment_body: str | None = None,
         replace_root_assignments: bool = False,
         initial_assignment: bool = False,
+        automation_context: dict | None = None,
     ) -> tuple[AssignmentEvent, bool]:
         del workspace_id
         self._lock_issue(db, issue_id)
@@ -211,6 +215,7 @@ class IssueAssignmentService:
             "notify": bool(notify),
             "trigger": trigger,
             "receipt_tracking": True,
+            **automation_history_actor(automation_context),
         }
         comment = db.get(LoopItemComment, comment_id) if comment_id else None
         if comment is None:
@@ -384,6 +389,7 @@ class IssueAssignmentService:
             "comment_id": assignment.id,
             "created_by_user_id": assignment.assigned_by_user_id,
             "created_by_user_name": creator.user_name if creator is not None else None,
+            "automation": assignment.metadata.get("automation"),
             "status": "active",
             "created_at": database_datetime_as_utc(db, assignment.created_at),
             "updated_at": database_datetime_as_utc(db, assignment.updated_at),
@@ -437,19 +443,29 @@ class IssueAssignmentService:
     def _assignment_comments(
         db: Session, issue_ids: list[str], *, for_update: bool = False
     ) -> list[LoopItemComment]:
+        model = LoopNode if for_update else LoopItemComment
         query = (
-            db.query(LoopItemComment)
-            .filter(
-                LoopItemComment.loop_item_id.in_(issue_ids),
-                loop_datetime_is_unset(LoopItemComment.deleted_at),
-                LoopItemComment.metadata_json["event_type"].as_string()
-                == ASSIGNMENT_EVENT_TYPE,
-            )
-            .order_by(LoopItemComment.created_at, LoopItemComment.id)
+            db.query(model)
+            .filter(model.loop_item_id.in_(issue_ids))
+            .order_by(model.created_at, model.id)
         )
         if for_update:
-            query = query.populate_existing().with_for_update()
-        return query.all()
+            # Lock by Issue identity alone: subtype/deletion indexes can scan
+            # another Issue's uncommitted rows before applying the Issue filter.
+            nodes = query.populate_existing().with_for_update().all()
+            return [
+                node
+                for node in nodes
+                if isinstance(node, LoopItemComment)
+                and loop_datetime_value_is_unset(node.deleted_at)
+                and isinstance(node.metadata_json, dict)
+                and node.metadata_json.get("event_type") == ASSIGNMENT_EVENT_TYPE
+            ]
+        return query.filter(
+            loop_datetime_is_unset(LoopItemComment.deleted_at),
+            LoopItemComment.metadata_json["event_type"].as_string()
+            == ASSIGNMENT_EVENT_TYPE,
+        ).all()
 
     def _reduce_events(
         self, comments: list[LoopItemComment]

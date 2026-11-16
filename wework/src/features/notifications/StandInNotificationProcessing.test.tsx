@@ -1,10 +1,11 @@
-import { fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
 import { StandInNotificationProcessing } from './StandInNotificationProcessing'
 import { assignment, runtimeItem } from './standInNotifications.fixtures'
 import { mergeStandInNotifications } from './standInNotifications'
 import { useStandInAssignmentNotifications } from './useStandInAssignmentNotifications'
+import { useStandInNotifications } from './useStandInNotifications'
 import type { TaskSource } from './NotificationTaskSourceContext'
 import {
   RuntimeInteractionsContext,
@@ -77,6 +78,54 @@ beforeEach(() => {
   readTask.mockResolvedValue({ success: true, task: runtimeItem.task })
 })
 describe('notification inline handling', () => {
+  it('keeps a resolved delegation action clickable during same-inbox history refresh', async () => {
+    const assignmentTasks = vi.fn().mockResolvedValue({ items: [] })
+    const currentServices = {
+      ...services,
+      standInApi: { ...services.standInApi!, assignmentTasks },
+    }
+    const source: TaskSource = {
+      items: [],
+      unreadTaskKeys: new Set(),
+      markRuntimeTaskRead: vi.fn(),
+      userId: 1,
+      services: currentServices,
+    }
+    const inbox = { items: [assignment], unread_count: 0, next_offset: null }
+    function Inbox({ value }: { value: typeof inbox }) {
+      const notification = useStandInNotifications(value, source, 'refresh-race', true).items[0]
+      return (
+        <StandInNotificationProcessing
+          notification={notification}
+          rowProps={rowProps}
+          services={currentServices}
+          userId={1}
+          onChanged={onChanged}
+        />
+      )
+    }
+    const rendered = render(<Inbox value={inbox} />)
+    await waitFor(() =>
+      expect(screen.getByTestId('notification-stand-in-start-assignment')).toBeEnabled()
+    )
+    let complete!: (value: { items: [] }) => void
+    assignmentTasks.mockImplementationOnce(
+      () =>
+        new Promise(resolve => {
+          complete = resolve
+        })
+    )
+    rendered.rerender(<Inbox value={{ ...inbox }} />)
+    await waitFor(() => expect(assignmentTasks).toHaveBeenCalledTimes(2))
+    try {
+      fireEvent.click(screen.getByTestId('notification-stand-in-start-assignment'))
+      await waitFor(() => expect(run).toHaveBeenCalledOnce())
+      expect(run).toHaveBeenCalledWith('12', 'ISSUE-1', 1, 'cloud', 'device', undefined)
+    } finally {
+      await act(async () => complete({ items: [] }))
+    }
+  })
+
   it('shows archived completion without requesting an unavailable archived transcript', () => {
     const archived = mergeStandInNotifications(
       [assignment],
@@ -261,7 +310,7 @@ describe('notification inline handling', () => {
     )
     fireEvent.click(screen.getByTestId('notification-stand-in-start-assignment'))
     expect(await screen.findByRole('alert')).toHaveTextContent(
-      '分身暂不可用，请检查分身是否已启用并关联此项目。'
+      '助理暂不可用，请检查助理是否已启用并关联此项目。'
     )
     expect(screen.queryByTestId('notification-stand-in-status-assignment')).toBeNull()
     expect(onChanged).not.toHaveBeenCalled()
@@ -539,6 +588,6 @@ it('localizes the persisted failed-task summary before transcript loading', asyn
       onChanged={onChanged}
     />
   )
-  expect(await screen.findByText('该分身角色已被删除，请重新选择角色。')).toBeVisible()
+  expect(await screen.findByText('该助理角色已被删除，请重新选择角色。')).toBeVisible()
   expect(screen.queryByText('Stand-in role no longer exists')).not.toBeInTheDocument()
 })

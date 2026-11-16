@@ -22,7 +22,8 @@ import { activityClassNames as cn } from '../issue-detail/activityClassNames'
 export interface ComposerToolbarProps {
   translate: CollaborationTranslate
   hideFeatureActions?: boolean
-  renderFeatureMenus?: (compact: boolean) => ReactNode
+  renderFeatureMenus?: (compact: boolean, permissionSelector: ReactNode) => ReactNode
+  renderTrailingActions?: (compact: boolean) => ReactNode
   contextUsageIndicator?: ReactNode
   workspaceMenu?: ReactNode
   renderModelSelector: (
@@ -75,6 +76,7 @@ const NARROW_MODEL_SELECTOR_MAX_WIDTH = 160
 export function ComposerToolbar({
   translate: t,
   renderFeatureMenus,
+  renderTrailingActions,
   hideFeatureActions = false,
   contextUsageIndicator,
   workspaceMenu,
@@ -151,13 +153,23 @@ export function ComposerToolbar({
     return () => observer.disconnect()
   }, [])
 
+  const permissionSelector = showExecutionTools ? (
+    <PermissionModeSelector
+      translate={t}
+      value={runtimePermissionMode(selectedModelOptions)}
+      disabled={disabled}
+      iconOnly
+      onChange={mode => onSelectModelOption(RUNTIME_PERMISSION_MODE_OPTION, mode)}
+    />
+  ) : null
+
   return (
     <div
       ref={toolbarRef}
       data-testid="composer-toolbar"
       data-compact={compact ? 'true' : 'false'}
       className={cn(
-        'mt-auto flex min-h-8 min-w-0 flex-wrap items-center justify-between gap-x-2 gap-y-1 pt-1',
+        'mt-auto flex min-h-7 min-w-0 flex-wrap items-center justify-between gap-x-2 gap-y-1 pt-1',
         className
       )}
     >
@@ -179,7 +191,7 @@ export function ComposerToolbar({
             supervisorPending={showExecutionTools && supervisorPending}
           />
         )}
-        {renderFeatureMenus?.(compact)}
+        {renderFeatureMenus ? renderFeatureMenus(compact, permissionSelector) : permissionSelector}
         {!hideFeatureActions && (
           <>
             {leadingContext}
@@ -205,18 +217,7 @@ export function ComposerToolbar({
         data-composer-toolbar-group="actions"
         className="ml-auto flex min-w-40 flex-1 items-center justify-end gap-1.5"
       >
-        {showExecutionTools ? (
-          <>
-            <PermissionModeSelector
-              translate={t}
-              value={runtimePermissionMode(selectedModelOptions)}
-              disabled={disabled}
-              iconOnly
-              onChange={mode => onSelectModelOption(RUNTIME_PERMISSION_MODE_OPTION, mode)}
-            />
-            {contextUsageIndicator}
-          </>
-        ) : null}
+        {showExecutionTools ? contextUsageIndicator : null}
         {showModelSelector
           ? (modelSelectorOverride ??
             renderModelSelector({
@@ -236,6 +237,7 @@ export function ComposerToolbar({
             }))
           : null}
         {workspaceMenu}
+        {renderTrailingActions?.(compact)}
         {showSubmitButton &&
           (isStreaming && !canSend ? (
             <Tooltip
@@ -249,7 +251,7 @@ export function ComposerToolbar({
                 data-testid="pause-response-button"
                 onClick={onPause}
                 disabled={disabled || !onPause}
-                className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-text-primary p-0 text-background hover:bg-text-primary/90"
+                className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-text-primary p-0 text-background hover:bg-text-primary/90"
                 aria-label={t('workbench.pause_response', '暂停回复')}
               >
                 <span className="h-3.5 w-3.5 rounded-sm bg-current" aria-hidden="true" />
@@ -267,7 +269,7 @@ export function ComposerToolbar({
                   data-composer-primary-action="true"
                   data-testid={sendButtonTestId}
                   onMouseDown={event => event.preventDefault()}
-                  className="flex h-8 w-8 items-center justify-center rounded-l-full hover:bg-text-primary/90"
+                  className="flex h-7 w-7 items-center justify-center rounded-l-full hover:bg-text-primary/90"
                   aria-label={primaryBusyLabel}
                 >
                   <ArrowUp className="h-4 w-4" />
@@ -277,7 +279,7 @@ export function ComposerToolbar({
                 ariaLabel={t('workbench.choose_send_mode', '选择发送方式')}
                 testId="send-mode-menu-button"
                 icon={ChevronDown}
-                triggerClassName="flex h-8 w-7 items-center justify-center rounded-r-full border-l border-background/20 hover:bg-text-primary/90"
+                triggerClassName="flex h-7 w-7 items-center justify-center rounded-r-full border-l border-background/20 hover:bg-text-primary/90"
                 items={[
                   {
                     label: t('workbench.send_after_turn', '当前回复结束后发送'),
@@ -334,8 +336,8 @@ export function ComposerToolbar({
                 disabled={!canSend}
                 onMouseDown={event => event.preventDefault()}
                 className={cn(
-                  'flex h-8 shrink-0 items-center justify-center gap-1.5 bg-text-primary text-background disabled:cursor-not-allowed disabled:bg-text-muted/45',
-                  sendButtonLabel ? 'rounded-lg px-3 text-sm font-medium' : 'w-8 rounded-full p-0'
+                  'flex h-7 shrink-0 items-center justify-center gap-1.5 bg-text-primary text-background disabled:cursor-not-allowed disabled:bg-text-muted/45',
+                  sendButtonLabel ? 'rounded-lg px-3 text-sm font-medium' : 'w-7 rounded-full p-0'
                 )}
                 aria-label={sendButtonLabel ?? t('workbench.send_message', '发送消息')}
               >

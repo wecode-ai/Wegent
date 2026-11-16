@@ -851,7 +851,12 @@ class SubtaskStore(Protocol):
     ) -> Optional[Subtask]: ...
 
     def list_assistant_by_task(
-        self, db: Session, *, task_id: int, owner_user_id: Optional[int] = None
+        self,
+        db: Session,
+        *,
+        task_id: int,
+        owner_user_id: Optional[int] = None,
+        include_contexts: bool = True,
     ) -> list[Subtask]: ...
 
     def list_after_message_id(
@@ -982,6 +987,8 @@ class SubtaskStore(Protocol):
         cutoff: datetime,
         max_age_cutoff: datetime,
         limit: int,
+        after_updated_at: datetime | None = None,
+        after_subtask_id: int | None = None,
     ) -> list[StalledRunningSubtask]: ...
 
     def list_session_task_ids(
@@ -1056,7 +1063,7 @@ class SubtaskStore(Protocol):
         db: Session,
         *,
         subtask: Subtask,
-        from_status: SubtaskStatus,
+        from_status: SubtaskStatus | tuple[SubtaskStatus, ...],
         **fields: Any,
     ) -> bool: ...
 

@@ -4,10 +4,51 @@ export async function verifyIssueDetailPropertyUi(control, scope, timeoutMs) {
   const summary = scope('[data-testid="cloud-todo-state-summary"]')
   await control.command('waitFor', summary, { visible: true, timeoutMs })
   const summaryText = await control.command('getText', summary)
+  const propertyLabels = `${summary} [data-testid="issue-property-grid"] dt`
+  assert.equal(
+    Number(await control.command('getElementCount', propertyLabels)),
+    4,
+    'The Issue property grid must contain four labels'
+  )
+  assert.equal(
+    await control.command('getText', propertyLabels),
+    '状态\n负责人\n里程碑\n时间范围',
+    'Each Issue property must have exactly one label in the property grid'
+  )
+  const metadata = scope('[data-testid="issue-primary-metadata"]')
+  await control.command('waitFor', metadata, { visible: true, timeoutMs })
+  const metadataText = await control.command('getText', metadata)
+  assert.match(metadataText, /标签/)
+  assert.match(metadataText, /参与者/)
+  const propertyHeight = await control.command(
+    'getComputedStyleValue',
+    `${summary} .task-detail-property`,
+    {
+      value: 'min-height',
+    }
+  )
+  assert.equal(
+    await control.command('getComputedStyleValue', `${metadata} .task-detail-rail-prop`, {
+      value: 'min-height',
+    }),
+    propertyHeight,
+    'Primary metadata must share the property row height'
+  )
+  assert.equal(
+    await control.command('getComputedStyleValue', `${metadata} .task-detail-rail-key`, {
+      value: 'font-weight',
+    }),
+    await control.command('getComputedStyleValue', propertyLabels, { value: 'font-weight' }),
+    'Primary metadata labels must share the property label weight'
+  )
+  await control.command('waitFor', `${metadata} [data-testid="cloud-todo-collaborators"]`, {
+    visible: true,
+    timeoutMs,
+  })
   assert.doesNotMatch(
     summaryText,
-    /负责人|可见范围/,
-    'The compact Issue property bar must not repeat property labels'
+    /可见范围/,
+    'The secondary visibility control must not repeat its property label'
   )
   assert.equal(
     await control.command('getAttribute', scope('[data-testid="cloud-todo-detail-assignee"]'), {

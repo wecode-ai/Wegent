@@ -4,9 +4,10 @@ import {
   type ModelProvider,
   type ProviderModel,
 } from '@/features/model-settings/providerModelConfiguration'
-import { defaultLocalModelToolProfile } from '@/features/model-settings/localModelSettings'
 import {
+  defaultLocalModelToolProfile,
   listLocalModelConfigs,
+  normalizeLocalModelCodexToolCompatibility,
   type LocalModelWebSearchMode,
 } from '@/features/model-settings/localModelSettings'
 import { localModelSupportsImageInput } from '@/features/model-settings/localModelProviders'
@@ -32,6 +33,10 @@ export function ProviderModelFields({
   const { t: common } = useTranslation('common')
   const format = model.api_format ?? provider.api_format
   const toolProfile = model.tool_profile ?? defaultLocalModelToolProfile(format)
+  const compatibility = normalizeLocalModelCodexToolCompatibility(
+    model.codex_tool_compatibility,
+    format
+  )
   const entry =
     model.catalog_entry ??
     createDefaultLocalModelCatalogEntry({
@@ -45,7 +50,7 @@ export function ProviderModelFields({
       <CustomModelCapabilitiesForm
         entry={entry}
         apiFormat={format}
-        codexToolCompatibility={model.codex_tool_compatibility ?? 'native'}
+        codexToolCompatibility={compatibility}
         onCodexToolCompatibilityChange={value => onChange({ codex_tool_compatibility: value })}
         contextWindow={model.context_window?.toString() ?? ''}
         maxOutputTokens={model.max_output_tokens?.toString() ?? ''}
@@ -195,7 +200,7 @@ export function ProviderModelFields({
               <select
                 className={INPUT}
                 data-testid={`provider-model-compatibility-${model.id}`}
-                value={model.codex_tool_compatibility ?? 'native'}
+                value={compatibility}
                 onChange={event =>
                   onChange({
                     codex_tool_compatibility: event.target

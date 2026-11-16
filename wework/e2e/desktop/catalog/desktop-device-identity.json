@@ -1,0 +1,18 @@
+{
+  "order": 166100,
+  "scenario": "./scenarios/desktop-device-identity.scenario.mjs",
+  "scenarioOnly": true,
+  "paths": [
+    "wework/electron/src/runtime/desktop-device-id*",
+    "wework/electron/src/runtime/desktop-runtime*",
+    "wework/electron/src/runtime/managed-executor-runtime*",
+    "executor/crates/config/src/device.rs"
+  ],
+  "ci": {
+    "core": {
+      "order": 111100,
+      "shard": 5,
+      "position": 13100
+    }
+  }
+}

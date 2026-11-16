@@ -1,0 +1,10 @@
+[package]
+name = "wegent-backend-config"
+version = "0.1.0"
+edition = "2024"
+rust-version.workspace = true
+license = "Apache-2.0"
+description = "Backend deployment configuration and environment initialization"
+
+[dependencies]
+url = "2"

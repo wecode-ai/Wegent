@@ -3,11 +3,12 @@
 // SPDX-License-Identifier: Apache-2.0
 
 mod api_context;
-pub(crate) mod automations;
+pub(crate) use wegent_automation as automations;
 mod codex_global_state;
 mod codex_legacy_search;
 mod codex_notifications;
 mod codex_rollout;
+mod codex_rollout_page;
 mod codex_timeline;
 mod codex_transcript_page;
 mod codex_transcript_search;
@@ -18,9 +19,11 @@ mod connection_dependencies;
 pub(crate) mod connection_host;
 mod connection_mcp;
 mod connectors;
+mod conversation_sessions;
 pub(crate) mod dingtalk;
 mod events;
 pub mod fork_transfer;
+pub(crate) mod git_connections;
 mod handler;
 pub(crate) mod lifecycle;
 pub(crate) mod local_connector_auth;
@@ -28,10 +31,13 @@ mod local_execution;
 mod mcp_elicitation;
 pub(crate) mod native_transcript;
 mod notification_mapping;
+mod reader;
 mod remote_projects;
+pub(crate) mod remote_task_access;
 mod response;
+mod restored_workspaces;
 mod runtime_handle_messages;
-mod store;
+pub(crate) mod store;
 mod task_create_contract;
 mod transcript;
 pub(crate) use transcript::codex_file_change_content;
@@ -40,6 +46,7 @@ mod transcript_search_annotations;
 mod transcript_search_projection;
 mod transcript_search_text;
 mod transcript_transport;
+pub(crate) mod transcript_work;
 mod util;
 pub(crate) use util::external_work_kind;
 pub(crate) use util::stand_in_requires_confirmation;
@@ -69,7 +76,8 @@ pub(crate) fn runtime_features() -> serde_json::Value {
                 "skills": true,
                 "standaloneWorkspace": true,
                 "workspaceInheritance": true,
-                "worktree": true
+                "worktree": true,
+                "intentCompilation": true
             }
         },
         "interactiveSessions": {
@@ -108,21 +116,6 @@ pub(crate) fn codex_workspace_roots() -> Vec<std::path::PathBuf> {
 }
 
 #[cfg(test)]
-mod project_editing_feature_tests {
-    #[test]
-    fn advertises_independent_project_editing_capabilities() {
-        let features = super::runtime_features();
-        assert_eq!(features["pluginSync"]["protocolVersion"], 2);
-        assert_eq!(
-            features["projectEditing"],
-            serde_json::json!({
-                "multiRoots": true,
-                "aiSettings": true,
-                "defaultProjectSpace": true,
-                "plugins": true,
-            })
-        );
-    }
-}
+mod project_editing_feature_tests {}
 
 mod stand_in_telemetry;

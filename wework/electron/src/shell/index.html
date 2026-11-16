@@ -12,13 +12,19 @@
     <link rel="stylesheet" href="./styles.css" />
   </head>
   <body>
-    <main id="runtime-overlay" data-phase="initializing">
+    <main id="runtime-overlay" data-phase="initializing" data-testid="startup-runtime-shell">
       <section class="runtime-card" aria-live="assertive" hidden>
         <h1>Wework 启动失败</h1>
         <p id="runtime-status">正在初始化 Core DSH…</p>
         <pre id="details" hidden></pre>
         <button id="reload-dsh" data-testid="startup-runtime-retry" type="button" hidden>
           重试启动
+        </button>
+        <button id="copy-diagnostics" data-testid="startup-runtime-copy" type="button" hidden>
+          复制诊断信息
+        </button>
+        <button id="open-logs" data-testid="startup-runtime-logs" type="button" hidden>
+          打开日志目录
         </button>
       </section>
     </main>

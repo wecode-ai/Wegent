@@ -33,7 +33,6 @@ from app.schemas.workspace import (
     WorkspaceExecutionEnvironmentCreate,
     WorkspaceExecutionEnvironmentListResponse,
     WorkspaceExecutionEnvironmentResponse,
-    WorkspaceListResponse,
     WorkspaceMemberCreate,
     WorkspaceMemberListResponse,
     WorkspaceMemberResponse,
@@ -43,13 +42,12 @@ from app.schemas.workspace import (
     WorkspaceResponse,
     WorkspaceUpdate,
 )
-from app.services.cloud_projects import cloud_project_service
 from app.services.cloud_projects.responses import (
     list_project_responses,
 )
 from app.services.cloud_projects.responses import project_response as _project_response
-from app.services.workspaces import workspace_service
-from app.services.workspaces.responses import list_workspace_responses
+from app.services.cloud_projects.service import cloud_project_service
+from app.services.workspaces.service import workspace_service
 from shared.telemetry.decorators import trace_sync
 
 router = APIRouter()
@@ -131,15 +129,6 @@ def create_workspace(
         (perf_counter() - persisted) * 1000,
     )
     return response
-
-
-# MIGRATION-CANDIDATE(api="GET /api/v1/workspaces"): remove after final confirmation.
-# @router.get("", response_model=WorkspaceListResponse)
-def list_workspaces(
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user_jwt_apikey_tasktoken),
-) -> WorkspaceListResponse:
-    return WorkspaceListResponse(items=list_workspace_responses(db, current_user.id))
 
 
 @router.get("/{workspace_id}", response_model=WorkspaceResponse)

@@ -15,6 +15,10 @@ from __future__ import annotations
 import uuid
 
 import httpx
+from knowledge_deleted_content_visibility import (
+    assert_residual_points_are_hidden,
+    snapshot_document_points,
+)
 from knowledge_remote_index_support import (
     ADMIN_USER_NAME,
     EMBEDDING_MODEL_URL,
@@ -121,6 +125,7 @@ def run_document_delete_scenario(
         )
         document_a_row = _load_document_row(document_a_id)
         generation = int(indexed_a["index_generation"])
+        points = snapshot_document_points(knowledge_base_id, document_a_id)
 
         before = _internal_retrieve_knowledge_base(
             client, knowledge_base_id, marker_a, user_id=owner_user_id
@@ -173,6 +178,17 @@ def run_document_delete_scenario(
             after_duplicate.json().get("records", []), document_a_id
         )
 
+        assert_residual_points_are_hidden(
+            client,
+            token,
+            knowledge_base_id=knowledge_base_id,
+            deleted_document_id=document_a_id,
+            sibling_document_id=document_b_id,
+            owner_user_id=owner_user_id,
+            sibling_marker=marker_b,
+            points=points,
+        )
+
         # An index task that was queued before the delete must not restore it.
         _assert_late_index_task_stands_down(
             document_id=document_a_id,
@@ -223,16 +239,21 @@ def run_delete_failure_scenario(
         detail = (
             failed.json().get("detail")
             if "json" in failed.headers.get("content-type", "")
-            else ""
+            else None
         )
         _check(
-            failed.status_code >= 500,
+            failed.status_code == 502,
             "a remote removal failure must surface instead of a local success: "
             f"{failed.status_code} {failed.text}",
         )
         _check(
-            isinstance(detail, str) and detail,
-            f"the surfaced removal failure must carry a detail: {failed.text}",
+            isinstance(detail, dict)
+            and detail.get("code") == "external_engine_unavailable"
+            and detail.get("error_code") == "external_engine_unavailable"
+            and detail.get("content_deleted") is False
+            and detail.get("index_cleanup") == "unconfirmed"
+            and detail.get("can_continue") is True,
+            f"the surfaced removal failure must carry its outcome: {failed.text}",
         )
         _check(
             _document_row_exists(document_id),

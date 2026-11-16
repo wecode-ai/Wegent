@@ -72,11 +72,15 @@ describe('shared card reply scheduling', () => {
     try {
       await act(async () => root.render(<Harness />))
       await act(async () => {
-        queue.enqueue('a', 'Once', [])
+        queue.enqueue('a', 'Once', [], [], 'exact-request-A')
       })
       await act(async () => root.render(null))
       await act(async () => root.render(<Harness />))
       expect(dispatch).toHaveBeenCalledOnce()
+      expect(dispatch).toHaveBeenCalledWith(
+        expect.anything(),
+        expect.objectContaining({ interactionId: 'exact-request-A' })
+      )
       await act(async () => {
         finish({ ok: false, persisted: true, error: 'Device offline' })
       })

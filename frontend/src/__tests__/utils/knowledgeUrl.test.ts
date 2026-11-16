@@ -1,93 +1,129 @@
-import { findKbByVirtualPath } from '@/utils/knowledgeUrl'
+import { buildKbUrl, parseKbUrl, resolveKbByVirtualPath } from '@/utils/knowledgeUrl'
 
-interface TestKb {
-  name: string
-  namespace: string
-}
-
-describe('findKbByVirtualPath', () => {
-  const personalKbs: TestKb[] = [
-    { name: 'mykb', namespace: 'default' },
-    { name: 'otherkb', namespace: 'default' },
-  ]
-
-  const teamKbs: TestKb[] = [
-    { name: 'ourdocs', namespace: 'team42' },
-    { name: 'projectdocs', namespace: 'team42' },
-  ]
-
-  const mixedKbs: TestKb[] = [
-    { name: 'mykb', namespace: 'default' },
-    { name: 'publickb', namespace: 'organization' },
-    { name: 'ourteamkb', namespace: 'team-alpha' },
-  ]
-
-  it('matches personal KB by namespace and name', () => {
-    const result = findKbByVirtualPath(personalKbs, 'default', 'MyKb')
-    expect(result).toEqual({ name: 'mykb', namespace: 'default' })
+const company = { id: 202, name: '工程与算法', namespace: 'acme-org' }
+const team = { id: 101, name: '工程与算法', namespace: 'team' }
+const personal = { id: 303, name: '工程与算法', namespace: 'default' }
+const all = [team, personal, company]
+const resolve = (namespace: string | null, name = '工程与算法') =>
+  resolveKbByVirtualPath({
+    allKnowledgeBases: all,
+    organizationKnowledgeBases: [company],
+    namespace,
+    name,
+    isLoading: false,
   })
 
-  it('matches team KB by namespace and name', () => {
-    const result = findKbByVirtualPath(teamKbs, 'team42', 'OurDocs')
-    expect(result).toEqual({ name: 'ourdocs', namespace: 'team42' })
+describe('knowledge URL scope resolution', () => {
+  it('round trips a company URL and resolves only inside the company collection', () => {
+    const parsed = parseKbUrl(buildKbUrl(company.namespace, company.name, true))!
+    expect(parsed).toMatchObject({ type: 'organization', namespace: null })
+    expect(resolve(parsed.namespace, parsed.kbName)).toEqual({
+      status: 'resolved',
+      knowledgeBase: company,
+    })
   })
 
-  it('matches organization KB with undefined namespace (ignores namespace)', () => {
-    const result = findKbByVirtualPath(mixedKbs, undefined, 'PublicKb')
-    expect(result).toEqual({ name: 'publickb', namespace: 'organization' })
+  it.each([
+    ['default', personal],
+    ['TEAM', team],
+  ])('matches namespace %s case insensitively', (namespace, expected) => {
+    expect(resolve(namespace)).toEqual({ status: 'resolved', knowledgeBase: expected })
   })
 
-  it('matches organization KB with null namespace (ignores namespace)', () => {
-    const result = findKbByVirtualPath(mixedKbs, null, 'PublicKb')
-    expect(result).toEqual({ name: 'publickb', namespace: 'organization' })
+  it('does not cross scopes on missing names or namespaces', () => {
+    expect(resolve('absent')).toEqual({ status: 'not-found' })
+    expect(resolve(null, 'absent')).toEqual({ status: 'not-found' })
   })
 
-  it('matches organization KB with empty string namespace (ignores namespace)', () => {
-    const result = findKbByVirtualPath(mixedKbs, '', 'PublicKb')
-    expect(result).toEqual({ name: 'publickb', namespace: 'organization' })
+  it.each([null, 'team'])('rejects ambiguous different IDs within scope %s', namespace => {
+    const kb = namespace ? team : company
+    expect(
+      resolveKbByVirtualPath({
+        allKnowledgeBases: [kb, { ...kb, id: 404 }],
+        organizationKnowledgeBases: [kb, { ...kb, id: 404 }],
+        namespace,
+        name: kb.name,
+        isLoading: false,
+      })
+    ).toEqual({ status: 'ambiguous' })
   })
 
-  it('is case-insensitive when matching name and namespace', () => {
-    const result = findKbByVirtualPath(personalKbs, 'Default', 'MyKB')
-    expect(result).toEqual({ name: 'mykb', namespace: 'default' })
+  it('deduplicates shared occurrences by ID', () => {
+    expect(
+      resolveKbByVirtualPath({
+        allKnowledgeBases: all,
+        organizationKnowledgeBases: [company, { ...company }],
+        namespace: null,
+        name: company.name,
+        isLoading: false,
+      })
+    ).toEqual({ status: 'resolved', knowledgeBase: company })
   })
 
-  it('returns undefined when no match exists', () => {
-    const result = findKbByVirtualPath(personalKbs, 'default', 'nonexistent')
-    expect(result).toBeUndefined()
+  it('keeps document paths attached to the scoped route', () => {
+    const url = buildKbUrl('team', 'My KB', false, 'folder/doc.md')
+    expect(parseKbUrl(url)).toEqual({
+      type: 'team',
+      namespace: 'team',
+      kbName: 'My KB',
+      docPath: 'folder/doc.md',
+    })
   })
+})
 
-  it('returns undefined when namespace is provided but does not match', () => {
-    const result = findKbByVirtualPath(mixedKbs, 'wrong', 'mykb')
-    expect(result).toBeUndefined()
-  })
+it('resolves the selected ID despite a stale name and same-scope duplicates', () => {
+  const selected = { ...company, id: 404, name: '改名后的库' }
+  expect(
+    resolveKbByVirtualPath({
+      allKnowledgeBases: [company, selected],
+      organizationKnowledgeBases: [company, selected],
+      namespace: null,
+      name: '工程与算法',
+      knowledgeBaseId: '404',
+      isLoading: false,
+    })
+  ).toEqual({ status: 'resolved', knowledgeBase: selected })
+})
 
-  it('returns undefined for empty array', () => {
-    const result = findKbByVirtualPath([], 'default', 'anything')
-    expect(result).toBeUndefined()
-  })
+it.each(['', '0', '-1', '202x', '1.5', '1e2', '9007199254740992', '999', '101', '303'])(
+  'rejects invalid, unavailable or out-of-scope ID %s without name fallback',
+  knowledgeBaseId => {
+    expect(
+      resolveKbByVirtualPath({
+        allKnowledgeBases: all,
+        organizationKnowledgeBases: [company],
+        namespace: null,
+        name: company.name,
+        knowledgeBaseId,
+        isLoading: false,
+      })
+    ).toEqual({ status: 'not-found' })
+  }
+)
 
-  it('matches first occurrence when multiple KBs have the same name in the same namespace', () => {
-    const kbs: TestKb[] = [
-      { name: 'dupname', namespace: 'default' },
-      { name: 'dupname', namespace: 'default' },
-    ]
-    const result = findKbByVirtualPath(kbs, 'default', 'dupname')
-    expect(result).toEqual({ name: 'dupname', namespace: 'default' })
-  })
+it('rejects a valid company ID at a different team namespace', () => {
+  expect(
+    resolveKbByVirtualPath({
+      allKnowledgeBases: all,
+      organizationKnowledgeBases: [company],
+      namespace: 'team',
+      name: team.name,
+      knowledgeBaseId: '202',
+      isLoading: false,
+    })
+  ).toEqual({ status: 'not-found' })
+})
 
-  it('matches organization KB by namespace when same name exists in personal namespace', () => {
-    const kbs: TestKb[] = [
-      { name: 'shared-kb', namespace: 'default' },
-      { name: 'shared-kb', namespace: 'organization' },
-    ]
-    const result = findKbByVirtualPath(kbs, 'organization', 'shared-kb')
-    expect(result).toEqual({ name: 'shared-kb', namespace: 'organization' })
-  })
-
-  it('returns undefined when no-name match exists in a different namespace', () => {
-    const kbs: TestKb[] = [{ name: 'shared-kb', namespace: 'default' }]
-    const result = findKbByVirtualPath(kbs, 'organization', 'shared-kb')
-    expect(result).toBeUndefined()
-  })
+it('builds a stable document link and preserves query parameters while replacing conflicting IDs', () => {
+  const url = new URL(
+    buildKbUrl('acme-org', 'Renamed KB', true, 'folder/doc.md', {
+      knowledgeBaseId: 202,
+      searchParams: 'kb=999&taskId=123&documentId=7&kb=101',
+    }),
+    'https://example.com'
+  )
+  expect(url.pathname).toBe('/knowledge/public/Renamed%20KB/folder/doc.md')
+  expect(url.searchParams.getAll('kb')).toEqual(['202'])
+  expect(url.searchParams.get('taskId')).toBe('123')
+  expect(url.searchParams.get('documentId')).toBe('7')
 })

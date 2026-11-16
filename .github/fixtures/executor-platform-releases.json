@@ -1,0 +1,62 @@
+[
+  {
+    "tag_name": "wework-v0.6.4",
+    "draft": false,
+    "prerelease": false,
+    "assets": []
+  },
+  {
+    "tag_name": "v3.0.0",
+    "draft": false,
+    "prerelease": true,
+    "assets": []
+  },
+  {
+    "tag_name": "v2.0.26",
+    "draft": true,
+    "prerelease": false,
+    "assets": []
+  },
+  {
+    "tag_name": "v2.0.25",
+    "draft": false,
+    "prerelease": false,
+    "assets": [
+      {
+        "name": "wegent-executor-macos-arm64",
+        "browser_download_url": "https://github.com/wecode-ai/Wegent/releases/download/v2.0.25/wegent-executor-macos-arm64"
+      },
+      {
+        "name": "wegent-executor-macos-amd64",
+        "browser_download_url": "https://github.com/wecode-ai/Wegent/releases/download/v2.0.25/wegent-executor-macos-amd64"
+      },
+      {
+        "name": "wegent-executor-linux-arm64",
+        "browser_download_url": "https://github.com/wecode-ai/Wegent/releases/download/v2.0.25/wegent-executor-linux-arm64"
+      },
+      {
+        "name": "wegent-executor-linux-amd64",
+        "browser_download_url": "https://github.com/wecode-ai/Wegent/releases/download/v2.0.25/wegent-executor-linux-amd64"
+      },
+      {
+        "name": "wegent-executor-windows-amd64.exe",
+        "browser_download_url": "https://github.com/wecode-ai/Wegent/releases/download/v2.0.25/wegent-executor-windows-amd64.exe"
+      }
+    ]
+  },
+  {
+    "tag_name": "v2.0.24",
+    "draft": false,
+    "prerelease": false,
+    "assets": [
+      {
+        "name": "wegent-executor-macos-arm64",
+        "browser_download_url": "https://github.com/wecode-ai/Wegent/releases/download/v2.0.24/wegent-executor-macos-arm64"
+      },
+      {
+        "name": "wegent-executor-windows-amd64.exe",
+        "browser_download_url": "https://github.com/wecode-ai/Wegent/releases/download/v2.0.24/wegent-executor-windows-amd64.exe"
+      }
+    ]
+  }
+]

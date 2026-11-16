@@ -12,6 +12,10 @@ import type {
 } from "../types";
 import { WorkspaceCollaborationGroupsConfiguration } from "../platform/WorkspaceResourceConfiguration";
 import type { ProjectAgentConfigurationHost } from "../project-agent-config/types";
+import {
+  readTemplateAgents,
+  templateRoutingResolver,
+} from "../templates/agents";
 import { applyProjectTemplate } from "../templates/projectConfiguration";
 import { templateMessages } from "../templates/messages";
 
@@ -174,7 +178,7 @@ function ScopedProjectCollaborationGroups({
                     namespace: agentResourceContext?.namespace ?? "default",
                     workspaceName:
                       agentResourceContext?.name ??
-                      (locale === "zh-CN" ? "当前空间" : "Current space"),
+                      (locale === "zh-CN" ? "当前分组" : "Current group"),
                     onClose,
                     onCreated: async (resource) => {
                       requireActive();
@@ -265,6 +269,13 @@ function ScopedProjectCollaborationGroups({
         canManage={canManage}
         agentActions={agentActions}
         commands={{
+          async loadTemplateAgents(group) {
+            return readTemplateAgents(
+              await api.agents.list(projectId, { forceRefresh: true }),
+              [group],
+              agentConfiguration?.readTemplateAgent,
+            );
+          },
           async createTemplateGroups(document, drafts) {
             requireActive();
             const created = await applyProjectTemplate(
@@ -274,6 +285,7 @@ function ScopedProjectCollaborationGroups({
               drafts,
               locale,
               templateMessages[locale].partial,
+              templateRoutingResolver(),
             );
             await reload();
             const latest = await api.projects.get(projectId);

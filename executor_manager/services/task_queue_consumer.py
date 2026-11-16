@@ -18,6 +18,7 @@ import time
 from datetime import datetime
 from typing import Any, Dict, Optional
 
+from executor_manager.clients.executor_binding import ObsoleteExecutorDispatch
 from executor_manager.config.config import (
     EXECUTOR_DISPATCHER_MODE,
     OFFLINE_TASK_EVENING_HOURS,
@@ -214,7 +215,7 @@ class TaskQueueConsumer:
                 and task_result.get("executor_name")
             ):
                 # Success - executor was created
-                self.queue_service.clear_pending(task_id)
+                self.queue_service.clear_pending(task_id, subtask_id)
                 return
 
             # No executor_name means submission failed
@@ -225,6 +226,11 @@ class TaskQueueConsumer:
             )
             self._handle_task_failure(task, error_msg)
 
+        except ObsoleteExecutorDispatch:
+            self.queue_service.clear_pending(task_id, subtask_id)
+            logger.info(
+                "[TaskQueueConsumer] Discarded obsolete turn %s/%s", task_id, subtask_id
+            )
         except Exception as e:
             logger.error(
                 f"[TaskQueueConsumer] Exception processing task "
@@ -287,7 +293,7 @@ class TaskQueueConsumer:
 
             if success:
                 # The failure is now terminal; stop tracking the dispatch.
-                self.queue_service.clear_pending(task_id)
+                self.queue_service.clear_pending(task_id, subtask_id)
                 logger.info(
                     f"[TaskQueueConsumer] Task {task_id}/{subtask_id} marked as FAILED"
                 )

@@ -1,3 +1,4 @@
+import { MockScopeStore } from './mock-scope'
 import type { IncomingMessage, ServerResponse } from 'http'
 import { writeAnthropicJsonResponse, writeAnthropicStreamingResponse } from './mock-anthropic'
 
@@ -14,7 +15,7 @@ type Scenario = {
   requests: Array<{ kind: string; body: MessageRequest }>
 }
 
-const scenarios = new Map<string, Scenario>()
+const scenarios = new MockScopeStore(() => new Map<string, Scenario>())
 
 function json(res: ServerResponse, status: number, body: unknown): void {
   res.writeHead(status, { 'Content-Type': 'application/json' })
@@ -53,13 +54,13 @@ export function handleClaudeCompactionRequest(
         json(res, 400, { error: 'A model and compaction mode are required' })
         return true
       }
-      scenarios.set(input.model, { ...input, requests: [] })
+      scenarios.current().set(input.model, { ...input, requests: [] })
       json(res, 200, { configured: true })
     } else if (req.method === 'DELETE') {
-      scenarios.delete(url.searchParams.get('model') || '')
+      scenarios.current().delete(url.searchParams.get('model') || '')
       json(res, 200, { deleted: true })
     } else {
-      const scenario = scenarios.get(url.searchParams.get('model') || '')
+      const scenario = scenarios.current().get(url.searchParams.get('model') || '')
       json(res, scenario ? 200 : 404, scenario || { error: 'Scenario not found' })
     }
     return true
@@ -67,7 +68,7 @@ export function handleClaudeCompactionRequest(
   if (!url.pathname.endsWith('/messages') || req.method !== 'POST') return false
   const body = JSON.parse(rawBody) as MessageRequest
   const model = body.model?.replace(/(?:\[1m\]|\+1m)$/i, '') || ''
-  const scenario = scenarios.get(model)
+  const scenario = scenarios.current().get(model)
   if (!scenario) return false
 
   const latestUser = body.messages?.filter(message => message.role === 'user').at(-1)

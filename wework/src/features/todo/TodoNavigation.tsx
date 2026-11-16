@@ -387,7 +387,7 @@ export function TodoSidebar({
                     className="flex h-8 w-full items-center gap-2 rounded px-2 text-xs text-text-secondary hover:bg-muted"
                   >
                     {projectIdCopied ? (
-                      <Check className="h-3.5 w-3.5 text-green-600" />
+                      <Check className="h-3.5 w-3.5 text-success wework:text-green-600" />
                     ) : (
                       <Copy className="h-3.5 w-3.5" />
                     )}

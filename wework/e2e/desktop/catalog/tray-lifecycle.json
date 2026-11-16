@@ -1,0 +1,13 @@
+{
+  "order": 172000,
+  "scenario": "./scenarios/tray-lifecycle.scenario.mjs",
+  "scenarioOnly": true,
+  "resources": ["macos-inspector-foreground"],
+  "ci": {
+    "core": {
+      "order": 118000,
+      "shard": 2,
+      "position": 16000
+    }
+  }
+}

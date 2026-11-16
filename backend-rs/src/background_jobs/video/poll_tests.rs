@@ -3,7 +3,7 @@
 
 use super::*;
 use crate::background_jobs::{
-    BackgroundJobsClient, client::Providers, config::BackgroundJobsConfig, with_lock_watchdog,
+    BackgroundJobsClient, config::BackgroundJobsConfig, with_lock_watchdog,
 };
 use brz_schedule::{
     Job, JobProvider, JobStatus, Registry, Worker, WorkerOptions, memory::MemoryProvider,
@@ -36,13 +36,7 @@ fn client(provider: Arc<MemoryProvider>) -> BackgroundJobsClient {
         shutdown_grace: Duration::from_secs(1),
     });
     client
-        .providers
-        .set(Providers {
-            jobs: provider.clone(),
-            locks: provider,
-            policies: Default::default(),
-        })
-        .ok()
+        .bind_providers(provider.clone(), provider, Default::default())
         .unwrap();
     client
 }

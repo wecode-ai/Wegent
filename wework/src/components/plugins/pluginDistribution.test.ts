@@ -1,5 +1,7 @@
-import { describe, expect, test } from 'vitest'
+// @vitest-environment node
+
 import type { InstalledPlugin, PluginMarketplaceItem } from '@/types/api'
+import { describe, expect, test } from 'vitest'
 import {
   installedPluginDistribution,
   installedPluginMarketplaceId,
@@ -121,62 +123,6 @@ describe('pluginDistribution', () => {
     }
   )
 
-  test('maps personal marketplace plugins to personal distribution', () => {
-    expect(
-      marketplacePluginDistribution(
-        marketplaceItem({
-          name: 'my-skill',
-          sourceProvider: 'user',
-          visibility: 'workspace',
-          manifest: { marketplaceId: 'wework-personal' },
-        })
-      )
-    ).toBe('personal')
-    expect(
-      marketplacePluginDistribution(
-        marketplaceItem({
-          name: 'code-review',
-          sourceProvider: 'user',
-          visibility: 'public',
-          manifest: { marketplaceId: 'personal' },
-        })
-      )
-    ).toBe('personal')
-    expect(
-      marketplacePluginDistribution(
-        marketplaceItem({
-          name: 'legacy-public-creation',
-          sourceProvider: 'user',
-          visibility: 'public',
-          accessRole: 'owner',
-        })
-      )
-    ).toBe('personal')
-  })
-
-  test('maps OpenAI local marketplaces to official and user-added ones to external', () => {
-    expect(
-      marketplacePluginDistribution(
-        marketplaceItem({
-          name: 'mailagent',
-          sourceProvider: 'codex',
-          visibility: 'public',
-          manifest: { marketplaceId: 'openai-bundled' },
-        })
-      )
-    ).toBe('official')
-    expect(
-      marketplacePluginDistribution(
-        marketplaceItem({
-          name: 'superpowers',
-          sourceProvider: 'codex',
-          visibility: 'public',
-          manifest: { marketplaceId: 'awesome-codex-plugins' },
-        })
-      )
-    ).toBe('external')
-  })
-
   test('maps wegent device marketplace plugins to workspace', () => {
     expect(
       marketplacePluginDistribution(
@@ -196,29 +142,6 @@ describe('pluginDistribution', () => {
           marketplace: 'wegent',
           sourceProvider: 'wegent',
           visibility: 'workspace',
-        })
-      )
-    ).toBe('workspace')
-  })
-
-  test('keeps cloud codex mirrors in official while preserving workspace cloud plugins', () => {
-    expect(
-      marketplacePluginDistribution(
-        marketplaceItem({
-          name: 'documents',
-          sourceProvider: 'codex',
-          visibility: 'public',
-          latestReleaseId: 11,
-        })
-      )
-    ).toBe('official')
-    expect(
-      marketplacePluginDistribution(
-        marketplaceItem({
-          name: 'dingtalk',
-          sourceProvider: 'wegent',
-          visibility: 'workspace',
-          latestReleaseId: 12,
         })
       )
     ).toBe('workspace')

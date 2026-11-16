@@ -175,13 +175,16 @@ export function resolveLocalPluginInventory(
       sourceItems[source] = result.items
     }
   }
-  // Codex membership covers the personal market too. A newer full Codex read
-  // supersedes an earlier disk override, including a previous successful empty.
-  if (sourceReads.codex?.status === 'fulfilled' && sourceReads.personal?.status !== 'fulfilled') {
+  // Codex owns personal membership only when no independent personal read is
+  // supplied. A rejected personal source must retain its own confirmed rows.
+  if (sourceReads.codex?.status === 'fulfilled' && !sourceReads.personal) {
     delete sourceItems.personal
     delete localInstalledSourceStatus.personal
   }
-  if (sourceReads.personal?.status === 'fulfilled')
+  if (
+    sourceReads.personal?.status === 'fulfilled' ||
+    (sourceReads.personal && previous?.localInstalledSources?.personal !== undefined)
+  )
     sourceItems.codex = (sourceItems.codex ?? []).filter(plugin => !isPersonal(plugin))
   const items = mergeLocalInstalledWithStorePackages(
     [...(sourceItems.codex ?? []), ...(sourceItems.personal ?? [])],

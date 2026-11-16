@@ -15,7 +15,7 @@ use crate::task_store_statements::{
 };
 
 pub(crate) use crate::task_store_statements::{
-    active_task_projection_statement, active_task_statement, owner_matches_task_id_statement,
+    active_task_projection_statement, owner_matches_task_id_statement,
     regular_active_task_statement, update_task_json_statement,
 };
 
@@ -56,6 +56,28 @@ pub(crate) struct Tables {
     pub(crate) subtasks: &'static str,
 }
 
+pub(crate) fn is_active_task(task: &brz_mysql::MysqlRow) -> bool {
+    super::task_column::<i64>(task, "is_active").is_some_and(|state| matches!(state, 1 | 2))
+        && super::task_column::<String>(task, "kind").as_deref() == Some("Task")
+}
+
+pub(crate) use wegent_task_store::dispatchable_task_status;
+
+pub(crate) async fn latest_assistant_id(
+    tx: &mut impl brz_mysql::MysqlTransaction,
+    table: &str,
+    task_id: i64,
+) -> brz_mysql::MysqlResult<Option<i64>> {
+    tx.fetch_optional(
+        format!(
+            "SELECT id FROM {table} WHERE task_id = ? AND role = 'ASSISTANT' \
+                 ORDER BY message_id DESC, id DESC LIMIT 1"
+        ),
+        (task_id,),
+    )
+    .await
+}
+
 /// One subtask row (`subtask_store.get_by_id`).
 pub(crate) fn subtask_by_id(tables: Tables) -> String {
     subtask_by_id_statement(tables.subtasks)
@@ -72,8 +94,8 @@ pub(crate) fn contexts_by_subtask() -> String {
 }
 
 /// `subtask_store.list_assistant_by_task`.
-pub(crate) fn assistant_subtasks(tables: Tables) -> String {
-    assistant_subtasks_by_task_statement(tables.subtasks)
+pub(crate) fn assistant_subtasks(subtask_table: &str) -> String {
+    assistant_subtasks_by_task_statement(subtask_table)
 }
 
 /// `subtask_store.update_fields` flush for the RUNNING status transition
@@ -88,12 +110,12 @@ pub(crate) fn update_subtask_running(tables: Tables) -> String {
 /// (`db.py:136`): a terminal error that carries no collected result writes no
 /// `result` column and leaves the stored value untouched.
 pub(crate) fn update_subtask_terminal(
-    tables: Tables,
+    subtask_table: &str,
     with_result: bool,
     with_error: bool,
     with_executor: bool,
 ) -> String {
-    update_subtask_terminal_statement(tables.subtasks, with_result, with_error, with_executor)
+    update_subtask_terminal_statement(subtask_table, with_result, with_error, with_executor)
 }
 
 /// `_get_team_from_task_ref` / `CollaborationStrategyFactory`: the Task CRD's
@@ -127,8 +149,8 @@ pub(crate) fn update_kind_json() -> &'static str {
 
 /// `create_pet`: insert a new Pet Kind row for a user.
 pub(crate) fn insert_pet_kind() -> &'static str {
-    "INSERT INTO kinds (user_id, kind, name, namespace, json, is_active) \
-     VALUES (?, ?, ?, ?, ?, ?)"
+    "INSERT INTO kinds (user_id, kind, name, namespace, json, is_active, created_at, updated_at) \
+     VALUES (?, ?, ?, ?, ?, ?, NOW(), NOW())"
 }
 
 /// `add_chat_experience`'s `db.refresh(pet)`

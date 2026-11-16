@@ -1,5 +1,9 @@
 import { fetchLocalRuntimeJson } from '../modules/runtime-request.mjs'
 import assert from 'node:assert/strict'
+import { readFile } from 'node:fs/promises'
+import { join } from 'node:path'
+import { requestExecutor } from '../modules/executor-rpc.mjs'
+import { until } from '../modules/plugin-regression-fixture.mjs'
 import {
   ACTIVE_COMPOSER_SELECTOR,
   ACTIVE_WORKBENCH_SELECTOR,
@@ -23,12 +27,14 @@ const MARKER = 'WEWORK_TASK_MODEL_DELETION'
 const SELECTOR = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="model-selector-button"]`
 const SEND = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="send-message-button"]`
 
-export function createDesktopScenario({ workspacePath, modelResponseTimeoutMs }) {
+export function createDesktopScenario({ workspacePath, modelResponseTimeoutMs, resultDir }) {
   let cloud
   let deletedModelId
+  let offlineModelId
   let replyCount = 0
   const modelName = `task-model-deletion-${process.pid}`
   const localModelName = `local-deletion-${process.pid}`
+  const offlineModelName = `task-model-offline-${process.pid}`
   const request = (path, options = {}) =>
     fetchJson(`${cloud.backendUrl}${path}`, {
       ...options,
@@ -37,6 +43,15 @@ export function createDesktopScenario({ workspacePath, modelResponseTimeoutMs })
         'Content-Type': 'application/json',
       },
     })
+
+  async function deletePublicModel(modelId) {
+    // The admin delete endpoint answers 204 with no JSON body.
+    const response = await fetch(`${cloud.backendUrl}/api/admin/public-models/${modelId}`, {
+      method: 'DELETE',
+      headers: { Authorization: `Bearer ${cloud.authToken}` },
+    })
+    assert.equal(response.status, 204, 'Offline fixture cleanup must return 204')
+  }
 
   async function createLocalModel(control) {
     await control.command('navigate', 'body', { value: '/settings/personal/models' })
@@ -132,6 +147,76 @@ export function createDesktopScenario({ workspacePath, modelResponseTimeoutMs })
     )
   }
 
+  /** Inspect the real feedback preview for the owning task's allowlisted model identities. */
+  async function assertFeedbackModelSnapshot(control, identity, expectedModelName) {
+    await control.command('clickWhenEnabled', '[data-testid="topnav-feedback-button"]')
+    try {
+      await control.command('waitFor', '[data-testid="task-feedback-note"]', { visible: true })
+      await control.command('fill', '[data-testid="task-feedback-note"]', {
+        value: 'Inspect the saved and restored task model identities.',
+      })
+      await control.command(
+        'clickWhenEnabled',
+        '[data-testid="task-feedback-group-full-task-checkbox"]'
+      )
+      await control.command('clickWhenEnabled', '[data-testid="task-feedback-export-button"]')
+      await control.command('waitFor', '[data-testid="task-feedback-preview-list"]')
+      await control.command(
+        'clickWhenEnabled',
+        '[data-testid="task-feedback-preview-category-task"]'
+      )
+      await control.command(
+        'clickWhenEnabled',
+        '[data-testid="task-feedback-preview-entry-context/task.json"]'
+      )
+      await control.command('waitFor', '[data-testid="task-feedback-preview-content"]')
+      const context = JSON.parse(
+        await control.command('getText', '[data-testid="task-feedback-preview-content"]')
+      )
+      assert.equal(context.task.taskId, identity.taskId)
+      assert.equal(typeof context.modelSelection?.scopeFingerprint, 'number')
+      for (const source of ['configured', 'effective', 'selected']) {
+        assert.equal(
+          context.modelSelection[source]?.modelName,
+          expectedModelName,
+          `The feedback preview omitted the ${source} task model identity`
+        )
+        assert.equal(Object.hasOwn(context.modelSelection[source], 'options'), false)
+      }
+    } finally {
+      await control.command('clickWhenEnabled', '[data-testid="task-feedback-close-button"]')
+      await control.command('waitFor', '[data-testid="task-feedback-dialog-overlay"]', {
+        visible: false,
+      })
+    }
+  }
+
+  /** Check that actual task and transcript reads log the owning task's saved model identity. */
+  async function assertTaskReadModelDiagnostics(control, identity, expectedModelName) {
+    const address = { taskId: identity.taskId }
+    const saved = await requestExecutor(control, 'runtime.tasks.get', { address })
+    const selection = saved.task.runtimeHandle.modelSelection
+    assert.equal(selection.modelName, expectedModelName)
+    await requestExecutor(control, 'runtime.tasks.transcript', { address })
+    const events = ['runtime task get resolved link', 'runtime task transcript resolved link']
+    await until(
+      () => readFile(join(resultDir, 'executor.log'), 'utf8'),
+      log =>
+        events.every(event =>
+          log
+            .split('\n')
+            .some(
+              line =>
+                line.includes(event) &&
+                line.includes(`local_task_id=${identity.taskId} `) &&
+                line.includes(`model_selection_name=${expectedModelName} `) &&
+                line.includes(`model_selection_type=${selection.modelType}`)
+            )
+        ),
+      'Task reads did not log the saved model identity'
+    )
+  }
+
   return {
     requiresCloudEnvironment: true,
     async prepareCloud(environment) {
@@ -193,6 +278,8 @@ export function createDesktopScenario({ workspacePath, modelResponseTimeoutMs })
         const row = snapshot.testIds.find(id => id.startsWith('runtime-local-task-row-'))
         const taskSelector = `[data-testid="${row}"]`
         const identity = await conversationIdentity(control)
+        await assertFeedbackModelSnapshot(control, identity, `local-model:${localModelId}`)
+        await assertTaskReadModelDiagnostics(control, identity, `local-model:${localModelId}`)
 
         // Delete the local configuration through the actual settings UI and reopen the task.
         await control.command('navigate', 'body', { value: '/settings/personal/models' })
@@ -234,8 +321,69 @@ export function createDesktopScenario({ workspacePath, modelResponseTimeoutMs })
         await send(control, 'follow-up after cloud deletion')
         assert.equal(replyCount, 3, 'Recovery did not continue the existing task')
         await assertOriginalConversation(control, identity, row)
+
+        // Hiding a public model after it has served the task must not replace
+        // the saved selection: the same task keeps calling it.
+        const offline = await request('/api/admin/public-models', {
+          method: 'POST',
+          body: JSON.stringify({
+            name: offlineModelName,
+            namespace: 'default',
+            json: {
+              apiVersion: 'agent.wecode.io/v1',
+              kind: 'Model',
+              metadata: {
+                name: offlineModelName,
+                namespace: 'default',
+                displayName: offlineModelName,
+              },
+              spec: {
+                protocol: 'openai-responses',
+                apiFormat: 'responses',
+                modelType: 'llm',
+                isVisible: true,
+                isWeworkAvailable: true,
+                modelConfig: {
+                  env: {
+                    model: 'openai',
+                    model_id: offlineModelName,
+                    base_url: `${cloud.modelServerUrl}/v1`,
+                    api_key: 'desktop-e2e',
+                  },
+                },
+              },
+            },
+          }),
+        })
+        offlineModelId = offline.id
+        assert.ok(offlineModelId, 'The offline fixture was not persisted')
+        await selectE2EModel(control, offlineModelName, offlineModelName)
+        await send(control, 'offline initial')
+        await request(`/api/admin/public-models/${offlineModelId}`, {
+          method: 'PUT',
+          body: JSON.stringify({ is_visible: false }),
+        })
+        await reloadMainWindow(
+          control,
+          'The renderer did not reconnect after the model went offline'
+        )
+        await control.command('waitFor', taskSelector)
+        await control.command('click', taskSelector)
+        await control.command('waitFor', SELECTOR, { text: offlineModelName })
+        // The hidden model is still a usable saved selection, unlike the
+        // deleted-model recovery path, so the composer stays enabled.
+        assert.equal(Number(await control.command('getElementCount', `${SELECTOR}:disabled`)), 0)
+        await control.command('waitFor', SEND, { visible: true })
+        await send(control, 'continue after offline')
+        assert.equal(
+          replyCount,
+          5,
+          'Continuing a task after its model went offline did not reach the model'
+        )
+        await assertOriginalConversation(control, identity, row)
       } finally {
         if (deletedModelId) await request(`/api/models/${deletedModelId}`, { method: 'DELETE' })
+        if (offlineModelId) await deletePublicModel(offlineModelId)
       }
     },
   }

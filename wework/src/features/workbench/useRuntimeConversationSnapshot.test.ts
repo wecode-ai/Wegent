@@ -4,8 +4,15 @@ import {
   applyRuntimeConversationAction,
   clearRuntimeConversationCacheForTests,
   getRuntimeConversationTurns,
+  cacheRuntimeConversationQueuedMessages,
+  cacheRuntimeConversationQueuePaused,
+  setRuntimeConversationTaskPlan,
 } from './runtimeConversationCache'
-import { useRuntimeConversationSnapshot } from './useRuntimeConversationSnapshot'
+import {
+  useRuntimeConversationMetadata,
+  useRuntimeConversationQueue,
+  useRuntimeConversationSnapshot,
+} from './useRuntimeConversationSnapshot'
 
 const first = { deviceId: 'device', taskId: 'first' }
 const second = { deviceId: 'device', taskId: 'second' }
@@ -20,6 +27,38 @@ function start(address: typeof first, content: string) {
   })
 }
 afterEach(clearRuntimeConversationCacheForTests)
+
+test('reads queue and metadata changes directly and switches their owner synchronously', () => {
+  cacheRuntimeConversationQueuedMessages(first, [
+    { id: 'queued', content: 'Follow up', status: 'queued', createdAt: '2026-11-06T00:00:00Z' },
+  ])
+  cacheRuntimeConversationQueuePaused(first, true)
+  setRuntimeConversationTaskPlan(first, {
+    ...first,
+    turnId: 'turn',
+    plan: [{ step: 'Implement', status: 'inProgress' }],
+  })
+  const { result, rerender } = renderHook(
+    ({ address }) => ({
+      queue: useRuntimeConversationQueue(address),
+      metadata: useRuntimeConversationMetadata(address),
+    }),
+    { initialProps: { address: first as typeof first | null } }
+  )
+  expect(result.current.queue.messages[0].content).toBe('Follow up')
+  expect(result.current.queue.paused).toBe(true)
+  expect(result.current.metadata.taskPlan?.turnId).toBe('turn')
+  rerender({ address: second })
+  expect(result.current.queue).toEqual({ messages: [], paused: false })
+  expect(result.current.metadata.taskPlan).toBeNull()
+  act(() => cacheRuntimeConversationQueuePaused(second, true))
+  expect(result.current.queue.paused).toBe(true)
+  rerender({ address: null })
+  expect(result.current.queue).toEqual({ messages: [], paused: false })
+  expect(result.current.metadata.taskPlan).toBeNull()
+  rerender({ address: first })
+  expect(result.current.queue.messages[0].id).toBe('queued')
+})
 
 test('switches snapshots in the same render and retains background updates for the previous task', () => {
   start(first, 'First task')

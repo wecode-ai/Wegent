@@ -8,6 +8,8 @@ import { fileURLToPath } from 'node:url'
 import { isolateAiVerifyRuntimeEnvironment } from './ai-verify-environment.mjs'
 import { wrapWindowsScriptCommand } from './child-process-command.mjs'
 import { resolveHarnessRuntimeAssetCacheEnvironment } from './lib/harness-runtime-cache.mjs'
+import { electronToolchainLockPath } from './lib/electron-toolchain-lock.mjs'
+import { acquireProcessLock } from './lib/process-lock.mjs'
 
 const scriptDir = dirname(fileURLToPath(import.meta.url))
 const weworkDir = resolve(scriptDir, '..')
@@ -53,7 +55,15 @@ function run(command, args, environment = process.env) {
 }
 
 try {
-  await run(pnpmCommand, ['run', 'prepare:electron'])
+  // Packaging consumes its verified ZIP directly, without a development runtime.
+  if (process.env.WEWORK_ELECTRON_DEPENDENCIES_READY !== 'true') {
+    const releaseToolchainLock = await acquireProcessLock(electronToolchainLockPath)
+    try {
+      await run(pnpmCommand, ['--dir', 'electron', 'install', '--frozen-lockfile'])
+    } finally {
+      await releaseToolchainLock()
+    }
+  }
   await run(
     pnpmCommand,
     [

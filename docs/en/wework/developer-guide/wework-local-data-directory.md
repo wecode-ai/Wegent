@@ -24,6 +24,35 @@ The default Executor Home is `~/.wework` and contains:
 The `WEGENT_EXECUTOR_HOME` environment variable overrides the default Executor
 Home. This is useful for isolated sessions, tests, and custom deployments.
 
+## Desktop Executor Identity
+
+Managed desktop and standalone Executors both prefer persisted identities and
+generate new ones only when missing.
+
+Without an explicit verification override, the Electron host first reads `desktop-device-id`, preserving IDs saved by older
+versions. Only when the file is absent does it hash the machine hardware UUID and
+application identifier (default `io.wecode.wework`) with SHA-256 and save
+`electron-<hash>`. Without an existing identity, the same machine and application
+produce the same ID. The raw hardware UUID is never sent as a device ID or written
+to identity files or logs.
+
+The managed Executor uses the host ID for local IPC and cloud `app_device_id`.
+Both managed and standalone Executors first use the `device_id` and
+`runtime_instance_id` persisted in `device-config.json`. Environment values seed
+only missing fields: the host supplies `device-<app_device_id>` and
+`runtime-<app_device_id>`; standalone Executors generate IDs when no seeds exist.
+New identities are saved and retained on restart. These three identities preserve
+their distinct routing responsibilities. Account permissions, session tokens and
+record-scoped routing remain controlled by authentication and registration;
+hardware hashes do not grant authority.
+
+Identity resolution neither moves conversation data nor rewrites saved references,
+and does not infer identity from old worktree records. Without an override, empty or unreadable identity
+files fail startup rather than silently replacing an identity. A valid hardware
+UUID is required only when generating a new desktop identity. Isolated verification
+can set a nonempty `WEGENT_APP_IPC_DEVICE_ID` as the effective ID before file reads
+or hardware lookup, without overwriting the normal file.
+
 ## Directory Scanning During Home Migration
 
 When moving a legacy Codex Home into the workbench directory, relative symlink

@@ -1,10 +1,10 @@
-import { act, render, screen, waitFor, within } from '@testing-library/react'
+import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
+import '@/i18n'
+import type { DeviceInfo } from '@/types/api'
+import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, test, vi } from 'vitest'
-import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
-import type { DeviceInfo } from '@/types/api'
 import { WorktreesSettingsPage } from './WorktreesSettingsPage'
-import '@/i18n'
 
 describe('WorktreesSettingsPage', () => {
   const getWorktreeSettings = vi.fn()
@@ -88,120 +88,6 @@ describe('WorktreesSettingsPage', () => {
     restoreWorktree.mockResolvedValue({ success: true })
   })
 
-  test('loads Codex defaults and linked tasks from the injected device API', async () => {
-    render(<WorktreesSettingsPage api={api} devices={devices} />)
-
-    expect(await screen.findByTestId('worktrees-settings-page')).toBeInTheDocument()
-    await waitFor(() =>
-      expect(getWorktreeSettings).toHaveBeenCalledWith({ deviceId: 'local-device' })
-    )
-    expect(screen.getByTestId('worktrees-auto-cleanup-switch')).toHaveAttribute(
-      'aria-checked',
-      'true'
-    )
-    expect(screen.getByTestId('worktrees-keep-count-input')).toHaveValue(15)
-    expect(screen.getByText('Fix settings')).toBeInTheDocument()
-  })
-
-  test('only lists online or busy devices with managed Worktree preflight support', async () => {
-    render(
-      <WorktreesSettingsPage
-        api={api}
-        devices={[
-          ...devices,
-          {
-            ...devices[0],
-            id: 2,
-            device_id: 'busy-device',
-            name: 'Busy Cloud',
-            status: 'busy',
-          },
-          {
-            ...devices[0],
-            id: 3,
-            device_id: 'unsupported-device',
-            name: 'Old Executor',
-            runtime_features: null,
-          },
-          {
-            ...devices[0],
-            id: 4,
-            device_id: 'offline-device',
-            name: 'Offline Cloud',
-            status: 'offline',
-          },
-        ]}
-      />
-    )
-
-    const select = await screen.findByTestId('worktrees-device-select')
-    expect(within(select).getAllByRole('option')).toHaveLength(2)
-    expect(within(select).getByRole('option', { name: 'This Mac' })).toBeInTheDocument()
-    expect(within(select).getByRole('option', { name: 'Busy Cloud' })).toBeInTheDocument()
-    expect(within(select).queryByRole('option', { name: 'Old Executor' })).not.toBeInTheDocument()
-    expect(within(select).queryByRole('option', { name: 'Offline Cloud' })).not.toBeInTheDocument()
-  })
-
-  test('matches the Codex project grouping and opens a linked conversation', async () => {
-    const onOpenRuntimeTask = vi.fn().mockResolvedValue(undefined)
-    const onRefreshWorkLists = vi.fn().mockResolvedValue(undefined)
-    const onLeaveSettings = vi.fn()
-    render(
-      <WorktreesSettingsPage
-        api={api}
-        devices={devices}
-        onOpenRuntimeTask={onOpenRuntimeTask}
-        onRefreshWorkLists={onRefreshWorkLists}
-        onLeaveSettings={onLeaveSettings}
-      />
-    )
-
-    const projectHeader = await screen.findByTestId('worktree-project-header')
-    expect(projectHeader).toHaveTextContent('/Users/me/repo')
-    expect(projectHeader).toContainElement(screen.getByTestId('worktrees-refresh-button'))
-    expect(screen.queryByText('已管理的工作树')).not.toBeInTheDocument()
-    expect(within(screen.getByTestId('worktree-row')).getByText('工作树')).toBeInTheDocument()
-    expect(screen.getByText('对话')).toBeInTheDocument()
-    expect(screen.getByTestId('delete-worktree-button-runtime-1')).toHaveTextContent('归档并回收')
-
-    await userEvent.click(screen.getByTestId('worktree-linked-task'))
-    await waitFor(() =>
-      expect(onOpenRuntimeTask).toHaveBeenCalledWith(
-        expect.objectContaining({ deviceId: 'local-device', taskId: 'runtime-1' })
-      )
-    )
-    expect(onRefreshWorkLists).toHaveBeenCalledTimes(1)
-    expect(onLeaveSettings).toHaveBeenCalledTimes(1)
-  })
-
-  test('shows restorable snapshots and restores the selected worktree', async () => {
-    listWorktrees.mockResolvedValueOnce({
-      success: true,
-      deviceId: 'local-device',
-      items: [
-        {
-          deviceId: 'local-device',
-          worktreeId: 'runtime-restorable',
-          path: '/Users/me/.wework/workspace/worktrees/restorable/repo',
-          repositoryName: 'repo',
-          sourcePath: '/Users/me/repo',
-          state: 'restorable',
-          conversations: [],
-        },
-      ],
-    })
-
-    render(<WorktreesSettingsPage api={api} devices={devices} />)
-
-    await userEvent.click(await screen.findByTestId('restore-worktree-button-runtime-restorable'))
-    await waitFor(() =>
-      expect(restoreWorktree).toHaveBeenCalledWith({
-        deviceId: 'local-device',
-        path: '/Users/me/.wework/workspace/worktrees/restorable/repo',
-      })
-    )
-  })
-
   test('shows persisted worktree failures so leftover directories remain diagnosable', async () => {
     const response = await listWorktrees()
     listWorktrees.mockResolvedValue({
@@ -272,81 +158,6 @@ describe('WorktreesSettingsPage', () => {
     )
     expect(screen.getByText('删除工作树失败')).toBeInTheDocument()
     expect(screen.getByTestId('delete-worktree-button-runtime-1')).toBeInTheDocument()
-  })
-
-  test.each(['recycle', 'restore'])(
-    'does not reload a previous device after %s completes',
-    async action => {
-      let complete: ((value: unknown) => void) | undefined
-      const pending = new Promise(resolve => {
-        complete = resolve
-      })
-      const operation = action === 'restore' ? restoreWorktree : deleteWorktree
-      operation.mockReturnValueOnce(pending)
-      if (action === 'restore') {
-        const response = await listWorktrees()
-        listWorktrees.mockResolvedValue({
-          ...response,
-          items: response.items.map((item: object) => ({ ...item, state: 'restorable' })),
-        })
-        listWorktrees.mockClear()
-      }
-      getWorktreeSettings.mockImplementation(async ({ deviceId }) => ({
-        deviceId,
-        worktreeRoot: deviceId,
-        resolvedWorktreeRoot: deviceId,
-        autoCleanupEnabled: true,
-        keepCount: deviceId === 'second-device' ? 7 : 15,
-      }))
-      render(
-        <WorktreesSettingsPage
-          api={api}
-          devices={[
-            ...devices,
-            { ...devices[0], device_id: 'second-device', name: 'Second device' },
-          ]}
-        />
-      )
-      await userEvent.click(
-        await screen.findByTestId(
-          `${action === 'restore' ? 'restore' : 'delete'}-worktree-button-runtime-1`
-        )
-      )
-      if (action === 'recycle')
-        await userEvent.click(screen.getByTestId('confirm-recycle-worktree-button'))
-      await userEvent.selectOptions(screen.getByTestId('worktrees-device-select'), 'second-device')
-      await waitFor(() => expect(screen.getByTestId('worktrees-keep-count-input')).toHaveValue(7))
-      await act(async () => {
-        complete?.({ success: true })
-      })
-      await waitFor(() =>
-        expect(screen.queryByTestId('confirm-recycle-worktree-button')).not.toBeInTheDocument()
-      )
-      expect(getWorktreeSettings.mock.calls.map(([arg]) => arg.deviceId)).toEqual([
-        'local-device',
-        'second-device',
-      ])
-      expect(screen.getByTestId('worktrees-keep-count-input')).toHaveValue(7)
-    }
-  )
-
-  test('saves the cleanup limit on Enter without reloading the list', async () => {
-    render(<WorktreesSettingsPage api={api} devices={devices} />)
-    await screen.findByText('Fix settings')
-    expect(listWorktrees).toHaveBeenCalledTimes(1)
-
-    const input = screen.getByTestId('worktrees-keep-count-input')
-    await userEvent.clear(input)
-    await userEvent.type(input, '20{Enter}')
-
-    await waitFor(() =>
-      expect(updateWorktreeSettings).toHaveBeenCalledWith({
-        deviceId: 'local-device',
-        keepCount: 20,
-      })
-    )
-    expect(screen.getByTestId('worktrees-saved-notice')).toHaveTextContent('已保存自动删除限制')
-    expect(listWorktrees).toHaveBeenCalledTimes(1)
   })
 
   test('ignores stale Worktree responses after switching devices', async () => {

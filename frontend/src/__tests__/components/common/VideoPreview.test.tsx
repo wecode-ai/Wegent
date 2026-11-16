@@ -25,7 +25,10 @@ describe('VideoPreview', () => {
       </StrictMode>
     )
 
-    expect(container.querySelector('video')).toHaveAttribute('src', url)
+    const video = container.querySelector('video')
+    expect(video).toHaveAttribute('src', url)
+    expect(video).toHaveAttribute('playsinline')
+    expect(video).toHaveAttribute('controlslist', 'nodownload nofullscreen noremoteplayback')
   })
 
   it('contains the video inside the available preview viewport', () => {

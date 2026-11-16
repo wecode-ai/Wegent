@@ -253,9 +253,8 @@ where
     mysql.fetch_all(sql.as_str(), args).await
 }
 
-/// Public shells for the missing keys (`get_shells_by_names_batch` public
-/// step; no `user_id` filter).
-pub async fn public_shells<M>(mysql: &M, keys: &[(String, String)]) -> MysqlResult<Vec<KindRow>>
+/// Direct group Shells for missing non-default keys, regardless of owner.
+pub async fn group_shells<M>(mysql: &M, keys: &[(String, String)]) -> MysqlResult<Vec<KindRow>>
 where
     M: Mysql,
 {
@@ -275,6 +274,24 @@ where
         or_group(&conditions),
     );
     mysql.fetch_all(sql.as_str(), args).await
+}
+
+/// Public Shell fallback by name from the default namespace.
+pub async fn public_shells_by_names<M>(mysql: &M, names: &[String]) -> MysqlResult<Vec<KindRow>>
+where
+    M: Mysql,
+{
+    if names.is_empty() {
+        return Ok(Vec::new());
+    }
+    let sql = format!(
+        "SELECT {KIND_COLUMNS} \nFROM kinds \n\
+         WHERE kinds.user_id = 0 AND kinds.kind = 'Shell' \
+         AND kinds.namespace = 'default' AND kinds.is_active = true \
+         AND kinds.name IN ({})",
+        placeholders(names.len()),
+    );
+    mysql.fetch_all(sql.as_str(), names.to_vec()).await
 }
 
 /// Personal Model keys (`user_id` + ref triple).

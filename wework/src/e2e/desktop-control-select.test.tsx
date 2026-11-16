@@ -1,7 +1,7 @@
 import { act, useState } from 'react'
 import { createRoot } from 'react-dom/client'
 import { describe, expect, test, vi } from 'vitest'
-import { selectDesktopControlOption } from './desktop-control-select'
+import { chooseDesktopControlOption, selectDesktopControlOption } from './desktop-control-select'
 ;(
   globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }
 ).IS_REACT_ACT_ENVIRONMENT = true
@@ -15,6 +15,31 @@ function createSelect() {
   document.body.append(select)
   return select
 }
+
+test.each([true, false])(
+  'chooses the currently mounted responsive control (compact=%s)',
+  compact => {
+    const container = document.createElement('div')
+    document.body.append(container)
+    const initial = document.createElement(compact ? 'button' : 'select')
+    container.append(initial)
+    const onChoose = vi.fn()
+    const mounted = compact ? createSelect() : document.createElement('button')
+    if (!compact) mounted.addEventListener('click', onChoose)
+    initial.replaceWith(mounted)
+
+    chooseDesktopControlOption(container.querySelector('select, button')!, 'local:project-space-id')
+
+    if (compact) expect((mounted as HTMLSelectElement).value).toBe('local:project-space-id')
+    else expect(onChoose).toHaveBeenCalledOnce()
+  }
+)
+
+test('rejects unrelated elements as choice targets', () => {
+  expect(() => chooseDesktopControlOption(document.createElement('div'), 'board')).toThrow(
+    'Choice target must be a select or button element'
+  )
+})
 
 describe('selectDesktopControlOption', () => {
   test('selects an option by visible label and dispatches React-compatible events', () => {

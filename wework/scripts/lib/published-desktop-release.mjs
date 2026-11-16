@@ -1,7 +1,7 @@
 import { execFile } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
 import { access, mkdir, readFile, realpath, rename, rm, stat } from 'node:fs/promises'
-import { isAbsolute, join, relative, resolve } from 'node:path'
+import { dirname, isAbsolute, join, relative, resolve } from 'node:path'
 import { promisify } from 'node:util'
 import { extractRuntimeArchive } from './extract-runtime-archive.mjs'
 import { hashReleaseAsset } from './portable-desktop-release.mjs'
@@ -32,7 +32,8 @@ function validateRelease(release, { version, platform, arch }) {
     release.dataSchema < 1 ||
     !Array.isArray(release.readableDataSchemas) ||
     release.readableDataSchemas.some(value => !Number.isSafeInteger(value) || value < 1) ||
-    !release.readableDataSchemas.includes(release.dataSchema)
+    !release.readableDataSchemas.includes(release.dataSchema) ||
+    (release.afterStopPreparation !== undefined && release.afterStopPreparation !== 1)
   )
     throw new Error('Published desktop release identity is invalid')
 }
@@ -104,11 +105,15 @@ export async function readDesktopReleaseInstallation(root, release) {
     descriptor.fixture !== release.fixture ||
     descriptor.version !== release.version ||
     descriptor.sourceSha !== release.sourceSha ||
-    descriptor.dataSchema !== release.dataSchema
+    descriptor.dataSchema !== release.dataSchema ||
+    descriptor.afterStopPreparation !== release.afterStopPreparation
   )
     throw new Error('Published desktop archive does not match its release descriptor')
   const executable = await releasePath(root, descriptor.executable)
   const resources = await releasePath(root, descriptor.resources)
+  const components = JSON.parse(await readFile(join(resources, 'components.json'), 'utf8'))
+  if (components.afterStopPreparation !== release.afterStopPreparation)
+    throw new Error('Published desktop stopped preparation capability does not match its package')
   const executor = join(
     resources,
     'bin',
@@ -177,4 +182,26 @@ export async function downloadPublishedDesktopRelease(options) {
     release
   )
   return { ...release, ...installation }
+}
+
+/** Verify and extract an existing producer artifact without changing its identity. */
+export async function readPrebuiltDesktopRelease({
+  directory,
+  version,
+  platform,
+  arch,
+  installation,
+}) {
+  const release = JSON.parse(
+    await readFile(join(directory, `release-${platform}-${arch}.json`), 'utf8')
+  )
+  validateRelease(release, { version, platform, arch })
+  const archive = join(directory, release.name)
+  await verifyArchive(archive, release)
+  await mkdir(dirname(installation), { recursive: true })
+  return {
+    ...release,
+    path: archive,
+    ...(await extractPublishedArchive(archive, installation, release)),
+  }
 }

@@ -3,6 +3,8 @@ import { DshExecutorTransportError } from '@/api/dsh/executorTransport'
 import { requestLocalExecutor } from '@/desktop/localExecutor'
 import { normalizeCloudBackendUrl } from '@/features/cloud-connection/cloudConnectionStorage'
 import i18n from '@/i18n'
+import { createLocalFirstPluginApi } from './pluginLocalSync'
+import { acquirePluginDeviceSync } from './pluginDeviceAutoSync'
 import type {
   DeviceCapabilitySyncResponse,
   InstalledPlugin,
@@ -99,8 +101,9 @@ function localInstallResponse(response: PluginMarketplaceInstallResponse, scope:
 /** Address the Runtime record on the wire; retain stable identity in plugin state. */
 export function createLocalDevicePluginApi(
   api: PluginApi,
-  resolveDeviceRouteId: (deviceId: string) => Promise<string>
-): PluginApi {
+  resolveDeviceRouteId: (deviceId: string) => Promise<string>,
+  profile?: PluginRuntimeProfile
+) {
   const deviceScope = async (
     deviceId = '',
     context: 'required' | 'optional' = 'required'
@@ -122,7 +125,21 @@ export function createLocalDevicePluginApi(
       return { deviceId: stableDeviceId, requestId: '' }
     }
   }
-  return {
+  const installOnDevice = async (
+    deviceId: string | undefined,
+    install: (scope: DeviceScope) => Promise<PluginMarketplaceInstallResponse>
+  ): Promise<PluginMarketplaceInstallResponse> => {
+    if (!deviceId?.trim()) throw new Error(i18n.t('workbench.plugins_device_identity_required'))
+    const release = await acquirePluginDeviceSync(deviceId, undefined, 'install')
+    try {
+      // Resolve the account-bound route after waiting, never before the lease.
+      const scope = await deviceScope(deviceId)
+      return localInstallResponse(await install(scope), scope)
+    } finally {
+      release()
+    }
+  }
+  const legacy: PluginApi = {
     ...api,
     async listInstalledPlugins(deviceId) {
       const scope = await deviceScope(deviceId, 'optional')
@@ -141,17 +158,12 @@ export function createLocalDevicePluginApi(
       }
     },
     async installMarketplacePlugin(id, deviceId) {
-      const scope = await deviceScope(deviceId)
-      const response = await api.installMarketplacePlugin(id, scope.requestId)
-      return localInstallResponse(response, scope)
+      return installOnDevice(deviceId, scope => api.installMarketplacePlugin(id, scope.requestId))
     },
     async ensureBuiltinPluginInstalled(pluginKey, options = {}) {
-      const scope = await deviceScope(options.deviceId)
-      const response = await api.ensureBuiltinPluginInstalled(pluginKey, {
-        ...options,
-        deviceId: scope.requestId,
-      })
-      return localInstallResponse(response, scope)
+      return installOnDevice(options.deviceId, scope =>
+        api.ensureBuiltinPluginInstalled(pluginKey, { ...options, deviceId: scope.requestId })
+      )
     },
     async updateMarketplacePlugin(id, releaseId, deviceId) {
       const scope = await deviceScope(deviceId)
@@ -191,4 +203,7 @@ export function createLocalDevicePluginApi(
       return { ...response, deviceId: localDeviceId(response.deviceId, scope) }
     },
   }
+  return profile
+    ? createLocalFirstPluginApi(api, legacy, profile)
+    : { ...legacy, supportsLocalSync: async () => false }
 }

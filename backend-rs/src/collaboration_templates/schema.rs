@@ -102,7 +102,7 @@ fn validate_group(value: &Value) -> Result<(String, String), FastApiError> {
         fields(
             role,
             &["key", "name", "responsibility"],
-            &["defaultKind"],
+            &["defaultKind", "agentKey"],
             "role",
         )?;
         if let Some(kind) = role.get("defaultKind")
@@ -202,7 +202,64 @@ pub(super) fn validate(value: &Value) -> Result<(), FastApiError> {
     identity(&spec["version"], "version")?;
     object(&spec["resources"], &["collaboration"], "resources")?;
     let collaboration = &spec["resources"]["collaboration"];
-    object(collaboration, &["project", "groups"], "collaboration")?;
+    fields(
+        collaboration,
+        &["project", "groups"],
+        &["agents"],
+        "collaboration",
+    )?;
+    let mut agent_keys = HashSet::new();
+    if let Some(agents) = collaboration.get("agents") {
+        for agent in array(agents, "agents", 100)? {
+            fields(
+                agent,
+                &[
+                    "key",
+                    "name",
+                    "runtime",
+                    "systemPrompt",
+                    "capabilityDescription",
+                ],
+                &[
+                    "executionMode",
+                    "workspacePolicy",
+                    "maxConcurrentExecutions",
+                ],
+                "agent",
+            )?;
+            if let Some(mode) = agent.get("executionMode")
+                && mode != "auto"
+                && mode != "manual_approval"
+            {
+                return Err(invalid("agent.executionMode"));
+            }
+            if let Some(policy) = agent.get("workspacePolicy")
+                && policy != "project"
+                && policy != "git_worktree"
+            {
+                return Err(invalid("agent.workspacePolicy"));
+            }
+            if let Some(limit) = agent.get("maxConcurrentExecutions")
+                && !limit.as_u64().is_some_and(|n| (1..=20).contains(&n))
+            {
+                return Err(invalid("agent.maxConcurrentExecutions"));
+            }
+            if !agent_keys.insert(identity(&agent["key"], "agent.key")?) {
+                return Err(invalid("agents.key"));
+            }
+            text(&agent["name"], "agent.name", true, 100)?;
+            text(&agent["systemPrompt"], "agent.systemPrompt", false, 20000)?;
+            text(
+                &agent["capabilityDescription"],
+                "agent.capabilityDescription",
+                false,
+                2000,
+            )?;
+            if agent["runtime"] != "codex" && agent["runtime"] != "claude_code" {
+                return Err(invalid("agent.runtime"));
+            }
+        }
+    }
     fields(
         &collaboration["project"],
         &["name", "description"],
@@ -220,6 +277,14 @@ pub(super) fn validate(value: &Value) -> Result<(), FastApiError> {
     let mut names = HashSet::new();
     for group in array(&collaboration["groups"], "groups", 10)? {
         let (key, name) = validate_group(group)?;
+        for role in group["roles"].as_array().unwrap() {
+            if let Some(agent_key) = role.get("agentKey")
+                && (role["defaultKind"] == "human"
+                    || !agent_keys.contains(&identity(agent_key, "role.agentKey")?))
+            {
+                return Err(invalid("role.agentKey"));
+            }
+        }
         if !keys.insert(key) || !names.insert(name) {
             return Err(invalid("groups"));
         }
@@ -323,6 +388,21 @@ mod tests {
         let mut value = builtin();
         value["spec"]["resources"]["collaboration"]["groups"][0]["stages"][0]["ownerRole"] =
             "missing".into();
+        assert!(validate(&value).is_err());
+    }
+
+    #[test]
+    fn rejects_nonportable_or_dangling_agent_definitions() {
+        let mut value = builtin();
+        value["spec"]["resources"]["collaboration"]["agents"][0]["apiKey"] = "secret".into();
+        assert!(validate(&value).is_err());
+        let mut value = builtin();
+        value["spec"]["resources"]["collaboration"]["groups"][0]["roles"][0]["agentKey"] =
+            "missing".into();
+        assert!(validate(&value).is_err());
+        let mut value = builtin();
+        value["spec"]["resources"]["collaboration"]["groups"][0]["roles"][0]["defaultKind"] =
+            "human".into();
         assert!(validate(&value).is_err());
     }
 

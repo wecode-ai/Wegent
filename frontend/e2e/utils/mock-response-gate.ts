@@ -5,6 +5,10 @@ export class MockResponseGate {
   private released = false
   private readonly pending = new Set<() => void>()
 
+  get pendingResponses(): number {
+    return this.pending.size
+  }
+
   async wait(response: ServerResponse): Promise<void> {
     if (this.released || response.destroyed) return
     await new Promise<void>(resolve => {

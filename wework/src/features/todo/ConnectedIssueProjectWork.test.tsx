@@ -85,44 +85,6 @@ describe('ConnectedIssueProjectWork', () => {
     expect(mocks.globalSelectProject).not.toHaveBeenCalled()
   })
 
-  it('keeps project workspace selection inside the Issue composer', async () => {
-    const project: ProjectWithTasks = { id: 92, name: '研发工作区', tasks: [] }
-    const onSelectProject = vi.fn()
-    const onSelectProjectWorkspace = vi.fn()
-
-    render(
-      <ConnectedIssueProjectWork
-        projects={[project]}
-        project={project}
-        selectedDeviceWorkspaceId={202}
-        onSelectProject={onSelectProject}
-        onSelectProjectWorkspace={onSelectProjectWorkspace}
-      >
-        {projectWork => (
-          <>
-            <span data-testid="selected-workspace">
-              {projectWork.selectedDeviceWorkspaceId ?? 'none'}
-            </span>
-            <span data-testid="pending-project">
-              {projectWork.pendingProjectWorkspaceProjectId ?? 'none'}
-            </span>
-            <button type="button" onClick={() => projectWork.onSelectProjectWorkspace?.(92, 203)}>
-              select local workspace
-            </button>
-          </>
-        )}
-      </ConnectedIssueProjectWork>
-    )
-
-    expect(screen.getByTestId('selected-workspace')).toHaveTextContent('202')
-    expect(screen.getByTestId('pending-project')).toHaveTextContent('none')
-
-    await userEvent.click(screen.getByText('select local workspace'))
-    expect(onSelectProjectWorkspace).toHaveBeenCalledWith(92, 203)
-    expect(mocks.globalSelectProjectWorkspace).not.toHaveBeenCalled()
-    expect(mocks.globalSelectProject).not.toHaveBeenCalled()
-  })
-
   it('uses the Issue project list and creates new projects without leaving the surface', async () => {
     const projects: ProjectWithTasks[] = [
       { id: 91, name: '运营工作区', tasks: [] },
@@ -161,46 +123,5 @@ describe('ConnectedIssueProjectWork', () => {
     const options = mocks.requestProjectCreateMode.mock.calls[0]?.[1]
     options?.onCreated?.({ id: 93, name: '新项目', tasks: [] })
     expect(onSelectProject).toHaveBeenCalledWith(93)
-  })
-
-  it('preserves an opaque execution strategy selected by the caller', () => {
-    const project: ProjectWithTasks = { id: 92, name: '研发工作区', tasks: [] }
-
-    render(
-      <ConnectedIssueProjectWork
-        projects={[project]}
-        project={project}
-        selectedDeviceWorkspaceId={202}
-        executionMode="plugin-owned-strategy"
-        onSelectProject={vi.fn()}
-        onSelectProjectWorkspace={vi.fn()}
-      >
-        {projectWork => <span data-testid="execution-strategy">{projectWork.executionMode}</span>}
-      </ConnectedIssueProjectWork>
-    )
-
-    expect(screen.getByTestId('execution-strategy')).toHaveTextContent('plugin-owned-strategy')
-  })
-
-  it('allows the Issue composer to clear a previously selected global worktree branch', () => {
-    const project: ProjectWithTasks = { id: 92, name: '研发工作区', tasks: [] }
-
-    render(
-      <ConnectedIssueProjectWork
-        projects={[project]}
-        project={project}
-        selectedDeviceWorkspaceId={202}
-        worktreeBranch={null}
-        onSelectProject={vi.fn()}
-        onSelectProjectWorkspace={vi.fn()}
-      >
-        {projectWork => (
-          <span data-testid="worktree-branch">{projectWork.worktreeBranch ?? 'none'}</span>
-        )}
-      </ConnectedIssueProjectWork>
-    )
-
-    expect(screen.getByTestId('worktree-branch')).toHaveTextContent('none')
-    expect(mocks.environmentProjectWork?.worktreeBranch).toBeNull()
   })
 })

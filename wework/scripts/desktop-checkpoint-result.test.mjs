@@ -4,6 +4,10 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import test from 'node:test'
 import { rejectRecordedCheckpointFailure } from '../e2e/desktop/checkpoint-result.mjs'
+import {
+  UPGRADE_CHECKPOINTS,
+  rejectFailedReleaseCheckpoint,
+} from '../e2e/desktop/upgrade-suite.mjs'
 
 test('a zero process exit cannot hide a persisted scenario assertion failure', async t => {
   const directory = await mkdtemp(join(tmpdir(), 'wework-checkpoint-result-'))
@@ -17,4 +21,12 @@ test('a zero process exit cannot hide a persisted scenario assertion failure', a
 test('a nonzero process status is preserved even without assertion evidence', async () => {
   const result = { code: 2, resultDir: '/missing-checkpoint', stderrTail: 'build failed' }
   assert.equal(await rejectRecordedCheckpointFailure(result), result)
+})
+
+test('a failed release pair stops before spending preparation time on further checkpoints', () => {
+  for (const checkpoint of UPGRADE_CHECKPOINTS) {
+    assert.throws(() => rejectFailedReleaseCheckpoint(checkpoint, { code: 1 }), /failed/)
+    assert.doesNotThrow(() => rejectFailedReleaseCheckpoint(checkpoint, { code: 0 }))
+  }
+  assert.doesNotThrow(() => rejectFailedReleaseCheckpoint('core-task-flow', { code: 1 }))
 })

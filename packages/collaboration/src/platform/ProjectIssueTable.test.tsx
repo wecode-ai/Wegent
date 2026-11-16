@@ -4,7 +4,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-import { act } from "react";
+import { act, useState } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -105,6 +105,65 @@ describe("ProjectIssueTable", () => {
     });
     return onOpen;
   }
+
+  it("keeps filter recovery and one create action when a milestone has no matching Issues", () => {
+    const onCreate = vi.fn();
+    function FilteredTable() {
+      const [filtered, setFiltered] = useState(true);
+      return (
+        <ProjectIssueTable
+          issues={filtered ? [] : [issue]}
+          assignmentsByIssueId={{}}
+          emptyLabel="Empty milestone"
+          issueLabel="Issue"
+          statusLabel="Status"
+          assignmentsLabel="Assignments"
+          updatedLabel="Updated"
+          createLabel="New Issue"
+          onCreate={onCreate}
+          onOpen={vi.fn()}
+          toolbarAction={
+            <button
+              data-testid="restore-milestone-filter"
+              onClick={() => setFiltered(false)}
+            >
+              All milestones
+            </button>
+          }
+        />
+      );
+    }
+    act(() => root.render(<FilteredTable />));
+    expect(
+      container.querySelector(
+        '[data-testid="collaboration-issue-table-empty"]',
+      ),
+    ).not.toBeNull();
+    const create = container.querySelector<HTMLButtonElement>(
+      '[data-testid="collaboration-issue-table-empty-create"]',
+    )!;
+    act(() => create.click());
+    expect(onCreate).toHaveBeenCalledOnce();
+    expect(
+      container.querySelectorAll(".collaboration-primary-button"),
+    ).toHaveLength(1);
+    act(() =>
+      container
+        .querySelector<HTMLButtonElement>(
+          '[data-testid="restore-milestone-filter"]',
+        )!
+        .click(),
+    );
+    expect(
+      container.querySelector(
+        '[data-testid="collaboration-issue-table-empty"]',
+      ),
+    ).toBeNull();
+    expect(container.textContent).toContain(issue.title);
+    expect(
+      container.querySelectorAll(".collaboration-primary-button"),
+    ).toHaveLength(1);
+  });
 
   it("opens an issue through a native keyboard-accessible button", () => {
     const onOpen = render({ [issue.id]: [assignment] });

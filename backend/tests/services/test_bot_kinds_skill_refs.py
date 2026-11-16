@@ -11,6 +11,7 @@ from app.models.kind import Kind
 from app.schemas.bot import BotCreate
 from app.schemas.kind import SkillRefMeta
 from app.services.adapters.bot_kinds import BotKindsService
+from tests.services.test_skill_binding_service import _create_skill
 
 
 def bot_create(**overrides):
@@ -175,60 +176,40 @@ def test_get_skill_refs_includes_skill_content_hash(mocker):
     assert refs["test-skill"].content_hash == "sha256:abc123"
 
 
-def test_resolve_skill_refs_accepts_user_default_binding(mocker):
+def test_resolve_skill_refs_accepts_user_default_binding(
+    mocker, test_db, test_user, test_admin_user
+):
     service = BotKindsService(Kind)
-    skill = SimpleNamespace(
-        name="h52wbox-cloud",
-        id=92,
-        namespace="default",
-        user_id=2,
-        json={},
-    )
-
-    query = mocker.Mock()
-    query.filter.return_value = query
-    query.first.return_value = skill
-    db = mocker.Mock()
-    db.query.return_value = query
+    skill = _create_skill(test_db, user_id=test_admin_user.id, name="h52wbox-cloud")
     mocker.patch(
         "app.services.adapters.bot_kinds.skill_binding_service.list_user_default_skill_ids",
-        return_value={92},
+        return_value={skill.id},
     )
     fallback = mocker.patch.object(service, "_get_skill_refs")
 
     refs = service._resolve_skill_refs(
-        db=db,
+        db=test_db,
         skill_names=["h52wbox-cloud"],
-        user_id=1,
+        user_id=test_user.id,
         namespace="default",
         provided_refs={
             "h52wbox-cloud": SkillRefMeta(
-                skill_id=92,
+                skill_id=skill.id,
                 namespace="default",
                 is_public=False,
             )
         },
     )
 
-    assert refs["h52wbox-cloud"].skill_id == 92
+    assert refs["h52wbox-cloud"].skill_id == skill.id
     fallback.assert_not_called()
 
 
-def test_resolve_skill_refs_rejects_group_only_skill_for_personal_bot(mocker):
+def test_resolve_skill_refs_rejects_group_only_skill_for_personal_bot(
+    mocker, test_db, test_user, test_admin_user
+):
     service = BotKindsService(Kind)
-    skill = SimpleNamespace(
-        name="h52wbox-cloud",
-        id=92,
-        namespace="default",
-        user_id=2,
-        json={},
-    )
-
-    query = mocker.Mock()
-    query.filter.return_value = query
-    query.first.return_value = skill
-    db = mocker.Mock()
-    db.query.return_value = query
+    skill = _create_skill(test_db, user_id=test_admin_user.id, name="h52wbox-cloud")
     mocker.patch(
         "app.services.adapters.bot_kinds.skill_binding_service.list_user_default_skill_ids",
         return_value=set(),
@@ -236,13 +217,13 @@ def test_resolve_skill_refs_rejects_group_only_skill_for_personal_bot(mocker):
 
     with pytest.raises(HTTPException) as exc_info:
         service._resolve_skill_refs(
-            db=db,
+            db=test_db,
             skill_names=["h52wbox-cloud"],
-            user_id=1,
+            user_id=test_user.id,
             namespace="default",
             provided_refs={
                 "h52wbox-cloud": SkillRefMeta(
-                    skill_id=92,
+                    skill_id=skill.id,
                     namespace="default",
                     is_public=False,
                 )
@@ -253,42 +234,32 @@ def test_resolve_skill_refs_rejects_group_only_skill_for_personal_bot(mocker):
     assert exc_info.value.detail == "Permission denied for skill 'h52wbox-cloud'"
 
 
-def test_resolve_skill_refs_accepts_skill_available_to_all_target_groups(mocker):
+def test_resolve_skill_refs_accepts_skill_available_to_all_target_groups(
+    mocker, test_db, test_user, test_admin_user
+):
     service = BotKindsService(Kind)
-    skill = SimpleNamespace(
-        name="h52wbox-cloud",
-        id=92,
-        namespace="default",
-        user_id=2,
-        json={},
-    )
-
-    query = mocker.Mock()
-    query.filter.return_value = query
-    query.first.return_value = skill
-    db = mocker.Mock()
-    db.query.return_value = query
+    skill = _create_skill(test_db, user_id=test_admin_user.id, name="h52wbox-cloud")
     mocker.patch(
         "app.services.adapters.bot_kinds.skill_binding_service.list_user_default_skill_ids",
         return_value=set(),
     )
     mocker.patch(
-        "app.services.adapters.bot_kinds.check_group_permission",
+        "app.services.skill_binding_policy.check_group_permission",
         return_value=True,
     )
     group_access = mocker.patch(
-        "app.services.adapters.bot_kinds.skill_binding_service.is_skill_available_to_group",
-        return_value=True,
+        "app.services.adapters.bot_kinds.skill_binding_service.list_group_skill_ids",
+        return_value={skill.id},
     )
 
     refs = service._resolve_skill_refs(
-        db=db,
+        db=test_db,
         skill_names=["h52wbox-cloud"],
-        user_id=1,
+        user_id=test_user.id,
         namespace="default",
         provided_refs={
             "h52wbox-cloud": SkillRefMeta(
-                skill_id=92,
+                skill_id=skill.id,
                 namespace="default",
                 is_public=False,
             )
@@ -296,52 +267,42 @@ def test_resolve_skill_refs_accepts_skill_available_to_all_target_groups(mocker)
         target_group_names=["engineering", "research"],
     )
 
-    assert refs["h52wbox-cloud"].skill_id == 92
-    assert [call.kwargs["group_namespace"] for call in group_access.call_args_list] == [
+    assert refs["h52wbox-cloud"].skill_id == skill.id
+    assert [call.args[1] for call in group_access.call_args_list] == [
         "engineering",
         "research",
     ]
 
 
-def test_resolve_skill_refs_rejects_skill_missing_from_one_target_group(mocker):
+def test_resolve_skill_refs_rejects_skill_missing_from_one_target_group(
+    mocker, test_db, test_user, test_admin_user
+):
     service = BotKindsService(Kind)
-    skill = SimpleNamespace(
-        name="h52wbox-cloud",
-        id=92,
-        namespace="default",
-        user_id=2,
-        json={},
-    )
-
-    query = mocker.Mock()
-    query.filter.return_value = query
-    query.first.return_value = skill
-    db = mocker.Mock()
-    db.query.return_value = query
+    skill = _create_skill(test_db, user_id=test_admin_user.id, name="h52wbox-cloud")
     mocker.patch(
         "app.services.adapters.bot_kinds.skill_binding_service.list_user_default_skill_ids",
         return_value=set(),
     )
     mocker.patch(
-        "app.services.adapters.bot_kinds.check_group_permission",
+        "app.services.skill_binding_policy.check_group_permission",
         return_value=True,
     )
     mocker.patch(
-        "app.services.adapters.bot_kinds.skill_binding_service.is_skill_available_to_group",
-        side_effect=lambda _db, *, group_namespace, **_kwargs: (
-            group_namespace == "engineering"
+        "app.services.adapters.bot_kinds.skill_binding_service.list_group_skill_ids",
+        side_effect=lambda _db, group_namespace, _user_id: (
+            {skill.id} if group_namespace == "engineering" else set()
         ),
     )
 
     with pytest.raises(HTTPException) as exc_info:
         service._resolve_skill_refs(
-            db=db,
+            db=test_db,
             skill_names=["h52wbox-cloud"],
-            user_id=1,
+            user_id=test_user.id,
             namespace="default",
             provided_refs={
                 "h52wbox-cloud": SkillRefMeta(
-                    skill_id=92,
+                    skill_id=skill.id,
                     namespace="default",
                     is_public=False,
                 )
@@ -356,7 +317,7 @@ def test_resolve_skill_refs_rejects_skill_missing_from_one_target_group(mocker):
 def test_resolve_skill_refs_rejects_unreadable_target_group(mocker):
     service = BotKindsService(Kind)
     group_permission = mocker.patch(
-        "app.services.adapters.bot_kinds.check_group_permission",
+        "app.services.skill_binding_policy.check_group_permission",
         side_effect=lambda _db, _user_id, group_name, _role: (
             group_name == "engineering"
         ),

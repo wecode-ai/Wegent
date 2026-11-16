@@ -48,6 +48,7 @@ export const initialWorkbenchState: WorkbenchState = {
   projects: [],
   devices: [],
   runtimeWork: null,
+  runtimeWorkLoad: { phase: 'loading', error: null },
   currentProject: null,
   currentRuntimeTask: null,
   standaloneChatKey: 0,
@@ -60,6 +61,10 @@ export const initialWorkbenchState: WorkbenchState = {
 }
 
 export type WorkbenchAction =
+  | { type: 'runtime_work_scope_reset' }
+  | { type: 'runtime_work_load_started' }
+  | { type: 'runtime_work_load_succeeded' }
+  | { type: 'runtime_work_load_failed'; error: string }
   | {
       type: 'bootstrapped'
       user: User
@@ -81,6 +86,7 @@ export type WorkbenchAction =
   | {
       type: 'devices_refreshed'
       devices: DeviceInfo[]
+      user?: User
       standaloneDeviceId?: string | null
       standaloneWorkspacePath?: string | null
     }
@@ -535,11 +541,33 @@ function upsertRuntimeWorkspace(
 ): RuntimeDeviceWorkspace[] {
   const task = workspace.tasks[0]
   if (!task) return workspaces
+  const matchesDevice = (item: RuntimeDeviceWorkspace) => item.deviceId === workspace.deviceId
+  // Executor snapshots own task state and grouping, even if creation finishes later.
+  if (
+    workspaces.some(
+      item =>
+        matchesDevice(item) &&
+        item.tasks.some(
+          current =>
+            current.taskId === task.taskId && !shouldReplaceRuntimeTaskProjection(current, task)
+        )
+    )
+  ) {
+    return workspaces
+  }
+  // A task can move from its source directory to a prepared worktree during creation.
+  const remainingWorkspaces = workspaces.map(item =>
+    matchesDevice(item)
+      ? { ...item, tasks: item.tasks.filter(current => current.taskId !== task.taskId) }
+      : item
+  )
   const nextWorkspace = upsertRuntimeTask(workspace, task)
-  const existingIndex = workspaces.findIndex(item => runtimeWorkspaceMatches(item, workspace))
-  if (existingIndex < 0) return [nextWorkspace, ...workspaces]
+  const existingIndex = remainingWorkspaces.findIndex(item =>
+    runtimeWorkspaceMatches(item, workspace)
+  )
+  if (existingIndex < 0) return [nextWorkspace, ...remainingWorkspaces]
 
-  return workspaces.map((item, index) => {
+  return remainingWorkspaces.map((item, index) => {
     if (index !== existingIndex) return item
     return upsertRuntimeTask(
       {
@@ -1006,8 +1034,41 @@ export function workbenchReducer(state: WorkbenchState, action: WorkbenchAction)
   return next
 }
 
+function userForNavigationRefresh(current: User | null, incoming?: User): User | null {
+  // Navigation responses do not own profile or preference updates for an existing account.
+  return incoming && incoming.id !== current?.id ? incoming : current
+}
+
 function reduceWorkbenchState(state: WorkbenchState, action: WorkbenchAction): WorkbenchState {
   switch (action.type) {
+    case 'runtime_work_scope_reset':
+      return {
+        ...state,
+        user: null,
+        projects: [],
+        devices: [],
+        runtimeWork: null,
+        runtimeWorkLoad: { phase: 'loading', error: null },
+        currentProject: null,
+        currentRuntimeTask: null,
+        selectedDeviceWorkspaceId: null,
+        pendingProjectWorkspaceProjectId: null,
+        standaloneDeviceId: null,
+        standaloneWorkspacePath: null,
+        isBootstrapping: true,
+      }
+    case 'runtime_work_load_started':
+      return {
+        ...state,
+        runtimeWorkLoad: {
+          phase: state.runtimeWork ? 'refreshing' : 'loading',
+          error: null,
+        },
+      }
+    case 'runtime_work_load_failed':
+      return { ...state, runtimeWorkLoad: { phase: 'error', error: action.error } }
+    case 'runtime_work_load_succeeded':
+      return { ...state, runtimeWorkLoad: { phase: 'ready', error: null } }
     case 'bootstrapped': {
       const devices = keepDevicesOnTransientEmpty(state.devices, action.devices)
       const runtimeWork = action.runtimeWork === undefined ? state.runtimeWork : action.runtimeWork
@@ -1020,7 +1081,7 @@ function reduceWorkbenchState(state: WorkbenchState, action: WorkbenchAction): W
         action.currentProject === undefined ? state.currentProject : action.currentProject
       return {
         ...state,
-        user: action.user,
+        user: userForNavigationRefresh(state.user, action.user),
         projects: action.projects,
         devices,
         runtimeWork,
@@ -1093,6 +1154,8 @@ function reduceWorkbenchState(state: WorkbenchState, action: WorkbenchAction): W
       const devices = keepDevicesOnTransientEmpty(state.devices, action.devices)
       return {
         ...state,
+        user: userForNavigationRefresh(state.user, action.user),
+        isBootstrapping: action.user ? false : state.isBootstrapping,
         devices,
         currentRuntimeTask: reconcileCurrentRuntimeTaskAddress(
           state.currentRuntimeTask,

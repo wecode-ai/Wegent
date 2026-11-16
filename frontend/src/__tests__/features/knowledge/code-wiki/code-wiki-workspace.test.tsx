@@ -26,7 +26,7 @@ jest.mock('@/features/knowledge/document/hooks/useNamespaceRoleMap', () => ({
 
 jest.mock('@/features/knowledge/permission/hooks/useKnowledgePermissions', () => ({
   useKnowledgePermissions: () => ({
-    myPermission: { role: 'owner' },
+    myPermission: { has_access: true, role: 'Owner', is_creator: false },
     fetchMyPermission: jest.fn(),
   }),
 }))
@@ -52,12 +52,14 @@ jest.mock('@/features/knowledge/document/components/DocumentList', () => ({
     canUpload,
     headerActions,
     groupInfo,
+    onGroupClick,
   }: {
     contentOrigin?: string
     readOnly?: boolean
     canUpload?: boolean
     headerActions?: ReactNode
-    groupInfo?: { groupId: string }
+    groupInfo?: { groupId: string; groupName?: string; groupType?: string }
+    onGroupClick?: (id: string, type?: string) => void
   }) => (
     <>
       <div
@@ -66,14 +68,29 @@ jest.mock('@/features/knowledge/document/components/DocumentList', () => ({
         data-read-only={String(readOnly)}
         data-can-upload={String(canUpload)}
         data-group-id={groupInfo?.groupId}
-      />
+      >
+        <input data-testid="code-wiki-document-context" />
+        {groupInfo && onGroupClick && (
+          <button
+            data-testid="code-wiki-group-navigation"
+            onClick={() => onGroupClick(groupInfo.groupId, groupInfo.groupType)}
+          >
+            {groupInfo.groupName}
+          </button>
+        )}
+      </div>
       {headerActions}
     </>
   ),
 }))
 
-jest.mock('@/features/knowledge/permission/components/PermissionManagementTab', () => ({
-  PermissionManagementTab: () => <div data-testid="mock-code-wiki-permissions" />,
+jest.mock('@/features/knowledge/document/components/KnowledgeAccessDialog', () => ({
+  KnowledgeAccessDialog: ({ onClose, canManage }: { onClose: () => void; canManage: boolean }) => (
+    <div role="dialog">
+      {canManage && <div data-testid="mock-code-wiki-permissions" />}
+      <button onClick={onClose}>Close permissions</button>
+    </div>
+  ),
 }))
 
 const wiki: KnowledgeBase = {
@@ -146,9 +163,19 @@ describe('CodeWikiWorkspace', () => {
       'false'
     )
 
+    const context = screen.getByTestId('code-wiki-document-context')
+    await user.type(context, 'preserve the user root')
     await user.click(screen.getByTestId('code-wiki-content-permissions'))
-
+    expect(screen.getByRole('dialog')).toBeInTheDocument()
+    expect(screen.getByTestId('code-wiki-document-context')).toBe(context)
     expect(screen.getByTestId('mock-code-wiki-permissions')).toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: 'Close permissions' }))
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+    expect(screen.getByTestId('mock-code-wiki-document-list')).toHaveAttribute(
+      'data-origin',
+      'user'
+    )
+    expect(context).toHaveValue('preserve the user root')
     expect(screen.queryByTestId('code-wiki-group-navigation')).not.toBeInTheDocument()
   })
 
@@ -165,6 +192,7 @@ describe('CodeWikiWorkspace', () => {
     )
 
     await user.click(screen.getByTestId('code-wiki-content-permissions'))
+    await user.click(screen.getByRole('button', { name: 'Close permissions' }))
     await user.click(screen.getByTestId('code-wiki-group-navigation'))
 
     expect(onGroupClick).toHaveBeenCalledWith('default', 'personal')
@@ -185,4 +213,26 @@ describe('CodeWikiWorkspace', () => {
       'false'
     )
   })
+})
+
+it('removes an open permission view immediately when the verified list role drops', async () => {
+  mockCanManageKnowledgeBase.mockReturnValue(true)
+  mockCanManageKnowledgeBaseDocuments.mockReturnValue(true)
+  mockCanManageKnowledgeBasePermissions.mockReturnValue(true)
+  const user = userEvent.setup()
+  const { rerender } = render(
+    <CodeWikiWorkspace wiki={wiki} view="documents" verifiedRole="Owner" />
+  )
+  const trigger = screen.getByTestId('code-wiki-content-permissions')
+  expect(trigger).toHaveClass('min-h-11', 'min-w-11')
+  expect(trigger.className).not.toContain('sm:min-h-0')
+  await user.click(trigger)
+  expect(screen.getByTestId('mock-code-wiki-permissions')).toBeInTheDocument()
+  rerender(<CodeWikiWorkspace wiki={wiki} view="documents" verifiedRole="Reporter" />)
+  expect(screen.queryByTestId('mock-code-wiki-permissions')).not.toBeInTheDocument()
+  expect(screen.getByRole('dialog')).toBeInTheDocument()
+  expect(screen.getByTestId('mock-code-wiki-document-list')).toHaveAttribute(
+    'data-read-only',
+    'true'
+  )
 })

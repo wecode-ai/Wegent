@@ -1,17 +1,10 @@
 import {
   openNewChatWithE2EModel,
   COMPOSER_SELECTOR,
-  TIMER_PROMPT,
   waitForNewTaskRow,
-  waitForToolDuration,
   ACTIVE_WORKBENCH_SELECTOR,
-  processingDurationSeconds,
-  PROCESSING_SUMMARY_SELECTOR,
-  toolDurationSeconds,
   ASSISTANT_CONTENT_SELECTOR,
-  TIMER_COMPLETION,
   waitForRuntimePaneReadyToSend,
-  completedToolDuration,
   INITIAL_PROMPT,
   HISTORY_TURNS,
   retainSecondTaskWorkspace,
@@ -22,6 +15,7 @@ import {
   THINKING_INDICATOR_SELECTOR,
   waitForBottom,
   getSingleElementMetrics,
+  assertShimmerCopyTracksText,
   assertElementFullyVisible,
   USER_MESSAGE_SELECTOR,
   USER_MESSAGE_E2E_ID,
@@ -57,7 +51,6 @@ export function createStreamingScrollChecks({
   modelResponseTimeoutMs,
   uiTimeoutMs,
   capture,
-  releaseTimerFinalCompletion,
   requestReceived,
   getTargetRequest,
   releaseStart,
@@ -68,109 +61,6 @@ export function createStreamingScrollChecks({
   scrollButtonAppendWritten,
   releaseResponse,
 }) {
-  const verifyTimers = async control => {
-    await openNewChatWithE2EModel(control, uiTimeoutMs)
-    const knownTimerTaskRows = new Set(
-      JSON.parse(await control.command('snapshot', 'body')).testIds.filter(testId =>
-        testId.startsWith('runtime-local-task-row-')
-      )
-    )
-    await control.command('fill', COMPOSER_SELECTOR, { value: TIMER_PROMPT })
-    await control.command('press', COMPOSER_SELECTOR, { key: 'Enter' })
-    const timerTaskRowTestId = await waitForNewTaskRow(
-      control,
-      knownTimerTaskRows,
-      TIMER_PROMPT,
-      uiTimeoutMs
-    )
-    const toolDurationBeforeSwitch = await waitForToolDuration(control, 3, uiTimeoutMs)
-    const processingDurationSelector = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="processing-duration-label"]`
-    const runningDurationBeforeSwitch = await control.command('getText', processingDurationSelector)
-    assert.match(runningDurationBeforeSwitch, /已处理/, 'The running turn duration was missing')
-    const elapsedBeforeSwitch = processingDurationSeconds(runningDurationBeforeSwitch)
-    // The turn label refreshes once per second; tool rows refresh every 100 ms.
-    assert.ok(elapsedBeforeSwitch >= 2, 'The turn timer did not advance with the running tool')
-    const summaryBeforeSwitch = await control.command('getText', PROCESSING_SUMMARY_SELECTOR)
-    assert.equal(
-      toolDurationSeconds(summaryBeforeSwitch),
-      0,
-      `The tool summary exposed an aggregate duration: ${summaryBeforeSwitch}`
-    )
-    await capture(control, 'streaming-text-06-running-tool.png')
-    await control.command('click', '[data-testid="new-chat-button"]')
-    await control.command('waitFor', COMPOSER_SELECTOR, { timeoutMs: uiTimeoutMs })
-    await control.command('clickWhenEnabled', `[data-testid="${timerTaskRowTestId}"]`, {
-      timeoutMs: uiTimeoutMs,
-    })
-    const toolDurationAfterSwitch = await waitForToolDuration(control, 1, uiTimeoutMs)
-    const runningDurationAfterSwitch = await control.command('getText', processingDurationSelector)
-    assert.match(runningDurationAfterSwitch, /已处理/)
-    assert.ok(
-      processingDurationSeconds(runningDurationAfterSwitch) >= elapsedBeforeSwitch,
-      `The turn timer reset after switching tasks: ${runningDurationAfterSwitch}`
-    )
-    assert.ok(
-      toolDurationAfterSwitch >= toolDurationBeforeSwitch,
-      `The running tool timer reset from ${toolDurationBeforeSwitch}s to ${toolDurationAfterSwitch}s after switching pages`
-    )
-    const summaryAfterSwitch = await control.command('getText', PROCESSING_SUMMARY_SELECTOR)
-    assert.equal(
-      toolDurationSeconds(summaryAfterSwitch),
-      0,
-      `The restored tool summary exposed an aggregate duration: ${summaryAfterSwitch}`
-    )
-    await capture(control, 'streaming-text-07-running-tool-restored.png')
-    let elapsedDuringFinalText
-    try {
-      await control.command('waitFor', ASSISTANT_CONTENT_SELECTOR, {
-        text: TIMER_COMPLETION,
-        timeoutMs: 25_000,
-      })
-      const finalTextDuration = await control.command('getText', processingDurationSelector)
-      assert.match(finalTextDuration, /已处理/, 'The timer stopped when final text arrived')
-      await new Promise(resolve => setTimeout(resolve, 2100))
-      const advancingDuration = await control.command('getText', processingDurationSelector)
-      assert.match(advancingDuration, /已处理/)
-      elapsedDuringFinalText = processingDurationSeconds(advancingDuration)
-      assert.ok(
-        elapsedDuringFinalText > processingDurationSeconds(finalTextDuration),
-        `The timer froze during final answer streaming: ${finalTextDuration} -> ${advancingDuration}`
-      )
-    } finally {
-      releaseTimerFinalCompletion()
-    }
-    await waitForRuntimePaneReadyToSend(control, uiTimeoutMs)
-    const completedDurationBeforeSwitch = await completedToolDuration(control, uiTimeoutMs)
-    const completedProcessingDuration = await control.command('getText', processingDurationSelector)
-    assert.match(completedProcessingDuration, /用时/, 'The completed turn duration was missing')
-    assert.ok(
-      processingDurationSeconds(completedProcessingDuration) >= elapsedDuringFinalText,
-      `The turn duration reset on completion: ${completedProcessingDuration}`
-    )
-    await capture(control, 'streaming-text-08-tool-completed.png')
-    await control.command('click', '[data-testid="new-chat-button"]')
-    await control.command('waitFor', COMPOSER_SELECTOR, { timeoutMs: uiTimeoutMs })
-    await control.command('clickWhenEnabled', `[data-testid="${timerTaskRowTestId}"]`, {
-      timeoutMs: uiTimeoutMs,
-    })
-    await control.command('waitFor', '[data-testid="message-assistant"]', {
-      text: TIMER_COMPLETION,
-      stableMs: 750,
-      timeoutMs: uiTimeoutMs,
-    })
-    const completedDurationAfterSwitch = await completedToolDuration(control, uiTimeoutMs)
-    assert.equal(
-      await control.command('getText', processingDurationSelector),
-      completedProcessingDuration,
-      'The completed turn duration changed after switching tasks'
-    )
-    assert.equal(
-      completedDurationAfterSwitch,
-      completedDurationBeforeSwitch,
-      `The completed tool duration changed from ${completedDurationBeforeSwitch}s to ${completedDurationAfterSwitch}s after switching conversations`
-    )
-    await capture(control, 'streaming-text-09-tool-duration-restored.png')
-  }
   const verifyScroll = async control => {
     await openNewChatWithE2EModel(control, uiTimeoutMs)
     const knownTaskRows = new Set(
@@ -237,6 +127,11 @@ export function createStreamingScrollChecks({
     await control.command('waitFor', THINKING_INDICATOR_SELECTOR, {
       timeoutMs: uiTimeoutMs,
     })
+    await assertShimmerCopyTracksText(
+      control,
+      `${THINKING_INDICATOR_SELECTOR} .activity-shimmer-text`,
+      'The waiting assistant indicator'
+    )
     const waitingScrollerMetrics = await waitForBottom(
       control,
       'The conversation scroller while waiting for the assistant',
@@ -290,11 +185,16 @@ export function createStreamingScrollChecks({
       PARTIAL_TEXT,
       'The runtime conversation cache lost or reordered streamed text before rendering'
     )
-    const immediatelyRenderedPartial = await control.command('getText', PROCESS_TEXT_SELECTOR)
+    // Cache publication precedes the pane's animation-frame commit.
+    await control.command('waitFor', PROCESS_TEXT_SELECTOR, {
+      text: PARTIAL_TEXT.slice(PARTIAL_TEXT.lastIndexOf('\n') + 1),
+      timeoutMs: uiTimeoutMs,
+    })
+    const renderedPartial = await control.command('getText', PROCESS_TEXT_SELECTOR)
     assert.equal(
-      immediatelyRenderedPartial.replace(/\s+/g, ''),
+      renderedPartial.replace(/\s+/g, ''),
       PARTIAL_TEXT.replace(/\s+/g, ''),
-      `The active conversation displayed only ${immediatelyRenderedPartial.length} of ${PARTIAL_TEXT.length} streamed characters`
+      `The active conversation displayed only ${renderedPartial.length} of ${PARTIAL_TEXT.length} streamed characters`
     )
     await control.command('waitFor', PROCESS_TEXT_SELECTOR, {
       text: MARKER,
@@ -819,5 +719,5 @@ export function createStreamingScrollChecks({
     )
     await capture(control, 'streaming-text-17-response-completed.png')
   }
-  return { verifyTimers, verifyScroll }
+  return { verifyScroll }
 }

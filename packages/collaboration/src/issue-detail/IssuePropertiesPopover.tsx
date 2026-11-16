@@ -1,6 +1,6 @@
 import * as Popover from '@radix-ui/react-popover'
 import { Ellipsis } from 'lucide-react'
-import { useId, useState, type ReactNode } from 'react'
+import { useId, useState, type ReactNode, type Ref } from 'react'
 import { useCollaborationPortalTheme } from '../theme/CollaborationTheme'
 import './IssuePropertiesPopover.css'
 
@@ -8,10 +8,14 @@ export function IssuePropertiesPopover({
   label,
   children,
   onClose,
+  triggerRef,
+  testIdPrefix = 'cloud-todo-more-properties',
 }: {
   label: string
   children: ReactNode
   onClose?: () => void
+  triggerRef?: Ref<HTMLButtonElement>
+  testIdPrefix?: string
 }) {
   const [open, setOpen] = useState(false)
   const portalTheme = useCollaborationPortalTheme()
@@ -29,10 +33,11 @@ export function IssuePropertiesPopover({
     <Popover.Root open={open} onOpenChange={changeOpen}>
       <Popover.Trigger asChild>
         <button
+          ref={triggerRef}
           type="button"
           className="task-detail-more-menu-trigger"
           aria-label={label}
-          data-testid="cloud-todo-more-properties"
+          data-testid={testIdPrefix}
         >
           <Ellipsis className="h-4 w-4" aria-hidden="true" />
         </button>
@@ -42,13 +47,13 @@ export function IssuePropertiesPopover({
           {...portalTheme}
           className={`${portalTheme.className} task-detail-more-menu-popover z-system-popover`}
           aria-labelledby={titleId}
-          data-testid="cloud-todo-more-properties-popover"
+          data-testid={`${testIdPrefix}-popover`}
           align="end"
           sideOffset={4}
           collisionPadding={8}
           onOpenAutoFocus={event => event.preventDefault()}
         >
-          <h3 id={titleId} className="task-detail-more-menu-title">
+          <h3 id={titleId} className="sr-only">
             {label}
           </h3>
           {children}

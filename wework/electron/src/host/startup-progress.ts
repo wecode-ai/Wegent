@@ -29,6 +29,7 @@ export interface StartupProgressUpdate {
   stage: StartupProgressStage
   startedAt: number
   activity?: StartupProgressActivity
+  completed?: boolean
 }
 
 export const STARTUP_PROGRESS_CHANNEL = 'startup-progress:update'
@@ -186,6 +187,7 @@ export class StartupProgressReporter {
   report(stageId: string): void {
     const index = STARTUP_PROGRESS_STAGES.findIndex(stage => stage.id === stageId)
     if (index < 0) throw new Error(`Unknown startup progress stage: ${stageId}`)
+    if (this.current?.completed) return
     if (index <= this.index) return
     this.index = index
     this.lastActivityPublishedAt = 0
@@ -211,12 +213,28 @@ export class StartupProgressReporter {
    * so the splash flickers with real work without flooding the renderer.
    */
   reportActivity(kind: StartupActivityKind, path: string): void {
-    if (!this.current || !path.trim()) return
+    if (!this.current || this.current.completed || !path.trim()) return
     const now = this.now()
     if (now - this.lastActivityPublishedAt < STARTUP_ACTIVITY_MIN_INTERVAL_MS) return
     this.lastActivityPublishedAt = now
     this.current = { ...this.current, activity: { kind, path } }
     this.publish(this.current)
+  }
+
+  complete(): StartupProgressUpdate {
+    if (!this.current || this.index !== STARTUP_PROGRESS_STAGES.length - 1) {
+      throw new Error('Startup cannot complete before the renderer stage')
+    }
+    if (!this.current.completed) {
+      this.current = {
+        ...this.current,
+        completedWeight: startupProgressTotalWeight(),
+        completed: true,
+      }
+      delete this.current.activity
+      this.publish(this.current)
+    }
+    return cloneUpdate(this.current)
   }
 
   history(): readonly StartupProgressUpdate[] {

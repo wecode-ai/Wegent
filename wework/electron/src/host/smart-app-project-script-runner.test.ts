@@ -1,23 +1,39 @@
+import * as childProcess from 'node:child_process'
+import { EventEmitter } from 'node:events'
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { createRequire } from 'node:module'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
+import { PassThrough } from 'node:stream'
 import { afterEach, describe, expect, test, vi } from 'vitest'
+import { testNodeRuntime } from '../runtime/test-helpers.js'
 import {
   runSmartAppProjectScripts,
   runSmartAppRuntimeProbe,
   type SmartAppScriptCommandRunner,
 } from './smart-app-project-script-runner.js'
 
+vi.mock('node:child_process', { spy: true })
+
 const roots: string[] = []
+const cleanups: Array<() => Promise<void>> = []
 
 afterEach(async () => {
+  await Promise.all(cleanups.splice(0).map(cleanup => cleanup()))
   await Promise.all(roots.splice(0).map(root => rm(root, { recursive: true, force: true })))
+  vi.restoreAllMocks()
+  vi.useRealTimers()
 })
 
 describe('runSmartAppProjectScripts', () => {
-  test.each(['pnpm@99.0.0', 'pnpm@11.7.0'])(
-    'ignores the containing workspace when running prepared project scripts (%s)',
-    async packageManager => {
+  test.for([
+    { packageManager: 'pnpm@99.0.0', runtime: 'current' },
+    { packageManager: 'pnpm@11.7.0', runtime: 'current' },
+    { packageManager: 'pnpm@99.0.0', runtime: 'electron' },
+    { packageManager: 'pnpm@11.7.0', runtime: 'electron' },
+  ])(
+    'ignores the containing workspace for $packageManager with the $runtime runtime',
+    async ({ packageManager, runtime }, { signal }) => {
       const host = await projectRoot()
       const root = join(host, 'fixtures', 'smart-app')
       await mkdir(root, { recursive: true })
@@ -30,32 +46,175 @@ describe('runSmartAppProjectScripts', () => {
         join(root, 'package.json'),
         JSON.stringify({
           name: 'prepared-project',
-          scripts: { check: 'node -e "process.exit(0)"' },
+          scripts: { check: 'node check.cjs' },
         })
       )
-      const pnpmEntry = process.env.npm_execpath
-      if (!pnpmEntry) throw new Error('Run this regression through pnpm test')
-      // npm_execpath can name either a JavaScript entry or a standalone executable.
-      const nodeEntry = /\.[cm]?js$/i.test(pnpmEntry)
-      const result = await runSmartAppProjectScripts({
+      await writeFile(
+        join(root, 'check.cjs'),
+        "require('node:fs').appendFileSync('checks.log', 'checked\\n')\n"
+      )
+      // Exercise the managed runtime's JavaScript CLI rather than the host pnpm distribution.
+      const pnpmEntry = join(
+        dirname(createRequire(import.meta.url).resolve('pnpm')),
+        'bin',
+        'pnpm.cjs'
+      )
+      const node = await testNodeRuntime(
+        host,
+        runtime === 'electron'
+          ? { command: createRequire(import.meta.url)('electron'), kind: 'electron' }
+          : undefined
+      )
+      const running = runSmartAppProjectScripts({
         ...options(root),
+        signal,
         scripts: { typecheck: 'check', test: 'check', build: 'check' },
         resolveCommand: async () => ({
-          command: nodeEntry ? process.execPath : pnpmEntry,
-          argsPrefix: [...(nodeEntry ? [pnpmEntry] : []), '--pm-on-fail=error'],
-          environment: { PATH: process.env.PATH, CI: 'true' },
+          command: node.command,
+          argsPrefix: [...node.argsPrefix, pnpmEntry, '--pm-on-fail=error'],
+          environment: { ...node.environment, CI: 'true' },
         }),
       })
+      cleanups.push(async () => {
+        try {
+          await running
+        } catch (error) {
+          if (!signal.aborted) throw error
+        }
+      })
+      const result = await running
       const logs = await Promise.all(
         result.scripts.map(script => readFile(join(root, script.logPath), 'utf8'))
       )
       expect(result.issues, JSON.stringify({ node: process.execPath, pnpmEntry, logs })).toEqual([])
       expect(result.scripts.map(script => script.status)).toEqual(['passed', 'passed', 'passed'])
+      expect(await readFile(join(root, 'checks.log'), 'utf8')).toBe('checked\n'.repeat(3))
       await expect(readFile(join(host, 'pnpm-lock.yaml'))).rejects.toMatchObject({ code: 'ENOENT' })
     },
     // This integration case starts three real pnpm/Node process pairs sequentially.
     15_000
   )
+
+  test.each(['scripts', 'probe'] as const)(
+    'cancels %s and stops the real process tree',
+    async kind => {
+      const root = await projectRoot()
+      const node = await testNodeRuntime(root)
+      const pidPath = join(root, 'child.pid')
+      const fixture = join(root, 'hold.cjs')
+      await writeFile(
+        fixture,
+        `const { spawn } = require('node:child_process')
+const child = spawn(process.execPath, ['-e',
+  'require("node:fs").writeFileSync(process.argv[1], JSON.stringify([process.ppid, process.pid])); setInterval(() => {}, 1000)',
+  ${JSON.stringify(pidPath)}], { stdio: 'inherit' })
+// Reap the child before exiting, including under a container PID 1.
+process.on('SIGTERM', () => {})
+child.once('exit', () => process.exit(0))
+setInterval(() => {}, 1000)
+`
+      )
+      const controller = new AbortController()
+      const resolveCommand = async () => ({ ...node, argsPrefix: [...node.argsPrefix, fixture] })
+      const input = { ...options(root), resolveCommand, signal: controller.signal }
+      const running =
+        kind === 'scripts'
+          ? runSmartAppProjectScripts(input)
+          : runSmartAppRuntimeProbe({ ...input, script: 'probe', baseUrl: 'http://127.0.0.1/' })
+      // Attach rejection handling before cancellation and always await cleanup, including failures.
+      const rejected = expect(running).rejects.toThrow('cancel fixture')
+      cleanups.push(async () => {
+        controller.abort(new Error('cancel fixture'))
+        await rejected
+      })
+      let pids: number[] = []
+      await vi.waitFor(
+        async () => {
+          pids = JSON.parse(await readFile(pidPath, 'utf8'))
+          expect(pids).toHaveLength(2)
+          for (const pid of pids) expect(pid).toBeGreaterThan(0)
+        },
+        { timeout: 4_000 }
+      )
+
+      controller.abort(new Error('cancel fixture'))
+      await rejected
+
+      await vi.waitFor(() => {
+        for (const pid of pids) {
+          expect(() => process.kill(pid, 0)).toThrow(expect.objectContaining({ code: 'ESRCH' }))
+        }
+      })
+    },
+    10_000
+  )
+
+  test.each(['closed', 'inherited'] as const)(
+    'finishes an exited script with %s output pipes and retains its logs',
+    async pipes => {
+      const root = await projectRoot()
+      vi.useFakeTimers()
+      const stdout = new PassThrough()
+      const stderr = new PassThrough()
+      const child = Object.assign(new EventEmitter(), { stdout, stderr })
+      const spawn = vi
+        .spyOn(childProcess, 'spawn')
+        .mockClear()
+        .mockReturnValueOnce(child as ReturnType<typeof childProcess.spawn>)
+      let settled = false
+      const running = runSmartAppRuntimeProbe({
+        ...options(root),
+        script: 'probe',
+        baseUrl: 'http://127.0.0.1/',
+      }).then(result => {
+        settled = true
+        return result
+      })
+      cleanups.push(async () => {
+        child.emit('close', 0)
+        stdout.destroy()
+        stderr.destroy()
+        await running
+      })
+      await vi.waitFor(() => expect(spawn).toHaveBeenCalledOnce())
+      stdout.write('script output\n')
+      child.emit('exit', 0)
+      stderr.write('output draining after exit\n')
+
+      if (pipes === 'closed') {
+        child.emit('close', 0)
+      } else {
+        await vi.advanceTimersByTimeAsync(999)
+        expect(settled).toBe(false)
+        await vi.advanceTimersByTimeAsync(1)
+        expect(stdout.destroyed).toBe(true)
+        expect(stderr.destroyed).toBe(true)
+      }
+
+      await expect(running).resolves.toEqual({ issues: [] })
+      expect(vi.getTimerCount()).toBe(0)
+      const log = await readFile(
+        join(root, 'test-results', 'smart-app', 'logs', 'runtime-probe.log'),
+        'utf8'
+      )
+      expect(log).toContain('script output\n')
+      expect(log).toContain('output draining after exit\n')
+    }
+  )
+
+  test('does not resolve or start commands after cancellation', async () => {
+    const root = await projectRoot()
+    const controller = new AbortController()
+    controller.abort(new Error('cancelled before start'))
+    const resolveCommand = vi.fn()
+    const input = { ...options(root), resolveCommand, signal: controller.signal }
+
+    await expect(runSmartAppProjectScripts(input)).rejects.toThrow('cancelled before start')
+    await expect(
+      runSmartAppRuntimeProbe({ ...input, script: 'probe', baseUrl: 'http://127.0.0.1/' })
+    ).rejects.toThrow('cancelled before start')
+    expect(resolveCommand).not.toHaveBeenCalled()
+  })
 
   test('runs typecheck, test, and build in a fixed order through managed pnpm', async () => {
     const root = await projectRoot()

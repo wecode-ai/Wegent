@@ -1,0 +1,12 @@
+{
+  "order": 140000,
+  "groupOrder": 9000,
+  "members": [
+    "cloud-worktree-capability",
+    "cloud-worktree-create",
+    "cloud-worktree-queued-cancel",
+    "cloud-worktree-tools",
+    "cloud-worktree-archive-restore"
+  ],
+  "cloudOnly": true
+}

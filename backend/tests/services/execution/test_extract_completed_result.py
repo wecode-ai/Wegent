@@ -97,6 +97,31 @@ class TestExtractCompletedResult:
         result = extract_completed_result({"file_changes": file_changes})
         assert result["file_changes"] == file_changes
 
+    @pytest.mark.parametrize(
+        "task_changes",
+        [
+            {
+                "status": "active",
+                "files": [{"path": "a.ts"}, {"path": "b.ts"}],
+                "diff": "task patch",
+            },
+            {"status": "active", "files": [], "diff": ""},
+            {"status": "error", "files": [], "diff": ""},
+        ],
+    )
+    def test_keeps_cumulative_changes_separate_from_turn_changes(self, task_changes):
+        turn_changes = {
+            "status": "active",
+            "files": [{"path": "b.ts"}],
+            "diff": "turn patch",
+        }
+        result = extract_completed_result(
+            {"file_changes": turn_changes, "task_file_changes": task_changes}
+        )
+
+        assert result["file_changes"] == turn_changes
+        assert result["task_file_changes"] == task_changes
+
     def test_preserves_executor_session(self):
         executor_session = {
             "agent": "CodeX",

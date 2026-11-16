@@ -17,6 +17,14 @@ export const MODEL_LABEL = 'Desktop E2E Chat'
 export const RECIPIENT_NAME = 'smart-app-e2e-recipient'
 export const STRANGER_NAME = 'smart-app-e2e-stranger'
 export const USER_PASSWORD = 'smart-app-e2e-password'
+export const SMART_APP_ICON_DATA_URL =
+  'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII='
+export const SMART_APP_ALT_ICON_DATA_URL =
+  'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+ip1sAAAAASUVORK5CYII='
+export const SMART_APP_SCREENSHOT_DATA_URL =
+  'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg=='
+export const SMART_APP_ALT_SCREENSHOT_DATA_URL =
+  'data:image/jpeg;base64,/9j/4AAQSkZJRgABAQEAYABgAAD/2wBDAAgGBgcGBQgHBwcJCQgKDBQNDAsLDBkSEw8UHRofHh0aHBwgJC4nICIsIxwcKDcpLDAxNDQ0Hyc5PTgyPDs0NDT/wAALCAABAAEBAREA/8QAFAABAAAAAAAAAAAAAAAAAAAACf/EABQQAQAAAAAAAAAAAAAAAAAAAAD/2gAIAQEAAD8AKp//2Q=='
 // Exercise large-entry EOF/backpressure in the real packaged Electron host.
 export const ZIP_BACKPRESSURE_CONTENT = Array.from({ length: 4096 }, (_, index) =>
   createHash('sha256').update(String(index)).digest('hex').repeat(4)

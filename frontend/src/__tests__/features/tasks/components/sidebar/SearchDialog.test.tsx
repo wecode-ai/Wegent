@@ -127,7 +127,10 @@ describe('SearchDialog group search', () => {
 
     projectTasksMock.mockResolvedValueOnce(projectResponse([createProjectTask(201)]))
     await searchFor('outside loaded pages')
-    expect(projectTasksMock).toHaveBeenCalledWith(7, 20, undefined, 'outside loaded pages')
+    expect(projectTasksMock).toHaveBeenCalledWith(7, 20, undefined, {
+      title: 'outside loaded pages',
+      includeTotal: false,
+    })
     expect(screen.getByTestId('task-search-result-201')).toBeInTheDocument()
     expect(screen.queryByTestId('task-search-result-1')).not.toBeInTheDocument()
 
@@ -239,13 +242,19 @@ describe('SearchDialog group search', () => {
     expect(screen.queryByText(mockRecentTask.title)).not.toBeInTheDocument()
     expect(screen.queryByText('common:tasks.new_conversation')).not.toBeInTheDocument()
     await loadDefaultTasks()
-    expect(projectTasksMock).toHaveBeenLastCalledWith(7, 20, undefined, undefined)
+    expect(projectTasksMock).toHaveBeenLastCalledWith(7, 20, undefined, {
+      title: undefined,
+      includeTotal: false,
+    })
     expect(screen.getAllByTestId(/^task-search-result-/)).toHaveLength(20)
     expect(searchTasksMock).not.toHaveBeenCalled()
     await act(async () => {
       fireEvent.click(screen.getByTestId('task-search-load-more-button'))
     })
-    expect(projectTasksMock).toHaveBeenLastCalledWith(7, 20, 'page-2', undefined)
+    expect(projectTasksMock).toHaveBeenLastCalledWith(7, 20, 'page-2', {
+      title: undefined,
+      includeTotal: false,
+    })
     expect(screen.getAllByTestId(/^task-search-result-/)).toHaveLength(21)
     expect(screen.queryByTestId('task-search-load-more-button')).not.toBeInTheDocument()
     fireEvent.click(screen.getByTestId('task-search-result-21'))
@@ -265,12 +274,18 @@ describe('SearchDialog group search', () => {
     expect(screen.getByText('Matching task 100')).toBeInTheDocument()
 
     await searchFor('Matching')
-    expect(projectTasksMock).toHaveBeenLastCalledWith(7, 20, undefined, 'Matching')
+    expect(projectTasksMock).toHaveBeenLastCalledWith(7, 20, undefined, {
+      title: 'Matching',
+      includeTotal: false,
+    })
     expect(screen.queryByText('Matching task 100')).not.toBeInTheDocument()
     await act(async () => {
       fireEvent.click(screen.getByTestId('task-search-load-more-button'))
     })
-    expect(projectTasksMock).toHaveBeenLastCalledWith(7, 20, 'matching-page-2', 'Matching')
+    expect(projectTasksMock).toHaveBeenLastCalledWith(7, 20, 'matching-page-2', {
+      title: 'Matching',
+      includeTotal: false,
+    })
     expect(screen.getAllByTestId(/^task-search-result-/)).toHaveLength(21)
     expect(searchTasksMock).not.toHaveBeenCalled()
   })
@@ -333,7 +348,10 @@ describe('SearchDialog group search', () => {
     fireEvent.click(screen.getByTestId('task-search-clear-button'))
     await act(async () => jest.advanceTimersByTime(300))
     expect(projectTasksMock).toHaveBeenCalledTimes(2)
-    expect(projectTasksMock).not.toHaveBeenCalledWith(7, 20, undefined, 'pending')
+    expect(projectTasksMock).not.toHaveBeenCalledWith(7, 20, undefined, {
+      title: 'pending',
+      includeTotal: false,
+    })
     expect(screen.getByText('Matching task 100')).toBeInTheDocument()
 
     const request = deferredResponse()
@@ -343,15 +361,18 @@ describe('SearchDialog group search', () => {
     await loadDefaultTasks()
     await act(async () => request.resolve(projectResponse([createProjectTask(1)])))
     expect(screen.getByTestId('task-search-input')).toHaveValue('')
-    expect(projectTasksMock).toHaveBeenLastCalledWith(7, 20, undefined, undefined)
+    expect(projectTasksMock).toHaveBeenLastCalledWith(7, 20, undefined, {
+      title: undefined,
+      includeTotal: false,
+    })
     expect(screen.getByText('Matching task 100')).toBeInTheDocument()
     expect(screen.queryByText('Matching task 1')).not.toBeInTheDocument()
   })
 
   it('clears a changed group scope and ignores the previous group response', async () => {
     const oldRequest = deferredResponse()
-    projectTasksMock.mockImplementation((projectId, _limit, _cursor, title) => {
-      if (projectId === 7 && title === 'old group') return oldRequest.promise
+    projectTasksMock.mockImplementation((projectId, _limit, _cursor, options) => {
+      if (projectId === 7 && options?.title === 'old group') return oldRequest.promise
       const task = createProjectTask(projectId === 7 ? 100 : 200)
       return Promise.resolve(projectResponse([{ ...task, project_id: projectId }]))
     })
@@ -363,12 +384,18 @@ describe('SearchDialog group search', () => {
     await loadDefaultTasks()
     await act(async () => oldRequest.resolve(projectResponse([createProjectTask(1)])))
     expect(screen.getByTestId('task-search-input')).toHaveValue('')
-    expect(projectTasksMock).toHaveBeenLastCalledWith(8, 20, undefined, undefined)
+    expect(projectTasksMock).toHaveBeenLastCalledWith(8, 20, undefined, {
+      title: undefined,
+      includeTotal: false,
+    })
     expect(screen.getByText('Matching task 200')).toBeInTheDocument()
     expect(screen.queryByText('Matching task 100')).not.toBeInTheDocument()
     expect(screen.queryByText('Matching task 1')).not.toBeInTheDocument()
     await searchFor('new group')
-    expect(projectTasksMock).toHaveBeenLastCalledWith(8, 20, undefined, 'new group')
+    expect(projectTasksMock).toHaveBeenLastCalledWith(8, 20, undefined, {
+      title: 'new group',
+      includeTotal: false,
+    })
   })
 
   it('ignores in-flight results after closing and reopening the dialog', async () => {
@@ -386,7 +413,10 @@ describe('SearchDialog group search', () => {
     await loadDefaultTasks()
     await act(async () => request.resolve(projectResponse([createProjectTask(1)])))
     expect(screen.getByTestId('task-search-input')).toHaveValue('')
-    expect(projectTasksMock).toHaveBeenLastCalledWith(7, 20, undefined, undefined)
+    expect(projectTasksMock).toHaveBeenLastCalledWith(7, 20, undefined, {
+      title: undefined,
+      includeTotal: false,
+    })
     expect(screen.getByText('Matching task 100')).toBeInTheDocument()
     expect(screen.queryByText('Matching task 1')).not.toBeInTheDocument()
   })
@@ -410,7 +440,10 @@ describe('SearchDialog group search', () => {
       fireEvent.click(screen.getByTestId('task-search-retry-button'))
     })
     expect(projectTasksMock).toHaveBeenCalledTimes(2)
-    expect(projectTasksMock).toHaveBeenLastCalledWith(7, 20, undefined, undefined)
+    expect(projectTasksMock).toHaveBeenLastCalledWith(7, 20, undefined, {
+      title: undefined,
+      includeTotal: false,
+    })
     expect(screen.getByText('Matching task 1')).toBeInTheDocument()
     expect(screen.queryByTestId('task-search-retry-button')).not.toBeInTheDocument()
   })

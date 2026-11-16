@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 
-const SOURCE_CONFIG = 'model = "desktop-e2e-imported"\n'
+const SOURCE_CONFIG = 'model = "desktop-e2e-imported"\npersonality = "friendly"\n'
 const SOURCE_INSTRUCTIONS = '# Desktop E2E imported instructions\n'
 const SOURCE_SKILL = '# Desktop E2E imported skill\n'
 
@@ -37,10 +37,21 @@ export async function createDesktopScenario({ captureScreenshot, executorHome, h
       await control.command('waitFor', '[data-testid="external-content-import-success"]', {
         text: 'Codex',
       })
+      const importedConfig = await readFile(join(destinationHome, 'config.toml'), 'utf8')
+      assert.doesNotMatch(
+        importedConfig,
+        /^\s*model\s*=/mu,
+        'The source Codex default model must not be imported into the managed home'
+      )
       assert.match(
-        await readFile(join(destinationHome, 'config.toml'), 'utf8'),
-        /^model = "desktop-e2e-imported"$/mu,
-        'The imported Codex model was not preserved in the managed home'
+        importedConfig,
+        /^personality = "friendly"$/mu,
+        'Other Codex settings were not preserved in the managed home'
+      )
+      assert.equal(
+        await readFile(join(sourceHome, 'config.toml'), 'utf8'),
+        SOURCE_CONFIG,
+        'Importing Codex settings must leave the source configuration unchanged'
       )
       assert.equal(
         await readFile(join(destinationHome, 'AGENTS.md'), 'utf8'),

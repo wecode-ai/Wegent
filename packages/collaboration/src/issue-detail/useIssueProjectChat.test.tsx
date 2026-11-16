@@ -5,6 +5,23 @@ import { expect, it, vi } from 'vitest'
 import type { ProjectChatClient, ProjectChatMessage } from '@wegent/chat-core'
 import { useIssueProjectChat } from './useIssueProjectChat'
 
+function createMessage(overrides: Partial<ProjectChatMessage>): ProjectChatMessage {
+  return {
+    messageId: 'comment',
+    projectId: 'project-1',
+    taskId: 'issue-1',
+    sequenceNumber: 1,
+    sender: { type: 'user', id: '42', name: 'User' },
+    type: 'text',
+    content: '',
+    metadata: {},
+    status: 'completed',
+    createdAt: '2026-09-25T00:00:00Z',
+    updatedAt: '2026-09-25T00:00:00Z',
+    ...overrides,
+  }
+}
+
 it.each(['after failure', 'during failure'])(
   'restores a failed initial subscription when reconnect occurs %s',
   async timing => {
@@ -88,12 +105,12 @@ it('does not merge a late comment or runtime response into another Issue', async
     const previousMerge = current.merge
     const pending = current.send('Old comment')
     await act(async () => root.render(<Harness issueId="issue-2" />))
-    const oldMessage = {
+    const oldMessage = createMessage({
       messageId: 'old',
       taskId: 'issue-1',
       content: 'Old comment',
       sequenceNumber: 1,
-    } as ProjectChatMessage
+    })
     await act(async () => {
       resolveSend(oldMessage)
       await pending
@@ -120,13 +137,13 @@ it('reloads the canonical activity snapshot when the Issue revision changes', as
   globalThis.IS_REACT_ACT_ENVIRONMENT = true
   const container = document.createElement('div')
   const root = createRoot(container)
-  const first = {
+  const first = createMessage({
     messageId: 'first',
     taskId: 'issue-1',
     content: 'First activity',
     sequenceNumber: 1,
     updatedAt: '2026-09-25T00:00:00Z',
-  } as ProjectChatMessage
+  })
   const managerComment = {
     ...first,
     messageId: 'manager-comment',
@@ -169,13 +186,13 @@ it('keeps the activity and reply draft mounted while an Issue revision refreshes
   globalThis.IS_REACT_ACT_ENVIRONMENT = true
   const container = document.createElement('div')
   const root = createRoot(container)
-  const message = {
+  const message = createMessage({
     messageId: 'comment',
     taskId: 'issue-1',
     content: 'Persisted comment',
     sequenceNumber: 1,
     updatedAt: '2026-10-13T00:00:00Z',
-  } as ProjectChatMessage
+  })
   let finishRefresh!: (subscription: unknown) => void
   const client = {
     subscribe: vi

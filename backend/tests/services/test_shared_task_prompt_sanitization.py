@@ -131,8 +131,10 @@ class TestPublicSharedTaskContexts:
         )
         from app.services import shared_task as shared_task_module
 
+        owner_id = 1
         task = SimpleNamespace(
             id=200,
+            user_id=owner_id,
             name="Shared task",
             created_at=datetime(2025, 1, 1),
         )
@@ -193,7 +195,7 @@ class TestPublicSharedTaskContexts:
         test_db.flush()
 
         service = shared_task_module.shared_task_service
-        monkeypatch.setattr(service, "_aes_decrypt", lambda _: "1#200")
+        share_link = service.create_share_link(test_db, task.id, owner_id)
         monkeypatch.setattr(
             shared_task_module.task_store,
             "get_task_by_states",
@@ -205,7 +207,7 @@ class TestPublicSharedTaskContexts:
             lambda *args, **kwargs: [subtask],
         )
 
-        response = service.get_public_shared_task(test_db, "share-token")
+        response = service.get_public_shared_task(test_db, share_link.share_token)
 
         assert len(response.subtasks) == 1
         assert len(response.subtasks[0].contexts) == 1

@@ -1,0 +1,12 @@
+{
+  "order": 77000,
+  "scenario": "./scenarios/board-transcript-followup.scenario.mjs",
+  "scenarioOnly": true,
+  "ci": {
+    "core": {
+      "order": 22000,
+      "shard": 3,
+      "position": 23000
+    }
+  }
+}

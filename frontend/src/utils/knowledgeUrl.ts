@@ -7,7 +7,7 @@
  *
  * URL format:
  *   /knowledge/default/{kbName}              → Personal KB (namespace="default", current user)
- *   /knowledge/public/{kbName}               → Organization KB (globally unique, no namespace in URL)
+ *   /knowledge/public/{kbName}               → Organization KB (company scope, no namespace in URL)
  *   /knowledge/{namespace}/{kbName}          → Team KB (namespace=team name)
  *
  * With document path:
@@ -40,7 +40,8 @@ export function buildKbUrl(
   namespace: string,
   kbName: string,
   isOrganization: boolean,
-  docPath?: string
+  docPath?: string,
+  query?: { knowledgeBaseId: number; searchParams?: string }
 ): string {
   let base: string
 
@@ -48,7 +49,7 @@ export function buildKbUrl(
     // Personal KB: /knowledge/default/{kbName}
     base = `/knowledge/default/${encodeURIComponent(kbName)}`
   } else if (isOrganization) {
-    // Organization KB: /knowledge/public/{kbName} (namespace omitted, globally unique)
+    // Organization KB: /knowledge/public/{kbName} (namespace omitted, resolved within company KBs)
     base = `/knowledge/public/${encodeURIComponent(kbName)}`
   } else {
     // Team KB: /knowledge/{namespace}/{kbName}
@@ -57,10 +58,13 @@ export function buildKbUrl(
 
   if (docPath) {
     const encodedDocPath = docPath.split('/').map(encodeURIComponent).join('/')
-    return `${base}/${encodedDocPath}`
+    base = `${base}/${encodedDocPath}`
   }
 
-  return base
+  if (!query) return base
+  const searchParams = new URLSearchParams(query.searchParams)
+  searchParams.set('kb', String(query.knowledgeBaseId))
+  return `${base}?${searchParams.toString()}`
 }
 
 /**
@@ -134,33 +138,66 @@ export function parseKbUrl(pathname: string): ParsedKbUrl | null {
   }
 }
 
-/**
- * Find a knowledge base by virtual path components (namespace + name).
- *
- * If `namespace` is a non-empty string, both namespace and name must match
- * case-insensitively. If `namespace` is undefined, null, or empty (organization
- * KBs), only the name is matched (any namespace).
- *
- * @param kbs The list of KB objects to search
- * @param namespace The namespace to filter by, or undefined/null/empty for org-level KBs
- * @param name The KB name to search for (case-insensitive)
- * @returns The first matching KB, or undefined if no match
- */
-export function findKbByVirtualPath<T extends { name: string; namespace: string }>(
-  kbs: T[],
-  namespace: string | undefined | null,
+/** Accept only positive, safely representable integer IDs. */
+export function parseKnowledgeBaseId(value: string | null | undefined): number | null {
+  if (!value || !/^[1-9]\d*$/.test(value)) return null
+  const id = Number(value)
+  return Number.isSafeInteger(id) ? id : null
+}
+
+export type KbUrlResolution<T> =
+  | { status: 'loading' | 'not-found' | 'ambiguous' | 'error' }
+  | { status: 'resolved'; knowledgeBase: T }
+
+/** Resolve within the URL's scope; ordering never determines identity. */
+export function resolveKbByVirtualPath<T extends { id: number; name: string; namespace: string }>({
+  allKnowledgeBases,
+  organizationKnowledgeBases,
+  namespace,
+  name,
+  knowledgeBaseId,
+  isLoading,
+  hasError = false,
+}: {
+  allKnowledgeBases: T[]
+  organizationKnowledgeBases: T[]
+  namespace: string | null | undefined
   name: string
-): T | undefined {
-  const targetName = name.toLowerCase()
+  knowledgeBaseId?: string | null
+  isLoading: boolean
+  hasError?: boolean
+}): KbUrlResolution<T> {
+  const requestedId = parseKnowledgeBaseId(knowledgeBaseId)
+  if (knowledgeBaseId != null && requestedId === null) return { status: 'not-found' }
+  if (isLoading) return { status: 'loading' }
+  if (hasError) return { status: 'error' }
+  const candidates = namespace ? allKnowledgeBases : organizationKnowledgeBases
+  const matches = new Map(
+    candidates
+      .filter(
+        kb =>
+          (requestedId !== null
+            ? kb.id === requestedId
+            : kb.name.toLowerCase() === name.toLowerCase()) &&
+          (!namespace || kb.namespace.toLowerCase() === namespace.toLowerCase())
+      )
+      .map(kb => [kb.id, kb])
+  )
+  if (matches.size === 0) return { status: 'not-found' }
+  if (matches.size > 1) return { status: 'ambiguous' }
+  return { status: 'resolved', knowledgeBase: matches.values().next().value! }
+}
 
-  if (namespace) {
-    // Personal or Team KB: match both namespace and name
-    const targetNs = namespace.toLowerCase()
-    return kbs.find(
-      kb => kb.namespace.toLowerCase() === targetNs && kb.name.toLowerCase() === targetName
-    )
-  }
-
-  // Organization KB: match name only (any namespace)
-  return kbs.find(kb => kb.name.toLowerCase() === targetName)
+/** Preserve identity and page context when a display name changes. */
+export function getCanonicalKbUrl(
+  kb: { id: number; name: string; namespace: string },
+  route: Pick<ParsedKbUrl, 'namespace' | 'kbName' | 'docPath'>,
+  query: string
+): string | null {
+  const searchParams = new URLSearchParams(query)
+  if (route.kbName === kb.name && searchParams.get('kb') === String(kb.id)) return null
+  return buildKbUrl(kb.namespace, kb.name, !route.namespace, route.docPath, {
+    knowledgeBaseId: kb.id,
+    searchParams: query,
+  })
 }

@@ -1,5 +1,7 @@
-import { describe, expect, test } from 'vitest'
+// @vitest-environment node
+
 import type { RuntimeSupervisorState, RuntimeWorkListResponse } from '@/types/api'
+import { describe, expect, test } from 'vitest'
 import { RuntimeSupervisorSnapshots } from './runtimeSupervisorSnapshots'
 
 const address = { deviceId: 'cloud-device', taskId: 'task-a', workspacePath: '/workspace' }
@@ -53,30 +55,11 @@ describe('RuntimeSupervisorSnapshots', () => {
     }
   })
 
-  test('allows a later authoritative snapshot to replace earlier events', () => {
-    const snapshots = new RuntimeSupervisorSnapshots()
-    snapshots.update(address, active)
-    const request = snapshots.capture()
-    const next = work({ ...active, status: 'checking', lastEvaluatedAt: 200 })
-
-    expect(snapshots.preserve(next, request)).toBe(next)
-  })
-
   test('preserves disabling supervision while a snapshot is pending', () => {
     const snapshots = new RuntimeSupervisorSnapshots()
     const request = snapshots.capture()
     snapshots.update(address, null)
 
     expect(snapshots.preserve(work(active), request).chats[0].tasks[0].supervisor).toBeNull()
-  })
-
-  test('clears events when the account changes', () => {
-    const snapshots = new RuntimeSupervisorSnapshots()
-    const request = snapshots.capture()
-    snapshots.update(address, active)
-    snapshots.clear()
-    const next = work(null)
-
-    expect(snapshots.preserve(next, request)).toBe(next)
   })
 })

@@ -20,11 +20,12 @@ impl RuntimeWorkHandler for RuntimeWorkRpcHandler {
         Box::pin(async move {
             let method = string_field(&data, "method")
                 .ok_or_else(|| AppIpcError::new("bad_request", "method is required"))?;
-            let payload = data
+            let mut payload = data
                 .get("payload")
                 .cloned()
                 .filter(Value::is_object)
                 .unwrap_or_else(|| json!({}));
+            self.bind_submitted_interface(&method, &mut payload, data.get("modelBinding"))?;
             self.dispatch(&method, payload).await
         })
     }
@@ -42,11 +43,49 @@ impl RuntimeWorkHandler for RuntimeWorkRpcHandler {
                     format!("Unsupported Codex app-server method: {method}"),
                 ));
             }
+            // Bundled reconciliation rewrites the same complete configuration that
+            // marketplace RPCs update. Keep an accepted native edit out of that window.
+            let _marketplace_mutation = if matches!(
+                method.as_str(),
+                "marketplace/add" | "marketplace/remove" | "marketplace/upgrade"
+            ) {
+                Some(self.bundled_plugin_marketplace_reconciliation.lock().await)
+            } else {
+                None
+            };
+            let _restart_guard = codex_app_server_restart_gate().lock().await;
             let params = data
                 .get("params")
                 .cloned()
                 .filter(Value::is_object)
                 .unwrap_or_else(|| json!({}));
+            if method == "app/list" {
+                log_executor_event(
+                    "codex app catalog read started",
+                    &[
+                        ("has_cursor", (!params["cursor"].is_null()).to_string()),
+                        (
+                            "force_refetch",
+                            (params["forceRefetch"] == true).to_string(),
+                        ),
+                    ],
+                );
+            }
+            if method == "plugin/list" {
+                log_executor_event(
+                    "codex plugin catalog read started",
+                    &[
+                        (
+                            "local_only",
+                            (params["marketplaceKinds"] == json!(["local"])).to_string(),
+                        ),
+                        (
+                            "force_refetch",
+                            (params["forceRefetch"] == true).to_string(),
+                        ),
+                    ],
+                );
+            }
             let _activation = if method == "skills/config/write" {
                 Some(crate::services::capability_activation::activate().await)
             } else {
@@ -65,6 +104,15 @@ impl RuntimeWorkHandler for RuntimeWorkRpcHandler {
                 self.codex_app_server.request(&method, params).await
             }
             .map_err(|error| AppIpcError::new("codex_app_server_request_failed", error))?;
+            if matches!(
+                method.as_str(),
+                "plugin/install"
+                    | "plugin/uninstall"
+                    | "marketplace/upgrade"
+                    | "config/value/write"
+            ) {
+                crate::services::capability_activation::notify_changed();
+            }
             if matches!(
                 method.as_str(),
                 "marketplace/add" | "marketplace/remove" | "plugin/list" | "plugin/installed"
@@ -93,6 +141,11 @@ impl RuntimeWorkHandler for RuntimeWorkRpcHandler {
                     ],
                 );
             }
+            let response = if method == "plugin/list" {
+                super::plugin_catalog::summarize_plugin_catalog(response)
+            } else {
+                response
+            };
             Ok(response)
         })
     }

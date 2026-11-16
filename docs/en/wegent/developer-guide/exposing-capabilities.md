@@ -57,7 +57,7 @@ Wegent provides two main approaches for exposing capabilities:
 
 ### Step 1: Create Skill Definition
 
-Create the Skill definition at `backend/init_data/skills/{your-skill-name}/SKILL.md`:
+Create the Skill definition at `backend-rs/init_data/skills/{your-skill-name}/SKILL.md`:
 
 ```yaml
 ---
@@ -518,7 +518,7 @@ def test_your_tool():
 
 - **Knowledge MCP**: `backend/app/mcp_server/tools/knowledge.py`
 - **Interactive Form MCP**: `backend/app/mcp_server/tools/interactive_form_question.py`
-- **Skill Definition**: `backend/init_data/skills/wegent-knowledge/SKILL.md`
+- **Skill Definition**: `backend-rs/init_data/skills/wegent-knowledge/SKILL.md`
 - **Server Registration**: `backend/app/mcp_server/server.py`
 - **Decorator Implementation**: `backend/app/mcp_server/tools/decorator.py`
 - **Registration Logic**: `backend/app/mcp_server/tool_registry.py`

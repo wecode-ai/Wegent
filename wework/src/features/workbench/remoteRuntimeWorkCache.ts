@@ -14,8 +14,12 @@ import type {
 import { EMPTY_RUNTIME_WORK } from './workbenchCloudStatus'
 import { mergeRuntimeWorkLists } from './runtimeWorkMerge'
 
-const REMOTE_RUNTIME_WORK_CACHE_VERSION = 3
-const REMOTE_RUNTIME_WORK_CACHE_KEY_PREFIX = 'wework.workbench.remoteRuntimeWork.v3'
+const REMOTE_RUNTIME_WORK_CACHE_VERSION = 4
+const REMOTE_RUNTIME_WORK_CACHE_KEY_PREFIX = 'wework.workbench.remoteRuntimeWork.v4'
+
+export function workbenchCacheScope(ownershipKey: string, userId: number): string {
+  return JSON.stringify([ownershipKey, userId])
+}
 
 type PersistedRuntimeTask = Pick<
   RuntimeTaskSummary,
@@ -70,8 +74,8 @@ interface RemoteRuntimeWorkCacheEnvelope {
   runtimeWork: PersistedRuntimeWorkList
 }
 
-function cacheKey(userId: number): string {
-  return `${REMOTE_RUNTIME_WORK_CACHE_KEY_PREFIX}.${userId}`
+function cacheKey(ownershipKey: string): string {
+  return `${REMOTE_RUNTIME_WORK_CACHE_KEY_PREFIX}.${encodeURIComponent(ownershipKey)}`
 }
 
 function recordValue(value: unknown): Record<string, unknown> {
@@ -437,9 +441,9 @@ export function createRemoteRuntimeWorkCacheSnapshot(value: unknown): RuntimeWor
   return hydratePersistedRuntimeWork(parsePersistedRuntimeWork(value))
 }
 
-export function readCachedRemoteRuntimeWork(userId: number): RuntimeWorkListResponse {
+export function readCachedRemoteRuntimeWork(ownershipKey: string): RuntimeWorkListResponse {
   try {
-    const raw = window.localStorage.getItem(cacheKey(userId))
+    const raw = window.localStorage.getItem(cacheKey(ownershipKey))
     if (!raw) return EMPTY_RUNTIME_WORK
     const envelope = recordValue(JSON.parse(raw))
     if (envelope.version !== REMOTE_RUNTIME_WORK_CACHE_VERSION) return EMPTY_RUNTIME_WORK
@@ -450,7 +454,7 @@ export function readCachedRemoteRuntimeWork(userId: number): RuntimeWorkListResp
 }
 
 export function writeCachedRemoteRuntimeWork(
-  userId: number,
+  ownershipKey: string,
   runtimeWork: RuntimeWorkListResponse,
   devices?: DeviceInfo[]
 ): RuntimeWorkListResponse {
@@ -463,7 +467,7 @@ export function writeCachedRemoteRuntimeWork(
     runtimeWork: persistedRuntimeWork,
   }
   try {
-    window.localStorage.setItem(cacheKey(userId), JSON.stringify(envelope))
+    window.localStorage.setItem(cacheKey(ownershipKey), JSON.stringify(envelope))
   } catch {
     // The current runtime work remains available when persistent storage is unavailable.
   }

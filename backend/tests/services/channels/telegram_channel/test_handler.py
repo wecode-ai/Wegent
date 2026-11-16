@@ -9,9 +9,11 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from fastapi import HTTPException
+from sqlalchemy import create_engine
+from sqlalchemy.orm import sessionmaker
 
-from app.models.subtask import SubtaskStatus
+from app.models.subtask import Subtask, SubtaskRole, SubtaskStatus
+from app.models.task import TaskResource
 from app.services.channels.callback import ChannelType
 from app.services.channels.device_selection import DeviceSelection, DeviceType
 from app.services.channels.handler import MessageContext
@@ -20,6 +22,7 @@ from app.services.execution.emitters import (
     CompositeResultEmitter,
     WebSocketResultEmitter,
 )
+from app.stores.tasks import subtask_store, task_store
 
 EXPECTED_IM_SOURCE = {
     "source": "im",
@@ -532,6 +535,115 @@ class TestTelegramChannelHandler:
         _assert_message_source(create_task_mock)
 
     @pytest.mark.asyncio
+    async def test_registration_failure_persists_detached_task_and_subtask(
+        self, handler, test_user
+    ):
+        from app.services.channels import handler as handler_module
+
+        engine = create_engine("sqlite://")
+        for model in (TaskResource, Subtask):
+            model.__table__.create(engine)
+        factory = sessionmaker(engine, expire_on_commit=False)
+        task = TaskResource(
+            user_id=test_user.id,
+            kind="Task",
+            name="registration-failure",
+            namespace="default",
+            json={"status": {"status": "PENDING"}},
+        )
+        with factory() as db:
+            db.add(task)
+            db.flush()
+            assistant = Subtask(
+                user_id=test_user.id,
+                task_id=task.id,
+                team_id=1,
+                title="assistant",
+                bot_ids=[],
+                role=SubtaskRole.ASSISTANT,
+                status=SubtaskStatus.PENDING,
+                progress=0,
+            )
+            db.add(assistant)
+            db.commit()
+            task_id = task.id
+            assistant_id = assistant.id
+        creation = SimpleNamespace(
+            task=task,
+            user_subtask=SimpleNamespace(id=301),
+            assistant_subtask=assistant,
+        )
+
+        with (
+            patch.object(
+                handler,
+                "_get_user_model_override",
+                new=AsyncMock(return_value=(None, None)),
+            ),
+            patch.object(
+                handler,
+                "_get_conversation_task_id",
+                new=AsyncMock(return_value=(None, False)),
+            ),
+            patch.object(
+                handler,
+                "_set_conversation_task_id",
+                new=AsyncMock(),
+            ),
+            patch.object(
+                handler,
+                "_get_selected_or_default_team",
+                new=AsyncMock(return_value=SimpleNamespace(id=100)),
+            ),
+            patch.object(
+                handler,
+                "_apply_team_model_restriction",
+                new=MagicMock(return_value=(None, None)),
+            ),
+            patch.object(
+                handler,
+                "create_streaming_emitter",
+                new=AsyncMock(return_value=None),
+            ),
+            patch.object(
+                handler,
+                "_register_streaming_emitter",
+                new=AsyncMock(side_effect=RuntimeError("cache down")),
+            ),
+            patch.object(
+                handler,
+                "_broadcast_user_message_to_web",
+                new=AsyncMock(),
+            ),
+            patch.object(handler, "send_text_reply", new=AsyncMock()),
+            patch(
+                "app.services.chat.storage.task_manager.create_task_and_subtasks",
+                new=AsyncMock(return_value=creation),
+            ),
+            patch(
+                "app.services.chat.trigger.trigger_ai_response_unified",
+                new=AsyncMock(),
+            ) as trigger,
+            patch.object(handler_module, "SessionLocal", factory),
+        ):
+            with factory() as db:
+                db.expunge_all()
+                result = await handler._create_and_process_chat(
+                    test_user, _message_context()
+                )
+
+        assert result is None
+        with factory() as db:
+            persisted_task = task_store.get_by_id(db, task_id=task_id)
+            persisted_subtask = subtask_store.get_basic_by_id(
+                db, subtask_id=assistant_id
+            )
+        assert persisted_task.json["status"]["status"] == "FAILED"
+        assert persisted_subtask.status == SubtaskStatus.FAILED
+        trigger.assert_not_awaited()
+        engine.dispose()
+
+    @pytest.mark.asyncio
     async def test_create_and_process_chat_ignores_agent_restricted_model(
         self, handler
     ):
@@ -861,6 +973,33 @@ class TestTelegramChannelHandler:
         create_task_mock.assert_not_called()
 
     @pytest.mark.asyncio
+    async def test_device_mode_awaits_hidden_model_compatibility_check(self, handler):
+        """A hidden device-mode selection is kept only after the async check resolves."""
+        user = SimpleNamespace(id=1, user_name="user")
+        db = MagicMock()
+        selection = SimpleNamespace(model_name="hidden-claude", model_type="public")
+        with (
+            patch(
+                "app.services.channels.handler.model_selection_manager.get_selection",
+                new=AsyncMock(return_value=selection),
+            ),
+            patch(
+                "app.services.model_aggregation_service.model_aggregation_service"
+                ".list_available_models",
+                return_value=[],
+            ),
+            patch.object(
+                handler,
+                "_is_claude_compatible_override",
+                new=AsyncMock(return_value=True),
+            ) as compatibility,
+        ):
+            result = await handler._get_device_mode_model_override(db, user)
+
+        assert result == ("hidden-claude", "public")
+        compatibility.assert_awaited_once_with(db, user, "hidden-claude")
+
+    @pytest.mark.asyncio
     async def test_is_claude_compatible_override_matches_model_list(self, handler):
         """The override compatibility check follows the model list provider."""
         user = SimpleNamespace(id=1)
@@ -891,6 +1030,85 @@ class TestTelegramChannelHandler:
                 await handler._is_claude_compatible_override(db, user, "unknown-model")
                 is None
             )
+
+    @pytest.mark.asyncio
+    async def test_is_claude_compatible_override_follows_bind_model_pointer(
+        self, handler
+    ):
+        """A hidden pointer model resolves its target before the provider check."""
+        user = SimpleNamespace(id=1)
+        db = MagicMock()
+        pointer_kind = SimpleNamespace(name="pointer-model")
+        pointer_spec = {"modelConfig": {"bind_model": "target-model"}}
+        target_kind = SimpleNamespace(name="target-model")
+        target_spec = {"modelConfig": {"env": {"model": "claude"}}}
+        with (
+            patch(
+                "app.services.model_aggregation_service.model_aggregation_service"
+                ".list_available_models",
+                return_value=[],
+            ),
+            patch(
+                "app.services.chat.config.model_resolver._find_model_with_namespace",
+                return_value=(pointer_kind, pointer_spec),
+            ) as find_model,
+            patch(
+                "app.services.chat.config.model_resolver._resolve_bind_model_pointer",
+                return_value=(target_kind, target_spec),
+            ) as resolve_pointer,
+        ):
+            assert (
+                await handler._is_claude_compatible_override(db, user, "pointer-model")
+                is True
+            )
+
+        find_model.assert_called_once_with(db, "pointer-model", 1)
+        resolve_pointer.assert_called_once_with(db, 1, pointer_kind, pointer_spec)
+
+    @pytest.mark.asyncio
+    async def test_device_mode_keeps_a_hidden_pointer_model_over_the_default(
+        self, handler
+    ):
+        """A saved pointer model wins over a visible device default."""
+        user = SimpleNamespace(id=1, user_name="user")
+        db = MagicMock()
+        selection = SimpleNamespace(model_name="pointer-model", model_type="public")
+        pointer_kind = SimpleNamespace(name="pointer-model")
+        pointer_spec = {"modelConfig": {"bind_model": "target-model"}}
+        target_kind = SimpleNamespace(name="target-model")
+        target_spec = {"modelConfig": {"env": {"model": "claude"}}}
+        visible_default = {
+            "name": "visible-default",
+            "displayName": "Visible Default",
+            "provider": "claude",
+            "type": "public",
+        }
+        with (
+            patch(
+                "app.services.channels.handler.model_selection_manager.get_selection",
+                new=AsyncMock(return_value=selection),
+            ),
+            patch(
+                "app.services.model_aggregation_service.model_aggregation_service"
+                ".list_available_models",
+                return_value=[visible_default],
+            ),
+            patch(
+                "app.core.config.settings.IM_CHANNEL_DEVICE_DEFAULT_MODEL",
+                "visible-default",
+            ),
+            patch(
+                "app.services.chat.config.model_resolver._find_model_with_namespace",
+                return_value=(pointer_kind, pointer_spec),
+            ),
+            patch(
+                "app.services.chat.config.model_resolver._resolve_bind_model_pointer",
+                return_value=(target_kind, target_spec),
+            ),
+        ):
+            result = await handler._get_device_mode_model_override(db, user)
+
+        assert result == ("pointer-model", "public")
 
     @pytest.mark.asyncio
     async def test_broadcast_user_message_to_web_includes_display_metadata(
@@ -1034,49 +1252,59 @@ class TestTelegramChannelHandler:
         assert trigger_mock.await_args.kwargs["result_emitter"] is None
 
     @pytest.mark.asyncio
-    async def test_private_im_continue_task_reports_running_task(self, handler):
-        message_context = _message_context()
+    async def test_callback_registration_failure_marks_task_and_closes_message(
+        self, handler
+    ):
+        task = SimpleNamespace(id=33, json={"status": {"status": "PENDING"}})
+        assistant_subtask = SimpleNamespace(
+            id=52,
+            status=SubtaskStatus.PENDING,
+            progress=0,
+            error_message="",
+            completed_at=None,
+        )
+        streaming_emitter = _streaming_emitter()
+        streaming_emitter.emit_error = AsyncMock()
         db = MagicMock()
-        user = SimpleNamespace(id=1)
-        im_session = SimpleNamespace(active_task_id=33)
-        task = SimpleNamespace(id=33)
 
         with (
-            patch(
-                "app.services.channels.handler.im_task_continuation_service.validate_personal_wework_task",
-                return_value=task,
-            ),
-            patch(
-                "app.services.channels.handler.im_task_continuation_service.get_task_team",
-                return_value=SimpleNamespace(id=38),
+            patch.object(
+                handler,
+                "create_streaming_emitter",
+                new=AsyncMock(return_value=streaming_emitter),
             ),
             patch.object(
                 handler,
-                "_build_private_im_message_source",
-                return_value=EXPECTED_IM_SOURCE,
-            ),
-            patch(
-                "app.services.channels.handler.im_task_continuation_service.append_message_to_task",
-                new=AsyncMock(
-                    side_effect=HTTPException(
-                        status_code=400,
-                        detail="Task is still running",
-                    )
-                ),
+                "_register_streaming_emitter",
+                new=AsyncMock(side_effect=RuntimeError("cache down")),
             ),
             patch.object(handler, "send_text_reply", new=AsyncMock()) as send_reply,
+            patch(
+                "app.services.chat.trigger.trigger_ai_response_unified",
+                new=AsyncMock(),
+            ) as trigger,
         ):
-            await handler._execute_private_im_continue_task(
+            result = await handler._trigger_private_im_task_response(
                 db=db,
-                user=user,
-                im_session=im_session,
-                task_id=33,
-                message="我刚才说的啥",
-                message_context=message_context,
+                task=task,
+                assistant_subtask=assistant_subtask,
+                team=SimpleNamespace(id=38),
+                user=SimpleNamespace(id=1),
+                user_subtask_id=51,
+                message="hello",
+                message_context=_message_context(),
+                params=SimpleNamespace(is_group_chat=False),
             )
 
+        assert result is False
+        assert assistant_subtask.status == SubtaskStatus.FAILED
+        assert task.json["status"]["status"] == "FAILED"
+        db.commit.assert_called_once()
+        streaming_emitter.emit_error.assert_awaited_once_with(
+            task_id=33, subtask_id=52, error="cache down"
+        )
         send_reply.assert_awaited_once()
-        assert "当前任务仍在执行" in send_reply.await_args.args[1]
+        trigger.assert_not_awaited()
 
     @pytest.mark.asyncio
     async def test_model_command_hides_models_blocked_by_agent(self, handler):

@@ -1,3 +1,5 @@
+// @vitest-environment node
+
 import { execFile } from 'node:child_process'
 import {
   cp,
@@ -49,7 +51,7 @@ test('builds and materializes one archive per DSH source while preserving role a
     writeFile(
       join(commands, 'install.cjs'),
       `
-const { appendFileSync, mkdirSync, readFileSync, writeFileSync } = require('node:fs')
+const { appendFileSync, mkdirSync, readFileSync, symlinkSync, writeFileSync } = require('node:fs')
 const { join } = require('node:path')
 const version = JSON.parse(readFileSync('package.json', 'utf8')).version
 appendFileSync(process.env.INSTALL_LOG, version + '\\n')
@@ -57,6 +59,14 @@ const root = join('node_modules', '@deepseek-ai', 'dsh')
 mkdirSync(join(root, 'lib'), { recursive: true })
 writeFileSync(join(root, 'package.json'), JSON.stringify({ version }))
 writeFileSync(join(root, 'lib', 'bin.js'), '')
+if (version === '0.2.0-rc.2') {
+  const optionalDirectory = join('node_modules', '.pnpm', 'package@0.2.0', 'node_modules')
+  mkdirSync(join(optionalDirectory, 'package'), { recursive: true })
+  writeFileSync(join(optionalDirectory, 'package', 'package.json'), JSON.stringify({
+    optionalDependencies: { 'missing-optional': '1.0.0' },
+  }))
+  symlinkSync('../missing-target', join(optionalDirectory, 'missing-optional'), 'junction')
+}
 `
     ),
   ])

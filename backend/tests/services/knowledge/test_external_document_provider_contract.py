@@ -137,7 +137,9 @@ class ProviderContractSuite:
         provider = self.make_provider()
         self.configure_user(monkeypatch, test_user)
         self.create_resource(test_db, test_user, "contract-fetch", "Fetch Doc")
-        self.mock_fetch_body(monkeypatch, provider, "# Fetch Doc body")
+        self.mock_fetch_body(
+            monkeypatch, provider, "# Fetch Doc body", title="Fetch Doc"
+        )
 
         content = asyncio.run(
             provider.fetch_content(test_db, test_user, "contract-fetch")
@@ -319,10 +321,13 @@ class TestDingTalkProviderContract(ProviderContractSuite):
         assert content.metadata["title"] == "重命名后的名字"
 
     @pytest.mark.asyncio
-    async def test_fetch_keeps_the_cached_title_when_the_source_has_none(
-        self, test_db, test_user, monkeypatch
-    ):
-        """A source without a usable title never blanks the copy's name."""
+    async def test_fetch_leaves_title_unspecified_when_the_source_has_none(
+        self,
+        test_db: Session,
+        test_user: User,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """An absent live title signals the publisher to retain the copy's name."""
         provider = self.make_provider()
         self.configure_user(monkeypatch, test_user)
         self.create_resource(test_db, test_user, "untitled-copy", "缓存的旧名字")
@@ -330,19 +335,24 @@ class TestDingTalkProviderContract(ProviderContractSuite):
 
         content = await provider.fetch_content(test_db, test_user, "untitled-copy")
 
-        assert content.name == "缓存的旧名字"
+        assert content.name == ""
+        assert "title" not in content.metadata
 
     @pytest.mark.asyncio
-    async def test_fetch_requires_a_node_in_the_user_directory(
-        self, test_db, test_user, monkeypatch
-    ):
+    async def test_fetch_reads_a_node_without_the_user_directory(
+        self,
+        test_db: Session,
+        test_user: User,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
         provider = self.make_provider()
         self.configure_user(monkeypatch, test_user)
-        self.mock_fetch_body(monkeypatch, provider, "body")
+        self.mock_fetch_body(monkeypatch, provider, "body", title="Live title")
 
-        with pytest.raises(ExternalDocumentFetchError) as exc_info:
-            await provider.fetch_content(test_db, test_user, "not-in-cache")
-        assert not isinstance(exc_info.value, ExternalSourceUnavailableError)
+        content = await provider.fetch_content(test_db, test_user, "not-in-cache")
+
+        assert content.name == "Live title"
+        assert content.content == b"body"
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize(

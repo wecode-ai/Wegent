@@ -4,8 +4,10 @@ import {
 } from './cloud-environment.mjs'
 
 import { tmpdir } from 'node:os'
-import { UPGRADE_PACKAGE_CHECKPOINTS } from '../upgrade-suite.mjs'
+import { simulatedDeviceApplicationId } from './simulated-device-identity.mjs'
+import { UPGRADE_DIAGNOSTIC_CHECKPOINTS } from '../upgrade-suite.mjs'
 import { waitForColdPackageStartup } from './cold-package-startup.mjs'
+import { nativeCloudAuthorizationFixture } from './native-cloud-authorization-client.mjs'
 
 import { verifyCloudCheckpoint } from './cloud-checkpoint-flows.mjs'
 import { createCloudHistorySearchVerification } from './cloud-history-search.mjs'
@@ -13,6 +15,7 @@ import { verifyLocalBoardUnread } from './local-board-unread.mjs'
 import { verifyMcpElicitationInFullAccess } from './mcp-elicitation-flow.mjs'
 import { MCP_URL_TIMEOUT_MS, MCP_FORM_TIMEOUT_MS } from './mcp-elicitation-evidence.mjs'
 import { verifyPendingTaskAcrossTabs } from './pending-task-tab-flow.mjs'
+import { prepareStandInOnboardingFixture } from './stand-in-onboarding-fixture.mjs'
 
 import {
   createCheckpointTaskFixture,
@@ -53,11 +56,11 @@ import {
 import {
   buildDesktopApp,
   buildExecutor,
-  codexUpstreamApiFormat,
   mcpElicitationConfigToml,
   prepareHarnessRuntimeRoots,
   resolveDesktopCodexBinary,
   toolDetailsMcpConfigToml,
+  setMatrixUpstreamProtocol,
   verifyCloudProjectFlow,
   verifyConnectedModelsOnLocalExecution,
   verifyDisabledRemoteSessionCapabilities,
@@ -145,7 +148,8 @@ import {
   observeWindowsSocketExhaustion,
 } from './windows-network-diagnostics.mjs'
 import { collectCodexSqliteDiagnostics } from './codex-sqlite-diagnostics.mjs'
-
+import { captureFailureFollowup, failedWaitCondition } from './failure-followup.mjs'
+import { startRendererCpuProfile } from './renderer-cpu-profile.mjs'
 import {
   ACTIVE_COMPOSER_SELECTOR,
   ACTIVE_SWITCH_MODEL_RETRY_SELECTOR,
@@ -162,6 +166,7 @@ import {
   CHECKPOINT_TASK_PROMPT,
   CLOUD_FEATURES_ONLY,
   CLOUD_ONLY,
+  CLOUD_DEVICE_LIFECYCLE_LATEST_VERSION,
   CLOUD_PUBLIC_MODEL_NAME,
   CLOUD_VISION_ONLY,
   COMPLETED_FORK_ONLY,
@@ -295,6 +300,7 @@ import {
   verifyRuntimeTaskOrderAndUnreadVisibility,
   verifyRunningFollowUpFork,
 } from './task-state-flows.mjs'
+import { verifyRuntimeWorkSilentRefresh } from './runtime-work-silent-refresh.mjs'
 
 import {
   verifyAttachmentComposerClearsOnSubmit,
@@ -1092,6 +1098,8 @@ async function writeLocalHarnessDiagnostics(control, resultDir) {
 }
 
 async function main() {
+  const releaseAssetToken = process.env.WEWORK_E2E_RELEASE_ASSET_TOKEN
+  delete process.env.WEWORK_E2E_RELEASE_ASSET_TOKEN
   validateDesktopSegmentOptions()
   const runsProjectPluginE2E = DESKTOP_SEGMENT === 'project-ai-settings'
   await mkdir(resultDir, { recursive: true })
@@ -1100,7 +1108,7 @@ async function main() {
   const workspacePath = join(resultDir, 'workspace')
   const secondaryProjectPath = join(resultDir, 'Codex', 'secondary-project-root')
   const composerProjectPath = join(resultDir, 'composer-project')
-  const usesDefaultUserData = UPGRADE_PACKAGE_CHECKPOINTS.includes(DESKTOP_SEGMENT)
+  const usesDefaultUserData = UPGRADE_DIAGNOSTIC_CHECKPOINTS.includes(DESKTOP_SEGMENT)
   const nativeApplicationData = usesDefaultUserData ? desktopApplicationDataDirectory() : null
   if (nativeApplicationData) await mkdir(nativeApplicationData, { recursive: true })
   const upgradeHome = nativeApplicationData
@@ -1134,10 +1142,19 @@ async function main() {
     mkdir(codexSqliteHome, { recursive: true }),
     mkdir(electronUserDataDirectory, { recursive: true, mode: 0o700 }),
   ])
+  // Desktop scenarios own their viewport instead of inheriting first-launch defaults.
+  // The host clamps these bounds to each runner's available display, as before.
   // Exercise consent explicitly; the product default already marks it as asked.
   await writeFile(
     join(electronUserDataDirectory, 'app-preferences.json'),
-    `${JSON.stringify({ telemetryConsentAsked: false, telemetryEnabled: false })}\n`,
+    `${JSON.stringify({
+      telemetryConsentAsked: false,
+      telemetryEnabled: false,
+      mainWindowState: {
+        bounds: { x: 0, y: 0, width: 1440, height: 960 },
+        maximized: true,
+      },
+    })}\n`,
     { flag: 'wx', mode: 0o600 }
   )
   // Background update dialogs steal focus from unrelated keyboard scenarios.
@@ -1218,6 +1235,7 @@ async function main() {
   const control = new DesktopE2EServer(workspacePath, workspacePath, null, {
     enableMarketplaceConnectorAppsStub: RUNS_PLUGIN_E2E || runsProjectPluginE2E,
   })
+  control.matrixEvidenceDirectory = resultDir
   const modelSwitchVerification = []
   let app
   const applicationProcessHistory = []
@@ -1225,6 +1243,7 @@ async function main() {
   let blockingNetworkProxy
   let cloudEnvironment
   let cloudHistorySearch
+  let nativeCloudLogin
   let phase = 'startup'
   let desktopScenarioVerified = false
   let testFailed = false
@@ -1236,15 +1255,17 @@ async function main() {
     desktopScenario = await loadDesktopScenario(process.env.WEWORK_E2E_DESKTOP_SCENARIO_MODULE, {
       appIdentifier,
       checkpoint: SELECTED_DESKTOP_SEGMENT,
-      captureScreenshot: (control, name, selector) =>
-        captureVerificationScreenshot(control, name, selector),
+      captureScreenshot: (control, name, selector, options) =>
+        captureVerificationScreenshot(control, name, selector, options),
       codexSqliteHome,
+      codexHome,
       executorHome,
       electronUserDataDirectory,
       usesDefaultUserData,
       homePath,
       upgradeHome,
       resultDir,
+      releaseAssetToken,
       standalone: DESKTOP_SCENARIO_ONLY,
       uiTimeoutMs: DEFAULT_STEP_TIMEOUT_MS,
       modelResponseTimeoutMs: Math.max(DEFAULT_STEP_TIMEOUT_MS, 30_000),
@@ -1279,10 +1300,13 @@ async function main() {
         backendEnv: desktopScenario?.backendEnv,
         claudeBinary: desktopScenario?.claudeBinary,
         codexBinary,
+        initialExecutorLatestVersion:
+          SELECTED_DESKTOP_SEGMENT === 'cloud-device-lifecycle'
+            ? CLOUD_DEVICE_LIFECYCLE_LATEST_VERSION
+            : undefined,
         managedCloudIdentity: CLOUD_ONLY,
         modelServerUrl: control.url,
-        scenarioConfigToml:
-          SELECTED_DESKTOP_SEGMENT === 'rendering-extensions' ? toolDetailsMcpConfigToml() : '',
+        scenarioConfigToml: shouldConfigureToolDetailsMcp() ? toolDetailsMcpConfigToml() : '',
         workspacePath: desktopScenario?.remoteWorkspacePath ?? workspacePath,
       })
       const [builtExecutor] = await Promise.all([buildExecutor(), cloudEnvironment.startBackend()])
@@ -1305,14 +1329,15 @@ async function main() {
     }
     desktopScenario?.setExecutorBinary?.(executorBinary)
     const desktopAppPromise = buildDesktopApp(appIdentifier, codexBinary)
-    const desktopApp = cloudEnvironment
-      ? (
-          await Promise.all([
-            desktopAppPromise,
-            cloudEnvironment.startRemoteExecutor(executorBinary),
-          ])
-        )[0]
-      : await desktopAppPromise
+    const desktopApp =
+      cloudEnvironment && desktopScenario?.requiresRemoteExecutor !== false
+        ? (
+            await Promise.all([
+              desktopAppPromise,
+              cloudEnvironment.startRemoteExecutor(executorBinary),
+            ])
+          )[0]
+        : await desktopAppPromise
     desktopScenario?.setCloudEnvironment?.(cloudEnvironment)
     const appBinary = desktopApp.binaryPath
     appBundlePath = desktopApp.appBundlePath
@@ -1342,6 +1367,7 @@ async function main() {
     }
 
     const needsPackagedHarnessRuntime =
+      desktopScenario?.requiresPackagedHarnessRuntime === true ||
       SELECTED_DESKTOP_SEGMENT?.startsWith('harness-app-') ||
       (RUNS_PLUGIN_E2E && shouldRunPluginSegment('core-dsh-ui-plugin-composition'))
     const usesReleasePackageRuntimeAssets =
@@ -1386,9 +1412,7 @@ async function main() {
       VITE_WEWORK_E2E: 'true',
       WEWORK_E2E_BACKGROUND_WINDOW: process.env.WEWORK_E2E_BACKGROUND_WINDOW ?? '1',
       WEWORK_E2E_DISABLE_COMPONENT_UPDATES: '1',
-      ...(DESKTOP_SEGMENT === 'local-file-preview'
-        ? { WEWORK_E2E_LOCAL_FILE_READ_DELAY_MS: '1500' }
-        : {}),
+      WEWORK_E2E_DISABLE_PYTHON_BOOTSTRAP: '1',
       WEWORK_APP_CONFIG_DIR: join(homePath, 'app-config'),
       WEWORK_E2E_CLOUD_BACKEND_URL: cloudEnvironment?.backendUrl ?? control.url,
       WEWORK_E2E_CLOUD_TOKEN:
@@ -1396,6 +1420,7 @@ async function main() {
         desktopScenario?.authToken ??
         'wework-desktop-e2e-cloud-token',
       WEWORK_E2E_CONTROL_URL: control.controlUrl,
+      WEWORK_DESKTOP_CONTROL_REGISTRY_DIR: join(resultDir, 'desktop-control'),
       WEWORK_E2E_MODEL_API_KEY: MODEL_API_KEY,
       WEWORK_E2E_MODEL_SERVER_URL: control.url,
       WEWORK_E2E_CODEX_HOME_INITIALIZATION: RUNS_PLUGIN_E2E ? 'true' : 'false',
@@ -1461,6 +1486,10 @@ async function main() {
     ]) {
       delete appEnvironment[key]
     }
+    if (shouldRunDesktopCheckpoint('cloud-project-creation')) {
+      // New Backend clone coverage shares the fixture's existing native root.
+      appEnvironment.WEGENT_EXECUTOR_PROJECTS_DIR = appEnvironment.WORKSPACE_ROOT
+    }
     if (electronCoreRuntimeRoot) {
       appEnvironment.WEWORK_HARNESS_RUNTIME_ROOT = electronCoreRuntimeRoot
     }
@@ -1481,6 +1510,15 @@ async function main() {
       Object.assign(appEnvironment, cleanEnvironment)
     }
     await desktopScenario?.prepareApp?.({ appBinary, appEnvironment, codexHome, control })
+    if (desktopScenario?.requiresNativeCloudAuthorization) {
+      assert.ok(cloudEnvironment, 'Native desktop login requires the real Backend environment')
+      nativeCloudLogin = nativeCloudAuthorizationFixture(
+        cloudEnvironment,
+        electronUserDataDirectory,
+        appBinary
+      )
+      await nativeCloudLogin.authorize()
+    }
     await desktopScenario?.prepareUserDataLaunch?.()
     const electronLaunchArguments = resolveElectronLaunchArguments({
       extraArguments: [
@@ -1579,6 +1617,19 @@ async function main() {
           ...options.appEnvironmentOverrides,
         }
       }
+      if (
+        options?.expectNewDeviceIdentity === true &&
+        !options.appEnvironmentOverrides?.WEWORK_APP_IDENTIFIER
+      ) {
+        // A profile is not hardware identity. Give each simulated device its own
+        // application namespace, and reuse it when returning to that device.
+        const profile = activeAppEnvironment.WEWORK_USER_DATA_DIR || electronUserDataDirectory
+        activeAppEnvironment.WEWORK_APP_IDENTIFIER = simulatedDeviceApplicationId({
+          applicationId: appEnvironment.WEWORK_APP_IDENTIFIER,
+          originalProfile: appEnvironment.WEWORK_USER_DATA_DIR || electronUserDataDirectory,
+          profile,
+        })
+      }
       app = await startDesktopAppProcess()
       await withTimeout(
         control.awaitReadyAfter(readyCountBeforeRestart),
@@ -1607,11 +1658,6 @@ async function main() {
         )
       } else {
         assert.equal(
-          nextUserDataDirectory,
-          previousUserDataDirectory,
-          'Restarting Wework unexpectedly changed the Electron user data directory'
-        )
-        assert.equal(
           desktopDeviceIdAfterRestart,
           desktopDeviceIdBeforeRestart,
           'Restarting Wework changed the persisted Electron device identity'
@@ -1622,15 +1668,17 @@ async function main() {
     desktopScenario?.setRestartDesktopApp?.(restartDesktopApp)
 
     const readiness = control.awaitReady()
-    const ready = desktopScenario?.usesColdPackageStartup
-      ? await waitForColdPackageStartup(readiness, appLogPath, {
-          phaseTimeoutMs: DESKTOP_READY_TIMEOUT_MS,
-        })
-      : await withTimeout(
-          readiness,
-          DESKTOP_READY_TIMEOUT_MS,
-          'Timed out waiting for the real Electron application to connect to the Desktop E2E controller'
-        )
+    // Release-pair diagnostics retain their previously certified startup deadline.
+    const ready =
+      usesReleasePackageRuntimeAssets && !usesDefaultUserData
+        ? await waitForColdPackageStartup(readiness, appLogPath, {
+            phaseTimeoutMs: DESKTOP_READY_TIMEOUT_MS,
+          })
+        : await withTimeout(
+            readiness,
+            DESKTOP_READY_TIMEOUT_MS,
+            'Timed out waiting for the real Electron application to connect to the Desktop E2E controller'
+          )
     assert.match(
       String(ready.location ?? ''),
       /^https?:/,
@@ -1712,6 +1760,14 @@ source = ${JSON.stringify(staleBundledMarketplacePath)}`
 
     if (desktopScenario && DESKTOP_SCENARIO_ONLY) {
       phase = 'desktop-extension-scenario'
+      if (
+        !desktopScenario.verifiesStandInOnboarding &&
+        (DESKTOP_SEGMENT.startsWith('stand-in') ||
+          DESKTOP_SEGMENT === 'application-menu' ||
+          DESKTOP_SEGMENT.startsWith('coordination-'))
+      ) {
+        await prepareStandInOnboardingFixture(control, cloudEnvironment, WORKBENCH_READY_TIMEOUT_MS)
+      }
       await desktopScenario.verify(control)
       if (DESKTOP_SEGMENT === 'local-harness') {
         await writeLocalHarnessDiagnostics(control, resultDir)
@@ -1836,12 +1892,7 @@ source = ${JSON.stringify(staleBundledMarketplacePath)}`
           control,
           cloudEnvironment,
           setCodexUpstreamProtocol: protocol =>
-            writeCodexConfig(
-              join(executorHome, 'codex'),
-              control.url,
-              '',
-              codexUpstreamApiFormat(protocol)
-            ),
+            setMatrixUpstreamProtocol(join(executorHome, 'codex'), protocol),
           workspacePath,
         })
       }
@@ -2123,6 +2174,7 @@ source = ${JSON.stringify(staleBundledMarketplacePath)}`
       await verifyLastUserMessageEdit({
         composerSelector: ACTIVE_COMPOSER_SELECTOR,
         control,
+        restartDesktopApp,
       })
       console.log(`Wework desktop message-edit E2E passed. Evidence: ${resultDir}`)
       return
@@ -3022,7 +3074,15 @@ source = ${JSON.stringify(staleBundledMarketplacePath)}`
         control.setScenario('late_bound_project_space')
         const lateBoundRequestCount =
           control.scenarioRequests.get('late_bound_project_space')?.length ?? 0
-        await sendPrompt(control, composerSelector, LATE_BOUND_PROJECT_SPACE_PROMPT)
+        // Native admission precedes this four-request tool loop. Reuse its
+        // model-request readiness boundary instead of spending the loop budget
+        // on UI submission and native thread initialization.
+        await sendPromptUntilScenarioRequest(
+          control,
+          composerSelector,
+          LATE_BOUND_PROJECT_SPACE_PROMPT,
+          'late_bound_project_space'
+        )
         await control.awaitScenarioRequestCount(
           'late_bound_project_space',
           lateBoundRequestCount + 4
@@ -3031,6 +3091,12 @@ source = ${JSON.stringify(staleBundledMarketplacePath)}`
           text: LATE_BOUND_PROJECT_SPACE_COMPLETION_TEXT,
           timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
         })
+        await control.command('click', '[data-testid="work-item-guide-open-summary"]')
+        await control.command('waitFor', '[data-testid="work-item-context-panel"]', {
+          visible: true,
+          timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+        })
+        await captureVerificationScreenshot(control, 'task-board-association-context-pill-open.png')
         await writeFile(
           join(resultDir, 'model-requests.json'),
           `${JSON.stringify(control.modelRequests, null, 2)}\n`,
@@ -3154,35 +3220,11 @@ source = ${JSON.stringify(staleBundledMarketplacePath)}`
         taskRowTestId,
         userText: TASK_PROMPT,
       })
-      phase = 'private-im-model-binding'
-      await control.command('click', '[data-testid="continue-in-im-button"]')
-      await withTimeout(
-        (async () => {
-          while (control.runtimeImBindingRequests.length === 0) {
-            await new Promise(resolvePromise => setTimeout(resolvePromise, 50))
-          }
-        })(),
-        DEFAULT_STEP_TIMEOUT_MS,
-        'The runtime task was not bound to the private IM session'
-      )
-      await withTimeout(
-        (async () => {
-          while (
-            Number(
-              await control.command('getElementCount', '[data-testid="continue-im-dialog-overlay"]')
-            ) !== 0
-          ) {
-            await new Promise(resolvePromise => setTimeout(resolvePromise, 50))
-          }
-        })(),
-        DEFAULT_STEP_TIMEOUT_MS,
-        'The single private IM session dialog did not close after automatic binding'
-      )
-      const runtimeImBinding = control.runtimeImBindingRequests.at(-1)
+      phase = 'private-im-stand-in-entry'
       assert.equal(
-        runtimeImBinding?.modelSelection?.modelName,
-        DEFAULT_MODEL_ID,
-        'The private IM binding did not preserve the active runtime model'
+        await control.command('getElementCount', '[data-testid="continue-in-im-button"]'),
+        '0',
+        'Private IM connects through stand-in settings instead of a task binding'
       )
       if (associatedTaskTabTestId) {
         phase = 'project-space-selected-task-tracked'
@@ -3475,6 +3517,10 @@ source = ${JSON.stringify(staleBundledMarketplacePath)}`
         'The request-user-input task did not expose its runtime task ID'
       )
       const requestInputTaskRowTestId = `runtime-local-task-row-${requestInputTaskId}`
+      await verifyRuntimeWorkSilentRefresh(
+        control,
+        requestInputDebugSnapshot.workbench.currentRuntimeTask
+      )
       await control.command('waitFor', `[data-testid="${requestInputTaskRowTestId}"]`, {
         timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
       })
@@ -3823,7 +3869,7 @@ source = ${JSON.stringify(staleBundledMarketplacePath)}`
       })
 
       phase = 'edit-last-user-message'
-      await verifyLastUserMessageEdit({ composerSelector, control })
+      await verifyLastUserMessageEdit({ composerSelector, control, restartDesktopApp })
       await ensureTaskRowVisible(control, secondTaskRowTestId)
       await control.command('clickWhenEnabled', `[data-testid="${secondTaskRowTestId}"]`, {
         timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
@@ -4087,14 +4133,11 @@ source = ${JSON.stringify(staleBundledMarketplacePath)}`
       const rightBrowserTabCloseSelector =
         '[data-testid="right-workspace-browser-tab-1-close-button"]'
       const retainedBrowserUrl = 'https://example.com/session-state'
-      await control.command(
-        'waitFor',
-        `${activeTaskWorkbenchSelector} [data-testid="workspace-file-editor"] .cm-content`,
-        {
-          text: FILE_PREVIEW_RESTORE_MARKER,
-          timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
-        }
-      )
+      await control.command('waitFor', '[data-testid="workspace-markdown-preview"]', {
+        target: activeTaskWorkbenchSelector,
+        text: FILE_PREVIEW_RESTORE_MARKER,
+        timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+      })
       assert.equal(
         await control.command(
           'getText',
@@ -4260,14 +4303,11 @@ source = ${JSON.stringify(staleBundledMarketplacePath)}`
         'The review tab was not active after switching back to the first task'
       )
       await control.command('click', '[data-testid="right-workspace-file-tab"]')
-      await control.command(
-        'waitFor',
-        `${activeTaskWorkbenchSelector} [data-testid="workspace-file-editor"] .cm-content`,
-        {
-          text: FILE_PREVIEW_RESTORE_MARKER,
-          timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
-        }
-      )
+      await control.command('waitFor', '[data-testid="workspace-markdown-preview"]', {
+        target: activeTaskWorkbenchSelector,
+        text: FILE_PREVIEW_RESTORE_MARKER,
+        timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+      })
       assert.equal(
         await control.command(
           'getText',
@@ -4661,6 +4701,23 @@ source = ${JSON.stringify(staleBundledMarketplacePath)}`
     console.log(`Wework desktop task-flow E2E passed. Diagnostics: ${resultDir}`)
   } catch (error) {
     testFailed = true
+    // Anchor the follow-up measurement to the failure itself; the diagnostic
+    // captures below can consume several seconds of wall-clock time.
+    const failedAt = Date.now()
+    if (String(error).includes('Timed out delivering UI action')) {
+      // Sample the stalled renderer without retrying or relaxing the failed command.
+      const stopProfile = await startRendererCpuProfile(
+        resultDir,
+        'command-delivery-timeout.cpuprofile',
+        3000,
+        { captureControlDiagnostics: true }
+      )
+      try {
+        await new Promise(resolve => setTimeout(resolve, 1000))
+      } finally {
+        await stopProfile()
+      }
+    }
     const networkDiagnostics = collectWindowsNetworkDiagnostics()
     await writeFile(
       join(resultDir, 'codex-sqlite-diagnostics.json'),
@@ -4767,6 +4824,19 @@ source = ${JSON.stringify(staleBundledMarketplacePath)}`
       )}\n`,
       'utf8'
     )
+    try {
+      // Observe the failed condition itself: record the measured convergence
+      // time or that no change happened within the budget, so slow
+      // asynchronous updates are distinguishable from stuck states (#4293).
+      // failedAt anchors the measurement to the actual step failure, before
+      // the diagnostic captures above have consumed wall-clock time.
+      await captureFailureFollowup(control, resultDir, {
+        condition: failedWaitCondition(error, control.commandHistory),
+        failedAt,
+      })
+    } catch {
+      // The follow-up is best-effort evidence; never mask the original failure.
+    }
     throw error
   } finally {
     const teardownFailures = []
@@ -4778,6 +4848,7 @@ source = ${JSON.stringify(staleBundledMarketplacePath)}`
       }
     }
     await runTeardownStep('desktop application', async () => stopDesktopAppProcess(app))
+    await runTeardownStep('native cloud authorization', async () => nativeCloudLogin?.restore())
     // Scenario fixtures can still need the controller, proxies, and backend during cleanup.
     await runTeardownStep('desktop scenario', async () => desktopScenario?.cleanup?.())
     await runTeardownStep('default upgrade Home', async () => {

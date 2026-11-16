@@ -249,6 +249,70 @@ test('preserves one request id across browser, DSH, and executor RPC', async () 
   assert.deepEqual(JSON.parse(response.body), { ok: true, result: { items: [] } })
 })
 
+test('HTTP disconnect cancels only its history request and removes abort listeners', async () => {
+  const request = executorRpcRequest({
+    id: 'closed-read',
+    method: 'runtime.tasks.transcript',
+    params: {},
+  })
+  const response = responseFixture()
+  let signal
+  let entered
+  const started = new Promise(resolve => {
+    entered = resolve
+  })
+  const serving = handleExecutorRpc(request, response, {
+    request(_method, _params, _timeout, _id, options) {
+      signal = options.signal
+      entered()
+      return new Promise((_resolve, reject) => {
+        signal.addEventListener(
+          'abort',
+          () => reject(new ExecutorRuntimeError('request_cancelled', 'Cancelled')),
+          { once: true }
+        )
+      })
+    },
+  })
+  await started
+  response.destroyed = true
+  response.emit('close')
+  await serving
+  assert.equal(signal.aborted, true)
+  assert.equal(response.headersSent, false)
+  assert.equal(request.listenerCount('aborted'), 0)
+  for (const event of ['close', 'error']) assert.equal(response.listenerCount(event), 0)
+})
+
+test('HTTP disconnect leaves an accepted send running to completion', async () => {
+  const request = executorRpcRequest({
+    id: 'closed-send',
+    method: 'runtime.tasks.send',
+    params: {},
+  })
+  const response = responseFixture()
+  let release
+  let entered
+  const started = new Promise(resolve => {
+    entered = resolve
+  })
+  const serving = handleExecutorRpc(request, response, {
+    request(_method, _params, _timeout, _id, options) {
+      assert.equal(options.signal, undefined)
+      entered()
+      return new Promise(resolve => {
+        release = resolve
+      })
+    },
+  })
+  await started
+  response.destroyed = true
+  response.emit('close')
+  release({ accepted: true })
+  await serving
+  assert.equal(response.headersSent, false)
+})
+
 test('does not forward an unsafe browser request id to the executor', async () => {
   const request = executorRpcRequest({
     id: 'unsafe\nrequest-id',
@@ -295,6 +359,38 @@ for (const event of ['finish', 'close']) {
     for (const name of ['finish', 'close', 'error']) assert.equal(response.listenerCount(name), 0)
   })
 }
+
+test('retains recovery events until the RPC bridge can reconcile them', async () => {
+  let ready = false
+  let stopped = 0
+  const stream = () =>
+    eventStreamFixture(
+      {},
+      {
+        events: [executorEvent(8, 'executor.event_lagged')],
+        onStop: () => {
+          stopped++
+        },
+      }
+    )
+  const options = {
+    assertReady: () => {
+      if (!ready) throw new ExecutorRuntimeError('runtime_not_ready', 'Not negotiated', true)
+    },
+  }
+  const unavailable = responseFixture()
+  await handleExecutorEvents(executorEventRequest('?after=7'), unavailable, stream, options)
+  assert.equal(unavailable.status, 503)
+  assert.equal(JSON.parse(unavailable.body).error.code, 'runtime_not_ready')
+  assert.doesNotMatch(unavailable.body, /executor.event_lagged/)
+  assert.equal(stopped, 2)
+  ready = true
+  const recovered = responseFixture()
+  await handleExecutorEvents(executorEventRequest('?after=7'), recovered, stream, options)
+  assert.equal(recovered.status, 200)
+  assert.match(recovered.body, /executor.event_lagged/)
+  assert.match(recovered.body, /"sequence":8/)
+})
 
 test('passes the browser cursor to the executor-owned event stream', async () => {
   const request = executorEventRequest('?after=7')

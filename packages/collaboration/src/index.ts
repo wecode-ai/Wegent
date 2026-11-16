@@ -29,6 +29,10 @@ export * from "./project-create";
 export * from "./project-manage";
 export * from "./project-shell";
 export * from "./SharedIssueDetailEditor";
+export type {
+  CommentIssueActions,
+  IssueCommentBoardContext,
+} from "./issue-detail/issueCommentActions";
 export { IssueDetailSearchableSelect } from "./issue-detail/IssueDetailControls";
 export * from "./permissions";
 export * from "./platform";
@@ -41,6 +45,7 @@ export * from "./workspace";
 export * from "./workspace-controller";
 export * from "./workspace-header/ProjectViewSwitcher";
 export * from "./web-adapter/createSharedWorkspaceFilesViewApi";
+export { BrowserAttachmentPreview } from "./web-adapter/BrowserAttachmentPreview";
 export {
   createAutomationExecutionCatalogApi,
   mapAutomationExecutionCatalog,
@@ -48,3 +53,10 @@ export {
 export { RuntimeConfigurationProvider } from "./runtime-profile/RuntimeConfigurationProvider";
 
 export { StandInIcon } from "./StandInIcon";
+
+export type {
+  Milestone,
+  MilestoneInput,
+  MilestonesApi,
+} from "./milestones/types";
+export * from "./issueParticipation";

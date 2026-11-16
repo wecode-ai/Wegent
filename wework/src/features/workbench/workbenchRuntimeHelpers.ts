@@ -3,7 +3,6 @@ import { normalizeProjectPluginNames } from '@wegent/chat-core/composer-plugin-s
 import { findRuntimeTask, findRuntimeTaskWorkspace } from '@wegent/chat-core/runtime-task-lookup'
 export { findRuntimeTask, findRuntimeTaskWorkspace } from '@wegent/chat-core/runtime-task-lookup'
 import { getPreferredStandaloneDeviceId } from '@/lib/device-selection'
-import { buildConversationWorkspacePath } from '@/lib/runtime-conversation-workspace'
 import {
   normalizeRuntimeWorkspacePath,
   runtimeProjectToProject,
@@ -46,21 +45,6 @@ export function findRuntimeTaskProjectWork(
       )
     ) ?? null
   )
-}
-
-export async function createConversationWorkspace(
-  deviceApi: {
-    createDirectory: (deviceId: string, path: string) => Promise<void>
-    getHomeDirectory: (deviceId: string) => Promise<string>
-  },
-  deviceId: string,
-  message: string,
-  taskId: string
-): Promise<string> {
-  const homeDirectory = await deviceApi.getHomeDirectory(deviceId)
-  const workspacePath = buildConversationWorkspacePath(homeDirectory, message, taskId)
-  await deviceApi.createDirectory(deviceId, workspacePath)
-  return workspacePath
 }
 
 export function getRuntimeTaskRouteKey(route: RuntimeTaskRoute): string {
@@ -407,14 +391,14 @@ export function getCommandStdoutObject(stdout: unknown): Record<string, unknown>
   return isRecord(stdout) ? stdout : null
 }
 
-function getLastProjectStorageKey(userId: number) {
-  return `wework.lastProjectId.${userId}`
+function getLastProjectStorageKey(ownershipKey: string) {
+  return `wework.lastProjectId.${ownershipKey}`
 }
 
-export function writeLastProjectId(userId: number, projectId: number | null) {
+export function writeLastProjectId(ownershipKey: string, projectId: number | null) {
   try {
     window.localStorage.setItem(
-      getLastProjectStorageKey(userId),
+      getLastProjectStorageKey(ownershipKey),
       projectId === null ? 'none' : String(projectId)
     )
   } catch {
@@ -422,9 +406,9 @@ export function writeLastProjectId(userId: number, projectId: number | null) {
   }
 }
 
-export function readLastProjectId(userId: number): number | null | undefined {
+export function readLastProjectId(ownershipKey: string): number | null | undefined {
   try {
-    const storedValue = window.localStorage.getItem(getLastProjectStorageKey(userId))
+    const storedValue = window.localStorage.getItem(getLastProjectStorageKey(ownershipKey))
     if (storedValue === null) return undefined
     if (storedValue === 'none') return null
     const value = Number(storedValue)

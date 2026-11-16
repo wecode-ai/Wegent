@@ -4,7 +4,7 @@
 import { expect, test, type Locator, type Page, type Request } from '@playwright/test'
 import { ADMIN_USER, REGULAR_USER } from '../../config/test-users'
 import { LoginPage } from '../../pages/auth/login.page'
-import { webApi } from '../../utils/collaboration-test-support'
+import { showAllProjectIssues, webApi } from '../../utils/collaboration-test-support'
 import {
   boardTest,
   archive,
@@ -39,6 +39,7 @@ async function columnSort(page: Page, column: string, rules: string[] = []): Pro
 }
 
 async function expectIssues(page: Page, all: Issue[], visible: Issue[]): Promise<void> {
+  await showAllProjectIssues(page)
   for (const issue of all) {
     await expect(page.getByTestId(`collaboration-issue-${issue.id}`)).toHaveCount(
       visible.includes(issue) ? 1 : 0
@@ -52,7 +53,9 @@ async function switchUser(
   currentUsername: string,
   nextUser: typeof REGULAR_USER
 ): Promise<void> {
-  await page.getByRole('button').filter({ hasText: currentUsername }).click()
+  const userMenu = page.getByTestId('user-floating-menu-toggle')
+  await expect(userMenu.getByText(currentUsername, { exact: true })).toBeVisible()
+  await userMenu.click()
   await page.getByRole('menuitem', { name: /^(退出登录|Logout)$/ }).click()
   await page.waitForURL(url => url.pathname === '/login')
   const loginPage = new LoginPage(page)
@@ -87,6 +90,7 @@ for (const role of ['Developer', 'Viewer'] as const) {
           'data-value',
           'status'
         )
+        await showAllProjectIssues(page)
         await expectIssues(page, all, all)
         await groupBy(page, 'assignee')
         const filter = page.getByTestId('cloud-board-group-filter')
@@ -110,6 +114,7 @@ for (const role of ['Developer', 'Viewer'] as const) {
         await filter.selectOption(`assignee-${member!.id}`)
         await search.fill('alpha')
         await page.reload()
+        await showAllProjectIssues(page)
         await expect(page.getByTestId('cloud-board-group-by')).toHaveAttribute(
           'data-value',
           'assignee'
@@ -162,6 +167,7 @@ for (const role of ['Developer', 'Viewer'] as const) {
 
     boardTest('enforces drag permissions and persists permitted changes', async ({ board }) => {
       const { page, project, mineAlpha, owner, suffix } = board
+      await showAllProjectIssues(page)
       if (role === 'Viewer') {
         await expectViewerCannotDrag(page, project.id, mineAlpha, owner.id)
       } else {
@@ -180,7 +186,10 @@ async function dragCard(page: Page, source: Locator, target: Locator): Promise<v
   try {
     await page.mouse.move(sourceBox!.x + 30, sourceBox!.y + 20)
     await expect(page.getByTestId('project-board-drag-overlay')).toBeVisible()
-    await target.scrollIntoViewIfNeeded()
+    // Center the drop target after the drag starts. Dnd-kit auto-scrolls a
+    // horizontally overflowing board while the pointer approaches an edge, so
+    // a minimally scrolled target can shift under a cached bounding box.
+    await target.evaluate(element => element.scrollIntoView({ block: 'center', inline: 'center' }))
     const targetBox = await target.boundingBox()
     expect(targetBox).not.toBeNull()
     await page.mouse.move(
@@ -239,6 +248,7 @@ async function expectViewerCannotDrag(
       }
       await expect(page.getByTestId('collaboration-issue-detail')).toHaveCount(0)
       await page.reload()
+      await showAllProjectIssues(page)
       await expect(page.getByTestId('cloud-board-group-by')).toHaveAttribute('data-value', group)
       await expect(source).toHaveCount(1)
       const after = await webApi<Issue>(page, `/api/v1/loop-items/${moving.id}`)
@@ -289,6 +299,7 @@ async function expectSortedDropUnchanged(
       expect(after[key], `A sorted same-column drop must preserve ${key}`).toEqual(before[key])
     }
     await page.reload()
+    await showAllProjectIssues(page)
     await expect(source).toHaveCount(1)
     const reloaded = await webApi<Issue>(page, `/api/v1/loop-items/${moving.id}`)
     for (const key of [
@@ -352,6 +363,7 @@ async function expectDeveloperCanMove(
     initial.items.find(issue => issue.id === second.id)!.sort_order
   )
   await page.reload()
+  await showAllProjectIssues(page)
   await groupBy(page, 'status')
   await columnSort(page, 'pending')
   await page.getByTestId('cloud-board-search').fill(title)
@@ -373,11 +385,13 @@ async function expectDeveloperCanMove(
   const persistedSecond = await webApi<Issue>(page, `/api/v1/loop-items/${second.id}`)
   expect(persistedSecond.sort_order).toBeLessThan(persistedFirst.sort_order)
   await page.reload()
+  await showAllProjectIssues(page)
   await page.getByTestId('cloud-board-search').fill(title)
   await expect(orderedCards).toHaveCount(2)
   await expect(orderedCards.first()).toHaveAttribute('data-testid', `cloud-todo-card-${second.id}`)
   const anchor = await createIssue(page, projectId, `${title} anchor`)
   await page.reload()
+  await showAllProjectIssues(page)
 
   for (const [group, sourceKey, targetKey, field, expected] of [
     ['status', 'pending', 'completed', 'status', 'completed'],
@@ -397,6 +411,7 @@ async function expectDeveloperCanMove(
         body: { parent_id: null, status: null, item_ids: [anchor.id, moving.id] },
       })
       await page.reload()
+      await showAllProjectIssues(page)
     }
     await groupBy(page, group)
     if (group !== 'status') {
@@ -413,6 +428,7 @@ async function expectDeveloperCanMove(
         (await webApi<Issue>(page, `/api/v1/loop-items/${moving.id}`)).sort_order
       ).toBeLessThan((await webApi<Issue>(page, `/api/v1/loop-items/${anchor.id}`)).sort_order)
       await page.reload()
+      await showAllProjectIssues(page)
       const ordered = page
         .getByTestId(`cloud-todo-column-${sourceKey}`)
         .getByTestId(new RegExp(`^cloud-todo-card-(${moving.id}|${anchor.id})$`))
@@ -436,6 +452,7 @@ async function expectDeveloperCanMove(
       .poll(async () => (await webApi<Issue>(page, `/api/v1/loop-items/${moving.id}`))[field])
       .toBe(expected)
     await page.reload()
+    await showAllProjectIssues(page)
     expect((await webApi<Issue>(page, `/api/v1/loop-items/${moving.id}`))[field]).toBe(expected)
     await expect(card(targetKey, moving.id)).toHaveCount(1)
     await expect(page.getByText(/保存失败|Failed to save|Could not save/i)).toHaveCount(0)
@@ -517,6 +534,7 @@ test('keeps unrelated tags during real multi-column drops and persists manual sa
         (await webApi<Issue>(page, `/api/v1/loop-items/${sibling.id}`)).sort_order
       )
       await page.reload()
+      await showAllProjectIssues(page)
       await expect(
         column('tag-alpha')
           .getByTestId(new RegExp(`^cloud-todo-card-(${moving.id}|${sibling.id})$`))
@@ -547,6 +565,7 @@ test('keeps unrelated tags during real multi-column drops and persists manual sa
           [...(await webApi<Issue>(page, `/api/v1/loop-items/${moving.id}`)).tags].sort()
         ).toEqual([...tags].sort())
         await page.reload()
+        await showAllProjectIssues(page)
         await expect(page.getByTestId('cloud-board-group-by')).toHaveAttribute('data-value', 'tag')
         for (const tag of ['alpha', 'beta', 'gamma', 'delta', 'keep']) {
           await expect(card(`tag-${tag}`)).toHaveCount(tags.includes(tag) ? 1 : 0)

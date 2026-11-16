@@ -5,6 +5,7 @@
 import type {
   WorkspaceDeliveryUpdate,
   SharedWorkspaceApi,
+  IssueAttachmentContext,
 } from "../ports/SharedWorkspaceApi";
 import type { ModelSelectionConfig } from "@wegent/chat-core/runtime-stream-types";
 import type {
@@ -21,6 +22,7 @@ import {
 } from "./issueAssigneeResources";
 
 export interface SharedIssueDetailTaskBinding {
+  stand_in_pending?: boolean | null;
   id: string;
   cloud_project_id: string;
   loop_item_id: string | null;
@@ -98,6 +100,8 @@ export interface SharedIssueDetailAgent {
 }
 
 export interface SharedIssueDetailCreateInput {
+  request_id?: string;
+  milestone_id?: string | null;
   title: string;
   description?: string;
   status?: string;
@@ -114,6 +118,7 @@ export interface SharedIssueDetailCreateInput {
 }
 
 export interface SharedIssueDetailUpdateInput {
+  milestone_id?: string | null;
   version: number;
   security_level?: "open" | "related";
   title?: string;
@@ -138,6 +143,7 @@ export interface SharedIssueDetailAssignmentInput {
 }
 
 export interface SharedIssueDetailPort {
+  milestones?: SharedWorkspaceApi["milestones"];
   issues: {
     get(issueId: string): Promise<CollaborationIssue>;
     create(
@@ -209,6 +215,7 @@ export interface SharedIssueDetailPort {
 export type SharedIssueDetailWorkspaceApi = Omit<
   Pick<
     SharedWorkspaceApi,
+    | "milestones"
     | "issues"
     | "assignmentReceipts"
     | "attachments"
@@ -243,6 +250,7 @@ export function toSharedIssueDetailTaskBinding(
     executionContext: binding.executionContext,
     binding_type: binding.bindingType,
     human_assignment_id: binding.humanAssignmentId,
+    stand_in_pending: binding.standInPending,
     dispatch_id: binding.dispatchId,
     linked_at: binding.linkedAt,
   };
@@ -314,6 +322,7 @@ export function createSharedIssueDetailPort(
   api: SharedIssueDetailWorkspaceApi,
   saveFile: (blob: Blob, filename: string) => Promise<void>,
   getTranscript = api.runtime?.getTranscript,
+  attachmentContext?: IssueAttachmentContext,
 ): SharedIssueDetailPort {
   const projects = (
     api as SharedIssueDetailWorkspaceApi & {
@@ -325,10 +334,15 @@ export function createSharedIssueDetailPort(
   ).projects;
 
   return {
+    milestones: api.milestones,
     issues: {
       get: api.issues.get,
       create: (projectId, input) =>
         api.issues.create(projectId, {
+          ...(input.request_id !== undefined
+            ? { requestId: input.request_id }
+            : {}),
+          milestoneId: input.milestone_id,
           title: input.title,
           ...(input.description !== undefined
             ? { description: input.description }
@@ -357,6 +371,7 @@ export function createSharedIssueDetailPort(
       update: (issueId, input) =>
         api.issues.update(issueId, {
           version: input.version,
+          milestoneId: input.milestone_id,
           ...(input.security_level !== undefined
             ? { securityLevel: input.security_level }
             : {}),
@@ -390,15 +405,32 @@ export function createSharedIssueDetailPort(
     attachments: {
       list: api.attachments.list,
       upload: api.attachments.upload,
-      read: api.attachments.read,
+      read: (attachmentId) =>
+        attachmentContext
+          ? api.attachments.read(attachmentId, attachmentContext)
+          : api.attachments.read(attachmentId),
       async download(attachmentId, filename) {
         if (api.attachments.download) {
-          await api.attachments.download(attachmentId, filename);
+          await (attachmentContext
+            ? api.attachments.download(
+                attachmentId,
+                filename,
+                attachmentContext,
+              )
+            : api.attachments.download(attachmentId, filename));
           return;
         }
-        await saveFile(await api.attachments.read(attachmentId), filename);
+        await saveFile(
+          await (attachmentContext
+            ? api.attachments.read(attachmentId, attachmentContext)
+            : api.attachments.read(attachmentId)),
+          filename,
+        );
       },
-      remove: api.attachments.remove,
+      remove: (attachmentId) =>
+        attachmentContext
+          ? api.attachments.remove(attachmentId, attachmentContext)
+          : api.attachments.remove(attachmentId),
     },
     collaborators: {
       list: (issueId) =>

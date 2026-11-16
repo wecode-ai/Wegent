@@ -7,20 +7,23 @@
 import hashlib
 import logging
 import time
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from dataclasses import dataclass
-from datetime import datetime, timedelta
+from datetime import datetime
 from typing import Any, Sequence
 
 import orjson
 from sqlalchemy.orm import Session
 
 from app.core.cache import cache_manager
-from app.models.im_session import IMPrivateSession, IMSessionMode, IMSessionState
+from app.models.im_session import IMPrivateSession, IMSessionMode
 
 logger = logging.getLogger(__name__)
 
-PENDING_STATE_TTL_MINUTES = 15
+PRIVATE_SESSION_MODE_PREFIX = "channel:private_session_mode:"
 PRIVATE_SESSION_KEY_PREFIX = "channel:private_session:"
+PRIVATE_SESSION_WRITE_LOCK_SECONDS = 30
 USER_PRIVATE_SESSIONS_PREFIX = "channel:user_private_sessions:"
 USER_GLOBAL_NOTIFICATION_PREFIX = "channel:user_global_notification:"
 USER_IM_NOTIFICATION_PRESENCE_PREFIX = "channel:user_im_notification_presence:"
@@ -56,6 +59,19 @@ class IMSessionService:
         identity = f"{channel_type}\0{channel_id}\0{conversation_id}\0{user_id}"
         return hashlib.sha256(identity.encode("utf-8")).hexdigest()
 
+    @asynccontextmanager
+    async def _session_write_lock(self, session_key: str) -> AsyncIterator[None]:
+        """Serialize session read-modify-write operations across workers."""
+
+        async with cache_manager._client_context() as client:
+            lock = client.lock(
+                f"{self._session_cache_key(session_key)}:write-lock",
+                timeout=PRIVATE_SESSION_WRITE_LOCK_SECONDS,
+                blocking_timeout=PRIVATE_SESSION_WRITE_LOCK_SECONDS,
+            )
+            async with lock:
+                yield
+
     async def get_or_create_private_session(
         self,
         db: Session | None,
@@ -75,30 +91,31 @@ class IMSessionService:
             channel_id=channel_id,
             conversation_id=conversation_id,
         )
-        session = await self.get_session(session_key)
-        if session is None:
-            session = IMPrivateSession(
-                session_key=session_key,
-                user_id=user_id,
-                channel_type=channel_type,
-                channel_id=channel_id,
-                conversation_id=conversation_id,
-                sender_id=sender_id,
-                proactive_recipient_id=proactive_recipient_id or "",
-                display_name=display_name,
-                last_seen_at=now,
-                created_at=now,
-                updated_at=now,
-            )
-        else:
-            session.sender_id = sender_id
-            if proactive_recipient_id:
-                session.proactive_recipient_id = proactive_recipient_id
-            session.display_name = display_name
-            session.last_seen_at = now
-            session.updated_at = now
+        async with self._session_write_lock(session_key):
+            session = await self.get_session(session_key)
+            if session is None:
+                session = IMPrivateSession(
+                    session_key=session_key,
+                    user_id=user_id,
+                    channel_type=channel_type,
+                    channel_id=channel_id,
+                    conversation_id=conversation_id,
+                    sender_id=sender_id,
+                    proactive_recipient_id=proactive_recipient_id or "",
+                    display_name=display_name,
+                    last_seen_at=now,
+                    created_at=now,
+                    updated_at=now,
+                )
+            else:
+                session.sender_id = sender_id
+                if proactive_recipient_id:
+                    session.proactive_recipient_id = proactive_recipient_id
+                session.display_name = display_name
+                session.last_seen_at = now
+                session.updated_at = now
 
-        await self.save_session(session)
+            await self.save_session(session)
         return session
 
     async def get_session(self, session_key: str) -> IMPrivateSession | None:
@@ -106,7 +123,7 @@ class IMSessionService:
         if not isinstance(data, dict):
             return None
         try:
-            return IMPrivateSession.from_dict(data)
+            session = IMPrivateSession.from_dict(data)
         except Exception:
             logger.warning(
                 "[IMSessionService] Failed to parse private IM session: key=%s",
@@ -114,6 +131,33 @@ class IMSessionService:
                 exc_info=True,
             )
             return None
+
+        legacy_mode = data.get("mode")
+        if legacy_mode in {"chat", "task", "stand_in"}:
+            mode = IMSessionMode.STAND_IN if legacy_mode == "task" else legacy_mode
+            await cache_manager.setnx(self._mode_key(session), mode, expire=None)
+            if await cache_manager.get_or_raise(self._mode_key(session)) is None:
+                raise RuntimeError("Could not migrate private IM mode")
+        return session
+
+    def _mode_key(self, session: IMPrivateSession) -> str:
+        return f"{PRIVATE_SESSION_MODE_PREFIX}{session.user_id}:{session.session_key}"
+
+    async def get_mode(self, session: IMPrivateSession) -> str:
+        mode = await cache_manager.get_or_raise(self._mode_key(session))
+        if mode is None:
+            return IMSessionMode.CHAT
+        if mode not in {IMSessionMode.CHAT, IMSessionMode.STAND_IN}:
+            raise ValueError("Invalid stored private IM mode")
+        return mode
+
+    async def set_mode(self, session: IMPrivateSession, mode: str) -> None:
+        if mode not in {IMSessionMode.CHAT, IMSessionMode.STAND_IN}:
+            raise ValueError("Invalid private IM mode")
+        if not await cache_manager.set_or_raise(
+            self._mode_key(session), mode, expire=None
+        ):
+            raise RuntimeError("Could not save private IM mode")
 
     async def save_session(self, session: IMPrivateSession) -> None:
         session.updated_at = datetime.now()
@@ -132,7 +176,7 @@ class IMSessionService:
         missing_keys: list[str] = []
         for session_key in session_keys:
             session = await self.get_session(session_key)
-            if session is None:
+            if session is None or session.user_id != user_id:
                 missing_keys.append(session_key)
                 continue
             sessions.append(session)
@@ -364,29 +408,6 @@ class IMSessionService:
             return None
         return data
 
-    async def list_active_runtime_task_sessions(
-        self,
-        db: Session | None,
-        *,
-        user_id: int,
-        runtime_task: dict[str, Any],
-    ) -> list[IMPrivateSession]:
-        task_key = self.runtime_task_notification_key(runtime_task)
-        sessions = await self.list_user_sessions(db, user_id=user_id)
-        matched_sessions: list[IMPrivateSession] = []
-        for session in sessions:
-            if not isinstance(session.active_runtime_task, dict):
-                continue
-            try:
-                active_task_key = self.runtime_task_notification_key(
-                    session.active_runtime_task
-                )
-            except ValueError:
-                continue
-            if active_task_key == task_key:
-                matched_sessions.append(session)
-        return matched_sessions
-
     def runtime_task_notification_key(self, runtime_task: dict[str, Any]) -> str:
         device_id = str(
             runtime_task.get("deviceId") or runtime_task.get("device_id") or ""
@@ -432,97 +453,88 @@ class IMSessionService:
             )
         return [sessions_by_key[session_key] for session_key in ordered_keys]
 
-    async def set_mode(
-        self, db: Session | None, *, session: IMPrivateSession, mode: str
-    ) -> None:
-        session.mode = mode
-        session.state = IMSessionState.IDLE
-        session.pending_payload = {}
-        session.state_expires_at = None
-        if mode == IMSessionMode.CHAT:
-            session.active_task_id = None
-            session.active_runtime_task = None
-        await self.save_session(session)
-
-    async def bind_active_task(
+    async def remember_chat_task(
         self,
-        db: Session | None,
         *,
-        session: IMPrivateSession,
+        user_id: int,
+        channel_type: str,
+        channel_id: int,
+        conversation_id: str,
         task_id: int,
     ) -> None:
-        session.mode = IMSessionMode.TASK
-        session.state = IMSessionState.IDLE
-        session.active_task_id = task_id
-        session.active_runtime_task = None
-        session.pending_payload = {}
-        session.state_expires_at = None
-        await self.save_session(session)
+        """Mirror the task a chat conversation continues for later recovery."""
 
-    async def bind_active_runtime_task(
-        self,
-        db: Session | None,
-        *,
-        session: IMPrivateSession,
-        runtime_task: dict[str, Any],
-    ) -> None:
-        session.mode = IMSessionMode.TASK
-        session.state = IMSessionState.IDLE
-        session.active_task_id = None
-        session.active_runtime_task = dict(runtime_task)
-        session.pending_payload = {}
-        session.state_expires_at = None
-        await self.save_session(session)
-
-    async def clear_active_task(
-        self, db: Session | None, *, session: IMPrivateSession
-    ) -> None:
-        session.active_task_id = None
-        session.active_runtime_task = None
-        session.state = IMSessionState.IDLE
-        session.pending_payload = {}
-        session.state_expires_at = None
-        await self.save_session(session)
-
-    async def set_pending_state(
-        self,
-        db: Session | None,
-        *,
-        session: IMPrivateSession,
-        state: str,
-        payload: dict[str, Any],
-        expires_at: datetime | None = None,
-        force_task_mode: bool = True,
-    ) -> None:
-        if force_task_mode:
-            session.mode = IMSessionMode.TASK
-        session.state = state
-        session.pending_payload = payload
-        session.state_expires_at = expires_at or (
-            datetime.now() + timedelta(minutes=PENDING_STATE_TTL_MINUTES)
+        session_key = self.build_session_key(
+            user_id=user_id,
+            channel_type=channel_type,
+            channel_id=channel_id,
+            conversation_id=conversation_id,
         )
-        await self.save_session(session)
+        async with self._session_write_lock(session_key):
+            session = await self.get_session(session_key)
+            if session is None or session.chat_task_id == task_id:
+                return
+            session.chat_task_id = task_id
+            await self.save_session(session)
 
-    async def cancel_pending(
-        self, db: Session | None, *, session: IMPrivateSession
-    ) -> None:
-        session.state = IMSessionState.IDLE
-        session.pending_payload = {}
-        session.state_expires_at = None
-        await self.save_session(session)
-
-    async def get_active_pending_payload(
+    async def forget_chat_task(
         self,
-        db: Session | None,
-        session: IMPrivateSession,
-    ) -> dict[str, Any] | None:
-        if session.state == IMSessionState.IDLE:
+        *,
+        user_id: int,
+        channel_type: str,
+        channel_id: int,
+        conversation_id: str,
+    ) -> None:
+        """Drop the chat task mirror so a new conversation cannot resume it."""
+
+        session_key = self.build_session_key(
+            user_id=user_id,
+            channel_type=channel_type,
+            channel_id=channel_id,
+            conversation_id=conversation_id,
+        )
+        async with self._session_write_lock(session_key):
+            session = await self.get_session(session_key)
+            if session is None or session.chat_task_id is None:
+                return
+            session.chat_task_id = None
+            await self.save_session(session)
+
+    async def set_proactive_recipient_id(
+        self, session: IMPrivateSession, recipient_id: str
+    ) -> None:
+        """Fill a missing recipient without replacing concurrent session updates."""
+
+        async with self._session_write_lock(session.session_key):
+            current = await self.get_session(session.session_key)
+            if current is None:
+                current = session
+            if not current.proactive_recipient_id:
+                current.proactive_recipient_id = recipient_id
+                await self.save_session(current)
+            session.proactive_recipient_id = current.proactive_recipient_id
+
+    async def get_chat_task(
+        self,
+        *,
+        user_id: int,
+        channel_type: str,
+        channel_id: int,
+        conversation_id: str,
+    ) -> int | None:
+        """Return the mirrored chat task for a private conversation."""
+
+        session = await self.get_session(
+            self.build_session_key(
+                user_id=user_id,
+                channel_type=channel_type,
+                channel_id=channel_id,
+                conversation_id=conversation_id,
+            )
+        )
+        if session is None:
             return None
-        if session.state_expires_at and session.state_expires_at < datetime.now():
-            await self.cancel_pending(db, session=session)
-            return None
-        payload = session.pending_payload
-        return payload if isinstance(payload, dict) else {}
+        return session.chat_task_id
 
     def _session_cache_key(self, session_key: str) -> str:
         return f"{PRIVATE_SESSION_KEY_PREFIX}{session_key}"

@@ -144,11 +144,16 @@ async def test_recovered_submission_starts_once_without_holding_receipt(
     monkeypatch.setattr(CardTaskExecution, "run", run)
     # Assert the deadline's scope directly, without a CI-sensitive 10 ms budget.
     receiver._schedule("event-1")
-    jobs = list(receiver._jobs)
+    (job,) = receiver._jobs
+    started_wait = asyncio.create_task(started.wait())
     try:
-        await asyncio.wait_for(started.wait(), timeout=1)
+        # Observe startup or premature completion using the real submission deadline.
+        await asyncio.wait({job, started_wait}, return_when=asyncio.FIRST_COMPLETED)
+        assert (
+            started.is_set()
+        ), "Recovery completed without starting the persisted turn"
         assert receiver.inbox.records["event-1"].state == "completed"
-        assert not any(job.done() for job in jobs)
+        assert not job.done()
         # A different worker may recover the receipt during model execution.
         await receiver._run_record("event-1")
         assert executions == [203]
@@ -156,7 +161,9 @@ async def test_recovered_submission_starts_once_without_holding_receipt(
         receiver._report_error.assert_not_awaited()
     finally:
         finished.set()
-        await asyncio.gather(*jobs)
+        started_wait.cancel()
+        await asyncio.gather(started_wait, return_exceptions=True)
+        await job
     assert receiver.inbox.receipts["event-1"] == "completed"
     assert "event-1" not in receiver.inbox.records
 

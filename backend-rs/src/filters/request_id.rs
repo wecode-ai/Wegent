@@ -47,10 +47,20 @@ where
             None
         };
         let mut response = self.inner.call(request, peer_addr).await;
+        // The source's request-id middleware belongs to the FastAPI app; a
+        // Socket.IO WebSocket upgrade is accepted by `socketio.ASGIApp` outside
+        // it, so a protocol switch carries no request-id response header.
         if let Some(request_id) = request_id {
-            response.headers_mut().insert(X_REQUEST_ID, request_id);
+            expose_response_request_id(&mut response, request_id);
         }
         response
+    }
+}
+
+/// Echo the request id on every response except a protocol switch.
+fn expose_response_request_id<B>(response: &mut http::Response<B>, request_id: HeaderValue) {
+    if response.status() != http::StatusCode::SWITCHING_PROTOCOLS {
+        response.headers_mut().insert(X_REQUEST_ID, request_id);
     }
 }
 
@@ -137,5 +147,17 @@ mod tests {
     fn skips_the_root_path_even_when_the_request_has_an_id() {
         assert!(!exposes_request_id("/"));
         assert!(exposes_request_id("/api/devices"));
+    }
+
+    #[test]
+    fn protocol_switches_do_not_echo_the_request_id() {
+        let mut upgrade = http::Response::new(());
+        *upgrade.status_mut() = http::StatusCode::SWITCHING_PROTOCOLS;
+        expose_response_request_id(&mut upgrade, HeaderValue::from_static("abcd1234"));
+        assert!(upgrade.headers().get(X_REQUEST_ID).is_none());
+
+        let mut ok = http::Response::new(());
+        expose_response_request_id(&mut ok, HeaderValue::from_static("abcd1234"));
+        assert_eq!(ok.headers()[X_REQUEST_ID], "abcd1234");
     }
 }

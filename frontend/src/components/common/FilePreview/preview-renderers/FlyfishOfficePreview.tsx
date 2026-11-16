@@ -6,6 +6,7 @@
 
 import FileViewer, { type ViewerOptions, type ViewerState } from '@file-viewer/react'
 import fileViewerPackage from '@file-viewer/react/package.json'
+import docxPackage from '@file-viewer/docx/package.json'
 import officePreset from '@file-viewer/preset-office'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Spinner } from '@/components/ui/spinner'
@@ -33,8 +34,8 @@ const OFFICE_VIEWER_OPTIONS: ViewerOptions = {
     cjkFontFallbackPath: `${FILE_VIEWER_ASSET_BASE}/vendor/pdf/fonts/`,
   },
   docx: {
-    workerUrl: `${FILE_VIEWER_ASSET_BASE}/vendor/docx/docx.worker.js`,
-    workerJsZipUrl: `${FILE_VIEWER_ASSET_BASE}/vendor/docx/jszip.min.js`,
+    workerUrl: `${FILE_VIEWER_ASSET_BASE}/vendor/docx/${docxPackage.version}/docx.worker.js`,
+    workerJsZipUrl: `${FILE_VIEWER_ASSET_BASE}/vendor/docx/${docxPackage.version}/jszip.min.js`,
     visualPagination: true,
   },
   spreadsheet: {

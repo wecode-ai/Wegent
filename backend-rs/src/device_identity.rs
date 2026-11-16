@@ -136,6 +136,29 @@ impl DeviceType {
     }
 }
 
+/// Source `app/services/device/identity.py::device_kind_type`.
+pub(crate) fn is_app_device(device: &DeviceKindRow) -> bool {
+    DeviceType::from_spec(&device.spec()) == DeviceType::App
+}
+
+/// `device_connection_route_id`: the transport identity used by the device's
+/// heartbeat connection (`app/services/device/identity.py:57`).
+pub(crate) fn device_connection_route_id(device: &DeviceKindRow) -> String {
+    if DeviceType::from_spec(&device.spec()) == DeviceType::Cloud {
+        let spec = device.spec();
+        let cloud = spec
+            .cloud_config
+            .as_ref()
+            .and_then(|config| config.device_id.clone());
+        return spec
+            .device_id
+            .filter(|value| !value.is_empty())
+            .or_else(|| cloud.filter(|value| !value.is_empty()))
+            .unwrap_or_else(|| device.name.clone());
+    }
+    record_route_id(device)
+}
+
 /// Source `app/services/device/identity.py::record_route_id`.
 pub(crate) fn record_route_id(device: &DeviceKindRow) -> String {
     if DeviceType::from_spec(&device.spec()) == DeviceType::App {
@@ -146,7 +169,7 @@ pub(crate) fn record_route_id(device: &DeviceKindRow) -> String {
 }
 
 /// Source `app/services/device/identity.py::device_identity_ids`.
-fn device_identity_ids(device: &DeviceKindRow) -> Vec<String> {
+pub(crate) fn device_identity_ids(device: &DeviceKindRow) -> Vec<String> {
     let spec = device.spec();
     let mut candidates: Vec<String> = Vec::new();
     let route = record_route_id(device);
@@ -173,7 +196,7 @@ fn device_identity_ids(device: &DeviceKindRow) -> Vec<String> {
 }
 
 /// Resolve aliases inside the already owner-scoped set of active devices.
-fn resolve_device_alias<'a>(
+pub(crate) fn resolve_device_alias<'a>(
     devices: &'a [DeviceKindRow],
     device_id: &str,
 ) -> Option<&'a DeviceKindRow> {
@@ -245,6 +268,69 @@ where
     Ok(resolve_device_alias(&all, submitted).cloned())
 }
 
+/// Resolve dispatch addresses by transport route, then by their logical aliases.
+pub(crate) async fn resolve_device_for_binding_on<Q: PluginQuery>(
+    query: &mut Q,
+    user_id: i64,
+    device_id: &str,
+) -> MysqlResult<Option<DeviceKindRow>> {
+    let submitted = device_id.trim();
+    if record_id_from_route(submitted).is_some() {
+        return resolve_owned_device_alias_on(query, user_id, submitted).await;
+    }
+    let devices: Vec<DeviceKindRow> = query.fetch_all(KINDS_DEVICE_QUERY, (user_id,)).await?;
+    Ok(resolve_device_for_binding(&devices, submitted).cloned())
+}
+
+fn resolve_device_for_binding<'a>(
+    devices: &'a [DeviceKindRow],
+    submitted: &str,
+) -> Option<&'a DeviceKindRow> {
+    if submitted.is_empty() {
+        return None;
+    }
+    let mut exact = devices
+        .iter()
+        .filter(|device| device_connection_route_id(device) == submitted);
+    match exact.next() {
+        Some(device) if exact.next().is_none() => Some(device),
+        Some(_) => None,
+        None => resolve_device_alias(devices, submitted),
+    }
+}
+
+/// Match the connection route before considering any logical aliases.
+pub(crate) async fn active_device_connection_on<Q: PluginQuery>(
+    query: &mut Q,
+    user_id: i64,
+    route_id: &str,
+    instance: Option<&str>,
+) -> MysqlResult<bool> {
+    if let Some(record_id) = record_id_from_route(route_id) {
+        let sql = format!("{KINDS_DEVICE_QUERY} AND kinds.id = ?");
+        let device: Option<DeviceKindRow> = query.fetch_optional(sql, (user_id, record_id)).await?;
+        return Ok(
+            device.is_some_and(|device| matches_device_connection(&device, route_id, instance))
+        );
+    }
+    let devices: Vec<DeviceKindRow> = query.fetch_all(KINDS_DEVICE_QUERY, (user_id,)).await?;
+    Ok(devices
+        .iter()
+        .any(|device| matches_device_connection(device, route_id, instance)))
+}
+
+fn matches_device_connection(
+    device: &DeviceKindRow,
+    route_id: &str,
+    instance: Option<&str>,
+) -> bool {
+    device_connection_route_id(device) == route_id
+        && device.json["spec"]["runtimeInstanceId"]
+            .as_str()
+            .filter(|id| !id.is_empty())
+            == instance.filter(|id| !id.is_empty())
+}
+
 /// Return aliases that unambiguously identify the same user-owned device.
 /// Unknown or ambiguous input retains its existing exact-address semantics.
 pub(crate) async fn owned_device_identity_ids<M>(
@@ -259,7 +345,10 @@ where
     Ok(unambiguous_device_identity_ids(&devices, device_id))
 }
 
-fn unambiguous_device_identity_ids(devices: &[DeviceKindRow], device_id: &str) -> Vec<String> {
+pub(crate) fn unambiguous_device_identity_ids(
+    devices: &[DeviceKindRow],
+    device_id: &str,
+) -> Vec<String> {
     let mut aliases = vec![device_id.to_owned()];
     let Some(device) = resolve_device_alias(devices, device_id) else {
         return aliases;
@@ -341,7 +430,7 @@ fn runtime_instance_id(device: &DeviceKindRow) -> Option<String> {
 }
 
 /// Source `app/services/device/runtime_route.py::_runtime_device_id`.
-fn runtime_device_id(device: &DeviceKindRow) -> String {
+pub(crate) fn runtime_device_id(device: &DeviceKindRow) -> String {
     if DeviceType::from_spec(&device.spec()) == DeviceType::App {
         return record_route_id(device);
     }
@@ -480,8 +569,7 @@ where
 
 /// Full `plugin_device_installations` row used by `reconcile_plugin_device_rows`
 /// (`app/models/plugin_marketplace.py::PluginDeviceInstallation`). The aliases
-/// mirror SQLAlchemy's `db.query(...).with_for_update()` projection so the
-/// prepared statement matches the recorded `FOR UPDATE` exchange.
+/// mirror SQLAlchemy's mapped-column projection.
 #[derive(Debug, Clone, FromMysqlRow)]
 pub struct PluginDeviceInstallationRow {
     #[mysql(rename = "plugin_device_installations_id")]
@@ -544,8 +632,10 @@ impl ReconcileRow for PluginDeviceInstallationRow {
     }
 }
 
-/// `db.query(PluginDeviceInstallation).filter(user_id=...).with_for_update()`:
-/// every mapped column with its SQLAlchemy alias.
+/// `db.query(PluginDeviceInstallation).filter(user_id=...).all()`: every
+/// mapped column with its SQLAlchemy alias. The source does not lock these
+/// rows; `reconcile_plugin_device_rows` serializes writers with the account
+/// lease instead.
 const RECONCILE_SELECT_QUERY: &str = "SELECT plugin_device_installations.id AS plugin_device_installations_id, \
      plugin_device_installations.installed_kind_id AS plugin_device_installations_installed_kind_id, \
      plugin_device_installations.user_id AS plugin_device_installations_user_id, \
@@ -559,7 +649,7 @@ const RECONCILE_SELECT_QUERY: &str = "SELECT plugin_device_installations.id AS p
      plugin_device_installations.last_sync_at AS plugin_device_installations_last_sync_at, \
      plugin_device_installations.updated_at AS plugin_device_installations_updated_at \
      FROM plugin_device_installations \
-     WHERE plugin_device_installations.user_id = ? FOR UPDATE";
+     WHERE plugin_device_installations.user_id = ?";
 
 /// `db.delete(row)`: SQLAlchemy deletes by primary key.
 const DELETE_ROW_QUERY: &str =
@@ -571,15 +661,15 @@ const UPDATE_DEVICE_ID_QUERY: &str =
 
 /// Source `app/services/plugin_device_identity.py::reconcile_plugin_device_rows`.
 ///
-/// Converges legacy alias rows within the caller's write transaction. It locks
-/// the user's rows `FOR UPDATE`, coalesces them to one row per
+/// Converges legacy alias rows within the caller's write transaction. It reads
+/// the user's rows, coalesces them to one row per
 /// `(installed_kind_id, canonical device)`, deletes the superseded alias rows,
 /// then rewrites each retained row's `device_id` to its canonical id. Identity
 /// reads go through the pooled handle (`mysql`) because
 /// `coalesce_plugin_device_rows` resolves `plugin_device_id` per unique
 /// `(user_id, device_id)` pair, exactly like the source.
 ///
-/// Returns the retained rows in `FOR UPDATE` load order. The source session's
+/// Returns the retained rows in primary-key load order. The source session's
 /// identity map keeps exactly these rows in that order, and a later
 /// `db.commit()` flush (e.g. `ensure_pending_for_device`'s pending UPDATEs)
 /// emits its UPDATE statements in this order, not in the caller's iteration
@@ -598,17 +688,24 @@ where
         .fetch_all(RECONCILE_SELECT_QUERY, (user_id,))
         .await?;
     let selected = coalesce_plugin_device_rows(mysql, rows.clone()).await?;
-    converge_plugin_device_rows(&mut transaction, rows, &selected).await
+    converge_plugin_device_rows(&mut transaction, rows, &selected, None).await
 }
 
 /// `reconcile_plugin_device_rows` on one borrowed session handle.
 ///
-/// The source locks, resolves, and rewrites the rows inside one request
-/// session; callers that already own that session's transaction pass it here
+/// The source resolves and rewrites the rows inside one request session;
+/// callers that already own that session's transaction pass it here
 /// so the identity reads stay on the pinned connection.
+pub(crate) trait LeaseCheck: Sync {
+    fn check<'a>(
+        &'a self,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = MysqlResult<()>> + Send + 'a>>;
+}
+
 pub(crate) async fn reconcile_plugin_device_rows_on<Q, R>(
     query: &mut Q,
     user_id: i64,
+    guard: Option<&dyn LeaseCheck>,
 ) -> MysqlResult<Vec<R>>
 where
     Q: PluginQuery,
@@ -616,15 +713,16 @@ where
 {
     let rows: Vec<R> = query.fetch_all(RECONCILE_SELECT_QUERY, (user_id,)).await?;
     let selected = coalesce_plugin_device_rows_on(query, rows.clone()).await?;
-    converge_plugin_device_rows(query, rows, &selected).await
+    converge_plugin_device_rows(query, rows, &selected, guard).await
 }
 
 /// Delete the superseded alias rows and rewrite each retained row's
-/// `device_id`, then return the retained rows in `FOR UPDATE` load order.
+/// `device_id`, then return the retained rows in primary-key load order.
 async fn converge_plugin_device_rows<Q, R>(
     query: &mut Q,
     rows: Vec<R>,
     selected: &[((i64, String), R)],
+    guard: Option<&dyn LeaseCheck>,
 ) -> MysqlResult<Vec<R>>
 where
     Q: PluginQuery,
@@ -632,10 +730,23 @@ where
 {
     let retained: std::collections::HashSet<i64> =
         selected.iter().map(|(_, row)| row.id()).collect();
+    // First flush boundary: the alias DELETE batch.
+    if let Some(guard) = guard
+        && rows.iter().any(|row| !retained.contains(&row.id()))
+    {
+        guard.check().await?;
+    }
     for row in &rows {
         if !retained.contains(&row.id()) {
             query.execute(DELETE_ROW_QUERY, (row.id(),)).await?;
         }
+    }
+    // Second flush boundary: the canonical `device_id` assignment, which marks
+    // every selected row dirty even when the value does not change.
+    if let Some(guard) = guard
+        && !selected.is_empty()
+    {
+        guard.check().await?;
     }
     for ((_, canonical_id), row) in selected {
         if row.device_id() != canonical_id {
@@ -645,7 +756,7 @@ where
         }
     }
     // Identity-map order after the deletes and rewrites: the retained rows in
-    // `FOR UPDATE` load order (primary key ascending).
+    // primary-key load order.
     Ok(rows
         .into_iter()
         .filter(|row| retained.contains(&row.id()))
@@ -655,6 +766,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+    use brz_mysql::MysqlError;
 
     #[test]
     fn record_id_from_route_matches_source() {
@@ -663,6 +775,44 @@ mod tests {
         assert_eq!(record_id_from_route("app-record-abc"), None);
         assert_eq!(record_id_from_route("electron-abc"), None);
         assert_eq!(record_id_from_route(""), None);
+    }
+
+    #[test]
+    fn binding_accepts_cloud_config_route_without_changing_logical_aliases() {
+        let rows = [DeviceKindRow {
+            id: 1,
+            name: "cloud-name".into(),
+            json: serde_json::json!({
+                "spec": {"deviceType": "cloud", "cloudConfig": {"deviceId": "cloud-route"}}
+            }),
+        }];
+        assert!(resolve_device_alias(&rows, "cloud-route").is_none());
+        assert_eq!(
+            resolve_device_for_binding(&rows, "cloud-route").map(|row| row.id),
+            Some(1)
+        );
+        assert_eq!(
+            resolve_device_for_binding(&rows, "cloud-name").map(|row| row.id),
+            Some(1)
+        );
+    }
+
+    #[test]
+    fn active_device_connection_matches_local_route_even_with_same_name_app() {
+        let app = app_device(1, "electron-1");
+        let local = DeviceKindRow {
+            id: 2,
+            name: app.name.clone(),
+            json: serde_json::json!({"spec": {"deviceType": "local", "runtimeInstanceId": ""}}),
+        };
+        let route = local.name.clone();
+        assert!(matches_device_connection(&local, &route, None));
+        assert!(!matches_device_connection(&app, &route, None));
+        assert!(!matches_device_connection(
+            &local,
+            &route,
+            Some("old-runtime")
+        ));
     }
 
     #[test]
@@ -848,5 +998,72 @@ mod tests {
             json: serde_json::json!({"spec": {"deviceType": "local"}}),
         };
         assert!(identity_from_device(&unroutable).is_none());
+    }
+
+    fn installation_row(id: i64, device_id: &str) -> PluginDeviceInstallationRow {
+        PluginDeviceInstallationRow {
+            id,
+            installed_kind_id: 9,
+            user_id: 3,
+            device_id: device_id.to_string(),
+            desired_release_id: 4,
+            actual_release_id: 0,
+            state: "pending".into(),
+            error_code: String::new(),
+            error_message: String::new(),
+            attempt_count: 0,
+            last_sync_at: NaiveDateTime::default(),
+            updated_at: NaiveDateTime::default(),
+        }
+    }
+
+    struct SecondCheckFails {
+        calls: std::sync::atomic::AtomicUsize,
+    }
+
+    impl LeaseCheck for SecondCheckFails {
+        fn check<'a>(
+            &'a self,
+        ) -> std::pin::Pin<Box<dyn std::future::Future<Output = MysqlResult<()>> + Send + 'a>>
+        {
+            let call = self.calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst) + 1;
+            Box::pin(async move {
+                if call >= 2 {
+                    Err(MysqlError::InvalidQuery {
+                        reason: "plugin_write_lease_lost".into(),
+                    })
+                } else {
+                    Ok(())
+                }
+            })
+        }
+    }
+
+    /// The alias DELETE runs under the first guard; the canonical `device_id`
+    /// assignment is not executed when the second guard rejects.
+    #[tokio::test]
+    async fn a_rejected_post_delete_guard_skips_the_canonical_update() {
+        // The retained row still carries a legacy alias, so a successful run
+        // must issue the canonical UPDATE.
+        let retained = installation_row(1, "retained-legacy");
+        let alias = installation_row(2, "legacy-alias");
+        let rows = vec![retained.clone(), alias];
+        let selected = vec![((1_i64, "canonical".to_string()), retained)];
+        let guard = SecondCheckFails {
+            calls: std::sync::atomic::AtomicUsize::new(0),
+        };
+        let capture = crate::sql_test_support::KindQueryCapture::writing();
+        let mut session = &capture;
+        let error = converge_plugin_device_rows(&mut session, rows, &selected, Some(&guard))
+            .await
+            .unwrap_err();
+        assert!(matches!(error, MysqlError::InvalidQuery { .. }));
+        let writes = capture.writes();
+        assert_eq!(writes.len(), 1, "only the DELETE ran");
+        assert!(
+            writes[0]
+                .sql
+                .starts_with("DELETE FROM plugin_device_installations")
+        );
     }
 }

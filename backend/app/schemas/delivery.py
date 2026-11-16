@@ -27,6 +27,8 @@ from app.utils.schedule_time import normalize_schedule_datetime
 
 
 class LoopItemCreate(BaseModel):
+    request_id: str | None = Field(default=None, min_length=1, max_length=64)
+    personal_task: bool = False
     runner_selection: RunnerSelection | None = None
     notify_assignee: bool = True
     title: str = Field(min_length=1, max_length=255)
@@ -39,6 +41,7 @@ class LoopItemCreate(BaseModel):
     priority: Literal["none", "low", "medium", "high", "urgent"] = "none"
     start_at: datetime | None = None
     due_at: datetime | None = None
+    milestone_id: str | None = Field(default=None, max_length=64)
     parent_id: str | None = Field(default=None, max_length=64)
     tags: list[TagName] = Field(default_factory=list, max_length=MAX_TAGS_PER_ITEM)
     workflow: IssueWorkflowInstance | None = None
@@ -86,6 +89,7 @@ class LoopItemUpdate(BaseModel):
     priority: Literal["none", "low", "medium", "high", "urgent"] | None = None
     start_at: datetime | None = None
     due_at: datetime | None = None
+    milestone_id: str | None = Field(default=None, max_length=64)
     parent_id: str | None = Field(default=None, max_length=64)
     tags: list[TagName] | None = Field(default=None, max_length=MAX_TAGS_PER_ITEM)
     workflow: IssueWorkflowInstance | None = None
@@ -132,6 +136,7 @@ class LoopItemPermissions(BaseModel):
 
 class LoopItemRead(BaseModel):
     activity_sequence: int | None = Field(default=None, ge=0)
+    content_revision: int | None = Field(default=None, ge=0)
 
 
 class IssueBadge(BaseModel):
@@ -141,6 +146,12 @@ class IssueBadge(BaseModel):
     icon: str = ""
     tone: Literal["neutral", "success", "warning", "danger"] = "neutral"
     tooltip: str = ""
+
+
+class IssueResourceParticipant(BaseModel):
+    kind: Literal["agent", "group"]
+    id: int
+    name: str
 
 
 class LoopItemResponse(BaseModel):
@@ -161,7 +172,12 @@ class LoopItemResponse(BaseModel):
     assignee_agent_name: str | None = None
     assignee_team_id: int | None = None
     assignee_team_name: str | None = None
+    resource_participants: list[IssueResourceParticipant] = Field(default_factory=list)
     ai_state: dict[str, Any] | None = None
+    processing_actor: dict[str, str] | None = None
+    human_waiting_since: str | None = None
+    human_requests: list[dict[str, Any]] = Field(default_factory=list)
+    personal_task_assignment_at: str | None = None
     execution_id: int | None = None
     execution_state: str | None = None
     execution_control_state: str | None = None
@@ -184,6 +200,7 @@ class LoopItemResponse(BaseModel):
     start_at: datetime | None = None
     due_at: datetime | None
     sort_order: int
+    milestone_id: str | None = None
     tags: list[str] = []
     created_by_user_id: int
     created_by_user_name: str | None = None
@@ -206,6 +223,19 @@ class LoopItemResponse(BaseModel):
     @classmethod
     def populate_tags(cls, value: object) -> object:
         """Fill tags and metadata-derived fields when the input has no tags key."""
+        if isinstance(value, dict):
+            metadata = value.get("metadata_json")
+            value = {
+                **value,
+                "personal_task_assignment_at": (
+                    metadata.get(
+                        "personal_task_assignment_at",
+                        value.get("personal_task_assignment_at"),
+                    )
+                    if isinstance(metadata, dict)
+                    else value.get("personal_task_assignment_at")
+                ),
+            }
         if isinstance(value, dict) and "tags" not in value:
             metadata = value.get("metadata_json")
             metadata = metadata if isinstance(metadata, dict) else {}
@@ -273,8 +303,18 @@ class LoopItemResponse(BaseModel):
             return {
                 **value,
                 "badges": value.get("badges", metadata.get("badges", [])),
+                "milestone_id": value.get("milestone_id", metadata.get("milestone_id")),
                 "tags": _normalize_tags(metadata.get("tags")),
                 "ai_state": ai_state,
+                "processing_actor": value.get("processing_actor"),
+                "human_waiting_since": value.get("human_waiting_since"),
+                "personal_task_assignment_at": metadata.get(
+                    "personal_task_assignment_at",
+                    value.get("personal_task_assignment_at"),
+                ),
+                "human_requests": value.get(
+                    "human_requests", metadata.get("human_requests", [])
+                ),
                 "execution_state": (
                     value.get("execution_state")
                     if value.get("execution_state") is not None
@@ -411,16 +451,6 @@ class LoopItemAttachmentImport(BaseModel):
     context_ids: list[int] = Field(min_length=1)
 
 
-class MyWorkItemResponse(LoopItemResponse):
-    project_key: str
-    project_name: str
-    has_active_task: bool
-
-
-class MyWorkListResponse(BaseModel):
-    items: list[MyWorkItemResponse]
-
-
 class LoopItemCollaboratorCreate(BaseModel):
     user_id: int = Field(ge=1)
 
@@ -438,6 +468,11 @@ class LoopItemCollaboratorResponse(BaseModel):
 
 class LoopItemTaskBind(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
+
+    stand_in_pending: bool | None = Field(default=None, alias="standInPending")
+    stand_in_conversation_id: str | None = Field(
+        default=None, alias="standInConversationId", min_length=1, max_length=255
+    )
 
     device_id: str = Field(alias="deviceId", min_length=1, max_length=100)
     task_id: str = Field(alias="taskId", min_length=1, max_length=255)
@@ -492,6 +527,7 @@ class LoopItemTaskBind(BaseModel):
 
 
 class LoopItemTaskBindingResponse(BaseModel):
+    stand_in_pending: bool | None = None
     model_config = ConfigDict(from_attributes=True, populate_by_name=True)
 
     id: SnowflakeId
@@ -534,6 +570,26 @@ class LoopItemTaskBindingResponse(BaseModel):
     @classmethod
     def normalize_unlinked_at(cls, value: object) -> object:
         return LoopItemResponse.normalize_unset_datetime(value)
+
+
+class MyWorkAssignmentContextResponse(BaseModel):
+    body: str
+    created_by_user_name: str | None
+    created_at: datetime
+
+
+class MyWorkItemResponse(LoopItemResponse):
+    attention_order: tuple[int, int, str] | None = None
+    project_key: str
+    project_name: str
+    has_active_task: bool
+    task_bindings: list[LoopItemTaskBindingResponse] = Field(default_factory=list)
+    assignment_context: MyWorkAssignmentContextResponse | None = None
+
+
+class MyWorkListResponse(BaseModel):
+    items: list[MyWorkItemResponse]
+    next_cursor: str | None = None
 
 
 class LoopItemPageResponse(BaseModel):

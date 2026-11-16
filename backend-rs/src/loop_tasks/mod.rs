@@ -14,6 +14,7 @@ pub mod cloud_context;
 pub mod collaborators;
 pub mod comments;
 pub mod http_error;
+mod human_requests;
 pub mod human_task_binding;
 pub mod item_response;
 pub(crate) mod loop_columns;

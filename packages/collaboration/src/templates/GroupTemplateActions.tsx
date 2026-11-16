@@ -5,38 +5,57 @@ import { useState } from 'react'
 import type { CollaborationGroup } from '../types'
 import type { CollaborationLocale } from '../i18n'
 import { useCollaborationTemplateStore } from './context'
-import { templateFromProject, exportTemplate } from './document'
-import { templateMessages } from './messages'
+import { templateFromProject, downloadTemplate } from './document'
+import { templateFailureMessage, templateMessages } from './messages'
 import { TemplateSaveDialog } from './TemplateSaveDialog'
 import type { CollaborationTemplate } from './types'
 
 export function GroupTemplateActions({
   group,
   locale,
+  loadAgents,
 }: {
   group: CollaborationGroup
   locale: CollaborationLocale
+  loadAgents(
+    group: CollaborationGroup
+  ): Promise<import('../ports/SharedWorkspaceApi').WorkspaceProjectAgent[]>
 }) {
   const store = useCollaborationTemplateStore()
   const m = templateMessages[locale]
   const [saving, setSaving] = useState<CollaborationTemplate | null>(null)
+  const [error, setError] = useState<string | null>(null)
+  const [busy, setBusy] = useState(false)
   if (!store) return null
-  const snapshot = () =>
+  const snapshot = async () =>
     templateFromProject(
       { name: group.name, description: group.description },
       [group],
       `template-${crypto.randomUUID()}`,
-      locale
+      locale,
+      await loadAgents(group)
     )
   return (
     <section className="collaboration-template-settings" data-testid="group-template-settings">
       <h3>{m.configuration}</h3>
       <p>{m.saveHint}</p>
+      {error && <p role="alert">{error}</p>}
       <button
         type="button"
         className="collaboration-template-choice"
         data-testid="group-template-save"
-        onClick={() => setSaving(snapshot())}
+        disabled={busy}
+        onClick={async () => {
+          setBusy(true)
+          setError(null)
+          try {
+            setSaving(await snapshot())
+          } catch (error) {
+            setError(templateFailureMessage(error, locale))
+          } finally {
+            setBusy(false)
+          }
+        }}
       >
         {m.saveTitle}
       </button>
@@ -46,17 +65,17 @@ export function GroupTemplateActions({
           type="button"
           className="collaboration-template-choice"
           data-testid="group-template-export"
-          onClick={() => {
-            const url = URL.createObjectURL(
-              new Blob([exportTemplate(snapshot())], {
-                type: 'application/yaml;charset=utf-8',
-              })
-            )
-            const link = document.createElement('a')
-            link.href = url
-            link.download = 'collaboration-group-template.yaml'
-            link.click()
-            window.setTimeout(() => URL.revokeObjectURL(url), 1000)
+          disabled={busy}
+          onClick={async () => {
+            setBusy(true)
+            setError(null)
+            try {
+              downloadTemplate(await snapshot(), 'collaboration-group-template.yaml')
+            } catch (error) {
+              setError(templateFailureMessage(error, locale))
+            } finally {
+              setBusy(false)
+            }
           }}
         >
           {m.export}

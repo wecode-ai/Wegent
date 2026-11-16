@@ -2,13 +2,16 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-import { act, renderHook } from '@testing-library/react'
+import { act, renderHook, waitFor } from '@testing-library/react'
 import { useRouter } from 'next/navigation'
 import { toast } from 'sonner'
 
 import { createCodeWiki } from '@/features/knowledge/code-wiki/createCodeWiki'
 import { useKnowledgeBaseDialogs } from '@/features/knowledge/document/hooks/useKnowledgeBaseDialogs'
-import { createKnowledgeBase } from '@/apis/knowledge'
+import { createKnowledgeBase, deleteKnowledgeBase } from '@/apis/knowledge'
+import type { KnowledgeBase } from '@/types/knowledge'
+import type { ContentDeletionOutcome } from '@/apis/knowledge-deletion'
+import client from '@/apis/client'
 
 jest.mock('next/navigation', () => ({
   useRouter: jest.fn(() => ({ push: jest.fn() })),
@@ -25,6 +28,7 @@ jest.mock('@/hooks/useTranslation', () => ({
 jest.mock('@/apis/knowledge', () => ({
   migrateKnowledgeBaseToGroup: jest.fn(),
   createKnowledgeBase: jest.fn(),
+  deleteKnowledgeBase: jest.fn(),
 }))
 
 jest.mock('@/features/knowledge/code-wiki/createCodeWiki', () => ({
@@ -32,6 +36,91 @@ jest.mock('@/features/knowledge/code-wiki/createCodeWiki', () => ({
 }))
 
 describe('creating a Code Wiki', () => {
+  it('does not dispatch an old deletion after the account changes during import', async () => {
+    const scope = jest.spyOn(client, 'getCacheScope').mockReturnValue('account-a')
+    try {
+      const sidebar = {
+        groups: [],
+        selectedGroupId: null,
+        currentUser: { id: 1 },
+        selectedKbId: 1,
+        refreshAll: jest.fn(),
+        clearSelection: jest.fn(),
+      }
+      jest.mocked(deleteKnowledgeBase).mockResolvedValue({
+        content_deleted: true,
+        index_cleanup: 'confirmed',
+        error_code: null,
+        can_continue: false,
+      })
+      const { result } = renderHook(() => useKnowledgeBaseDialogs({ sidebar }))
+      act(() => result.current.setDeletingKb({ id: 1 } as KnowledgeBase))
+      let operation!: Promise<void>
+      act(() => {
+        operation = result.current.handleDelete(true)
+        scope.mockReturnValue('account-b')
+      })
+      await act(async () => {
+        await operation
+      })
+      expect(deleteKnowledgeBase).not.toHaveBeenCalled()
+    } finally {
+      scope.mockRestore()
+    }
+  })
+  it.each([false, true])(
+    'does not overwrite a new deletion target after pending deletion (account change: %s)',
+    async accountChanged => {
+      let resolve!: (outcome: ContentDeletionOutcome) => void
+      const pending = new Promise<ContentDeletionOutcome>(done => {
+        resolve = done
+      })
+      jest.mocked(deleteKnowledgeBase).mockReturnValue(pending)
+      const push = jest.fn()
+      jest.mocked(useRouter).mockReturnValue({ ...useRouter(), push })
+      const sidebar = {
+        groups: [],
+        selectedGroupId: null,
+        currentUser: { id: 1 },
+        selectedKbId: 1,
+        refreshAll: jest.fn().mockResolvedValue(undefined),
+        clearSelection: jest.fn(),
+      }
+      const { result, rerender } = renderHook(
+        ({ userId, selectedKbId }) =>
+          useKnowledgeBaseDialogs({
+            sidebar: {
+              ...sidebar,
+              currentUser: { id: userId },
+              selectedKbId,
+            },
+          }),
+        { initialProps: { userId: 1, selectedKbId: 1 } }
+      )
+      act(() => result.current.setDeletingKb({ id: 1 } as KnowledgeBase))
+      let operation!: Promise<void>
+      await act(async () => {
+        operation = result.current.handleDelete(true)
+        await Promise.resolve()
+      })
+      rerender({ userId: accountChanged ? 2 : 1, selectedKbId: 2 })
+      act(() => result.current.setDeletingKb({ id: 2 } as KnowledgeBase))
+      await act(async () => {
+        resolve({
+          content_deleted: true,
+          index_cleanup: 'unconfirmed',
+          error_code: 'external_engine_unavailable',
+          can_continue: false,
+        })
+        await operation
+      })
+      expect(sidebar.clearSelection).not.toHaveBeenCalled()
+      expect(push).not.toHaveBeenCalled()
+      expect(result.current.deletingKb?.id).toBe(2)
+      expect(result.current.isDeleting).toBe(false)
+      expect(toast.warning).not.toHaveBeenCalled()
+    }
+  )
   beforeEach(() => {
     jest.clearAllMocks()
     jest.mocked(createCodeWiki).mockResolvedValue({
@@ -62,9 +151,7 @@ describe('creating a Code Wiki', () => {
       refreshAll,
       clearSelection: jest.fn(),
     }
-    const { result } = renderHook(() =>
-      useKnowledgeBaseDialogs({ sidebar, reloadGroupKbs: jest.fn() })
-    )
+    const { result } = renderHook(() => useKnowledgeBaseDialogs({ sidebar }))
 
     await act(async () => {
       await result.current.handleCreate({
@@ -104,9 +191,7 @@ describe('creating a Code Wiki', () => {
       refreshAll: jest.fn().mockResolvedValue(undefined),
       clearSelection: jest.fn(),
     }
-    const { result } = renderHook(() =>
-      useKnowledgeBaseDialogs({ sidebar, reloadGroupKbs: jest.fn() })
-    )
+    const { result } = renderHook(() => useKnowledgeBaseDialogs({ sidebar }))
 
     await act(async () => {
       await result.current.handleCreate({
@@ -153,9 +238,7 @@ describe('creating a normal knowledge base', () => {
       refreshAll: jest.fn().mockResolvedValue(undefined),
       clearSelection: jest.fn(),
     }
-    const { result } = renderHook(() =>
-      useKnowledgeBaseDialogs({ sidebar, reloadGroupKbs: jest.fn() })
-    )
+    const { result } = renderHook(() => useKnowledgeBaseDialogs({ sidebar }))
 
     await act(async () => {
       await result.current.handleCreate({
@@ -169,4 +252,145 @@ describe('creating a normal knowledge base', () => {
     )
     expect(result.current.isCreating).toBe(false)
   })
+})
+
+it('retains the created library identity and does not recreate when list refresh fails', async () => {
+  jest
+    .mocked(createKnowledgeBase)
+    .mockResolvedValueOnce({ id: 29, name: 'Created once', namespace: 'default' } as never)
+  const sidebar = {
+    groups: [],
+    selectedGroupId: null,
+    currentUser: { id: 1 },
+    selectedKbId: null,
+    refreshAll: jest.fn().mockRejectedValue(new Error('list offline')),
+    clearSelection: jest.fn(),
+  }
+  const { result } = renderHook(() => useKnowledgeBaseDialogs({ sidebar }))
+  await act(async () => result.current.handleCreate({ name: 'Created once' }))
+  expect(result.current.createdKb).toEqual({ id: 29, name: 'Created once', namespace: 'default' })
+  expect(result.current.createError).toBeNull()
+  expect(result.current.createRefreshError).toBe('list offline')
+  const calls = jest.mocked(createKnowledgeBase).mock.calls.length
+  await act(async () => result.current.handleCreate({ name: 'Created once' }))
+  expect(createKnowledgeBase).toHaveBeenCalledTimes(calls)
+})
+
+it('rechecks the selected team before creating even through a previously captured submit callback', async () => {
+  const sidebar = {
+    groups: [{ id: 'group-team', name: 'team', displayName: 'Team', type: 'group' }],
+    filterGroupId: 'group-team',
+    selectedGroupId: null,
+    currentUser: { id: 1 },
+    selectedKbId: null,
+    refreshAll: jest.fn().mockResolvedValue(undefined),
+    clearSelection: jest.fn(),
+  }
+  const { result, rerender } = renderHook(
+    ({ canCreate }) =>
+      useKnowledgeBaseDialogs({
+        sidebar,
+        availableGroups: [
+          { id: 'group-team', name: 'team', displayName: 'Team', type: 'group', canCreate },
+        ],
+      }),
+    { initialProps: { canCreate: true } }
+  )
+  act(() => result.current.handleCreateKbFromAll('notebook'))
+  expect(result.current.defaultCreateGroupId).toBe('group-team')
+  const submit = result.current.handleCreate
+  const calls = jest.mocked(createKnowledgeBase).mock.calls.length
+  rerender({ canCreate: false })
+  await act(async () => {
+    await expect(submit({ name: 'Team library', selectedGroupId: 'group-team' })).rejects.toThrow(
+      'document.creation.spaceUnavailable'
+    )
+  })
+  expect(createKnowledgeBase).toHaveBeenCalledTimes(calls)
+  expect(result.current.createdKb).toBeNull()
+})
+
+it('ignores a late creation response after changing account and keeps the new scope idle', async () => {
+  let finish!: (value: never) => void
+  jest.mocked(createKnowledgeBase).mockImplementationOnce(
+    () =>
+      new Promise(resolve => {
+        finish = resolve
+      })
+  )
+  const base = {
+    groups: [],
+    selectedGroupId: null,
+    selectedKbId: null,
+    refreshAll: jest.fn().mockResolvedValue(undefined),
+    clearSelection: jest.fn(),
+  }
+  const { result, rerender } = renderHook(
+    ({ userId }) =>
+      useKnowledgeBaseDialogs({
+        sidebar: { ...base, currentUser: { id: userId } },
+      }),
+    { initialProps: { userId: 1 } }
+  )
+  let request!: Promise<void>
+  act(() => {
+    request = result.current.handleCreate({ name: 'Old library' })
+  })
+  await waitFor(() => expect(finish).toBeDefined())
+  rerender({ userId: 2 })
+  await act(async () => {
+    finish({ id: 29, name: 'Old library', namespace: 'default' } as never)
+    await request
+  })
+  expect(result.current.createdKb).toBeNull()
+  expect(result.current.isCreating).toBe(false)
+  expect(base.refreshAll).not.toHaveBeenCalled()
+})
+
+it('does not send the deferred document create when its account scope has already changed', async () => {
+  jest
+    .mocked(createKnowledgeBase)
+    .mockResolvedValue({ id: 29, name: 'Old library', namespace: 'default' } as never)
+  const base = {
+    groups: [],
+    selectedGroupId: null,
+    selectedKbId: null,
+    refreshAll: jest.fn().mockResolvedValue(undefined),
+    clearSelection: jest.fn(),
+  }
+  const { result, rerender } = renderHook(
+    ({ userId }) =>
+      useKnowledgeBaseDialogs({
+        sidebar: { ...base, currentUser: { id: userId } },
+      }),
+    { initialProps: { userId: 1 } }
+  )
+  const calls = jest.mocked(createKnowledgeBase).mock.calls.length
+  let request!: Promise<void>
+  act(() => {
+    request = result.current.handleCreate({ name: 'Old library' })
+    rerender({ userId: 2 })
+  })
+  await act(async () => request)
+  expect(createKnowledgeBase).toHaveBeenCalledTimes(calls)
+  expect(result.current.createdKb).toBeNull()
+})
+
+it.each([
+  ['space:personal', 'personal'],
+  ['organization', 'organization'],
+])('opens creation in the selected space %s', (filter, expected) => {
+  const sidebar = {
+    groups: [],
+    filterGroupId: filter,
+    selectedGroupId: null,
+    currentUser: { id: 1 },
+    selectedKbId: null,
+    refreshAll: jest.fn().mockResolvedValue(undefined),
+    clearSelection: jest.fn(),
+  }
+  const { result } = renderHook(() => useKnowledgeBaseDialogs({ sidebar }))
+  act(() => result.current.handleCreateKbFromAll('notebook'))
+  expect(result.current.defaultCreateGroupId).toBe(expected)
+  expect(result.current.showCreateDialog).toBe(true)
 })

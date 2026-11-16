@@ -1,10 +1,12 @@
+// @vitest-environment node
+
+import type { RuntimeProjectWork } from '@/types/api'
 import { describe, expect, test } from 'vitest'
 import {
   resolveRuntimeTaskProjects,
   runtimeProjectToProject,
   runtimeProjectUiId,
 } from './runtime-project'
-import type { RuntimeProjectWork } from '@/types/api'
 
 describe('runtime project helpers', () => {
   test('includes remote runtime projects in task project choices', () => {

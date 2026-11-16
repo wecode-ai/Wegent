@@ -10,6 +10,11 @@ import { useBrowserRuntimeConversation } from './useBrowserRuntimeConversation'
 import { BrowserTaskComposer } from './BrowserTaskComposer'
 
 import type { RuntimeTaskAddress } from '@wegent/chat-core/runtime'
+import {
+  ToolInteractionServicesProvider,
+  useToolInteractionServices,
+} from '../conversation/ToolInteractionServices'
+import { useMemo } from 'react'
 
 function BrowserTaskConversationContentContent({
   runtime,
@@ -26,6 +31,11 @@ function BrowserTaskConversationContentContent({
   preview?: boolean
   testId?: string
 }) {
+  const inheritedServices = useToolInteractionServices()
+  const toolServices = useMemo(
+    () => ({ ...inheritedServices, requestUserInputSource: address }),
+    [inheritedServices, address]
+  )
   const { state, session, task, markdown, conversation, metadataError, actionError, reload } =
     useBrowserRuntimeConversation(runtime, address, translate, projectId)
   return (
@@ -69,13 +79,15 @@ function BrowserTaskConversationContentContent({
             />
           }
         >
-          <ScrollableMessageArea
-            {...conversation}
-            className="min-h-0 flex-1"
-            scrollTestId="right-workspace-chat-scroll-area"
-            initialScrollPosition={preview ? 'latest' : 'restore'}
-            messageListClassName={`${DESKTOP_MESSAGE_LIST_WIDTH_CLASS} pb-4 pt-5`}
-          />
+          <ToolInteractionServicesProvider value={toolServices}>
+            <ScrollableMessageArea
+              {...conversation}
+              className="min-h-0 flex-1"
+              scrollTestId="right-workspace-chat-scroll-area"
+              initialScrollPosition={preview ? 'latest' : 'restore'}
+              messageListClassName={`${DESKTOP_MESSAGE_LIST_WIDTH_CLASS} pb-4 pt-5`}
+            />
+          </ToolInteractionServicesProvider>
         </TemporaryConversationLayout>
       </ConversationTranslationProvider>
     </MarkdownServicesProvider>

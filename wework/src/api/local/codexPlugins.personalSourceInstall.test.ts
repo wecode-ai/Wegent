@@ -1,8 +1,12 @@
-import { beforeEach, describe, expect, test, vi } from 'vitest'
 import type { PluginMarketplaceItem } from '@/types/api'
+import { beforeEach, describe, expect, test, vi } from 'vitest'
 import { clearLocalCodexPluginsReadStateCache, createLocalCodexPluginApi } from './codexPlugins'
 
 const mocks = vi.hoisted(() => ({ request: vi.fn(), resume: vi.fn() }))
+vi.mock('@/api/local/runtimeAuthStatus', () => ({
+  getLocalCodexAuthStatus: vi.fn().mockResolvedValue({ sha256: 'test-account' }),
+}))
+
 vi.mock('@/lib/runtime-environment', () => ({
   isDesktopRuntime: () => true,
   isElectronRuntime: () => true,
@@ -58,12 +62,15 @@ function fixture(
     failRead?: string
     pauseAt?: string
     pause?: Promise<void>
+    installedMarketplacePath?: string
   } = {}
 ) {
   let committed = false
   mocks.request.mockImplementation(async (method: string, payload?: { method?: string }) => {
     if (method === options.pauseAt) await options.pause
     if (method === options.failRead) throw new Error(`Unavailable ${method}`)
+    if (method === 'executor.codex_home.config.read')
+      return { enabledPluginKeys: committed ? [membership.id] : [] }
     if (method === 'executor.plugins.personal.list')
       return { marketplaceId: 'wework-personal', marketplacePath: path, plugins: [source] }
     if (method === 'executor.plugins.links.list')
@@ -95,7 +102,13 @@ function fixture(
     if (method === 'executor.plugins.manifest.read') return {}
     if (method === 'codex.app_server_request' && payload?.method === 'plugin/installed')
       return {
-        marketplaces: [{ name: 'wework-personal', path, plugins: committed ? [membership] : [] }],
+        marketplaces: [
+          {
+            name: 'wework-personal',
+            path: options.installedMarketplacePath ?? path,
+            plugins: committed ? [membership] : [],
+          },
+        ],
       }
     if (method === 'codex.app_server_request' && payload?.method === 'plugin/read')
       return { plugin: { summary: membership, description: 'Author source', skills: [] } }
@@ -112,6 +125,46 @@ beforeEach(() => {
 })
 
 describe('personal source reinstall', () => {
+  test.each([path, '/alias/personal'])(
+    'confirms installed source at the Executor-validated canonical root or selected alias: %s',
+    async installedMarketplacePath => {
+      fixture({ installedMarketplacePath })
+      const selected = {
+        ...item,
+        localPersonalSource: { marketplacePath: '/alias/personal', pluginName: name },
+      }
+
+      const installed = await createLocalCodexPluginApi().installPersonalPluginSource(
+        selected,
+        () => true
+      )
+
+      expect(mocks.request).toHaveBeenCalledWith('executor.plugins.personal.list', {
+        marketplacePath: '/alias/personal',
+      })
+      expect(mocks.request).toHaveBeenCalledWith(nativeInstall, {
+        marketplacePath: `${path}/.agents/plugins/marketplace.json`,
+        pluginName: name,
+      })
+      expect(installed.spec.sourcePayload?.cloudPluginId).toBe(42)
+      expect(installed.spec.source.type).toBe('local')
+    }
+  )
+
+  test('rejects an installed marketplace path that the Executor did not validate for this selection', async () => {
+    fixture({ installedMarketplacePath: '/unrelated/personal' })
+
+    await expect(
+      createLocalCodexPluginApi().installPersonalPluginSource(
+        {
+          ...item,
+          localPersonalSource: { marketplacePath: '/alias/personal', pluginName: name },
+        },
+        () => true
+      )
+    ).rejects.toThrow('Installed personal plugin source identity could not be confirmed')
+  })
+
   test('uses the verified source and native commit, preserving cloud identity and local version', async () => {
     const installed = await createLocalCodexPluginApi().installPersonalPluginSource(
       item,
@@ -135,6 +188,25 @@ describe('personal source reinstall', () => {
     ).toBe(false)
   })
 
+  test.each([{ linkedId: 99 }, { missingLink: true }, { managedPath: sourcePath }])(
+    'filesystem aliases preserve author-link and managed-package rejection: %j',
+    async options => {
+      fixture(options)
+
+      await expect(
+        createLocalCodexPluginApi().installPersonalPluginSource(
+          {
+            ...item,
+            localPersonalSource: { marketplacePath: '/alias/personal', pluginName: name },
+          },
+          () => true
+        )
+      ).rejects.toThrow()
+
+      expect(mocks.request.mock.calls.some(([method]) => method === nativeInstall)).toBe(false)
+    }
+  )
+
   test.each([
     { linkedId: 99 },
     { missingLink: true },
@@ -152,18 +224,6 @@ describe('personal source reinstall', () => {
     expect(mocks.request.mock.calls.some(([method]) => method === nativeInstall)).toBe(false)
   })
 
-  test('keeps an independent source distinct from a same-plugin managed package at another path', async () => {
-    fixture({ managedPath: '/executor/store/managed-package' })
-
-    const installed = await createLocalCodexPluginApi().installPersonalPluginSource(
-      item,
-      () => true
-    )
-
-    expect(installed.spec.source.type).toBe('local')
-    expect(installed.spec.sourcePayload?.managedByWegent).not.toBe(true)
-  })
-
   test('does not grant source installation to a recipient even with a stale source hint', async () => {
     await expect(
       createLocalCodexPluginApi().installPersonalPluginSource(
@@ -172,29 +232,5 @@ describe('personal source reinstall', () => {
       )
     ).rejects.toThrow('identity is unavailable')
     expect(mocks.request).not.toHaveBeenCalled()
-  })
-
-  test.each([
-    'executor.plugins.personal.list',
-    'executor.plugins.links.list',
-    'executor.plugins.store.list',
-  ])('ignores source verification from an expired account scope after %s', async phase => {
-    let release!: () => void
-    const pause = new Promise<void>(resolve => {
-      release = resolve
-    })
-    let current = true
-    fixture({ pauseAt: phase, pause })
-    const result = createLocalCodexPluginApi().installPersonalPluginSource(item, () => current)
-    const rejection = expect(result).rejects.toThrow('account changed')
-    await vi.waitFor(() =>
-      expect(mocks.request.mock.calls.some(([method]) => method === phase)).toBe(true)
-    )
-
-    current = false
-    release()
-    await rejection
-
-    expect(mocks.request.mock.calls.some(([method]) => method === nativeInstall)).toBe(false)
   })
 })

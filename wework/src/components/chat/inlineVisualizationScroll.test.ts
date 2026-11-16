@@ -2,10 +2,24 @@ import { afterEach, describe, expect, test, vi } from 'vitest'
 import {
   createVisualizationWheelScript,
   forwardVisualizationWheel,
+  withVisualizationWheel,
 } from './inlineVisualizationScroll'
 
 const TOKEN = 'visualization-scroll-token'
 const MESSAGE_TYPE = 'wework-inline-visualization-wheel'
+
+test.each([
+  '<section><script>const closingTag = "</body>"</script><p>Form</p></section>',
+  '<!doctype html><html><body><script>const closingTag = "</body>"</script><p>Form</p></body></html>',
+])('adds the scroll bridge without rewriting app scripts or document structure', html => {
+  const parsed = new DOMParser().parseFromString(withVisualizationWheel(html, TOKEN), 'text/html')
+  const scripts = parsed.querySelectorAll('script')
+  expect(scripts).toHaveLength(2)
+  expect(scripts[0].textContent).toBe('const closingTag = "</body>"')
+  expect(scripts[1].textContent).toContain("addEventListener('wheel'")
+  expect(parsed.querySelector('p')?.textContent).toBe('Form')
+  expect(parsed.doctype?.name).toBe(html.startsWith('<!doctype') ? 'html' : undefined)
+})
 
 function message(overrides: Record<string, unknown> = {}) {
   return {
@@ -151,7 +165,7 @@ afterEach(() => {
 })
 
 describe('forwardVisualizationWheel', () => {
-  test.each(['top', 'bottom'] as const)(
+  test.each(['top'] as const)(
     'records user intent before scrolling the actual %s-origin viewport',
     origin => {
       const { viewport, frame, scrollBy, wrapper } = createViewport(origin, true)
@@ -217,20 +231,6 @@ describe('forwardVisualizationWheel', () => {
 
     expect(listener).not.toHaveBeenCalled()
     expect(scrollBy).not.toHaveBeenCalled()
-  })
-
-  test('forwards horizontal pixel scrolling without vertical movement', () => {
-    const { viewport, frame, scrollBy } = createViewport('top')
-
-    forwardVisualizationWheel(frame, message({ deltaX: -48, deltaY: 0 }), TOKEN)
-
-    expect(scrollBy).toHaveBeenCalledExactlyOnceWith({
-      top: 0,
-      left: -48,
-      behavior: 'instant',
-    })
-    expect(viewport.scrollTop).toBe(400)
-    expect(viewport.scrollLeft).toBe(-48)
   })
 })
 

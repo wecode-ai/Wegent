@@ -21,7 +21,7 @@ pub(super) struct CollaborativeProject {
     permission_sources: Vec<Value>,
 }
 
-pub(super) fn access_sql(
+pub(crate) fn access_sql(
     user_id: i32,
     project_id: Option<i64>,
     workspace_id: Option<i64>,

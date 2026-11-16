@@ -165,11 +165,11 @@ impl AssistantTurnAccumulation {
                 AssistantItemIdentity::Block(index) => {
                     let block = self.blocks.get(*index)?;
                     let id = string_field(block, "id")?;
-                    Some(json!({
-                        "id": id,
-                        "type": "block",
-                        "block": block,
-                    }))
+                    Some(Value::Object(Map::from_iter([
+                        ("id".to_owned(), Value::String(id)),
+                        ("type".to_owned(), Value::String("block".to_owned())),
+                        ("block".to_owned(), block.clone()),
+                    ])))
                 }
                 AssistantItemIdentity::Text(index) => {
                     self.assistant_parts.get(*index).map(|part| {
@@ -650,12 +650,12 @@ pub(super) fn collect_assistant_message(
     item: &Value,
     fallback_timestamp: i64,
     fold_commentary: bool,
-    unphased_is_process: bool,
+    unphased_process: bool,
     assistant: &mut AssistantTurnAccumulation,
     options: TranscriptBuildOptions,
 ) {
     if let Some(content) = extract_text(item) {
-        match assistant_message_phase(item, fold_commentary, unphased_is_process) {
+        match assistant_message_phase(item, fold_commentary, unphased_process) {
             AssistantMessagePhase::Process => {
                 assistant.blocks.push(process_text_block(
                     item,
@@ -710,13 +710,12 @@ enum AssistantMessagePhase {
 fn assistant_message_phase(
     item: &Value,
     fold_commentary: bool,
-    unphased_is_process: bool,
+    unphased_process: bool,
 ) -> AssistantMessagePhase {
     match assistant_message_phase_name(item).as_deref() {
         Some("analysis") => AssistantMessagePhase::Process,
         Some("commentary") if fold_commentary => AssistantMessagePhase::Process,
-        // A completed item can precede a tool while its turn is still active.
-        None if unphased_is_process
+        None if unphased_process
             || string_field(item, "status")
                 .is_some_and(|status| normalized_phase_or_status(status) == "inprogress") =>
         {
@@ -819,9 +818,9 @@ fn synthetic_assistant_message(draft: AssistantMessageDraft<'_>) -> Value {
         "subtaskId": draft.subtask_id,
         "turnId": draft.turn_id,
         "createdAt": draft.created_at,
-        "blocks": draft.blocks,
-        "runtimeItems": draft.runtime_items,
     });
+    message["blocks"] = Value::Array(draft.blocks.to_vec());
+    message["runtimeItems"] = Value::Array(draft.runtime_items.to_vec());
     if draft.options.truncate_content {
         limit_content_field(&mut message, MAX_TRANSCRIPT_MESSAGE_CONTENT_CHARS);
     }

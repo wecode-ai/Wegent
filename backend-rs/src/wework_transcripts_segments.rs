@@ -589,7 +589,7 @@ async fn store_segment(
             "Uploaded transcript segment size does not match its manifest",
         ));
     }
-    let digest = crate::attachments::s3_signing::hex_sha256(file_bytes);
+    let digest = wegent_storage::s3_signing::hex_sha256(file_bytes);
     if digest != request.sha256 {
         return Err(transcript_error(
             brz_http_server::StatusCode::UNPROCESSABLE_ENTITY,
@@ -750,7 +750,7 @@ fn is_snapshot(request: &SegmentRequest) -> bool {
 
 /// `_segment_object_key`: the per-user, per-transcript content-addressed key.
 fn segment_object_key(user_id: i32, transcript_id: &str, request: &SegmentRequest) -> String {
-    let transcript_key = crate::attachments::s3_signing::hex_sha256(transcript_id.as_bytes());
+    let transcript_key = wegent_storage::s3_signing::hex_sha256(transcript_id.as_bytes());
     let kind = if is_snapshot(request) {
         "snapshot"
     } else {

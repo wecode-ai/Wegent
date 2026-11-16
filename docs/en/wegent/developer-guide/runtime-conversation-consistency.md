@@ -8,6 +8,10 @@ The shared conversation Store owns Wework transcripts. Execution lifecycle, Goal
 
 ## Ordering contract
 
+A history page can contain older turns and the live turn while omitting Goal continuations already observed locally. Turn and item merging share the same neighboring-identity insertion logic, placing missing turns between their observed neighbors instead of appending them after the live turn. Hydration uses that same merge entry point when supplying prerequisites for buffered deltas, so concatenation cannot become a false native-order anchor. Optimistic input without a native identity stays at the tail.
+
+Diagnostic snapshots export explicitly allowed device identity, status, and routing fields; raw cloud-device and remote connection configuration is excluded.
+
 The pinned Codex `0.163.0-alpha.5` supports `thread/timeline/list`. Entries carry their canonical rollout `position`; the initial request reads the newest window, and `nextCursor` pages backwards. Each native request returns at most 100 entries. Ordinary executor reads combine at most five pages; only explicit full-content requests traverse the remaining history. Native cursors remain opaque.
 
 `thread/items/list` supplies ordered arrays, but its entries and live notifications do not share a persisted position or snapshot revision. Receive order, timestamps, tool completion times, and text equality cannot establish canonical history order.
@@ -23,6 +27,8 @@ Persisted items use native positions; unpositioned runtime items retain their ob
 Turn lifecycle is independent of unpersisted items. Native `turns/list` can synthesize interruption while its runtime observation is catching up. When the executor still owns that exact active turn and the timeline has no `turnCompleted` boundary, projection keeps it running even if the live buffer is empty or all observed items have been persisted. An actual terminal boundary wins; its marker survives pagination cursors and cannot be reopened by the active buffer.
 
 Turns and items share the same position and neighboring-identity ordering rules. Cached turns outside the newest history page that have no native position remain before their observed next native turn; appending all of them to the conversation tail would displace current Goal output and select an old reply as active. A new live turn without an observed native successor remains at the tail. Page merges must not invent adjacency for old cached turns from the merged array.
+
+Answering an asynchronous question can preempt streamed text while Codex continues the same turn. The interrupted prefix may exist only as a live item without a persisted position. The executor must retain completed live-item identities as neighboring anchors when overlaying that prefix, placing it before the subsequent guidance input. Omitting completed bodies must not discard their ordering anchors or append the old prefix after newer progress. Existing native item order and positions remain authoritative. The `streaming-content` desktop checkpoint uses real Codex, an async question option click, and model stream preemption to cover live rendering, reload recovery, and completed history.
 
 User messages must use their containing turn's canonical identity instead of retaining an earlier request alias. When editing or retrying replaces a turn, the executor records supersession for both the request alias and native ID using the persisted native mapping, so optimistic caches, native history, and reloaded history remove the same old turn.
 

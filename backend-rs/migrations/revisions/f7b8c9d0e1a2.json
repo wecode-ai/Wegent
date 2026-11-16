@@ -1,0 +1,81 @@
+{
+  "revision": "f7b8c9d0e1a2",
+  "parents": [
+    "e4a7b9c2d1f0"
+  ],
+  "source": "20260904_f7b8c9d0e1a2_add_wework_transcript_sync.py",
+  "upgrade": [
+    {
+      "sql": [
+        "CREATE TABLE wework_transcripts (\n    id BIGINT NOT NULL COMMENT 'Wework transcript primary key' AUTO_INCREMENT, \n    user_id INTEGER NOT NULL COMMENT 'Owner user ID' DEFAULT '0', \n    transcript_id VARCHAR(100) NOT NULL COMMENT 'Device-independent transcript identity' DEFAULT '', \n    parent_transcript_id VARCHAR(100) NOT NULL COMMENT 'Parent transcript identity; empty means this is a root transcript' DEFAULT '', \n    forked_at_sequence BIGINT NOT NULL COMMENT 'Parent sequence used to fork; 0 means no parent fork point' DEFAULT '0', \n    title VARCHAR(512) NOT NULL COMMENT 'Transcript display title' DEFAULT '', \n    state VARCHAR(20) NOT NULL COMMENT 'Transcript lifecycle state: active or archived' DEFAULT 'active', \n    current_sequence BIGINT NOT NULL COMMENT 'Latest synchronized hot turn sequence' DEFAULT '0', \n    archived_through_sequence BIGINT NOT NULL COMMENT 'Latest sequence moved to immutable archive storage' DEFAULT '0', \n    writer_client_id VARCHAR(100) NOT NULL COMMENT 'Current writer device ID; empty means no active writer' DEFAULT '', \n    writer_fencing_token BIGINT NOT NULL COMMENT 'Monotonic token fencing stale device writes' DEFAULT '0', \n    writer_lease_expires_at DATETIME(6) NOT NULL COMMENT 'Writer lease expiry time; epoch means no active lease' DEFAULT '1970-01-01 00:00:00.000000', \n    archived_at DATETIME(6) NOT NULL COMMENT 'Archive time; epoch means the transcript is not archived' DEFAULT '1970-01-01 00:00:00.000000', \n    created_at DATETIME(6) NOT NULL COMMENT 'Creation time' DEFAULT CURRENT_TIMESTAMP(6), \n    updated_at DATETIME(6) NOT NULL COMMENT 'Last update time' DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6), \n    PRIMARY KEY (id), \n    CONSTRAINT uniq_wework_transcript_user_identity UNIQUE (user_id, transcript_id)\n)CHARSET=utf8mb4 ENGINE=InnoDB COMMENT='Device-independent Wework transcript synchronization state'"
+      ]
+    },
+    {
+      "sql": [
+        "CREATE INDEX idx_wework_transcript_user_updated ON wework_transcripts (user_id, updated_at)"
+      ]
+    },
+    {
+      "sql": [
+        "CREATE INDEX idx_wework_transcript_parent ON wework_transcripts (user_id, parent_transcript_id)"
+      ]
+    },
+    {
+      "sql": [
+        "CREATE TABLE wework_transcript_turns (\n    id BIGINT NOT NULL COMMENT 'Wework transcript turn primary key' AUTO_INCREMENT, \n    transcript_db_id BIGINT NOT NULL COMMENT 'Owning transcript ID; logical reference without database foreign key' DEFAULT '0', \n    sequence BIGINT NOT NULL COMMENT 'Monotonic turn sequence within the transcript' DEFAULT '0', \n    turn_id VARCHAR(100) NOT NULL COMMENT 'Device-independent finalized turn identity' DEFAULT '', \n    payload JSON NOT NULL COMMENT 'Finalized transcript turn payload', \n    created_at DATETIME(6) NOT NULL COMMENT 'Creation time' DEFAULT CURRENT_TIMESTAMP(6), \n    PRIMARY KEY (id), \n    CONSTRAINT uniq_wework_transcript_turn_sequence UNIQUE (transcript_db_id, sequence), \n    CONSTRAINT uniq_wework_transcript_turn_identity UNIQUE (transcript_db_id, turn_id)\n)CHARSET=utf8mb4 ENGINE=InnoDB COMMENT='Hot finalized turns awaiting transcript archival'"
+      ]
+    },
+    {
+      "sql": [
+        "CREATE INDEX idx_wework_transcript_turn_range ON wework_transcript_turns (transcript_db_id, sequence)"
+      ]
+    },
+    {
+      "sql": [
+        "CREATE TABLE wework_transcript_archives (\n    id BIGINT NOT NULL COMMENT 'Wework transcript archive primary key' AUTO_INCREMENT, \n    transcript_db_id BIGINT NOT NULL COMMENT 'Owning transcript ID; logical reference without database foreign key' DEFAULT '0', \n    from_sequence BIGINT NOT NULL COMMENT 'First turn sequence contained in the archive' DEFAULT '0', \n    to_sequence BIGINT NOT NULL COMMENT 'Last turn sequence contained in the archive' DEFAULT '0', \n    storage_key VARCHAR(500) NOT NULL COMMENT 'Immutable object-storage key for the compressed archive' DEFAULT '', \n    sha256 VARCHAR(64) NOT NULL COMMENT 'SHA-256 digest of the compressed archive' DEFAULT '', \n    size_bytes BIGINT NOT NULL COMMENT 'Compressed archive size in bytes' DEFAULT '0', \n    format VARCHAR(32) NOT NULL COMMENT 'Archive serialization and compression format' DEFAULT 'jsonl.zst', \n    created_at DATETIME(6) NOT NULL COMMENT 'Creation time' DEFAULT CURRENT_TIMESTAMP(6), \n    PRIMARY KEY (id), \n    CONSTRAINT uniq_wework_transcript_archive_range UNIQUE (transcript_db_id, from_sequence, to_sequence)\n)CHARSET=utf8mb4 ENGINE=InnoDB COMMENT='Immutable archived Wework transcript segments'"
+      ]
+    },
+    {
+      "sql": [
+        "CREATE INDEX idx_wework_transcript_archive_range ON wework_transcript_archives (transcript_db_id, from_sequence)"
+      ]
+    }
+  ],
+  "downgrade": [
+    {
+      "sql": [
+        "DROP INDEX idx_wework_transcript_archive_range ON wework_transcript_archives"
+      ]
+    },
+    {
+      "sql": [
+        "DROP TABLE wework_transcript_archives"
+      ]
+    },
+    {
+      "sql": [
+        "DROP INDEX idx_wework_transcript_turn_range ON wework_transcript_turns"
+      ]
+    },
+    {
+      "sql": [
+        "DROP TABLE wework_transcript_turns"
+      ]
+    },
+    {
+      "sql": [
+        "DROP INDEX idx_wework_transcript_parent ON wework_transcripts"
+      ]
+    },
+    {
+      "sql": [
+        "DROP INDEX idx_wework_transcript_user_updated ON wework_transcripts"
+      ]
+    },
+    {
+      "sql": [
+        "DROP TABLE wework_transcripts"
+      ]
+    }
+  ]
+}

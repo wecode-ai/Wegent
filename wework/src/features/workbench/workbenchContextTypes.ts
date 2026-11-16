@@ -1,9 +1,9 @@
 import type { EnvironmentDiffMode, EnvironmentInfoLoadOptions } from '@/api/environment'
 import type { ModelSelectorCloseReason } from '@wegent/collaboration/controls/model-selector-types'
 import type { RuntimeTaskLifecycleStore } from './runtimeTaskLifecycle'
+import type { ModelSelectionDiagnostics } from './modelSelectionDiagnostics'
 import type {
   Attachment,
-  BindRuntimeTaskIMSessionsResponse,
   CloneGitRepositoryInput,
   CreatedRuntimeProject,
   CreateGitWorkspaceProjectRequest,
@@ -63,7 +63,6 @@ import type {
 } from '@/types/api'
 import type { WorkbenchWorkspaceLaunchOptions } from './workspaceLaunchRequest'
 import type { DeviceUpgradeState } from '@/types/device-events'
-import type { DockerRemoteDeviceCommandResponse } from '@/types/devices'
 import type { EnvironmentInfo } from '@/types/environment'
 import type { CodeCommentContext, WorkspaceFileApi, WorkspaceTarget } from '@/types/workspace-files'
 import type {
@@ -91,6 +90,7 @@ export type ArchiveRuntimeTaskResult = {
 
 export type RefreshWorkLists = (options?: {
   syncCloud?: boolean
+  refreshDevices?: boolean
   unarchivedTasks?: RuntimeTaskAddress[]
 }) => Promise<void>
 
@@ -198,9 +198,14 @@ export interface RuntimePaneGuidanceResult {
 }
 
 export interface RuntimeTaskModelSelectionControls {
+  /** Whether the conversation's persisted selection has been loaded, even when it has none. */
+  selectionResolved: boolean
+  /** Whether the resolved selection can be used to send, i.e. its model is available. */
+  selectionReady: boolean
   taskSelection: ModelSelectionConfig | null
   selectedModel: UnifiedModel | null
   activeModel: UnifiedModel | null
+  supportsModelProviderSwitch?: boolean
   selectedModelOptions: ModelOptions
 }
 
@@ -215,11 +220,16 @@ export interface WorkbenchContextValue {
   projectChat: {
     scopeKey: string
     inputByScope: Readonly<Record<string, string>>
+    goalDraftActiveByScope: Readonly<Record<string, boolean>>
+    setGoalDraftActiveForScope: (scopeKey: string, active: boolean) => void
     models: UnifiedModel[]
     skills: UnifiedSkill[]
     selectedModel: UnifiedModel | null
     activeModel?: UnifiedModel | null
+    supportsModelProviderSwitch?: boolean
     selectedModelOptions: ModelOptions
+    selectionRevision?: number
+    modelSelectionDiagnostics?: ModelSelectionDiagnostics
     isModelCatalogReady: boolean
     isModelSelectionReady: boolean
     onModelSelectorOpenChange?: (open: boolean, closeReason?: ModelSelectorCloseReason) => void
@@ -242,14 +252,6 @@ export interface WorkbenchContextValue {
     isAttachmentReadyToSend: boolean
     setSelectedModel: (model: UnifiedModel | null) => void
     setSelectedModelAndOptions?: (model: UnifiedModel, options: ModelOptions) => void
-    continueInNewConversation?: (
-      model: UnifiedModel,
-      options?: ModelOptions,
-      source?: {
-        address?: RuntimeTaskAddress
-        draft?: string
-      }
-    ) => void
     setSelectedModelOption: (optionId: string, value: string) => void
     getSelectedModel?: () => UnifiedModel | null
     getSelectedModelOptions?: () => ModelOptions
@@ -357,10 +359,6 @@ export interface WorkbenchContextValue {
   setRuntimeGoal: (request: RuntimeGoalSetRequest) => Promise<RuntimeGoalSetResponse>
   clearRuntimeGoal: (address: RuntimeTaskAddress) => Promise<RuntimeGoalClearResponse>
   listImPrivateSessions: () => Promise<IMPrivateSessionListResponse>
-  bindRuntimeTaskToImSessions: (
-    address: RuntimeTaskAddress,
-    sessionKeys: string[]
-  ) => Promise<BindRuntimeTaskIMSessionsResponse>
   getImNotificationSettings: () => Promise<RuntimeIMNotificationSettingsResponse>
   updateGlobalImNotification: (
     data: RuntimeGlobalIMNotificationUpdateRequest
@@ -373,7 +371,6 @@ export interface WorkbenchContextValue {
   ) => Promise<RuntimeTaskIMNotificationSubscriptionResponse>
   refreshWorkLists: RefreshWorkLists
   refreshDevices: () => Promise<void>
-  getRemoteDeviceStartupCommand: () => Promise<DockerRemoteDeviceCommandResponse>
   upgradeDevice: (deviceId: string) => Promise<void>
   createProject: (
     data: CreateProjectRequest,
@@ -505,6 +502,7 @@ export type WorkbenchPaneState = Pick<
   | 'projects'
   | 'devices'
   | 'runtimeWork'
+  | 'runtimeWorkLoad'
   | 'standaloneDeviceId'
   | 'standaloneWorkspacePath'
   | 'selectedDeviceWorkspaceId'

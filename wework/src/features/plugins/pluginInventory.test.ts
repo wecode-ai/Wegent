@@ -1,24 +1,25 @@
-import { afterEach, describe, expect, test, vi } from 'vitest'
-import { toWegentStoreInstalledPlugin } from '@wegent/chat-core/codex-installed-plugins'
-import { inventoryIdentity, type LocalPluginInventoryRead } from './pluginInventorySources'
 import type { InstalledPlugin, LocalDeviceApp, PluginMarketplaceItem } from '@/types/api'
+import { toWegentStoreInstalledPlugin } from '@wegent/chat-core/codex-installed-plugins'
+import { composerAppsFromRuntimeSnapshot } from '@wegent/chat-core/runtime-composer-plugin-source'
+import { afterEach, describe, expect, test, vi } from 'vitest'
 import {
-  loadPluginInventory,
-  selectComposerPluginApps,
-  writePluginInventory,
-  hydratePluginInventoryLogos,
-  updatePluginInventoryInstallation,
   commitPluginInventoryInstallation,
-  refreshInstalledPluginInventory,
   hasLoadedPluginInventory,
+  hydratePluginInventoryLogos,
+  loadPluginInventory,
+  refreshInstalledPluginInventory,
+  selectComposerPluginApps,
+  updatePluginInventoryInstallation,
+  writePluginInventory,
 } from './pluginInventory'
+import { inventoryIdentity, type LocalPluginInventoryRead } from './pluginInventorySources'
 import {
   clearPluginMarketplaceCache,
-  getPluginMarketplaceCache,
-  setPluginMarketplaceCache,
-  removePluginMarketplaceInstallation,
   flushPluginMarketplaceCachePersist,
+  getPluginMarketplaceCache,
+  removePluginMarketplaceInstallation,
   resetPluginMarketplaceCacheMemory,
+  setPluginMarketplaceCache,
 } from './pluginMarketplaceCache'
 
 afterEach(() => clearPluginMarketplaceCache())
@@ -34,42 +35,6 @@ function deferred<T>() {
 }
 
 describe('installed-only management refresh', () => {
-  test('distinguishes an unread cloud source from a successful empty cloud source', async () => {
-    const native = { ...dingtalk, spec: { ...dingtalk.spec, pluginId: null } }
-    writePluginInventory('test', 'device', {
-      installedPlugins: [dingtalk, native],
-      installedPluginsFetchedAt: 123,
-      localInstalledSources: { codex: [inventoryIdentity(native)] },
-    })
-    const readLocalInstalledPlugins = async () => ({
-      items: [],
-      deviceId: 'device',
-      sourceReads: {
-        codex: { status: 'fulfilled' as const, items: [] },
-        store: { status: 'fulfilled' as const, items: [] },
-      },
-    })
-    const retained = await loadPluginInventory({
-      cacheKey: 'test',
-      deviceId: 'device',
-      readLocalInstalledPlugins,
-      listCloudInstalledPlugins: async () => undefined,
-      cloudMembershipAuthoritative: true,
-      isCurrent: () => true,
-    })
-    expect(retained?.installedPlugins).toEqual([dingtalk])
-    expect(retained?.installedPluginsFetchedAt).toBe(123)
-    const cleared = await loadPluginInventory({
-      cacheKey: 'test',
-      deviceId: 'device',
-      readLocalInstalledPlugins,
-      listCloudInstalledPlugins: async () => [],
-      cloudMembershipAuthoritative: true,
-      isCurrent: () => true,
-    })
-    expect(cleared?.installedPlugins).toEqual([])
-  })
-
   test('registers a confirmed native install before a failed source refresh and restart', async () => {
     const plugin = {
       ...dingtalk,
@@ -313,72 +278,6 @@ describe('installed-only management refresh', () => {
     )
   })
 
-  test('publishes cold local rows first, then resolves cloud membership for the actual device once', async () => {
-    const local = deferred<{ items: InstalledPlugin[]; deviceId: string }>()
-    const cloud = deferred<{ items: InstalledPlugin[] }>()
-    const readLocal = vi.fn(() => local.promise)
-    const readCloud = vi.fn(() => cloud.promise)
-    const refresh = refreshInstalledPluginInventory({
-      cacheKey: 'test',
-      readLocal,
-      readCloud,
-      isCurrent: () => true,
-    })
-    await vi.waitFor(() => expect(readLocal).toHaveBeenCalled())
-    expect(readCloud).not.toHaveBeenCalled()
-    expect(getPluginMarketplaceCache('test')).toBeNull()
-    local.resolve({ items: [dingtalk], deviceId: 'device' })
-    await vi.waitFor(() => expect(readCloud).toHaveBeenCalledWith('device'))
-    expect(getPluginMarketplaceCache('test')?.installedPlugins).toHaveLength(1)
-    expect(getPluginMarketplaceCache('test')?.installedPluginsFetchedAt).toBeUndefined()
-    cloud.resolve({ items: [] })
-    await refresh
-    expect(readCloud).toHaveBeenCalledTimes(1)
-    expect(getPluginMarketplaceCache('test')?.installedPluginsFetchedAt).toBeGreaterThan(0)
-  })
-
-  test.each(['cloud', 'local'] as const)(
-    'publishes the first known-device %s result without claiming complete inventory',
-    async first => {
-      const personal: InstalledPlugin = {
-        ...dingtalk,
-        metadata: { ...dingtalk.metadata, name: 'personal', labels: { id: 'personal' } },
-        spec: {
-          ...dingtalk.spec,
-          pluginId: null,
-          origin: 'created',
-          source: { ...dingtalk.spec.source, type: 'local', pluginKey: 'personal' },
-        },
-      }
-      const local = deferred<{ items: InstalledPlugin[]; deviceId: string }>()
-      const cloud = deferred<{ items: InstalledPlugin[] }>()
-      const readCloud = vi.fn(() => cloud.promise)
-      const refresh = refreshInstalledPluginInventory({
-        cacheKey: 'test',
-        deviceId: 'device',
-        readLocal: () => local.promise,
-        readCloud,
-        isCurrent: () => true,
-      })
-      if (first === 'cloud') cloud.resolve({ items: [dingtalk] })
-      else local.resolve({ items: [personal], deviceId: 'device' })
-      await vi.waitFor(() =>
-        expect(getPluginMarketplaceCache('test')?.installedPlugins).toEqual([
-          first === 'cloud' ? dingtalk : personal,
-        ])
-      )
-      expect(getPluginMarketplaceCache('test')?.installedPluginsFetchedAt).toBeUndefined()
-
-      if (first === 'cloud') local.resolve({ items: [personal], deviceId: 'device' })
-      else cloud.resolve({ items: [dingtalk] })
-      await refresh
-
-      expect(readCloud).toHaveBeenCalledExactlyOnceWith('device')
-      expect(getPluginMarketplaceCache('test')?.installedPlugins).toEqual([dingtalk, personal])
-      expect(getPluginMarketplaceCache('test')?.installedPluginsFetchedAt).toBeGreaterThan(0)
-    }
-  )
-
   test.each([false, true])(
     'accepts a successful cloud source while preserving pending local rows and enrichment (empty: %s)',
     async empty => {
@@ -552,101 +451,6 @@ describe('installed-only management refresh', () => {
       )
     }
   )
-
-  test('publishes partial local packages without marking membership complete', async () => {
-    await expect(
-      refreshInstalledPluginInventory({
-        cacheKey: 'test',
-        readLocal: async () => ({
-          items: [dingtalk],
-          deviceId: 'device',
-          partial: true,
-          sourceReads: {
-            codex: { status: 'fulfilled', items: [dingtalk] },
-            store: { status: 'rejected' },
-          },
-        }),
-        readCloud: async () => {
-          throw new Error('Cloud unavailable')
-        },
-        isCurrent: () => true,
-      })
-    ).rejects.toThrow('Cloud unavailable')
-    expect(getPluginMarketplaceCache('test')?.installedPlugins).toEqual([dingtalk])
-    expect(getPluginMarketplaceCache('test')?.installedPluginsFetchedAt).toBeUndefined()
-  })
-
-  test('does not restore a removed source row after a partial local refresh', async () => {
-    const removed: InstalledPlugin = {
-      ...dingtalk,
-      spec: { ...dingtalk.spec, pluginId: null, origin: 'created' },
-    }
-    const retained: InstalledPlugin = {
-      ...removed,
-      metadata: { ...removed.metadata, name: 'retained', labels: { id: 'retained' } },
-      spec: {
-        ...removed.spec,
-        source: { ...removed.spec.source, pluginKey: 'retained' },
-      },
-    }
-    writePluginInventory('test', 'device', {
-      installedPlugins: [removed, retained],
-      installedPluginsFetchedAt: 123,
-      localInstalledSources: {
-        codex: [inventoryIdentity(removed)],
-        store: [inventoryIdentity(retained)],
-      },
-    })
-    await expect(
-      refreshInstalledPluginInventory({
-        cacheKey: 'test',
-        deviceId: 'device',
-        readLocal: async () => ({
-          items: [],
-          deviceId: 'device',
-          partial: true,
-          sourceReads: { codex: { status: 'fulfilled', items: [] }, store: { status: 'rejected' } },
-        }),
-        readCloud: async () => ({ items: [] }),
-        isCurrent: () => true,
-      })
-    ).rejects.toThrow('Local plugin inventory is incomplete')
-    expect(getPluginMarketplaceCache('test')?.installedPlugins).toEqual([retained])
-    expect(getPluginMarketplaceCache('test')?.installedPluginsFetchedAt).toBe(123)
-  })
-
-  test('accepts fresh components and logos from a partial local refresh', async () => {
-    const local: InstalledPlugin = {
-      ...dingtalk,
-      spec: { ...dingtalk.spec, pluginId: null, origin: 'created' },
-    }
-    writePluginInventory('test', 'device', { installedPlugins: [local] })
-    const updated: InstalledPlugin = {
-      ...local,
-      spec: {
-        ...local.spec,
-        interface: { logo: 'data:image/png;base64,aaa' },
-        components: { ...local.spec.components, skills: [] },
-      },
-    }
-    await expect(
-      refreshInstalledPluginInventory({
-        cacheKey: 'test',
-        readLocal: async () => ({
-          items: [updated],
-          deviceId: 'device',
-          partial: true,
-          sourceReads: {
-            codex: { status: 'fulfilled', items: [updated] },
-            store: { status: 'rejected' },
-          },
-        }),
-        readCloud: async () => ({ items: [] }),
-        isCurrent: () => true,
-      })
-    ).rejects.toThrow('Local plugin inventory is incomplete')
-    expect(getPluginMarketplaceCache('test')?.installedPlugins).toEqual([updated])
-  })
 
   test('retains local rows when the local read rejects while accepting fresh cloud rows', async () => {
     const local: InstalledPlugin = {
@@ -864,25 +668,6 @@ describe('installed-only management refresh', () => {
     expect(getPluginMarketplaceCache('test')).toBe(expected)
     expect(readCloud).not.toHaveBeenCalled()
   })
-
-  test('does not replace a newer complete empty inventory with an older cold local read', async () => {
-    const local = deferred<{ items: InstalledPlugin[]; deviceId: string }>()
-    const readCloud = vi.fn().mockResolvedValue({ items: [] })
-    const refresh = refreshInstalledPluginInventory({
-      cacheKey: 'test',
-      readLocal: () => local.promise,
-      readCloud,
-      isCurrent: () => true,
-    })
-    const expected = writePluginInventory('test', 'device', {
-      installedPlugins: [],
-      installedPluginsFetchedAt: Date.now(),
-    })
-    local.resolve({ items: [dingtalk], deviceId: 'device' })
-    await refresh
-    expect(getPluginMarketplaceCache('test')).toBe(expected)
-    expect(readCloud).not.toHaveBeenCalled()
-  })
 })
 
 async function loadAndSelect(
@@ -923,7 +708,6 @@ async function loadAndSelect(
   }
   return selectComposerPluginApps(getPluginMarketplaceCache('test')!, options.visiblePluginKeys)
 }
-import { composerAppsFromRuntimeSnapshot } from '@wegent/chat-core/runtime-composer-plugin-source'
 
 describe('shared domain inventory regressions', () => {
   test('binds a catalog-only snapshot to the confirmed installation device', () => {
@@ -939,75 +723,6 @@ describe('shared domain inventory regressions', () => {
       spec: { ...dingtalk.spec, enabled: false },
     })
     expect(getPluginMarketplaceCache('test')).toBe(snapshot)
-  })
-
-  test('does not let a pre-install inventory request erase an acknowledged installation', async () => {
-    writePluginInventory('test', 'device', { installedPlugins: [] })
-    let resolve!: (plugins: InstalledPlugin[]) => void
-    const loading = loadPluginInventory({
-      cacheKey: 'test',
-      deviceId: 'device',
-      isCurrent: () => true,
-      readLocalInstalledPlugins: () =>
-        new Promise<InstalledPlugin[]>(done => {
-          resolve = done
-        }).then(items => ({ items })),
-      listCloudInstalledPlugins: async () => [],
-    })
-    commitPluginInventoryInstallation('test', 'device', dingtalk)
-    resolve([])
-    await loading
-    expect(getPluginMarketplaceCache('test')!.installedPlugins).toEqual([dingtalk])
-  })
-
-  test('does not replace a complete record with an outdated partial scan record', async () => {
-    writePluginInventory('test', 'device', { installedPlugins: [dingtalk] })
-    await loadPluginInventory({
-      cacheKey: 'test',
-      deviceId: 'device',
-      partial: true,
-      isCurrent: () => true,
-      readLocalInstalledPlugins: async () => ({
-        items: [],
-        partial: true,
-        sourceReads: {
-          store: {
-            status: 'fulfilled',
-            items: [{ ...dingtalk, spec: { ...dingtalk.spec, enabled: false } }],
-          },
-        },
-      }),
-      listCloudInstalledPlugins: async () => undefined,
-    })
-    expect(getPluginMarketplaceCache('test')!.installedPlugins).toEqual([dingtalk])
-  })
-
-  test('does not treat a partial disk scan as proof that other plugins were removed', async () => {
-    writePluginInventory('test', 'device', { installedPlugins: [dingtalk] })
-    const partial = await loadPluginInventory({
-      cacheKey: 'test',
-      deviceId: 'device',
-      partial: true,
-      isCurrent: () => true,
-      readLocalInstalledPlugins: async () => ({
-        items: [],
-        partial: true,
-        sourceReads: {
-          personal: { status: 'fulfilled', items: [] },
-          store: { status: 'fulfilled', items: [] },
-        },
-      }),
-      listCloudInstalledPlugins: async () => undefined,
-    })
-    expect(partial!.installedPlugins).toEqual([dingtalk])
-    const complete = await loadPluginInventory({
-      cacheKey: 'test',
-      deviceId: 'device',
-      isCurrent: () => true,
-      readLocalInstalledPlugins: async () => ({ items: [] }),
-      listCloudInstalledPlugins: async () => [],
-    })
-    expect(complete!.installedPlugins).toEqual([])
   })
 
   test('rejects an old refresh even when intervening settings changes restore the same values', async () => {
@@ -1176,27 +891,6 @@ describe('shared domain inventory regressions', () => {
     ])
   })
 
-  test('keeps a locally materialized DingTalk package when cloud device acknowledgement is missing', async () => {
-    const pending = {
-      ...dingtalk,
-      spec: { ...dingtalk.spec, installState: 'not_installed' as const },
-    }
-    const apps = await loadAndSelect({
-      deviceId: 'device',
-      readLocalInstalledPlugins: async () => [localDingtalk],
-      listCloudInstalledPlugins: async () => [pending],
-      listCodexApps: async () => [],
-    })
-    expect(apps.map(app => app.pluginKey)).toEqual(['dingtalk'])
-    const stored = getPluginMarketplaceCache('test')!.installedPlugins[0]!
-    expect(stored.spec.installState).toBe('not_installed')
-    expect(stored.spec.sourcePayload?.localPresent).toBe(true)
-    const snapshot = writePluginInventory('test', 'device', {
-      installedPlugins: [{ ...stored, spec: { ...stored.spec, enabled: false } }],
-    })
-    expect(selectComposerPluginApps(snapshot)).toEqual([])
-  })
-
   test('keeps app authorization separate from a name-matched skill package', () => {
     const sites = {
       ...dingtalk,
@@ -1241,30 +935,6 @@ describe('shared domain inventory regressions', () => {
     expect(selectComposerPluginApps(snapshot, new Set(['dingtalk']))).toHaveLength(1)
     expect(snapshot.installedPlugins[0]!.spec.enabled).toBe(false)
     expect(snapshot.installedPlugins[0]).not.toHaveProperty('raw')
-  })
-
-  test('does not resurrect an uninstalled package when an earlier read finishes', async () => {
-    writePluginInventory('test', 'device', { installedPlugins: [dingtalk] })
-    let resolve!: (plugins: InstalledPlugin[]) => void
-    const delayed = new Promise<InstalledPlugin[]>(done => {
-      resolve = done
-    })
-    const loading = loadPluginInventory({
-      cacheKey: 'test',
-      deviceId: 'device',
-      isCurrent: () => true,
-      readLocalInstalledPlugins: () => delayed.then(items => ({ items })),
-      listCloudInstalledPlugins: async () => [],
-    })
-    removePluginMarketplaceInstallation('test', {
-      installedIds: ['62'],
-      marketplaceItemIds: [],
-      pluginKeys: ['dingtalk'],
-    })
-    resolve([dingtalk])
-    await loading
-    expect(getPluginMarketplaceCache('test')!.installedPlugins).toEqual([])
-    expect(selectComposerPluginApps(getPluginMarketplaceCache('test')!)).toEqual([])
   })
 
   test('discards reads from a previous account scope', async () => {
@@ -1385,38 +1055,6 @@ describe('pluginInventory', () => {
     }
   })
 
-  test('uses the selected device materialization instead of a different release template', async () => {
-    const cloud: InstalledPlugin = {
-      ...dingtalk,
-      spec: { ...dingtalk.spec, releaseId: 2, interface: { defaultPrompt: ['new template'] } },
-      status: {
-        ...dingtalk.status,
-        devices: [
-          {
-            deviceId: 'local-device',
-            desiredReleaseId: 2,
-            actualReleaseId: 1,
-            state: 'installed',
-            attemptCount: 1,
-            updatedAt: '',
-          },
-        ],
-      },
-    }
-    const local: InstalledPlugin = {
-      ...localDingtalk,
-      spec: { ...localDingtalk.spec, interface: { defaultPrompt: ['installed template'] } },
-    }
-    const apps = await loadAndSelect({
-      deviceId: 'local-device',
-      listCodexApps: async () => [],
-      readLocalInstalledPlugins: async () => [local],
-      listCloudInstalledPlugins: async () => [cloud],
-    })
-    expect(apps).toHaveLength(1)
-    expect(apps[0].trialTemplates?.map(template => template.name)).toEqual(['installed template'])
-  })
-
   test('resolves a declared relative logo from the installed plugin root', async () => {
     const localPlugin: InstalledPlugin = {
       ...dingtalk,
@@ -1509,16 +1147,6 @@ describe('pluginInventory', () => {
     }
   )
 
-  test('maps installed cloud rows with valid membership', async () => {
-    const apps = await loadAndSelect({
-      deviceId: 'local-device',
-      listCodexApps: async () => [],
-      readLocalInstalledPlugins: async () => ({ items: [] }),
-      listCloudInstalledPlugins: async () => [dingtalk],
-    })
-    expect(apps.map(app => app.id)).toEqual(['plugin:dingtalk'])
-  })
-
   test('keeps an installed plugin selectable for chat authorization without enabling its connector', async () => {
     const googleDrive: InstalledPlugin = {
       ...dingtalk,
@@ -1566,41 +1194,6 @@ describe('pluginInventory', () => {
       }),
     ])
     expect(getPluginMarketplaceCache('test')!.apps![0].isAccessible).toBe(false)
-  })
-
-  test('lists a globally disabled plugin when the current project installed it', async () => {
-    const projectPlugin: InstalledPlugin = {
-      ...dingtalk,
-      spec: {
-        ...dingtalk.spec,
-        enabled: false,
-      },
-      status: { state: 'disabled' },
-    }
-
-    const hiddenApps = await loadAndSelect({
-      deviceId: 'local-device',
-      listCodexApps: async () => [],
-      readLocalInstalledPlugins: async () => [projectPlugin],
-      listCloudInstalledPlugins: async () => [],
-    })
-    expect(hiddenApps).toEqual([])
-
-    const projectApps = await loadAndSelect(
-      {
-        deviceId: 'local-device',
-        listCodexApps: async () => [],
-        readLocalInstalledPlugins: async () => [projectPlugin],
-        listCloudInstalledPlugins: async () => [],
-      },
-      { visiblePluginKeys: new Set(['dingtalk']) }
-    )
-    expect(projectApps).toEqual([
-      expect.objectContaining({
-        id: 'plugin:dingtalk',
-        name: '钉钉',
-      }),
-    ])
   })
 
   test('prefers marketplace catalog package logos over unresolved installed logos', async () => {

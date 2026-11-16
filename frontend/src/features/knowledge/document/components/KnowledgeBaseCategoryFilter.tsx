@@ -27,9 +27,8 @@ export function KnowledgeBaseCategoryFilter({
   showCode: boolean
 }) {
   const { t } = useTranslation('knowledge')
-  const options: KnowledgeBaseCategory[] = showCode
-    ? ['all', 'document', 'code']
-    : ['all', 'document']
+  if (!showCode) return null
+  const options: KnowledgeBaseCategory[] = ['all', 'document', 'code']
 
   return (
     <div

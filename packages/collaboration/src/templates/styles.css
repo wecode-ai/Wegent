@@ -69,6 +69,15 @@
 .collaboration-template-dialog .collaboration-primary-button:hover:not(:disabled) {
   background: rgb(var(--color-text-primary) / 0.8);
 }
+.collaboration-template-page .collaboration-danger-button,
+.collaboration-template-dialog .collaboration-danger-button {
+  color: rgb(var(--color-error));
+  background: rgb(var(--color-error) / 0.08);
+}
+.collaboration-template-page .collaboration-danger-button:hover:not(:disabled),
+.collaboration-template-dialog .collaboration-danger-button:hover:not(:disabled) {
+  background: rgb(var(--color-error) / 0.14);
+}
 .collaboration-template-page svg,
 .collaboration-template-dialog svg {
   width: 16px;
@@ -90,7 +99,7 @@
 }
 
 .collaboration-template-page input,
-.collaboration-template-field input,
+.collaboration-template-field input:not([type='checkbox']):not([type='radio']),
 .collaboration-template-field textarea,
 .collaboration-template-field select {
   min-width: 0;
@@ -236,6 +245,101 @@
   gap: 8px;
   margin-bottom: 18px;
 }
+
+.collaboration-runtime-disclosure {
+  min-width: 0;
+  color: rgb(var(--color-text-primary));
+  font-size: var(--text-sm);
+  font-weight: 400;
+}
+.collaboration-runtime-disclosure > summary {
+  display: flex;
+  align-items: center;
+  min-height: 32px;
+  gap: 6px;
+  color: rgb(var(--color-text-secondary));
+  cursor: pointer;
+  list-style: none;
+}
+.collaboration-runtime-disclosure > summary::-webkit-details-marker {
+  display: none;
+}
+.collaboration-runtime-disclosure > summary:focus-visible {
+  outline: 2px solid rgb(var(--color-focus-ring));
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+.collaboration-runtime-disclosure > summary > svg {
+  width: 16px;
+  height: 16px;
+  flex: none;
+}
+.collaboration-runtime-disclosure[open] > summary > svg {
+  transform: rotate(90deg);
+}
+.collaboration-runtime-disclosure-body {
+  display: grid;
+  gap: 4px;
+  padding-top: 4px;
+}
+.collaboration-runtime-disclosure .collaboration-runtime-hint {
+  margin: 4px 0;
+  color: rgb(var(--color-text-muted));
+  font-size: var(--text-xs);
+  font-weight: 400;
+  line-height: 1.5;
+}
+.collaboration-runtime-disclosure .collaboration-runtime-device {
+  display: flex;
+  min-width: 0;
+  min-height: 36px;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 8px;
+  border-radius: 6px;
+  color: rgb(var(--color-text-primary));
+  cursor: pointer;
+}
+.collaboration-runtime-device:hover {
+  background: rgb(var(--color-bg-hover));
+}
+.collaboration-runtime-device:has(input:disabled) {
+  color: rgb(var(--color-text-muted));
+  cursor: default;
+}
+.collaboration-runtime-device > input[type='checkbox'] {
+  width: 16px;
+  height: 16px;
+  min-height: 0;
+  flex: none;
+  margin: 0;
+  padding: 0;
+  accent-color: rgb(var(--color-text-primary));
+}
+.collaboration-runtime-device > svg {
+  width: 16px;
+  height: 16px;
+  flex: none;
+  color: rgb(var(--color-text-muted));
+}
+.collaboration-runtime-device-name {
+  min-width: 0;
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.collaboration-runtime-device-status {
+  flex: none;
+  color: rgb(var(--color-text-muted));
+  font-size: var(--text-xs);
+}
+@media (max-width: 767px) {
+  .collaboration-runtime-disclosure > summary,
+  .collaboration-runtime-disclosure .collaboration-runtime-device {
+    min-height: 44px;
+  }
+}
 .collaboration-template-binding {
   display: grid;
   grid-template-columns: minmax(160px, 1fr) minmax(180px, 1fr);
@@ -288,5 +392,56 @@
   .collaboration-template-dialog input,
   .collaboration-template-dialog select {
     min-height: 44px;
+  }
+}
+
+.collaboration-template-agent-roster {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px 16px;
+  list-style: none;
+  padding: 0;
+  margin: 12px 0;
+}
+.collaboration-template-agent-roster li {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+.collaboration-template-agent-roster strong {
+  font-weight: 500;
+}
+.collaboration-template-role-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+.collaboration-template-role-heading button {
+  flex: none;
+}
+.collaboration-template-role-heading button:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+@media (max-width: 767px) {
+  .collaboration-template-role-heading button {
+    min-width: 44px;
+    min-height: 44px;
+  }
+}
+.collaboration-template-agent-roster span {
+  color: rgb(var(--color-text-muted));
+  font-size: var(--text-sm);
+}
+.collaboration-template-bindings summary {
+  cursor: pointer;
+  margin: 12px 0;
+}
+@media (max-width: 767px) {
+  .collaboration-template-bindings summary {
+    min-height: 44px;
+    display: flex;
+    align-items: center;
   }
 }

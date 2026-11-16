@@ -42,6 +42,7 @@ function createMenu(
   const dispatch = vi.fn()
   const reload = vi.fn()
   const openExternal = vi.fn(async () => undefined)
+  const openProcessExplorer = vi.fn<() => Promise<void>>().mockResolvedValue(undefined)
   const menu = new ApplicationMenu({
     platform,
     appName: 'Wework',
@@ -59,26 +60,63 @@ function createMenu(
     dispatch,
     openDevTools: vi.fn(),
     openLogDirectory: vi.fn(async () => undefined),
+    openProcessExplorer,
     showMain: vi.fn(async () => undefined),
     quit: vi.fn(),
     openExternal,
     reportError: vi.fn(),
   })
   menu.setLanguage('en')
-  return { menu, built: () => built!, dispatch, reload, openExternal }
+  return {
+    menu,
+    built: () => built!,
+    dispatch,
+    reload,
+    openExternal,
+    openProcessExplorer,
+  }
 }
 
 describe('application menu model', () => {
+  test('opens the native Process Explorer without a renderer dispatch round trip', async () => {
+    const { menu, dispatch, openProcessExplorer } = createMenu('linux')
+    expect(await menu.activateForTesting('developer.processExplorer', 'main')).toBe(true)
+    expect(openProcessExplorer).toHaveBeenCalledOnce()
+    expect(dispatch).not.toHaveBeenCalled()
+  })
+
+  test('does not acknowledge the native Process Explorer before it is ready', async () => {
+    const { menu, openProcessExplorer } = createMenu('linux')
+    let ready!: () => void
+    openProcessExplorer.mockImplementation(
+      () =>
+        new Promise<void>(resolve => {
+          ready = resolve
+        })
+    )
+    let acknowledged = false
+    const activation = Promise.resolve(
+      menu.activateForTesting('developer.processExplorer', 'main')
+    ).then(result => {
+      acknowledged = true
+      return result
+    })
+    await Promise.resolve()
+    expect(acknowledged).toBe(false)
+    ready()
+    await expect(activation).resolves.toBe(true)
+  })
+
   test.each(['darwin', 'win32', 'linux'] as const)(
     'refreshes the selected window from the View menu on %s',
-    platform => {
+    async platform => {
       const { menu, built, reload, dispatch } = createMenu(platform)
       menu.setCapabilities({})
       const item = built().getMenuItemById('view.refresh')!
       expect(item.label).toBe('Refresh')
       expect(item.visible).toBe(true)
       expect(item.accelerator).toBe('CommandOrControl+R')
-      expect(menu.activateForTesting('view.refresh', 'main')).toBe(true)
+      expect(await menu.activateForTesting('view.refresh', 'main')).toBe(true)
       expect(reload).toHaveBeenCalledOnce()
       expect(dispatch).not.toHaveBeenCalled()
       menu.setLanguage('zh-CN')
@@ -144,7 +182,7 @@ describe('application menu model', () => {
     expect(about.role).toBeUndefined()
   })
 
-  test('dispatches the declared action for each menu item', () => {
+  test('dispatches the declared action for each menu item', async () => {
     const { menu, dispatch } = createMenu()
     menu.setCapabilities({ [APPLICATION_MENU_CAPABILITIES.taskSurface]: true })
     for (const [id, action] of [
@@ -158,21 +196,21 @@ describe('application menu model', () => {
       ['help.issues', APPLICATION_MENU_ACTIONS.openFeedback],
     ] as const) {
       dispatch.mockClear()
-      expect(menu.activateForTesting(id, 'main')).toBe(true)
+      expect(await menu.activateForTesting(id, 'main')).toBe(true)
       expect(dispatch).toHaveBeenCalledWith(action, expect.anything())
     }
   })
 
-  test('keeps report issue inside the app instead of opening GitHub', () => {
+  test('keeps report issue inside the app instead of opening GitHub', async () => {
     const { menu, openExternal } = createMenu()
-    expect(menu.activateForTesting('help.issues', 'main')).toBe(true)
+    expect(await menu.activateForTesting('help.issues', 'main')).toBe(true)
     expect(openExternal).not.toHaveBeenCalled()
   })
 
-  test('refuses to activate a hidden menu item', () => {
+  test('refuses to activate a hidden menu item', async () => {
     const { menu, dispatch } = createMenu()
     menu.setCapabilities({})
-    expect(menu.activateForTesting('view.terminal', 'main')).toBe(false)
+    expect(await menu.activateForTesting('view.terminal', 'main')).toBe(false)
     expect(dispatch).not.toHaveBeenCalled()
   })
 

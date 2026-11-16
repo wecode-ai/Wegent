@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { ContinueInImDialog } from '@/components/chat/ContinueInImDialog'
+import { ImSessionPickerDialog } from '@/components/chat/ImSessionPickerDialog'
 import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
 import type { IMPrivateSession } from '@/types/api'
 import { useTranslation } from '@/hooks/useTranslation'
@@ -39,7 +39,7 @@ export function NotificationImTarget({
     }
   }, [services?.imSessionApi])
   return (
-    <ContinueInImDialog
+    <ImSessionPickerDialog
       open
       loading={loading}
       submitting={submitting}
@@ -51,7 +51,6 @@ export function NotificationImTarget({
       )}
       submitLabel={t('workbench.save')}
       allowMultiple={false}
-      rememberSelection={false}
       defaultSelectedSessionKeys={selected ? [selected] : []}
       onClose={onClose}
       onSubmit={async keys => {

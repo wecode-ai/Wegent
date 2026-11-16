@@ -4,6 +4,7 @@
 
 import '@testing-library/jest-dom'
 import fileViewerPackage from '@file-viewer/react/package.json'
+import docxPackage from '@file-viewer/docx/package.json'
 import { act, render, screen } from '@testing-library/react'
 import { FlyfishOfficePreview } from '@/components/common/FilePreview/preview-renderers/FlyfishOfficePreview'
 import { getPreviewType, isFilePreviewable } from '@/components/common/FilePreview/utils'
@@ -72,8 +73,12 @@ describe('FlyfishOfficePreview', () => {
     expect(options.pdf.workerUrl).toBe(`${assetBase}vendor/pdf/pdf.worker.mjs`)
     expect(options.pdf.cMapUrl).toBe(`${assetBase}vendor/pdf/cmaps/`)
     expect(options.pdf.wasmUrl).toBe(`${assetBase}vendor/pdf/wasm/`)
-    expect(options.docx.workerUrl).toBe(`${assetBase}vendor/docx/docx.worker.js`)
-    expect(options.docx.workerJsZipUrl).toBe(`${assetBase}vendor/docx/jszip.min.js`)
+    expect(options.docx.workerUrl).toBe(
+      `${assetBase}vendor/docx/${docxPackage.version}/docx.worker.js`
+    )
+    expect(options.docx.workerJsZipUrl).toBe(
+      `${assetBase}vendor/docx/${docxPackage.version}/jszip.min.js`
+    )
     expect(options.spreadsheet.workerUrl).toBe(`${assetBase}vendor/xlsx/sheet.worker.js`)
     expect(options.presentation.workerUrl).toBe(`${assetBase}vendor/pptx/pptx.worker.js`)
   })

@@ -9,6 +9,7 @@ const target = {
   socketBaseUrl: 'https://cloud.example',
   socketPath: '/socket.io',
 }
+const configuredConnection = { ...target, user: { id: 1 } }
 const payload = {
   address: { deviceId: 'remote', taskId: 'task' },
   callId: 'call',
@@ -23,12 +24,14 @@ beforeEach(() => {
 it('routes native cleanup to the correct executor and reuses refreshed authentication', async () => {
   const local = vi.fn().mockResolvedValue({ local: true })
   const token = vi.fn().mockResolvedValueOnce('first').mockResolvedValue('second')
-  const runtime = new McpAppRuntime(local, token, async () => target)
+  const runtime = new McpAppRuntime(local, token, async () => configuredConnection)
   expect(await runtime.request(payload)).toEqual({ local: true })
   await runtime.request({ ...payload, method: 'retain', target })
   await runtime.request({ ...payload, method: 'retain', target })
   expect(local).toHaveBeenCalledTimes(1)
   expect(createCloudRuntimeIpcClient).toHaveBeenCalledTimes(1)
+  expect(token).toHaveBeenNthCalledWith(1, target.apiBaseUrl, 1)
+  expect(token).toHaveBeenNthCalledWith(2, target.apiBaseUrl, 1)
   expect(cloud.request).toHaveBeenLastCalledWith(
     'runtime.mcp_apps.request',
     { ...payload, method: 'retain' },
@@ -41,7 +44,7 @@ it('routes native cleanup to the correct executor and reuses refreshed authentic
 
 it('rejects a different credential destination before obtaining a token', async () => {
   const token = vi.fn()
-  const runtime = new McpAppRuntime(vi.fn(), token, async () => target)
+  const runtime = new McpAppRuntime(vi.fn(), token, async () => configuredConnection)
   await expect(
     runtime.request({ ...payload, target: { ...target, socketBaseUrl: 'https://other.example' } })
   ).rejects.toThrow('not configured')
@@ -54,6 +57,7 @@ it('preserves a configured socket override and existing access-token mode', asyn
   const refresh = vi.fn()
   const runtime = new McpAppRuntime(vi.fn(), refresh, async () => ({
     ...configured,
+    user: { id: 1 },
     credentialMode: 'legacy_access_token',
     token: 'legacy',
   }))
@@ -64,7 +68,7 @@ it('preserves a configured socket override and existing access-token mode', asyn
 })
 
 it('disposes through its acquired client after the user disconnects cloud settings', async () => {
-  const connection = vi.fn().mockResolvedValueOnce(target).mockResolvedValue(null)
+  const connection = vi.fn().mockResolvedValueOnce(configuredConnection).mockResolvedValue(null)
   const runtime = new McpAppRuntime(vi.fn(), vi.fn().mockResolvedValue('token'), connection)
   await runtime.request({ ...payload, method: 'retain', target })
   await runtime.request({ ...payload, target })
@@ -100,16 +104,33 @@ it('binds each instance to its original authenticated client across account chan
 })
 
 it('disposes a cleanup client even when acquisition never succeeded', async () => {
-  const runtime = new McpAppRuntime(vi.fn(), vi.fn().mockResolvedValue('token'), async () => target)
+  const runtime = new McpAppRuntime(
+    vi.fn(),
+    vi.fn().mockResolvedValue('token'),
+    async () => configuredConnection
+  )
   await runtime.request({ ...payload, target })
   expect(cloud.dispose).toHaveBeenCalledOnce()
   runtime.dispose()
   expect(cloud.dispose).toHaveBeenCalledOnce()
 })
 
-it('reports malformed cloud settings without echoing stored data', async () => {
-  const { readMcpAppConnection } = await import('./mcp-app-runtime.js')
-  const storage = { read: async () => ({ 'wework.cloudConnection': 'private-invalid-setting' }) }
-  await expect(readMcpAppConnection(storage)).rejects.toThrow('Stored cloud connection is invalid')
-  expect(await readMcpAppConnection({ read: async () => ({}) })).toBeNull()
+it('does not acquire an authenticated client when the profile has no valid owner', async () => {
+  const refresh = vi.fn()
+  const runtime = new McpAppRuntime(vi.fn(), refresh, async () => target)
+  await expect(runtime.request({ ...payload, method: 'retain', target })).rejects.toThrow(
+    'account is unavailable'
+  )
+  expect(refresh).not.toHaveBeenCalled()
+  expect(createCloudRuntimeIpcClient).not.toHaveBeenCalled()
+})
+
+it('does not reuse a new account token when native credentials no longer match the profile', async () => {
+  const refresh = vi.fn().mockRejectedValue(new Error('Cloud credential account changed'))
+  const runtime = new McpAppRuntime(vi.fn(), refresh, async () => configuredConnection)
+  await expect(runtime.request({ ...payload, method: 'retain', target })).rejects.toThrow(
+    'Cloud credential account changed'
+  )
+  expect(refresh).toHaveBeenCalledWith(target.apiBaseUrl, configuredConnection.user.id)
+  expect(createCloudRuntimeIpcClient).not.toHaveBeenCalled()
 })

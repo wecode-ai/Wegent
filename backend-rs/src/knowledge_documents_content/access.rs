@@ -595,7 +595,6 @@ pub(crate) fn quote_literal(value: &str) -> String {
 #[derive(Debug, FromMysqlRow)]
 pub(super) struct NamespaceRow {
     pub(super) namespace_id: i64,
-    pub(super) namespace_name: String,
     pub(super) namespace_level: String,
 }
 
@@ -743,55 +742,11 @@ where
     Ok(matched_roles)
 }
 
-/// `namespace.id IN (...)` active namespaces
-/// (`Namespace.id.in_(ids), is_active`).
-pub(super) async fn namespaces_by_ids<M>(mysql: &M, ids: &[i64]) -> MysqlResult<Vec<NamespaceRow>>
-where
-    M: Mysql,
-{
-    if ids.is_empty() {
-        return Ok(Vec::new());
-    }
-    let joined = ids
-        .iter()
-        .map(|id| id.to_string())
-        .collect::<Vec<_>>()
-        .join(", ");
-    mysql
-        .fetch_all(
-            &format!(
-                "SELECT {NAMESPACE_COLUMNS} \nFROM namespace \n\
-                 WHERE namespace.id IN ({joined}) AND namespace.is_active = 1"
-            ),
-            (),
-        )
-        .await
-}
-
+/// One `resource_members` row's role (the `resource_id` projection is no
+/// longer read after the group-role batch moved to the shared helper).
 #[derive(Debug, FromMysqlRow)]
 pub(super) struct MemberRow {
-    pub(super) resource_members_resource_id: i64,
     pub(super) resource_members_role: String,
-}
-
-#[derive(Debug, FromMysqlRow)]
-pub(super) struct IdRow {
-    pub(super) resource_members_resource_id: i64,
-}
-
-/// `db.query(ResourceMember.resource_id, ResourceMember.entity_id)` — the
-/// two-column projection of `NamespaceEntityResolver
-/// .get_resource_ids_by_entity`'s org-department bindings scan (the result
-/// set carries no `entity_type` column).
-#[derive(Debug, FromMysqlRow)]
-pub(super) struct DeptBindingRow {
-    pub(super) resource_members_resource_id: i64,
-    pub(super) resource_members_entity_id: String,
-}
-
-#[derive(Debug, FromMysqlRow)]
-pub(super) struct EntityIdRow {
-    pub(super) resource_members_entity_id: String,
 }
 
 #[derive(Debug, FromMysqlRow)]

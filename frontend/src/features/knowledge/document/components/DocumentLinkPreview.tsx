@@ -16,6 +16,7 @@ import { VideoPreview } from '@/components/common/FilePreview/preview-renderers/
 import { useTranslation } from '@/hooks/useTranslation'
 import type { DocumentLinkResource } from '../utils/documentLinkResource'
 import { useDocumentLinkPreview } from '../hooks/useDocumentLinkPreview'
+import { DocumentProtectionBoundary } from './DocumentProtectionBoundary'
 
 const FlyfishOfficePreview = dynamic(
   () =>
@@ -35,9 +36,20 @@ const FlyfishOfficePreview = dynamic(
 interface DocumentLinkPreviewProps {
   resource: DocumentLinkResource | null
   onOpenChange: (open: boolean) => void
+  knowledgeBaseId: number
+  protectedPreview: boolean
+  isOrganization: boolean
+  watermarkText: string
 }
 
-export function DocumentLinkPreview({ resource, onOpenChange }: DocumentLinkPreviewProps) {
+export function DocumentLinkPreview({
+  resource,
+  onOpenChange,
+  knowledgeBaseId,
+  protectedPreview,
+  isOrganization,
+  watermarkText,
+}: DocumentLinkPreviewProps) {
   const { t } = useTranslation('knowledge')
   const { state, retry, fail } = useDocumentLinkPreview(resource)
 
@@ -135,7 +147,15 @@ export function DocumentLinkPreview({ resource, onOpenChange }: DocumentLinkPrev
           <DialogTitle className="truncate">{resource?.label}</DialogTitle>
         </DialogHeader>
         <div className="min-h-0 flex-1 overflow-hidden rounded-lg border border-border">
-          {renderContent()}
+          <DocumentProtectionBoundary
+            enabled={protectedPreview}
+            showWatermark
+            knowledgeBaseId={knowledgeBaseId}
+            preferExtension={isOrganization}
+            watermarkText={watermarkText}
+          >
+            {renderContent()}
+          </DocumentProtectionBoundary>
         </div>
       </DialogContent>
     </Dialog>

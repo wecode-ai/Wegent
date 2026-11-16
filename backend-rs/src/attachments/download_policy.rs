@@ -273,6 +273,25 @@ mod tests {
     }
 
     #[test]
+    fn disabled_originals_keep_forbidden_error_even_when_media_is_playable() {
+        // Token validation does not grant a policy exemption. Preserve the
+        // policy decision, error contract, and playback/download distinction.
+        let allowed = kinds_json(Some(serde_json::json!({})));
+        let protected = kinds_json(Some(serde_json::json!({"allowDocumentDownload": false})));
+        assert!(original_download_allowed(&allowed));
+        assert!(!original_download_allowed(&protected));
+        let error = download_disabled();
+        assert_eq!(error.status(), StatusCode::FORBIDDEN);
+        assert!(
+            error
+                .validation_detail()
+                .contains("DOCUMENT_DOWNLOAD_DISABLED")
+        );
+        assert!(playback_exempt("video/mp4"));
+        assert_ne!(Purpose::Playback, Purpose::Download);
+    }
+
+    #[test]
     fn extension_normalization_matches_the_source() {
         assert_eq!(normalize_extension(None), None);
         assert_eq!(normalize_extension(Some("")), None);

@@ -31,17 +31,12 @@ export function readMessageLayoutTypography(element?: HTMLElement | null): Messa
     typeof document === 'undefined'
       ? 16
       : Number.parseFloat(getComputedStyle(document.documentElement).fontSize) || 16
-  const paragraph = element?.querySelector<HTMLElement>(
-    '[data-testid="message-assistant"] p[data-scroll-anchor]'
-  )
-  const paragraphLineHeight = paragraph
-    ? Number.parseFloat(getComputedStyle(paragraph).lineHeight)
-    : 0
   return {
     rootFontSize: rootSize,
     font: `${weight} ${size}px ${family}`,
     userFont: `${weight} ${userSize}px ${family}`,
-    lineHeight: paragraphLineHeight || rootSize * 1.5,
+    // Body leading-6 is 1.5rem; virtualized compact cards cannot define this input.
+    lineHeight: rootSize * 1.5,
     userLineHeight: rootSize * 1.25,
     codeLineHeight:
       (Number.parseFloat(style?.getPropertyValue('--text-code') ?? '') || DEFAULT_CODE_FONT_SIZE) *

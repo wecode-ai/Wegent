@@ -25,8 +25,8 @@ use std::sync::atomic::{AtomicBool, Ordering};
 
 use brz_http::Client as HttpClient;
 
-use crate::attachments::minio_client::{self, MinioConfig};
-use crate::attachments::s3_signing;
+use wegent_storage::minio_client::{self, MinioConfig};
+use wegent_storage::s3_signing;
 
 /// `settings.DELIVERY_S3_BUCKET` default.
 const DEFAULT_BUCKET: &str = "wegent-deliveries";

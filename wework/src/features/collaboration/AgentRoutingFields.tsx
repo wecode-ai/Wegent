@@ -52,6 +52,17 @@ export function AgentEnvironmentFields({
           }
         />
       </div>
+      {selectionOnly &&
+        !routing.environmentLoading &&
+        !routing.environments.some(item => item.project_authorized) && (
+          <p
+            role="status"
+            className="text-xs text-text-muted"
+            data-testid={`${prefix}-environment-empty`}
+          >
+            {t('workbench.runner_environment_setup_hint')}
+          </p>
+        )}
       {environment ? (
         <p className="text-xs text-text-muted">
           {t(`workbench.runner_owner_${environment.owner_type}`)} ·{' '}
@@ -162,9 +173,13 @@ export function AgentModelFields({
             <option value="user_select">{t('workbench.runner_user_select')}</option>
           )}
           {routing.model && !routing.modelAvailable && (
-            <option value={runnerModelKey(routing.model)} disabled>
+            <option
+              value={runnerModelKey(routing.model)}
+              disabled={!routing.persistedModelSupported}
+            >
               {routing.model.model_id}
-              {!routing.loading &&
+              {!routing.persistedModelSupported &&
+                !routing.loading &&
                 !routing.nativeLoading &&
                 ` · ${t('workbench.runner_model_unavailable')}`}
             </option>
@@ -229,6 +244,7 @@ export function AgentModelFields({
         routing.modelMode === 'fixed' &&
         routing.model &&
         !routing.modelAvailable &&
+        !routing.persistedModelSupported &&
         !(routing.nativeLoading && routing.model.source !== 'cloud') &&
         !routing.loading && (
           <p role="alert" className="text-xs text-destructive">

@@ -6,11 +6,15 @@ import { executorMigrationLock } from './workbench-migration-lock.js'
 
 vi.mock('node:child_process', async importOriginal => {
   const original = await importOriginal<typeof import('node:child_process')>()
+  const { testNodeEnvironment } = await import('./test-helpers.js')
   return {
     ...original,
     // Keep real child pipes and lifecycle while launching the fixture on every platform.
     spawn: (command: string, args: string[], options: import('node:child_process').SpawnOptions) =>
-      original.spawn(process.execPath, [command, ...args], options),
+      original.spawn(process.execPath, [command, ...args], {
+        ...options,
+        env: testNodeEnvironment(options.env),
+      }),
   }
 })
 

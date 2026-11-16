@@ -1,3 +1,5 @@
+// @vitest-environment node
+
 import { describe, expect, test, vi } from 'vitest'
 import { createResponseApiStreamState, emitResponseApiEvent } from './responseApiStream'
 
@@ -156,6 +158,21 @@ describe('emitResponseApiEvent', () => {
     expect(onRuntimeWorkChanged).toHaveBeenCalledWith({
       taskId: 'task-1',
       deviceId: 'device-1',
+    })
+  })
+
+  test.each([true, false])('preserves explicit archive state %s in work changes', archived => {
+    const onRuntimeWorkChanged = vi.fn()
+    emitResponseApiEvent(
+      { onRuntimeWorkChanged },
+      'runtime.work.changed',
+      { taskId: 'task-1', deviceId: 'device-1', data: { archived } },
+      createResponseApiStreamState()
+    )
+    expect(onRuntimeWorkChanged).toHaveBeenCalledWith({
+      taskId: 'task-1',
+      deviceId: 'device-1',
+      archived,
     })
   })
 

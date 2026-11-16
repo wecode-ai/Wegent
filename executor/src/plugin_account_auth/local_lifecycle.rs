@@ -1,6 +1,7 @@
 //! Native-only bridge for the existing local login UI. Never a model capability.
 
 use super::{AuthError, NativeAuthGateway};
+#[cfg(test)]
 use crate::local::backend::LocalBackendTransport;
 use serde_json::{json, Value};
 use std::{
@@ -22,7 +23,7 @@ pub(super) struct Request {
     reply: oneshot::Sender<Result<Value, AuthError>>,
 }
 
-pub(super) fn start<T: LocalBackendTransport>(
+pub(super) fn start<T: super::PluginAuthTransport>(
     transport: T,
     connected: Arc<AtomicBool>,
     mut cancelled: watch::Receiver<bool>,
@@ -37,7 +38,7 @@ pub(super) fn start<T: LocalBackendTransport>(
             if request.reply.is_closed() {
                 continue;
             }
-            let result = if !connected.load(Ordering::Acquire) {
+            let result = if !transport.available(connected.load(Ordering::Acquire)) {
                 Err(AuthError("plugin_auth_backend_unavailable"))
             } else {
                 let gateway = NativeAuthGateway::new(transport.clone());

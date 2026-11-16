@@ -82,6 +82,8 @@ export class FakeWebContents extends EventEmitter {
   isDestroyed = vi.fn(() => this.destroyed)
   isDevToolsOpened = vi.fn(() => this.devToolsOpened)
   isLoading = vi.fn(() => true)
+  isLoadingMainFrame = vi.fn(() => false)
+  getBackgroundThrottling = vi.fn(() => false)
   loadURL = vi.fn<(url: string) => Promise<void>>()
   openDevTools = vi.fn(() => {
     this.devToolsOpened = true

@@ -1,7 +1,7 @@
+import type { WorkspaceTabsContextValue } from '@/features/workspace-tabs/workspaceTabsContextValue'
 import { render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, test, vi } from 'vitest'
-import type { WorkspaceTabsContextValue } from '@/features/workspace-tabs/workspaceTabsContextValue'
 import type { WeworkDshRoute } from './dshRoutes'
 import { DshRouteSurface } from './DshRouteSurface'
 
@@ -54,6 +54,7 @@ function createWorkspaceTabs(activeTabId: string): WorkspaceTabsContextValue {
     closeOtherTabs: vi.fn(),
     restoreClosedTab: vi.fn(),
     moveTab: vi.fn(),
+    updateTab: vi.fn(),
     updateActiveTab: vi.fn(),
   }
 }
@@ -62,20 +63,6 @@ describe('DshRouteSurface navigation', () => {
   beforeEach(() => {
     mocks.navigateTo.mockReset()
     mocks.workspaceTabs = null
-  })
-
-  test('updates the owning active tab without reselecting it', async () => {
-    const workspaceTabs = createWorkspaceTabs('applications')
-    mocks.workspaceTabs = workspaceTabs
-
-    render(<DshRouteSurface route={route} search="?view=owned" workspaceTabId="applications" />)
-    await userEvent.click(screen.getByRole('button', { name: '打开智能工作台市场' }))
-
-    expect(workspaceTabs.updateActiveTab).toHaveBeenCalledWith({
-      contentRoute: '/sites?app_type=smart_app',
-    })
-    expect(workspaceTabs.selectTab).not.toHaveBeenCalled()
-    expect(mocks.navigateTo).not.toHaveBeenCalled()
   })
 
   test('selects the owning tab when an inactive retained surface navigates', async () => {

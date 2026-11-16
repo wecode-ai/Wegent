@@ -1,5 +1,8 @@
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
+import { createInstance } from 'i18next'
+import { I18nextProvider } from 'react-i18next'
+import zh from '@/i18n/locales/zh-CN/common.json'
 import { invokeDesktopHost } from '@/api/dsh/desktopHost'
 import { AppUpdateErrorDetailsDialog } from './AppUpdateErrorDetailsDialog'
 import type { AppUpdateError } from './app-update-error'
@@ -7,6 +10,7 @@ import type { AppUpdateError } from './app-update-error'
 vi.mock('@/api/dsh/desktopHost', () => ({ invokeDesktopHost: vi.fn() }))
 
 const originalClipboard = Object.getOwnPropertyDescriptor(navigator, 'clipboard')
+const translations = createInstance()
 const updateError: AppUpdateError = {
   stage: 'check',
   kind: 'generic',
@@ -17,12 +21,15 @@ const updateError: AppUpdateError = {
 
 function renderDialog(error = updateError) {
   return render(
-    <AppUpdateErrorDetailsDialog open error={error} onClose={vi.fn()} onRetry={vi.fn()} />
+    <I18nextProvider i18n={translations}>
+      <AppUpdateErrorDetailsDialog open error={error} onClose={vi.fn()} onRetry={vi.fn()} />
+    </I18nextProvider>
   )
 }
 
 describe('AppUpdateErrorDetailsDialog diagnostics', () => {
-  beforeEach(() => {
+  beforeEach(async () => {
+    await translations.init({ lng: 'zh-CN', resources: { 'zh-CN': { common: zh } } })
     window.__WEWORK_RUNTIME_CONFIG__ = { desktopHost: 'electron' }
     Object.defineProperty(navigator, 'clipboard', { configurable: true, value: undefined })
     vi.mocked(invokeDesktopHost).mockReset().mockResolvedValue(undefined)
@@ -109,4 +116,21 @@ describe('AppUpdateErrorDetailsDialog diagnostics', () => {
     expect(diagnostics).not.toContain('技术信息:')
     expect(diagnostics).not.toContain('null')
   })
+
+  test.each([
+    ['extract', '更新包解压失败', '解压更新包'],
+    ['verify', '更新包校验失败', '校验更新包'],
+    ['prepare', '更新运行环境准备失败', '准备更新运行环境'],
+  ] as const)(
+    'shows the actual %s stage rather than a download failure',
+    (stage, summary, feature) => {
+      renderDialog({ ...updateError, stage, retryable: false })
+
+      expect(screen.getByRole('dialog')).toHaveTextContent(summary)
+      expect(screen.getByRole('dialog')).toHaveTextContent(feature)
+      expect(screen.getByRole('dialog')).not.toHaveTextContent('更新下载失败')
+      expect(screen.queryByTestId('app-update-error-retry')).not.toBeInTheDocument()
+      expect(screen.getByTestId('app-update-error-copy')).toBeEnabled()
+    }
+  )
 })

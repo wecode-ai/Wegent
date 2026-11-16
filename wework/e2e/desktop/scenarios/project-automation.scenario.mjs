@@ -16,6 +16,10 @@ import {
   verifyCloudSaveDuringNativeFaults,
   verifyLocalBasicDefaultSave,
 } from '../modules/agent-catalog-regressions.mjs'
+import {
+  collaborationProjectViewSelector,
+  selectCollaborationProjectView,
+} from '../modules/collaboration-project-navigation.mjs'
 
 const ACTIVE_WORKBENCH_SELECTOR = '[data-workspace-tab-content][aria-hidden="false"]'
 const WORKSPACE_NAME = '协作组验收空间'
@@ -224,7 +228,10 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
           'click',
           scoped('[data-testid="collaboration-workspace-participants-tab-groups"]')
         )
-        await control.command('click', scoped('[data-testid="collaboration-group-open-create"]'))
+        await control.command(
+          'clickWhenEnabled',
+          scoped('[data-testid="collaboration-group-open-create"]')
+        )
         await control.command('waitFor', scoped('[data-testid="collaboration-group-form"]'), {
           timeoutMs: uiTimeoutMs,
         })
@@ -298,10 +305,14 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
           scoped(`[data-testid="collaboration-workspace-project-${project.id}"]`),
           { timeoutMs: uiTimeoutMs }
         )
-        await control.command('waitFor', scoped('[data-testid="collaboration-tab-manage"]'), {
-          timeoutMs: uiTimeoutMs,
-        })
-        await control.command('click', scoped('[data-testid="collaboration-tab-manage"]'))
+        await control.command(
+          'waitFor',
+          collaborationProjectViewSelector(ACTIVE_WORKBENCH_SELECTOR, 'manage'),
+          {
+            timeoutMs: uiTimeoutMs,
+          }
+        )
+        await selectCollaborationProjectView(control, ACTIVE_WORKBENCH_SELECTOR, 'manage')
         await control.command(
           'waitFor',
           scoped('[data-testid="project-settings-shell-group-ai-team"]'),
@@ -568,6 +579,25 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
           'click',
           scoped(`[data-testid="collaboration-group-remove-${workspaceGroup.id}"]`)
         )
+        await control.command(
+          'waitFor',
+          scoped('[data-testid="collaboration-group-delete-dialog"]')
+        )
+        await control.command('click', scoped('[data-testid="collaboration-group-delete-cancel"]'))
+        assert.ok(
+          (await request(`/api/v1/cloud-projects/${project.id}/collaboration-groups`)).items.some(
+            group => group.id === workspaceGroup.id
+          ),
+          'Cancelling removal must preserve the Project association'
+        )
+        await control.command(
+          'click',
+          scoped(`[data-testid="collaboration-group-remove-${workspaceGroup.id}"]`)
+        )
+        await control.command(
+          'clickWhenEnabled',
+          scoped('[data-testid="collaboration-group-delete-confirm"]')
+        )
         await waitForApiValue(
           () => request(`/api/v1/cloud-projects/${project.id}/collaboration-groups`),
           response => !response.items?.some(candidate => candidate.id === workspaceGroup.id),
@@ -585,6 +615,14 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
         await control.command(
           'click',
           scoped(`[data-testid="collaboration-group-remove-${projectGroup.id}"]`)
+        )
+        await control.command(
+          'waitFor',
+          scoped('[data-testid="collaboration-group-delete-dialog"]')
+        )
+        await control.command(
+          'clickWhenEnabled',
+          scoped('[data-testid="collaboration-group-delete-confirm"]')
         )
         await waitForApiValue(
           () => request(`/api/v1/cloud-projects/${project.id}/collaboration-groups`),

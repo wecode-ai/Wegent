@@ -484,7 +484,7 @@ async fn status_for_owned(
 /// `identity.py::owned_active_device`: the record route selects one row by
 /// id, otherwise the exact Kind name selects at most two rows so a duplicate
 /// identity raises `DeviceIdentityConflictError`.
-async fn owned_active_device(
+pub(crate) async fn owned_active_device(
     state: &AppState,
     user_id: i64,
     device_id: &str,

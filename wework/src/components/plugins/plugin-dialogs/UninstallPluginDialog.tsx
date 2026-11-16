@@ -71,7 +71,7 @@ export function UninstallPluginDialog({
           <button
             type="button"
             data-testid={confirmTestId}
-            className="h-9 rounded-lg bg-red-600 px-4 text-sm font-medium text-white hover:bg-red-700"
+            className="h-9 rounded-lg bg-destructive px-4 text-sm font-medium text-destructive-contrast hover:bg-destructive/90 wework:bg-red-600 wework:text-white wework:hover:bg-red-700"
             onClick={onConfirm}
           >
             {t('workbench.plugins_uninstall', '卸载')}

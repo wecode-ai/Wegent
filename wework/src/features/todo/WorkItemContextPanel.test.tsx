@@ -1,9 +1,9 @@
-import { render, screen, waitFor } from '@testing-library/react'
+import { render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { describe, expect, test, vi } from 'vitest'
 
-import '@/i18n'
 import type { CloudLoopItem, CloudProject } from '@/api/deliveries'
+import '@/i18n'
 import type { ProjectSpaceApi } from './projectSpaceSelection'
 import { WorkItemContextPanel } from './WorkItemContextPanel'
 
@@ -17,6 +17,7 @@ vi.mock('./TodoEditor', () => ({
     headerActions,
     selectedTaskId,
     deviceNamesById,
+    currentUserId,
     onRead,
     onUpdated,
     onOpenTaskConversation,
@@ -29,6 +30,7 @@ vi.mock('./TodoEditor', () => ({
     headerActions?: React.ReactNode
     selectedTaskId?: string | null
     deviceNamesById?: Readonly<Record<string, string>>
+    currentUserId?: string | number
     onRead?: (item: CloudLoopItem) => void
     onUpdated: (item: CloudLoopItem) => void
     onOpenTaskConversation?: (task: {
@@ -46,6 +48,7 @@ vi.mock('./TodoEditor', () => ({
       data-selected-task={selectedTaskId}
       data-device-name={deviceNamesById?.['local-device']}
       data-item-count={allItems.length}
+      data-handling-user={currentUserId}
       data-item-unread={String(item.is_unread)}
       data-list-item-unread={String(
         allItems.find(candidate => candidate.id === item.id)?.is_unread
@@ -124,66 +127,59 @@ const item: CloudLoopItem = {
 }
 
 describe('WorkItemContextPanel', () => {
-  test('reuses the workspace work-item editor and opens related tasks', async () => {
-    const user = userEvent.setup()
-    const onOpenTask = vi.fn()
-    const onOpenBoard = vi.fn()
-    const child = { ...item, id: 'WORK-2', parent_id: item.id, title: '子工作项' }
-    const api = {
-      listLoopItems: vi.fn().mockResolvedValue({ items: [item, child] }),
-    } as unknown as ProjectSpaceApi
+  test.each(['local', 'backend'] as const)(
+    'preserves %s project authorization through the embedded editor',
+    async store => {
+      const api = {
+        listLoopItems: vi.fn().mockResolvedValue({ items: [item] }),
+      } as unknown as ProjectSpaceApi
+      render(
+        <WorkItemContextPanel
+          api={api}
+          services={{}}
+          project={{ ...project, project_store: store, current_user_id: 7 }}
+          item={item}
+          currentUserId={7}
+          onOpenTask={vi.fn()}
+        />
+      )
+      expect(screen.getByTestId('mock-todo-editor')).toHaveAttribute('data-handling-user', '7')
+    }
+  )
 
-    render(
-      <WorkItemContextPanel
-        api={api}
-        services={{}}
-        project={project}
-        item={item}
-        currentTask={{ deviceId: 'local-device', taskId: 'runtime-1' }}
-        deviceNamesById={{ 'local-device': '本地开发机' }}
-        onOpenBoard={onOpenBoard}
-        onOpenTask={onOpenTask}
-      />
-    )
-
-    const editor = screen.getByTestId('mock-todo-editor')
-    expect(editor).toHaveAttribute('data-presentation', 'workspace-panel')
-    expect(editor).toHaveAttribute('data-fill', 'yes')
-    expect(editor).toHaveAttribute('data-controls', 'no')
-    expect(editor).toHaveAttribute('data-selected-task', 'runtime-1')
-    expect(editor).toHaveAttribute('data-device-name', '本地开发机')
-    await waitFor(() => expect(editor).toHaveAttribute('data-item-count', '2'))
-
-    await user.click(screen.getByTestId('mock-related-task'))
-    expect(onOpenTask).toHaveBeenCalledWith({
-      deviceId: 'local-device',
-      taskId: 'runtime-2',
-    })
-
-    await user.click(screen.getByTestId('work-item-open-board'))
-    expect(onOpenBoard).toHaveBeenCalledOnce()
-  })
-
-  test('keeps edits in the shared detail component', async () => {
-    const api = {
-      listLoopItems: vi.fn().mockResolvedValue({ items: [item] }),
-    } as unknown as ProjectSpaceApi
-
-    render(
-      <WorkItemContextPanel
-        api={api}
-        services={{}}
-        project={project}
-        item={item}
-        currentTask={{ deviceId: 'local-device', taskId: 'runtime-1' }}
-        onOpenBoard={vi.fn()}
-        onOpenTask={vi.fn()}
-      />
-    )
-
-    await userEvent.click(screen.getByTestId('mock-update-item'))
-    expect(screen.getByTestId('mock-todo-editor')).toHaveTextContent('更新后的工作项')
-  })
+  test.each([
+    { store: 'local', projectUser: 0, author: 7, expected: 7 },
+    { store: 'local', projectUser: 7, author: 0, expected: 0 },
+    { store: 'backend', projectUser: 9, author: 7, expected: 9 },
+  ] as const)(
+    'uses only the owning realm authority ($store/$author)',
+    async ({ store, projectUser, author, expected }) => {
+      render(
+        <WorkItemContextPanel
+          api={
+            {
+              listLoopItems: vi.fn().mockResolvedValue({ items: [item] }),
+            } as unknown as ProjectSpaceApi
+          }
+          services={{
+            localParticipationIdentity: {
+              nativeOwnerUserId: 0,
+              currentUser: { id: author, user_name: 'Current participant' },
+              viewerUserIds: [0, author],
+            },
+          }}
+          project={{ ...project, project_store: store, current_user_id: projectUser }}
+          item={item}
+          currentUserId={999}
+          onOpenTask={vi.fn()}
+        />
+      )
+      expect(screen.getByTestId('mock-todo-editor')).toHaveAttribute(
+        'data-handling-user',
+        String(expected)
+      )
+    }
+  )
 
   test('keeps read confirmations in the detail and item list', async () => {
     const unreadItem = { ...item, is_unread: true, content_revision: 1 }

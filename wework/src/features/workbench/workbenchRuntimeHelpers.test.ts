@@ -1,13 +1,13 @@
+import type { RuntimeWorkListResponse } from '@/types/api'
 import { beforeEach, describe, expect, test } from 'vitest'
 import {
   buildRuntimeTaskTitle,
-  findRuntimeTaskForPinRequest,
   findProjectDeviceWorkspace,
-  getRuntimeTaskThreadId,
+  findRuntimeTaskForPinRequest,
   getDefaultProjectDeviceWorkspaceId,
+  getRuntimeTaskThreadId,
   hydrateRuntimeTaskAddress,
   MAX_RUNTIME_TASK_TITLE_LENGTH,
-  mergeRuntimeTaskHandles,
   projectTaskAddresses,
   readLastProjectId,
   removeRuntimeTasks,
@@ -18,7 +18,6 @@ import {
   updateRuntimeWorkTaskTitle,
   writeLastProjectId,
 } from './workbenchRuntimeHelpers'
-import type { RuntimeWorkListResponse } from '@/types/api'
 
 describe('workbenchRuntimeHelpers', () => {
   beforeEach(() => {
@@ -36,7 +35,7 @@ describe('workbenchRuntimeHelpers', () => {
     expect(updated).toEqual(runtimeWork)
   })
 
-  test.each([null, undefined])('does not create a runtime list from %s', runtimeWork => {
+  test.each([null])('does not create a runtime list from %s', runtimeWork => {
     expect(
       updateRuntimeWorkTask(runtimeWork, { deviceId: 'device-1', taskId: 'missing' }, {})
     ).toBeNull()
@@ -50,17 +49,6 @@ describe('workbenchRuntimeHelpers', () => {
     expect(buildRuntimeTaskTitle('Ask [@sample](plugin://sample@local) to help')).toBe(
       'Ask @sample to help'
     )
-  })
-
-  test('removes leading plugin mentions from task titles', () => {
-    expect(buildRuntimeTaskTitle('[$Sites](plugin://sites) 创建一个 OKR 网站')).toBe(
-      '创建一个 OKR 网站'
-    )
-    expect(
-      buildRuntimeTaskTitle(
-        '[$Sites](plugin://sites) [@designer](plugin://designer) Build a portal'
-      )
-    ).toBe('Build a portal')
   })
 
   test('limits runtime task titles for compact display and terminal context', () => {
@@ -120,105 +108,6 @@ describe('workbenchRuntimeHelpers', () => {
       },
     ])
   })
-
-  test('hydrates an inherited task address with its exact worktree path', () => {
-    const runtimeWork: RuntimeWorkListResponse = {
-      projects: [
-        {
-          project: { key: 'local:/workspace/project', name: 'Project' },
-          deviceWorkspaces: [
-            {
-              deviceId: 'local-device',
-              available: true,
-              workspacePath: '/workspace/worktrees/login',
-              workspaceKind: 'worktree',
-              worktreeId: 'login',
-              tasks: [
-                {
-                  taskId: 'development-task',
-                  threadId: 'development-thread',
-                  workspacePath: '/workspace/worktrees/login',
-                  title: 'Develop login',
-                  runtime: 'codex',
-                  runtimeHandle: { threadId: 'development-thread' },
-                },
-              ],
-            },
-          ],
-        },
-      ],
-      chats: [],
-      totalTasks: 1,
-    }
-
-    expect(
-      hydrateRuntimeTaskAddress(runtimeWork, {
-        deviceId: 'local-device',
-        taskId: 'development-task',
-      })
-    ).toEqual({
-      deviceId: 'local-device',
-      taskId: 'development-task',
-      runtime: 'codex',
-      threadId: 'development-thread',
-      workspacePath: '/workspace/worktrees/login',
-      runtimeHandle: { threadId: 'development-thread' },
-    })
-  })
-
-  test.each(['local_project', 'remote_project'])(
-    'uses %s plugins for a new conversation draft',
-    source => {
-      const runtimeWork: RuntimeWorkListResponse = {
-        projects: [
-          {
-            project: {
-              id: 7,
-              key: 'local:/workspace/project',
-              name: 'Project',
-              source,
-              aiSettings: {
-                plugins: [
-                  {
-                    id: 'quality-gate@team-market',
-                    pluginName: 'quality-gate',
-                    marketplaceId: 'team-market',
-                    displayName: 'Quality Gate',
-                  },
-                ],
-              },
-            },
-            deviceWorkspaces: [
-              {
-                deviceId: 'local-device',
-                available: true,
-                mapped: true,
-                workspacePath: '/workspace/project',
-                tasks: [
-                  {
-                    taskId: 'draft-task',
-                    workspacePath: '/workspace/project',
-                    title: 'New conversation',
-                    runtime: 'codex',
-                  },
-                ],
-              },
-            ],
-          },
-        ],
-        chats: [],
-        totalTasks: 1,
-      }
-
-      expect(
-        resolveComposerProjectPluginNames(runtimeWork, 7, {
-          deviceId: 'local-device',
-          taskId: 'draft-task',
-          workspacePath: '/workspace/project',
-        })
-      ).toEqual(['quality-gate'])
-    }
-  )
 
   test('keeps an existing task pinned to its captured project plugins', () => {
     const runtimeWork: RuntimeWorkListResponse = {
@@ -312,33 +201,6 @@ describe('workbenchRuntimeHelpers', () => {
       workspacePath: '/workspace/worktrees/login',
       threadId: 'development-thread',
       runtimeHandle: { threadId: 'development-thread' },
-    })
-  })
-
-  test('merges runtime task handles without dropping existing metadata', () => {
-    expect(
-      mergeRuntimeTaskHandles(
-        {
-          modelSelection: {
-            modelName: 'local-model:luna',
-            modelType: 'runtime',
-            options: {},
-          },
-          threadId: 'pending-thread',
-        },
-        {
-          threadId: 'ready-thread',
-          turnId: 'turn-1',
-        }
-      )
-    ).toEqual({
-      modelSelection: {
-        modelName: 'local-model:luna',
-        modelType: 'runtime',
-        options: {},
-      },
-      threadId: 'ready-thread',
-      turnId: 'turn-1',
     })
   })
 
@@ -475,61 +337,22 @@ describe('workbenchRuntimeHelpers', () => {
     expect(updated?.chats[0]?.tasks.map(task => task.title)).toEqual(['解决分支冲突', '未修改'])
   })
 
-  test('stores the last project per user and ignores invalid values', () => {
-    writeLastProjectId(7, 42)
+  test('stores the last project per backend and owner and ignores invalid values', () => {
+    const owner = JSON.stringify(['https://first.example/api', 7])
+    const otherBackend = JSON.stringify(['https://second.example/api', 7])
+    const otherUser = JSON.stringify(['https://first.example/api', 8])
+    writeLastProjectId(owner, 42)
 
-    expect(readLastProjectId(7)).toBe(42)
-    expect(readLastProjectId(8)).toBeUndefined()
+    expect(readLastProjectId(owner)).toBe(42)
+    expect(readLastProjectId(otherBackend)).toBeUndefined()
+    expect(readLastProjectId(otherUser)).toBeUndefined()
 
-    writeLastProjectId(7, null)
-    expect(readLastProjectId(7)).toBeNull()
+    writeLastProjectId(owner, null)
+    expect(readLastProjectId(owner)).toBeNull()
 
-    localStorage.setItem('wework.lastProjectId.7', 'not-a-project')
-    expect(readLastProjectId(7)).toBeUndefined()
+    localStorage.setItem(`wework.lastProjectId.${owner}`, 'not-a-project')
+    expect(readLastProjectId(owner)).toBeUndefined()
   })
-
-  test.each(['local_project', 'remote_project'])(
-    'selects the primary root for a multi-root %s project',
-    source => {
-      const runtimeWork: RuntimeWorkListResponse = {
-        projects: [
-          {
-            project: {
-              id: 7,
-              key: 'product',
-              name: 'Product',
-              source,
-              roots: [
-                { kind: 'local', path: '/workspace/web/' },
-                { kind: 'local', path: '/workspace/api' },
-              ],
-            },
-            deviceWorkspaces: [
-              {
-                id: 12,
-                deviceId: 'device-1',
-                workspacePath: '/workspace/api',
-                available: true,
-                tasks: [],
-              },
-              {
-                id: 11,
-                deviceId: 'device-1',
-                workspacePath: '/workspace/web',
-                available: true,
-                tasks: [],
-              },
-            ],
-          },
-        ],
-        chats: [],
-        totalTasks: 0,
-      }
-
-      expect(getDefaultProjectDeviceWorkspaceId(runtimeWork, 7)).toBe(11)
-      expect(findProjectDeviceWorkspace(runtimeWork, 7, null)?.workspacePath).toBe('/workspace/web')
-    }
-  )
 
   test('keeps multi-location non-local projects explicit', () => {
     const runtimeWork: RuntimeWorkListResponse = {

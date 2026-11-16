@@ -11,7 +11,7 @@ export async function sendNativeKeyAndWait(
     reject = rejectEvent
   })
   const record = (event: KeyboardEvent) => {
-    if (event.isTrusted && event.target === target) acknowledge()
+    if (event.isTrusted && event.composedPath()[0] === target) acknowledge()
   }
   window.addEventListener(type, record, true)
   const timeout = window.setTimeout(

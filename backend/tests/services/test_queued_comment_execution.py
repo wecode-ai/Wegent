@@ -271,8 +271,9 @@ def test_cp07_cp09_cp11_queue_admission_preserves_use_authority(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("recovered", [False, True])
 async def test_offline_root_and_early_reply_are_durable_and_keep_one_session(
-    test_db, test_user, assigned_mention_scope
+    test_db, test_user, assigned_mention_scope, recovered
 ):
     project, _, item, agent, _ = assigned_mention_scope
     device = (
@@ -305,8 +306,10 @@ async def test_offline_root_and_early_reply_are_durable_and_keep_one_session(
         update(LoopItem).where(LoopItem.id == item.id).values(metadata_json={})
     )
     test_db.commit()
-    _, root_message, root = await submit(test_db, test_user, project, item, agent)
-    _, _, reply = await submit(
+    root_comment, root_message, root = await submit(
+        test_db, test_user, project, item, agent
+    )
+    reply_comment, _, reply = await submit(
         test_db, test_user, project, item, agent, reply_to=root_message.message_id
     )
     assert root.status == reply.status == "queued"
@@ -343,9 +346,48 @@ async def test_offline_root_and_early_reply_are_durable_and_keep_one_session(
     loop_item_execution_service._persist_runtime_request_intent(
         test_db, execution=claimed
     )
+    root_payload = loop_item_execution_service.build_executor_runtime_payload(
+        test_db,
+        execution=claimed,
+        execution_target_id=device.name,
+        executor_device_id=device.name,
+    )
+    assert root_payload["clientUserMessageId"] == root_comment.message_id
     # Model completion is synthetic here; no real Runtime or model service runs.
     claimed.status = "completed"
     test_db.commit()
+    if recovered:
+        loop_item_execution_service.cancel(
+            test_db,
+            execution_id=later_root.id,
+            note="Cancel the queued independent turn",
+        )
+        other = Kind(
+            kind="Device",
+            name="recovered-device",
+            namespace="default",
+            user_id=test_user.id,
+            is_active=True,
+            json=device.json,
+        )
+        test_db.add(other)
+        test_db.flush()
+        test_db.add(
+            LoopItemExecution(
+                loop_item_id=item.id,
+                cloud_project_id=project.id,
+                executor_owner_user_id=test_user.id,
+                runtime_device_id=other.name,
+                runtime_task_id="recovered-session",
+                status="completed",
+            )
+        )
+        test_db.execute(
+            update(LoopItem.__table__)
+            .where(LoopItem.id == item.id)
+            .values(metadata={"runner_binding": {"environment_id": str(other.id)}})
+        )
+        test_db.commit()
     assert loop_item_execution_service.prepare_queued_assignments(test_db) == 1
     claimed_reply = loop_item_execution_service.claim_next_for_device(
         test_db,
@@ -357,3 +399,14 @@ async def test_offline_root_and_early_reply_are_durable_and_keep_one_session(
     assert claimed_reply.id == reply.id
     assert claimed_reply.runtime_task_id == root.runtime_task_id
     assert claimed_reply.runtime_request["newSession"] is False
+    if recovered:
+        test_db.refresh(item)
+        assert item.metadata_json["runner_binding"]["environment_id"] == str(other.id)
+    reply_payload = loop_item_execution_service.build_executor_runtime_payload(
+        test_db,
+        execution=claimed_reply,
+        execution_target_id=device.name,
+        executor_device_id=device.name,
+    )
+    assert reply_payload["clientUserMessageId"] == reply_comment.message_id
+    assert reply_comment.message_id != root_comment.message_id

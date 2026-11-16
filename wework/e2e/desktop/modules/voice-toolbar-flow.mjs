@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import { mkdir, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { fetchLocalRuntime } from './runtime-request.mjs'
+import { WORKBENCH_READY_TIMEOUT_MS, withTimeout } from './shared.mjs'
 
 const PACKAGE = '@wework-e2e/speech-model'
 const PROVIDER = 'voice-toolbar-model'
@@ -12,6 +13,38 @@ const LEFT_ACTIONS = [
   '[data-testid="composer-plugin-picker-button"]',
   '[data-testid="quick-phrase-button"]',
 ]
+
+export async function waitForVoiceToolbarReady(control, report = console.log) {
+  try {
+    await control.command('waitFor', `${VOICE} button:not([aria-haspopup])`)
+  } catch (error) {
+    try {
+      const observations = {
+        mounted: ['getElementCount', VOICE],
+        buttons: ['getElementCount', `${VOICE} button`],
+        readyButtons: ['getElementCount', `${VOICE} button:not([aria-haspopup])`],
+        active: ['getElementCount', ACTIVE],
+        popup: ['getAttribute', `${VOICE} button`, { value: 'aria-haspopup' }],
+        label: ['getAttribute', `${VOICE} button`, { value: 'aria-label' }],
+        title: ['getAttribute', `${VOICE} button`, { value: 'title' }],
+      }
+      const state = await withTimeout(
+        Promise.all(
+          Object.entries(observations).map(async ([key, command]) => [
+            key,
+            String(await control.command(...command)).slice(0, 256),
+          ])
+        ),
+        1_000,
+        'Voice toolbar failure diagnostics did not complete'
+      )
+      report(`[voice-toolbar-readiness] ${JSON.stringify(Object.fromEntries(state))}`)
+    } catch {
+      // Diagnostics must preserve the original readiness failure.
+    }
+    throw error
+  }
+}
 
 async function installSpeechModel(control, resultDir) {
   const directory = join(resultDir, 'speech-model')
@@ -36,6 +69,22 @@ async function installSpeechModel(control, resultDir) {
     join(directory, 'index.js'),
     `export const inject = ['speechToText']
 export function apply(ctx) {
+  const speech = ctx.speechToText
+  const originalConfigure = speech.configure
+  const observedConfigure = async function (patch) {
+    const startedAt = Date.now()
+    console.log('[voice-selection]', { phase: 'started', pid: process.pid })
+    try {
+      const result = await originalConfigure.call(this, patch)
+      console.log('[voice-selection]', { phase: 'completed', elapsedMs: Date.now() - startedAt, selection: this.snapshot().selection })
+      return result
+    } catch (error) {
+      console.error('[voice-selection]', { phase: 'failed', elapsedMs: Date.now() - startedAt, message: String(error?.message ?? error) })
+      throw error
+    }
+  }
+  speech.configure = observedConfigure
+  ctx.effect(() => () => { if (speech.configure === observedConfigure) speech.configure = originalConfigure })
   ctx.effect(() => ctx.speechToText.register({
     info: { id: '${PROVIDER}', name: 'Toolbar speech model', location: 'cloud', languages: ['auto'] },
     transcribe: async () => { throw new Error('Cancelled recordings must never reach inference') },
@@ -45,7 +94,12 @@ export function apply(ctx) {
   )
   const origin = await control.command('getLocationOrigin', 'body')
   const response = await fetchLocalRuntime(control, `${origin}/wework/electron-host/v1/invoke`, {
+    // Package installation and profile validation exceed an ordinary UI step.
+    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
     method: 'POST',
+    // Installing a real plugin snapshots the profile, runs pnpm and validates
+    // the result. These serial phases can exceed the ordinary UI step budget.
+    timeoutMs: 60_000,
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify({
       capability: 'runtime.installCoreDshPlugin',
@@ -80,7 +134,7 @@ export async function verifyVoiceToolbar({ control, resultDir, restartDesktopApp
   await control.command('waitFor', `${provider} option[value="${PROVIDER}"]`)
   await control.command('select', provider, { value: PROVIDER })
   await control.command('click', '[data-testid="voice-input-setup-close"]')
-  await control.command('waitFor', `${VOICE} button:not([aria-haspopup])`)
+  await waitForVoiceToolbarReady(control)
   await assertToolbar(control, false)
 
   // Enter the real capture/request/error row even on machines without a mic.

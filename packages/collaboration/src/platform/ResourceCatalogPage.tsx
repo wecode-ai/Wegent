@@ -2,12 +2,10 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
 import {
   Bot,
-  ChevronRight,
   Cloud,
-  FolderOpen,
   Monitor,
   Plus,
   Search,
@@ -33,6 +31,10 @@ import type {
 } from "./types";
 import type { DeviceCatalogState } from "./useDeviceCatalog";
 import { DeviceCatalogFeedback } from "./DeviceCatalogFeedback";
+import { ResourceBindingDialog } from "./ResourceBindingDialog";
+import { DeviceLastSeen, useDeviceLastSeenClock } from "./DeviceLastSeen";
+import { DeviceDeleteDialog } from "./DeviceDeleteDialog";
+import { Tooltip } from "../issue-detail/Tooltip";
 import {
   ResourceDestinationDialog,
   type ResourceDestinationOption,
@@ -40,6 +42,9 @@ import {
 import type { PlatformMessages } from "./platformMessages";
 import {
   runtimeLabel,
+  resourceCatalogCopy,
+  canDeleteOfflineDevice,
+  isDeviceDeletionProtected,
   type ResourceCatalogKind,
   type ResourceScope,
   type ResourceSource,
@@ -67,9 +72,14 @@ export function ResourceCatalogPage({
   onCreateTeam,
   onDeleteAgent,
   onDeleteTeam,
+  onDeleteDevice,
+  currentUserId,
+  locale,
   onManageResource,
+  preferences,
 }: {
   api: SharedWorkspaceApi;
+  preferences?: ReactNode;
   domain: CollaborationDomain;
   kind: ResourceCatalogKind;
   cloudAccess: CollaborationPlatformHostAdapter["cloudAccess"];
@@ -96,6 +106,9 @@ export function ResourceCatalogPage({
   onCreateTeam(workspaceId: string): void;
   onDeleteAgent(agent: CollaborationOwnedAgent): Promise<void>;
   onDeleteTeam(group: CollaborationGroup): Promise<void>;
+  onDeleteDevice?(device: CollaborationExecutionEnvironment): Promise<void>;
+  currentUserId?: number;
+  locale: string;
   onManageResource(
     kind: ResourceCatalogKind,
     resourceId?: string,
@@ -152,9 +165,6 @@ export function ResourceCatalogPage({
   const [bindingResourceId, setBindingResourceId] = useState<string | null>(
     null,
   );
-  const [bindingWorkspaceId, setBindingWorkspaceId] = useState<string | null>(
-    null,
-  );
   const [deletingAgent, setDeletingAgent] =
     useState<CollaborationOwnedAgent | null>(null);
   const [deletingTeam, setDeletingTeam] = useState<CollaborationGroup | null>(
@@ -162,6 +172,9 @@ export function ResourceCatalogPage({
   );
   const [deleteBusy, setDeleteBusy] = useState(false);
   const [deleteError, setDeleteError] = useState<string | null>(null);
+  const [deletingDevice, setDeletingDevice] =
+    useState<CollaborationExecutionEnvironment | null>(null);
+  const now = useDeviceLastSeenClock(kind === "devices");
   const workspaceLocations = useMemo(
     () =>
       new Map(
@@ -292,34 +305,12 @@ export function ResourceCatalogPage({
     setQuery("");
     setCreateOpen(false);
     setBindingResourceId(null);
-    setBindingWorkspaceId(null);
     setDeletingAgent(null);
     setDeletingTeam(null);
+    setDeletingDevice(null);
     setDeleteError(null);
   }, [domain, kind]);
-  const pageCopy = {
-    agents: {
-      title: messages.agents,
-      hint: messages.agentsPageHint,
-      search: messages.searchAgents,
-      create: messages.createAgent,
-      icon: Bot,
-    },
-    teams: {
-      title: messages.teams,
-      hint: messages.teamsPageHint,
-      search: messages.searchTeams,
-      create: messages.createTeam,
-      icon: UsersRound,
-    },
-    devices: {
-      title: messages.devices,
-      hint: messages.devicesPageHint,
-      search: messages.searchDevices,
-      create: messages.addDevice,
-      icon: Monitor,
-    },
-  }[kind];
+  const pageCopy = resourceCatalogCopy(kind, messages);
 
   const agentRows = agents.map((agent) => {
     return {
@@ -423,7 +414,7 @@ export function ResourceCatalogPage({
         : ("shared" as const),
     owner: environment.owner_name,
     ownership: "",
-    detail: `${environment.coding_tools.length} ${messages.toolCount}`,
+    detail: `${environment.device_id != null ? `#${environment.device_id} · ` : ""}${environment.coding_tools.length} ${messages.toolCount}`,
     access:
       environment.owner_type === "workspace"
         ? messages.currentWorkspace
@@ -442,25 +433,34 @@ export function ResourceCatalogPage({
             ? messages.errorStatus
             : messages.offline,
     statusTone: environment.status,
-    workspaceNames:
-      environment.owner_type === "workspace"
-        ? workspaces
-            .filter((workspace) => workspace.id === environment.owner_id)
-            .map((workspace) => workspace.name)
-        : [],
+    workspaceCount:
+      environment.workspace_ids?.length ??
+      (environment.owner_type === "workspace" ? 1 : 0),
+    workspaceNames: workspaces
+      .filter((workspace) =>
+        environment.owner_type === "workspace"
+          ? workspace.id === environment.owner_id
+          : environment.workspace_ids?.includes(workspace.id),
+      )
+      .map((workspace) => workspace.name),
   }));
   const rows =
     kind === "agents" ? agentRows : kind === "teams" ? teamRows : deviceRows;
   const visibleRows = rows.filter(
     (row) =>
+      (kind !== "devices" || row.statusTone === "online") &&
       (scope === "all" || row.scope === scope) &&
       (!normalizedQuery ||
         `${row.name} ${row.owner} ${row.workspaceNames.join(" ")}`
           .toLocaleLowerCase()
           .includes(normalizedQuery)),
   );
-  const PageIcon = pageCopy.icon;
-  const rowsInSource = rows;
+  const PageIcon =
+    kind === "agents" ? Bot : kind === "teams" ? UsersRound : Monitor;
+  const rowsInSource =
+    kind === "devices"
+      ? rows.filter((row) => row.statusTone === "online")
+      : rows;
   const scopeCounts = {
     all: rowsInSource.length,
     mine: rowsInSource.filter((row) => row.scope === "mine").length,
@@ -472,8 +472,17 @@ export function ResourceCatalogPage({
   const workspaceUsage = (row: (typeof rows)[number]) =>
     row.source === "local"
       ? messages.localSpaces
-      : row.workspaceNames.length
-        ? formatCount(messages.addedToSpaceCount, row.workspaceNames.length)
+      : (
+            "workspaceCount" in row
+              ? row.workspaceCount
+              : row.workspaceNames.length
+          )
+        ? formatCount(
+            messages.addedToSpaceCount,
+            "workspaceCount" in row
+              ? row.workspaceCount
+              : row.workspaceNames.length,
+          )
         : messages.notAddedToSpace;
   const startCreate = () => {
     if (domain === "local") {
@@ -525,6 +534,14 @@ export function ResourceCatalogPage({
         ) : null}
       </header>
 
+      {preferences && (
+        <section
+          className="mb-4 border-b border-border pb-4"
+          data-testid="collaboration-device-preferences"
+        >
+          {preferences}
+        </section>
+      )}
       <div className="collaboration-resource-catalog-toolbar">
         <div className="collaboration-resource-filter-stack">
           <div
@@ -588,6 +605,7 @@ export function ResourceCatalogPage({
             ) : (
               <>
                 <span>{messages.runStatus}</span>
+                <span>{messages.lastSeen}</span>
                 <span>{messages.toolCount}</span>
                 <span>{messages.usedBySpaces}</span>
               </>
@@ -688,6 +706,14 @@ export function ResourceCatalogPage({
                   >
                     {row.status}
                   </span>
+                  <DeviceLastSeen
+                    device={
+                      environments.find((device) => device.id === row.id)!
+                    }
+                    locale={locale}
+                    messages={messages}
+                    now={now}
+                  />
                   <span className="collaboration-resource-row-tools">
                     {row.tools.slice(0, 3).map((tool) => (
                       <em key={tool}>{runtimeLabel(tool)}</em>
@@ -702,6 +728,28 @@ export function ResourceCatalogPage({
                 </>
               )}
               <span className="collaboration-resource-row-actions">
+                {kind === "devices" &&
+                onDeleteDevice &&
+                canDeleteOfflineDevice(
+                  environments.find((device) => device.id === row.id)!,
+                  currentUserId,
+                ) ? (
+                  <Tooltip label={messages.deleteDevice}>
+                    <button
+                      type="button"
+                      className="collaboration-resource-settings-button collaboration-resource-delete-button"
+                      aria-label={messages.deleteDevice}
+                      data-testid={`collaboration-devices-delete-${row.id}`}
+                      onClick={() =>
+                        setDeletingDevice(
+                          environments.find((device) => device.id === row.id)!,
+                        )
+                      }
+                    >
+                      <Trash2 aria-hidden="true" />
+                    </button>
+                  </Tooltip>
+                ) : null}
                 {kind !== "teams" && row.source === "cloud" ? (
                   <button
                     type="button"
@@ -792,59 +840,35 @@ export function ResourceCatalogPage({
         />
       ) : null}
       {bindingRow ? (
-        <div
-          className="collaboration-resource-dialog-backdrop"
-          role="presentation"
-          onMouseDown={() => setBindingResourceId(null)}
-        >
-          <section
-            className="collaboration-resource-dialog"
-            role="dialog"
-            aria-modal="true"
-            aria-label={messages.chooseSpace}
-            onMouseDown={(event) => event.stopPropagation()}
-          >
-            <header>
-              <div>
-                <h2>{messages.chooseSpace}</h2>
-                <p>{messages.chooseSpaceHint}</p>
-              </div>
-              <button
-                type="button"
-                aria-label={messages.cancel}
-                onClick={() => setBindingResourceId(null)}
-              >
-                <X aria-hidden="true" />
-              </button>
-            </header>
-            <div className="collaboration-resource-space-options">
-              {cloudWorkspaces.length ? (
-                cloudWorkspaces.map((workspace) => (
-                  <button
-                    type="button"
-                    key={workspace.id}
-                    data-testid={`collaboration-${kind}-space-${workspace.id}`}
-                    disabled={bindingWorkspaceId === workspace.id}
-                    onClick={() => {
-                      setBindingWorkspaceId(workspace.id);
-                      void onAddToWorkspace(workspace.id, kind, bindingRow.id)
-                        .then(() => setBindingResourceId(null))
-                        .finally(() => setBindingWorkspaceId(null));
-                    }}
-                  >
-                    <FolderOpen aria-hidden="true" />
-                    <span>
-                      <strong>{workspace.name}</strong>
-                    </span>
-                    <ChevronRight aria-hidden="true" />
-                  </button>
-                ))
-              ) : (
-                <p>{messages.noAvailableSpaces}</p>
-              )}
-            </div>
-          </section>
-        </div>
+        <ResourceBindingDialog
+          workspaces={cloudWorkspaces}
+          kind={kind}
+          messages={messages}
+          onClose={() => setBindingResourceId(null)}
+          onBind={(workspaceId) =>
+            onAddToWorkspace(workspaceId, kind, bindingRow.id)
+          }
+        />
+      ) : null}
+      {deletingDevice && onDeleteDevice ? (
+        <DeviceDeleteDialog
+          device={deletingDevice}
+          protectedRegistration={
+            !environments.some(
+              (device) =>
+                device.id === deletingDevice.id &&
+                !isDeviceDeletionProtected(device),
+            )
+          }
+          workspaceNames={
+            deviceRows.find((row) => row.id === deletingDevice.id)
+              ?.workspaceNames ?? []
+          }
+          locale={locale}
+          messages={messages}
+          onDelete={onDeleteDevice}
+          onClose={() => setDeletingDevice(null)}
+        />
       ) : null}
       {deletingAgent ? (
         <div

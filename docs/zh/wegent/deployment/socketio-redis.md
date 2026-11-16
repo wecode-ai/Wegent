@@ -17,9 +17,11 @@ Backend 的 Socket.IO Redis manager 默认启用 TCP keepalive，并使用以下
 | `SOCKETIO_REDIS_SOCKET_TIMEOUT` | `30` | 限制一次 Redis 读取或写入的等待时间 |
 | `SOCKETIO_REDIS_CONNECT_TIMEOUT` | `5` | 限制建立 Redis 连接的等待时间 |
 | `SOCKETIO_REDIS_HEALTH_CHECK_INTERVAL` | `15` | Redis 客户端执行命令或读取前的健康检查间隔 |
+| `SOCKETIO_REDIS_ACK_PROBE_INTERVAL_SECONDS` | `30` | 一次回执探测结束后到下次探测的等待时间 |
 
 这些设置只作用于 Backend 的 Socket.IO Redis manager，不改变缓存或 Celery 的连接设置。
 修改环境变量后需要重启 Backend 实例。
+设置 `SOCKETIO_REDIS_CLIENT_NAME` 可在 Redis 的 `CLIENT LIST` 中识别此 manager 的连接。
 
 ## 超时与重新订阅
 
@@ -27,12 +29,20 @@ Backend 的 Socket.IO Redis manager 默认启用 TCP keepalive，并使用以下
 客户端进入已有的重连和重新订阅流程。收到一条消息的部分数据后停止收包，也会触发
 这一流程，避免 listener 一直等待剩余字节。
 
-健康检查在客户端执行命令或读取前进行，不是在后台定时运行。因此完全空闲的订阅
-也可能达到读取超时，并自动重新订阅。持续连接失败时沿用 Socket.IO 的重试退避。
+健康检查在客户端执行命令或读取前进行，不是在后台定时运行。后台回执探测的等待
+间隔取配置值与读取超时一半的较小值，让健康空闲订阅在超时前收到消息，避免无谓
+重连期间丢失 RPC 回执。持续连接失败时沿用 Socket.IO 的重试退避。
 重新订阅恢复后可以接收新消息；Redis Pub/Sub 不重放断连期间错过的消息，已超时的
 设备操作需要重新发起。
 
 ## 验证恢复
+
+Python Backend 在每个进程内通过 Socket.IO 使用的 Redis channel 发送探测回执。
+连续三次探测失败后，`/api/shutdown/status` 返回 503，下一次成功后恢复就绪。
+配置的探测间隔默认为 30 秒；默认读取超时下实际等待间隔为 15 秒，每次最多等待 5 秒。
+
+用 `LOG_LEVEL=DEBUG` 采集回执日志时，可按 `host_id`、`sid` 和
+`callback_id` 对齐 `publish`、`receive` 和 `match` 三个阶段。
 
 从设备 WebSocket 所属实例以外的 Backend 调用只读 `runtime.capacity.get`，确认
 收到 RPC 回包。也应检查订阅恢复后的设备命令和实时推送。

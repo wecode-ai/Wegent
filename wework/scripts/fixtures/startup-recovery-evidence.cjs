@@ -1,8 +1,8 @@
-// Unit fixture: only the Electron/process-exit boundary is doubled. The parent
-// recovery reader, generated child publisher, filesystem and IPC gates are real.
+// Unit fixture: Electron resolution and the process-exit boundary are doubled.
+// The recovery reader, generated publisher, filesystem and IPC gates are real.
 const childProcess = require('node:child_process')
 const fs = require('node:fs/promises')
-const { syncBuiltinESMExports } = require('node:module')
+const { createRequire, syncBuiltinESMExports } = require('node:module')
 const path = require('node:path')
 const vm = require('node:vm')
 const { pathToFileURL } = require('node:url')
@@ -77,7 +77,20 @@ async function reader(mode, root, modulePath, evidence) {
   let child
   let childExited
   let released = false
-  childProcess.execFile = (_binary, args, _options, callback) => {
+  const electronRequire = createRequire(
+    new URL('../../../electron/package.json', pathToFileURL(modulePath))
+  )
+  const electronModule = electronRequire.resolve('electron')
+  const previousElectron = require.cache[electronModule]
+  require.cache[electronModule] = {
+    id: electronModule,
+    filename: electronModule,
+    loaded: true,
+    exports: '/unused-electron',
+  }
+  childProcess.execFile = (binary, args, _options, callback) => {
+    if (binary !== '/unused-electron')
+      throw new Error('Unit fixture must not resolve a real Electron binary')
     if (mode !== 'race') {
       void completedWriter(JSON.parse(args[1]), mode, evidence).then(
         () => callback(null, '', ''),
@@ -129,6 +142,8 @@ async function reader(mode, root, modulePath, evidence) {
     result.failure = { name: error.name, message: error.message }
   } finally {
     result.writerExitCode = await childExited
+    if (previousElectron) require.cache[electronModule] = previousElectron
+    else delete require.cache[electronModule]
   }
   process.stdout.write(JSON.stringify(result))
 }

@@ -158,7 +158,11 @@ pub(super) async fn uploaded(
         };
         let mut descriptor = json!({"attachment_id":row.id,"storage_backend":data["storage_backend"].as_str().unwrap_or("mysql"),"storage_key":data["storage_key"].as_str().unwrap_or(""),"updated_at":row.updated_at.format("%Y-%m-%dT%H:%M:%S%.f").to_string(),"filename":data["original_filename"].as_str().unwrap_or(&row.name),"file_extension":data["file_extension"].as_str().unwrap_or(""),"file_size":data["file_size"].as_i64().unwrap_or(0),"mime_type":mime});
         if kind != "image" {
-            if let Some(external) = state.video_extensions.resolve_material(&data, kind) {
+            if let Some(external) = state
+                .video_extensions
+                .resolve_uploaded_material(&data, kind, user, row.id)
+                .await?
+            {
                 if let Some(map) = external.as_object() {
                     descriptor.as_object_mut().unwrap().extend(map.clone());
                 }

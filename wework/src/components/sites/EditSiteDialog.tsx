@@ -100,7 +100,10 @@ export function EditSiteDialog({ site, loading, error, onCancel, onConfirm }: Ed
               </label>
             </div>
             {error && (
-              <p className="mt-3 text-xs leading-5 text-red-500" role="alert">
+              <p
+                className="mt-3 text-xs leading-5 text-destructive wework:text-red-500"
+                role="alert"
+              >
                 {error}
               </p>
             )}

@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import '@testing-library/jest-dom'
-import { fireEvent, render, screen } from '@testing-library/react'
+import { fireEvent, render, screen, within } from '@testing-library/react'
 
 import { UserFloatingMenu } from '@/features/layout/components/UserFloatingMenu'
 
@@ -89,5 +89,23 @@ describe('UserFloatingMenu', () => {
     expect(root).toHaveClass('z-30')
     expect(menu).toHaveClass('z-40')
     expect(menu).toHaveClass('pointer-events-auto')
+  })
+
+  it('keeps the account toggle unambiguous when Issue cards show the same username', () => {
+    const openIssue = jest.fn()
+    render(
+      <>
+        <button type="button" onClick={openIssue}>
+          Issue awaiting shiqiong
+        </button>
+        <UserFloatingMenu />
+      </>
+    )
+    expect(screen.getAllByRole('button', { name: /shiqiong/i })).toHaveLength(2)
+    const toggle = screen.getByTestId('user-floating-menu-toggle')
+    expect(within(toggle).getByText('shiqiong', { exact: true })).toBeVisible()
+    fireEvent.click(toggle)
+    expect(openIssue).not.toHaveBeenCalled()
+    expect(screen.getByRole('menu', { name: 'User menu' })).toBeVisible()
   })
 })

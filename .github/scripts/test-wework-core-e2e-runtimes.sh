@@ -42,8 +42,12 @@ ruby -ryaml -e '
   raise "Backend Rust OCI references must use the shared resolver" unless runtime_steps.all? { |s| s.fetch("run").include?(resolver) }
   steps = producer.fetch("steps").to_h { |s| [s.fetch("name"), s] }
   build = steps.fetch("Build Backend Rust E2E runtime").fetch("run")
-  raise "Backend Rust must compile the attachment S3 example" unless build.include?("--example attachment_s3_e2e")
-  raise "Backend Rust must compile the attachment hosting example" unless build.include?("--example attachment_hosting_e2e")
+  builder_recipe = ".github/runtime-images/backend-rs-builder.Dockerfile"
+  raise "Backend Rust must build with its hashed Noble recipe" unless build.include?("--file #{builder_recipe}") && digests.first.include?(builder_recipe)
+  builder = File.read(File.join(File.dirname(ARGV[1]), "../runtime-images/backend-rs-builder.Dockerfile"))
+  raise "Backend Rust builder must use Noble" unless builder.include?("FROM ubuntu:24.04")
+  raise "Backend Rust must compile the attachment S3 example" unless builder.include?("--example attachment_s3_e2e")
+  raise "Backend Rust must compile the attachment hosting example" unless builder.include?("--example attachment_hosting_e2e")
   publish = steps.fetch("Publish content-addressed Backend Rust E2E image")
   raise "Backend Rust image publication must use its hashed recipe" unless publish.fetch("run").include?("--file #{recipe}")
   dockerfile = File.read(File.join(File.dirname(ARGV[1]), "../runtime-images/backend-rs-e2e.Dockerfile"))
@@ -116,22 +120,22 @@ ruby -ryaml -e '
   puts step.fetch("run")
 ' "${RUNTIME_ACTION_FILE:-$script_dir/../actions/build-wework-core-e2e/action.yml}" > "$temp_dir/build.sh"
 
-for command in apt-get cargo; do
-  cat > "$temp_dir/bin/$command" <<'EOF'
+cat > "$temp_dir/bin/cargo" <<'EOF'
 #!/usr/bin/env bash
-set -euo pipefail
 echo unexpected-build >> "$TEST_LOG"
-exit 1
+exit 99
 EOF
-done
+cat > "$temp_dir/bin/apt-get" <<'EOF'
+#!/usr/bin/env bash
+echo unexpected-build >> "$TEST_LOG"
+exit 99
+EOF
 cat > "$temp_dir/bin/oras" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
-test "$#" -eq 2
-test "$1" = logout
-test "$2" = ghcr.io
+test "$*" = 'logout ghcr.io'
 echo logout >> "$TEST_LOG"
-[[ "${FAIL_LOGOUT:-false}" != true ]] || exit 1
+[[ "$FAIL_LOGOUT" != true ]] || exit 1
 rm "$DOCKER_CONFIG/config.json"
 EOF
 cat > "$temp_dir/bin/pnpm" <<'EOF'
@@ -140,11 +144,11 @@ set -euo pipefail
 test -z "${GITHUB_TOKEN:-}"
 echo package >> "$TEST_LOG"
 if [[ "$RUNTIME_ARTIFACTS" == true ]]; then
+  test ! -f "$DOCKER_CONFIG/config.json"
   test -x .ci-artifacts/wegent-executor
   test -x .ci-artifacts/wegent-backend-rs
-  test ! -f "$DOCKER_CONFIG/config.json"
 fi
-[[ "$FAIL_PACKAGE" != true ]] || exit 1
+[[ "$FAILURE" != package ]] || exit 1
 for ((i=0; i<50; i++)); do
   if [[ -x .ci-artifacts/wegent-executor ]]; then
     mkdir -p wework/electron/release/WeWork-linux-x64/resources/bin
@@ -161,7 +165,8 @@ chmod +x "$temp_dir/bin/"*
 run_case() {
   local mode="$1" failure="$2" expected="$3"
   local repo="$temp_dir/repo-$mode-$failure"
-  mkdir -p "$repo/.github/scripts" "$repo/docker-config"
+  mkdir -p "$repo/.github/scripts" "$repo/docker-config" "$repo/runtime-temp"
+  cp "$script_dir/restore-actions-runtime.sh" "$script_dir/runtime-artifact.mjs" "$repo/.github/scripts/"
   printf '{"auths":{"ghcr.io":{"auth":"synthetic-credential"}}}\n' > "$repo/docker-config/config.json"
   touch "$repo/log"
   cat > "$repo/.github/scripts/restore-oci-runtime-binary.sh" <<'EOF'
@@ -176,7 +181,7 @@ case "$1 $2 $3" in
   *) exit 1 ;;
 esac
 echo "oci $3" >> "$TEST_LOG"
-[[ "$FAIL_RUNTIME" != "$3" ]] || exit 1
+[[ "$FAILURE" != "$3" ]] || exit 1
 mkdir -p "$(dirname "$3")"
 printf '#!/bin/sh\nexit 0\n' > "$3"
 chmod +x "$3"
@@ -190,28 +195,30 @@ test "$ACTIONS_ARTIFACT_HEAD_SHA" = synthetic-head-sha
 test "$ACTIONS_ARTIFACT_WAIT_SECONDS" = 1800
 test -f "$DOCKER_CONFIG/config.json"
 case "$1" in
-  executor-e2e-binary) binary=wegent-executor ;;
-  backend-rs-e2e-runtime) binary=wegent-backend-rs ;;
+  executor-e2e-binary) component=executor; binary=wegent-executor; image=executor ;;
+  backend-rs-e2e-runtime) component=backend-rs; binary=wegent-backend-rs; image=backend ;;
   *) exit 1 ;;
 esac
 echo "artifact $1" >> "$TEST_LOG"
-[[ "$FAIL_RUNTIME" != "$1" ]] || exit 1
+[[ "$FAILURE" != "$component" ]] || exit 1
 mkdir -p "$2"
-if [[ "$MISSING_BINARY" != "$binary" ]]; then
-  printf '#!/bin/sh\nexit 0\n' > "$2/$binary"
+printf '#!/bin/sh\nexit 0\n' > "$2/$binary"
+RUNTIME_HEAD_SHA="$ACTIONS_ARTIFACT_HEAD_SHA" node .github/scripts/runtime-artifact.mjs create "$2" "$component" "$image" "$binary"
+if [[ "$FAILURE" == "missing:$binary" ]]; then
+  rm "$2/$binary"
+fi
+if [[ "$FAILURE" == checksum && "$component" == backend-rs ]]; then
+  printf corrupt > "$2/$binary"
 fi
 EOF
-  chmod +x "$repo/.github/scripts/restore-oci-runtime-binary.sh"
-  chmod +x "$repo/.github/scripts/download-actions-artifact.sh"
+  chmod +x "$repo/.github/scripts/"*.sh
   local status=0
   (cd "$repo"; PATH="$temp_dir/bin:$PATH" TEST_LOG="$repo/log" \
+    TMPDIR="$repo/runtime-temp" \
     RUNTIME_ARTIFACTS="$mode" RUNTIME_HEAD_SHA=synthetic-head-sha \
-    FAIL_RUNTIME="$failure" MISSING_BINARY="${failure#missing:}" \
-    DOCKER_CONFIG="$repo/docker-config" \
-    FAIL_LOGOUT="$([[ "$failure" == logout ]] && echo true || echo false)" \
-    FAIL_PACKAGE="$([[ "$failure" == package ]] && echo true || echo false)" \
-    GITHUB_TOKEN=synthetic-read-token EXECUTOR_IMAGE=executor \
-    BACKEND_RS_IMAGE=backend bash "$temp_dir/build.sh") || status=$?
+    FAILURE="$failure" FAIL_LOGOUT="$([[ "$failure" == logout ]] && echo true || echo false)" \
+    DOCKER_CONFIG="$repo/docker-config" GITHUB_TOKEN=synthetic-read-token \
+    EXECUTOR_IMAGE=executor BACKEND_RS_IMAGE=backend bash "$temp_dir/build.sh") || status=$?
   if [[ "$expected" == success ]]; then
     test "$status" -eq 0
     test -x "$repo/.ci-artifacts/wegent-backend-rs"
@@ -221,9 +228,10 @@ EOF
   fi
   if grep -q unexpected-build "$repo/log"; then return 1; fi
   test -z "$(find "$repo/.ci-artifacts" -type d -name '*-download.*' -print)"
+  test -z "$(find "$repo/runtime-temp" -mindepth 1 -print)"
   if [[ "$mode" == true ]]; then
     if grep -q oci "$repo/log"; then return 1; fi
-    test "$(grep -c '^artifact ' "$repo/log")" -eq 2
+    test "$(grep -c artifact "$repo/log")" -eq 2
     if [[ "$expected" == success || "$failure" == package || "$failure" == logout ]]; then
       test "$(sed -n '3p' "$repo/log")" = logout
       if [[ "$failure" != logout ]]; then
@@ -234,17 +242,18 @@ EOF
   else
     if grep -q logout "$repo/log"; then return 1; fi
     if grep -q '^artifact ' "$repo/log"; then return 1; fi
-    test "$(grep -c '^oci ' "$repo/log")" -eq 2
+    test "$(grep -c oci "$repo/log")" -eq 2
   fi
 }
 
 run_case true none success
 run_case false none success
-run_case true executor-e2e-binary failure
-run_case true backend-rs-e2e-runtime failure
+run_case true executor failure
+run_case true backend-rs failure
+run_case true checksum failure
+run_case true logout failure
 run_case true missing:wegent-executor failure
 run_case true missing:wegent-backend-rs failure
-run_case true logout failure
 run_case true package failure
 run_case false .ci-artifacts/wegent-executor failure
 run_case false .ci-artifacts/wegent-backend-rs failure

@@ -1,3 +1,5 @@
+// @vitest-environment jsdom
+
 import { beforeEach, describe, expect, test, vi } from 'vitest'
 import { GITHUB_CLI_TARGET, githubVerificationUrl } from './githubCli'
 import {
@@ -6,11 +8,14 @@ import {
   isLocalConnector,
   isLocalQrConnector,
   localConnectorAuthHealth,
+  localConnectorAuthPoll,
+  localConnectorAuthStart,
   localConnectorAuthLogout,
   LocalConnectorAuthLogoutError,
   localQrManageActionFromHealth,
   pluginLocalConnectorAuthTarget,
 } from './localConnectorAuth'
+import { LOCAL_CONNECTOR_AUTH_CHANGED_EVENT } from './localConnectorAuthEvents'
 
 const mocks = vi.hoisted(() => ({
   ensureLocalExecutorStarted: vi.fn(),
@@ -87,6 +92,73 @@ describe('localConnectorAuthHealth cache', () => {
     expect(mocks.requestLocalExecutor).toHaveBeenCalledTimes(2)
   })
 
+  test('only explicit plugin use requests runtime preparation and bypasses passive cached health', async () => {
+    const target = { pluginKey: 'wiki', connectorSlug: 'wiki' }
+    await localConnectorAuthHealth(target)
+    expect(mocks.requestLocalExecutor.mock.calls[0][1]).not.toHaveProperty('prepareRuntime')
+    await localConnectorAuthHealth(target, { prepareRuntime: true })
+    expect(mocks.requestLocalExecutor).toHaveBeenCalledTimes(2)
+    expect(mocks.requestLocalExecutor.mock.calls[1][1]).toMatchObject({ prepareRuntime: true })
+  })
+
+  test.each([false, true])(
+    'preserves the instance binding with runtime preparation=%s',
+    async prepareRuntime => {
+      const target = {
+        pluginKey: 'gitlab',
+        connectorSlug: `wework-gitlab-cli-${'a'.repeat(64)}`,
+        instance: 'https://gitlab.example.test',
+      }
+      await localConnectorAuthHealth(target, { bypassCache: true, prepareRuntime })
+      expect(mocks.requestLocalExecutor).toHaveBeenCalledWith(
+        'runtime.local_connector_auth.health',
+        {
+          pluginKey: target.pluginKey,
+          connectorSlug: target.connectorSlug,
+          instance: target.instance,
+          pluginRoot: undefined,
+          sessionId: undefined,
+          ...(prepareRuntime ? { prepareRuntime: true } : {}),
+        }
+      )
+    }
+  )
+
+  test.each([
+    ['Python', ['scripts/auth.py', 'login']],
+    ['shell', ['scripts/local-auth.sh', 'login']],
+    ['PowerShell', ['scripts/local-auth.ps1', 'login']],
+    ['native', ['bin/local-auth', 'login']],
+  ])('delegates %s runtime readiness to the executor', async (_name, start) => {
+    const target = {
+      pluginKey: 'native-connector',
+      connectorSlug: 'native-connector',
+      localAuth: {
+        kind: 'browser_oauth' as const,
+        health: [start[0], 'health'],
+        start,
+        poll: [],
+      },
+    }
+
+    await localConnectorAuthStart(target)
+
+    expect(mocks.ensureLocalExecutorStarted).toHaveBeenCalledOnce()
+    expect(mocks.requestLocalExecutor).toHaveBeenCalledWith('runtime.local_connector_auth.start', {
+      pluginKey: target.pluginKey,
+      connectorSlug: target.connectorSlug,
+      pluginRoot: undefined,
+      sessionId: undefined,
+    })
+  })
+
+  test('propagates runtime preparation failure from the executor', async () => {
+    mocks.requestLocalExecutor.mockRejectedValueOnce(new Error('python_runtime_unavailable'))
+    await expect(
+      localConnectorAuthStart({ pluginKey: 'wiki', connectorSlug: 'wiki' })
+    ).rejects.toThrow('python_runtime_unavailable')
+  })
+
   test('gh login is owned by the CLI, so every health check reads the actual executor state', async () => {
     await expect(localConnectorAuthHealth(GITHUB_CLI_TARGET)).resolves.toEqual({ status: 'ok' })
     mocks.requestLocalExecutor.mockResolvedValueOnce({ status: 'need_login' })
@@ -95,6 +167,43 @@ describe('localConnectorAuthHealth cache', () => {
     })
     expect(mocks.requestLocalExecutor).toHaveBeenCalledTimes(2)
   })
+
+  test('notifies active views after login and logout, without notifying on health or pending authorization', async () => {
+    const listener = vi.fn()
+    window.addEventListener(LOCAL_CONNECTOR_AUTH_CHANGED_EVENT, listener)
+    try {
+      await localConnectorAuthHealth(GITHUB_CLI_TARGET)
+      expect(listener).not.toHaveBeenCalled()
+      mocks.requestLocalExecutor.mockResolvedValueOnce({ status: 'waiting_browser' })
+      await localConnectorAuthStart(GITHUB_CLI_TARGET)
+      expect(listener).not.toHaveBeenCalled()
+      await localConnectorAuthPoll(GITHUB_CLI_TARGET, 'session')
+      expect(listener).toHaveBeenCalledTimes(1)
+      await localConnectorAuthLogout(GITHUB_CLI_TARGET)
+      expect(listener).toHaveBeenCalledTimes(2)
+    } finally {
+      window.removeEventListener(LOCAL_CONNECTOR_AUTH_CHANGED_EVENT, listener)
+    }
+  })
+
+  test.each([undefined, null])(
+    'rejects an empty logout result (%s) without notifying views',
+    async result => {
+      const listener = vi.fn()
+      window.addEventListener(LOCAL_CONNECTOR_AUTH_CHANGED_EVENT, listener)
+      mocks.requestLocalExecutor.mockResolvedValueOnce(result)
+      try {
+        await expect(localConnectorAuthLogout(GITHUB_CLI_TARGET)).rejects.toMatchObject({
+          name: 'LocalConnectorAuthLogoutError',
+          message: 'local_auth_logout_failed',
+          accountRevoked: false,
+        })
+        expect(listener).not.toHaveBeenCalled()
+      } finally {
+        window.removeEventListener(LOCAL_CONNECTOR_AUTH_CHANGED_EVENT, listener)
+      }
+    }
+  )
 
   test('rejects an unsuccessful logout rather than reporting a disconnected session', async () => {
     mocks.requestLocalExecutor.mockResolvedValue({ status: 'error', hint: 'synthetic-secret' })
@@ -147,7 +256,7 @@ describe('localConnectorAuthHealth cache', () => {
 
 describe('local connector kinds', () => {
   test('gh authorization accepts only known HTTPS GitHub endpoints on the standard port', () => {
-    expect(githubVerificationUrl('https://github.com/login/device')).toBe(
+    expect(githubVerificationUrl('https://github.com/login/device', 'ABCD-1234')).toBe(
       'https://github.com/login/device'
     )
     for (const address of [
@@ -158,7 +267,14 @@ describe('local connector kinds', () => {
       'https://github.com/settings/tokens',
       'invalid',
     ])
-      expect(githubVerificationUrl(address)).toBeNull()
+      expect(githubVerificationUrl(address, 'ABCD-1234')).toBeNull()
+  })
+  test('requires a valid code only for device authorization', () => {
+    expect(githubVerificationUrl('https://github.com/login/device')).toBeNull()
+    expect(githubVerificationUrl('https://github.com/login/device', 'SECRET')).toBeNull()
+    expect(
+      githubVerificationUrl('https://github.com/login/oauth/authorize?client_id=fixture')
+    ).toBe('https://github.com/login/oauth/authorize?client_id=fixture')
   })
   test('distinguishes browser and QR authentication', () => {
     const browser = {

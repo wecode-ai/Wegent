@@ -451,42 +451,36 @@ pub(crate) mod security {
             .unwrap_or_else(|| text.to_owned())
     }
 
-    /// AES-128/192/256-CBC decryption with PKCS#7 unpadding.
+    /// AES-CBC with the historical provider length-only padding check.
     fn decrypt_cbc(key: &[u8], iv: &[u8], data: &[u8]) -> Option<Vec<u8>> {
-        match key.len() {
-            16 => cbc_decrypt::<aes::Aes128>(key, iv, data),
-            24 => cbc_decrypt::<aes::Aes192>(key, iv, data),
-            32 => cbc_decrypt::<aes::Aes256>(key, iv, data),
-            _ => None,
-        }
-    }
-
-    fn cbc_decrypt<C>(key: &[u8], iv: &[u8], data: &[u8]) -> Option<Vec<u8>>
-    where
-        C: aes::cipher::KeyInit + aes::cipher::BlockDecrypt,
-    {
-        if data.is_empty() || !data.len().is_multiple_of(BLOCK_SIZE) || data.len() < BLOCK_SIZE {
-            return None;
-        }
-        let decryptor = C::new_from_slice(key).ok()?;
-        let mut previous: Vec<u8> = iv.to_vec();
-        let mut plain = Vec::with_capacity(data.len());
-        for block in data.chunks(BLOCK_SIZE) {
-            let mut decrypted = block.to_vec();
-            decryptor.decrypt_block(aes::cipher::generic_array::GenericArray::from_mut_slice(
-                &mut decrypted,
-            ));
-            for index in 0..BLOCK_SIZE {
-                plain.push(decrypted[index] ^ previous[index]);
-            }
-            previous = block.to_vec();
-        }
+        let mut plain = wegent_crypto::decrypt_cbc_blocks(key, iv, data).ok()?;
         let padding = *plain.last()? as usize;
         if padding == 0 || padding > BLOCK_SIZE || plain.len() < padding {
             return None;
         }
         plain.truncate(plain.len() - padding);
         Some(plain)
+    }
+
+    #[cfg(test)]
+    mod padding_contract_tests {
+        use super::*;
+
+        #[test]
+        fn preserves_the_provider_length_only_padding_contract() {
+            let key = b"12345678901234567890123456789012";
+            let mut iv = *b"1234567890123456";
+            let ciphertext = STANDARD.decode("caUaFV2wgkYz1SIrepv7PQ==").unwrap();
+            // The six-byte plaintext stays intact, but its first padding byte changes.
+            iv[6] ^= 1;
+            assert_eq!(decrypt_cbc(key, &iv, &ciphertext).unwrap(), b"wegent");
+            assert!(wegent_crypto::decrypt_cbc(key, &iv, &ciphertext).is_err());
+            for data in [b"".as_slice(), b"partial"] {
+                assert!(decrypt_cbc(key, &iv, data).is_none());
+            }
+            assert!(decrypt_cbc(b"short", &iv, &ciphertext).is_none());
+            assert!(decrypt_cbc(key, b"short", &ciphertext).is_none());
+        }
     }
 }
 

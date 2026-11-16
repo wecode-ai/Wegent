@@ -90,6 +90,7 @@ class StreamingResponseEmitter(ResultEmitter):
         self._write_deadline: Optional[float] = None
         self._flush_now = asyncio.Event()
         self._pending_progress: list[Callable[[CompactProgressState], None]] = []
+        self._terminal_delivery_succeeded = False
 
         if existing_card_instance_id:
             self._started = True
@@ -401,6 +402,11 @@ class StreamingResponseEmitter(ResultEmitter):
         # A task may have multiple turns; scope terminal state to the actual card.
         return f"{self._answer_key}:terminal"
 
+    @property
+    def terminal_delivery_succeeded(self) -> bool:
+        """Whether the provider accepted the card's terminal update."""
+        return self._terminal_delivery_succeeded
+
     def _check_write_deadline(self) -> None:
         if (
             self._write_deadline is not None
@@ -693,6 +699,7 @@ class StreamingResponseEmitter(ResultEmitter):
             await self._call_card("fail", content)
         else:
             await self._call_card("finish", content)
+        self._terminal_delivery_succeeded = True
         await self._mark_finished()
         self._progress.mode = "answer"
         self._full_content = content

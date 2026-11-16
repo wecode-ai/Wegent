@@ -1,3 +1,5 @@
+// @vitest-environment node
+
 import { describe, expect, test } from 'vitest'
 import type { RuntimeTaskSummary } from '@/types/api'
 import { RuntimeTaskLifecycleStore } from './RuntimeTaskLifecycleStore'
@@ -30,6 +32,30 @@ function task(
 }
 
 describe('native lifecycle ownership', () => {
+  test.each(['waitingForUserInput', 'awaitingUserReply'] as const)(
+    'one accepted answer cannot clear native aggregate %s before its revision advances',
+    interactionStatus => {
+      const store = new RuntimeTaskLifecycleStore('native-concurrent-inputs')
+      const pending = { ...task('2', 'running', 'turn-1'), interactionStatus }
+      store.syncRuntimeTask(address, pending)
+      store.userInputResponded(address)
+      expect(store.getTask(address)?.derived.shouldShowSidebarWaiting).toBe(true)
+      store.syncRuntimeTask(address, pending)
+      expect(store.getTask(address)?.interactionStatus).toBe(interactionStatus)
+      expect(store.getTask(address)?.derived.shouldShowSidebarRunning).toBe(false)
+
+      store.syncRuntimeTask(address, {
+        ...task('3', 'running', 'turn-1'),
+        interactionStatus: null,
+      })
+      expect(store.getTask(address)?.derived.shouldShowSidebarWaiting).toBe(false)
+      expect(store.getTask(address)?.derived.shouldShowSidebarRunning).toBe(true)
+      store.syncRuntimeTask(address, pending)
+      expect(store.getTask(address)?.interactionStatus).toBeNull()
+      expect(store.getTask(address)?.turn.id).toBe('turn-1')
+    }
+  )
+
   test('accepts versioned turn updates after history arrives before the native starting snapshot', () => {
     const store = new RuntimeTaskLifecycleStore('native-startup-history-race')
     const initial = task('1', 'starting', null)

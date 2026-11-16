@@ -1,3 +1,5 @@
+// @vitest-environment node
+
 import { expect, test } from 'vitest'
 import type { InstalledPlugin, PluginMarketplaceItem } from '@/types/api'
 import { applyInstalledPluginsToMarketplaceItems, applyPluginCloudLinks } from './codexPlugins'

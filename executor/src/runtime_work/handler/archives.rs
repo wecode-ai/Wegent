@@ -4,6 +4,13 @@
 
 use super::*;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum ArchivedDeleteOutcome {
+    Completed,
+    Deferred,
+    Failed,
+}
+
 pub(super) async fn run_worktree_restore_blocking<F>(restore: F) -> Result<bool, String>
 where
     F: FnOnce() -> Result<bool, String> + Send + 'static,
@@ -107,6 +114,7 @@ impl RuntimeWorkRpcHandler {
         link.updated_at = now_ms();
         self.upsert_local_task(link.clone());
         log_runtime_archive_link("runtime task archive stored link", &link, true);
+        emit_runtime_work_changed(&self.event_tx, &self.device_id, &link.local_task_id);
         Ok(task_action_success(&link))
     }
 
@@ -116,6 +124,9 @@ impl RuntimeWorkRpcHandler {
         thread_id: &str,
         archive_error: String,
     ) -> Value {
+        if let Err(error) = self.mark_archived_link_deleted(link) {
+            return task_action_failure(link, error.to_string());
+        }
         let started_at = Instant::now();
         let delete_result = self
             .call_codex_thread_method_without_list_invalidation(
@@ -143,7 +154,6 @@ impl RuntimeWorkRpcHandler {
             ),
         }
 
-        self.mark_archived_link_deleted(link);
         self.store.delete_task(&link.local_task_id);
         let mut response = task_action_success(link);
         response["cleaned"] = json!(true);
@@ -247,6 +257,14 @@ impl RuntimeWorkRpcHandler {
         link.continuable = true;
         link.updated_at = now_ms();
         self.upsert_local_task(link.clone());
+        emit_response_event(
+            &self.event_tx,
+            &self.device_id,
+            "runtime.work.changed",
+            &link.local_task_id,
+            &runtime_event_request_from_link(&link),
+            json!({"taskId":link.local_task_id,"archived":false}),
+        );
         Ok(task_action_success(&link))
     }
 
@@ -255,6 +273,13 @@ impl RuntimeWorkRpcHandler {
             .or_else(|| string_field(&payload, "name"))
             .ok_or_else(|| AppIpcError::new("bad_request", "title is required"))?;
         let mut link = self.task_link_from_payload(&payload, false).await?;
+        link = self
+            .store
+            .materialize_discovered_task(link)
+            .map_err(|error| AppIpcError::new("task_state_update_failed", error.to_string()))?
+            .ok_or_else(|| {
+                AppIpcError::new("task_not_found", "Task was deleted before its rename")
+            })?;
         if let Some(thread_id) = link.thread_id.as_deref() {
             if let Err(error) = self
                 .call_codex_thread_method(
@@ -267,7 +292,7 @@ impl RuntimeWorkRpcHandler {
             }
         }
 
-        link = self.commit_runtime_task_title(link, title);
+        link = self.commit_runtime_task_title(link, title, None)?;
 
         let mut response = task_action_success(&link);
         response["codexRename"] = json!({"stateUpdated": true});
@@ -350,9 +375,14 @@ impl RuntimeWorkRpcHandler {
                     string_field(&goal, "status"),
                 );
                 let resumed = if string_field(&goal, "status").as_deref() == Some("active") {
-                    self.resume_goal_needing_attention(&link.local_task_id)
-                        .await
-                        .unwrap_or(false)
+                    self.journal_active_goal_turn(
+                        &link.local_task_id,
+                        self.active_codex_turn(&link.local_task_id).as_ref(),
+                    );
+                    // A successful activation must survive shutdown even when
+                    // no local send still owns the native continuation.
+                    self.persist_current_turn_state().await?;
+                    self.resume_active_goal(&link.local_task_id).await?
                 } else {
                     false
                 };
@@ -398,7 +428,9 @@ impl RuntimeWorkRpcHandler {
 
     pub(super) async fn delete_archived_link(&self, link: RuntimeTaskLink) -> Value {
         self.store.upsert_task(link.clone());
-        self.mark_archived_link_deleted(&link);
+        if let Err(error) = self.mark_archived_link_deleted(&link) {
+            return task_action_failure(&link, error.to_string());
+        }
         let background = match self.archived_delete_tx.send(link.clone()) {
             Ok(()) => true,
             Err(error) => {
@@ -409,7 +441,8 @@ impl RuntimeWorkRpcHandler {
                         ("error", error.to_string()),
                     ],
                 );
-                self.delete_archived_link_background(link.clone()).await;
+                self.delete_archived_link_background(link.clone(), false)
+                    .await;
                 false
             }
         };
@@ -440,17 +473,63 @@ impl RuntimeWorkRpcHandler {
             .filter(|link| link.status == "archived" && self.archived_link_is_deleted(link))
             .collect::<Vec<_>>();
         handle.spawn(async move {
+            // A parent thread can be queued before the fork that references it.
+            // Defer only that conflict until incoming cleanup work has drained,
+            // then retry the parent so a bulk delete can finish.
+            let mut deferred = VecDeque::new();
             for link in interrupted {
-                handler.delete_archived_link_background(link).await;
+                if handler
+                    .delete_archived_link_background(link.clone(), true)
+                    .await
+                    == ArchivedDeleteOutcome::Deferred
+                {
+                    deferred.push_back((link, 1_usize));
+                }
             }
-            while let Some(link) = rx.recv().await {
-                handler.delete_archived_link_background(link).await;
+            loop {
+                let next = tokio::select! {
+                    biased;
+                    message = rx.recv() => match message {
+                        Some(link) => Some((link, 0_usize)),
+                        None => break,
+                    },
+                    _ = sleep(ARCHIVED_BACKGROUND_FORK_RETRY_DELAY), if !deferred.is_empty() => {
+                        deferred.pop_front()
+                    }
+                };
+                let Some((link, attempt)) = next else {
+                    continue;
+                };
+                let allow_retry = attempt < ARCHIVED_BACKGROUND_FORK_RETRY_LIMIT;
+                match handler
+                    .delete_archived_link_background(link.clone(), allow_retry)
+                    .await
+                {
+                    ArchivedDeleteOutcome::Deferred => {
+                        deferred.push_back((link, attempt + 1));
+                    }
+                    ArchivedDeleteOutcome::Completed => {
+                        // A deletion can release parents that were originally
+                        // queued first. Reset their retry budgets so dependency
+                        // chains of any depth converge instead of exhausting a
+                        // fixed number of attempts while children are removed.
+                        reset_deferred_fork_retry_attempts(&mut deferred);
+                    }
+                    ArchivedDeleteOutcome::Failed => {}
+                }
                 sleep(ARCHIVED_BACKGROUND_DELETE_INTERVAL).await;
+            }
+            while let Some((link, _)) = deferred.pop_front() {
+                handler.delete_archived_link_background(link, false).await;
             }
         });
     }
 
-    pub(super) async fn delete_archived_link_background(&self, link: RuntimeTaskLink) {
+    pub(super) async fn delete_archived_link_background(
+        &self,
+        link: RuntimeTaskLink,
+        allow_fork_reference_retry: bool,
+    ) -> ArchivedDeleteOutcome {
         let mut errors = Vec::new();
 
         let has_other_link = self.store.list_task_summaries(true).iter().any(|task| {
@@ -527,6 +606,20 @@ impl RuntimeWorkRpcHandler {
                     }
                 }
                 Err(error) if codex_thread_is_already_deleted(&error, thread_id) => {}
+                Err(error)
+                    if allow_fork_reference_retry
+                        && codex_thread_has_fork_history_reference(&error) =>
+                {
+                    log_executor_event(
+                        "runtime archived conversation thread delete deferred",
+                        &[
+                            ("local_task_id", link.local_task_id.clone()),
+                            ("thread_id", thread_id.to_owned()),
+                            ("error", error),
+                        ],
+                    );
+                    return ArchivedDeleteOutcome::Deferred;
+                }
                 Err(error) => {
                     errors.push(error.clone());
                     log_executor_event(
@@ -595,6 +688,11 @@ impl RuntimeWorkRpcHandler {
                     },
                 },
             }));
+        }
+        if errors.is_empty() {
+            ArchivedDeleteOutcome::Completed
+        } else {
+            ArchivedDeleteOutcome::Failed
         }
     }
 
@@ -678,6 +776,16 @@ fn codex_thread_is_already_deleted(error: &str, thread_id: &str) -> bool {
         || error.contains(&format!("thread not found: {thread_id}"))
 }
 
+fn codex_thread_has_fork_history_reference(error: &str) -> bool {
+    error.contains("forked history still references it")
+}
+
+fn reset_deferred_fork_retry_attempts(deferred: &mut VecDeque<(RuntimeTaskLink, usize)>) {
+    for (_, attempt) in deferred {
+        *attempt = 0;
+    }
+}
+
 fn cleanup_join_error_response(link: &RuntimeTaskLink, error: tokio::task::JoinError) -> Value {
     json!({
         "taskId": link.local_task_id,
@@ -690,4 +798,30 @@ fn cleanup_join_error_response(link: &RuntimeTaskLink, error: tokio::task::JoinE
         "items": [],
         "error": error.to_string(),
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn completed_fork_leaf_resets_retry_budgets_for_queued_parents() {
+        let mut deferred = ["a", "b", "c", "d"]
+            .into_iter()
+            .map(|id| {
+                (
+                    RuntimeTaskLink::new_pending(
+                        id.to_owned(),
+                        format!("/tmp/{id}"),
+                        id.to_owned(),
+                    ),
+                    ARCHIVED_BACKGROUND_FORK_RETRY_LIMIT,
+                )
+            })
+            .collect::<VecDeque<_>>();
+
+        reset_deferred_fork_retry_attempts(&mut deferred);
+
+        assert!(deferred.iter().all(|(_, attempt)| *attempt == 0));
+    }
 }

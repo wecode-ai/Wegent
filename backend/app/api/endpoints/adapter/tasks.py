@@ -177,22 +177,6 @@ def fork_task(
     return {"task_id": forked_task.id, "task": task_detail}
 
 
-# MIGRATION-CANDIDATE(api="GET /api/tasks"): remove after final confirmation.
-# @router.get("", response_model=TaskListResponse)
-def get_tasks(
-    page: int = Query(1, ge=1, description="Page number"),
-    limit: int = Query(10, ge=1, le=100, description="Items per page"),
-    current_user: User = Depends(security.get_current_user),
-    db: Session = Depends(get_db),
-):
-    """Get current user's task list (paginated), excluding DELETE status tasks"""
-    skip = (page - 1) * limit
-    items, total = task_kinds_service.get_user_tasks_with_pagination(
-        db=db, user_id=current_user.id, skip=skip, limit=limit
-    )
-    return {"total": total, "items": items}
-
-
 @router.get("/lite", response_model=TaskLiteListResponse)
 def get_tasks_lite(
     page: int = Query(1, ge=1, description="Page number"),
@@ -558,12 +542,17 @@ def share_task(
 def get_task_share_info(
     share_token: str = Query(..., description="Share token from URL"),
     db: Session = Depends(get_db),
+    current_user: Optional[User] = Depends(security.get_current_user_optional),
 ):
     """
     Get task share information from share token.
     This endpoint doesn't require authentication, so anyone with the link can view.
     """
-    return shared_task_service.get_share_info(db=db, share_token=share_token)
+    return shared_task_service.get_share_info(
+        db=db,
+        share_token=share_token,
+        viewer_id=current_user.id if current_user else None,
+    )
 
 
 @router.post("/share/join", response_model=JoinSharedTaskResponse)
@@ -583,6 +572,7 @@ def join_shared_task(
         user_team = (
             db.query(Kind)
             .filter(
+                Kind.user_id == current_user.id,
                 Kind.kind == "Team",
                 Kind.id == request.team_id,
                 Kind.is_active == True,

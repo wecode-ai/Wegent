@@ -1,5 +1,6 @@
 import { readRawRequestBody as readRequestBody } from '../modules/response-protocol.mjs'
 import assert from 'node:assert/strict'
+import { TransportFaultProxy } from '../modules/transport-fault-proxy.mjs'
 
 import {
   ACTIVE_COMPOSER_SELECTOR,
@@ -14,11 +15,6 @@ const INITIAL_COMPLETION = 'WEWORK_DESKTOP_E2E_CLOUD_CONTEXT_STALL_INITIAL_COMPL
 const FOLLOW_UP_PROMPT = 'WEWORK_DESKTOP_E2E_CLOUD_CONTEXT_STALL_FOLLOW_UP'
 const FOLLOW_UP_COMPLETION = 'WEWORK_DESKTOP_E2E_CLOUD_CONTEXT_STALL_FOLLOW_UP_COMPLETE'
 const ATTACHMENT_FILENAME = 'cloud-context-stall.png'
-
-function json(response, status, body) {
-  response.writeHead(status, { 'content-type': 'application/json; charset=utf-8' })
-  response.end(JSON.stringify(body))
-}
 
 function sse(events) {
   return events.map(event => `event: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`).join('')
@@ -62,6 +58,8 @@ async function waitForCloudContextRequest(requestCount, timeoutMs) {
 }
 
 export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspacePath }) {
+  const appEnvironment = {}
+  let environment, proxy
   let cloudContextRequests = 0
   let modelRequestSequence = 0
   let releaseInitialResponse = () => {}
@@ -70,17 +68,22 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
   })
 
   return {
-    async handleHttp(request, response, url) {
-      if (request.method === 'GET' && url.pathname === '/api/v1/cloud-projects') {
-        json(response, 200, { items: [] })
-        return true
-      }
-
-      if (request.method === 'GET' && url.pathname === '/api/v1/runtime-tasks/cloud-context') {
+    requiresCloudEnvironment: true,
+    appEnvironment,
+    async prepareCloud(cloud) {
+      proxy = await new TransportFaultProxy(cloud.backendUrl).start()
+      appEnvironment.WEWORK_E2E_CLOUD_BACKEND_URL = proxy.url
+      proxy.rule = entry => {
+        if (entry.method !== 'GET' || entry.path !== '/api/v1/runtime-tasks/cloud-context')
+          return null
         cloudContextRequests += 1
-        return true
+        return 'hold-response'
       }
-
+    },
+    setCloudEnvironment(value) {
+      environment = value
+    },
+    async handleHttp(request, response, url) {
       if (request.method === 'POST' && ['/responses', '/v1/responses'].includes(url.pathname)) {
         const body = await readRequestBody(request)
         const completion = body.includes(FOLLOW_UP_PROMPT)
@@ -108,6 +111,7 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
     },
 
     async verify(control) {
+      await environment.waitForConnectedAppDevice()
       await createSingleRootLocalProject(control, workspacePath, 'cloud-context-resilience')
       await selectE2EModel(control)
       await control.command('waitFor', ACTIVE_COMPOSER_SELECTOR, {
@@ -175,8 +179,9 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
       return { cloudContextRequests, modelRequestSequence }
     },
 
-    cleanup() {
+    async cleanup() {
       releaseInitialResponse()
+      await proxy?.stop()
     },
   }
 }

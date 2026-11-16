@@ -1,3 +1,4 @@
+import { setNativeCatalogOverride } from './model-catalog-recovery.mjs'
 import {
   countTextOccurrences,
   createCheckpointTaskFixture,
@@ -10,8 +11,10 @@ import { inputUserMessageTexts } from './desktop-server.mjs'
 import { assertConversationTextOrder } from './conversation-navigation.mjs'
 
 import { ensureTaskRowVisible } from './memory-tool-flows.mjs'
+import { runtimeTransportGates } from './runtime-transport-gates.mjs'
 import { findRuntimeWorkTask, waitForForkTaskRow } from './runtime-task-evidence.mjs'
 import {
+  expandAllReadConversations,
   verifyActiveConversationSurvivesCollapse,
   verifyCollapseReadConversations,
 } from './read-conversation-flows.mjs'
@@ -56,18 +59,174 @@ import {
   WORKBENCH_READY_TIMEOUT_MS,
   assert,
   join,
-  mkdir,
   readFile,
-  rm,
   selectE2EModel,
   sendPromptUntilScenarioRequest,
-  writeFile,
   withTimeout,
 } from './shared.mjs'
 
 import { captureVerificationScreenshot, waitForWorkbenchDebugState } from './workspace-flows.mjs'
 
 const PRIORITY_FILTER_SHORTCUT = process.platform === 'win32' ? 'Control+Alt+U' : 'Meta+Alt+U'
+const PINNED_SECTION = '[data-testid="sidebar-pinned-section"]'
+const PINNED_TASK_LIST = '[data-testid="pinned-runtime-task-sortable-list"]'
+
+async function readTrackedPinnedTaskOrder(control, trackedRows) {
+  const order =
+    Number(await control.command('getElementCount', PINNED_TASK_LIST)) === 0
+      ? []
+      : JSON.parse(await control.command('getTestIdOrder', PINNED_TASK_LIST))
+  return order.filter(testId => trackedRows.includes(testId))
+}
+
+async function waitForPinnedTaskOrder(control, trackedRows, expectedRows, stableMs = 500) {
+  const deadline = Date.now() + DEFAULT_STEP_TIMEOUT_MS
+  let stableSince = null
+  let lastOrder = []
+  while (Date.now() < deadline) {
+    lastOrder = await readTrackedPinnedTaskOrder(control, trackedRows)
+    if (lastOrder.join(',') === expectedRows.join(',')) {
+      stableSince ??= Date.now()
+      if (Date.now() - stableSince >= stableMs) return
+    } else {
+      stableSince = null
+    }
+    await new Promise(resolve => setTimeout(resolve, 100))
+  }
+  assert.fail(
+    `Pinned task order did not remain ${JSON.stringify(expectedRows)}; last order ${JSON.stringify(lastOrder)}`
+  )
+}
+
+async function waitForPinnedTaskOrderToSettle(control, trackedRows, stableMs = 1500) {
+  const deadline = Date.now() + DEFAULT_STEP_TIMEOUT_MS
+  let stableOrder = []
+  let stableSince = null
+  while (Date.now() < deadline) {
+    const order = await readTrackedPinnedTaskOrder(control, trackedRows)
+    const containsEveryTrackedTask =
+      order.length === trackedRows.length && trackedRows.every(row => order.includes(row))
+    if (containsEveryTrackedTask && order.join(',') === stableOrder.join(',')) {
+      stableSince ??= Date.now()
+      if (Date.now() - stableSince >= stableMs) return order
+    } else {
+      stableOrder = order
+      stableSince = null
+    }
+    await new Promise(resolve => setTimeout(resolve, 100))
+  }
+  assert.fail(
+    `Pinned task order did not settle at ${stableMs}ms; last order ${JSON.stringify(stableOrder)}`
+  )
+}
+
+async function refreshRuntimeWorkAndWait(control, gates, gateId) {
+  await gates.arm({
+    id: gateId,
+    kind: 'response',
+    name: 'runtime.tasks.list',
+    where: [{ path: 'params.pendingOnly', equals: undefined }],
+    hold: false,
+  })
+  await control.command('refreshRuntimeWork', 'body', { value: '{}' })
+  const response = await gates.wait(gateId)
+  assert.equal(response.deliveries, 1, `Runtime work refresh ${gateId} was not delivered`)
+  assert.notEqual(response.deliveredAt, undefined, `Runtime work refresh ${gateId} stayed held`)
+}
+
+async function pinRuntimeTask(control, taskId) {
+  const row = `runtime-local-task-row-${taskId}`
+  await ensureTaskRowVisible(control, row)
+  await control.command('hover', `[data-testid="${row}"]`)
+  await control.command('waitFor', `[data-testid="runtime-local-task-mark-${taskId}"]`, {
+    enabled: true,
+  })
+  await control.command('click', `[data-testid="runtime-local-task-mark-${taskId}"]`)
+  await control.command('waitFor', `${PINNED_SECTION} [data-testid="${row}"]`)
+  assert.equal(
+    Number(await control.command('getElementCount', `[data-testid="${row}"]`)),
+    1,
+    'Pinning duplicated a runtime task across the project and pinned projections'
+  )
+}
+
+async function unpinRuntimeTask(control, taskId) {
+  const row = `runtime-local-task-row-${taskId}`
+  await control.command('hover', `${PINNED_SECTION} [data-testid="${row}"]`)
+  await control.command(
+    'click',
+    `${PINNED_SECTION} [data-testid="runtime-local-task-mark-${taskId}"]`
+  )
+  await control.command('waitFor', `${PINNED_SECTION} [data-testid="${row}"]`, { visible: false })
+  await ensureTaskRowVisible(control, row)
+  assert.equal(
+    Number(await control.command('getElementCount', `[data-testid="${row}"]`)),
+    1,
+    'Unpinning duplicated or removed the runtime task'
+  )
+}
+
+async function verifyPinnedTaskRefresh({
+  composerSelector,
+  control,
+  existingTaskId,
+  newTaskButtonSelector,
+}) {
+  const secondTaskRow = await createCheckpointTaskFixture(
+    control,
+    composerSelector,
+    newTaskButtonSelector
+  )
+  const secondTaskId = secondTaskRow.replace('runtime-local-task-row-', '')
+  const taskIds = [existingTaskId, secondTaskId]
+  const taskRows = taskIds.map(taskId => `runtime-local-task-row-${taskId}`)
+  const gates = runtimeTransportGates(control)
+
+  try {
+    await pinRuntimeTask(control, taskIds[0])
+    await pinRuntimeTask(control, taskIds[1])
+    const initialOrder = await waitForPinnedTaskOrderToSettle(control, taskRows)
+
+    await refreshRuntimeWorkAndWait(control, gates, 'pinned-refresh-both')
+    await waitForPinnedTaskOrder(control, taskRows, initialOrder)
+    for (const row of taskRows) {
+      assert.equal(
+        Number(await control.command('getElementCount', `[data-testid="${row}"]`)),
+        1,
+        'Refreshing duplicated a pinned task across work projections'
+      )
+    }
+
+    await unpinRuntimeTask(control, taskIds[0])
+    await refreshRuntimeWorkAndWait(control, gates, 'pinned-refresh-one')
+    await waitForPinnedTaskOrder(control, taskRows, [taskRows[1]])
+    await unpinRuntimeTask(control, taskIds[1])
+    await refreshRuntimeWorkAndWait(control, gates, 'pinned-refresh-none')
+    await waitForPinnedTaskOrder(control, taskRows, [])
+    await waitForWorkbenchDebugState(
+      control,
+      snapshot => snapshot.workbench?.runtimeWorkSummary?.totalTasks === taskRows.length,
+      'Unpinning changed the number of runtime tasks in the merged work view'
+    )
+    await expandAllReadConversations(control)
+    for (const row of taskRows) {
+      await ensureTaskRowVisible(control, row)
+      assert.equal(
+        Number(await control.command('getElementCount', `[data-testid="${row}"]`)),
+        1,
+        'Refreshing an unpinned task duplicated or removed it across work projections'
+      )
+    }
+    await control.command('click', `[data-testid="${taskRows[0]}"]`)
+    await waitForWorkbenchDebugState(
+      control,
+      snapshot => snapshot.workbench?.currentRuntimeTask?.taskId === taskIds[0],
+      'The pinned refresh regression did not restore the original current task'
+    )
+  } finally {
+    await gates.reset()
+  }
+}
 
 async function verifyPriorityFilter({ composerSelector, control, projectRowSelector }) {
   let requestInputResponseReleased = false
@@ -242,6 +401,14 @@ async function verifyPriorityFilter({ composerSelector, control, projectRowSelec
       'The priority shortcut did not restore the regular sidebar'
     )
     await captureVerificationScreenshot(control, 'priority-filter-05-shortcut-restored-sidebar.png')
+    await verifyPinnedTaskRefresh({
+      composerSelector,
+      control,
+      existingTaskId: requestInputTaskId,
+      newTaskButtonSelector: projectRowSelector
+        ? `${projectRowSelector} [data-testid="project-new-conversation-button"]`
+        : '[data-testid="new-chat-button"]',
+    })
     await verifyCollapseReadConversations({
       composerSelector,
       control,
@@ -271,21 +438,16 @@ async function verifyPriorityFilter({ composerSelector, control, projectRowSelec
  * Codex's non-blocking `request_user_input_async` question must render as the
  * interactive card and be answered with the next user message.
  */
-async function setCatalogOverride(executorHome, slug, fields) {
-  const capabilities = join(executorHome, 'capabilities')
-  await mkdir(capabilities, { recursive: true })
-  await writeFile(
-    join(capabilities, 'model-catalog-overrides.json'),
-    `${JSON.stringify([{ slug, fields }], null, 2)}\n`
-  )
-  // Codex caches the served catalog; drop it so the new entry is picked up.
-  await rm(join(executorHome, 'codex', 'models_cache.json'), { force: true })
-}
 
-export async function verifyFreeTextRequestUserInput({ composerSelector, control, executorHome }) {
-  await setCatalogOverride(executorHome, DEFAULT_MODEL_ID, {
-    experimental_supported_tools: ['request_user_input_async'],
-  })
+export async function verifyFreeTextRequestUserInput({ composerSelector, control }) {
+  await setNativeCatalogOverride(
+    control,
+    DEFAULT_MODEL_ID,
+    {
+      experimental_supported_tools: ['request_user_input_async'],
+    },
+    WORKBENCH_READY_TIMEOUT_MS
+  )
   control.setScenario('request_user_input_async')
   await control.command('click', '[data-testid="new-chat-button"]')
   await control.command('waitFor', composerSelector, { timeoutMs: WORKBENCH_READY_TIMEOUT_MS })
@@ -334,13 +496,18 @@ export async function verifyFreeTextRequestUserInput({ composerSelector, control
   assert.equal(Number(await control.command('getElementCount', card)), 0)
 }
 
-export async function verifyAsyncRequestUserInput({ composerSelector, control, executorHome }) {
+export async function verifyAsyncRequestUserInput({ composerSelector, control }) {
   // Codex only exposes its non-blocking question tool to models that declare it,
   // which the cloud catalog does in production. Declare it for the E2E model so
   // the regression exercises the real app-server path.
-  await setCatalogOverride(executorHome, DEFAULT_MODEL_ID, {
-    experimental_supported_tools: ['request_user_input_async'],
-  })
+  await setNativeCatalogOverride(
+    control,
+    DEFAULT_MODEL_ID,
+    {
+      experimental_supported_tools: ['request_user_input_async'],
+    },
+    WORKBENCH_READY_TIMEOUT_MS
+  )
   control.setScenario('request_user_input_async')
   await control.command('click', '[data-testid="new-chat-button"]')
   await control.command('waitFor', composerSelector, {
@@ -437,14 +604,31 @@ export async function verifyAsyncRequestUserInput({ composerSelector, control, e
   )
 
   await control.command('click', '[data-testid="request-user-input-option-question_1-1"]')
-  // Hold the turn open until the answer has provably landed, so the assertion
-  // covers delivery while the model is still working rather than after it stops.
+  // Native guidance is accepted before it can be applied at the next model boundary.
   await control.command('waitFor', '[data-testid="message-user"]', {
     text: REQUEST_USER_INPUT_ASYNC_BUSY_ANSWER,
     visible: true,
     stableMs: COMPOSER_READY_STABILITY_MS,
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
+  await waitForWorkbenchDebugState(
+    control,
+    snapshot =>
+      snapshot.pane?.status?.isBusy === true &&
+      snapshot.pane?.queuedMessages?.some(
+        message =>
+          message.content === REQUEST_USER_INPUT_ASYNC_BUSY_ANSWER &&
+          message.status === 'sending' &&
+          message.deliveryMode === 'guidance' &&
+          !message.awaitingGuidanceAcceptance
+      ),
+    'The running async answer was not accepted as guidance'
+  )
+  await withTimeout(
+    control.releaseAsyncRequestUserInputHold(),
+    DEFAULT_STEP_TIMEOUT_MS,
+    'Timed out releasing the original async question response'
+  )
   await control.command('waitFor', '[data-testid="user-message-question-reply"]', {
     text: REQUEST_USER_INPUT_ASYNC_BUSY_QUESTION,
     visible: true,
@@ -457,7 +641,7 @@ export async function verifyAsyncRequestUserInput({ composerSelector, control, e
     'The async answer only landed after the model stopped working'
   )
   await withTimeout(
-    control.releaseAsyncRequestUserInputHold(),
+    control.releaseAsyncRequestUserInputAnswerHold(),
     DEFAULT_STEP_TIMEOUT_MS,
     'Timed out releasing the running async question turn'
   )
@@ -488,14 +672,15 @@ export async function verifyAsyncRequestUserInput({ composerSelector, control, e
   )
 }
 
-export async function verifyAsyncQuestionWaitingIndicator({
-  composerSelector,
-  control,
-  executorHome,
-}) {
-  await setCatalogOverride(executorHome, DEFAULT_MODEL_ID, {
-    experimental_supported_tools: ['request_user_input_async'],
-  })
+export async function verifyAsyncQuestionWaitingIndicator({ composerSelector, control }) {
+  await setNativeCatalogOverride(
+    control,
+    DEFAULT_MODEL_ID,
+    {
+      experimental_supported_tools: ['request_user_input_async'],
+    },
+    WORKBENCH_READY_TIMEOUT_MS
+  )
   control.setScenario('request_user_input_async')
   await control.command('click', '[data-testid="new-chat-button"]')
   await control.command('waitFor', composerSelector, { timeoutMs: WORKBENCH_READY_TIMEOUT_MS })

@@ -86,6 +86,7 @@ export function buildAiVerifyEnvironment(
     ...(nativeCodexHome ? { WEWORK_E2E_NATIVE_CODEX_HOME: nativeCodexHome } : {}),
     ...(verifyCodexHomeInitialization ? { VITE_WEWORK_E2E_CODEX_HOME_INITIALIZATION: 'true' } : {}),
     DEVICE_ID: deviceId,
+    WEGENT_APP_IPC_DEVICE_ID: deviceId,
     WEWORK_APP_IDENTIFIER: appIdentifier,
     DEVICE_SESSION_GATEWAY_HOST: '127.0.0.1',
     DEVICE_SESSION_GATEWAY_PORT: '0',

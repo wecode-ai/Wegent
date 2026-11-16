@@ -1,11 +1,12 @@
 """One authorization and capability resolver for collaboration runner routing."""
 
 import json
+import logging
 from dataclasses import dataclass
 from typing import Any
 
 from fastapi import HTTPException
-from sqlalchemy import case, func, or_
+from sqlalchemy import and_, or_
 from sqlalchemy.orm import Session
 
 from app.models.delivery import (
@@ -30,7 +31,10 @@ from app.services.cloud_project_visibility import readable_workspace_ids
 from app.services.cloud_projects.access import require_cloud_project_role
 from app.services.device.identity import resolve_owned_device_alias
 from app.services.device.runtime_route import runtime_device_route_id
+from app.services.runner_routing_diagnostics import log_environment_denial
 from app.services.workspaces.storage import workspace_id_for_project
+
+logger = logging.getLogger(__name__)
 
 
 def routing_error(code: str, message: str) -> HTTPException:
@@ -234,6 +238,7 @@ class ResolvedRouting:
     candidates: list[Kind]
     source: str
     model_source: str = "agent_fixed"
+    recovery_from_environment_id: str | None = None
 
     def snapshot(self) -> dict[str, Any]:
         return {
@@ -242,6 +247,11 @@ class ResolvedRouting:
             "model": self.model.model_dump(exclude_none=True),
             "source": self.source,
             "model_source": self.model_source,
+            **(
+                {"recovery_from_environment_id": self.recovery_from_environment_id}
+                if self.recovery_from_environment_id
+                else {}
+            ),
         }
 
 
@@ -249,64 +259,12 @@ def resolve_routing(db: Session, **kwargs) -> ResolvedRouting:
     try:
         return _resolve_routing(db, **kwargs)
     except HTTPException as error:
-        if isinstance(error.detail, dict) and error.detail.get("error_code") in {
-            "RUNNER_SELECTION_REQUIRED",
-            "RUNNER_MODEL_REQUIRED",
-            "AUTOMATION_RUNNER_REQUIRED",
-        }:
-            config = kwargs["config"]
-            ids = visible_environment_ids(db, kwargs["user_id"], kwargs["project_id"])
-            allowed = execution_environment_ids(
-                db, kwargs["project_id"], kwargs.get("agent_id")
-            )
-            devices = (
-                db.query(Kind)
-                .filter(
-                    Kind.id.in_(ids),
-                    Kind.kind == "Device",
-                    Kind.namespace == "default",
-                    Kind.is_active.is_(True),
-                )
-                .all()
-            )
-            policy = config["execution_policy"]
-            bound = issue_binding(db, kwargs["issue_id"])
-            if (
-                bound
-                and policy["mode"] == "user_select"
-                and not kwargs.get("automatic")
-            ):
-                policy = {"mode": "fixed", "environment_id": bound}
-            environments = []
-            from app.services.runner_cloud_models import cloud_model_catalog
+        from app.services.runner_routing_errors import attach_routing_context
 
-            for device in devices:
-                spec = (device.json or {}).get("spec") or {}
-                workspace = spec.get("workspaceOwnerId")
-                environments.append(
-                    {
-                        "id": str(device.id),
-                        "device_key": runtime_device_route_id(device),
-                        "name": spec.get("displayName") or device.name,
-                        "owner_type": "workspace" if workspace else "user",
-                        "owner_id": str(workspace or device.user_id),
-                        "status": "unknown",
-                        "project_authorized": device.id in allowed,
-                        "models": [
-                            model.model_dump() for model in catalog(device).models
-                        ],
-                        "runtimes": catalog(device).runtimes,
-                    }
-                )
-            error.detail["runner_selection_request"] = {
-                "runtime": config["runtime"],
-                "execution_policy": policy,
-                "model_policy": config["model_policy"],
-                "environments": environments,
-                "cloud_models": cloud_model_catalog(db, kwargs["user_id"]),
-                "cloud_only": config["execution_policy"]["mode"] != "fixed",
-                "automatic": bool(kwargs.get("automatic")),
-            }
+        attach_routing_context(db, error, **kwargs)
+        from app.services.runner_selection_request import attach_runner_selection
+
+        attach_runner_selection(db, error, **kwargs)
         raise
 
 
@@ -320,6 +278,9 @@ def _resolve_routing(
     selection: dict | None,
     automatic: bool = False,
     agent_id: str | None = None,
+    session_environment_id: str | None = None,
+    group_recovery: bool = False,
+    allow_hidden_models: bool = False,
 ) -> ResolvedRouting:
     if not config.get("model_policy"):
         raise routing_error(
@@ -329,15 +290,42 @@ def _resolve_routing(
     policy = ExecutionPolicy.model_validate(config["execution_policy"])
     model_policy = ModelPolicy.model_validate(config["model_policy"])
     selected = RunnerSelection.model_validate(selection or {})
-    bound_id = issue_binding(db, issue_id)
+    bound_id = session_environment_id or issue_binding(db, issue_id)
     source = policy.mode
     if policy.mode == "user_select":
         policy, source = _user_policy(db, user_id, selected, bound_id, automatic)
     elif selected.execution_policy and selected.execution_policy != policy:
         raise routing_error("RUNNER_POLICY_FIXED", "The agent's runner policy is fixed")
-    candidates = _candidates(db, policy, project_id, user_id, agent_id)
+    try:
+        candidates = _candidates(
+            db, policy, project_id, user_id, agent_id, automatic=automatic
+        )
+    except HTTPException as error:
+        if (
+            source == "issue_binding"
+            and isinstance(error.detail, dict)
+            and error.detail.get("error_code") == "RUNNER_ENVIRONMENT_UNAVAILABLE"
+        ):
+            raise routing_error(
+                "ISSUE_RUNNER_CONFLICT",
+                "The bound execution environment is no longer available or authorized",
+            ) from error
+        raise
+    recovery_from = None
     if bound_id:
-        candidates = [item for item in candidates if str(item.id) == bound_id]
+        bound_candidates = [item for item in candidates if str(item.id) == bound_id]
+        from app.services.runner_recovery import lock_recovery_source
+
+        if (
+            (not bound_candidates or group_recovery)
+            and session_environment_id is None
+            and selected.recovery_from_environment_id == bound_id
+            and not automatic
+            and lock_recovery_source(db, issue_id, bound_id)
+        ):
+            recovery_from = bound_id
+        else:
+            candidates = bound_candidates
         if not candidates:
             raise routing_error(
                 "ISSUE_RUNNER_CONFLICT",
@@ -349,16 +337,21 @@ def _resolve_routing(
         candidates,
         config["runtime"],
         automatic,
-        allow_native_default=ExecutionPolicy.model_validate(
-            config["execution_policy"]
-        ).mode
-        == "fixed",
+        allow_native_default=policy.mode == "fixed",
     )
     if model.source == "cloud":
         from app.services.runner_cloud_models import require_cloud_model
 
-        require_cloud_model(db, user_id, model)
-    elif model.source == "native" and config["execution_policy"]["mode"] != "fixed":
+        # A fixed agent model and a saved execution selection are persisted
+        # choices: they stay callable after an admin hides the model from new
+        # selections. New selections are validated before they are persisted.
+        require_cloud_model(
+            db,
+            user_id,
+            model,
+            allow_hidden=allow_hidden_models or model_policy.mode == "fixed",
+        )
+    elif model.source == "native" and policy.mode != "fixed":
         raise routing_error(
             "RUNNER_MODEL_UNAVAILABLE", "Local models require a fixed environment"
         )
@@ -378,6 +371,7 @@ def _resolve_routing(
             if model_policy.mode == "fixed"
             else "execution_selection" if selected.model else "environment_default"
         ),
+        recovery_from,
     )
 
 
@@ -415,7 +409,10 @@ def _candidates(
     project_id: str,
     user_id: int,
     agent_id: str | None = None,
+    *,
+    automatic: bool = False,
 ) -> list[Kind]:
+    """Filter authorized devices by policy and retain evidence when none match."""
     try:
         require_cloud_project_role(db, project_id, user_id, BaseRole.Developer)
     except HTTPException as error:
@@ -423,25 +420,97 @@ def _candidates(
             "RUNNER_PROJECT_ACCESS_REVOKED",
             "The triggering user no longer has permission to execute in the project",
         ) from error
-    ids = execution_environment_ids(db, project_id, agent_id)
-    if policy.mode == "fixed":
-        ids &= {int(policy.environment_id)}
-    devices = (
-        db.query(Kind)
-        .filter(
-            Kind.id.in_(ids),
-            Kind.kind == "Device",
-            Kind.namespace == "default",
-            Kind.is_active.is_(True),
-        )
-        .all()
+    authorized_ids = execution_environment_ids(db, project_id, agent_id)
+    devices = _device_candidates(
+        db, authorized_ids, policy, user_id, allow_personal=not automatic
     )
     if not devices:
+        log_environment_denial(
+            db,
+            project_id=project_id,
+            user_id=user_id,
+            agent_id=agent_id,
+            policy=policy,
+            authorized_ids=authorized_ids,
+        )
         raise routing_error(
             "RUNNER_ENVIRONMENT_UNAVAILABLE",
             "No execution environment is authorized for this selection",
         )
     return devices
+
+
+def _device_candidates(
+    db: Session,
+    authorized_ids: set[int],
+    policy: ExecutionPolicy,
+    user_id: int,
+    *,
+    allow_personal: bool,
+) -> list[Kind]:
+    authority = Kind.id.in_(authorized_ids)
+    if allow_personal and policy.mode == "fixed":
+        authority = or_(
+            authority,
+            and_(Kind.id == int(policy.environment_id), Kind.user_id == user_id),
+        )
+    query = db.query(Kind).filter(
+        authority,
+        Kind.kind == "Device",
+        Kind.namespace == "default",
+        Kind.is_active.is_(True),
+    )
+    if policy.mode == "fixed":
+        query = query.filter(Kind.id == int(policy.environment_id))
+    return [
+        device
+        for device in query.all()
+        if device.id in authorized_ids or _personal_device_owner(device) == user_id
+    ]
+
+
+def _personal_device_owner(device: Kind) -> int | None:
+    payload = device.json if isinstance(device.json, dict) else {}
+    spec = payload.get("spec")
+    if isinstance(spec, dict) and spec.get("workspaceOwnerId"):
+        return None
+    return device.user_id
+
+
+def automatic_execution(execution: Any) -> bool:
+    return bool(
+        getattr(execution, "automation_run_id", None)
+        or (execution.runtime_origin_context or {}).get("run_id")
+    )
+
+
+def personal_execution_device(execution: Any, device: Kind) -> bool:
+    """Owner consent covers only manual, exact-device use, never a pool."""
+    if (
+        automatic_execution(execution)
+        or execution.assigner_user_id <= 0
+        or _personal_device_owner(device) != execution.assigner_user_id
+        or device.kind != "Device"
+        or device.namespace != "default"
+        or not device.is_active
+    ):
+        return False
+    selection = execution.runtime_selection
+    route = selection.get("runner_routing")
+    if not isinstance(route, dict):
+        return False
+    routes = [route, *selection.get("group_runner_requirements", {}).values()]
+    return all(
+        item.get("execution_policy", {}).get("mode") == "fixed"
+        and str(item["execution_policy"].get("environment_id")) == str(device.id)
+        for item in routes
+    )
+
+
+def execution_device_authorized(db: Session, execution: Any, device: Kind) -> bool:
+    return personal_execution_device(execution, device) or device.id in (
+        execution_environment_ids(db, execution.cloud_project_id, execution.agent_id)
+    )
 
 
 def _resolve_model(
@@ -491,8 +560,15 @@ def _resolve_model(
 
 def eligible_runner(db: Session, execution: Any, device: Kind) -> bool:
     from app.services.collaboration_revocation import execution_authorized
+    from app.services.runner_recovery import (
+        original_session,
+        permits_runner_recovery,
+        session_matches,
+    )
 
     if not execution_authorized(db, execution):
+        return False
+    if not session_matches(db, execution, device.id):
         return False
     snapshot = execution.runtime_selection["runner_routing"]
     try:
@@ -500,6 +576,12 @@ def eligible_runner(db: Session, execution: Any, device: Kind) -> bool:
     except HTTPException:
         return False
     if bound_id and bound_id != str(device.id):
+        if not original_session(execution) and not permits_runner_recovery(
+            db, execution, bound_id
+        ):
+            return False
+    resolved = execution.runtime_selection.get("resolved_environment_id")
+    if resolved and resolved != str(device.id):
         return False
     routes = [
         (execution.agent_id, snapshot),
@@ -513,12 +595,17 @@ def eligible_runner(db: Session, execution: Any, device: Kind) -> bool:
                 execution.cloud_project_id,
                 execution.assigner_user_id,
                 agent_id,
+                automatic=automatic_execution(execution),
             )
             model = ModelIdentity.model_validate(route["model"])
             if model.source == "cloud":
                 from app.services.runner_cloud_models import require_cloud_model
 
-                require_cloud_model(db, execution.assigner_user_id, model)
+                # The route is a persisted execution snapshot, not a fresh
+                # selection.
+                require_cloud_model(
+                    db, execution.assigner_user_id, model, allow_hidden=True
+                )
             if device.id not in {item.id for item in members} or not supports_model(
                 device, model
             ):
@@ -540,72 +627,29 @@ def claim_routing(db: Session, execution: Any, device: Kind) -> bool:
     )
     if issue is None:
         return False
+    from app.services.runner_recovery import session_matches
+
+    if not session_matches(db, execution, device.id):
+        return False
     try:
         bound = issue_binding(db, issue.id)
     except HTTPException:
         return False
     if bound and bound != str(device.id):
-        return False
+        from app.services.runner_recovery import (
+            original_session,
+            permits_runner_recovery,
+        )
+
+        if not original_session(execution) and not permits_runner_recovery(
+            db, execution, bound, locking=True
+        ):
+            return False
     if snapshot is not None and not eligible_runner(db, execution, device):
         return False
-    return _bind_issue_in_claim(db, issue, execution, device)
+    from app.services.runner_claim import bind_issue_in_claim
 
-
-def _bind_issue_in_claim(
-    db: Session, issue: LoopItem, execution: Any, device: Kind
-) -> bool:
-    """Both historical and routed claims share one durable affinity lock."""
-    from app.models.loop_item_execution import LoopItemExecution
-
-    scope = getattr(execution, "execution_scope", "")
-    if (
-        scope
-        and db.query(LoopItemExecution.id)
-        .filter(
-            LoopItemExecution.execution_scope == scope,
-            LoopItemExecution.status.in_(["claimed", "running", "cancel_requested"]),
-        )
-        .with_for_update()
-        .first()
-    ):
-        return False
-    if not (issue.metadata_json or {}).get("runner_binding"):
-        metadata = case(
-            (
-                func.lower(func.json_type(LoopItem.metadata_json)) == "object",
-                LoopItem.metadata_json,
-            ),
-            else_=func.json_object(),
-        )
-        changed = (
-            db.query(LoopItem)
-            .filter(
-                LoopItem.id == issue.id,
-                LoopItem.version == issue.version,
-                or_(
-                    func.json_extract(metadata, "$.runner_binding").is_(None),
-                    func.lower(
-                        func.json_type(func.json_extract(metadata, "$.runner_binding"))
-                    )
-                    == "null",
-                ),
-            )
-            .update(
-                {
-                    LoopItem.metadata_json: func.json_set(
-                        metadata,
-                        "$.runner_binding",
-                        func.json_object("environment_id", str(device.id)),
-                    ),
-                },
-                synchronize_session=False,
-            )
-        )
-        if changed != 1:
-            db.refresh(issue, with_for_update=True)
-            return issue_binding(db, issue.id) == str(device.id)
-        db.refresh(issue, with_for_update=True)
-    return True
+    return bind_issue_in_claim(db, issue, execution, device)
 
 
 def bind_claimed_runner(db: Session, execution: Any, device: Kind) -> None:
@@ -613,7 +657,11 @@ def bind_claimed_runner(db: Session, execution: Any, device: Kind) -> None:
     if snapshot is None:
         return
     issue = db.get(LoopItem, execution.loop_item_id)
-    if issue_binding(db, issue.id) != str(device.id):
+    from app.services.runner_recovery import original_session
+
+    if not original_session(execution) and issue_binding(db, issue.id) != str(
+        device.id
+    ):
         raise routing_error(
             "ISSUE_RUNNER_CONFLICT", "Issue affinity changed before the claim completed"
         )
@@ -681,26 +729,25 @@ def validate_agent_policies(
         raise routing_error(
             "RUNNER_RUNTIME_MISMATCH", "Runner policies require a native executor"
         )
-    ids = (
+    authorized_ids = (
         explicit_project_environment_ids(db, project_id)
         if project_id
         else visible_environment_ids(db, user_id)
     )
-    if policy.mode == "fixed":
-        ids &= {int(policy.environment_id)}
-    elif policy.mode == "project_pool" and project_id:
-        ids &= explicit_project_environment_ids(db, project_id)
-    candidates = (
-        db.query(Kind)
-        .filter(
-            Kind.id.in_(ids),
-            Kind.kind == "Device",
-            Kind.namespace == "default",
-            Kind.is_active.is_(True),
-        )
-        .all()
+    candidates = _device_candidates(
+        db, authorized_ids, policy, user_id, allow_personal=True
     )
     if policy.mode == "fixed" and not candidates:
+        if project_id:
+            log_environment_denial(
+                db,
+                project_id=project_id,
+                user_id=user_id,
+                agent_id=None,
+                policy=policy,
+                authorized_ids=authorized_ids,
+                phase="configuration_validation",
+            )
         raise routing_error(
             "RUNNER_ENVIRONMENT_UNAVAILABLE",
             "The selected environment is not authorized",
@@ -714,7 +761,8 @@ def validate_agent_policies(
         if model_policy.model.source == "cloud":
             from app.services.runner_cloud_models import require_cloud_model
 
-            require_cloud_model(db, user_id, model_policy.model)
+            # The agent's fixed model policy is a persisted choice.
+            require_cloud_model(db, user_id, model_policy.model, allow_hidden=True)
             if policy.mode != "fixed":
                 return
         if model_policy.model.source == "native" and policy.mode != "fixed":
@@ -737,6 +785,8 @@ def resolve_group_routing(
     user_id: int,
     selection: dict | None,
     automatic: bool = False,
+    session_environment_id: str | None = None,
+    allow_hidden_models: bool = False,
 ) -> dict:
     """A collaboration group shares one Issue runner but keeps member models."""
     from app.models.delivery import ProjectChatAgent
@@ -748,6 +798,7 @@ def resolve_group_routing(
         .all()
     )
     routes = {}
+    member_candidates = {}
     intersection = None
     for reference in [group.get("leader"), *(group.get("members") or [])]:
         if not isinstance(reference, dict) or reference.get("kind") != "agent":
@@ -773,30 +824,110 @@ def resolve_group_routing(
             key: value
             for key, value in (selection or {}).items()
             if (
-                key == "execution_policy"
-                and config["execution_policy"]["mode"] == "user_select"
-                or key == "model"
-                and config["model_policy"]["mode"] == "user_select"
+                key == "recovery_from_environment_id"
+                or (
+                    key == "execution_policy"
+                    and config["execution_policy"]["mode"] == "user_select"
+                )
+                or (key == "model" and config["model_policy"]["mode"] == "user_select")
             )
         }
-        route = resolve_routing(
-            db,
-            config=config,
-            agent_id=agent.id,
-            project_id=project_id,
-            issue_id=issue_id,
-            user_id=user_id,
-            selection=choices,
-            automatic=automatic,
-        )
+        try:
+            route = resolve_routing(
+                db,
+                config=config,
+                agent_id=agent.id,
+                project_id=project_id,
+                issue_id=issue_id,
+                user_id=user_id,
+                selection=choices,
+                automatic=automatic,
+                session_environment_id=session_environment_id,
+                group_recovery=True,
+                allow_hidden_models=allow_hidden_models,
+            )
+        except HTTPException as error:
+            if isinstance(error.detail, dict):
+                error.detail.setdefault("routing_context", {}).update(
+                    group_id=group.get("id"),
+                    group_name=group.get("name"),
+                    agent_id=agent.id,
+                    agent_name=agent.name,
+                )
+            logger.warning(
+                "Group member routing denied: %s",
+                json.dumps(
+                    {
+                        "event": "group_member_routing_denied",
+                        "project_id": project_id,
+                        "issue_id": issue_id,
+                        "group_id": group.get("id"),
+                        "member_reference_id": member_id,
+                        "agent_id": agent.id,
+                        "agent_name": agent.name,
+                        "user_id": user_id,
+                        "execution_policy": config.get("execution_policy"),
+                        "error_code": (
+                            error.detail.get("error_code")
+                            if isinstance(error.detail, dict)
+                            else None
+                        ),
+                    },
+                    sort_keys=True,
+                ),
+            )
+            raise
         routes[agent.id] = route.snapshot()
         candidates = {device.id for device in route.candidates}
+        member_candidates[agent.id] = sorted(candidates)
         intersection = candidates if intersection is None else intersection & candidates
     if routes and not intersection:
-        raise routing_error(
+        logger.warning(
+            "Group runner intersection empty: %s",
+            json.dumps(
+                {
+                    "event": "group_runner_intersection_empty",
+                    "project_id": project_id,
+                    "issue_id": issue_id,
+                    "group_id": group.get("id"),
+                    "user_id": user_id,
+                    "member_candidate_environment_ids": member_candidates,
+                },
+                sort_keys=True,
+            ),
+        )
+        error = routing_error(
             "ISSUE_RUNNER_CONFLICT",
             "No authorized runner satisfies all group members' environment and model policies",
         )
+        error.detail["routing_context"] = {
+            "reason": "group_no_common_environment",
+            "issue_id": issue_id,
+            "group_id": group.get("id"),
+            "group_name": group.get("name"),
+            "members": [
+                {
+                    "agent_id": agent_id,
+                    "agent_name": next(
+                        row.name for row in agents if row.id == agent_id
+                    ),
+                    "environment_ids": [str(value) for value in environment_ids],
+                }
+                for agent_id, environment_ids in member_candidates.items()
+            ],
+        }
+        raise error
+    recovery_from = next(
+        (
+            route["recovery_from_environment_id"]
+            for route in routes.values()
+            if route.get("recovery_from_environment_id")
+        ),
+        None,
+    )
+    if recovery_from and int(recovery_from) in (intersection or set()):
+        for route in routes.values():
+            route.pop("recovery_from_environment_id", None)
     return routes
 
 

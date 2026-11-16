@@ -34,7 +34,10 @@ export interface AuthSectionConfig {
   renderSearch: (props: {
     role: MemberRole
     onSelect: (entry: AuthEntry) => void
+    /** Selected targets of this section, including targets retained after a failed grant. */
+    selectedEntries?: AuthEntry[]
     /** Optional entity ID to exclude from search results (e.g. the KB's owning namespace) */
+    boundEntityIds?: string[]
     excludedEntityId?: string
   }) => ReactNode
 }

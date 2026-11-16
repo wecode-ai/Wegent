@@ -5,14 +5,18 @@ import { CLOUD_DEVICE_ID } from '../modules/shared.mjs'
 import { TransportFaultProxy } from '../modules/transport-fault-proxy.mjs'
 import { verifyPluginCatalogBoundaries } from '../modules/plugin-catalog-boundaries.mjs'
 import { verifyPluginSourceContinuation } from '../modules/plugin-source-continuation.mjs'
+import { verifyPersonalInventoryRecovery } from '../modules/plugin-personal-inventory-recovery.mjs'
 import { verifyPluginInstallUpdateResilience } from '../modules/plugin-install-update-resilience.mjs'
 import { verifyPluginLateResponseResilience } from '../modules/plugin-late-response-resilience.mjs'
 import { verifyPluginDetailResilience } from '../modules/plugin-detail-resilience.mjs'
 import { verifyPluginPartialInventoryResilience } from '../modules/plugin-partial-inventory-resilience.mjs'
 import { verifyPluginScopeBoundaries } from '../modules/plugin-scope-boundaries.mjs'
+import { verifyPluginLocalSync } from '../modules/plugin-local-sync.mjs'
 import { verifyPluginWriteCoordination } from '../modules/plugin-write-coordination.mjs'
 import { verifyPluginRegistrationCoordination } from '../modules/plugin-registration-coordination.mjs'
 import { verifyPluginSyncDisconnect } from '../modules/plugin-sync-disconnect.mjs'
+import { verifyPluginReinstallStatus } from '../modules/plugin-reinstall-status.mjs'
+import { verifyPluginCopiedSourceReinstall } from '../modules/plugin-copied-source-reinstall.mjs'
 import { startRealObjectStorage } from '../modules/real-object-storage.mjs'
 import {
   accountPlugin,
@@ -31,6 +35,8 @@ import {
 
 // Real MySQL, Python API, gateway, Executor and Electron. Only the network
 // transport is faulted; no plugin responses or cache state are synthesized.
+// The partial-inventory checkpoint fixes host pressure so concurrent CI work
+// cannot prevent the real idle scheduler from exercising the inventory guard.
 export async function createDesktopScenario({
   checkpoint,
   captureScreenshot,
@@ -42,6 +48,9 @@ export async function createDesktopScenario({
   workbenchReadyTimeoutMs,
 }) {
   const appEnvironment = { ELECTRON_ENABLE_LOGGING: '1' }
+  if (checkpoint === 'plugin-uninstall-lost-response') {
+    appEnvironment.WEWORK_E2E_SYSTEM_PRESSURE = 'idle'
+  }
   const evidence = []
   const objectStorage =
     checkpoint === 'plugin-write-coordination'
@@ -92,15 +101,100 @@ export async function createDesktopScenario({
     const startIndex = apiProxy.requests.length
     apiProxy.rule = request =>
       request.method === 'DELETE' && request.path === deletePath(item) ? 'hold-response' : null
-    await uninstallInUi(control, item)
-    await until(
-      () => deletes(item),
-      requests => requests.some(request => request.status === 204 && request.committedResponseHeld),
-      'Real DELETE never committed'
-    )
+    // Device capability sync and auto-update take the same account plugin-write
+    // lease. A slow writer can hold it past the backend's three-second
+    // acquisition wait, so the real DELETE returns 503 plugin_write_busy and
+    // changes nothing. Deliver that real rejection and repeat the user action;
+    // only a committed DELETE whose response was lost is verified, never
+    // replayed.
+    let attempts = 0
+    let committedDeleteIndex = -1
+    while (true) {
+      attempts += 1
+      const attemptStart = deletes(item).length
+      await uninstallInUi(control, item)
+      const settled = await until(
+        () => deletes(item).slice(attemptStart),
+        requests =>
+          requests.some(request => request.status === 204 && request.committedResponseHeld) ||
+          requests.some(request => request.status === 503 && request.committedResponseHeld),
+        'Real DELETE neither committed nor was rejected'
+      )
+      const committed = settled.find(
+        request => request.status === 204 && request.committedResponseHeld
+      )
+      if (committed) {
+        // Record the committed request's exact position. Any DELETE after it is
+        // a replay of a destructive action the backend already committed, even
+        // when it arrived in the same observation batch.
+        committedDeleteIndex = attemptStart + settled.indexOf(committed)
+        break
+      }
+      const rejected = settled.find(
+        request => request.status === 503 && request.committedResponseHeld
+      )
+      if (!rejected) throw new Error('The rejected DELETE was not held for inspection')
+      const held = rejected.readHeldResponse()
+      if (!held) throw new Error('The rejected DELETE response was no longer inspectable')
+      assert.equal(held.status, 503, 'The rejected DELETE did not return 503')
+      const body = held.body.toString('utf8')
+      let rejection
+      try {
+        rejection = JSON.parse(body)
+      } catch {
+        throw new Error(`The rejected DELETE returned a non-JSON body: ${body.slice(0, 200)}`)
+      }
+      assert.equal(
+        rejection.detail,
+        'plugin_write_busy',
+        `The uninstall failed for a reason other than the plugin-write lease: ${body.slice(0, 200)}`
+      )
+      // The real rejection must not have changed account state before the retry.
+      assert.ok(
+        await accountPlugin(cloud, item.slug),
+        'A plugin-write lease rejection removed the plugin'
+      )
+      if (attempts === 3) throw new Error('Real DELETE never committed')
+      const verificationStart = apiProxy.requests.length
+      // The proxy withheld the real rejection; deliver it so the renderer
+      // completes this attempt before the next one starts.
+      await rejected.release()
+      await until(
+        () => apiProxy.requests.slice(verificationStart),
+        requests =>
+          requests.some(
+            request =>
+              request.method === 'GET' &&
+              request.path === '/api/plugins/installed' &&
+              request.unscoped &&
+              request.responseCompleted
+          ),
+        'The rejected uninstall was not verified against the account'
+      )
+    }
     assert.equal(await accountPlugin(cloud, item.slug), undefined)
     await assertInstallButton(control, item, 20_000)
-    assert.equal(deletes(item).length, 1, 'Lost response caused a second destructive DELETE')
+    assert.equal(
+      deletes(item).filter(request => request.status === 204).length,
+      1,
+      'Lost response caused a second committed DELETE'
+    )
+    // Each explicit user attempt must send exactly one DELETE: a 404, 503, or
+    // duplicate 204 replay would raise the total above the attempt count.
+    assert.equal(
+      deletes(item).length,
+      attempts,
+      'Each explicit uninstall attempt must send exactly one DELETE'
+    )
+    // The committed DELETE must be the last request. Checking its exact
+    // position catches a replay that arrived in the same observation batch as
+    // the successful request.
+    assert.ok(committedDeleteIndex >= 0, 'The committed DELETE position was not recorded')
+    assert.equal(
+      deletes(item).length,
+      committedDeleteIndex + 1,
+      'The client replayed a DELETE after the backend committed the uninstall'
+    )
     assert.ok(
       apiProxy.requests
         .slice(startIndex)
@@ -113,7 +207,12 @@ export async function createDesktopScenario({
       'Missing authoritative account verification GET'
     )
     await assertSurfaces(control, item, false)
-    evidence.push({ case: 'committed-delete-lost-response', deleteCount: deletes(item).length })
+    evidence.push({
+      case: 'committed-delete-lost-response',
+      attempts,
+      deleteCount: deletes(item).length,
+      committedDeleteIndex,
+    })
     apiProxy.rule = () => null
   }
 
@@ -492,6 +591,7 @@ export async function createDesktopScenario({
               // The real empty-catalog checks must precede the old uninstall fixtures.
               verifyBoundaryGroups(control, [
                 ['source-continuation', verifyPluginSourceContinuation],
+                ['personal-inventory-recovery', verifyPersonalInventoryRecovery],
                 ['catalog-sources', verifyPluginCatalogBoundaries],
                 ['late-response', verifyPluginLateResponseResilience],
                 ['plugin-detail', verifyPluginDetailResilience],
@@ -517,8 +617,11 @@ export async function createDesktopScenario({
             control =>
               verifyBoundaryGroups(control, [
                 ['sync-disconnect', verifyPluginSyncDisconnect],
+                ['reinstall-status', verifyPluginReinstallStatus],
+                ['copied-source-reinstall', verifyPluginCopiedSourceReinstall],
                 ['write-coordination', verifyPluginWriteCoordination],
                 ['install-and-update', verifyPluginInstallUpdateResilience],
+                ['local-http-without-registration', verifyPluginLocalSync],
               ]),
           ],
           ['plugin-uninstall-unknown-result', unknownResult],

@@ -1,27 +1,55 @@
+import type { ModelSelectionConfig, UnifiedModel } from '@/types/api'
 import { act, renderHook, waitFor } from '@testing-library/react'
 import { expect, test, vi } from 'vitest'
-import type { UnifiedModel } from '@/types/api'
 import { useWorkbenchModels } from './useWorkbenchModels'
 
-test('distinguishes restored default settings from an available model', async () => {
-  const replacement: UnifiedModel = { name: 'replacement', type: 'public' }
-  const api = { listModels: vi.fn().mockResolvedValue({ data: [] }) }
+test('keeps a restored native provider through catalog refresh and clears it on model change', async () => {
+  const model: UnifiedModel = { name: 'native-codex', type: 'runtime' }
+  const replacement: UnifiedModel = { name: 'other-codex', type: 'runtime' }
+  const api = { listModels: vi.fn().mockResolvedValue({ data: [model, replacement] }) }
   const { result } = renderHook(() =>
-    useWorkbenchModels({ api, locked: false, persistSelection: false })
+    useWorkbenchModels({
+      api,
+      locked: false,
+      persistSelection: false,
+      selectionConfig: {
+        modelName: model.name,
+        modelType: model.type,
+        options: { runnerModelProvider: 'native-provider' },
+      },
+    })
   )
 
-  await waitFor(() => expect(api.listModels).toHaveBeenCalledOnce())
-  await waitFor(() => expect(result.current.isLoading).toBe(false))
-  expect(result.current.selectedModel).toBeNull()
   await waitFor(() => expect(result.current.isSelectionReady).toBe(true))
-  expect(result.current.selectedModelAvailable).toBe(false)
-
-  api.listModels.mockResolvedValue({ data: [replacement] })
+  expect(result.current.getSelectedModelOptions()).toMatchObject({
+    runnerModelProvider: 'native-provider',
+  })
+  api.listModels.mockResolvedValue({ data: [{ ...model }, { ...replacement }] })
   act(() => result.current.refreshModels())
-  await waitFor(() => expect(result.current.models).toEqual([replacement]))
+  await waitFor(() => expect(api.listModels).toHaveBeenCalledTimes(2))
+  await waitFor(() => expect(result.current.isLoading).toBe(false))
+  expect(result.current.getSelectedModelOptions()).toMatchObject({
+    runnerModelProvider: 'native-provider',
+  })
+  act(() => result.current.setSelectedModelAndOptions(model, { reasoning: 'medium' }))
+  expect(result.current.getSelectedModelOptions()).toMatchObject({
+    runnerModelProvider: 'native-provider',
+  })
+  act(() =>
+    result.current.setSelectedModelAndOptions(replacement, result.current.getSelectedModelOptions())
+  )
+  expect(result.current.getSelectedModelOptions()).not.toHaveProperty('runnerModelProvider')
+  act(() =>
+    result.current.setSelectedModelAndOptions(model, { runnerModelProvider: 'native-provider' })
+  )
+  expect(result.current.getSelectedModelOptions()).not.toHaveProperty('runnerModelProvider')
+  act(() =>
+    result.current.setSelectionForScope('default', model, {
+      runnerModelProvider: 'native-provider',
+    })
+  )
   act(() => result.current.setSelectedModel(replacement))
-  expect(result.current.isSelectionReady).toBe(true)
-  expect(result.current.selectedModelAvailable).toBe(true)
+  expect(result.current.getSelectedModelOptions()).not.toHaveProperty('runnerModelProvider')
 })
 
 test('does not advertise send readiness before a deferred catalog has loaded', async () => {
@@ -80,4 +108,127 @@ test('finishes a failed catalog attempt so the launcher can report an unavailabl
   await waitFor(() => expect(hook.result.current.isCatalogReady).toBe(true))
   expect(hook.result.current.models).toEqual([])
   expect(hook.result.current.error).toBe(error)
+})
+
+test('keeps a user-selected model through a task summary refresh', async () => {
+  const local: UnifiedModel = { name: 'local-model', type: 'runtime' }
+  const cloud: UnifiedModel = { name: 'cloud-model', type: 'public', provider: 'openai' }
+  const api = { listModels: vi.fn().mockResolvedValue({ data: [local, cloud] }) }
+  const hook = renderHook(
+    ({ selectionConfig }: { selectionConfig: ModelSelectionConfig }) =>
+      useWorkbenchModels({
+        api,
+        locked: false,
+        persistSelection: false,
+        scopeKey: 'task-scope',
+        selectionConfig,
+      }),
+    {
+      initialProps: {
+        selectionConfig: { modelName: local.name, modelType: local.type } as ModelSelectionConfig,
+      },
+    }
+  )
+
+  await waitFor(() => expect(hook.result.current.isSelectionReady).toBe(true))
+  act(() => hook.result.current.setSelectedModelForScope('task-scope', cloud))
+  expect(hook.result.current.getSelectedModelForScope('task-scope')).toEqual(cloud)
+
+  hook.rerender({
+    selectionConfig: { modelName: local.name, modelType: local.type } as ModelSelectionConfig,
+  })
+  await waitFor(() => expect(hook.result.current.isLoading).toBe(false))
+  expect(hook.result.current.getSelectedModelForScope('task-scope')).toEqual(cloud)
+})
+
+test('keeps each conversation selection when switching scopes without sending', async () => {
+  const modelA: UnifiedModel = { name: 'model-a', type: 'runtime' }
+  const modelB: UnifiedModel = { name: 'model-b', type: 'runtime' }
+  const modelC: UnifiedModel = { name: 'model-c', type: 'runtime' }
+  const modelD: UnifiedModel = { name: 'model-d', type: 'runtime' }
+  const api = {
+    listModels: vi.fn().mockResolvedValue({ data: [modelA, modelB, modelC, modelD] }),
+  }
+  const hook = renderHook(
+    ({ scopeKey, selectionConfig }: { scopeKey: string; selectionConfig: ModelSelectionConfig }) =>
+      useWorkbenchModels({
+        api,
+        locked: false,
+        persistSelection: false,
+        scopeKey,
+        selectionConfig,
+      }),
+    {
+      initialProps: {
+        scopeKey: 'task-a',
+        selectionConfig: { modelName: modelA.name, modelType: modelA.type },
+      },
+    }
+  )
+
+  await waitFor(() => expect(hook.result.current.isSelectionReady).toBe(true))
+  act(() => hook.result.current.setSelectedModelForScope('task-a', modelB))
+  expect(hook.result.current.getSelectedModelForScope('task-a')).toEqual(modelB)
+
+  hook.rerender({
+    scopeKey: 'task-b',
+    selectionConfig: { modelName: modelC.name, modelType: modelC.type },
+  })
+  await waitFor(() =>
+    expect(hook.result.current.getSelectedModelForScope('task-b')).toEqual(modelC)
+  )
+  act(() => hook.result.current.setSelectedModelForScope('task-b', modelD))
+
+  hook.rerender({
+    scopeKey: 'task-a',
+    selectionConfig: { modelName: modelA.name, modelType: modelA.type },
+  })
+  await waitFor(() => expect(hook.result.current.selectedModel).toEqual(modelB))
+  expect(hook.result.current.getSelectedModelForScope('task-a')).toEqual(modelB)
+  expect(hook.result.current.getSelectedModelForScope('task-b')).toEqual(modelD)
+})
+
+test('bumps selectionRevision for a scoped model option change', async () => {
+  const model: UnifiedModel = { name: 'scoped-model', type: 'runtime' }
+  const api = { listModels: vi.fn().mockResolvedValue({ data: [model] }) }
+  const { result } = renderHook(() =>
+    useWorkbenchModels({
+      api,
+      locked: false,
+      persistSelection: false,
+      scopeKey: 'active-scope',
+    })
+  )
+
+  await waitFor(() => expect(result.current.isSelectionReady).toBe(true))
+  const before = result.current.selectionRevision
+  act(() => result.current.setSelectedModelOptionForScope('background-scope', 'reasoning', 'high'))
+  await waitFor(() => expect(result.current.selectionRevision).toBeGreaterThan(before))
+})
+
+test('keeps a user-selected model through a catalog refresh for a bound task', async () => {
+  const local: UnifiedModel = { name: 'local-model', type: 'runtime' }
+  const cloud: UnifiedModel = { name: 'cloud-model', type: 'public', provider: 'openai' }
+  const api = { listModels: vi.fn().mockResolvedValue({ data: [local, cloud] }) }
+  const { result } = renderHook(() =>
+    useWorkbenchModels({
+      api,
+      locked: false,
+      persistSelection: false,
+      scopeKey: 'task-scope',
+      selectionConfig: { modelName: local.name, modelType: local.type },
+    })
+  )
+
+  await waitFor(() => expect(result.current.isSelectionReady).toBe(true))
+  expect(result.current.getSelectedModelForScope('task-scope')).toEqual(local)
+
+  act(() => result.current.setSelectedModelForScope('task-scope', cloud))
+  expect(result.current.getSelectedModelForScope('task-scope')).toEqual(cloud)
+
+  api.listModels.mockResolvedValue({ data: [{ ...local }, { ...cloud }] })
+  act(() => result.current.refreshModels())
+  await waitFor(() => expect(api.listModels).toHaveBeenCalledTimes(2))
+  await waitFor(() => expect(result.current.isLoading).toBe(false))
+  expect(result.current.getSelectedModelForScope('task-scope')).toEqual(cloud)
 })

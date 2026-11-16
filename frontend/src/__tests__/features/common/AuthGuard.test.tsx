@@ -176,6 +176,42 @@ describe('AuthGuard', () => {
       })
     })
 
+    it('allows the task access metadata page without bypassing backend authentication', async () => {
+      ;(usePathname as jest.Mock).mockReturnValue('/shared/task/access')
+      ;(userApis.isAuthenticated as jest.Mock).mockReturnValue(false)
+
+      const { getByText } = render(
+        <AuthGuard>
+          <div>Task share metadata</div>
+        </AuthGuard>
+      )
+
+      await waitFor(() => {
+        expect(userApis.isAuthenticated).not.toHaveBeenCalled()
+        expect(mockRouter.replace).not.toHaveBeenCalled()
+        expect(getByText('Task share metadata')).toBeInTheDocument()
+      })
+    })
+
+    it('does not allow arbitrary task access subpaths without authentication', async () => {
+      ;(usePathname as jest.Mock).mockReturnValue('/shared/task/access/private')
+      ;(userApis.isAuthenticated as jest.Mock).mockReturnValue(false)
+      mockSearchParams.toString.mockReturnValue('tab=private')
+
+      const { queryByText } = render(
+        <AuthGuard>
+          <div>Protected content</div>
+        </AuthGuard>
+      )
+
+      await waitFor(() => {
+        expect(mockRouter.replace).toHaveBeenCalledWith(
+          `${paths.auth.login.getHref()}?redirect=${encodeURIComponent('/shared/task/access/private?tab=private')}`
+        )
+      })
+      expect(queryByText('Protected content')).not.toBeInTheDocument()
+    })
+
     it('should allow access to shared knowledge page without authentication', async () => {
       // Arrange
       ;(usePathname as jest.Mock).mockReturnValue('/shared/knowledge')

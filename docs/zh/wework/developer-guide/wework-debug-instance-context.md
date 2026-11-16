@@ -39,6 +39,8 @@ Wework 支持从一个正在运行的 Wework 内置 Terminal 中启动另一个�
 - `WEWORK_APP_IDENTIFIER`: 自动生成的 Electron 应用身份，根据当前 worktree 路径生成，用于隔离单实例锁、应用数据和 macOS 菜单栏图标位置。启动脚本会忽略从父 App 继承的身份；只有明确需要复用身份时才使用 `WEWORK_DEV_APP_IDENTIFIER` 覆盖。
 - `WEWORK_USER_DATA_DIR`: 自动生成的 Electron 用户数据目录。启动脚本会忽略从父 App 继承的目录；需要明确覆盖时使用 `WEWORK_DEV_USER_DATA_DIR`。
 
+开发启动会清除从正式版继承的 `WEWORK_RELEASE_ROOT`、`WEWORK_RELEASE_SUPERVISED`、`WEWORK_ACTIVE_RELEASE_ID` 和 `WEWORK_COMPONENT_DATA_DIRECTORY`，避免独立开发目录误用正式版的发布状态或组件数据。
+
 macOS 开发启动脚本会为每个显示名称准备写时复制的 Electron App Bundle。任务
 shell 直接使用注入的标题；从已有 runtime worktree 启动的终端也可以从本地运行时
 索引恢复标题。脚本随后设置 Bundle 元数据，并将主可执行文件重命名为
@@ -62,6 +64,19 @@ macOS `tray-lifecycle` 回归会在独立应用域中设置位置，验证退出
 并验证重启后的 GUID 和位置；只检查 GUID 不足以覆盖这一问题。
 
 脚本也会把这些值导出为 `VITE_WEWORK_*`，供前端在运行时显示。
+
+## Cargo 构建隔离
+
+macOS 启动脚本和 Unix Executor 启动入口使用同一套 Cargo 目录解析逻辑。构建
+状态按组件和 worktree 的规范路径隔离，编译内容缓存仍由 sccache 共享。Cargo
+依赖文件时间判断是否重编译；多个 worktree 共用一个 `target` 时，较旧源码可能
+被误判为无需重编译，导致读取另一份源码的产物。
+
+`CARGO_TARGET_DIR` 指定缓存存放位置，启动入口会在其下追加
+`<组件>/worktrees/<路径哈希>`；未设置时使用 `WEGENT_CARGO_TARGET_ROOT` 或默认
+缓存根目录。`WEGENT_DISABLE_SHARED_CARGO_TARGET=1` 将产物放在当前 worktree 的
+`target/<组件>`。macOS 启动日志会显示最终的 `CARGO_TARGET_DIR`。直接运行
+`cargo` 时不会经过这些启动入口，应自行选择独立的 target 目录。
 
 ## 前端显示
 

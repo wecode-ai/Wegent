@@ -10,7 +10,7 @@
       "displayName": "产品全流程",
       "description": "从产品定义与体验设计开始，协同研发、测试和交付，让每一阶段都有明确的负责人、产物与验收标准。",
       "category": "collaboration",
-      "version": "1.1.0",
+      "version": "1.2.0",
       "resources": {
         "collaboration": {
           "project": {
@@ -43,32 +43,43 @@
                   "key": "role-0",
                   "name": "项目负责人",
                   "responsibility": "协调全流程、管理阻塞与阶段确认",
-                  "defaultKind": "agent"
+                  "defaultKind": "agent",
+                  "agentKey": "main-role-0"
                 },
                 {
                   "key": "role-1",
                   "name": "产品经理",
-                  "responsibility": "梳理用户问题、需求范围与验收标准"
+                  "responsibility": "梳理用户问题、需求范围与验收标准",
+                  "agentKey": "main-role-1",
+                  "defaultKind": "agent"
                 },
                 {
                   "key": "role-2",
                   "name": "设计师",
-                  "responsibility": "设计用户流程、交互与高保真界面"
+                  "responsibility": "设计用户流程、交互与高保真界面",
+                  "agentKey": "main-role-2",
+                  "defaultKind": "agent"
                 },
                 {
                   "key": "role-3",
                   "name": "研发工程师",
-                  "responsibility": "技术方案、编码实现与自测"
+                  "responsibility": "技术方案、编码实现与自测",
+                  "agentKey": "main-role-3",
+                  "defaultKind": "agent"
                 },
                 {
                   "key": "role-4",
                   "name": "测试工程师",
-                  "responsibility": "独立测试、缺陷跟踪与回归验证"
+                  "responsibility": "独立测试、缺陷跟踪与回归验证",
+                  "agentKey": "main-role-4",
+                  "defaultKind": "agent"
                 },
                 {
                   "key": "role-5",
                   "name": "交付负责人",
-                  "responsibility": "发布准备、使用文档、交接与回滚预案"
+                  "responsibility": "发布准备、使用文档、交接与回滚预案",
+                  "agentKey": "main-role-5",
+                  "defaultKind": "agent"
                 }
               ],
               "stages": [
@@ -138,6 +149,50 @@
               },
               "key": "main"
             }
+          ],
+          "agents": [
+            {
+              "key": "main-role-0",
+              "name": "项目负责人",
+              "runtime": "codex",
+              "systemPrompt": "你是项目负责人。协调全流程、管理阻塞与阶段确认。遵循小组协作流程，以可验证的产物完成职责，及时反馈阻塞和需要人工判断的问题。",
+              "capabilityDescription": "协调全流程、管理阻塞与阶段确认"
+            },
+            {
+              "key": "main-role-1",
+              "name": "产品经理",
+              "runtime": "codex",
+              "systemPrompt": "你是产品经理。梳理用户问题、需求范围与验收标准。遵循小组协作流程，以可验证的产物完成职责，及时反馈阻塞和需要人工判断的问题。",
+              "capabilityDescription": "梳理用户问题、需求范围与验收标准"
+            },
+            {
+              "key": "main-role-2",
+              "name": "设计师",
+              "runtime": "codex",
+              "systemPrompt": "你是设计师。设计用户流程、交互与高保真界面。遵循小组协作流程，以可验证的产物完成职责，及时反馈阻塞和需要人工判断的问题。",
+              "capabilityDescription": "设计用户流程、交互与高保真界面"
+            },
+            {
+              "key": "main-role-3",
+              "name": "研发工程师",
+              "runtime": "codex",
+              "systemPrompt": "你是研发工程师。技术方案、编码实现与自测。遵循小组协作流程，以可验证的产物完成职责，及时反馈阻塞和需要人工判断的问题。",
+              "capabilityDescription": "技术方案、编码实现与自测"
+            },
+            {
+              "key": "main-role-4",
+              "name": "测试工程师",
+              "runtime": "codex",
+              "systemPrompt": "你是测试工程师。独立测试、缺陷跟踪与回归验证。遵循小组协作流程，以可验证的产物完成职责，及时反馈阻塞和需要人工判断的问题。",
+              "capabilityDescription": "独立测试、缺陷跟踪与回归验证"
+            },
+            {
+              "key": "main-role-5",
+              "name": "交付负责人",
+              "runtime": "codex",
+              "systemPrompt": "你是交付负责人。发布准备、使用文档、交接与回滚预案。遵循小组协作流程，以可验证的产物完成职责，及时反馈阻塞和需要人工判断的问题。",
+              "capabilityDescription": "发布准备、使用文档、交接与回滚预案"
+            }
           ]
         }
       }
@@ -154,7 +209,7 @@
       "displayName": "调研分析",
       "description": "围绕一个问题收集证据、比较选项，形成有来源、有判断的决策建议。",
       "category": "collaboration",
-      "version": "1.1.0",
+      "version": "1.2.0",
       "resources": {
         "collaboration": {
           "project": {
@@ -185,17 +240,22 @@
                   "key": "role-0",
                   "name": "协调负责人",
                   "responsibility": "确定范围、整合结论",
-                  "defaultKind": "agent"
+                  "defaultKind": "agent",
+                  "agentKey": "main-role-0"
                 },
                 {
                   "key": "role-1",
                   "name": "资料研究",
-                  "responsibility": "检索资料、标注来源"
+                  "responsibility": "检索资料、标注来源",
+                  "agentKey": "main-role-1",
+                  "defaultKind": "agent"
                 },
                 {
                   "key": "role-2",
                   "name": "分析核验",
-                  "responsibility": "比较选项、交叉验证"
+                  "responsibility": "比较选项、交叉验证",
+                  "agentKey": "main-role-2",
+                  "defaultKind": "agent"
                 }
               ],
               "stages": [
@@ -237,6 +297,29 @@
               },
               "key": "main"
             }
+          ],
+          "agents": [
+            {
+              "key": "main-role-0",
+              "name": "协调负责人",
+              "runtime": "codex",
+              "systemPrompt": "你是协调负责人。确定范围、整合结论。遵循小组协作流程，以可验证的产物完成职责，及时反馈阻塞和需要人工判断的问题。",
+              "capabilityDescription": "确定范围、整合结论"
+            },
+            {
+              "key": "main-role-1",
+              "name": "资料研究",
+              "runtime": "codex",
+              "systemPrompt": "你是资料研究。检索资料、标注来源。遵循小组协作流程，以可验证的产物完成职责，及时反馈阻塞和需要人工判断的问题。",
+              "capabilityDescription": "检索资料、标注来源"
+            },
+            {
+              "key": "main-role-2",
+              "name": "分析核验",
+              "runtime": "codex",
+              "systemPrompt": "你是分析核验。比较选项、交叉验证。遵循小组协作流程，以可验证的产物完成职责，及时反馈阻塞和需要人工判断的问题。",
+              "capabilityDescription": "比较选项、交叉验证"
+            }
           ]
         }
       }
@@ -253,7 +336,7 @@
       "displayName": "内容创作",
       "description": "确定受众与传播目标，让策划、撰写和审校沿着清晰流程完成。",
       "category": "collaboration",
-      "version": "1.1.0",
+      "version": "1.2.0",
       "resources": {
         "collaboration": {
           "project": {
@@ -284,17 +367,22 @@
                   "key": "role-0",
                   "name": "协调负责人",
                   "responsibility": "确认受众、把控方向",
-                  "defaultKind": "agent"
+                  "defaultKind": "agent",
+                  "agentKey": "main-role-0"
                 },
                 {
                   "key": "role-1",
                   "name": "内容撰写",
-                  "responsibility": "策划提纲、撰写初稿"
+                  "responsibility": "策划提纲、撰写初稿",
+                  "agentKey": "main-role-1",
+                  "defaultKind": "agent"
                 },
                 {
                   "key": "role-2",
                   "name": "内容审校",
-                  "responsibility": "核查事实、调整表达"
+                  "responsibility": "核查事实、调整表达",
+                  "agentKey": "main-role-2",
+                  "defaultKind": "agent"
                 }
               ],
               "stages": [
@@ -335,6 +423,29 @@
                 "requiredTags": []
               },
               "key": "main"
+            }
+          ],
+          "agents": [
+            {
+              "key": "main-role-0",
+              "name": "协调负责人",
+              "runtime": "codex",
+              "systemPrompt": "你是协调负责人。确认受众、把控方向。遵循小组协作流程，以可验证的产物完成职责，及时反馈阻塞和需要人工判断的问题。",
+              "capabilityDescription": "确认受众、把控方向"
+            },
+            {
+              "key": "main-role-1",
+              "name": "内容撰写",
+              "runtime": "codex",
+              "systemPrompt": "你是内容撰写。策划提纲、撰写初稿。遵循小组协作流程，以可验证的产物完成职责，及时反馈阻塞和需要人工判断的问题。",
+              "capabilityDescription": "策划提纲、撰写初稿"
+            },
+            {
+              "key": "main-role-2",
+              "name": "内容审校",
+              "runtime": "codex",
+              "systemPrompt": "你是内容审校。核查事实、调整表达。遵循小组协作流程，以可验证的产物完成职责，及时反馈阻塞和需要人工判断的问题。",
+              "capabilityDescription": "核查事实、调整表达"
             }
           ]
         }

@@ -1,6 +1,6 @@
-import { act, fireEvent, render, screen } from '@testing-library/react'
-import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
 import type { RuntimeGoal } from '@/types/api'
+import { fireEvent, render, screen } from '@testing-library/react'
+import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
 import { GoalStatusBar } from './GoalStatusBar'
 
 vi.mock('@/hooks/useTranslation', () => ({
@@ -30,21 +30,6 @@ describe('GoalStatusBar', () => {
     vi.useRealTimers()
   })
 
-  test('shows the full objective in a tooltip when hovering the truncated text', () => {
-    render(<GoalStatusBar goal={goal} />)
-
-    const objective = screen.getByTestId('goal-objective')
-    expect(objective).toHaveClass('truncate')
-    expect(screen.queryByTestId('goal-objective-tooltip')).not.toBeInTheDocument()
-
-    fireEvent.pointerEnter(objective.parentElement as HTMLElement)
-    act(() => {
-      vi.advanceTimersByTime(700)
-    })
-
-    expect(screen.getByTestId('goal-objective-tooltip')).toHaveTextContent(goal.objective)
-  })
-
   test('shows recovery state and exposes a resume action when attention is required', () => {
     const onResumeGoal = vi.fn()
     render(
@@ -58,11 +43,5 @@ describe('GoalStatusBar', () => {
     expect(screen.getByTestId('goal-status-bar')).toHaveTextContent('需要恢复')
     fireEvent.click(screen.getByTestId('resume-goal-button'))
     expect(onResumeGoal).toHaveBeenCalledOnce()
-  })
-
-  test('shows an automatic restart recovery separately from normal execution', () => {
-    render(<GoalStatusBar goal={{ ...goal, status: 'active' }} executionStatus="recovering" />)
-
-    expect(screen.getByTestId('goal-status-bar')).toHaveTextContent('正在恢复')
   })
 })

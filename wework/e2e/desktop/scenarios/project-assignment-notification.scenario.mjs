@@ -1,3 +1,5 @@
+import { revealCollaborationSidebarElement } from '../modules/collaboration-sidebar-navigation.mjs'
+import { selectedToolCall } from '../modules/model-tool-calls.mjs'
 import assert from 'node:assert/strict'
 
 import { verifySilentIssueSaves } from '../modules/issue-save-notification-flows.mjs'
@@ -29,6 +31,10 @@ import {
   configureFirstProjectExecutionEnvironment,
   selectCollaborationDomain,
 } from '../modules/workspace-flows.mjs'
+import {
+  collaborationProjectViewSelector,
+  selectCollaborationProjectView,
+} from '../modules/collaboration-project-navigation.mjs'
 
 const CONTENT = '[data-workspace-tab-content][aria-hidden="false"]'
 const MODEL = 'desktop-e2e-cloud-responses'
@@ -149,6 +155,10 @@ async function verifyCanonicalDeviceCatalog(control, request, timeoutMs) {
     'The desktop Runtime did not register its canonical device resource',
     timeoutMs
   )
+  await revealCollaborationSidebarElement(
+    control,
+    inCollaborationSidebar('[data-testid="collaboration-primary-devices"]')
+  )
   await control.command(
     'click',
     inCollaborationSidebar('[data-testid="collaboration-primary-devices"]')
@@ -252,10 +262,10 @@ async function createIssue(
   title = ISSUE,
   { notifyAssignee = true, beforeSave } = {}
 ) {
-  await control.command('waitFor', scoped('[data-testid="collaboration-tab-board"]'), {
+  await control.command('waitFor', collaborationProjectViewSelector(CONTENT, 'board'), {
     timeoutMs: uiTimeoutMs,
   })
-  await control.command('click', scoped('[data-testid="collaboration-tab-board"]'))
+  await selectCollaborationProjectView(control, CONTENT, 'board')
   await control.command('clickWhenEnabled', scoped('[data-testid="collaboration-issue-create"]'))
   await control.command('fill', scoped('[data-testid="cloud-todo-title"]'), { value: title })
   await control.command('fill', scoped('[data-testid="cloud-todo-detail-description"]'), {
@@ -318,16 +328,13 @@ async function verifyIssueTags(control, request, issue, uiTimeoutMs) {
   const tag = `验收标签-${process.pid}`
   const temporaryTag = `临时标签-${process.pid}`
   const trigger = scoped('[data-testid="cloud-todo-more-properties"]')
-  const popover = '[data-testid="cloud-todo-more-properties-popover"]'
-  const input = `${popover} [data-testid="cloud-todo-detail-tag-input"]`
-  const chip = `${popover} [data-testid="cloud-todo-detail-tag-tag-${tag}"]`
-  const assertDismissed = async () => {
-    await waitForValue(
-      () => control.command('getElementCount', popover),
-      value => Number(value) === 0,
-      'More properties did not dismiss',
-      uiTimeoutMs
-    )
+  const metadata = scoped('[data-testid="issue-primary-metadata"]')
+  const properties = scoped('[data-testid="cloud-todo-more-properties-popover"]')
+  const input = `${metadata} [data-testid="cloud-todo-detail-tag-input"]`
+  const chip = `${metadata} [data-testid="cloud-todo-detail-tag-tag-${tag}"]`
+  const assertCollapsed = async () => {
+    await control.command('waitFor', properties, { visible: false, timeoutMs: uiTimeoutMs })
+    await control.command('waitFor', input, { visible: true, timeoutMs: uiTimeoutMs })
     assert.equal(
       await control.command('getAttribute', trigger, { value: 'aria-expanded' }),
       'false'
@@ -340,8 +347,8 @@ async function verifyIssueTags(control, request, issue, uiTimeoutMs) {
     )
   }
   // The list API can observe the new row before the create request finishes.
-  await control.command('waitFor', trigger, { visible: true, timeoutMs: uiTimeoutMs })
-  await control.command('click', trigger)
+  await control.command('waitFor', input, { visible: true, timeoutMs: uiTimeoutMs })
+  await assertCollapsed()
   assert.equal(
     await control.command('getComputedStyleValue', input, { value: 'opacity' }),
     '1',
@@ -350,8 +357,12 @@ async function verifyIssueTags(control, request, issue, uiTimeoutMs) {
   await control.command('fill', input, { value: tag })
   assert.equal(await control.command('getValue', input), tag)
   await control.command('pointerClick', scoped('[data-testid="cloud-todo-detail-title"]'))
-  await assertDismissed()
+  await assertCollapsed()
   await control.command('click', trigger)
+  await control.command('waitFor', properties, { visible: true, timeoutMs: uiTimeoutMs })
+  await control.command('waitFor', input, { visible: true, timeoutMs: uiTimeoutMs })
+  await control.command('click', trigger)
+  await assertCollapsed()
   await control.command('waitFor', chip, { visible: true, timeoutMs: uiTimeoutMs })
   await control.command('fill', input, { value: tag })
   await control.command('press', input, { key: 'Enter' })
@@ -360,14 +371,13 @@ async function verifyIssueTags(control, request, issue, uiTimeoutMs) {
   await control.command('press', input, { key: 'Enter' })
   await control.command(
     'click',
-    `${popover} [data-testid="cloud-todo-detail-tag-tag-remove-${temporaryTag}"]`
+    `${metadata} [data-testid="cloud-todo-detail-tag-tag-remove-${temporaryTag}"]`
   )
-  await control.command('press', input, { key: 'Escape' })
-  await assertDismissed()
-  await control.command('click', trigger)
+  await control.command('pointerClick', scoped('[data-testid="cloud-todo-detail-title"]'))
+  await assertCollapsed()
   await control.command('waitFor', chip, { visible: true, timeoutMs: uiTimeoutMs })
-  await control.command('pointerClick', scoped('[data-testid="cloud-todo-save"]'))
-  await assertDismissed()
+  await control.command('pointerClick', scoped('[data-testid="cloud-todo-detail-title"]'))
+  await assertCollapsed()
   const updated = await waitForValue(
     () => request(`/api/v1/loop-items/${issue.id}`),
     value => value.tags?.length === 1 && value.tags[0] === tag,
@@ -375,9 +385,10 @@ async function verifyIssueTags(control, request, issue, uiTimeoutMs) {
     uiTimeoutMs
   )
   await control.command('click', trigger)
+  await control.command('waitFor', properties, { visible: true, timeoutMs: uiTimeoutMs })
   await control.command('waitFor', chip, { visible: true, timeoutMs: uiTimeoutMs })
-  await control.command('pointerClick', scoped('[data-testid="cloud-todo-detail-title"]'))
-  await assertDismissed()
+  await control.command('click', trigger)
+  await assertCollapsed()
   return updated
 }
 
@@ -386,9 +397,6 @@ async function changeIssueStatus(control, request, issueId, status, uiTimeoutMs)
   await control.command('waitFor', statusSelect, { timeoutMs: uiTimeoutMs })
   await control.command('select', statusSelect, {
     value: status,
-  })
-  await control.command('clickWhenEnabled', scoped('[data-testid="cloud-todo-save"]'), {
-    timeoutMs: uiTimeoutMs,
   })
   return waitForValue(
     () => request(`/api/v1/loop-items/${issueId}`),
@@ -555,7 +563,7 @@ export function createDesktopScenario({
           delivery_id: delivery.id,
           fulfillments: [],
         })
-        events = namespacedFunctionCall(CALLS.finalize, tool.namespace, tool.name, tool.arguments)
+        events = selectedToolCall(CALLS.finalize, tool)
       } else if (requestContainsToolOutput(body, CALLS.create)) {
         delivery = findDeliveryDraft(findToolOutput(body.input ?? [], CALLS.create))
         assert.ok(delivery, 'create_delivery 没有返回持久化的 Delivery 草稿')
@@ -573,7 +581,7 @@ export function createDesktopScenario({
         const tool = selectMcpTool(body, 'wework_space', 'create_delivery', {
           markdown: `# ${ISSUE}\n\n${MARKER}：项目周报已经整理完成。`,
         })
-        events = namespacedFunctionCall(CALLS.create, tool.namespace, tool.name, tool.arguments)
+        events = selectedToolCall(CALLS.create, tool)
       } else {
         events = mcpToolRequestEvents(body, {
           toolName: 'create_delivery',
@@ -693,7 +701,7 @@ export function createDesktopScenario({
         assignmentId: notification.payload.assignmentId,
       })
       await captureScreenshot(control, 'assignment-02-human-work-pending.png', CONTENT)
-      await control.command('click', scoped('[data-testid="cloud-todo-personal-task-start"]'), {
+      await control.command('click', scoped('[data-testid="cloud-todo-create-task"]'), {
         visible: true,
       })
       await control.command('waitFor', '[data-testid="ai-chat-modal"]', {
@@ -729,7 +737,7 @@ export function createDesktopScenario({
       runtimeTaskId = binding.task_id
       assert.equal(
         binding.device_id,
-        currentApp.app_device_id ?? currentApp.device_id,
+        currentApp.execution_target_id,
         'Human AI assistance must run on the current computer even when the project environment is remote'
       )
       assert.equal(binding.assignment_id, notification.payload.assignmentId)
@@ -820,7 +828,7 @@ export function createDesktopScenario({
       assert.equal(binding.modelSelection?.modelName, MODEL)
       // Change the new-chat default without sending, then reopen the bound personal
       // task through the Issue drawer. Its model must come from the binding.
-      await control.command('click', scoped('[data-testid="cloud-todo-personal-task-start"]'), {
+      await control.command('click', scoped('[data-testid="cloud-todo-create-task"]'), {
         visible: true,
       })
       await selectE2EModel(control, DEFAULT_MODEL_ID, DEFAULT_MODEL_LABEL, taskPanel)

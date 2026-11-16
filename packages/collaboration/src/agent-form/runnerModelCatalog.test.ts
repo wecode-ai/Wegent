@@ -5,6 +5,8 @@ import { runnerModelKey, type RunnerModel } from './runnerRouting'
 import { runnerModelCatalog } from './runnerModelCatalog'
 import {
   getSelectedModelDisplayLabel,
+  getControlsForModel,
+  getDefaultModelOptions,
   groupModelsByFamily,
   isSameModelSelection,
   modelSelectionKey,
@@ -21,6 +23,46 @@ const native: RunnerModel = {
 }
 
 describe('runner model picker catalog', () => {
+  it.each(['openai', 'custom'])('preserves the shared Codex speed control for %s', provider => {
+    const [entry] = runnerModelCatalog([{ ...native, provider }], [], 'codex')
+
+    expect(getControlsForModel(entry.model).find(control => control.id === 'speed')).toMatchObject({
+      defaultValue: 'standard',
+      options: [
+        expect.objectContaining({ value: 'standard' }),
+        expect.objectContaining({ value: 'fast' }),
+      ],
+    })
+    expect(getDefaultModelOptions(entry.model).speed).toBe('standard')
+  })
+
+  it('uses native reasoning metadata for default labels and explicit selections', () => {
+    const [entry] = runnerModelCatalog(
+      [
+        {
+          ...native,
+          default_reasoning_effort: 'low',
+          supported_reasoning_efforts: ['low', 'high'],
+        },
+      ],
+      [],
+      'codex'
+    )
+    expect(getDefaultModelOptions(entry.model)).toMatchObject({
+      reasoning: 'low',
+    })
+    expect(getSelectedModelDisplayLabel(entry.model)).toBe('GPT Sol Low')
+    expect(getSelectedModelDisplayLabel(entry.model, { reasoning: 'high' })).toBe('GPT Sol High')
+    expect(entry.model.config?.ui).toMatchObject({
+      reasoningEfforts: ['low', 'high'],
+    })
+    expect(entry.identity).toEqual({
+      runtime: 'codex',
+      provider: 'openai',
+      model_id: 'gpt-sol',
+    })
+  })
+
   it('uses the unchanged common catalog for network labels and ordering', () => {
     const catalog: UnifiedModel[] = ['公网', '内网', '海外'].map(region => ({
       name: `kimi-k3(${region})`,

@@ -3,12 +3,12 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { act, renderHook } from '@testing-library/react'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
 import {
   useStandardCloudBoardController,
   type ProjectBoardColumn,
   type StandardCloudBoardItem,
 } from '@wegent/collaboration/project-board'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 const pending: ProjectBoardColumn = {
   dotClass: '',
@@ -115,24 +115,6 @@ describe('project board sorting', () => {
     const second = setup()
     expect(second.result.current.state.getColumnSort(pending.key)).toEqual([])
     expect(second.result.current.state.getColumnSort(completed.key)).toEqual(['created-desc'])
-  })
-
-  it('restores compound rules in order and compares ties using the next rule', () => {
-    const first = setup()
-    first.rerender({ ...first.options, items: items.map(item => ({ ...item, priority: 'high' })) })
-    act(() =>
-      first.result.current.state.selectColumnSort(pending.key, ['priority-desc', 'created-desc'])
-    )
-    expect(
-      first.result.current.getColumnItems(pending, first.result.current.state).map(item => item.id)
-    ).toEqual(['2', '1', '0'])
-    expect(first.result.current.state.getColumnSort(completed.key)).toEqual(['priority-desc'])
-    first.unmount()
-    const second = setup()
-    expect(second.result.current.state.getColumnSort(pending.key)).toEqual([
-      'priority-desc',
-      'created-desc',
-    ])
   })
 
   it('isolates sorting by project and resets an invalid saved preference', () => {

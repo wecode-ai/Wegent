@@ -29,11 +29,11 @@ use brz_http_server::{EphemeralBytesArena, IntoHttpError as _, Response};
 use brz_mysql::{Mysql, MysqlRow};
 use chrono::Utc;
 
-use crate::attachments::s3_signing::hex_sha256;
 use crate::auth::verify_token;
 use crate::config::AuthConfig;
 use crate::http_compat::FastApiError;
 use crate::sql_support::quote_sql_literal;
+use wegent_storage::s3_signing::hex_sha256;
 
 /// `app.core.auth_utils.API_KEY_PREFIX`: raw keys carry this prefix.
 const API_KEY_PREFIX: &str = "wg-";
@@ -269,7 +269,7 @@ async fn verify_jwt_token_with_db<M: Mysql>(
     mysql: &M,
     token: &str,
 ) -> Result<ExecutorUser, ()> {
-    let user_name = verify_token(config, token)?;
+    let user_name = verify_token(config, token).map_err(|_| ())?;
     let user: Result<Option<MysqlRow>, ()> = mysql
         .fetch_optional(&user_by_name_sql(&user_name), ())
         .await

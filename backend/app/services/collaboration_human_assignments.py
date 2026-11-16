@@ -234,6 +234,18 @@ def notify_collaboration_human_assignment(
 ) -> None:
     """Notify the person without creating a board child Issue."""
 
+    from app.services.project_chat.stand_in_events import enqueue_issue_wakeup
+
+    enqueue_issue_wakeup(
+        db,
+        user_id=human.id,
+        payload={
+            "projectId": str(project.id),
+            "itemId": issue.id,
+            "assignmentId": assignment_id,
+        },
+    )
+
     existing = (
         db.query(WeworkNotification)
         .filter(

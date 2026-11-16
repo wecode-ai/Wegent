@@ -24,6 +24,9 @@ export type CollaborationPlatformView = "spaces" | "resources";
 export type CollaborationDomain = "local" | "cloud";
 export type CollaborationPlatformRootView =
   | "home"
+  | "issues-assigned"
+  | "issues-created"
+  | "issues-participating"
   | "agents"
   | "teams"
   | "devices"
@@ -55,13 +58,44 @@ export interface CollaborationPlatformLocation {
 }
 
 export interface CollaborationPlatformHostAdapter {
+  /** Stable authentication and backend identity, independent of optional data readiness. */
+  accountScope: string;
+  projectTemplateRequest?: {
+    key: string;
+    document: import("../templates/types").CollaborationTemplate;
+    onHandled(): void;
+  };
   templateStore?: import("../templates/store").CollaborationTemplateStore;
   templateNavigation?: boolean;
+  renderPersonalHome?(props: {
+    projects: CollaborationProject[];
+    createIssue: ReactNode;
+    createdIssue?: {
+      key: string;
+      issue: import("../ports/SharedWorkspaceApi").WorkspaceMyWorkItem;
+      project: CollaborationProject;
+      task?: import("../ports/SharedWorkspaceApi").WorkspaceRuntimeTaskAddress;
+    };
+    onCreatedIssueHandled?(key: string): void;
+    onOpenIssue(
+      issue: import("../ports/SharedWorkspaceApi").WorkspaceMyWorkItem,
+    ): void;
+  }): ReactNode;
+  createIndependentIssue?(): void;
+  renderIssueList?(props: {
+    scope: "assigned" | "created" | "participating";
+    projects: CollaborationProject[];
+    onOpenIssue(
+      issue: import("../ports/SharedWorkspaceApi").WorkspaceMyWorkItem,
+    ): void;
+  }): ReactNode;
   renderStandInPage?(props: {
     projects: CollaborationProject[];
     onClose(): void;
   }): ReactNode;
   renderProjectSidebarBadge?(project: CollaborationProject): ReactNode;
+  convertLocalProjectToCloud?(project: CollaborationProject): void;
+  openProjectConversation?(project: CollaborationProject): void;
   currentUser?: {
     id: number;
     name: string;
@@ -79,6 +113,7 @@ export interface CollaborationPlatformHostAdapter {
     dingtalkAitable: boolean;
     projectLocation?: "cloud" | "local";
     workspaceLocations?: readonly ("local" | "cloud")[];
+    projectNavigation?: "workspaces" | "projects";
     sidebarPresentation?: "full" | "context";
   };
   defaultAssistant?: CollaborationDefaultAssistant;
@@ -88,6 +123,7 @@ export interface CollaborationPlatformHostAdapter {
     resourceId?: string,
     source?: "local" | "cloud",
   ): void;
+  renderExecutionEnvironmentPreferences?(): ReactNode;
   renderDeviceCreator?(input: {
     source: "local" | "cloud";
     workspaceId?: string;

@@ -1,0 +1,13 @@
+{
+  "order": 51000,
+  "scenario": "./scenarios/stand-in-cloud.scenario.mjs",
+  "scenarioOnly": true,
+  "paths": ["wework/e2e/desktop/modules/stand-in-instance-flows.mjs"],
+  "ci": {
+    "core": {
+      "order": 45000,
+      "shard": 8,
+      "position": 6000
+    }
+  }
+}

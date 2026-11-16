@@ -18,12 +18,15 @@ import {
   responseCreated,
 } from '../modules/response-protocol.mjs'
 import { waitForWorkbenchDebugState } from '../modules/workspace-flows.mjs'
+import { createGoalAdmissionRecovery } from '../modules/goal-admission-recovery.mjs'
 
 const GOAL = 'WEWORK_OVERLOADED_GOAL'
 const RECOVERED = 'WEWORK_OVERLOADED_GOAL_RECOVERED'
+const FIRST_RETRY_DELAY_MS = 10_000
 
 export function createDesktopScenario(options) {
   const existing = createOverloadRecovery(options)
+  const admission = createGoalAdmissionRecovery(options)
   let active = false
   let requests = 0
   let releaseRecovered
@@ -42,6 +45,7 @@ export function createDesktopScenario(options) {
   return {
     ...existing,
     async handleHttp(request, response, url) {
+      if (admission.active) return admission.handleHttp(request, response, url)
       if (!active) return existing.handleHttp(request, response, url)
       if (request.method !== 'POST' || !['/responses', '/v1/responses'].includes(url.pathname))
         return false
@@ -112,7 +116,11 @@ export function createDesktopScenario(options) {
           )
           await control.command('click', '[data-testid="set-goal-button"]')
           await control.command('fill', ACTIVE_COMPOSER_SELECTOR, { value: `${GOAL}_${action}` })
+          // Admit the user mutation before recovery sees the failed native frame.
+          // UI commands must not race the native retry deadline.
+          if (!continuing) await existing.overloadTerminalGate.arm()
           await control.command('press', ACTIVE_COMPOSER_SELECTOR, { key: 'Enter' })
+          if (!continuing) await existing.overloadTerminalGate.wait()
           const stopped = await waitForWorkbenchDebugState(
             control,
             snapshot =>
@@ -135,7 +143,8 @@ export function createDesktopScenario(options) {
                 snapshot.pane?.goal?.status === 'active' &&
                 snapshot.workbench?.activeLifecycle?.goalStatus === 'active' &&
                 snapshot.pane?.status?.isBusy,
-              'Overload recovery did not restore the Goal lifecycle'
+              'Overload recovery did not restore the Goal lifecycle',
+              options.modelResponseTimeoutMs
             )
             const after = (await rpc('runtime.tasks.goal.get', { address })).goal
             assert.equal(after.objective, before.objective)
@@ -161,6 +170,7 @@ export function createDesktopScenario(options) {
           } else {
             if (action === 'clear') await rpc('runtime.tasks.goal.clear', { address })
             else await rpc('runtime.tasks.goal.set', { address, status: action })
+            await existing.overloadTerminalGate.release()
           }
           await waitForWorkbenchDebugState(
             control,
@@ -168,9 +178,9 @@ export function createDesktopScenario(options) {
             'The recovered or stopped Goal did not settle'
           )
           if (!continuing) {
-            // The model backoff is five seconds. Observe beyond its deadline to
+            // Observe beyond the native first retry delay in turn_recovery.rs to
             // prove a user mutation cannot be undone by the pending recovery.
-            await new Promise(resolve => setTimeout(resolve, 5500))
+            await new Promise(resolve => setTimeout(resolve, FIRST_RETRY_DELAY_MS + 500))
             assert.equal(requests, 1, 'Recovery continued a Goal changed by the user')
             const goal = (await rpc('runtime.tasks.goal.get', { address })).goal
             assert.equal(goal?.status ?? null, action === 'clear' ? null : action)
@@ -188,11 +198,16 @@ export function createDesktopScenario(options) {
           address = null
         }
       } finally {
-        releaseRecovered?.()
-        releaseContinuation?.()
-        if (address) await rpc('runtime.tasks.goal.clear', { address })
-        active = false
+        await existing.overloadTerminalGate.release()
+        try {
+          if (address) await rpc('runtime.tasks.goal.clear', { address })
+        } finally {
+          releaseRecovered?.()
+          releaseContinuation?.()
+          active = false
+        }
       }
+      await admission.verify(control)
     },
     diagnostics() {
       return { ...existing.diagnostics(), goalRequests: requests, goalActive: active }

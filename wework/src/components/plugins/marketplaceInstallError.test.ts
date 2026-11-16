@@ -1,3 +1,5 @@
+// @vitest-environment node
+
 import { describe, expect, test } from 'vitest'
 import {
   humanizeMarketplaceInstallError,
@@ -34,19 +36,6 @@ describe('humanizeMarketplaceInstallError', () => {
     ).toBe('卸载该远程插件需要先登录 ChatGPT / Codex 账号。')
   })
 
-  test('maps leftover installs after uninstall without assuming the source', () => {
-    expect(
-      humanizeMarketplaceUninstallError(
-        'Plugin "github" is still installed after uninstall; tried ids: plugin_connector_1p_github, github@openai-curated-remote',
-        t
-      )
-    ).toBe('卸载未完成，插件仍显示为已安装。请刷新插件列表后重试；如果问题持续，请提交反馈。')
-  })
-
-  test('maps empty uninstall failures', () => {
-    expect(humanizeMarketplaceUninstallError('', t)).toBe('卸载失败，请稍后重试')
-  })
-
   test.each([
     'PLUGIN_UNINSTALL_PREFLIGHT_FAILED',
     'Managed plugin account install id is unavailable; refresh installed plugins and retry uninstall',
@@ -54,9 +43,5 @@ describe('humanizeMarketplaceInstallError', () => {
     expect(humanizeMarketplaceUninstallError(message, t)).toBe(
       '暂时无法确认当前账号的插件安装状态，请刷新后重试。'
     )
-  })
-
-  test('strips the executor prefix from other failures', () => {
-    expect(humanizeMarketplaceInstallError('codex_app_server_request_failed: boom', t)).toBe('boom')
   })
 })

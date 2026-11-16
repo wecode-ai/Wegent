@@ -7,9 +7,14 @@ import type { WorkspaceTab } from '@/features/workspace-tabs/workspaceTabs'
 import type { DesktopHostEvent } from '@/api/dsh/desktopHost'
 
 const mocks = vi.hoisted(() => ({
+  experimental: true,
   subscribe: vi.fn(),
   invoke: vi.fn(async () => undefined),
   navigate: vi.fn(),
+}))
+let eventSequence = 0
+vi.mock('@/features/experimental-features/useExperimentalFeaturesEnabled', () => ({
+  useExperimentalFeaturesEnabled: () => mocks.experimental,
 }))
 vi.mock('@/api/dsh/desktopHost', () => ({
   subscribeDesktopHostEvents: mocks.subscribe,
@@ -34,10 +39,12 @@ function setup({
   kind = 'task',
   tabs = [tab({ id: 'active', kind: 'task' })],
   pathname = '/',
+  pendingEvents = [],
 }: {
   kind?: 'task' | 'board' | 'auxiliary'
   tabs?: WorkspaceTab[]
   pathname?: string
+  pendingEvents?: DesktopHostEvent[]
 } = {}) {
   const context = {
     activeTab: { ...tabs[0], kind },
@@ -49,7 +56,12 @@ function setup({
     restoreClosedTab: vi.fn(),
   } as unknown as WorkspaceTabsContextValue
   const unlisten = vi.fn()
-  mocks.subscribe.mockReturnValue(unlisten)
+  mocks.subscribe.mockImplementation((handler, options) => {
+    for (const event of pendingEvents) {
+      if (options?.replay?.(event)) handler(event)
+    }
+    return unlisten
+  })
   const view = render(
     <WorkspaceTabsContext.Provider value={context}>
       <ApplicationMenuWorkspaceBridge pathname={pathname} />
@@ -57,7 +69,11 @@ function setup({
   )
   const handle = mocks.subscribe.mock.calls.at(-1)![0] as (event: DesktopHostEvent) => void
   const send = (action: string, windowLabel = 'workspace-one') =>
-    handle({ type: 'application-menu.action', sequence: 1, payload: { action, windowLabel } })
+    handle({
+      type: 'application-menu.action',
+      sequence: ++eventSequence,
+      payload: { action, windowLabel },
+    })
   const lastCapabilities = () => {
     const call = mocks.invoke.mock.calls
       .filter(([name]) => name === 'applicationMenu.setCapabilities')
@@ -68,7 +84,17 @@ function setup({
 }
 
 describe('application menu workspace actions', () => {
-  beforeEach(() => vi.clearAllMocks())
+  beforeEach(() => {
+    vi.clearAllMocks()
+    mocks.experimental = true
+  })
+
+  test('opens ordinary automations while My stand-in is disabled', () => {
+    mocks.experimental = false
+    const { send } = setup()
+    send('open-automations')
+    expect(mocks.navigate).toHaveBeenCalledExactlyOnceWith('/automations')
+  })
 
   test('opens new task and project-space tabs without discarding the active tab', () => {
     const { context, send } = setup()
@@ -77,6 +103,20 @@ describe('application menu workspace actions', () => {
     expect(context.openTab).toHaveBeenCalledWith('task')
     expect(context.openTab).toHaveBeenCalledWith('board')
     expect(context.selectTab).not.toHaveBeenCalled()
+  })
+
+  test('handles a work menu event received before the workspace mounts only once', () => {
+    const event: DesktopHostEvent = {
+      type: 'application-menu.action',
+      sequence: ++eventSequence,
+      payload: { action: 'open-tasks', windowLabel: 'workspace-one' },
+    }
+    const first = setup({ pathname: '/settings', pendingEvents: [event] })
+    expect(first.context.selectTab).toHaveBeenCalledExactlyOnceWith('active')
+    first.view.unmount()
+
+    const remounted = setup({ pathname: '/settings', pendingEvents: [event] })
+    expect(remounted.context.selectTab).not.toHaveBeenCalled()
   })
 
   test('closes the active tab through the workspace tab context', () => {
@@ -129,6 +169,18 @@ describe('application menu workspace actions', () => {
     const { send } = setup()
     for (const action of ['open-plugins', 'open-automations', 'open-applications']) send(action)
     expect(mocks.navigate.mock.calls).toEqual([['/plugins'], ['/automations'], ['/sites']])
+  })
+
+  test('opens independent schedules without carrying calendar identity and device state', () => {
+    const original = window.location.href
+    window.history.replaceState({}, '', '/stand-in?profileId=reviewer&deviceId=device-a')
+    try {
+      const { send } = setup({ pathname: '/stand-in' })
+      send('open-automations')
+      expect(mocks.navigate).toHaveBeenCalledWith('/automations')
+    } finally {
+      window.history.replaceState({}, '', original)
+    }
   })
 
   test('ignores actions addressed to another window', () => {

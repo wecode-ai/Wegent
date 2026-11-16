@@ -123,7 +123,7 @@ async def test_failed_refresh_is_cached_briefly(
     [
         (
             GithubVersionChecker(),
-            {"tag_name": "v3.1.4"},
+            [{"tag_name": "v3.1.4"}],
             "3.1.4",
         ),
         (
@@ -135,7 +135,7 @@ async def test_failed_refresh_is_cached_briefly(
 )
 async def test_version_checker_runs_blocking_request_in_thread(
     checker,
-    payload: dict,
+    payload: dict | list,
     expected_version: str,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

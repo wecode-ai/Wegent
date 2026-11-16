@@ -4,7 +4,14 @@ import { join } from 'node:path'
 import { requestContainsSkillLocator } from './desktop-server.mjs'
 import { requestExecutor } from './executor-rpc.mjs'
 import { managedRoot } from './managed-plugin-root.mjs'
-import { testId, until } from './plugin-regression-fixture.mjs'
+import {
+  accountPlugin,
+  materializedPlugin,
+  pluginApi,
+  testId,
+  uninstallInUi,
+  until,
+} from './plugin-regression-fixture.mjs'
 import {
   createSse,
   handleEmptyReplyPrediction,
@@ -62,6 +69,38 @@ export function createPluginSkillHotUpdate({
     return [...log.matchAll(/codex shared app-server process starting process_id=(\d+)/g)].map(
       match => match[1]
     )
+  }
+
+  function resetConversation() {
+    assert.equal(pending, null, 'Cannot replace a pending skill hot update conversation')
+    identity = undefined
+    address = undefined
+    processStarts = undefined
+    round = 0
+  }
+
+  async function assertMembership(control, installed) {
+    const catalog = await rpc(control, 'runtime.codex.app_server.request', {
+      method: 'skills/list',
+      params: { cwds: [address.workspacePath], forceReload: false },
+    })
+    const skill = catalog.data
+      .flatMap(entry => entry.skills)
+      .find(item => item.name === `${fixture.slug}:${fixture.slug}`)
+    assert.equal(Boolean(skill), installed, 'The real Codex skill membership is stale')
+    if (installed) {
+      assert.equal(await realpath(skill.path), await realpath(skillPath))
+      assert.equal(skill.enabled, true)
+    }
+  }
+
+  async function membershipTurn(control, installed, reopen = true) {
+    const startedAt = Date.now()
+    if (reopen) await openConversation(control)
+    await beginTurn(control, installed)
+    const turn = await finishTurn(control, false, false)
+    await assertMembership(control, installed)
+    return { ...turn, startedAt, completedAt: Date.now(), catalogMembership: installed }
   }
 
   async function recordCatalogFailure(catalog, advertised) {
@@ -149,7 +188,7 @@ export function createPluginSkillHotUpdate({
     await control.command('clickWhenEnabled', ACTIVE_SEND_BUTTON_SELECTOR)
   }
 
-  async function finishTurn(control, checkCatalog = true) {
+  async function finishTurn(control, checkCatalog = true, verifyProcess = true) {
     try {
       await control.command('waitFor', testId('message-assistant'), {
         text: pending.completion,
@@ -174,9 +213,15 @@ export function createPluginSkillHotUpdate({
       if (checkCatalog) await assertCatalog(control, pending.enabled)
       const starts = await readStarts()
       assert.ok(starts.length > 0, 'The executor did not log a real Codex process')
-      if (processStarts)
+      if (processStarts && verifyProcess)
         assert.deepEqual(starts, processStarts, 'Skill toggling restarted the shared Codex process')
-      else processStarts = starts
+      if (!processStarts) processStarts = starts
+      return {
+        ...current,
+        processStarts: starts,
+        advertised: pending.enabled,
+        catalogBytes: pending.catalogBytes,
+      }
     } finally {
       releasePending()
     }
@@ -209,6 +254,7 @@ export function createPluginSkillHotUpdate({
       const turn = pending
       assert.equal(turn.observed, false, 'The skill hot update turn made a duplicate model request')
       const catalog = latestSkillCatalog(body)
+      pending.catalogBytes = Buffer.byteLength(catalog)
       const advertised = requestContainsSkillLocator(
         { instructions: catalog },
         skillPath,
@@ -256,6 +302,7 @@ export function createPluginSkillHotUpdate({
       return true
     },
     async start(control, installedFixture) {
+      resetConversation()
       fixture = installedFixture
       executorOrigin = await control.command('getLocationOrigin', 'body')
       const root = await until(
@@ -263,11 +310,101 @@ export function createPluginSkillHotUpdate({
         Boolean,
         'The real plugin package was not materialized'
       )
-      skillPath = join(root, 'skills', fixture.slug, 'SKILL.md')
+      skillPath = await realpath(join(root, 'skills', fixture.slug, 'SKILL.md'))
       await control.command('navigate', 'body', { value: '/' })
       await createSingleRootLocalProject(control, workspacePath, 'skill-hot-update')
       await selectE2EModel(control)
       await sendTurn(control, true)
+    },
+    async verifyMembershipLifecycle(control, cloud, deviceId) {
+      resetConversation()
+      const startedAt = Date.now()
+      const phases = []
+      const slug = 'skill-membership-hot-update-e2e'
+      const version = '1.0.0'
+      const release = await cloud.publishPluginRelease({
+        slug,
+        version,
+        skills: { [slug]: 'Verify pure skill membership in an existing conversation' },
+      })
+      fixture = { ...release, slug }
+      executorOrigin = await control.command('getLocationOrigin', 'body')
+      const home = await realpath(join(executorHome, 'codex'))
+      skillPath = join(
+        home,
+        'plugins',
+        'cache',
+        'wegent',
+        slug,
+        version,
+        'skills',
+        slug,
+        'SKILL.md'
+      )
+      await control.command('navigate', 'body', { value: '/' })
+      await createSingleRootLocalProject(control, workspacePath, 'skill-membership-hot-update')
+      await selectE2EModel(control)
+      phases.push({ phase: 'before_install', ...(await membershipTurn(control, false, false)) })
+      const installStartedAt = Date.now()
+      await pluginApi(
+        cloud,
+        `/plugins/marketplace/${fixture.pluginId}/install?device_id=${encodeURIComponent(deviceId)}`,
+        'POST'
+      )
+      const installed = await accountPlugin(cloud, slug)
+      assert.ok(installed, 'The real install did not create membership')
+      fixture.installedId = Number(installed.metadata.labels.id)
+      const root = await until(
+        () => managedRoot(executorHome, fixture.installedId),
+        Boolean,
+        'The pure skill package was not materialized'
+      )
+      assert.equal(
+        await realpath(join(root, 'skills', slug, 'SKILL.md')),
+        await realpath(skillPath)
+      )
+      phases.push({
+        phase: 'after_install',
+        mutationStartedAt: installStartedAt,
+        ...(await membershipTurn(control, true)),
+      })
+      const uninstallStartedAt = Date.now()
+      await uninstallInUi(control, fixture)
+      await until(
+        () => materializedPlugin(executorHome, fixture.installedId),
+        value => value === null,
+        'The pure skill uninstall did not commit'
+      )
+      assert.equal(await accountPlugin(cloud, slug), undefined)
+      phases.push({
+        phase: 'after_uninstall',
+        mutationStartedAt: uninstallStartedAt,
+        ...(await membershipTurn(control, false)),
+      })
+      await writeFile(
+        join(resultDir, 'skill-membership-hot-update.json'),
+        JSON.stringify(
+          {
+            ...identity,
+            startedAt,
+            completedAt: Date.now(),
+            phases,
+            processStarts,
+            rounds: round,
+            installedThenRemoved: slug,
+          },
+          null,
+          2
+        )
+      )
+      // Save every phase before asserting so a baseline run retains both mutations.
+      for (const phase of phases) {
+        assert.deepEqual(
+          phase.processStarts,
+          processStarts,
+          `Pure skill membership restarted Codex: ${phase.phase}`
+        )
+      }
     },
     async hold(control, enabled) {
       await openConversation(control)

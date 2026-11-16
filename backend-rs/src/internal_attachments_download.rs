@@ -26,10 +26,10 @@
 use brz_http_server::{Binary, HttpResponse, StatusCode};
 
 use crate::attachments::context_store::SubtaskContextRow;
-use crate::attachments::minio_client::MinioConfig;
 use crate::attachments::storage;
 use crate::http_compat::FastApiError;
 use crate::state::AppState;
+use wegent_storage::minio_client::MinioConfig;
 
 /// `ContextType.ATTACHMENT`.
 const CONTEXT_TYPE_ATTACHMENT: &str = "attachment";

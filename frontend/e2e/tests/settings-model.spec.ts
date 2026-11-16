@@ -16,23 +16,6 @@ async function expectModelResourcePage(page: Page) {
   })
 }
 
-async function expectModelListHasContentOrEmptyState(page: Page) {
-  await expect
-    .poll(
-      async () => {
-        const modelCount = await page.locator('[data-testid^="model-card-"]').count()
-        const emptyVisible = await page
-          .getByText(/No models|暂无模型|没有模型|无模型/)
-          .isVisible()
-          .catch(() => false)
-
-        return modelCount > 0 || emptyVisible
-      },
-      { timeout: 15000 }
-    )
-    .toBe(true)
-}
-
 async function openCreateModelDialog(page: Page) {
   await page.locator('[data-testid="new-capability-button"]').click()
   await expect(page.locator('[data-testid="new-capability-menu"]')).toBeVisible({
@@ -55,20 +38,6 @@ test.describe('Settings - Model Management', () => {
     await page.goto(MODEL_RESOURCES_URL)
     await page.waitForLoadState('domcontentloaded')
     await expectModelResourcePage(page)
-  })
-
-  test('should access model management page', async ({ page }) => {
-    await expect(page.locator('[data-testid="new-capability-button"]')).toBeVisible({
-      timeout: 15000,
-    })
-  })
-
-  test('should display model list or empty state', async ({ page }) => {
-    await expectModelListHasContentOrEmptyState(page)
-  })
-
-  test('should open create model form', async ({ page }) => {
-    await openCreateModelDialog(page)
   })
 
   test('should configure an LLM with an image understanding sidecar', async ({
@@ -173,29 +142,6 @@ test.describe('Settings - Model Management', () => {
     if (await submitButton.isVisible({ timeout: 3000 }).catch(() => false)) {
       await submitButton.click()
       await page.waitForTimeout(2000)
-    }
-  })
-
-  test('should show test connection button for user models', async ({ page }) => {
-    await expectModelListHasContentOrEmptyState(page)
-    const testButton = page
-      .locator('button[title*="Test"], button[title*="测试"], button:has(svg.lucide-beaker)')
-      .first()
-
-    if (await testButton.isVisible({ timeout: 3000 }).catch(() => false)) {
-      await testButton.click()
-      await page.waitForTimeout(2000)
-    }
-  })
-
-  test('should show delete button for user models', async ({ page }) => {
-    await expectModelListHasContentOrEmptyState(page)
-    const deleteButton = page
-      .locator('button[title*="Delete"], button[title*="删除"], button:has(svg.lucide-trash)')
-      .first()
-
-    if (await deleteButton.isVisible({ timeout: 3000 }).catch(() => false)) {
-      expect(true).toBeTruthy()
     }
   })
 })

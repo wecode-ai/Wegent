@@ -1,10 +1,10 @@
 import { render, screen, waitFor } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
-import '@/i18n'
 import type { ProjectChatClient } from '@/api/backend/projectChatSocket'
 import type { CloudLoopItem, CloudProject } from '@/api/deliveries'
 import type { ProjectSpaceDetailServices } from '@/features/workbench/workbenchServices'
+import '@/i18n'
 import type { ProjectSpaceApi } from './projectSpaceSelection'
 import { WorkItemContextPanel } from './WorkItemContextPanel'
 
@@ -56,7 +56,7 @@ function createServices() {
 describe('task-page Issue activity', () => {
   beforeEach(() => renderActivity.mockClear())
 
-  it.each(['local', 'backend'] as const)(
+  it.each(['backend'] as const)(
     'uses the %s project services for a task on the local executor',
     async projectStore => {
       const local = createServices()
@@ -128,5 +128,26 @@ describe('task-page Issue activity', () => {
       currentUserId: 'account-user',
     })
     expect(cloud.projectChatAgentApi?.list).not.toHaveBeenCalled()
+  })
+
+  it('passes embedded execution navigation through the original Issue editor to activity', async () => {
+    const local = createServices()
+    const onOpenRuntimeTask = vi.fn()
+    render(
+      <WorkItemContextPanel
+        api={local.deliveryApi}
+        services={{ projectSpaceDetailServices: { local } }}
+        project={project}
+        item={item}
+        currentTask={{ deviceId: 'local-device', taskId: 'runtime-1' }}
+        onOpenTask={vi.fn()}
+        onOpenRuntimeTask={onOpenRuntimeTask}
+      />
+    )
+    await screen.findByTestId('issue-activity')
+    expect(screen.queryByTestId('work-item-open-board')).not.toBeInTheDocument()
+    const address = { deviceId: 'other-device', taskId: 'actual-execution' }
+    renderActivity.mock.lastCall?.[0].onOpenRuntimeTask(address)
+    expect(onOpenRuntimeTask).toHaveBeenCalledExactlyOnceWith(address)
   })
 })

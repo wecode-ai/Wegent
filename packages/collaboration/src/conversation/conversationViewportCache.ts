@@ -10,15 +10,20 @@ export interface VirtualMeasurementLayout {
   messages: ReadonlyMap<string, string>
 }
 
+export interface ConversationViewportAnchor {
+  messageId: string
+  itemId: string | null
+  chunkIndex: string | null
+  anchorIndex: number
+  text: string
+  textOffset: number | null
+  offsetFromScrollerTop: number
+}
+
 export interface ConversationScrollSnapshot {
   distanceFromBottomPx: number
   pinnedToBottom: boolean
-  anchor?: {
-    messageId: string
-    itemId: string | null
-    textOffset: number | null
-    offsetFromScrollerTop: number
-  }
+  anchor?: ConversationViewportAnchor
 }
 
 export function getConversationScrollSnapshot(key: string): ConversationScrollSnapshot | undefined {

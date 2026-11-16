@@ -95,7 +95,9 @@ async fn agent_process_engine_deploys_bot_skills_for_regular_claude_tasks() {
 cat >/dev/null
 isolated_config=false
 agent_skill=false
-if [ "$CLAUDE_CONFIG_DIR" = "$WEGENT_WORKBENCH_HOME/agents/test-user/default/test-agent" ]; then isolated_config=true; fi
+if [ "$WEGENT_AGENT_HOME" = "$WEGENT_WORKBENCH_HOME/agents/test-user/default/test-agent" ]; then
+  case "$CLAUDE_CONFIG_DIR" in "$WEGENT_AGENT_HOME"/runtime/executions/execution-*) isolated_config=true ;; esac
+fi
 if [ -f "$SKILLS_DIR/agent-skill/SKILL.md" ]; then agent_skill=true; fi
 printf '{"type":"assistant","message":{"content":[{"type":"text","text":"isolated=%s skill=%s"}]}}\n' "$isolated_config" "$agent_skill"
 "#,

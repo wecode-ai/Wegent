@@ -1,7 +1,9 @@
+// @vitest-environment node
+
 import { describe, expect, it, vi } from 'vitest'
 import { createAgentRoutingCatalog } from './agentRoutingCatalog'
 import type { HttpClient } from './http'
-import type { RunnerEnvironment } from '@wegent/collaboration'
+import { createSharedWorkspaceHttpApi, type RunnerEnvironment } from '@wegent/collaboration'
 
 const runner: RunnerEnvironment = {
   id: '42',
@@ -15,7 +17,7 @@ const runner: RunnerEnvironment = {
   models: [],
 }
 
-function setup(deviceType = 'remote') {
+function setup(deviceType = 'remote', deviceOverrides: Record<string, unknown> = {}) {
   let scope = 1
   const get = vi.fn(async (path: string) => {
     if (path === '/devices')
@@ -28,6 +30,7 @@ function setup(deviceType = 'remote') {
             name: 'Runner',
             status: 'online',
             bind_shell: 'claudecode',
+            ...deviceOverrides,
           },
         ],
       }
@@ -36,14 +39,18 @@ function setup(deviceType = 'remote') {
     return { items: [] }
   })
   const read = vi.fn(async () => ({ models: [], errors: [] }))
-  const api = createAgentRoutingCatalog(
-    { get, getCacheScope: () => scope } as unknown as HttpClient,
-    read
-  )
+  const client = {
+    get,
+    post: vi.fn(),
+    delete: vi.fn(),
+    getCacheScope: () => scope,
+  } as unknown as HttpClient
+  const api = createAgentRoutingCatalog(client, read)
   return {
     api,
     get,
     read,
+    client,
     switchAccount: () => {
       scope += 1
     },
@@ -51,6 +58,83 @@ function setup(deviceType = 'remote') {
 }
 
 describe('agent routing catalogs', () => {
+  it('revalidates grants immediately after adding or revoking a project device', async () => {
+    const { api, get, client } = setup()
+    const original = get.getMockImplementation()!
+    let granted = false
+    get.mockImplementation(async path =>
+      path.includes('/cloud-projects/')
+        ? {
+            items: granted
+              ? [
+                  {
+                    id: '42',
+                    device_id: 42,
+                    device_key: 'device-42',
+                    name: 'Runner',
+                    kind: 'local_device',
+                    coding_tools: ['codex'],
+                    status: 'online',
+                    can_use: true,
+                  },
+                ]
+              : [],
+          }
+        : original(path)
+    )
+    expect((await api.listEnvironments('1'))[0].project_authorized).toBe(false)
+    vi.mocked(client.post).mockImplementation(async () => {
+      granted = true
+      return { id: '42' } as never
+    })
+    vi.mocked(client.delete).mockImplementation(async () => {
+      granted = false
+      return undefined as never
+    })
+    const settings = createSharedWorkspaceHttpApi(client)
+    await settings.projects.addExecutionEnvironment('1', 42)
+    expect((await api.listEnvironments('1'))[0].project_authorized).toBe(true)
+    await settings.projects.removeExecutionEnvironment('1', 42)
+    expect((await api.listEnvironments('1'))[0].project_authorized).toBe(false)
+  })
+
+  it('does not join an older pending inventory during authorization revalidation', async () => {
+    const { api, get, client } = setup()
+    const original = get.getMockImplementation()!
+    let release
+    const pending = new Promise(resolve => {
+      release = resolve
+    })
+    let requests = 0
+    get.mockImplementation(async path => {
+      if (!path.includes('/cloud-projects/')) return original(path)
+      if (++requests === 1) return pending
+      return {
+        items: [
+          {
+            id: '42',
+            device_id: 42,
+            device_key: 'device-42',
+            name: 'Runner',
+            kind: 'local_device',
+            coding_tools: ['codex'],
+            status: 'online',
+            can_use: true,
+          },
+        ],
+      }
+    })
+    const old = api.listEnvironments('1')
+    await vi.waitFor(() => expect(requests).toBe(1))
+    vi.mocked(client.post).mockResolvedValue({ id: '42' } as never)
+    await createSharedWorkspaceHttpApi(client).projects.addExecutionEnvironment('1', 42)
+    const fresh = await api.listEnvironments('1')
+    expect(fresh[0].project_authorized).toBe(true)
+    release({ items: [] })
+    await old
+    expect((await api.listEnvironments('1'))[0].project_authorized).toBe(true)
+  })
+
   it('loads metadata without model RPCs and caches only the selected native catalog', async () => {
     const { api, get, read, switchAccount } = setup()
     const [first, second] = await Promise.all([
@@ -81,6 +165,19 @@ describe('agent routing catalogs', () => {
     await api.listNativeModels(rows[0])
     expect(get).toHaveBeenCalledWith('/v1/resources/execution-environments')
     expect(read).not.toHaveBeenCalled()
+  })
+
+  it('keeps APP device aliases available for template routing', async () => {
+    const { api } = setup('app', {
+      device_id: 'local-device',
+      app_device_id: 'electron-current',
+      socket_device_id: 'app-record-42',
+    })
+    const rows = await api.listEnvironments()
+    expect(rows[0]).toMatchObject({
+      device_key: 'local-device',
+      app_device_id: 'electron-current',
+    })
   })
 
   it('retries native failures without poisoning the cache', async () => {

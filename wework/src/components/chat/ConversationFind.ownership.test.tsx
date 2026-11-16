@@ -8,7 +8,9 @@ afterEach(() => {
   vi.useRealTimers()
 })
 
-function fixture() {
+function fixture({ reducedMotion = false, targetTop = 200 } = {}) {
+  const preference = window.matchMedia('(prefers-reduced-motion: reduce)')
+  vi.spyOn(window, 'matchMedia').mockReturnValue({ ...preference, matches: reducedMotion })
   let nextFrame = 0
   const frames = new Map<number, FrameRequestCallback>()
   vi.spyOn(window, 'requestAnimationFrame').mockImplementation(callback => {
@@ -40,7 +42,7 @@ function fixture() {
   const walk = vi.spyOn(document, 'createTreeWalker')
   vi.spyOn(document, 'createRange').mockImplementation(() => {
     const range = createRange()
-    range.getBoundingClientRect = () => new DOMRect(0, 200, 100, 20)
+    range.getBoundingClientRect = () => new DOMRect(0, targetTop, 100, 20)
     return range
   })
   const navigation = vi.fn()
@@ -59,7 +61,10 @@ function fixture() {
   }
   const hook = renderHook(props => useConversationSearchTarget(props), { initialProps: props })
   for (let index = 0; index < 5; index += 1) frame()
-  expect(scroller.scrollTo).toHaveBeenCalledWith({ top: 560, behavior: 'smooth' })
+  expect(scroller.scrollTo).toHaveBeenCalledWith({
+    top: 500 + targetTop - 140,
+    behavior: reducedMotion ? 'auto' : 'smooth',
+  })
   return { ...hook, props, scroller, content, interaction, navigation, frame, walk }
 }
 
@@ -72,6 +77,49 @@ test('retains search navigation ownership until the native smooth scroll ends', 
   fireEvent(current.scroller, new Event('scrollend'))
   expect(current.navigation).toHaveBeenLastCalledWith(null)
 })
+
+test('retains instant navigation ownership until the virtualizer receives native scroll events', () => {
+  const current = fixture({ reducedMotion: true })
+  expect(current.scroller.scrollTop).toBe(560)
+  expect(current.navigation).toHaveBeenLastCalledWith('target')
+  fireEvent.scroll(current.scroller)
+  expect(current.navigation).toHaveBeenLastCalledWith('target')
+  fireEvent(current.scroller, new Event('scrollend'))
+  expect(current.navigation).toHaveBeenLastCalledWith(null)
+})
+
+test('finishes an instant no-op without waiting for a native event that will never fire', () => {
+  const current = fixture({ reducedMotion: true, targetTop: 140 })
+  expect(current.scroller.scrollTop).toBe(500)
+  expect(current.navigation).toHaveBeenLastCalledWith(null)
+})
+
+test('cancels instant navigation without issuing another scroll write', () => {
+  const current = fixture({ reducedMotion: true })
+  const writes = vi.mocked(current.scroller.scrollTo).mock.calls.length
+  fireEvent.wheel(current.scroller, { deltaY: -10 })
+  expect(current.navigation).toHaveBeenLastCalledWith(null)
+  expect(current.scroller.scrollTo).toHaveBeenCalledTimes(writes)
+})
+
+test.each(['wheel', 'unmount'] as const)(
+  '%s cancels the instant completion frame after native offset read-back',
+  reason => {
+    const current = fixture({ reducedMotion: true })
+    fireEvent.scroll(current.scroller)
+    expect(current.navigation).toHaveBeenLastCalledWith('target')
+    const writes = vi.mocked(current.scroller.scrollTo).mock.calls.length
+    if (reason === 'wheel') fireEvent.wheel(current.scroller, { deltaY: -10 })
+    else current.unmount()
+    expect(current.navigation).toHaveBeenLastCalledWith(null)
+    const notifications = current.navigation.mock.calls.length
+    current.frame()
+    fireEvent.scroll(current.scroller)
+    current.frame()
+    expect(current.navigation).toHaveBeenCalledTimes(notifications)
+    expect(current.scroller.scrollTo).toHaveBeenCalledTimes(writes)
+  }
+)
 
 test.each(['wheel', 'scrollbar', 'pause', 'replace', 'unmount'] as const)(
   '%s cancels the pending native search animation at its current position',

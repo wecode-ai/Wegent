@@ -83,6 +83,12 @@ function createApi(options?: {
       return next;
     },
   );
+  const remove = vi.fn(
+    async (_projectId: string, agentId: string, _version: number) => {
+      const index = rows.findIndex((row) => row.id === agentId);
+      if (index >= 0) rows.splice(index, 1);
+    },
+  );
   const api = {
     projects: {},
     resources: {
@@ -95,6 +101,7 @@ function createApi(options?: {
       list,
       create,
       update,
+      remove,
     },
     automationExecutionCatalog: {
       load: vi.fn(async () => ({
@@ -117,7 +124,7 @@ function createApi(options?: {
       ),
     },
   } as unknown as SharedWorkspaceApi;
-  return { api, create, list, update };
+  return { api, create, list, update, remove };
 }
 
 function element(testId: string): HTMLElement {
@@ -161,7 +168,7 @@ const hostedCreationHost: ProjectAgentConfigurationHost = {
       </button>
     );
   },
-  renderLocalAgentEditor({ onClose, onSaved, projectId, resourceId }) {
+  renderProjectAgentEditor({ onClose, onSaved, projectId, resourceId }) {
     return (
       <div
         data-project-id={projectId}
@@ -238,6 +245,71 @@ describe("ProjectAgentConfiguration", () => {
       );
     });
   }
+
+  it("confirms deletion and preserves the Agent when cancelled", async () => {
+    const { api, remove } = createApi();
+    await render(api);
+    await click("project-agent-delete-project-agent-1");
+    expect(remove).not.toHaveBeenCalled();
+    await click("project-agent-delete-cancel");
+    expect(remove).not.toHaveBeenCalled();
+    expect(container.textContent).toContain("已有智能体");
+    await click("project-agent-delete-project-agent-1");
+    await click("project-agent-delete-confirm");
+    expect(remove).toHaveBeenCalledWith(project.id, "project-agent-1", 1);
+    expect(
+      container.querySelector(
+        '[data-testid="project-agent-delete-project-agent-1"]',
+      ),
+    ).toBeNull();
+  });
+
+  it("keeps a referenced Agent and explains how to remove its group dependency", async () => {
+    const { api, remove } = createApi();
+    remove.mockRejectedValueOnce(new Error("PROJECT_AGENT_IN_USE: referenced"));
+    await render(api);
+    await click("project-agent-delete-project-agent-1");
+    await click("project-agent-delete-confirm");
+    expect(container.textContent).toContain("请先在小组中替换或移除");
+    expect(
+      container.querySelector(
+        '[data-testid="project-agent-delete-project-agent-1"]',
+      ),
+    ).not.toBeNull();
+    await click("project-agent-delete-confirm");
+    expect(remove).toHaveBeenCalledTimes(2);
+    expect(
+      container.querySelector(
+        '[data-testid="project-agent-delete-project-agent-1"]',
+      ),
+    ).toBeNull();
+  });
+
+  it("reports a refresh failure separately after successful deletion and retries only the list", async () => {
+    const { api, remove, list } = createApi();
+    await render(api);
+    list.mockRejectedValueOnce(new Error("Refresh unavailable"));
+    await click("project-agent-delete-project-agent-1");
+    await click("project-agent-delete-confirm");
+    expect(remove).toHaveBeenCalledTimes(1);
+    expect(
+      container.querySelector('[data-testid="project-agent-delete-dialog"]'),
+    ).toBeNull();
+    expect(
+      container.querySelector('[data-testid="project-agent-config-error"]')
+        ?.textContent,
+    ).toContain("Refresh unavailable");
+    await click("project-agent-config-retry");
+    expect(remove).toHaveBeenCalledTimes(1);
+    expect(
+      container.querySelector('[data-testid="project-agent-config-error"]'),
+    ).toBeNull();
+    expect(
+      container.querySelector(
+        '[data-testid="project-agent-delete-project-agent-1"]',
+      ),
+    ).toBeNull();
+  });
 
   it("shows a retryable list failure without claiming the catalog is empty", async () => {
     const { api, list } = createApi();
@@ -681,37 +753,201 @@ describe("ProjectAgentConfiguration", () => {
     ).toBeNull();
   });
 
-  it("routes project Agent editing through the local Agent editor", async () => {
-    const { api } = createApi({
-      agents: [projectAgent({ runtime: "claude_code", wegent_team_id: null })],
-      workspaceAgents: [],
-    });
-    await renderHosted(api, {
-      target: { ...project, id: "local-project", project_store: "local" },
-    });
+  it.each(["local", "backend"] as const)(
+    "edits native project Agents in %s storage",
+    async (store) => {
+      const { api } = createApi({
+        agents: [
+          projectAgent({ runtime: "claude_code", wegent_team_id: null }),
+        ],
+        workspaceAgents: [],
+      });
+      await renderHosted(api, {
+        target: { ...project, id: "native-project", project_store: store },
+      });
 
-    await click("project-agent-edit-project-agent-1");
-    expect(element("hosted-local-agent-editor").dataset.resourceId).toBe(
-      "project-agent-1",
-    );
-    expect(
-      document.querySelector('[data-testid="hosted-agent-editor"]'),
-    ).toBeNull();
-  });
+      await click("project-agent-edit-project-agent-1");
+      expect(element("hosted-local-agent-editor").dataset.resourceId).toBe(
+        "project-agent-1",
+      );
+      expect(
+        document.querySelector('[data-testid="hosted-agent-editor"]'),
+      ).toBeNull();
+    },
+  );
 
-  it("keeps a shared Agent usable without exposing unauthorized configuration edits", async () => {
-    const { api } = createApi({
-      agents: [projectAgent({ can_edit: false })],
-    });
+  it.each(["local", "backend"] as const)(
+    "retries a failed %s list refresh without repeating the completed save",
+    async (store) => {
+      const onAgentsChange = vi.fn();
+      const row = projectAgent({ runtime: "codex", wegent_team_id: null });
+      const { api, list, update } = createApi({ agents: [row] });
+      await renderHosted(api, {
+        target: { ...project, project_store: store },
+        onAgentsChange,
+      });
+      await click("project-agent-edit-project-agent-1");
+      list.mockRejectedValueOnce(new Error("List refresh unavailable"));
+      await click("hosted-local-agent-save");
+      expect(
+        document.querySelector('[data-testid="hosted-local-agent-editor"]'),
+      ).toBeNull();
+      expect(element("project-agent-config-error").textContent).toContain(
+        "List refresh unavailable",
+      );
+      expect(
+        element("project-agent-row-project-agent-1").textContent,
+      ).toContain(row.name);
+      expect(onAgentsChange).toHaveBeenCalledOnce();
+      list.mockResolvedValueOnce([{ ...row, name: "Saved name", version: 2 }]);
+      await click("project-agent-config-retry");
+      expect(
+        element("project-agent-row-project-agent-1").textContent,
+      ).toContain("Saved name");
+      expect(update).not.toHaveBeenCalled();
+      expect(onAgentsChange).toHaveBeenCalledOnce();
+    },
+  );
+
+  it("clears a failed refresh when a later edit refresh succeeds", async () => {
+    const row = projectAgent({ runtime: "codex", wegent_team_id: null });
+    const { api, list } = createApi({ agents: [row] });
     await renderHosted(api);
-
-    expect(element("project-agent-row-project-agent-1")).toBeTruthy();
+    await click("project-agent-edit-project-agent-1");
+    list.mockRejectedValueOnce(new Error("List refresh unavailable"));
+    await click("hosted-local-agent-save");
+    expect(element("project-agent-config-error").textContent).toContain(
+      "List refresh unavailable",
+    );
+    expect((element("project-agent-add") as HTMLButtonElement).disabled).toBe(
+      true,
+    );
+    await click("project-agent-edit-project-agent-1");
+    list.mockResolvedValueOnce([
+      { ...row, name: "Latest saved name", version: 3 },
+    ]);
+    await click("hosted-local-agent-save");
     expect(
-      document.querySelector(
-        '[data-testid="project-agent-edit-project-agent-1"]',
-      ),
+      document.querySelector('[data-testid="project-agent-config-error"]'),
     ).toBeNull();
+    expect(element("project-agent-row-project-agent-1").textContent).toContain(
+      "Latest saved name",
+    );
+    expect((element("project-agent-add") as HTMLButtonElement).disabled).toBe(
+      false,
+    );
   });
+
+  it.each([
+    ["success", "success"],
+    ["success", "failure"],
+    ["failure", "success"],
+    ["failure", "failure"],
+  ])(
+    "ignores an old project refresh %s after the new project load %s",
+    async (oldResult, newResult) => {
+      const first = projectAgent({ runtime: "codex", wegent_team_id: null });
+      const next = projectAgent({
+        id: "next-agent",
+        name: "Next project Agent",
+        runtime: "codex",
+        wegent_team_id: null,
+      });
+      const { api, list } = createApi({ agents: [first] });
+      await renderHosted(api);
+      let resolve!: (rows: WorkspaceProjectAgent[]) => void;
+      let reject!: (cause: Error) => void;
+      const pending = new Promise<WorkspaceProjectAgent[]>((done, fail) => {
+        resolve = done;
+        reject = fail;
+      });
+      await click("project-agent-edit-project-agent-1");
+      list.mockImplementationOnce(() => pending);
+      await click("hosted-local-agent-save");
+      if (newResult === "success") list.mockResolvedValueOnce([next]);
+      else list.mockRejectedValueOnce(new Error("Next project unavailable"));
+      await renderHosted(api, { target: { ...project, id: "next-project" } });
+      await act(async () => {
+        if (oldResult === "success")
+          resolve([{ ...first, name: "Obsolete project Agent" }]);
+        else reject(new Error("Obsolete project unavailable"));
+      });
+      expect(
+        document.querySelector(
+          '[data-testid="project-agent-row-project-agent-1"]',
+        ),
+      ).toBeNull();
+      if (newResult === "success") {
+        expect(element("project-agent-row-next-agent").textContent).toContain(
+          next.name,
+        );
+        expect(
+          document.querySelector('[data-testid="project-agent-config-error"]'),
+        ).toBeNull();
+      } else {
+        expect(element("project-agent-config-error").textContent).toContain(
+          "Next project unavailable",
+        );
+        expect(
+          (element("project-agent-add") as HTMLButtonElement).disabled,
+        ).toBe(true);
+      }
+    },
+  );
+
+  it.each(["success", "failure"])(
+    "ignores an earlier edit refresh %s after a later edit refresh",
+    async (oldResult) => {
+      const row = projectAgent({ runtime: "codex", wegent_team_id: null });
+      const { api, list } = createApi({ agents: [row] });
+      await renderHosted(api);
+      let resolve!: (rows: WorkspaceProjectAgent[]) => void;
+      let reject!: (cause: Error) => void;
+      const pending = new Promise<WorkspaceProjectAgent[]>((done, fail) => {
+        resolve = done;
+        reject = fail;
+      });
+      await click("project-agent-edit-project-agent-1");
+      list.mockImplementationOnce(() => pending);
+      await click("hosted-local-agent-save");
+      await click("project-agent-edit-project-agent-1");
+      list.mockResolvedValueOnce([
+        { ...row, name: "Latest saved name", version: 3 },
+      ]);
+      await click("hosted-local-agent-save");
+      await act(async () => {
+        if (oldResult === "success")
+          resolve([{ ...row, name: "Obsolete saved name", version: 2 }]);
+        else reject(new Error("Obsolete refresh unavailable"));
+      });
+      expect(
+        element("project-agent-row-project-agent-1").textContent,
+      ).toContain("Latest saved name");
+      expect(
+        document.querySelector('[data-testid="project-agent-config-error"]'),
+      ).toBeNull();
+      expect((element("project-agent-add") as HTMLButtonElement).disabled).toBe(
+        false,
+      );
+    },
+  );
+
+  it.each([12, null])(
+    "does not expose unauthorized edits for Agent definition %s",
+    async (teamId) => {
+      const { api } = createApi({
+        agents: [projectAgent({ can_edit: false, wegent_team_id: teamId })],
+      });
+      await renderHosted(api);
+
+      expect(element("project-agent-row-project-agent-1")).toBeTruthy();
+      expect(
+        document.querySelector(
+          '[data-testid="project-agent-edit-project-agent-1"]',
+        ),
+      ).toBeNull();
+    },
+  );
 
   it("archives an existing project agent with optimistic concurrency", async () => {
     const { api, update } = createApi();

@@ -3,6 +3,7 @@
 const SYSTEM_KEYS = new Set(
   [
     'PATH',
+    'CFFIXED_USER_HOME',
     'SystemRoot',
     'SYSTEMROOT',
     'WINDIR',

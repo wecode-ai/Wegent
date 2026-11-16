@@ -25,7 +25,7 @@ type TopNavigationProps = {
   showLogo?: boolean
   title?: string
   titleSuffix?: React.ReactNode // Content to render after the title (e.g., bound knowledge base badge)
-  /** Content to render in the center area (e.g., tabs for knowledge page) */
+  /** Flexible content that takes the place of the title in the compact navigation row. */
   centerContent?: React.ReactNode
   taskDetail?: TaskDetail | null
   children?: React.ReactNode
@@ -66,19 +66,37 @@ export default function TopNavigation({
   const leftPaddingClass = isSidebarCollapsed && isDesktop ? 'pl-24' : 'pl-4 sm:pl-6'
   // Right padding is always the same - the expand button is fixed positioned and doesn't need reserved space
   const rightPaddingClass = 'pr-4 sm:pr-6'
+  const hasCompactCenter = Boolean(centerContent) && !isDesktop
+  const titleContent = (
+    <>
+      {variant === 'with-sidebar' ? (
+        <TaskTitleDropdown
+          title={title}
+          taskDetail={taskDetail}
+          onTaskDeleted={onTaskDeleted}
+          onMembersChanged={onMembersChanged}
+          hideGroupChatOptions={hideGroupChatOptions}
+        />
+      ) : (
+        title && <h1 className="text-xl font-semibold text-text-primary truncate">{title}</h1>
+      )}
+      {titleSuffix}
+    </>
+  )
 
   return (
-    <div
-      className={`relative flex items-center justify-between py-2 sm:py-3 min-h-[44px] bg-base ${leftPaddingClass} ${rightPaddingClass}`}
+    <header
+      className={`relative flex shrink-0 items-center justify-between py-2 sm:py-3 min-h-[44px] bg-base ${leftPaddingClass} ${rightPaddingClass} ${hasCompactCenter ? 'flex-wrap gap-y-1' : ''}`}
     >
       {/* Left side - Mobile sidebar toggle, Logo, and Title */}
-      <div className="flex items-center gap-3 min-w-0 flex-1 overflow-hidden">
+      <div className="flex items-center gap-3 min-w-0 flex-1">
         {showHamburgerMenu && (
           <button
             type="button"
             className="flex h-11 w-11 flex-shrink-0 items-center justify-center rounded-xl border border-border bg-surface text-text-muted hover:bg-muted hover:text-text-primary focus:outline-none focus:ring-2 focus:ring-primary/40 lg:hidden"
             onClick={onMobileSidebarToggle}
             aria-label={t('common:common.open_sidebar')}
+            data-testid="mobile-task-sidebar-toggle"
           >
             <Bars3Icon className="h-5 w-5" aria-hidden="true" />
           </button>
@@ -99,31 +117,25 @@ export default function TopNavigation({
           </div>
         )}
 
-        {/* Show task title dropdown when in with-sidebar variant */}
-        {variant === 'with-sidebar' && (
-          <TaskTitleDropdown
-            title={title}
-            taskDetail={taskDetail}
-            onTaskDeleted={onTaskDeleted}
-            onMembersChanged={onMembersChanged}
-            hideGroupChatOptions={hideGroupChatOptions}
-          />
+        {hasCompactCenter ? (
+          <div className="min-w-0 flex-1">{centerContent}</div>
+        ) : (
+          <div className="flex min-w-0 items-center gap-3 overflow-hidden">{titleContent}</div>
         )}
-
-        {/* Show title as heading when explicitly provided and not in with-sidebar variant */}
-        {title && variant !== 'with-sidebar' && (
-          <h1 className="text-xl font-semibold text-text-primary truncate">{title}</h1>
-        )}
-
-        {/* Title suffix - content rendered after the title (e.g., bound knowledge base badge) */}
-        {titleSuffix}
-
-        {/* Center content - content rendered in the center area (e.g., tabs) */}
-        {centerContent}
       </div>
 
       {/* Right side - User menu and other controls */}
-      {children && <div className="flex items-center gap-2 sm:gap-3 flex-shrink-0">{children}</div>}
-    </div>
+      {(children || (!hasCompactCenter && centerContent)) && (
+        <div className="flex items-center gap-2 sm:gap-3 flex-shrink-0">
+          {!hasCompactCenter && centerContent}
+          {children}
+        </div>
+      )}
+      {hasCompactCenter && (
+        <div className="flex min-w-0 basis-full items-center gap-3 overflow-hidden">
+          {titleContent}
+        </div>
+      )}
+    </header>
   )
 }

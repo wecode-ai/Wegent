@@ -136,6 +136,7 @@ def extract_completed_result(response_data: dict) -> dict:
             "standalone_chat_workspace_path"
         ),
         "file_changes": response_data.get("file_changes"),
+        "task_file_changes": response_data.get("task_file_changes"),
         "executor_session": response_data.get("executor_session"),
         "reasoning_content": reasoning_content,
     }

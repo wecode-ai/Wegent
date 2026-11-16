@@ -12,8 +12,10 @@ from unittest.mock import AsyncMock, Mock
 
 import pytest
 import pytest_asyncio
+import socketio
 
 from app.core import socketio as socketio_core
+from app.core.socketio_redis import ObservedRedisManager
 
 
 class RedisSubscriptionServer:
@@ -80,6 +82,11 @@ class RedisSubscriptionServer:
 
     async def publish_callback(self, channel: bytes, payload: bytes) -> None:
         emit = json.loads(payload)
+        if emit.get("method") == "callback":
+            for subscriber in tuple(self.subscribers):
+                subscriber.write(self.message(channel, payload))
+                await subscriber.drain()
+            return
         sid, namespace, callback_id = emit["callback"]
         callback = json.dumps(
             {
@@ -92,8 +99,11 @@ class RedisSubscriptionServer:
             }
         ).encode()
         for subscriber in tuple(self.subscribers):
-            subscriber.write(self.message(channel, callback))
-            await subscriber.drain()
+            try:
+                subscriber.write(self.message(channel, callback))
+                await subscriber.drain()
+            except ConnectionError:
+                self.subscribers.discard(subscriber)
 
     async def handle(
         self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter
@@ -123,6 +133,9 @@ class RedisSubscriptionServer:
                 else:
                     writer.write(b"+OK\r\n")
                 await writer.drain()
+        except ConnectionError:
+            # A disconnected client must not abort another subscriber's callback.
+            pass
         finally:
             self.subscribers.discard(writer)
             heartbeat = self.heartbeats.pop(writer, None)
@@ -145,6 +158,42 @@ class RedisSubscriptionServer:
         for task in tasks:
             task.cancel()
         await asyncio.gather(*tasks, return_exceptions=True)
+
+
+@pytest.mark.asyncio
+async def test_subscription_cleanup_handles_reset_during_command_read() -> None:
+    stub = RedisSubscriptionServer(partial_response=False)
+    reader = AsyncMock(spec=asyncio.StreamReader)
+    reader.readline.side_effect = ConnectionResetError("peer reset")
+    writer = Mock(spec=asyncio.StreamWriter)
+    writer.wait_closed = AsyncMock()
+
+    await stub.handle(reader, writer)
+
+    writer.close.assert_called_once_with()
+    writer.wait_closed.assert_awaited_once_with()
+    assert not stub.handlers
+    assert stub.connections_closed.is_set()
+
+
+@pytest.mark.asyncio
+async def test_callback_fanout_survives_a_disconnected_subscriber() -> None:
+    stub = RedisSubscriptionServer(partial_response=False)
+    disconnected = Mock(spec=asyncio.StreamWriter)
+    disconnected.write.side_effect = ConnectionResetError("peer reset")
+    healthy = Mock(spec=asyncio.StreamWriter)
+    healthy.drain = AsyncMock()
+    stub.subscribers.update([disconnected, healthy])
+    payload = json.dumps(
+        {"callback": ["device", "/local-executor", 1], "host_id": "owner"}
+    ).encode()
+
+    await stub.publish_callback(b"socketio", payload)
+
+    healthy.write.assert_called_once()
+    healthy.drain.assert_awaited_once()
+    assert disconnected not in stub.subscribers
+    assert healthy in stub.subscribers
 
 
 @pytest.mark.asyncio
@@ -212,6 +261,7 @@ async def redis_subscription(
         "settings",
         SimpleNamespace(
             REDIS_URL=f"redis://127.0.0.1:{port}/0",
+            SOCKETIO_REDIS_CLIENT_NAME=None,
             SOCKETIO_REDIS_SOCKET_TIMEOUT=0.2,
             SOCKETIO_REDIS_CONNECT_TIMEOUT=1.0,
             SOCKETIO_REDIS_HEALTH_CHECK_INTERVAL=0.1,
@@ -272,3 +322,56 @@ async def test_stalled_subscription_resubscribes_and_receives_rpc_ack(
         if manager.redis is not None:
             await manager.redis.aclose()
         await asyncio.wait_for(redis_subscription.connections_closed.wait(), timeout=2)
+
+
+@pytest.mark.asyncio
+async def test_ack_probe_keeps_an_idle_subscription_below_its_read_deadline() -> None:
+    stub = RedisSubscriptionServer(partial_response=False)
+    subscribed = asyncio.Event()
+    resubscribed = asyncio.Event()
+    original_subscribe = stub.subscribe
+
+    async def subscribe(writer: asyncio.StreamWriter) -> None:
+        await original_subscribe(writer)
+        subscribed.set()
+        if stub.subscriptions > 1:
+            resubscribed.set()
+
+    stub.subscribe = subscribe
+    listener = await asyncio.start_server(stub.handle, "127.0.0.1", 0)
+    port = listener.sockets[0].getsockname()[1]
+    manager = ObservedRedisManager(
+        f"redis://127.0.0.1:{port}/0",
+        redis_options={"socket_timeout": 0.2},
+    )
+    server = socketio.AsyncServer(client_manager=manager)
+    manager.initialize()
+    probe = None
+    try:
+        await asyncio.wait_for(subscribed.wait(), timeout=2)
+        await manager.check_ack()
+        probe = asyncio.create_task(manager.run_ack_probe(interval_seconds=1))
+        with pytest.raises(TimeoutError):
+            await asyncio.wait_for(resubscribed.wait(), timeout=0.7)
+        result = await server.call(
+            "runtime:rpc",
+            {},
+            to="remote-device-sid",
+            namespace="/local-executor",
+            timeout=2,
+        )
+        assert result == {"active": 0, "limit": 10, "queued": 0}
+        assert manager.ack_ready
+    finally:
+        if probe is not None:
+            probe.cancel()
+            await asyncio.gather(probe, return_exceptions=True)
+        manager.thread.cancel()
+        await asyncio.gather(manager.thread, return_exceptions=True)
+        if manager.pubsub is not None:
+            await manager.pubsub.aclose()
+        if manager.redis is not None:
+            await manager.redis.aclose()
+        listener.close()
+        await listener.wait_closed()
+        await stub.close()

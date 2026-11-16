@@ -40,6 +40,12 @@ async function saveSilently(page: Page, testId: string): Promise<void> {
   await action.click()
 }
 
+async function selectAssigneeSilently(page: Page, userId: string | number): Promise<void> {
+  await page.getByTestId('cloud-todo-detail-assignee').click()
+  await page.getByTestId('cloud-todo-assignee-notify').uncheck()
+  await page.getByTestId(`cloud-todo-detail-assignee-option-user:${userId}`).click()
+}
+
 async function expectNoAssignmentNotification(
   request: APIRequestContext,
   issueId: string
@@ -113,8 +119,6 @@ test.describe('Issue Dispatch human assignment', () => {
     await page.getByTestId('cloud-todo-detail-assignee').click()
     await page.getByTestId(`cloud-todo-detail-assignee-option-user:${memberId}`).click()
     await expect(page.getByTestId('wework-assignment-notify-confirm')).toHaveCount(0)
-    await expect(page.getByTestId('cloud-todo-save')).toHaveText(/^(保存并通知|Save and notify)$/)
-    await page.getByTestId('cloud-todo-save').click()
     await expect(page.getByTestId('cloud-todo-save')).toHaveCount(0)
     await expect(page.getByTestId('cloud-todo-detail-assignee')).toHaveAttribute(
       'data-value',
@@ -198,19 +202,20 @@ test.describe('Issue Dispatch human assignment', () => {
     await captureEvidence(page, testInfo, '04-silent-create-persisted')
 
     // Change the owner through the UI, then exercise a real reassignment to another person.
-    await page.getByTestId('cloud-todo-detail-assignee').click()
-    await page.getByTestId(`cloud-todo-detail-assignee-option-user:${owner.id}`).click()
-    await saveSilently(page, 'cloud-todo-save')
+    const ownerAssigned = page.waitForResponse(
+      response =>
+        response.request().method() === 'POST' && response.url().endsWith(`/${issueId}/assign`)
+    )
+    await selectAssigneeSilently(page, owner.id)
+    expect((await ownerAssigned).ok()).toBe(true)
     await expect(page.getByTestId('cloud-todo-save')).toHaveCount(0)
     expect((await webApi<SavedIssue>(page, issuePath)).assignee_user_id).toBe(owner.id)
-    await page.getByTestId('cloud-todo-detail-assignee').click()
-    await page.getByTestId(`cloud-todo-detail-assignee-option-user:${memberId}`).click()
     await setRole('Viewer')
     const rejectedAssignment = page.waitForResponse(
       response =>
         response.request().method() === 'POST' && response.url().endsWith(`/${issueId}/assign`)
     )
-    await saveSilently(page, 'cloud-todo-save')
+    await selectAssigneeSilently(page, memberId)
     expect((await rejectedAssignment).status()).toBe(422)
     await expect(error).toContainText('Assignee is not a member')
     await expect(page.getByTestId('cloud-todo-detail-assignee')).toHaveAttribute(
@@ -226,7 +231,12 @@ test.describe('Issue Dispatch human assignment', () => {
     await expectNoAssignmentNotification(request, issueId)
     await captureEvidence(page, testInfo, '05-silent-reassignment-rejected')
     await setRole('Developer')
-    await saveSilently(page, 'cloud-todo-save')
+    const retryAssigned = page.waitForResponse(
+      response =>
+        response.request().method() === 'POST' && response.url().endsWith(`/${issueId}/assign`)
+    )
+    await page.getByTestId('cloud-todo-field-retry').click()
+    expect((await retryAssigned).ok()).toBe(true)
     await expect(page.getByTestId('cloud-todo-save')).toHaveCount(0)
     await page.reload()
     await expect(page.getByTestId('cloud-todo-detail-assignee')).toHaveAttribute(

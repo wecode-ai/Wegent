@@ -1,3 +1,5 @@
+// @vitest-environment node
+
 import assert from 'node:assert/strict'
 import { onTestFinished, test } from 'vitest'
 import { verifySideChatAttachmentIsolation } from '../e2e/desktop/modules/path-attachment-flows.mjs'

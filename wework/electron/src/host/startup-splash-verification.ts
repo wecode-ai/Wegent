@@ -33,6 +33,9 @@ export function observeStartupSplash(
         snapshot.timeoutHidden,
         snapshot.failureHidden,
         snapshot.recoveryHidden,
+        snapshot.toastText,
+        snapshot.toastHidden,
+        snapshot.toastSequence,
       ])
       if (state !== previousState) {
         observations.push({ ...snapshot, capturedAt: Date.now() })
@@ -57,7 +60,7 @@ export function observeStartupSplash(
 
 export async function inspectStartupSplash(
   window: BrowserWindow | null
-): Promise<Record<string, unknown>> {
+): Promise<StartupSplashInspection> {
   if (!window || window.isDestroyed()) throw new Error('Startup splash is unavailable')
   return window.webContents.executeJavaScript(`(() => {
     const text = id => document.getElementById(id)?.textContent ?? ''
@@ -65,7 +68,19 @@ export async function inspectStartupSplash(
     const activity = document.getElementById('splash-activity')
     const style = activity ? getComputedStyle(activity) : null
     const progress = document.getElementById('splash-progress')
+    const brandCanvas = document.getElementById('startup-brand-canvas')
+    const toast = document.getElementById('startup-toast')
+    const region = element => {
+      if (!element) return null
+      const bounds = element.getBoundingClientRect()
+      return {
+        id: element.id,
+        appRegion: getComputedStyle(element).getPropertyValue('-webkit-app-region'),
+        bounds: { x: bounds.x, y: bounds.y, width: bounds.width, height: bounds.height },
+      }
+    }
     return {
+      progress: structuredClone(currentUpdate),
       title: text('splash-title'),
       stepCount: text('splash-step-count'),
       activity: activity?.textContent ?? '',
@@ -80,8 +95,19 @@ export async function inspectStartupSplash(
       recoveryHidden: hidden('startup-recovery'),
       toastText: text('startup-toast'),
       toastHidden: hidden('startup-toast'),
+      toastSequence: Number(toast?.dataset.sequence ?? 0),
+      brandBounds: brandCanvas?.dataset.startupLogoBounds
+        ? JSON.parse(brandCanvas.dataset.startupLogoBounds)
+        : null,
       progressClassName: progress?.className,
       progressNow: progress?.getAttribute('aria-valuenow'),
+      dragRegions: {
+        stage: region(document.getElementById('startup-window-drag-region')),
+        status: region(document.getElementById('startup-status')),
+        controls: Array.from(document.querySelectorAll('button, a'))
+          .filter(element => element.checkVisibility())
+          .map(region),
+      },
     }
   })()`)
 }

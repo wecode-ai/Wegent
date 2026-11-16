@@ -1,10 +1,12 @@
-import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import assert from 'node:assert/strict'
+import { mkdir, mkdtemp, readFile, rename, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { extract } from 'tar'
-import { afterEach, expect, test } from 'vitest'
+import { afterEach, test } from 'node:test'
 import { componentReleaseScope, MANAGED_COMPONENT_IDS } from '../desktop-component-release.mjs'
 import { hashComponentPath } from './component-content-hash.mjs'
+import { packBundledComponentArchives } from './bundled-component-archives.mjs'
 import {
   deliveredPackagePaths,
   preparePackagedComponentAssets,
@@ -52,21 +54,25 @@ async function fixture() {
   }
 }
 
-test.each([
+for (const [platform, arch, suffix] of [
   ['macos', 'arm64', 'mac-arm64/WeWork.app/Contents/Resources'],
   ['macos', 'x64', 'mac/WeWork.app/Contents/Resources'],
   ['windows', 'x64', 'win-unpacked/resources'],
   ['linux', 'arm64', 'linux-arm64-unpacked/resources'],
   ['linux', 'x64', 'linux-unpacked/resources'],
-])('locates delivered resources for %s/%s', (platform, arch, suffix) => {
-  expect(deliveredPackagePaths('/installer', platform, arch).resourcesRoot).toBe(
-    join('/installer', suffix)
-  )
-})
+]) {
+  test(`locates delivered resources for ${platform}/${arch}`, () => {
+    assert.equal(
+      deliveredPackagePaths('/installer', platform, arch).resourcesRoot,
+      join('/installer', suffix)
+    )
+  })
+}
 
 test('rejects unsupported delivered packages', () => {
-  expect(() => deliveredPackagePaths('/installer', 'windows', 'arm64')).toThrow(
-    'Unsupported delivered package'
+  assert.throws(
+    () => deliveredPackagePaths('/installer', 'windows', 'arm64'),
+    /Unsupported delivered package/
   )
 })
 
@@ -79,22 +85,61 @@ test('archives delivered signed bytes even after E2E overwrites mutable build re
     JSON.stringify({ appVersion: 'fixture', sourceSha: 'b'.repeat(40) })
   )
   const result = await preparePackagedComponentAssets(options)
-  expect(result.sourceSha).toBe(options.manifest.sourceSha)
-  expect(
-    JSON.parse(await readFile(join(options.output, 'components-macos-arm64.json'), 'utf8'))
-  ).toEqual(result)
+  assert.equal(result.sourceSha, options.manifest.sourceSha)
+  assert.deepEqual(
+    JSON.parse(await readFile(join(options.output, 'components-macos-arm64.json'), 'utf8')),
+    result
+  )
   for (const [id, component] of Object.entries(result.components)) {
     const extracted = join(options.root, 'extracted', id)
     await mkdir(extracted, { recursive: true })
     await extract({ file: join(options.output, component.assetName), cwd: extracted })
-    expect(await hashComponentPath(join(extracted, component.entryPath))).toBe(
+    assert.equal(
+      await hashComponentPath(join(extracted, component.entryPath)),
       options.manifest.components[id].sha256
     )
-    expect(component.version).toBe(options.manifest.components[id].version)
-    expect(await hashComponentPath(join(options.output, component.assetName))).toBe(
+    assert.equal(component.version, options.manifest.components[id].version)
+    assert.equal(
+      await hashComponentPath(join(options.output, component.assetName)),
       component.archiveSha256
     )
   }
+})
+
+test('reuses and verifies the sealed bundled archive when raw small files are not delivered', async () => {
+  const options = await fixture()
+  const component = options.manifest.components.weworkCorePlugins
+  await rename(
+    join(options.resourcesRoot, component.path),
+    join(options.resourcesRoot, 'wework-core-plugins')
+  )
+  component.path = 'wework-core-plugins'
+  await writeFile(options.manifestPath, JSON.stringify(options.manifest))
+  await packBundledComponentArchives(options.resourcesRoot)
+  const packaged = JSON.parse(await readFile(options.manifestPath, 'utf8'))
+  const archive = packaged.components.weworkCorePlugins.archive
+  await packBundledComponentArchives(options.resourcesRoot)
+  assert.deepEqual(
+    JSON.parse(await readFile(options.manifestPath, 'utf8')).components.weworkCorePlugins.archive,
+    archive
+  )
+  await rm(join(options.resourcesRoot, component.path), { recursive: true })
+  await assert.rejects(readFile(join(options.resourcesRoot, component.path, 'signed.bin')), {
+    code: 'ENOENT',
+  })
+  const result = await preparePackagedComponentAssets(options)
+  const delivered = result.components.weworkCorePlugins
+  assert.equal(delivered.archiveSha256, archive.sha256)
+  assert.equal(delivered.contentSha256, component.sha256)
+  assert.equal(delivered.entryPath, '.')
+  const unpacked = join(options.root, 'verified-delivery')
+  await mkdir(unpacked)
+  await extract({ file: join(options.output, delivered.assetName), cwd: unpacked })
+  assert.equal(await readFile(join(unpacked, 'signed.bin'), 'utf8'), 'signed weworkCorePlugins')
+  const bytes = await readFile(join(options.resourcesRoot, archive.path))
+  bytes[bytes.length - 1] ^= 1
+  await writeFile(join(options.resourcesRoot, archive.path), bytes)
+  await assert.rejects(preparePackagedComponentAssets(options), /archive integrity mismatch/)
 })
 
 test('rejects bytes changed after the delivered manifest was sealed', async () => {
@@ -103,12 +148,13 @@ test('rejects bytes changed after the delivered manifest was sealed', async () =
     join(options.resourcesRoot, options.manifest.components.executor.path),
     'fixture executor'
   )
-  await expect(preparePackagedComponentAssets(options)).rejects.toThrow(
-    'Packaged component checksum mismatch: executor'
+  await assert.rejects(
+    preparePackagedComponentAssets(options),
+    /Packaged component checksum mismatch: executor/
   )
 })
 
-test.each([
+for (const [label, message, mutate] of [
   [
     'version',
     'Delivered component manifest does not match the release',
@@ -130,9 +176,11 @@ test.each([
       manifest.components.executor.path = '../outside'
     },
   ],
-])('rejects invalid delivered %s', async (_name, error, change) => {
-  const options = await fixture()
-  change(options.manifest)
-  await writeFile(options.manifestPath, JSON.stringify(options.manifest))
-  await expect(preparePackagedComponentAssets(options)).rejects.toThrow(error)
-})
+]) {
+  test(`rejects invalid delivered ${label}`, async () => {
+    const options = await fixture()
+    mutate(options.manifest)
+    await writeFile(options.manifestPath, JSON.stringify(options.manifest))
+    await assert.rejects(preparePackagedComponentAssets(options), { message })
+  })
+}

@@ -111,7 +111,7 @@ export function CloudModelsSection({
           {t('workbench.cloud_models_loading', '正在加载云端模型...')}
         </div>
       ) : error ? (
-        <div className="rounded-lg border border-red-500/20 bg-red-500/10 px-3 py-3 text-sm text-red-500">
+        <div className="rounded-lg border border-destructive/20 bg-destructive/10 px-3 py-3 text-sm text-destructive wework:border-red-500/20 wework:bg-red-500/10 wework:text-red-500">
           {error}
         </div>
       ) : models.length === 0 ? (

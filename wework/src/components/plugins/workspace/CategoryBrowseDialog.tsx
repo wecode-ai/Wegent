@@ -1,25 +1,18 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useRef } from 'react'
 import type { KeyboardEvent as ReactKeyboardEvent } from 'react'
-import { useVirtualizer } from '@tanstack/react-virtual'
 import { X } from 'lucide-react'
 import { useTranslation } from '@/hooks/useTranslation'
 import type { PluginMarketplaceItem } from '@/types/api'
 import type { MarketplaceCategorySection } from '../marketplaceCategorySections'
-import {
-  PluginMarketplaceRow,
-  type PluginMarketplaceRowAction,
-  type PluginMarketplaceRowLabels,
-} from './PluginMarketplaceRow'
-
-const CATEGORY_ROW_ESTIMATE_PX = 78
-const CATEGORY_GRID_BREAKPOINT_PX = 1050
+import type { PluginMarketplaceRowAction, PluginMarketplaceRowLabels } from './PluginMarketplaceRow'
+import { MarketplaceCardGrid } from './MarketplaceCardGrid'
 
 export function CategoryBrowseDialog({
   section,
   isLoggedIn,
   isReconciling,
   installingMarketplacePluginIds,
-  uninstallingPluginIds,
+  isLocallyUninstalling,
   allowPendingRetry,
   showPendingAsSyncing,
   rowLabels,
@@ -30,7 +23,7 @@ export function CategoryBrowseDialog({
   isLoggedIn: boolean
   isReconciling: boolean
   installingMarketplacePluginIds: Set<string | number>
-  uninstallingPluginIds: Set<string | number>
+  isLocallyUninstalling: (item: PluginMarketplaceItem) => boolean
   allowPendingRetry: boolean
   showPendingAsSyncing?: boolean
   rowLabels: PluginMarketplaceRowLabels
@@ -39,19 +32,6 @@ export function CategoryBrowseDialog({
 }) {
   const { t } = useTranslation('common')
   const dialogRef = useRef<HTMLDivElement>(null)
-  const listRef = useRef<HTMLDivElement>(null)
-  const [columnCount, setColumnCount] = useState(() =>
-    typeof window === 'undefined' || window.innerWidth > CATEGORY_GRID_BREAKPOINT_PX ? 2 : 1
-  )
-
-  useEffect(() => {
-    const media = window.matchMedia(`(max-width: ${CATEGORY_GRID_BREAKPOINT_PX}px)`)
-    const syncColumns = () => setColumnCount(media.matches ? 1 : 2)
-    syncColumns()
-    media.addEventListener('change', syncColumns)
-    return () => media.removeEventListener('change', syncColumns)
-  }, [])
-
   useEffect(() => {
     const previouslyFocused =
       document.activeElement instanceof HTMLElement ? document.activeElement : null
@@ -62,34 +42,9 @@ export function CategoryBrowseDialog({
     }
   }, [])
 
-  const rowCount = Math.max(1, Math.ceil(section.items.length / columnCount))
-  const virtualizer = useVirtualizer({
-    count: rowCount,
-    getScrollElement: () => listRef.current,
-    estimateSize: () => CATEGORY_ROW_ESTIMATE_PX,
-    overscan: 8,
-    observeElementRect: (instance, callback) => {
-      const element = instance.scrollElement
-      if (!element) return
-      const emit = () => {
-        const rect = element.getBoundingClientRect()
-        callback({
-          width: Math.max(rect.width, 720),
-          height: Math.max(rect.height, 560),
-        })
-      }
-      emit()
-      const observer = typeof ResizeObserver === 'undefined' ? null : new ResizeObserver(emit)
-      observer?.observe(element)
-      window.addEventListener('resize', emit)
-      return () => {
-        observer?.disconnect()
-        window.removeEventListener('resize', emit)
-      }
-    },
-  })
-
   const handleDialogKeyDown = (event: ReactKeyboardEvent<HTMLDivElement>) => {
+    // Portaled menus own their keyboard and focus scope, including Escape.
+    if (!event.currentTarget.contains(event.target as Node)) return
     if (event.key === 'Escape') {
       event.preventDefault()
       onClose()
@@ -116,16 +71,6 @@ export function CategoryBrowseDialog({
       first.focus()
     }
   }
-
-  const virtualRows = virtualizer.getVirtualItems()
-  const rowItems = useMemo(
-    () =>
-      virtualRows.map(row => ({
-        row,
-        items: section.items.slice(row.index * columnCount, row.index * columnCount + columnCount),
-      })),
-    [columnCount, section.items, virtualRows]
-  )
 
   return (
     <div
@@ -164,33 +109,21 @@ export function CategoryBrowseDialog({
             <X className="h-4 w-4" />
           </button>
         </div>
-        <div ref={listRef} className="min-h-0 flex-1 overflow-y-auto px-6 py-5">
-          <div className="relative w-full" style={{ height: `${virtualizer.getTotalSize()}px` }}>
-            {rowItems.map(({ row, items }) => (
-              <div
-                key={row.key}
-                className="plugin-market-card-grid absolute left-0 top-0 w-full"
-                style={{
-                  transform: `translateY(${row.start}px)`,
-                }}
-              >
-                {items.map(item => (
-                  <PluginMarketplaceRow
-                    key={item.id}
-                    item={item}
-                    isLoggedIn={isLoggedIn}
-                    isReconciling={isReconciling}
-                    isInstalling={installingMarketplacePluginIds.has(item.id)}
-                    isUninstalling={uninstallingPluginIds.has(item.installedPluginId ?? item.id)}
-                    allowPendingRetry={allowPendingRetry}
-                    showPendingAsSyncing={showPendingAsSyncing}
-                    labels={rowLabels}
-                    onAction={onAction}
-                  />
-                ))}
-              </div>
-            ))}
-          </div>
+        <div
+          data-plugin-market-scroll-region=""
+          className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-6 py-5"
+        >
+          <MarketplaceCardGrid
+            items={section.items}
+            isLoggedIn={isLoggedIn}
+            isReconciling={isReconciling}
+            installingMarketplacePluginIds={installingMarketplacePluginIds}
+            isLocallyUninstalling={isLocallyUninstalling}
+            allowPendingRetry={allowPendingRetry}
+            showPendingAsSyncing={showPendingAsSyncing}
+            labels={rowLabels}
+            onAction={onAction}
+          />
         </div>
       </div>
     </div>

@@ -1,0 +1,118 @@
+// CPython records pinned to uv 0.9.5's download-metadata.json (build 20251014).
+export const PYTHON_ARTIFACTS = {
+  'darwin-arm64': {
+    key: 'cpython-3.12.12-darwin-aarch64-none',
+    filename: 'cpython-3.12.12%2B20251014-aarch64-apple-darwin-install_only_stripped.tar.gz',
+    name: 'cpython',
+    arch: {
+      family: 'aarch64',
+      variant: null,
+    },
+    os: 'darwin',
+    libc: 'none',
+    major: 3,
+    minor: 12,
+    patch: 12,
+    prerelease: '',
+    sha256: '84cb7acbf75264982c8bdd818bfa1ff0f1eb76007b48a5f3e01d28633b46afdf',
+    variant: null,
+    build: '20251014',
+  },
+  'darwin-x64': {
+    key: 'cpython-3.12.12-darwin-x86_64-none',
+    filename: 'cpython-3.12.12%2B20251014-x86_64-apple-darwin-install_only_stripped.tar.gz',
+    name: 'cpython',
+    arch: {
+      family: 'x86_64',
+      variant: null,
+    },
+    os: 'darwin',
+    libc: 'none',
+    major: 3,
+    minor: 12,
+    patch: 12,
+    prerelease: '',
+    sha256: 'f76a921e71e9c8954cccd00f176b7083041527b3b4223670d05bbb2f51209d3f',
+    variant: null,
+    build: '20251014',
+  },
+  'linux-arm64': {
+    key: 'cpython-3.12.12-linux-aarch64-gnu',
+    filename: 'cpython-3.12.12%2B20251014-aarch64-unknown-linux-gnu-install_only_stripped.tar.gz',
+    name: 'cpython',
+    arch: {
+      family: 'aarch64',
+      variant: null,
+    },
+    os: 'linux',
+    libc: 'gnu',
+    major: 3,
+    minor: 12,
+    patch: 12,
+    prerelease: '',
+    sha256: 'd2a6c0d4ceea088f635b309a59d5d700a256656423225f96ddfb71d532adb1aa',
+    variant: null,
+    build: '20251014',
+  },
+  'linux-x64': {
+    key: 'cpython-3.12.12-linux-x86_64-gnu',
+    filename: 'cpython-3.12.12%2B20251014-x86_64-unknown-linux-gnu-install_only_stripped.tar.gz',
+    name: 'cpython',
+    arch: {
+      family: 'x86_64',
+      variant: null,
+    },
+    os: 'linux',
+    libc: 'gnu',
+    major: 3,
+    minor: 12,
+    patch: 12,
+    prerelease: '',
+    sha256: 'c74addcd1b033a6e4d60ead3ab47fcc995569027e01d3061c4a934f363c4a0cf',
+    variant: null,
+    build: '20251014',
+  },
+  'win32-arm64': {
+    key: 'cpython-3.12.12-windows-aarch64-none',
+    filename: 'cpython-3.12.12%2B20251014-aarch64-pc-windows-msvc-install_only_stripped.tar.gz',
+    name: 'cpython',
+    arch: {
+      family: 'aarch64',
+      variant: null,
+    },
+    os: 'windows',
+    libc: 'none',
+    major: 3,
+    minor: 12,
+    patch: 12,
+    prerelease: '',
+    sha256: '518eef7d7d3fda73b5cf41f90ec15f5944e1af7b779bc0b31a56bee62e838bc4',
+    variant: null,
+    build: '20251014',
+  },
+  'win32-x64': {
+    key: 'cpython-3.12.12-windows-x86_64-none',
+    filename: 'cpython-3.12.12%2B20251014-x86_64-pc-windows-msvc-install_only_stripped.tar.gz',
+    name: 'cpython',
+    arch: {
+      family: 'x86_64',
+      variant: null,
+    },
+    os: 'windows',
+    libc: 'none',
+    major: 3,
+    minor: 12,
+    patch: 12,
+    prerelease: '',
+    sha256: '3c8b9b10a933909c98b9916297e2093b24a9c2abaa23df1c2622c2bfe052cb94',
+    variant: null,
+    build: '20251014',
+  },
+} as const
+
+export function pythonArtifact(platform: string, arch: string) {
+  const key = `${platform}-${arch}` as keyof typeof PYTHON_ARTIFACTS
+  const artifact = PYTHON_ARTIFACTS[key]
+  if (!artifact) throw new Error('Unsupported managed Python platform or architecture')
+  return artifact
+}

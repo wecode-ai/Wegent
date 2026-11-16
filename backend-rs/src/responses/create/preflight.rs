@@ -55,6 +55,7 @@ pub(super) async fn generation_context<M: brz_mysql::Mysql>(
     task_id: i64,
     user_subtask_id: i64,
     user_id: i64,
+    generation: Option<&Value>,
 ) -> Result<Option<Value>, FastApiError> {
     let current_attachments = contexts::attachments_by_subtask(mysql, user_subtask_id)
         .await
@@ -64,7 +65,7 @@ pub(super) async fn generation_context<M: brz_mysql::Mysql>(
         .await
         .map_err(super::request::dependency)?;
     Ok(skill_generation::enrich_skill_generation_context(
-        None,
+        generation,
         &current_attachments,
         &task_attachments,
         user_subtask_id,
@@ -86,9 +87,14 @@ pub(super) async fn workspace<M: brz_mysql::Mysql>(
     task_json: &Value,
     project_id: i64,
     user_id: i64,
+    created_git_repository: Option<&Value>,
 ) -> WorkspaceReads {
-    let workspace_resource =
-        super::project_workspace::workspace_repository(task_store, task_json, user_id).await;
+    let workspace_resource = if let Some(repository) = created_git_repository {
+        let branch = repository["branchName"].as_str().unwrap_or_default();
+        Some((repository.clone(), branch.to_owned()))
+    } else {
+        super::project_workspace::workspace_repository(task_store, task_json, user_id).await
+    };
     let project_config =
         super::project_workspace::load_project_config(mysql, project_id, user_id).await;
     WorkspaceReads {

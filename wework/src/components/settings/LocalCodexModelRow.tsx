@@ -75,9 +75,14 @@ export function LocalCodexModelRow({
                         '登录 ChatGPT 账号以在 Wework 中使用 Codex。'
                       ))}
           </div>
-          {error && <div className="mt-1 text-xs text-red-500">{error}</div>}
+          {error && (
+            <div className="mt-1 text-xs text-destructive wework:text-red-500">{error}</div>
+          )}
           {loginError && (
-            <div data-testid="local-codex-login-error" className="mt-1 text-xs text-red-500">
+            <div
+              data-testid="local-codex-login-error"
+              className="mt-1 text-xs text-destructive wework:text-red-500"
+            >
               {loginError}
             </div>
           )}

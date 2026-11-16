@@ -1,0 +1,20 @@
+name: Prepare verified Electron installer cache
+description: Reuse published checksum-verified Electron downloads before the official installer
+runs:
+  using: composite
+  steps:
+    - name: Restore published Electron downloads
+      shell: bash
+      run: .github/scripts/restore-ci-downloads.sh
+
+    - name: Install locked Electron package dependencies
+      shell: bash
+      env:
+        ELECTRON_SKIP_BINARY_DOWNLOAD: "1"
+      run: pnpm --dir wework/electron install --frozen-lockfile
+
+    - name: Prime the official Electron installer cache
+      shell: bash
+      env:
+        GH_TOKEN: ${{ github.token }}
+      run: node .github/scripts/prime-ci-electron-installer-cache.mjs

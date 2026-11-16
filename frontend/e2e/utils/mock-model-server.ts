@@ -14,9 +14,12 @@
 
 import * as http from 'http'
 import { writePhaseChangingMessage, type PhaseChangingMessage } from './mock-responses-phase'
-import { closePreviewFileSource, handlePreviewFileSource } from './preview-file-source'
+import { handlePreviewFileSource } from './preview-file-source'
+import { startMockServer } from './mock-server-lifecycle'
 import { writeAnthropicStreamingResponse, writeAnthropicJsonResponse } from './mock-anthropic'
 import { MockResponseGate } from './mock-response-gate'
+import { MockScopeStore, mockRequestScope, withMockScope } from './mock-scope'
+import { verifyImageUrlInMessage, type VisionMessage } from './mock-model-vision'
 import {
   writeAnthropicStreamingToolCalls,
   writeAnthropicJsonToolCalls,
@@ -31,6 +34,7 @@ import { handleMineruRequest } from './mock-mineru'
 import { handleProviderMcpHttpRequest, providerMcpToolCallCount } from './mock-provider-mcp'
 import {
   deferredToolSearchCall,
+  codeModeToolCall,
   modelToolDefinitions,
   modelToolMatches,
   resolveToolName,
@@ -42,19 +46,6 @@ interface CapturedRequest {
   url: string
   headers: Record<string, string | string[] | undefined>
   body: unknown
-}
-
-interface VisionMessage {
-  role: string
-  content:
-    | string
-    | Array<{
-        type: string
-        text?: string
-        image_url?: {
-          url: string
-        }
-      }>
 }
 
 interface ModelRequest {
@@ -72,6 +63,8 @@ interface StreamRule {
   responseTool?: ToolResponse
   responseTools?: ToolResponse[]
   chunkDelayMs?: number
+  holdDone?: boolean
+  terminalError?: string
   doneDelayMs?: number
   holdResponse?: boolean
 }
@@ -94,68 +87,19 @@ interface ToolScenario {
   capturedHeaders: Array<Record<string, string | string[] | undefined>>
 }
 
-// Store captured requests for verification
-const capturedRequests: CapturedRequest[] = []
-const streamRules: StreamRule[] = []
-const responseGates = new Map<string, MockResponseGate>()
-const toolScenarios: ToolScenario[] = []
-const servedToolRuleCounts = new Map<string, number>()
+const states = new MockScopeStore(() => ({
+  capturedRequests: [] as CapturedRequest[],
+  streamRules: [] as StreamRule[],
+  responseGates: new Map<string, MockResponseGate>(),
+  toolScenarios: [] as ToolScenario[],
+  servedToolRuleCounts: new Map<string, number>(),
+}))
 
 // Port for the mock server
 const PORT = parseInt(process.env.MOCK_MODEL_PORT || '9999')
 const DEFAULT_RESPONSE_CONTENT =
   'I can see the image you uploaded. It appears to be a small red test image with dimensions of 10x10 pixels.'
 const DEFAULT_CHUNK_DELAY_MS = 50
-
-/**
- * Verify if a message contains valid image_url format
- */
-function verifyImageUrlInMessage(message: VisionMessage): {
-  hasImageUrl: boolean
-  imageUrlPrefix?: string
-  isValidFormat: boolean
-  details: string
-} {
-  if (typeof message.content === 'string') {
-    return {
-      hasImageUrl: false,
-      isValidFormat: false,
-      details: 'Content is a string, not vision format',
-    }
-  }
-
-  if (!Array.isArray(message.content)) {
-    return {
-      hasImageUrl: false,
-      isValidFormat: false,
-      details: 'Content is not an array',
-    }
-  }
-
-  let hasText = false
-  let hasImageUrl = false
-  let imageUrlPrefix: string | undefined
-
-  for (const item of message.content) {
-    if (item.type === 'text' && item.text) {
-      hasText = true
-    }
-    if (item.type === 'image_url' && item.image_url?.url) {
-      hasImageUrl = true
-      const match = item.image_url.url.match(/^(data:image\/[^;]+;base64,)/)
-      if (match) {
-        imageUrlPrefix = match[1]
-      }
-    }
-  }
-
-  return {
-    hasImageUrl,
-    imageUrlPrefix,
-    isValidFormat: hasText && hasImageUrl && !!imageUrlPrefix,
-    details: `hasText=${hasText}, hasImageUrl=${hasImageUrl}, prefix=${imageUrlPrefix || 'none'}`,
-  }
-}
 
 function extractText(value: unknown): string {
   if (typeof value === 'string') {
@@ -182,8 +126,9 @@ function getRequestText(request: ModelRequest | null): string {
 
 function findStreamRule(request: ModelRequest | null): StreamRule | undefined {
   const requestText = getRequestText(request)
-  return streamRules
-    .filter(rule => requestText.includes(rule.matchText))
+  return states
+    .current()
+    .streamRules.filter(rule => requestText.includes(rule.matchText))
     .sort((left, right) => right.matchText.length - left.matchText.length)[0]
 }
 
@@ -213,8 +158,9 @@ function findToolScenario(
   headers: http.IncomingHttpHeaders
 ): ToolScenario | undefined {
   const requestText = getRequestText(request)
-  return toolScenarios
-    .filter(
+  return states
+    .current()
+    .toolScenarios.filter(
       scenario =>
         requestText.includes(scenario.matchText) && headersMatch(headers, scenario.matchHeaders)
     )
@@ -251,10 +197,15 @@ function resolveScenarioToolCalls(
   request: ModelRequest | null,
   toolCalls: ToolCallRule[]
 ): ToolCallRule[] {
-  return toolCalls.map(toolCall => ({
-    ...toolCall,
-    arguments: resolveScenarioValue(toolCall.arguments, request) as Record<string, unknown>,
-  }))
+  return toolCalls.map(toolCall => {
+    const args = resolveScenarioValue(toolCall.arguments, request) as Record<string, unknown>
+    return (
+      codeModeToolCall(request, toolCall.toolName, args, toolCall.inspectToolNames) ?? {
+        ...toolCall,
+        arguments: args,
+      }
+    )
+  })
 }
 
 function resolveResponsesTool(
@@ -446,7 +397,9 @@ function writeStreamingResponse(
   res: http.ServerResponse,
   content: string,
   chunkDelayMs: number,
-  doneDelayMs: number
+  doneDelayMs: number,
+  doneGate?: MockResponseGate,
+  terminalError?: string
 ): void {
   const chunks = content.split(' ')
   let index = 0
@@ -460,7 +413,16 @@ function writeStreamingResponse(
       return
     }
 
-    setTimeout(() => writeSseDone(res), doneDelayMs)
+    const finish = async () => {
+      await doneGate?.wait(res)
+      if (res.destroyed) return
+      if (terminalError) {
+        res.end(`data: ${JSON.stringify({ error: { message: terminalError } })}\n\n`)
+      } else {
+        writeSseDone(res)
+      }
+    }
+    setTimeout(() => void finish(), doneDelayMs)
   }
 
   sendChunk()
@@ -475,7 +437,8 @@ function writeResponsesStreamingResponse(
   res: http.ServerResponse,
   content: string,
   model: string,
-  doneDelayMs: number
+  doneDelayMs: number,
+  doneGate?: MockResponseGate
 ): void {
   const responseId = `resp_${Date.now()}`
   const messageId = `msg_${Date.now()}`
@@ -509,7 +472,9 @@ function writeResponsesStreamingResponse(
     output_index: 0,
     item: output[0],
   })
-  setTimeout(() => {
+  const finish = async () => {
+    await doneGate?.wait(res)
+    if (res.destroyed) return
     writeResponsesSseEvent(res, {
       type: 'response.completed',
       response: {
@@ -528,7 +493,8 @@ function writeResponsesStreamingResponse(
       },
     })
     res.end()
-  }, doneDelayMs)
+  }
+  setTimeout(() => void finish(), doneDelayMs)
 }
 
 /** Emit tool calls after an optional phase-changing message in the same response. */
@@ -537,20 +503,25 @@ function writeResponsesToolCalls(
   request: ModelRequest | null,
   toolCalls: ToolCallRule[],
   model: string,
-  preamble?: PhaseChangingMessage
+  preamble?: PhaseChangingMessage,
+  doneGate?: MockResponseGate
 ): void {
   const responseId = `resp_${Date.now()}`
   const output = toolCalls.map((toolCall, index) => {
-    const codeTool = modelToolDefinitions(request).find(
-      tool => tool.namespace === 'functions' && tool.name === 'exec'
+    const codeTool = modelToolDefinitions(request).find(tool =>
+      ['exec', 'functions__exec'].includes(tool.name)
     )
-    if (toolCall.toolName === 'exec_command' && codeTool) {
+    if (
+      codeTool &&
+      toolCall.toolName === codeTool.name &&
+      typeof toolCall.arguments.input === 'string'
+    ) {
       return {
         type: 'custom_tool_call',
         call_id: `call_${Date.now()}_${index}`,
         namespace: codeTool.namespace,
         name: codeTool.name,
-        input: `text(await tools.exec_command(${JSON.stringify(toolCall.arguments)}))`,
+        input: toolCall.arguments.input,
       }
     }
     const tool = resolveResponsesTool(request, toolCall.toolName)
@@ -572,7 +543,7 @@ function writeResponsesToolCalls(
     response: { id: responseId, object: 'response', status: 'in_progress', model, output: [] },
   })
   /** Finish tool output after the optional assistant item at output index zero. */
-  const finish = (message?: Record<string, unknown>) => {
+  const finish = async (message?: Record<string, unknown>) => {
     output.forEach((item, outputIndex) => {
       writeResponsesSseEvent(res, {
         type: 'response.output_item.done',
@@ -580,6 +551,8 @@ function writeResponsesToolCalls(
         item,
       })
     })
+    await doneGate?.wait(res)
+    if (res.destroyed) return
     writeResponsesSseEvent(res, {
       type: 'response.completed',
       response: {
@@ -599,14 +572,21 @@ function writeResponsesToolCalls(
     })
     res.end()
   }
-  if (preamble) writePhaseChangingMessage(res, preamble, finish)
-  else finish()
+  if (preamble) writePhaseChangingMessage(res, preamble, value => void finish(value))
+  else void finish()
 }
 
 /**
  * Create the mock HTTP server
  */
 const server = http.createServer((req, res) => {
+  let scope: string
+  try {
+    scope = mockRequestScope(req)
+  } catch {
+    res.writeHead(400).end('Invalid mock request scope')
+    return
+  }
   const pathname = req.url?.split('?')[0]
   if (
     pathname &&
@@ -624,11 +604,16 @@ const server = http.createServer((req, res) => {
   }
   let body = ''
 
-  req.on('data', chunk => {
-    body += chunk.toString()
+  req.setEncoding('utf8')
+  req.on('data', (chunk: string) => {
+    body += chunk
   })
 
-  req.on('end', async () => {
+  req.on('end', () => withMockScope(scope, handleRequest))
+
+  async function handleRequest(): Promise<void> {
+    const { capturedRequests, streamRules, responseGates, toolScenarios, servedToolRuleCounts } =
+      states.current()
     const timestamp = new Date().toISOString()
 
     try {
@@ -657,7 +642,7 @@ const server = http.createServer((req, res) => {
 
     // Log the request
     console.log(`\n${'='.repeat(60)}`)
-    console.log(`[${timestamp}] ${req.method} ${req.url}`)
+    console.log(`[${timestamp}] ${req.method} ${req.url}${scope ? ` scope=${scope}` : ''}`)
     console.log(`${'='.repeat(60)}`)
 
     const requestText = getRequestText(parsedBody).trim()
@@ -712,7 +697,7 @@ const server = http.createServer((req, res) => {
       (req.url?.includes('/messages') && !req.url.includes('/messages/count_tokens'))
     const streamRule = modelEndpoint ? findStreamRule(parsedBody) : undefined
     const responseGate = streamRule && responseGates.get(streamRule.matchText)
-    if (responseGate) {
+    if (responseGate && !streamRule?.holdDone) {
       await responseGate.wait(res)
       if (res.destroyed) return
     }
@@ -740,7 +725,8 @@ const server = http.createServer((req, res) => {
             parsedBody,
             resolveScenarioToolCalls(parsedBody, scenarioStep.toolCalls),
             parsedBody?.model || 'mock-codex',
-            scenarioStep.preamble
+            scenarioStep.preamble,
+            streamRule?.holdDone ? responseGate : undefined
           )
           return
         }
@@ -755,7 +741,8 @@ const server = http.createServer((req, res) => {
         res,
         responseContent,
         model,
-        scenarioStep?.doneDelayMs ?? streamRule?.doneDelayMs ?? 0
+        scenarioStep?.doneDelayMs ?? streamRule?.doneDelayMs ?? 0,
+        streamRule?.holdDone ? responseGate : undefined
       )
     } else if (req.url?.includes('/chat/completions')) {
       if (toolScenario && scenarioStep) {
@@ -797,7 +784,9 @@ const server = http.createServer((req, res) => {
           res,
           responseContent,
           streamRule?.chunkDelayMs ?? DEFAULT_CHUNK_DELAY_MS,
-          scenarioStep?.doneDelayMs ?? streamRule?.doneDelayMs ?? 0
+          scenarioStep?.doneDelayMs ?? streamRule?.doneDelayMs ?? 0,
+          streamRule?.holdDone ? responseGate : undefined,
+          streamRule?.terminalError
         )
       } else {
         // Return non-streaming response
@@ -896,7 +885,14 @@ const server = http.createServer((req, res) => {
       }
       writeJson(res, 200, { released: gate.release() })
     } else if (req.url === '/stream-rules' && req.method === 'GET') {
-      writeJson(res, 200, streamRules)
+      writeJson(
+        res,
+        200,
+        streamRules.map(rule => ({
+          ...rule,
+          pendingResponses: responseGates.get(rule.matchText)?.pendingResponses ?? 0,
+        }))
+      )
     } else if (req.url === '/stream-rules' && req.method === 'POST') {
       const streamRule = parseJsonBody<StreamRule>(body)
       if (
@@ -914,7 +910,7 @@ const server = http.createServer((req, res) => {
       const existingIndex = streamRules.findIndex(rule => rule.matchText === streamRule.matchText)
       responseGates.get(streamRule.matchText)?.release()
       responseGates.delete(streamRule.matchText)
-      if (streamRule.holdResponse) {
+      if (streamRule.holdResponse || streamRule.holdDone) {
         responseGates.set(streamRule.matchText, new MockResponseGate())
       }
       servedToolRuleCounts.delete(streamRule.matchText)
@@ -1010,49 +1006,9 @@ const server = http.createServer((req, res) => {
       res.writeHead(404, { 'Content-Type': 'application/json' })
       res.end(JSON.stringify({ error: 'Not found' }))
     }
-  })
+  }
 })
 
-// Start the server
-server.listen(PORT, () => {
-  console.log(`
-╔════════════════════════════════════════════════════════════╗
-║           Mock Model Server for E2E Testing                ║
-╠════════════════════════════════════════════════════════════╣
-║  Server running on: http://localhost:${PORT}                  ║
-║                                                            ║
-║  Endpoints:                                                ║
-║    POST /v1/responses        - Mock OpenAI Responses API   ║
-║    POST /v1/chat/completions - Mock OpenAI chat API        ║
-║    POST /v1/messages         - Mock Anthropic Messages API ║
-║    GET  /captured-requests   - View captured requests      ║
-║    POST /clear-requests      - Clear captured requests     ║
-║    GET  /stream-rules        - View stream rules           ║
-║    POST /stream-rules        - Add a matched stream rule   ║
-║    DELETE /stream-rules      - Clear stream rules          ║
-║    POST /tool-scenarios      - Add a tool-call scenario    ║
-║    GET  /tool-scenarios      - View one tool-call scenario ║
-║    DELETE /tool-scenarios    - Clear tool-call scenarios   ║
-║    POST /mcp                 - Mock Streamable HTTP MCP    ║
-║    GET  /mcp-control/calls   - View provider tool calls    ║
-║    POST /mcp-control/reset   - Reset provider state        ║
-║    GET  /health              - Health check                ║
-║                                                            ║
-║  Configure your model to use:                              ║
-║    Base URL: http://localhost:${PORT}/v1                      ║
-║    API Key: any-value                                      ║
-╚════════════════════════════════════════════════════════════╝
-`)
-})
+startMockServer(server, PORT)
 
-// Handle graceful shutdown
-process.on('SIGINT', async () => {
-  console.log('\nShutting down mock server...')
-  await closePreviewFileSource()
-  server.close(() => {
-    console.log('Server closed')
-    process.exit(0)
-  })
-})
-
-export { server, capturedRequests, verifyImageUrlInMessage }
+export { server, verifyImageUrlInMessage }

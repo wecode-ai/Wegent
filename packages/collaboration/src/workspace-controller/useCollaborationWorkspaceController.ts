@@ -979,7 +979,7 @@ export function createCollaborationWorkspaceControllerCommands({
     const pending = pendingReadRequests.get(issue.id);
     if (pending) return pending;
     const request = api.issues
-      .markRead(issue.id)
+      .markRead(issue.id, undefined, issue.content_revision)
       .then(confirmIssueRead)
       .catch(() => {
         reportError(messages.saveFailed);

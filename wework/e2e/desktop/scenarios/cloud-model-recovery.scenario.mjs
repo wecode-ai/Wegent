@@ -24,6 +24,7 @@ async function cleanupFixtures(cleanups) {
     try {
       await cleanup()
     } catch (error) {
+      console.error('[desktop-e2e] Connector fixture cleanup error:', error)
       errors.push(error)
     }
   }
@@ -558,6 +559,9 @@ async function verifyPluginFullSync(runtime, cloud, request, options) {
       updatedStarts,
       'Repeated upgrade sync restarted Codex'
     )
+  } catch (error) {
+    console.error('[desktop-e2e] Full capability sync verification error:', error)
+    throw error
   } finally {
     if (backendStopped) await cloud.launchBackend()
     await cleanupFixtures(cleanups)

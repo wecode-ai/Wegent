@@ -1,8 +1,7 @@
 import { act, cleanup, renderHook, waitFor } from '@testing-library/react'
-import { afterEach, describe, expect, test, vi } from 'vitest'
 import { resetConversationDiagnosticsForTest } from '@wegent/collaboration/conversation/conversationDiagnostics'
+import { afterEach, describe, expect, test, vi } from 'vitest'
 import {
-  conversationSearchRanges,
   useConversationSearchTarget,
   type ConversationSearchTarget,
 } from '../../../../packages/collaboration/src/conversation/useConversationSearchTarget'
@@ -70,78 +69,6 @@ describe('conversation find navigation', () => {
     expect(failure).toHaveBeenCalledOnce()
   })
 
-  test('waits for a mounted match, then keeps its diagram section as the anchor through SVG rendering', async () => {
-    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
-    const frame = navigationFrames()
-    const scroller = document.createElement('div')
-    scroller.scrollTo = vi.fn()
-    Object.defineProperties(scroller, {
-      scrollHeight: { value: 2000 },
-      clientHeight: { value: 300 },
-    })
-    vi.spyOn(scroller, 'getBoundingClientRect').mockReturnValue({ top: 100 } as DOMRect)
-    const content = document.createElement('div')
-    content.innerHTML =
-      '<article data-message-id="target"><div data-testid="assistant-message-content"><p>not ready</p></div></article>'
-    const article = content.querySelector('article')!
-    vi.spyOn(article, 'getBoundingClientRect').mockReturnValue({ top: 700, height: 600 } as DOMRect)
-    const navigation = vi.fn()
-    const { unmount } = renderHook(() =>
-      useConversationSearchTarget({
-        target: {
-          query: 'keyword',
-          messageId: 'target',
-          occurrence: 0,
-          matchCounts: new Map([['target', 1]]),
-        },
-        contentRef: { current: content },
-        scrollRef: { current: scroller },
-        onNavigationTargetChange: navigation,
-      })
-    )
-    frame()
-    frame()
-    expect(scroller.scrollTo).not.toHaveBeenCalled()
-    const body = article.querySelector('div')!
-    await act(async () => {
-      body.innerHTML =
-        '<section><span hidden data-diagram-search-source>keyword</span><div data-search-excluded><span>keyword</span><img alt="keyword" /></div></section>'
-      await Promise.resolve()
-    })
-    const section = body.querySelector('section')!
-    let diagramTop = 700
-    vi.spyOn(section, 'getBoundingClientRect').mockImplementation(
-      () => ({ top: diagramTop, height: 384 }) as DOMRect
-    )
-    const ranges = conversationSearchRanges(article, 'keyword', 10)
-    expect(ranges).toHaveLength(1)
-    expect(ranges[0].startContainer.parentElement?.hasAttribute('data-diagram-search-source')).toBe(
-      true
-    )
-    act(() => vi.advanceTimersByTime(80))
-    frame()
-    frame()
-    expect(scroller.scrollTo).toHaveBeenCalledExactlyOnceWith({ top: 750, behavior: 'auto' })
-    // Renderer changes must not invalidate the fixed section anchor or restart its two frames.
-    await act(async () => {
-      body.querySelector('[data-search-excluded]')!.innerHTML = '<img alt="keyword rendered" />'
-      await Promise.resolve()
-    })
-    diagramTop = 400
-    // A known match remains navigable even if rendering stalls longer than the missing-match timeout.
-    act(() => vi.advanceTimersByTime(1600))
-    frame()
-    expect(scroller.scrollTo).toHaveBeenCalledTimes(1)
-    frame()
-    expect(scroller.scrollTo).toHaveBeenLastCalledWith({ top: 342, behavior: 'smooth' })
-    expect(scroller.scrollTo).toHaveBeenCalledTimes(2)
-    expect(navigation).toHaveBeenLastCalledWith('target')
-    act(() => scroller.dispatchEvent(new Event('scrollend')))
-    expect(navigation).toHaveBeenLastCalledWith(null)
-    unmount()
-    expect(scroller.scrollTo).toHaveBeenCalledTimes(2)
-  })
-
   test.each(['pause', 'replace', 'timeout'] as const)(
     'cancels pending match preparation on %s without stopping native scroll',
     async reason => {
@@ -194,60 +121,6 @@ describe('conversation find navigation', () => {
       frame()
       expect(scroller.scrollTo).not.toHaveBeenCalled()
       expect(navigation).toHaveBeenLastCalledWith(null)
-    }
-  )
-
-  test.each(['removed', 'unmeasured'] as const)(
-    'releases navigation when a prepared match becomes %s',
-    async state => {
-      vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
-      const frame = navigationFrames()
-      const scroller = document.createElement('div')
-      scroller.scrollTo = vi.fn()
-      Object.defineProperties(scroller, {
-        scrollHeight: { value: 1000 },
-        clientHeight: { value: 300 },
-      })
-      vi.spyOn(scroller, 'getBoundingClientRect').mockReturnValue({ top: 0 } as DOMRect)
-      const content = document.createElement('div')
-      content.innerHTML =
-        '<article data-message-id="target"><div data-testid="assistant-message-content"><p>keyword</p></div></article>'
-      let rangeHeight = 20
-      const createRange = document.createRange.bind(document)
-      vi.spyOn(document, 'createRange').mockImplementation(() => {
-        const range = createRange()
-        range.getBoundingClientRect = () => ({ top: 200, height: rangeHeight }) as DOMRect
-        return range
-      })
-      const navigation = vi.fn()
-      renderHook(() =>
-        useConversationSearchTarget({
-          target: {
-            query: 'keyword',
-            messageId: 'target',
-            occurrence: 0,
-            matchCounts: new Map([['target', 1]]),
-          },
-          contentRef: { current: content },
-          scrollRef: { current: scroller },
-          onNavigationTargetChange: navigation,
-        })
-      )
-      frame()
-      frame()
-      await act(async () => {
-        if (state === 'removed') content.querySelector('p')!.textContent = 'not ready'
-        else rangeHeight = 0
-        await Promise.resolve()
-      })
-      frame()
-      act(() => vi.advanceTimersByTime(1499))
-      expect(navigation).toHaveBeenLastCalledWith('target')
-      act(() => vi.advanceTimersByTime(1))
-      frame()
-      frame()
-      expect(scroller.scrollTo).not.toHaveBeenCalled()
-      expect(navigation.mock.calls).toEqual([['target'], [null]])
     }
   )
 

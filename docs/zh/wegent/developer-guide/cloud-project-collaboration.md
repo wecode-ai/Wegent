@@ -367,3 +367,13 @@ flowchart LR
 历史执行结果与会话读取状态独立。读取失败不得显示为“没有对话记录”，也不能据此宣称执行器确认未运行。首次读取展示骨架屏；设备实际离线时保留错误与重试入口，不切换到成员同名设备。自动化回归包含成员读取管理员会话；默认只执行针对性单元测试，E2E 需明确要求。
 
 HTTP transcript 响应必须保留 Runtime 的 `turns`、`running`、`origin`、`historyUnavailable` 和 `turnNavigation`，与 Socket.IO 读取契约一致。缺少 `turns` 是协议错误，不能用空列表替代已有会话。
+
+## 项目里程碑
+
+本地和云端的内部 Issue 项目都支持里程碑。项目视图中的“里程碑”可以创建和编辑目标描述、截止日期，手动关闭或重新打开，并展示当前用户可见 Issue 的完成数和剩余数。完成比例按已完成 Issue 数除以关联 Issue 总数计算；空里程碑显示 0%，AI 执行结束不会直接计为 Issue 完成。
+
+每个 Issue 最多关联同项目的一个里程碑，父子 Issue 分别设置。创建或查看 Issue 时可选择里程碑；从里程碑详情新建 Issue 时默认选中当前里程碑，也可手动更改或解除关联。看板和表格支持筛选，表格支持批量设置或移除关联。里程碑删除只解除关联，保留全部 Issue。云端里程碑由项目 Maintainer/Owner 管理，Issue 关联遵守原有内容编辑权限；进度统计沿用 Issue 可见性规则。
+
+里程碑复用 `loop_items` 的 `resource_type=milestone`，Issue 的关联保存于 `metadata.milestone_id`。本地通过 Executor IPC 和 SQLite 事务持久化，云端里程碑管理 API 由 Rust 实现；现有 Python Issue API 负责关联字段的创建和更新。同项目校验与删除使用同一里程碑记录的事务锁，更新和删除均校验版本。无需新增表或数据库迁移。外部 GitHub/GitLab/钉钉 Issue provider 不包含在此支持范围内。
+
+已完成 Issue 归档后继续计入里程碑的总数和完成数，未完成 Issue 归档后仍计入未完成数，归档与恢复均不改变交付进度；界面单独标明已归档数量，可从里程碑详情进入现有归档箱查看。

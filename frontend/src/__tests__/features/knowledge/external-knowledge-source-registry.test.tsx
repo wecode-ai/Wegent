@@ -3,13 +3,17 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import '@testing-library/jest-dom'
-import { fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { useState, type ComponentProps } from 'react'
 
 import { registerExternalKnowledgeSource } from '@/features/knowledge/externalKnowledgeSourceRegistry'
 import ContextSelectorBase from '@/features/tasks/components/chat/ContextSelector'
 import type { ContextItem } from '@/types/context'
-import type { ExternalKbNode, ExternalKnowledgeBase } from '@/types/external-knowledge'
+import type {
+  ExternalKbNode,
+  ExternalKnowledgeBase,
+  ExternalKnowledgeBaseListResponse,
+} from '@/types/external-knowledge'
 
 type ContextSelectorProps = ComponentProps<typeof ContextSelectorBase>
 
@@ -23,6 +27,22 @@ const mockGetOrganizationNamespace = jest.fn()
 const mockUseKnowledgeBaseOptions = jest.fn()
 const mockListFakeKnowledgeBases = jest.fn()
 const mockListFakeNodes = jest.fn()
+const paginationPhases: { phase: string; elapsedMs: number }[] = []
+
+afterEach(() => {
+  if (paginationPhases.length > 0) {
+    console.info('External knowledge pagination phases', paginationPhases)
+    paginationPhases.length = 0
+  }
+})
+
+function deferredKnowledgeBasePage() {
+  let resolve!: (response: ExternalKnowledgeBaseListResponse) => void
+  const promise = new Promise<ExternalKnowledgeBaseListResponse>(resolvePromise => {
+    resolve = resolvePromise
+  })
+  return { promise, resolve }
+}
 
 const mockT = (key: string, fallback?: string | Record<string, unknown>) =>
   typeof fallback === 'string' ? fallback : key
@@ -225,40 +245,62 @@ describe('external knowledge source registry — ContextSelector (conversation)'
   })
 
   it('pages through all external knowledge bases for the active scope', async () => {
-    mockListFakeKnowledgeBases.mockImplementation((params?: { offset?: number }) =>
-      Promise.resolve({
-        items:
-          params?.offset === 0
-            ? Array.from({ length: 100 }, (_, index) => makeFakeKb(index))
-            : [makeFakeKb(100)],
-        has_more: params?.offset === 0,
+    const startedAt = performance.now()
+    const trace = (phase: string) =>
+      paginationPhases.push({
+        phase,
+        elapsedMs: Math.round(performance.now() - startedAt),
       })
-    )
+    const firstPage = deferredKnowledgeBasePage()
+    const lastPage = deferredKnowledgeBasePage()
+    trace('start')
+    mockListFakeKnowledgeBases.mockImplementation((params?: { offset?: number }) => {
+      trace(`page-${params?.offset}`)
+      if (params?.offset === 0) return firstPage.promise
+      if (params?.offset === 100) return lastPage.promise
+      throw new Error(`Unexpected external knowledge offset: ${params?.offset}`)
+    })
 
-    render(
-      <ContextSelector
-        open={true}
-        onOpenChange={jest.fn()}
-        selectedContexts={[]}
-        onSelect={jest.fn()}
-        onDeselect={jest.fn()}
-        onReplaceContexts={jest.fn()}
-      >
-        <button>trigger</button>
-      </ContextSelector>
-    )
+    await act(async () => {
+      render(
+        <ContextSelector
+          open={true}
+          onOpenChange={jest.fn()}
+          selectedContexts={[]}
+          onSelect={jest.fn()}
+          onDeselect={jest.fn()}
+          onReplaceContexts={jest.fn()}
+        >
+          <button>trigger</button>
+        </ContextSelector>
+      )
+    })
 
-    await waitFor(() =>
-      expect(
-        screen.getByTestId(`knowledge-picker-source-external:${FAKE_PROVIDER}`)
-      ).toBeInTheDocument()
-    )
+    trace('rendered')
     fireEvent.click(screen.getByTestId(`knowledge-picker-source-external:${FAKE_PROVIDER}`))
-    fireEvent.click(screen.getByTestId('knowledge-picker-external-scope-organization'))
+    await act(async () => {
+      fireEvent.click(screen.getByTestId('knowledge-picker-external-scope-organization'))
+    })
+    trace('scope-clicked')
+    expect(mockListFakeKnowledgeBases).toHaveBeenCalledTimes(1)
 
-    await waitFor(() =>
-      expect(screen.getByTestId('knowledge-picker-external-kb-lib-100')).toBeInTheDocument()
-    )
+    await act(async () => {
+      firstPage.resolve({
+        items: Array.from({ length: 100 }, (_, index) => makeFakeKb(index)),
+        has_more: true,
+      })
+    })
+    trace('first-page-delivered')
+    expect(mockListFakeKnowledgeBases).toHaveBeenCalledTimes(2)
+    expect(screen.getAllByText('picker.loading').length).toBeGreaterThan(0)
+    expect(screen.queryByTestId('knowledge-picker-external-kb-lib-100')).not.toBeInTheDocument()
+
+    await act(async () => {
+      lastPage.resolve({ items: [makeFakeKb(100)], has_more: false })
+    })
+    trace('last-page-rendered')
+    expect(screen.getByTestId('knowledge-picker-external-kb-lib-100')).toBeInTheDocument()
+    expect(screen.getAllByTestId(/^knowledge-picker-external-kb-lib-/)).toHaveLength(101)
     expect(mockListFakeKnowledgeBases).toHaveBeenNthCalledWith(
       1,
       expect.objectContaining({ limit: 100, offset: 0 })

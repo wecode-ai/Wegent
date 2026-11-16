@@ -103,7 +103,7 @@ def test_final_text_survives_managed_execution_outcome_race(
         assert activity.content == previous_content
         return result
 
-    lock_execution = loop_item_execution_service._lock_terminal_event_execution
+    lock_execution = loop_item_execution_service._lock_runtime_event_execution
 
     def lock_after_snapshot(*args, **kwargs):
         reconcile()
@@ -119,7 +119,7 @@ def test_final_text_survives_managed_execution_outcome_race(
         patch.object(device_namespace, "_publish_execution_item_change"),
         patch.object(
             loop_item_execution_service,
-            "_lock_terminal_event_execution",
+            "_lock_runtime_event_execution",
             side_effect=lock,
         ),
     ):

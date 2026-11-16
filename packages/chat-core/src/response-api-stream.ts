@@ -201,6 +201,9 @@ export function emitResponseApiEvent(
     handlers.onRuntimeWorkChanged?.({
       taskId,
       ...(base.deviceId ? { deviceId: base.deviceId } : {}),
+      ...(typeof data.archived === "boolean"
+        ? { archived: data.archived }
+        : {}),
       ...(workspacePath && Array.isArray(cleanup.errors)
         ? {
             archiveCleanup: {

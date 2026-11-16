@@ -154,6 +154,14 @@ async fn require_personal_binding(
     .map_err(internal)?
     .is_none()
     {
+        tracing::warn!(
+            user_id = user.id,
+            issue_id = item_id,
+            assignment_id,
+            device_id,
+            reason = "owned_device_not_found",
+            "Stand-in assignment receipt rejected"
+        );
         return Err(FastApiError::detail(
             StatusCode::FORBIDDEN,
             "A recipient-owned task binding is required",
@@ -183,6 +191,16 @@ async fn require_personal_binding(
     }) {
         Ok(())
     } else {
+        tracing::warn!(
+            user_id = user.id,
+            issue_id = item_id,
+            assignment_id,
+            device_id,
+            task_id = payload.task_id.as_deref().unwrap_or_default(),
+            binding_count = bindings.len(),
+            reason = "matching_assignment_binding_not_found",
+            "Stand-in assignment receipt rejected"
+        );
         Err(FastApiError::detail(
             StatusCode::FORBIDDEN,
             "A recipient-owned task binding is required",

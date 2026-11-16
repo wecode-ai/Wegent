@@ -12,6 +12,37 @@ export interface ProjectAgentOwnerOption {
 }
 
 export interface ProjectAgentConfigurationHost {
+  listTemplateAgentModels?(
+    runtime: "codex" | "claude_code",
+    context?: {
+      projectId?: string;
+      environmentId?: string;
+      location?: "local" | "cloud";
+    },
+  ): Promise<{
+    models: import("../agent-form/runnerRouting").RunnerModel[];
+  }>;
+  listTemplateCloudAgentModels?(
+    runtime: "codex" | "claude_code",
+    projectId?: string,
+  ): Promise<import("../agent-form/runnerRouting").RunnerModel[]>;
+  listTemplateAgentEnvironments?(
+    projectId: string,
+    location?: "local" | "cloud",
+  ): Promise<import("../types").CollaborationExecutionEnvironment[]>;
+  templateAgentEnvironmentSettingsHref?(
+    project: import("../types").CollaborationProject,
+  ): string;
+
+  createTemplateAgent?(
+    agent: import("../templates/types").TemplateAgent,
+    namespace: string,
+    routing: import("../templates/types").TemplateAgentRouting,
+  ): Promise<{ id: string; name: string }>;
+  readTemplateAgent?(
+    teamId: number,
+  ): Promise<Omit<import("../templates/types").TemplateAgent, "key">>;
+
   /**
    * Whether the host lets the user pick an already existing Agent resource.
    * Defaults to true; hosts that only manage Agents through their own resource
@@ -43,7 +74,8 @@ export interface ProjectAgentConfigurationHost {
     onSaved(agent: { name: string; teamId: number }): Promise<void>;
     workspaceName: string;
   }): ReactNode;
-  renderLocalAgentEditor?(props: {
+  /** Edits a project-owned definition through its local or cloud storage API. */
+  renderProjectAgentEditor?(props: {
     projectId?: string;
     resourceId: string;
     onClose(): void;

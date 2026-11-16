@@ -234,6 +234,58 @@ describe('verifySmartAppRuntime', () => {
     expect(stop).toHaveBeenCalledOnce()
     await expect(stat(temporaryRoot)).rejects.toMatchObject({ code: 'ENOENT' })
   })
+
+  test('keeps the runtime alive until its probe completes', async () => {
+    const stop = vi.fn().mockResolvedValue(undefined)
+    let releaseProbe!: () => void
+    const probe = new Promise<{ issues: [] }>(resolve => {
+      releaseProbe = () => resolve({ issues: [] })
+    })
+    const runProbe = vi.fn(() => probe)
+    const dependencies = fixtureDependencies({
+      createRuntime: () => ({
+        start: vi.fn().mockResolvedValue(undefined),
+        url: () => 'http://127.0.0.1:41001/',
+        stop,
+      }),
+      runProbe,
+    })
+    const running = verifySmartAppRuntime(options(), dependencies)
+    try {
+      await vi.waitFor(() => expect(runProbe).toHaveBeenCalledOnce())
+      expect(stop).not.toHaveBeenCalled()
+    } finally {
+      releaseProbe()
+      await running
+    }
+    expect(stop).toHaveBeenCalledOnce()
+  })
+
+  test('passes cancellation to the probe and waits for it before reclaiming the runtime', async () => {
+    const controller = new AbortController()
+    const stop = vi.fn().mockResolvedValue(undefined)
+    const dependencies = fixtureDependencies({
+      createRuntime: () => ({
+        start: vi.fn().mockResolvedValue(undefined),
+        url: () => 'http://127.0.0.1:41001/',
+        stop,
+      }),
+      runProbe: async input => {
+        expect(input.signal).toBe(controller.signal)
+        expect(stop).not.toHaveBeenCalled()
+        controller.abort(new Error('cancel probe'))
+        input.signal?.throwIfAborted()
+        return { issues: [] }
+      },
+    })
+
+    const result = await verifySmartAppRuntime(options({ signal: controller.signal }), dependencies)
+
+    expect(result.issues).toEqual([
+      expect.objectContaining({ code: 'SA-RUNTIME-CANCELLED', stage: 'runtime' }),
+    ])
+    expect(stop).toHaveBeenCalledOnce()
+  })
 })
 
 function options(overrides: Record<string, unknown> = {}) {

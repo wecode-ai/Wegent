@@ -45,6 +45,7 @@ from app.models.wiki import (
 from app.services.knowledge.code_wiki.page_path import collation_key
 from app.services.knowledge.code_wiki.projection import (
     PENDING_INDEX_CLEANUP_KEY,
+    ProjectionOutcome,
     ProjectionSideEffects,
     apply_projection_plan,
     finish_projection,
@@ -266,6 +267,7 @@ def publish_generation(
     effects: ProjectionSideEffects,
     policy: Optional[PublishPolicy] = None,
     require_completed: bool = True,
+    trigger: str = "code_wiki_publish",
 ) -> PublishResult:
     """Project a version into the knowledge base and make it the published one.
 
@@ -282,6 +284,26 @@ def publish_generation(
     Returns:
         Whether the version was published, with the gate's verdict either way.
     """
+    from shared.event_reporting.catalogs.knowledge import loaded_scalar, observe
+
+    event_kb_id = loaded_scalar(knowledge_base, "id")
+    event_generation_id = loaded_scalar(generation, "id")
+
+    def report_publish(published: bool, reason: str | None = None) -> None:
+        observe(
+            "knowledge.code_wiki.publish.finished",
+            lambda: {
+                "kb_id": event_kb_id,
+                "status": "success" if published else "skipped",
+                "data": {
+                    "generation": event_generation_id,
+                    "published": published,
+                    "reason": reason,
+                    "trigger": trigger,
+                },
+            },
+        )
+
     if require_completed and generation.status != WikiGenerationStatus.COMPLETED:
         verdict = GateVerdict(
             passed=False,
@@ -289,6 +311,7 @@ def publish_generation(
         )
         _record_verdict(generation, verdict)
         db.commit()
+        report_publish(False, verdict.reason)
         return PublishResult(published=False, verdict=verdict, reason=verdict.reason)
 
     # Settle what the last publish could not before computing this one. Doing it here
@@ -313,6 +336,7 @@ def publish_generation(
         )
         _record_verdict(generation, verdict)
         db.commit()
+        report_publish(False, verdict.reason)
         return PublishResult(published=False, verdict=verdict, reason=verdict.reason)
 
     order_error = _reviewed_order_error(generation, desired)
@@ -320,6 +344,7 @@ def publish_generation(
         verdict = GateVerdict(passed=False, reason=order_error)
         _record_verdict(generation, verdict)
         db.commit()
+        report_publish(False, verdict.reason)
         return PublishResult(published=False, verdict=verdict, reason=verdict.reason)
 
     # The gate is asked what readers would lose, so it is given what readers can see
@@ -343,6 +368,7 @@ def publish_generation(
         )
         _record_verdict(generation, verdict)
         db.commit()
+        report_publish(False, verdict.reason)
         return PublishResult(published=False, verdict=verdict, reason=verdict.reason)
 
     plan = compute_projection_plan(desired, existing)
@@ -377,6 +403,10 @@ def publish_generation(
         },
     )
     db.commit()
+    from app.services.knowledge.event_logging import emit_fact_snapshots
+
+    emit_fact_snapshots(outcome.committed_facts)
+    report_publish(True)
 
     # Past this point the version is live. Nothing below may raise: the pages are
     # already correct, and failing now would only cause the run to be repeated.

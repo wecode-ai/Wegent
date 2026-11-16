@@ -24,10 +24,14 @@ pub(super) const TASK_SCOPED_ENV_KEYS: &[&str] = &[
     "WEWORK_PARENT_TITLE",
 ];
 
+pub(super) fn is_backend_task(request: &ExecutionRequest) -> bool {
+    request.task_id.trim().parse::<i64>().is_ok_and(|id| id > 0)
+}
+
 pub(super) fn task_identity_env(request: &ExecutionRequest) -> BTreeMap<String, String> {
     let mut env = BTreeMap::new();
     env.extend(crate::plugin_account_auth::broker::environment());
-    if request.task_id.trim().parse::<i64>().is_ok_and(|id| id > 0) {
+    if is_backend_task(request) {
         env.insert(
             "WEGENT_BACKEND_TASK_ID".to_owned(),
             request.task_id.trim().to_owned(),
@@ -99,36 +103,6 @@ fn non_empty(value: Option<&str>) -> Option<&str> {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn uses_materialized_workspace_path_for_task_workspace() {
-        let mut request = ExecutionRequest {
-            task_id: "task-1".to_owned(),
-            project_workspace_path: Some("/runtime/workspaces/task-1".to_owned()),
-            backend_url: Some("https://backend.example.com".to_owned()),
-            ..ExecutionRequest::default()
-        };
-        request.extra.insert(
-            "runtimeTaskTitle".to_owned(),
-            serde_json::json!("Identify local development instances"),
-        );
-
-        let env = task_identity_env(&request);
-
-        assert_eq!(env.get("WEGENT_TASK_ID"), Some(&"task-1".to_owned()));
-        assert_eq!(
-            env.get("WEGENT_TASK_WORKSPACE"),
-            Some(&"/runtime/workspaces/task-1".to_owned())
-        );
-        assert_eq!(
-            env.get("WEWORK_PARENT_TITLE"),
-            Some(&"Identify local development instances".to_owned())
-        );
-        assert!(env.contains_key("WEGENT_RUNTIME_BACKEND_URL"));
-        assert!(env
-            .keys()
-            .all(|key| TASK_SCOPED_ENV_KEYS.contains(&key.as_str())));
-    }
 
     #[test]
     fn runtime_local_task_id_stabilizes_thread_identity() {

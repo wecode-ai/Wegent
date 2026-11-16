@@ -1,6 +1,6 @@
 import { useState } from "react";
 import * as Popover from "@radix-ui/react-popover";
-import { AtSign, Check, UserRound, Bot, UsersRound } from "lucide-react";
+import { AtSign, Check, ChevronDown, UserRound, Bot, UsersRound } from "lucide-react";
 import { useCollaborationPortalTheme } from "../theme";
 import type { IssueHomeOwnerOption } from "./issueHomeOwners";
 import type { CollaborationTranslate } from "../i18n";
@@ -11,12 +11,14 @@ export function IssueOwnerPicker({
   onChange,
   disabled,
   translate,
+  showLabel = false,
 }: {
   owners: IssueHomeOwnerOption[];
   value: string | null;
   onChange(id: string | null): void;
   disabled: boolean;
   translate: CollaborationTranslate;
+  showLabel?: boolean;
 }) {
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
@@ -61,10 +63,12 @@ export function IssueOwnerPicker({
           disabled={disabled}
           aria-label={owner ? `${label}: ${owner.title}` : label}
           title={owner ? `${label}: ${owner.title}` : label}
-          className="inline-flex h-11 min-w-11 shrink-0 items-center justify-center gap-1 rounded-md px-1.5 text-base text-text-secondary hover:bg-muted keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-primary disabled:opacity-50 md:h-7 md:min-w-7"
+          className="inline-flex h-11 min-w-11 shrink-0 items-center justify-center gap-1.5 rounded-md px-2 text-sm text-text-secondary hover:bg-muted keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-primary disabled:opacity-50 md:h-7 md:min-w-7"
         >
-          <AtSign aria-hidden="true" className="h-4 w-4 shrink-0" />
+          {showLabel ? <UserRound aria-hidden="true" className="h-4 w-4 shrink-0" /> : <AtSign aria-hidden="true" className="h-4 w-4 shrink-0" />}
           {owner && <span className="max-w-32 truncate">{owner.title}</span>}
+          {!owner && showLabel && <span>{label}</span>}
+          {showLabel && <ChevronDown aria-hidden="true" className="h-3.5 w-3.5 shrink-0 text-text-muted" />}
         </button>
       </Popover.Trigger>
       <Popover.Portal>

@@ -4,6 +4,7 @@ import { dirname, join } from 'node:path'
 import { afterEach, describe, expect, test, vi } from 'vitest'
 import * as workbenchDshRuntime from '../runtime/workbench-dsh-runtime.js'
 import { WorkbenchRuntimeManager } from '../runtime/workbench-runtime.js'
+import { testNodeRuntime } from '../runtime/test-helpers.js'
 import {
   createManager,
   createSmartAppArchive,
@@ -15,8 +16,10 @@ vi.mock('electron', () => ({
 }))
 
 const roots: string[] = []
+const runtimeManagers: WorkbenchRuntimeManager[] = []
 
 afterEach(async () => {
+  await Promise.all(runtimeManagers.splice(0).map(runtime => runtime.stop()))
   await Promise.all(roots.splice(0).map(root => rm(root, { recursive: true, force: true })))
 })
 
@@ -27,6 +30,8 @@ describe('SmartAppManager installation runtime ownership', () => {
       const root = await mkdtemp(join(tmpdir(), 'wework-smart-app-live-install-'))
       roots.push(root)
       const runtimes = new WorkbenchRuntimeManager()
+      runtimeManagers.push(runtimes)
+      const node = await testNodeRuntime(root)
       const close = vi.fn((id: string) => runtimes.close(id))
       const manager = createManager(
         root,
@@ -39,16 +44,17 @@ describe('SmartAppManager installation runtime ownership', () => {
         }
       )
       const launch = vi.spyOn(workbenchDshRuntime, 'prepareWorkbenchDshLaunch').mockResolvedValue({
-        command: process.execPath,
+        command: node.command,
         entry: 'fixture',
         args: [
+          ...node.argsPrefix,
           '-e',
           `const server = require('node:http').createServer((_, response) => response.end('ready'))
            server.listen(0, '127.0.0.1', () => console.log('dsh web: http://127.0.0.1:' + server.address().port))`,
         ],
         cwd: root,
         dshHome: root,
-        environment: {},
+        environment: node.environment,
         profile: 'fixture',
         url: 'http://127.0.0.1:0/',
         version: '0.1.0-rc.8',

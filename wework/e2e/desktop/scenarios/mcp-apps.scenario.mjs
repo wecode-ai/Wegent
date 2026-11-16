@@ -1,6 +1,7 @@
+import { readNativeMcpCallId } from '../modules/native-tool-call-id.mjs'
 import { createOrdinaryMcpRegression } from './ordinary-mcp-regression.mjs'
 import { verifyMcpDiscoveryNetworkFailure } from './mcp-discovery-network-regression.mjs'
-import { verifyMcpReplacementSession } from './mcp-app-session-regression.mjs'
+import { verifyMcpReplacementSession, waitForMcpAppText } from './mcp-app-session-regression.mjs'
 import assert from 'node:assert/strict'
 import { readFile } from 'node:fs/promises'
 import { join } from 'node:path'
@@ -25,6 +26,7 @@ const callId = 'mcp-app-open'
 const composer =
   '[data-active-workbench-pane="true"] [data-testid="chat-message-input"][contenteditable="true"]'
 
+/** Exercise MCP app isolation, transport recovery and native resource cleanup with a real server. */
 export function createDesktopScenario({
   workspacePath,
   resultDir,
@@ -34,11 +36,13 @@ export function createDesktopScenario({
   captureScreenshot,
 }) {
   const ordinaryMcp = createOrdinaryMcpRegression({ uiTimeoutMs, modelResponseTimeoutMs })
+  // Native turns can reopen the stdio server. Keep the test counter scoped to the scenario.
+  const counterPath = join(resultDir, 'mcp-app-counter')
   let calls = 0
   let activeCase = { callId, tool: 'show_app', prompt, completion }
   return {
     prepareApp: ordinaryMcp.prepareApp,
-    codexConfigToml: `\n[mcp_servers.counter]\ncommand = ${JSON.stringify(process.execPath)}\nargs = [${JSON.stringify(fileURLToPath(new URL('../../utils/mcp-app-server.mjs', import.meta.url)))}]\n`,
+    codexConfigToml: `\n[mcp_servers.counter]\ncommand = ${JSON.stringify(process.execPath)}\nargs = [${JSON.stringify(fileURLToPath(new URL('../../utils/mcp-app-server.mjs', import.meta.url)))}, ${JSON.stringify(counterPath)}]\n`,
     async handleHttp(request, response, url) {
       if (await ordinaryMcp.handleHttp(request, response, url)) return true
       if (request.method !== 'POST' || !['/responses', '/v1/responses'].includes(url.pathname))
@@ -87,6 +91,7 @@ export function createDesktopScenario({
       const address = JSON.parse(await control.command('getWorkbenchDebugSnapshot', 'body'))
         .workbench.currentRuntimeTask
       assert.ok(address.taskId)
+      const callId = await readNativeMcpCallId(control, address, 'counter', 'show_app', uiTimeoutMs)
       const discoveredApp = await requestExecutor(
         control,
         'runtime.mcp_apps.request',
@@ -132,16 +137,8 @@ export function createDesktopScenario({
         return result.result
       }
       assert.equal(await frameAction('document-status', 'body'), 200)
-      const waitText = async text => {
-        const deadline = Date.now() + uiTimeoutMs
-        let actual
-        do {
-          actual = await frameAction('text', '#status')
-          if (actual === text) return
-          await new Promise(resolve => setTimeout(resolve, 100))
-        } while (Date.now() < deadline)
-        assert.equal(actual, text)
-      }
+      const waitText = (text, deadline = Date.now() + uiTimeoutMs) =>
+        waitForMcpAppText(frameAction, text, deadline)
       const dismissRightPanel = async () => {
         await control.command('hover', '[data-testid^="right-workspace-mcp-app-tab-"][role="tab"]')
         await control.command(
@@ -272,7 +269,14 @@ export function createDesktopScenario({
           text: activeCase.completion,
           timeoutMs: modelResponseTimeoutMs,
         })
-        const scope = '[data-mcp-call-id="' + activeCase.callId + '"]'
+        const nativeCallId = await readNativeMcpCallId(
+          control,
+          address,
+          'counter',
+          tool,
+          uiTimeoutMs
+        )
+        const scope = '[data-mcp-call-id="' + nativeCallId + '"]'
         if (tool === 'show_recovery') {
           await control.command('waitFor', scope + ' [data-testid="mcp-app-retry"]')
           await control.command('click', scope + ' [data-testid="mcp-app-retry"]')
@@ -360,7 +364,9 @@ export function createDesktopScenario({
       )
       assert.equal(await frameAction('value', '#draft'), 'restart draft')
       await frameAction('click', '#refresh')
-      await waitText('Counter 1')
+      // Process health precedes the cold MCP connection. Its first operation must
+      // complete within the same recovery budget as the executor restart.
+      await waitText('Counter 5', reconnectDeadline)
       assert.equal(await frameAction('attribute', 'body', 'data-integrity'), 'verified')
       frameUrl = await verifyMcpReplacementSession(
         control,
@@ -369,7 +375,7 @@ export function createDesktopScenario({
         uiTimeoutMs
       )
       await frameAction('click', '#refresh')
-      await waitText('Counter 2')
+      await waitText('Counter 6')
       const oldSessions = await frameAction('sessions', 'body')
       assert.ok(oldSessions.length > 0)
       const oldDocumentUrl = frameUrl
@@ -415,19 +421,9 @@ export function createDesktopScenario({
       )
       await control.command('fill', composer, { value: '' })
       await frameAction('click', '#refresh')
-      // Startup model synchronization may restart this process-local fixture.
-      const counterDeadline = Date.now() + uiTimeoutMs
-      let counterText
-      do {
-        counterText = await frameAction('text', '#status')
-        if (/^Counter \d+$/.test(counterText)) break
-        await new Promise(resolve => setTimeout(resolve, 100))
-      } while (Date.now() < counterDeadline)
-      assert.match(counterText, /^Counter \d+$/)
-      const firstCount = Number(counterText.slice('Counter '.length))
-      assert.ok(firstCount > 0)
+      await waitText('Counter 7')
       await frameAction('click', '#refresh')
-      await waitText(`Counter ${firstCount + 1}`)
+      await waitText('Counter 8')
       await control.command('click', '[data-testid="new-chat-button"]')
       await control.command('waitFor', composer)
       await control.command('waitFor', '[data-testid="mcp-app-frame"]', { visible: false })

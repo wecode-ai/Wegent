@@ -71,6 +71,7 @@ export interface SmartAppRuntimeVerifierDependencies {
     script: string
     baseUrl: string
     cookieHeader?: string
+    signal?: AbortSignal
   }) => Promise<{ issues: SmartAppVerificationIssue[] }>
   copyProject: (projectRoot: string, destination: string) => Promise<void>
 }
@@ -174,12 +175,13 @@ export async function verifySmartAppRuntime(
         const cookies = await dshBrowserAuthenticationCookies(session.defaultSession, baseUrl)
         cookieHeader = cookies.map(cookie => `${cookie.name}=${cookie.value}`).join('; ')
       }
-      return dependencies.runProbe({
+      return await dependencies.runProbe({
         projectRoot: isolatedProject,
         runtimeRoot: options.runtimeRoot,
         environment,
         script,
         baseUrl,
+        ...(options.signal ? { signal: options.signal } : {}),
         ...(cookieHeader ? { cookieHeader } : {}),
       })
     }

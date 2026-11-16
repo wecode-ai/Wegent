@@ -24,14 +24,14 @@ from typing import Any, Dict, List, Optional
 
 from app.core.cache import cache_manager
 from app.core.config import settings
+from app.services.chat.storage.response_cancel import (
+    CANCEL_FLAG_TTL,
+    CANCEL_KEY_PREFIX,
+    ResponseCancelCoordinator,
+)
 from shared.models.blocks import BlockStatus, create_text_block, create_tool_block
 
 logger = logging.getLogger(__name__)
-
-# Redis key prefix for cancellation flags
-CANCEL_KEY_PREFIX = "chat:cancel:"
-# Cancellation flag TTL in seconds (5 minutes should be enough for any chat)
-CANCEL_FLAG_TTL = 300
 
 # Redis key prefix for streaming content cache
 STREAMING_KEY_PREFIX = "chat:streaming:"
@@ -45,6 +45,12 @@ CONTEXT_METRICS_KEY_PREFIX = "chat:context_metrics:"
 CALLBACK_CHANNEL_PREFIX = "callback:channel:"
 # Unified TTL for all streaming-related data (1 hour)
 STREAMING_TTL = 3600
+# Compare raw JSON so Lua never rounds large subtask IDs through cjson numbers.
+TOUCH_TASK_STREAMING_ACTIVITY_SCRIPT = """
+if (redis.call('GET', KEYS[1]) or '') ~= ARGV[1] then return 0 end
+redis.call('SET', KEYS[1], ARGV[2], 'EX', ARGV[3])
+return 1
+"""
 # Internal field stored in Redis block metadata. It is stripped before returning
 # blocks to callers so API consumers still see the existing block shape.
 BLOCK_CONTENT_KEY_FIELD = "_content_key"
@@ -271,12 +277,28 @@ class SessionManager:
         """Generate Redis key for cancellation flag."""
         return f"{CANCEL_KEY_PREFIX}{subtask_id}"
 
+    @property
+    def response_cancel(self) -> ResponseCancelCoordinator:
+        return ResponseCancelCoordinator(self._cache)
+
+    async def finish_response_cancel(self, subtask_id: int, token: str | None) -> bool:
+        """Notify only after the caller commits its terminal database state."""
+        success = (
+            await self.response_cancel.finalize(subtask_id, token)
+            if token is not None
+            else False
+        )
+        local_event = self._local_events.get(subtask_id)
+        if local_event:
+            local_event.set()
+        return success
+
     async def register_stream(self, subtask_id: int) -> asyncio.Event:
         """
         Register a new streaming request and return its cancellation event.
 
         Creates a local asyncio.Event for in-process signaling and
-        clears any existing cancellation flag in Redis.
+        clears a previous cancellation flag unless its producer is committing.
 
         Args:
             subtask_id: The subtask ID for the stream
@@ -288,12 +310,7 @@ class SessionManager:
         cancel_event = asyncio.Event()
         self._local_events[subtask_id] = cancel_event
 
-        # Clear any existing cancellation flag in Redis (in case of retry)
-        cancel_key = self._get_cancel_key(subtask_id)
-        try:
-            await self._cache.delete(cancel_key)
-        except Exception as e:
-            logger.warning(f"Failed to clear cancel flag for subtask {subtask_id}: {e}")
+        await self.response_cancel.register(subtask_id)
 
         return cancel_event
 
@@ -341,14 +358,7 @@ class SessionManager:
         if subtask_id in self._local_events:
             del self._local_events[subtask_id]
 
-        # Clean up Redis cancellation flag
-        cancel_key = self._get_cancel_key(subtask_id)
-        try:
-            await self._cache.delete(cancel_key)
-        except Exception as e:
-            logger.warning(
-                f"Failed to delete cancel flag for subtask {subtask_id}: {e}"
-            )
+        await self.response_cancel.unregister(subtask_id)
 
     async def is_cancelled(self, subtask_id: int) -> bool:
         """
@@ -720,31 +730,45 @@ class SessionManager:
             )
             return False
 
-    async def touch_task_streaming_activity(self, task_id: int) -> bool:
-        """
-        Refresh task-level streaming last activity timestamp.
+    async def touch_task_streaming_activity(
+        self, task_id: int, subtask_id: int, *, started_at: datetime
+    ) -> bool:
+        """Refresh owned activity, restoring missing state at the observer's start.
 
-        Args:
-            task_id: Task ID
-
-        Returns:
-            bool: True if updated successfully, False otherwise
+        ``started_at`` is this emitter's observation start, not necessarily the
+        executor's original start (callbacks may construct an emitter per event).
+        A concurrent START must win over this activity update.
         """
         try:
             key = self._get_task_streaming_key(task_id)
-            status = await self._cache.get(key)
-            if not status:
-                return False
-
-            if not isinstance(status, dict):
-                logger.warning(
-                    "[SessionManager] Invalid task streaming status format for task_id=%s",
-                    task_id,
+            async with self._cache._client_context() as client:
+                snapshot = await client.get(key)
+                if snapshot is None:
+                    status = {
+                        "subtask_id": subtask_id,
+                        "user_id": 0,
+                        "username": "",
+                        "started_at": started_at.isoformat(),
+                    }
+                else:
+                    status = json.loads(snapshot)
+                    if (
+                        not isinstance(status, dict)
+                        or type(status.get("subtask_id")) is not int
+                        or status["subtask_id"] != subtask_id
+                    ):
+                        return False
+                status["last_activity_at"] = datetime.now(timezone.utc).isoformat()
+                return bool(
+                    await client.eval(
+                        TOUCH_TASK_STREAMING_ACTIVITY_SCRIPT,
+                        1,
+                        key,
+                        snapshot if snapshot is not None else "",
+                        json.dumps(status),
+                        STREAMING_TTL,
+                    )
                 )
-                return False
-
-            status["last_activity_at"] = datetime.now(timezone.utc).isoformat()
-            return await self._cache.set(key, status, expire=STREAMING_TTL)
         except Exception as e:
             logger.error(
                 f"Error touching task streaming activity for task {task_id}: {e}",

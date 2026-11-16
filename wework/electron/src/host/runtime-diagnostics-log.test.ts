@@ -42,3 +42,62 @@ test('persists executor transport diagnostics with the configured prefix', async
     await rm(directory, { recursive: true, force: true })
   }
 })
+
+test('persists interaction failure context and redacts credentials in exception details', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'wework-interaction-log-'))
+  try {
+    const path = join(directory, 'runtime-launch.log')
+    const log = new RuntimeDiagnosticsLog(path)
+    await log.record(
+      1,
+      '[Wework] Runtime task create diagnostic ' +
+        JSON.stringify({
+          stage: 'pending-interaction-load-failed',
+          operation: 'transcript',
+          deviceId: 'device-1',
+          taskId: 'task-1',
+          error: { message: 'HTTP 401 token=private-value', stack: 'Error: token=private-value' },
+        })
+    )
+    await log.flush()
+    const contents = await readFile(path, 'utf8')
+    expect(contents).toContain('"stage":"pending-interaction-load-failed"')
+    expect(contents).toContain('"operation":"transcript"')
+    expect(contents).toContain('"deviceId":"device-1"')
+    expect(contents).toContain('"taskId":"task-1"')
+    expect(contents).toContain('HTTP 401')
+    expect(contents).not.toContain('private-value')
+  } finally {
+    await rm(directory, { recursive: true, force: true })
+  }
+})
+
+test('persists local catalog lifecycle messages without unrelated renderer output', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'wework-local-catalog-log-'))
+  try {
+    const path = join(directory, 'local-workspace-catalog.log')
+    const prefix = '[Wework] Local workspace catalog '
+    const log = new RuntimeDiagnosticsLog(path, prefix)
+    for (const status of ['started', 'fulfilled', 'rejected']) {
+      const diagnostic = JSON.stringify({
+        source: 'local',
+        catalog: 'agents',
+        status,
+        elapsedMs: 1,
+      })
+      await log.record(3, prefix + (status === 'rejected' ? 'failed ' : '') + diagnostic)
+    }
+    await log.record(3, '[Wework] Local workspace unrelated console output')
+    await log.flush()
+
+    const contents = await readFile(path, 'utf8')
+    expect(contents).toContain('web_contents_id=3')
+    expect(contents).toContain('"catalog":"agents"')
+    for (const status of ['started', 'fulfilled', 'rejected']) {
+      expect(contents).toContain(`"status":"${status}"`)
+    }
+    expect(contents).not.toContain('unrelated console output')
+  } finally {
+    await rm(directory, { recursive: true, force: true })
+  }
+})

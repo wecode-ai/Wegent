@@ -1,4 +1,5 @@
 import { Clock3, Image as ImageIcon, Search, Wrench } from "lucide-react";
+import type { CollaborationTranslate } from "../../i18n";
 import type { ToolBlock } from "./types";
 import {
   getToolActivityFilePaths,
@@ -20,43 +21,33 @@ import {
 } from "./toolBlockKinds";
 import { basename, truncate } from "./toolBlockText";
 
-type GenericToolLabels = {
-  waitRunning: string;
-  waitDone: string;
-  waitError: string;
-  callRunning: (name: string) => string;
-  callDone: (name: string) => string;
-  callError: (name: string) => string;
-  fileCount: (count: number) => string;
-  fileFallback: string;
-  searchRunning: string;
-  searchDone: string;
-  searchError: string;
-  imageView: (filename: string) => string;
-  imageViewFallback: string;
-  imageGenerationRunning: string;
-  imageGenerationDone: string;
-  imageGenerationError: string;
-  javascriptRunning: string;
-  javascriptDone: string;
-  javascriptError: string;
-};
+function toolState(block: ToolBlock): "done" | "error" | "running" {
+  return block.status === "error"
+    ? "error"
+    : block.status === "done"
+      ? "done"
+      : "running";
+}
+
+function toolLabel(
+  translate: CollaborationTranslate,
+  key: string,
+  options?: Record<string, string | number>,
+): string {
+  return translate(`conversation.tool_activity.${key}`, undefined, options);
+}
 
 export function getBlockLabel(
   block: ToolBlock,
-  genericLabels: GenericToolLabels,
+  translate: CollaborationTranslate,
 ): { icon: React.ReactNode; label: string } {
   const name = block.toolName.toLowerCase();
-  const prefix = getToolStatusPrefix(block);
-
+  const state = toolState(block);
   if (isNodeReplToolName(name)) {
-    const label =
-      block.status === "error"
-        ? genericLabels.javascriptError
-        : block.status === "done"
-          ? genericLabels.javascriptDone
-          : genericLabels.javascriptRunning;
-    return { icon: <TerminalIcon />, label };
+    return {
+      icon: <TerminalIcon />,
+      label: toolLabel(translate, `javascript_${state}`),
+    };
   }
   if (isCommandToolName(name)) {
     const activityKind = getToolActivityKind(block);
@@ -66,50 +57,50 @@ export function getBlockLabel(
         paths.length === 1
           ? basename(paths[0])
           : paths.length > 1
-            ? genericLabels.fileCount(paths.length)
-            : genericLabels.fileFallback;
-      return { icon: <FileIcon />, label: `${prefix.read} ${target}` };
+            ? toolLabel(translate, "file_count", { count: paths.length })
+            : toolLabel(translate, "file_fallback");
+      return {
+        icon: <FileIcon />,
+        label: toolLabel(translate, `read_${state}`, { name: target }),
+      };
     }
     if (activityKind === "search") {
-      const action =
-        block.status === "error"
-          ? genericLabels.searchError
-          : block.status === "done"
-            ? genericLabels.searchDone
-            : genericLabels.searchRunning;
       return {
         icon: <Search className="h-4 w-4" strokeWidth={1.7} />,
-        label: action,
+        label: toolLabel(translate, `search_${state}`),
       };
     }
     const command = getInputField(block, "command", "cmd", "commandLine");
     const shortCmd = command
       ? truncate(unwrapShellCommand(command).split("\n")[0], 40)
       : block.toolName;
-    return { icon: <TerminalIcon />, label: `${prefix.running} ${shortCmd}` };
+    return {
+      icon: <TerminalIcon />,
+      label: toolLabel(translate, `command_${state}`, { name: shortCmd }),
+    };
   }
   if (isFileCreateToolName(name)) {
     return {
       icon: <FileIcon />,
-      label: getFileToolLabel(prefix.create, block, "新增"),
+      label: getFileToolLabel(block, "create", translate),
     };
   }
   if (isFileEditToolName(name)) {
     return {
       icon: <EditIcon />,
-      label: getFileToolLabel(prefix.edit, block, "编辑"),
+      label: getFileToolLabel(block, "edit", translate),
     };
   }
   if (isFileReadToolName(name)) {
     return {
       icon: <FileIcon />,
-      label: getFileToolLabel(prefix.read, block, "读取"),
+      label: getFileToolLabel(block, "read", translate),
     };
   }
   if (isWebSearchToolName(name)) {
     return {
       icon: <Search className="h-4 w-4" strokeWidth={1.7} />,
-      label: prefix.webSearch,
+      label: toolLabel(translate, `web_search_${state}`),
     };
   }
   if (isImageViewToolName(name)) {
@@ -117,58 +108,40 @@ export function getBlockLabel(
     return {
       icon: <FileIcon />,
       label: path
-        ? genericLabels.imageView(basename(path))
-        : genericLabels.imageViewFallback,
+        ? toolLabel(translate, "image_view", { filename: basename(path) })
+        : toolLabel(translate, "image_view_fallback"),
     };
   }
   if (isImageGenerationToolName(name)) {
-    const label =
-      block.status === "error"
-        ? genericLabels.imageGenerationError
-        : block.status === "done"
-          ? genericLabels.imageGenerationDone
-          : genericLabels.imageGenerationRunning;
     return {
       icon: <ImageIcon className="h-4 w-4" strokeWidth={1.7} />,
-      label,
+      label: toolLabel(translate, `image_generation_${state}`),
     };
   }
   if (isGuidanceToolName(name)) {
-    return { icon: <ToolIcon />, label: prefix.guidance };
+    return {
+      icon: <ToolIcon />,
+      label: toolLabel(translate, `guidance_${state}`),
+    };
   }
-
-  return getGenericToolLabel(block, genericLabels);
+  return getGenericToolLabel(block, translate);
 }
 
 function getGenericToolLabel(
   block: ToolBlock,
-  labels: GenericToolLabels,
+  translate: CollaborationTranslate,
 ): { icon: React.ReactNode; label: string } {
   const name = getReadableToolName(block.toolName);
-  const normalizedName = name.toLowerCase();
-
-  if (normalizedName.includes("wait")) {
-    const label =
-      block.status === "error"
-        ? labels.waitError
-        : block.status === "done"
-          ? labels.waitDone
-          : labels.waitRunning;
+  const state = toolState(block);
+  if (name.toLowerCase().includes("wait")) {
     return {
       icon: <Clock3 className="h-4 w-4" strokeWidth={1.7} />,
-      label,
+      label: toolLabel(translate, `wait_${state}`),
     };
   }
-
-  const label =
-    block.status === "error"
-      ? labels.callError(name)
-      : block.status === "done"
-        ? labels.callDone(name)
-        : labels.callRunning(name);
   return {
     icon: <Wrench className="h-4 w-4" strokeWidth={1.7} />,
-    label,
+    label: toolLabel(translate, `call_${state}`, { name }),
   };
 }
 
@@ -179,59 +152,19 @@ function getReadableToolName(toolName: string): string {
 }
 
 function getFileToolLabel(
-  prefix: string,
   block: ToolBlock,
-  action: string,
+  action: "create" | "edit" | "read",
+  translate: CollaborationTranslate,
 ): string {
-  const filePaths = getFileInputPaths(block);
-  if (filePaths.length === 1) return `${prefix} ${basename(filePaths[0])}`;
-  if (filePaths.length > 1) return `${prefix} ${filePaths.length} 个文件`;
-  return fileToolFallbackLabel(block.status, action);
-}
-
-function fileToolFallbackLabel(
-  status: ToolBlock["status"],
-  action: string,
-): string {
-  if (status === "error") return `${action}文件失败`;
-  if (status === "done") return `${action}文件`;
-  return `正在${action}文件`;
-}
-
-function getToolStatusPrefix(block: ToolBlock) {
-  if (block.status === "error") {
-    return {
-      running: "运行失败",
-      create: "新增失败",
-      edit: "编辑失败",
-      read: "读取失败",
-      webSearch: "搜索网页失败",
-      guidance: "引导对话失败",
-      generic: "执行失败",
-    };
-  }
-
-  if (block.status === "done") {
-    return {
-      running: "运行",
-      create: "新增",
-      edit: "编辑",
-      read: "读取",
-      webSearch: "搜索网页",
-      guidance: "引导对话",
-      generic: "执行",
-    };
-  }
-
-  return {
-    running: "正在运行",
-    create: "正在新增",
-    edit: "正在编辑",
-    read: "正在读取",
-    webSearch: "正在搜索网页",
-    guidance: "正在引导对话",
-    generic: "正在执行",
-  };
+  const paths = getFileInputPaths(block);
+  const state = toolState(block);
+  if (paths.length === 0)
+    return toolLabel(translate, `${action}_file_${state}`);
+  const name =
+    paths.length === 1
+      ? basename(paths[0])
+      : toolLabel(translate, "file_count", { count: paths.length });
+  return toolLabel(translate, `${action}_${state}`, { name });
 }
 
 function TerminalIcon() {

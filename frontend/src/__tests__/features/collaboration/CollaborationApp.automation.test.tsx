@@ -308,7 +308,9 @@ describe('CollaborationApp project collaboration groups', () => {
 
     expect(screen.getByTestId('automatic-processing-schedule-frequency')).toHaveValue('weekdays')
     expect(screen.getByTestId('automatic-processing-schedule-time')).toHaveValue('09:00')
-    expect(screen.getByTestId('automatic-processing-preview')).toHaveTextContent('工作日 09:00')
+    expect(screen.getByTestId('automatic-processing-preview')).toHaveTextContent('周一至周五 09:00')
+    expect(screen.getByTestId('automatic-processing-workday-only')).not.toBeChecked()
+    fireEvent.click(screen.getByTestId('automatic-processing-workday-only'))
 
     fireEvent.change(screen.getByTestId('automatic-processing-schedule-frequency'), {
       target: { value: 'weekly' },
@@ -330,6 +332,7 @@ describe('CollaborationApp project collaboration groups', () => {
         project.id,
         expect.objectContaining({
           cronExpression: '30 14 * * 3',
+          workdayOnly: true,
           timezone: 'Asia/Shanghai',
           triggerType: 'schedule',
         })

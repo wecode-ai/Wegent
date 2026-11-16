@@ -1,5 +1,5 @@
 import type { AppearanceConfig, WorkbenchBackgroundConfig } from './types'
-import { defaultThemeAppearance } from '@wegent/collaboration/theme'
+import { DEFAULT_UI_THEME_ID, defaultThemeAppearance } from '@wegent/collaboration/theme'
 export { DEFAULT_ACCENT_COLOR, lightPalette, darkPalette } from '@wegent/collaboration/theme'
 
 const defaultBackground: WorkbenchBackgroundConfig = {
@@ -13,6 +13,10 @@ const defaultBackground: WorkbenchBackgroundConfig = {
 
 export const defaultAppearance: AppearanceConfig = {
   ...defaultThemeAppearance,
+  schemaVersion: 2,
+  lightThemeId: DEFAULT_UI_THEME_ID,
+  darkThemeId: DEFAULT_UI_THEME_ID,
+  themeOverrides: { light: {}, dark: {} },
   mode: 'system',
   sidebarTranslucent: true,
   backgroundImagePath: null,

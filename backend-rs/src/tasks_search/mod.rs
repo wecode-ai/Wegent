@@ -35,7 +35,7 @@ use crate::tasks_db_projection::{
     validate_page_limit,
 };
 
-pub mod statements;
+pub use wegent_task_store::owned_statements as statements;
 
 #[cfg(test)]
 #[path = "mysql_tests.rs"]

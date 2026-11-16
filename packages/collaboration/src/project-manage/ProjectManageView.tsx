@@ -16,9 +16,9 @@ import { ProjectProviderSection, ProjectTagsSection } from './ProjectManageSecti
 import { ProjectMembersSection } from './ProjectMembersSection'
 import { useProjectMembers } from './useProjectMembers'
 import {
-  createProjectVersionMutationQueue,
-  type ProjectVersionMutationQueue,
-} from './projectMutationQueue'
+  createVersionMutationQueue,
+  type VersionMutationQueue,
+} from '../versionMutationQueue'
 import { repositoryAddress, repositoryProviderConfig } from './provider'
 import { collectProjectTags, updateBoardViewTag } from '../project-board/projectTags'
 import { hasTooManyTags, isTagNameTooLong } from '../tagging'
@@ -164,16 +164,16 @@ export function ProjectManageView<
   const synchronizedProjectVersionRef = useRef(project.version)
   const [savedProjectScope, setSavedProjectScope] = useState<{
     projectId: string
-    mutationQueue: ProjectVersionMutationQueue<Project>
+    mutationQueue: VersionMutationQueue<Project>
   }>(() => ({
     projectId: project.id,
-    mutationQueue: createProjectVersionMutationQueue(project.version),
+    mutationQueue: createVersionMutationQueue(project.version),
   }))
   let projectScope = savedProjectScope
   if (savedProjectScope.projectId !== project.id) {
     projectScope = {
       projectId: project.id,
-      mutationQueue: createProjectVersionMutationQueue(project.version),
+      mutationQueue: createVersionMutationQueue(project.version),
     }
     setSavedProjectScope(projectScope)
   }

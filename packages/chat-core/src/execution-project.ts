@@ -32,9 +32,12 @@ export interface ProjectConfig {
 export interface DeviceInfo {
   id: number
   device_id: string
+  execution_target_id?: string | null
   name: string
   status: 'online' | 'offline' | 'busy'
   is_default: boolean
+  last_seen_at?: string | null
+  workspace_ids?: string[]
   device_type?: 'local' | 'app' | 'cloud' | 'remote' | string
   capabilities?: string[] | null
   slot_used?: number
@@ -123,6 +126,7 @@ export interface RuntimeProjectEditingCapability {
 
 export interface RuntimeFeatureSet {
   schemaVersion: number
+  remoteTaskAccess?: { version: number; enabled: boolean; taskCreation?: boolean } | null
   interactiveSessions?: RuntimeInteractiveSessionCapability | null
   worktrees?: RuntimeWorktreeCapability | null
   projectEditing?: RuntimeProjectEditingCapability | null

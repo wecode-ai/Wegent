@@ -6,17 +6,18 @@ import type { SharedWorkspaceApi } from '../ports/SharedWorkspaceApi'
 import type { CollaborationGroup, CollaborationProject } from '../types'
 import type { CollaborationLocale } from '../i18n'
 import { useCollaborationTemplateStore } from './context'
-import { exportTemplate, templateFromProject } from './document'
-import { templateMessages } from './messages'
+import { downloadTemplate, templateFromProject } from './document'
+import { templateFailureMessage, templateMessages } from './messages'
 import { TemplateDialog } from './TemplateDialog'
 import { CollaborationTemplatePage } from './CollaborationTemplatePage'
-import { TemplateBindingsDialog, type TemplateParticipant } from './TemplateBindings'
+import { ProjectTemplateApplyDialog } from './ProjectTemplateApplyDialog'
 import { TemplateSaveDialog } from './TemplateSaveDialog'
 import type { CollaborationTemplate } from './types'
-import { applyProjectTemplate } from './projectConfiguration'
+import { readTemplateAgents } from './agents'
 
 export function ProjectTemplateSettings({
   api,
+  agentConfiguration,
   project,
   locale,
   currentUserId,
@@ -24,6 +25,7 @@ export function ProjectTemplateSettings({
   onChange,
 }: {
   api: SharedWorkspaceApi
+  agentConfiguration?: import('../project-agent-config/types').ProjectAgentConfigurationHost
   project: CollaborationProject
   locale: CollaborationLocale
   currentUserId?: number
@@ -37,7 +39,6 @@ export function ProjectTemplateSettings({
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [choosing, setChoosing] = useState(false)
-  const [candidates, setCandidates] = useState<TemplateParticipant[]>([])
   const [selected, setSelected] = useState<CollaborationTemplate | null>(null)
   const [saving, setSaving] = useState<CollaborationTemplate | null>(null)
   const scope = useRef(0)
@@ -73,8 +74,18 @@ export function ProjectTemplateSettings({
     }
   }, [reload])
   if (!store) return null
-  const snapshot = () =>
-    templateFromProject(configurationProject, groups, `template-${crypto.randomUUID()}`, locale)
+  const snapshot = async () =>
+    templateFromProject(
+      configurationProject,
+      groups,
+      `template-${crypto.randomUUID()}`,
+      locale,
+      await readTemplateAgents(
+        await api.agents.list(project.id, { forceRefresh: true }),
+        groups,
+        agentConfiguration?.readTemplateAgent
+      )
+    )
   return (
     <section className="collaboration-template-settings" data-testid="project-template-settings">
       <h2>{m.configuration}</h2>
@@ -96,38 +107,7 @@ export function ProjectTemplateSettings({
             className="collaboration-template-choice"
             data-testid="project-template-import"
             disabled={loading || !!error}
-            onClick={async () => {
-              const generation = scope.current
-              setLoading(true)
-              try {
-                const [members, agents] = await Promise.all([
-                  api.members.list(project.id),
-                  api.agents.list(project.id),
-                ])
-                if (scope.current !== generation) return
-                setCandidates([
-                  ...members.map(member => ({
-                    kind: 'human' as const,
-                    id: String(member.user_id),
-                    name: member.user_name,
-                    label: member.user_name,
-                    responsibility: '',
-                  })),
-                  ...agents.map(agent => ({
-                    kind: 'agent' as const,
-                    id: String(agent.team_id ?? agent.id),
-                    name: agent.name,
-                    label: agent.name,
-                    responsibility: '',
-                  })),
-                ])
-                setChoosing(true)
-              } catch {
-                if (scope.current === generation) setError(m.failed)
-              } finally {
-                if (scope.current === generation) setLoading(false)
-              }
-            }}
+            onClick={() => setChoosing(true)}
           >
             {m.importProject}
           </button>
@@ -141,7 +121,17 @@ export function ProjectTemplateSettings({
           className="collaboration-template-choice"
           data-testid="project-template-save"
           disabled={loading || !!error}
-          onClick={() => setSaving(snapshot())}
+          onClick={async () => {
+            setLoading(true)
+            setError(null)
+            try {
+              setSaving(await snapshot())
+            } catch (error) {
+              setError(templateFailureMessage(error, locale))
+            } finally {
+              setLoading(false)
+            }
+          }}
         >
           {m.saveTitle}
         </button>
@@ -154,17 +144,16 @@ export function ProjectTemplateSettings({
           className="collaboration-template-choice"
           data-testid="project-template-export"
           disabled={loading || !!error}
-          onClick={() => {
-            const url = URL.createObjectURL(
-              new Blob([exportTemplate(snapshot())], {
-                type: 'application/yaml;charset=utf-8',
-              })
-            )
-            const link = document.createElement('a')
-            link.href = url
-            link.download = 'collaboration-template.yaml'
-            link.click()
-            window.setTimeout(() => URL.revokeObjectURL(url), 1000)
+          onClick={async () => {
+            setLoading(true)
+            setError(null)
+            try {
+              downloadTemplate(await snapshot(), 'collaboration-template.yaml')
+            } catch (error) {
+              setError(templateFailureMessage(error, locale))
+            } finally {
+              setLoading(false)
+            }
           }}
         >
           {m.export}
@@ -187,20 +176,21 @@ export function ProjectTemplateSettings({
         </TemplateDialog>
       )}
       {selected && (
-        <TemplateBindingsDialog
+        <ProjectTemplateApplyDialog
+          api={api}
+          agentConfiguration={agentConfiguration}
+          projectId={project.id}
           document={selected}
           locale={locale}
-          candidates={candidates}
           currentUserId={currentUserId}
-          existingNames={groups.map(group => group.name)}
           onClose={() => {
             setSelected(null)
             void reload()
           }}
-          onApply={async (drafts, document) => {
-            await applyProjectTemplate(api, project.id, document, drafts, locale, m.partial)
-            const latest = await reload()
-            if (latest) onChange?.(latest)
+          onApplied={latest => {
+            setSelected(null)
+            void reload()
+            onChange?.(latest)
           }}
         />
       )}

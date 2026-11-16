@@ -4,6 +4,7 @@ import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { requestExecutor } from './executor-rpc.mjs'
 import { DEFAULT_MODEL_ID } from './shared.mjs'
+import { waitForTemporaryChatLog } from './temporary-chat-log.mjs'
 
 export const LEGACY_PROMPT = 'WEWORK_LEGACY_TEMPORARY_CHAT_NATIVE_EPHEMERAL'
 export const LEGACY_COMPLETION = 'Legacy temporary chat fixture completed.'
@@ -41,25 +42,37 @@ export async function createLegacyTemporaryChat(
     ephemeral: true,
     new_session: true,
   }
+  const generationTimeoutMs = Math.max(uiTimeoutMs, 30_000)
+  const deadline = performance.now() + generationTimeoutMs
   const generated = await requestExecutor(
     control,
     'runtime.text.generate',
-    { executionRequest },
-    Math.max(uiTimeoutMs, 30_000)
+    {
+      executionRequest,
+    },
+    generationTimeoutMs
   )
   assert.equal(generated.content, LEGACY_COMPLETION)
-  const log = await readFile(executorLogPath, 'utf8')
-  const created = taskLines(log.slice(before), 'codex shared thread request finished', taskId)
-  assert.equal(created.length, 1, 'Legacy setup must create exactly one real native thread')
-  assert.ok(created[0].includes(' operation=thread/start '))
-  const threadId = / thread_id=(\S+)/.exec(created[0])?.[1]
-  assert.ok(threadId, 'The real ephemeral generation did not report a native thread ID')
-  assert.equal(
-    taskLines(log.slice(before), 'codex shared turn request finished', taskId).filter(
-      line => line.includes(` thread_id=${threadId} `) && line.includes(' outcome=completed')
-    ).length,
-    1,
-    'Legacy setup must complete its real Codex turn'
+  // The IPC result can arrive before the supervisor's asynchronous log append.
+  const { threadId, logLength } = await waitForTemporaryChatLog(
+    executorLogPath,
+    deadline - performance.now(),
+    'the completed native Codex turn for the legacy fixture',
+    log => {
+      const recent = log.slice(before)
+      const created = taskLines(recent, 'codex shared thread request finished', taskId)
+      if (!created.length) return null
+      assert.equal(created.length, 1, 'Legacy setup must create exactly one real native thread')
+      assert.ok(created[0].includes(' operation=thread/start '))
+      const threadId = / thread_id=(\S+)/.exec(created[0])?.[1]
+      assert.ok(threadId, 'The real ephemeral generation did not report a native thread ID')
+      const completed = taskLines(recent, 'codex shared turn request finished', taskId).filter(
+        line => line.includes(` thread_id=${threadId} `) && line.includes(' outcome=completed')
+      )
+      if (!completed.length) return null
+      assert.equal(completed.length, 1, 'Legacy setup must complete exactly one real Codex turn')
+      return { threadId }
+    }
   )
   const lookup = await requestExecutor(control, 'runtime.tasks.get', { taskId }, uiTimeoutMs)
   assert.equal(lookup.success, false, 'Auxiliary generation unexpectedly created a formal task')
@@ -67,7 +80,7 @@ export async function createLegacyTemporaryChat(
     taskId,
     threadId,
     executionRequest,
-    executorLogOffset: log.length,
+    executorLogOffset: logLength,
     sourceWorkspacePath: workspacePath,
     createdAt: new Date().toISOString(),
   }

@@ -1,14 +1,9 @@
 import type { CollaborationProject } from '@wegent/collaboration'
-import { ArrowUpRight, Bot, ChevronDown } from 'lucide-react'
-import {
-  roleIncludesProject,
-  standInRoleName,
-  type StandInRole,
-  type PersonalStandInAgent,
-} from '@/api/personalStandIn'
-import type { StandInProjectAgentChoice } from './useStandInProjectAgents'
+import { ArrowUpRight, ChevronDown } from 'lucide-react'
+import { roleIncludesProject, standInRoleName, type StandInRole } from '@/api/personalStandIn'
 import { useTranslation } from '@/hooks/useTranslation'
 
+/** Select a reusable stand-in for a project and summarize its instructions and intake state. */
 export function StandInProjectSetup({
   project,
   roles,
@@ -17,8 +12,6 @@ export function StandInProjectSetup({
   creating,
   onChoose,
   role,
-  agents,
-  projectAgents,
   onOpenSettings,
 }: {
   project: CollaborationProject
@@ -28,8 +21,6 @@ export function StandInProjectSetup({
   creating: boolean
   onChoose(value: string): void
   role: StandInRole
-  agents: PersonalStandInAgent[]
-  projectAgents: StandInProjectAgentChoice[]
   onOpenSettings?(): void
 }) {
   const { t } = useTranslation('common')
@@ -56,19 +47,11 @@ export function StandInProjectSetup({
             <option value="" disabled>
               {t('standIn.personal.choose_stand_in')}
             </option>
-            {roles
-              .filter(
-                row =>
-                  !row.agentProject ||
-                  (row.agentProject.id === project.id &&
-                    row.agentProject.store ===
-                      (project.project_store === 'local' ? 'local' : 'cloud'))
-              )
-              .map(row => (
-                <option key={row.id} value={row.id}>
-                  {standInRoleName(row, roles.indexOf(row), t('standIn.personal.default_role'))}
-                </option>
-              ))}
+            {roles.map(row => (
+              <option key={row.id} value={row.id}>
+                {standInRoleName(row, roles.indexOf(row), t('standIn.personal.default_role'))}
+              </option>
+            ))}
             <option value="__new">{t('standIn.personal.new_project_stand_in')}</option>
           </select>
           <ChevronDown
@@ -81,19 +64,6 @@ export function StandInProjectSetup({
         <>
           <div className="py-1" data-testid="stand-in-project-summary">
             <dl className="grid grid-cols-[5rem_minmax(0,1fr)] gap-x-3 gap-y-2 text-sm">
-              <dt className="text-text-muted">{t('standIn.agent_label')}</dt>
-              <dd className="flex items-center gap-2">
-                <Bot className="h-4 w-4 shrink-0" />
-                {role.agentResourceId
-                  ? (agents.find(agent => agent.id === role.agentResourceId)?.name ??
-                    t('standIn.agent_unavailable'))
-                  : role.agentId
-                    ? (projectAgents.find(
-                        choice =>
-                          choice.id === role.agentId && choice.project.id === role.agentProject?.id
-                      )?.name ?? t('standIn.personal.project_agent'))
-                    : t('standIn.default_agent')}
-              </dd>
               {role.prompt && (
                 <>
                   <dt className="text-text-muted">{t('standIn.personal.requirements_summary')}</dt>

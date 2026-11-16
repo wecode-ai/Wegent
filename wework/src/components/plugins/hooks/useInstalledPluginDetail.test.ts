@@ -1,6 +1,6 @@
+import { emptyPluginComponents } from '@/features/plugins/slimPluginComponents'
 import { act, renderHook, waitFor } from '@testing-library/react'
 import { expect, test, vi } from 'vitest'
-import { emptyPluginComponents } from '@/features/plugins/slimPluginComponents'
 import type { InstalledPluginItem } from '../PluginManagementRows'
 import { useInstalledPluginDetail } from './useInstalledPluginDetail'
 

@@ -142,6 +142,21 @@ export function createDesktopScenario(options) {
       assert.doesNotMatch(await control.command('getText', panel), /无交付说明|交付会话/)
       await control.command('click', scoped('[data-testid="todo-detail-delivery-close"]'))
       await control.command('waitFor', panel, { visible: false })
+      // Visibility can end before the exit animation commits the route close.
+      await control.command(
+        'waitFor',
+        `${CONTENT}:not(:has([data-testid="collaboration-issue-detail"]))`
+      )
+      assert.equal(
+        Number(
+          await control.command(
+            'getElementCount',
+            scoped('[data-testid="collaboration-issue-detail"]')
+          )
+        ),
+        0,
+        'The Issue drawer must unmount before reopening the same Issue'
+      )
       await control.command('click', card)
       await control.command('waitFor', row(chatOnly.id), { text: '2 条消息' })
       await control.command('click', row(chatOnly.id))

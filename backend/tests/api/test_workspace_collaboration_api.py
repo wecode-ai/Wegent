@@ -25,9 +25,15 @@ from app.models.resource_member import ResourceMember
 from app.models.user import User
 from app.models.wework_notification import WeworkNotification
 from app.services.cloud_projects.service import cloud_project_service
+from app.services.collaboration_human_assignments import (
+    collaboration_human_assignment_status,
+)
+from app.services.issue_assignments import issue_assignment_service
 from app.services.workspaces.execution_environments import (
     WorkspaceExecutionEnvironmentService,
 )
+from app.services.workspaces.responses import list_workspace_responses
+from tests.service_results import service_result
 from tests.utils.collaboration import authorize_project_agent
 
 
@@ -605,10 +611,18 @@ def test_workspace_collaboration_group_supports_human_or_agent_leader(
     assert any(
         entry["id"] == project_group["id"] for entry in task_groups.json()["items"]
     )
-    round_statuses = test_client.post(
-        f"/api/v1/cloud-projects/{project['id']}/executions/statuses",
-        headers=_auth(task_token),
-        json={"loop_item_id": "ISSUE-1", "human_assignment_ids": ["human-pending"]},
+    round_statuses = service_result(
+        lambda: {
+            "items": [
+                collaboration_human_assignment_status(
+                    test_db,
+                    project_id=int(project["id"]),
+                    issue_id="ISSUE-1",
+                    human_assignment_id=identity,
+                )
+                for identity in ["human-pending"]
+            ]
+        }
     )
     assert round_statuses.status_code == 200
     assert round_statuses.json()["items"][0]["status"] == "queued"
@@ -983,9 +997,18 @@ def test_issue_actions_are_authorized_independently(
     assert assignment["workflow_step"] == "开发"
     assert assignment["comment_id"] is not None
 
-    listed = test_client.get(
-        f"/api/v1/loop-items/{issue['id']}/assignments",
-        headers=_auth(reporter_token),
+    listed = service_result(
+        lambda: {
+            "items": [
+                issue_assignment_service.response_values(test_db, row)
+                for row in issue_assignment_service.list(
+                    test_db,
+                    project_id=int(project["id"]),
+                    issue_id=issue["id"],
+                    user_id=reporter.id,
+                )
+            ]
+        }
     )
     assert listed.status_code == 200
     assert {row["target_id"] for row in listed.json()["items"]} >= {
@@ -998,9 +1021,18 @@ def test_issue_actions_are_authorized_independently(
         headers=_auth(maintainer_token),
     )
     assert removed.status_code == 204
-    remaining = test_client.get(
-        f"/api/v1/loop-items/{issue['id']}/assignments",
-        headers=_auth(reporter_token),
+    remaining = service_result(
+        lambda: {
+            "items": [
+                issue_assignment_service.response_values(test_db, row)
+                for row in issue_assignment_service.list(
+                    test_db,
+                    project_id=int(project["id"]),
+                    issue_id=issue["id"],
+                    user_id=reporter.id,
+                )
+            ]
+        }
     ).json()["items"]
     assert str(reporter.id) not in {row["target_id"] for row in remaining}
     assert str(test_user.id) in {row["target_id"] for row in remaining}
@@ -1073,9 +1105,8 @@ def test_project_member_can_read_minimal_parent_workspace_navigation_context(
     }
     listed_workspace_ids = {
         item["id"]
-        for item in test_client.get(
-            "/api/v1/workspaces",
-            headers=_auth(target_token),
+        for item in service_result(
+            lambda: {"items": list_workspace_responses(test_db, target.id)}
         ).json()["items"]
     }
     assert workspace["id"] not in listed_workspace_ids
@@ -1685,14 +1716,3 @@ def test_agent_assignment_rejects_agent_from_another_project(
         .count()
         == 0
     )
-
-
-@pytest.fixture
-def test_client(test_client):
-    """Exercise retained Python HTTP components in an isolated application."""
-    from tests.retained_python_handlers import component_client
-
-    with component_client(
-        test_client, ("workspaces", "groups", "issue_assignments", "execution_statuses")
-    ) as client:
-        yield client

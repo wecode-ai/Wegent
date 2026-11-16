@@ -17,7 +17,9 @@ use std::sync::OnceLock;
 use std::time::Duration;
 
 use async_trait::async_trait;
+use brz_http_server::StatusCode;
 use brz_json::adapters::python_truthy;
+use brz_mysql::{FromMysqlRow, MysqlTransaction};
 use chrono::Utc;
 use serde_json::Value;
 
@@ -26,6 +28,9 @@ use crate::mcp_oauth_credentials::{
     clear_service_oauth_credentials, provider_oauth_client, save_service_oauth_credentials,
     service_oauth_credentials,
 };
+use crate::mcp_user_service::{decrypt_with_env, service_config_with};
+use crate::teams::teams_repository::USER_COLUMNS;
+use crate::transaction_outcome::{self, Completion};
 
 /// `REFRESH_SKEW_SECONDS`: a token this close to expiry is refreshed early.
 const REFRESH_SKEW_SECONDS: i64 = 1800;
@@ -37,6 +42,22 @@ const INVALID_GRANT_ERROR: &str = "invalid_grant";
 /// `user.preferences`: the changed column plus `onupdate=func.now()`.
 const USER_PREFERENCES_UPDATE_SQL: &str =
     "UPDATE users SET preferences=?, updated_at=now() WHERE users.id = ?";
+
+/// `UserMCPService.locked_user(user_id)`'s owner read
+/// (`app/services/user_mcp_service.py:83-95`):
+/// `db.query(User).filter(User.id == user_id).with_for_update()
+/// .populate_existing().one_or_none()` — the labeled ORM projection with the
+/// row lock and no `LIMIT`.
+fn locked_user_statement() -> String {
+    format!("SELECT {USER_COLUMNS} \nFROM users \nWHERE users.id = ? FOR UPDATE")
+}
+
+/// The locked row's re-read configuration payload.
+#[derive(FromMysqlRow)]
+struct LockedUserRow {
+    #[mysql(rename = "users_preferences")]
+    preferences: String,
+}
 
 /// The request builder's OAuth access-token lookup.
 ///
@@ -70,132 +91,184 @@ pub(crate) fn token_service(
 
 #[async_trait]
 impl UserMcpAccessTokens for McpOAuthTokenService<'_> {
+    /// `ensure_access_token_sync` -> `_ensure_access_token`
+    /// (`app/services/user_mcp_oauth.py:408-449`): hold the owner row lock from
+    /// the re-read through any refresh and persistence, and commit this
+    /// transaction even when the stored token is already usable.
     async fn ensure_access_token(
         &self,
         preferences: &str,
         provider_id: &str,
         service_id: &str,
     ) -> Result<String, FastApiError> {
-        if let Some(token) = usable_token(preferences, provider_id, service_id)? {
-            return Ok(token);
-        }
-        let Some(target) = refresh_target(preferences, provider_id, service_id)? else {
-            return Ok(String::new());
-        };
-        let Some(client) = refresh_client() else {
-            return Ok(String::new());
-        };
-        let Ok(request) = client.post(target.token_endpoint.as_str()) else {
-            tracing::warn!(
-                provider_id,
-                service_id,
-                "MCP OAuth token endpoint is not a valid URL"
-            );
-            return Ok(String::new());
-        };
-        let response = match request
-            .form(&[
-                ("grant_type", "refresh_token"),
-                ("client_id", target.client_id.as_str()),
-                ("refresh_token", target.refresh_token.as_str()),
-            ])
-            .send()
-            .await
-        {
-            Ok(response) => response,
-            Err(error) => {
-                tracing::warn!(
-                    provider_id,
-                    service_id,
-                    %error,
-                    "MCP OAuth token refresh failed"
-                );
-                return Ok(String::new());
-            }
-        };
-        let status = response.status();
-        if !status.is_success() {
-            let error = oauth_error_code(response).await;
-            tracing::warn!(
-                provider_id,
-                service_id,
-                %status,
-                error = %error,
-                "MCP OAuth token refresh failed"
-            );
-            // `_note_refresh_failure`: drop only the grants the provider
-            // rejected, so the service must be authorized again.
-            if error == INVALID_GRANT_ERROR {
-                let document =
-                    clear_service_oauth_credentials(preferences, provider_id, service_id)?;
-                self.persist(&document).await?;
-            }
-            return Ok(String::new());
-        }
-        let payload: Value = match response.json().await {
-            Ok(payload) => payload,
-            Err(error) => {
-                tracing::warn!(
-                    provider_id,
-                    service_id,
-                    %error,
-                    "MCP OAuth token refresh returned no JSON payload"
-                );
-                return Ok(String::new());
-            }
-        };
-        if !token_payload_usable(&payload) {
-            tracing::warn!(
-                provider_id,
-                service_id,
-                "MCP OAuth token refresh returned no access token"
-            );
-            return Ok(String::new());
-        }
-        let access_token = string_value(payload.get("access_token"));
-        let refresh_token = {
-            let value = string_value(payload.get("refresh_token"));
-            if value.is_empty() {
-                target.refresh_token
-            } else {
-                value
-            }
-        };
-        let scope = string_value(payload.get("scope"));
-        let document = save_service_oauth_credentials(
-            preferences,
-            provider_id,
-            service_id,
-            &access_token,
-            &refresh_token,
-            expires_at(&payload),
-            &scope,
-        )?;
-        self.persist(&document).await?;
-        Ok(access_token)
+        // `ensure_access_token_sync` reads the caller's snapshot only for the
+        // URL the locked re-read must still match.
+        let expected_url =
+            service_config_with(preferences, provider_id, service_id, decrypt_with_env)?.url;
+        let user_id = self.user_id;
+        transaction_outcome::run(
+            self.mysql,
+            async |transaction| {
+                // `locked_user(user_id)`: the fresh transaction's locked
+                // owner read (`SessionLocal.begin()` + `with_for_update`).
+                let row: Option<LockedUserRow> = transaction
+                    .fetch_optional(locked_user_statement(), (user_id,))
+                    .await
+                    .map_err(|error| {
+                        tracing::warn!(%error, user_id, "MCP owner lock read failed");
+                        FastApiError::unhandled()
+                    })?;
+                let Some(row) = row else {
+                    return Err(FastApiError::detail(
+                        StatusCode::NOT_FOUND,
+                        "User not found",
+                    ));
+                };
+                // The configuration is re-read from the locked row, not the
+                // caller's snapshot; a concurrent change requires a retry.
+                let current = row.preferences;
+                let config =
+                    service_config_with(&current, provider_id, service_id, decrypt_with_env)?;
+                if !config.enabled || config.auth_mode != "oauth" || config.url != expected_url {
+                    return Err(FastApiError::detail(
+                        StatusCode::CONFLICT,
+                        "MCP configuration changed; please retry",
+                    ));
+                }
+                if let Some(token) = usable_token(&current, provider_id, service_id)? {
+                    return Ok(Completion::Commit(token));
+                }
+                let token =
+                    refresh_locked(transaction, user_id, &current, provider_id, service_id).await?;
+                Ok(Completion::Commit(token))
+            },
+            FastApiError::unhandled,
+        )
+        .await
     }
 }
 
-impl McpOAuthTokenService<'_> {
-    /// `db.merge(user); persistent.preferences = preferences; db.commit()`:
-    /// the rewritten document replaces `users.preferences`.
-    async fn persist(&self, document: &str) -> Result<(), FastApiError> {
-        self.mysql
-            .execute(USER_PREFERENCES_UPDATE_SQL, (document, self.user_id))
-            .await
-            .map_err(|error| {
-                tracing::warn!(%error, user_id = self.user_id, "failed to store MCP OAuth credentials");
-                FastApiError::unhandled()
-            })?;
-        self.mysql
-            .execute("COMMIT", ())
-            .await
-            .map(|_| ())
-            .map_err(|error| {
-                tracing::warn!(%error, user_id = self.user_id, "failed to commit MCP OAuth credentials");
-                FastApiError::unhandled()
-            })
+/// `_refresh_locked_user` (`user_mcp_oauth.py:430-449`): the refresh request
+/// and its persistence stay inside the transaction that holds the owner row
+/// lock.
+async fn refresh_locked<T: MysqlTransaction>(
+    transaction: &mut T,
+    user_id: i64,
+    preferences: &str,
+    provider_id: &str,
+    service_id: &str,
+) -> Result<String, FastApiError> {
+    let Some(target) = refresh_target(preferences, provider_id, service_id)? else {
+        return Ok(String::new());
+    };
+    let Some(client) = refresh_client() else {
+        return Ok(String::new());
+    };
+    let Ok(request) = client.post(target.token_endpoint.as_str()) else {
+        tracing::warn!(
+            provider_id,
+            service_id,
+            "MCP OAuth token endpoint is not a valid URL"
+        );
+        return Ok(String::new());
+    };
+    let response = match request
+        .form(&[
+            ("grant_type", "refresh_token"),
+            ("client_id", target.client_id.as_str()),
+            ("refresh_token", target.refresh_token.as_str()),
+        ])
+        .send()
+        .await
+    {
+        Ok(response) => response,
+        Err(error) => {
+            tracing::warn!(
+                provider_id,
+                service_id,
+                %error,
+                "MCP OAuth token refresh failed"
+            );
+            return Ok(String::new());
+        }
+    };
+    let status = response.status();
+    if !status.is_success() {
+        let error = oauth_error_code(response).await;
+        tracing::warn!(
+            provider_id,
+            service_id,
+            %status,
+            error = %error,
+            "MCP OAuth token refresh failed"
+        );
+        // `_note_refresh_failure`: drop only the grants the provider rejected,
+        // so the service must be authorized again.
+        if error == INVALID_GRANT_ERROR {
+            let document = clear_service_oauth_credentials(preferences, provider_id, service_id)?;
+            save_locked(transaction, user_id, &document).await?;
+        }
+        return Ok(String::new());
     }
+    let payload: Value = match response.json().await {
+        Ok(payload) => payload,
+        Err(error) => {
+            tracing::warn!(
+                provider_id,
+                service_id,
+                %error,
+                "MCP OAuth token refresh returned no JSON payload"
+            );
+            return Ok(String::new());
+        }
+    };
+    if !token_payload_usable(&payload) {
+        tracing::warn!(
+            provider_id,
+            service_id,
+            "MCP OAuth token refresh returned no access token"
+        );
+        return Ok(String::new());
+    }
+    let access_token = string_value(payload.get("access_token"));
+    let refresh_token = {
+        let value = string_value(payload.get("refresh_token"));
+        if value.is_empty() {
+            target.refresh_token
+        } else {
+            value
+        }
+    };
+    let scope = string_value(payload.get("scope"));
+    let document = save_service_oauth_credentials(
+        preferences,
+        provider_id,
+        service_id,
+        &access_token,
+        &refresh_token,
+        expires_at(&payload),
+        &scope,
+    )?;
+    save_locked(transaction, user_id, &document).await?;
+    Ok(access_token)
+}
+
+/// `db.merge(user)` inside the lock transaction: the rewritten document
+/// replaces `users.preferences`. The transaction owns the commit, exactly like
+/// `locked_user`'s `SessionLocal.begin()` context manager.
+async fn save_locked<T: MysqlTransaction>(
+    transaction: &mut T,
+    user_id: i64,
+    document: &str,
+) -> Result<(), FastApiError> {
+    transaction
+        .execute(USER_PREFERENCES_UPDATE_SQL, (document, user_id))
+        .await
+        .map(|_| ())
+        .map_err(|error| {
+            tracing::warn!(%error, user_id, "failed to store MCP OAuth credentials");
+            FastApiError::unhandled()
+        })
 }
 
 /// `is_secure_mcp_url`: only `https` (with a hostname) or `http` to a loopback

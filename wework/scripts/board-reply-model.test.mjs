@@ -1,3 +1,5 @@
+// @vitest-environment node
+
 import assert from 'node:assert/strict'
 import { Readable } from 'node:stream'
 import { setImmediate } from 'node:timers/promises'

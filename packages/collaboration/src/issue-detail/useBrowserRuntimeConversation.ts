@@ -157,7 +157,8 @@ export function useBrowserRuntimeConversation(
       messages: state.messages,
       loading: state.loading,
       isWaitingForAssistant:
-        state.running && (state.messages.at(-1)?.role === 'user' || !state.messages.length),
+        actions.isRetryPending ||
+        (state.running && (state.messages.at(-1)?.role === 'user' || !state.messages.length)),
       hasMoreBefore: state.hasMoreBefore,
       loadingMoreBefore: state.loadingMoreBefore,
       turnNavigation: state.turnNavigation,

@@ -43,7 +43,7 @@ export function createFileCitationChecks({ workspacePath, uiTimeoutMs }) {
       await control.command('waitFor', '[data-testid="workspace-file-path"]', {
         text: purpose === 'source' ? source : output,
       })
-      await control.command('waitFor', '[data-testid="workspace-file-editor"] .cm-content', {
+      await control.command('waitFor', '[data-testid="workspace-file-editor-content"]', {
         text: CONTENT,
       })
       assert.equal(

@@ -24,11 +24,24 @@ export interface RendererStorageCleanup {
 export class RendererStorageStore {
   private operation = Promise.resolve()
   private closed = false
+  private readFailure: unknown = null
+  private pendingSeed: Record<string, string> | null = null
 
-  constructor(private readonly dataDirectory: string) {}
+  constructor(
+    private readonly dataDirectory: string,
+    private readonly onUpdate?: (update: RendererStorageUpdate) => void
+  ) {}
 
   close(): Promise<void> {
+    if (this.closed) return this.operation
     this.closed = true
+    this.operation = this.operation.then(async () => {
+      const state = await this.readFile()
+      if (this.readFailure) throw this.readFailure
+      if (!state && this.pendingSeed) {
+        await this.writeFile({ version: 1, entries: this.pendingSeed })
+      }
+    })
     return this.operation
   }
 
@@ -52,25 +65,37 @@ export class RendererStorageStore {
   }
 
   read(): Promise<Record<string, string>> {
-    return this.serial(async () => (await this.readFile())?.entries ?? {})
+    return this.serial(async () => (await this.readFile())?.entries ?? this.pendingSeed ?? {})
   }
 
   initialize(seed: Record<string, string>): Promise<Record<string, string>> {
     return this.serial(async () => {
       const state = await this.readFile()
       if (state) return state.entries
+      if (this.readFailure) return seed
 
-      await this.writeFile({ version: 1, entries: seed })
-      return seed
+      const entries = (this.pendingSeed ??= { ...seed })
+      try {
+        await this.writeFile({ version: 1, entries })
+      } catch (error) {
+        console.warn('[renderer-storage] Initial state remains temporary', {
+          errorType: error instanceof Error ? error.name : typeof error,
+        })
+        return entries
+      }
+      this.notifyUpdate({ clear: false, changes: entries })
+      return entries
     })
   }
 
   update(update: RendererStorageUpdate): Promise<void> {
     return this.serial(async () => {
       const state = await this.readFile()
+      if (this.readFailure) throw this.readFailure
+      const seed = state ? null : this.pendingSeed
       const entries = Object.create(null) as Record<string, string>
-      if (!update.clear && state) {
-        for (const [key, value] of Object.entries(state.entries)) {
+      if (!update.clear) {
+        for (const [key, value] of Object.entries(state?.entries ?? this.pendingSeed ?? {})) {
           entries[key] = value
         }
       }
@@ -82,11 +107,23 @@ export class RendererStorageStore {
         }
       }
       await this.writeFile({ version: 1, entries })
+      this.notifyUpdate({
+        clear: update.clear,
+        changes: { ...(!update.clear ? seed : null), ...update.changes },
+      })
     })
   }
 
   clear(): Promise<void> {
     return this.serial(() => this.writeFile({ version: 1, entries: {} }))
+  }
+
+  private notifyUpdate(update: RendererStorageUpdate): void {
+    try {
+      this.onUpdate?.(update)
+    } catch {
+      console.warn('[renderer-storage] Change observer failed after persistence')
+    }
   }
 
   private path(): string {
@@ -98,40 +135,62 @@ export class RendererStorageStore {
   }
 
   private async readFile(): Promise<RendererStorageState | null> {
+    this.readFailure = null
     try {
       const value = JSON.parse(await readFile(this.path(), 'utf8')) as unknown
-      if (!value || typeof value !== 'object' || Array.isArray(value)) return null
+      if (!value || typeof value !== 'object' || Array.isArray(value))
+        throw new Error('Invalid renderer storage state')
       const record = value as Partial<RendererStorageState>
-      if (record.version !== 1 || !validEntries(record.entries)) return null
+      if (record.version !== 1 || !validEntries(record.entries))
+        throw new Error('Invalid renderer storage entries')
+      this.pendingSeed = null
       return { version: 1, entries: record.entries }
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null
-      throw error
+      // JSON errors may include a source excerpt containing stored credentials.
+      const code = (error as NodeJS.ErrnoException).code
+      const suffix = typeof code === 'string' && /^E[A-Z0-9]+$/.test(code) ? ` (${code})` : ''
+      this.readFailure = new Error(
+        `Stored application state is unreadable; the original file is preserved${suffix}`
+      )
+      console.warn('[renderer-storage] Stored state is temporarily read-only', {
+        errorType: error instanceof Error ? error.name : typeof error,
+      })
+      return null
     }
   }
 
   private async readOriginFile(): Promise<RendererStorageOriginState | null> {
     try {
       const value = JSON.parse(await readFile(this.originPath(), 'utf8')) as unknown
-      if (!value || typeof value !== 'object' || Array.isArray(value)) return null
+      if (!value || typeof value !== 'object' || Array.isArray(value))
+        throw new Error('Invalid renderer origin history')
       const record = value as Partial<RendererStorageOriginState>
       if (
         record.version !== 1 ||
         !Array.isArray(record.origins) ||
-        record.origins.length === 0 ||
         record.origins.some(origin => typeof origin !== 'string')
       ) {
-        return null
+        throw new Error('Invalid renderer origin history entries')
       }
+      if (record.origins.length === 0) return null
       return { version: 1, origins: record.origins }
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null
-      throw error
+      if (error instanceof SyntaxError) {
+        // Syntax errors can expose the JSON source, including a stored URL.
+        error.message = 'Invalid origin history JSON'
+        error.stack = undefined
+      }
+      throw new Error('Renderer storage origin history is unreadable; browser state is preserved', {
+        cause: error,
+      })
     }
   }
 
   private async writeFile(state: RendererStorageState): Promise<void> {
     await this.writeJsonFile(this.path(), state)
+    this.pendingSeed = null
   }
 
   private async writeOriginFile(state: RendererStorageOriginState): Promise<void> {

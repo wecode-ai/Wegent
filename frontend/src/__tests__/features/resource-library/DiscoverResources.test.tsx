@@ -359,6 +359,42 @@ describe('DiscoverResources', () => {
     expect(featured).toHaveAttribute('aria-pressed', 'true')
   })
 
+  it('leaves an external marketplace when a tag is selected', async () => {
+    mockSearchParams = new URLSearchParams('type=skill&marketplace=weibo&keyword=PDF')
+
+    function SkillMarketplace() {
+      const [activeMarketplaceKey, setActiveMarketplaceKey] = useState<string | null>('weibo')
+      return (
+        <DiscoverResources
+          resourceType="skill"
+          systemOnly
+          externalMarketplaces={[
+            {
+              key: 'weibo',
+              label: 'SkillHub',
+              content: <div data-testid="skillhub-marketplace-content">SkillHub search</div>,
+            },
+          ]}
+          activeExternalMarketplaceKey={activeMarketplaceKey}
+          onExternalMarketplaceChange={setActiveMarketplaceKey}
+        />
+      )
+    }
+
+    render(<SkillMarketplace />)
+
+    expect(await screen.findByTestId('skillhub-marketplace-content')).toBeInTheDocument()
+    fireEvent.click(screen.getByTestId('marketplace-tag-filter-technical_development'))
+
+    expect(screen.queryByTestId('skillhub-marketplace-content')).not.toBeInTheDocument()
+    expect(mockReplace).toHaveBeenCalledWith(
+      '/resource-library?type=skill&tag=technical_development',
+      {
+        scroll: false,
+      }
+    )
+  })
+
   it('includes regular marketplace resources after selecting a category', async () => {
     render(<DiscoverResources resourceType="agent" systemOnly />)
 

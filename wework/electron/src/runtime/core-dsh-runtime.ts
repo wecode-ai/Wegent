@@ -18,8 +18,11 @@ const CORE_PLUGIN_PACKAGES = [
   ['@wegent/dsh-terminal-runtime', 'wework-terminal-runtime'],
   ['@wegent/dsh-transcript-sync', 'wework-transcript-sync'],
   ['@wegent/dsh-plugin-runtime', 'wework-plugin-runtime'],
+  ['@wegent/dsh-connection-host', 'wework-connection-host'],
   ['@wegent/dsh-connection-runtime', 'wework-connection-runtime'],
+  ['@wegent/dsh-coordination-runtime', 'wework-coordination-runtime'],
   ['@wegent/dsh-connection-dingtalk', 'wework-connection-dingtalk'],
+  ['@wegent/dsh-connection-git', 'wework-connection-git'],
   ['@wegent/dsh-conversation-export', 'wework-conversation-export'],
   ['@wegent/dsh-ui-core-apps', 'wework-ui-core-apps'],
   ['@wegent/dsh-ui-core-settings', 'wework-ui-core-settings'],
@@ -43,8 +46,11 @@ const CORE_HOST_BUNDLES = [
   '@wegent/dsh-secure-storage',
   '@wegent/dsh-terminal-runtime',
   '@wegent/dsh-plugin-runtime',
+  '@wegent/dsh-connection-host',
   '@wegent/dsh-connection-runtime',
+  '@wegent/dsh-coordination-runtime',
   '@wegent/dsh-connection-dingtalk',
+  '@wegent/dsh-connection-git',
   '@wegent/dsh-app-wework',
   '@deepseek-ai/dsh-web-app',
   '@wegent/dsh-executor-runtime',
@@ -68,7 +74,11 @@ const CORE_UI_BUNDLES = [
 ] as const
 const CORE_BUNDLES = [...CORE_HOST_BUNDLES, ...CORE_UI_BUNDLES] as const
 const CORE_UI_DEPENDENCIES: readonly string[] = CORE_UI_BUNDLES
-const OPTIONAL_CORE_BUNDLES = new Set(['@wegent/dsh-connection-dingtalk'])
+const OPTIONAL_CORE_BUNDLES = new Set([
+  '@wegent/dsh-connection-runtime',
+  '@wegent/dsh-connection-dingtalk',
+  '@wegent/dsh-connection-git',
+])
 
 // User plugin packages and their manifests must survive a runtime-only reset.
 export async function resetCoreDshRuntime(dataDirectory: string): Promise<void> {
@@ -349,11 +359,13 @@ async function prepareProfile(options: {
     .every(name => currentBundles.includes(name))
   await ensureNodePtySpawnHelpersExecutable(profileRoot)
   await mkdir(profileRoot, { recursive: true, mode: 0o700 })
-  // Package installation replaces client files even when their bytes are unchanged.
-  // Production plugin changes take effect on explicit restart, without remounting the UI.
-  await writeFile(join(profileRoot, 'cordis.patch.yml'), '- id: client-hmr\n  disabled: true\n', {
-    mode: 0o600,
-  })
+  // Package operations temporarily unlink dependencies. Production changes take
+  // effect on explicit restart; neither profile nor client HMR may reload mid-install.
+  await writeFile(
+    join(profileRoot, 'cordis.patch.yml'),
+    '- id: client-hmr\n  disabled: true\n- id: hmr\n  disabled: true\n',
+    { mode: 0o600 }
+  )
   if (
     stampIsCurrent &&
     removedDependencies.size === 0 &&

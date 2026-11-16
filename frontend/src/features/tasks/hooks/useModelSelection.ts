@@ -409,8 +409,9 @@ export function useModelSelection({
   useEffect(() => {
     const currentTeamId = selectedTeam?.id ?? null
 
-    // Skip if no models loaded yet
-    if (models.length === 0) {
+    // Skip if no models loaded yet. A recorded task model still restores when
+    // the visible catalog is empty because it may have been hidden.
+    if (models.length === 0 && !taskModelId) {
       return
     }
 
@@ -437,13 +438,23 @@ export function useModelSelection({
       let restoredForceOverride: boolean | undefined
 
       // Priority 1: Use taskModelId from API (if exists and not default)
-      // Search in ALL models, not just filtered ones, since task already has a recorded model
+      // Search in ALL models, not just filtered ones, since task already has a recorded model.
+      // A persisted task model may have been hidden from new selections by an
+      // admin. Keep it selected so the existing task can continue; the backend
+      // still resolves persisted references by name.
       if (taskModelId && taskModelId !== DEFAULT_MODEL_NAME) {
         const foundModel = models.find(m => m.name === taskModelId || m.displayName === taskModelId)
         if (foundModel) {
           restoredModel = foundModel
-          restoredForceOverride = true
+        } else {
+          restoredModel = {
+            name: taskModelId,
+            displayName: taskModelId,
+            provider: '',
+            modelId: '',
+          }
         }
+        restoredForceOverride = true
       }
 
       // Priority 2: Use global preference (for new chat only, i.e. no taskId)
@@ -510,14 +521,40 @@ export function useModelSelection({
       return
     }
 
-    // Case 2: Model list changed - check compatibility
+    // Case 2: Model list changed - upgrade a restored placeholder or check compatibility
     if (selectedModel && selectedModel.name !== DEFAULT_MODEL_NAME) {
-      const isStillCompatible = selectableModels.some(m => {
-        if (selectedModel.type) {
-          return m.name === selectedModel.name && m.type === selectedModel.type
+      // The recorded task model may have been hidden when the task first
+      // rendered. Once it appears in the catalog, replace the placeholder with
+      // the real model so its type and capability metadata become available.
+      const recordedModel =
+        taskModelId && selectedModel.name === taskModelId && !selectedModel.type
+          ? models.find(m => m.name === taskModelId || m.displayName === taskModelId)
+          : undefined
+      if (recordedModel) {
+        isRestoringRef.current = true
+        setSelectedModel(recordedModel)
+        if (recordedModel.isAdvanced) {
+          setShowAdvancedModelsState(true)
         }
-        return m.name === selectedModel.name
-      })
+        setTimeout(() => {
+          isRestoringRef.current = false
+        }, 100)
+        return
+      }
+
+      // The recorded task model may still be absent from the refreshed
+      // catalog. Keep the selected model while this task remains selected,
+      // whether it still carries catalog metadata or is a placeholder; the
+      // backend resolves persisted references after the model is hidden.
+      const isRecordedTaskModel = Boolean(taskModelId) && selectedModel.name === taskModelId
+      const isStillCompatible =
+        isRecordedTaskModel ||
+        selectableModels.some(m => {
+          if (selectedModel.type) {
+            return m.name === selectedModel.name && m.type === selectedModel.type
+          }
+          return m.name === selectedModel.name
+        })
       if (!isStillCompatible) {
         setSelectedModel(null)
       }
@@ -549,6 +586,12 @@ export function useModelSelection({
 
     // Skip if not initialized (initial load)
     if (!hasInitializedRef.current) {
+      return
+    }
+
+    // A restored hidden/deleted task model is an untyped placeholder. It must
+    // not overwrite the team's real saved preference.
+    if (selectedModel.name !== DEFAULT_MODEL_NAME && !selectedModel.type) {
       return
     }
 

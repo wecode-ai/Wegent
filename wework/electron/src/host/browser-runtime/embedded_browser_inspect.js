@@ -32,6 +32,7 @@
     pageUrl: location.href,
     documentToken,
     indexToRef: {},
+    indexNodes: {},
     refs: {},
   }
 
@@ -39,8 +40,11 @@
     frameId: 'main',
     parentFrameId: null,
     depth: 0,
-    offsetX: 0,
-    offsetY: 0,
+    originX: 0,
+    originY: 0,
+    scaleX: 1,
+    scaleY: 1,
+    frameRect: null,
     frameElement: null,
   })
 
@@ -49,6 +53,13 @@
   sortedNodes.forEach((node, index) => {
     node.index = index
     node.inspectId = inspectId
+    registry.indexNodes[String(index)] = {
+      index,
+      frameId: node.frameId,
+      role: node.role,
+      name: node.name,
+      actionable: node.actionable,
+    }
     if (node.actionable && node.element) {
       const fingerprint = fingerprintFor(node, node.element)
       node.ref = `wk-mvp:${inspectId}:${node.frameId}:${index}:${hashText(JSON.stringify(fingerprint))}`
@@ -147,6 +158,9 @@
       url: safeRead(() => doc.location.href, ''),
       title: safeRead(() => doc.title, ''),
       accessible: true,
+      rect: context.frameRect || null,
+      scaleX: round(context.scaleX),
+      scaleY: round(context.scaleY),
     })
     const root = doc.documentElement || doc.body
     if (!root) return
@@ -185,12 +199,29 @@
     try {
       const childDoc = iframe.contentDocument
       if (!childDoc) throw new Error('frame document unavailable')
+      const localRect = iframe.getBoundingClientRect()
+      const frameMetrics = frameContentMetrics(iframe, localRect)
+      if (!isAxisAlignedTransform(iframe)) {
+        warnings.push(
+          warning(
+            'frame_transform_approximate',
+            'A frame uses a rotated or skewed transform; coordinates are approximate.',
+            { frameId }
+          )
+        )
+      }
       collectDocument(childDoc, {
         frameId,
         parentFrameId: context.frameId,
         depth: context.depth + 1,
-        offsetX: rect.x,
-        offsetY: rect.y,
+        originX:
+          context.originX +
+          context.scaleX * (localRect.x + frameMetrics.left * frameMetrics.scaleX),
+        originY:
+          context.originY + context.scaleY * (localRect.y + frameMetrics.top * frameMetrics.scaleY),
+        scaleX: context.scaleX * frameMetrics.scaleX,
+        scaleY: context.scaleY * frameMetrics.scaleY,
+        frameRect: rect,
         frameElement: iframe,
       })
     } catch (error) {
@@ -233,10 +264,10 @@
       return null
     }
     const role = inferRole(element)
-    const states = statesFor(element)
-    const name = accessibleName(element, role)
+    const states = statesFor(element, doc)
+    const name = accessibleName(element, role, doc)
     const rect = rectFor(element, context)
-    const visibility = visibilityFor(element, rect, doc, context)
+    const visibility = visibilityFor(element, rect, doc)
     const href = hrefFor(element)
     const value = valueFor(element)
     const inputType =
@@ -300,7 +331,7 @@
       .join(' ')
     if (text.length < 2) return
     const rect = rectFor(element, context)
-    const visibility = visibilityFor(element, rect, doc, context)
+    const visibility = visibilityFor(element, rect, doc)
     if (!visibility.visible || !visibility.inViewport) return
     nodes.push({
       rank: 90,
@@ -380,15 +411,12 @@
     return 'generic'
   }
 
-  function accessibleName(element, role) {
+  function accessibleName(element, role, doc = element.ownerDocument) {
     const labelledBy = element.getAttribute?.('aria-labelledby')
     if (labelledBy) {
       const label = labelledBy
         .split(/\s+/)
-        .map(
-          id =>
-            document.getElementById(id)?.innerText || document.getElementById(id)?.textContent || ''
-        )
+        .map(id => doc.getElementById(id)?.innerText || doc.getElementById(id)?.textContent || '')
         .join(' ')
       if (normalizeWhitespace(label)) return normalizeWhitespace(label)
     }
@@ -400,7 +428,7 @@
     if (tag === 'input' || tag === 'textarea' || tag === 'select') {
       const id = element.id
       if (id) {
-        const label = document.querySelector(`label[for="${cssEscape(id)}"]`)
+        const label = doc.querySelector(`label[for="${cssEscape(id)}"]`)
         if (label && normalizeWhitespace(label.innerText || label.textContent)) {
           return normalizeWhitespace(label.innerText || label.textContent)
         }
@@ -422,7 +450,7 @@
     return normalizeWhitespace(element.innerText || element.textContent || '')
   }
 
-  function statesFor(element) {
+  function statesFor(element, doc = element.ownerDocument) {
     const states = []
     if (element.disabled || element.closest?.('fieldset[disabled]')) states.push('disabled')
     if (element.readOnly) states.push('readonly')
@@ -439,7 +467,7 @@
       if (value === 'true') states.push(state)
       if (value === 'false' && attr === 'aria-expanded') states.push('collapsed')
     }
-    if (document.activeElement === element) states.push('focused')
+    if (doc.activeElement === element) states.push('focused')
     if (element.hidden || element.getAttribute?.('aria-hidden') === 'true') states.push('hidden')
     return Array.from(new Set(states))
   }
@@ -447,14 +475,79 @@
   function rectFor(element, context) {
     const rect = element.getBoundingClientRect()
     return {
-      x: round(rect.x + context.offsetX),
-      y: round(rect.y + context.offsetY),
-      width: round(rect.width),
-      height: round(rect.height),
+      x: round(context.originX + context.scaleX * rect.x),
+      y: round(context.originY + context.scaleY * rect.y),
+      width: round(rect.width * context.scaleX),
+      height: round(rect.height * context.scaleY),
     }
   }
 
-  function visibilityFor(element, rect, doc, context) {
+  function viewportRectFor(element) {
+    const localRect = element.getBoundingClientRect()
+    let originX = 0
+    let originY = 0
+    let scaleX = 1
+    let scaleY = 1
+    let doc = element.ownerDocument
+    for (let depth = 0; depth < 20; depth++) {
+      const frame = safeFrameElement(doc.defaultView)
+      if (!frame) break
+      const frameRect = frame.getBoundingClientRect()
+      const metrics = frameContentMetrics(frame, frameRect)
+      originX += scaleX * (frameRect.x + metrics.left * metrics.scaleX)
+      originY += scaleY * (frameRect.y + metrics.top * metrics.scaleY)
+      scaleX *= metrics.scaleX
+      scaleY *= metrics.scaleY
+      doc = frame.ownerDocument
+    }
+    return {
+      x: round(originX + scaleX * localRect.x),
+      y: round(originY + scaleY * localRect.y),
+      width: round(localRect.width * scaleX),
+      height: round(localRect.height * scaleY),
+    }
+  }
+
+  function frameContentMetrics(frame, rect) {
+    const style = frame.ownerDocument.defaultView.getComputedStyle(frame)
+    const paddingLeft = Number.parseFloat(style.paddingLeft) || 0
+    const paddingRight = Number.parseFloat(style.paddingRight) || 0
+    const paddingTop = Number.parseFloat(style.paddingTop) || 0
+    const paddingBottom = Number.parseFloat(style.paddingBottom) || 0
+    const layoutWidth = Number(frame.offsetWidth) || rect.width
+    const layoutHeight = Number(frame.offsetHeight) || rect.height
+    return {
+      scaleX: layoutWidth > 0 && rect.width > 0 ? rect.width / layoutWidth : 1,
+      scaleY: layoutHeight > 0 && rect.height > 0 ? rect.height / layoutHeight : 1,
+      left: frame.clientLeft + paddingLeft,
+      top: frame.clientTop + paddingTop,
+      width: Math.max(0, frame.clientWidth - paddingLeft - paddingRight),
+      height: Math.max(0, frame.clientHeight - paddingTop - paddingBottom),
+    }
+  }
+
+  function safeFrameElement(view) {
+    try {
+      return view?.frameElement || null
+    } catch {
+      return null
+    }
+  }
+
+  function isAxisAlignedTransform(element) {
+    const view = element.ownerDocument?.defaultView
+    const transform = view?.getComputedStyle(element).transform
+    if (!transform || transform === 'none') return true
+    const values = transform.match(/matrix(3d)?\(([^)]+)\)/i)
+    if (!values) return true
+    const parts = values[2].split(',').map(value => Number(value.trim()))
+    if (!values[1]) return Math.abs(parts[1] || 0) < 0.001 && Math.abs(parts[2] || 0) < 0.001
+    return [1, 2, 3, 4, 7, 8, 11, 12, 13, 14].every(index => {
+      return Math.abs(parts[index] || 0) < 0.001
+    })
+  }
+
+  function visibilityFor(element, rect, doc) {
     const style = doc.defaultView.getComputedStyle(element)
     const hasBox = rect.width > 0 && rect.height > 0
     const hidden =
@@ -467,7 +560,7 @@
     const visible = hasBox && !hidden && intersectsViewport(rect, options.viewportMargin)
     const visibleRatio = visibleAreaRatio(rect)
     const receivesPointerEvents = style.pointerEvents !== 'none'
-    const hitTest = hitTestFor(element, rect, doc, context)
+    const hitTest = hitTestFor(element, rect, doc, inViewport)
     const occluded = visible && inViewport && hitTest.sampleCount > 0 && hitTest.hitCount === 0
     const visibilityWarnings = []
     if (visible && inViewport && !hitTest.centerHit && hitTest.hitCount > 0) {
@@ -496,27 +589,27 @@
     }
   }
 
-  function hitTestFor(element, rect, doc, context) {
-    if (rect.width <= 0 || rect.height <= 0 || !intersectsViewport(rect, 0)) {
+  function hitTestFor(element, rect, doc, inViewport) {
+    if (rect.width <= 0 || rect.height <= 0 || !inViewport) {
       return { sampleCount: 0, hitCount: 0, centerHit: false }
     }
-    const padding = Math.min(4, rect.width / 4, rect.height / 4)
+    const localRect = element.getBoundingClientRect()
+    const view = doc.defaultView || window
+    const padding = Math.min(4, localRect.width / 4, localRect.height / 4)
     const samples = [
-      [rect.x + rect.width / 2, rect.y + rect.height / 2, true],
-      [rect.x + padding, rect.y + padding, false],
-      [rect.x + rect.width - padding, rect.y + padding, false],
-      [rect.x + padding, rect.y + rect.height - padding, false],
-      [rect.x + rect.width - padding, rect.y + rect.height - padding, false],
-    ].filter(([x, y]) => x >= 0 && y >= 0 && x <= window.innerWidth && y <= window.innerHeight)
+      [localRect.x + localRect.width / 2, localRect.y + localRect.height / 2, true],
+      [localRect.x + padding, localRect.y + padding, false],
+      [localRect.x + localRect.width - padding, localRect.y + padding, false],
+      [localRect.x + padding, localRect.y + localRect.height - padding, false],
+      [localRect.x + localRect.width - padding, localRect.y + localRect.height - padding, false],
+    ].filter(([x, y]) => x >= 0 && y >= 0 && x <= view.innerWidth && y <= view.innerHeight)
     let hitCount = 0
     let centerHit = false
     let topElementSummary
     for (const [x, y, center] of samples) {
-      const localX = x - context.offsetX
-      const localY = y - context.offsetY
-      const hit = deepestElementFromPoint(doc, localX, localY)
+      const hit = deepestElementFromPoint(doc, x, y)
       if (!topElementSummary && hit) topElementSummary = summarizeElement(hit)
-      if (isHitAccepted(element, hit)) {
+      if (isHitAccepted(element, hit) && ancestorFramesAccept(element, x, y)) {
         hitCount++
         if (center) centerHit = true
       }
@@ -527,6 +620,25 @@
       centerHit,
       topElementSummary,
     }
+  }
+
+  function ancestorFramesAccept(element, localX, localY) {
+    let doc = element.ownerDocument
+    let x = localX
+    let y = localY
+    for (let depth = 0; depth < 20; depth++) {
+      const frame = safeFrameElement(doc.defaultView)
+      if (!frame) return true
+      const frameRect = frame.getBoundingClientRect()
+      const metrics = frameContentMetrics(frame, frameRect)
+      x = frameRect.x + metrics.scaleX * (metrics.left + x)
+      y = frameRect.y + metrics.scaleY * (metrics.top + y)
+      const parentDoc = frame.ownerDocument
+      const hit = deepestElementFromPoint(parentDoc, x, y)
+      if (!isHitAccepted(frame, hit)) return false
+      doc = parentDoc
+    }
+    return false
   }
 
   function deepestElementFromPoint(doc, x, y) {
@@ -629,6 +741,30 @@
       registry.indexToRef?.[Number(input.index)]
     const record = ref ? registry.refs?.[ref] : null
     if (!record) {
+      const indexNode =
+        input.index !== undefined && input.index !== null
+          ? registry.indexNodes?.[String(input.index)]
+          : null
+      if (indexNode && !indexNode.actionable) {
+        return {
+          ok: false,
+          errorCode: 'element_not_actionable',
+          message: 'Inspect target is not actionable.',
+        }
+      }
+      const staleRegistry =
+        input.index !== undefined && input.index !== null
+          ? current.inspectRegistries.find(item => {
+              return item !== registry && item.indexNodes?.[String(input.index)]
+            })
+          : null
+      if (staleRegistry) {
+        return {
+          ok: false,
+          errorCode: 'stale_inspect',
+          message: 'Inspect index belongs to an older inspect result.',
+        }
+      }
       return { ok: false, errorCode: 'element_not_found', message: 'Inspect target was not found.' }
     }
     if (!record.actionable) {
@@ -643,8 +779,15 @@
       return { ok: false, errorCode: 'stale_ref', message: 'Inspect target is detached.' }
     }
     const role = inferRole(element)
-    const name = trimText(accessibleName(element, role), options.maxNameChars)
-    const rect = rectFor(element, { offsetX: 0, offsetY: 0 })
+    const doc = element.ownerDocument
+    const name = trimText(accessibleName(element, role, doc), options.maxNameChars)
+    const localRect = element.getBoundingClientRect()
+    const rect = {
+      x: round(localRect.x),
+      y: round(localRect.y),
+      width: round(localRect.width),
+      height: round(localRect.height),
+    }
     const fingerprint = fingerprintFor(
       {
         tagName: element.tagName.toLowerCase(),
@@ -677,6 +820,7 @@
       role,
       name,
       rect,
+      viewportRect: viewportRectFor(element),
       visible: true,
       actionable: true,
       element,
@@ -772,7 +916,7 @@
   }
 
   function uploadInfoFor(element, inputType) {
-    if (!(element instanceof HTMLInputElement) || inputType !== 'file') return undefined
+    if (element.tagName?.toLowerCase() !== 'input' || inputType !== 'file') return undefined
     const files = Array.from(element.files || [])
       .map(file => file.name)
       .filter(Boolean)

@@ -2,6 +2,7 @@ import { mkdir, writeFile } from 'node:fs/promises'
 import { waitForSnapshot } from './conversation-layout.mjs'
 
 import { telemetryEvents } from './response-protocol.mjs'
+import { expireAutomationCredentials } from './automation-stale-credentials.mjs'
 
 import {
   ACTIVE_COMPOSER_SELECTOR,
@@ -71,6 +72,21 @@ async function verifyTelemetryPreference(control) {
     'false',
     'Disabling telemetry was not persisted'
   )
+  const refusal = JSON.parse(await control.command('getAppPreferences', 'body'))
+  assert.equal(refusal.telemetryEnabled, false)
+  assert.ok(refusal.telemetryConsentRevision > 0)
+  await assert.rejects(
+    control.command('setTelemetryConsent', 'body', {
+      value: JSON.stringify({
+        enabled: true,
+        expectedRevision: refusal.telemetryConsentRevision - 1,
+      }),
+    }),
+    /changed in another window/
+  )
+  const afterStaleOptIn = JSON.parse(await control.command('getAppPreferences', 'body'))
+  assert.equal(afterStaleOptIn.telemetryEnabled, false, 'A stale opt-in replaced the saved refusal')
+  assert.equal(afterStaleOptIn.telemetryConsentRevision, refusal.telemetryConsentRevision)
   await control.command('click', '[data-testid="settings-back-button"]')
   await control.command('click', '[data-testid="plugins-button"]')
   await control.command('waitFor', '[data-testid="plugins-workspace"]', {
@@ -256,7 +272,6 @@ async function declineInitialTelemetryConsent(control) {
 }
 
 async function setExperimentalFeaturesEnabled(control, enabled) {
-  if (control.experimentalFeaturesEnabled === enabled) return
   const settingsButtonCount = Number(
     await control.command('getElementCount', '[data-testid="settings-button"]', {
       visible: true,
@@ -266,7 +281,6 @@ async function setExperimentalFeaturesEnabled(control, enabled) {
     await control.command('setAppPreferences', 'body', {
       value: JSON.stringify({ experimentalFeaturesEnabled: enabled }),
     })
-    control.experimentalFeaturesEnabled = enabled
     return
   }
 
@@ -282,7 +296,12 @@ async function setExperimentalFeaturesEnabled(control, enabled) {
     snapshot => snapshot.testIds.includes('general-experimental-features-toggle'),
     'The experimental features control did not mount'
   )
-  await control.command('scrollIntoView', toggleSelector, { visible: false })
+  // Suspense retains hidden settings DOM while its next module is loading.
+  await control.command('waitFor', '[data-testid="dsh-settings-loading"]', {
+    visible: false,
+    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+  })
+  await control.command('scrollIntoView', toggleSelector, { visible: true })
   await control.command('waitFor', toggleSelector, { visible: true })
   if (
     (await control.command('getAttribute', toggleSelector, { value: 'aria-checked' })) !==
@@ -297,7 +316,6 @@ async function setExperimentalFeaturesEnabled(control, enabled) {
       `${enabled ? 'Enabling' : 'Disabling'} experimental features was not persisted`
     )
   }
-  control.experimentalFeaturesEnabled = enabled
   await control.command('click', '[data-testid="settings-back-button"]')
 }
 
@@ -313,9 +331,9 @@ async function verifyAutomationLifecycle(control, executorHome, homePath) {
   const initialSnapshot = JSON.parse(await control.command('snapshot', 'body'))
   assert.ok(
     initialSnapshot.testIds.includes('automation-button'),
-    'Automations remained hidden behind the experimental-features preference'
+    'Independent schedules must remain available when experimental features are disabled'
   )
-  await control.command('click', '[data-testid="automation-button"]')
+  await control.command('navigate', 'body', { value: '/automations' })
   await control.command('waitFor', '[data-testid="create-automation-button"]', {
     timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
   })
@@ -450,8 +468,8 @@ async function verifyAutomationLifecycle(control, executorHome, homePath) {
       modelOptions: {
         collaborationMode: 'default',
         weworkCloudModelNamespace: 'default',
-        weworkCloudModelNativeNamespaceTools: 'true',
-        weworkCloudModelNativeToolSearch: 'true',
+        weworkCloudModelNativeNamespaceTools: 'false',
+        weworkCloudModelNativeToolSearch: 'false',
         weworkCloudModelResourceUserId: '0',
         weworkCloudModelUpstreamApiFormat: 'openai-responses',
         reasoningEffort: 'medium',
@@ -495,6 +513,7 @@ async function verifyAutomationLifecycle(control, executorHome, homePath) {
   const previousScenario = control.scenario
   control.setScenario('automation')
   try {
+    await expireAutomationCredentials(control, storedAutomation.id, DEFAULT_STEP_TIMEOUT_MS)
     await control.command('click', `[data-testid="${automationActions}"]`)
     await control.command('click', '[data-testid="automation-run-now-button"]')
     await control.awaitScenarioRequestCount('automation', 2, WORKBENCH_READY_TIMEOUT_MS)
@@ -552,7 +571,7 @@ async function verifyAutomationLifecycle(control, executorHome, homePath) {
         timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
       })
     }
-    await control.command('click', '[data-testid="automation-button"]')
+    await control.command('navigate', 'body', { value: '/automations' })
     await control.command('waitFor', `[data-testid="${automationRow}"]`, {
       timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
     })
@@ -650,7 +669,7 @@ async function verifyAutomationLifecycle(control, executorHome, homePath) {
     })
 
     await control.command('click', '[data-testid="new-chat-button"]')
-    await control.command('click', '[data-testid="automation-button"]')
+    await control.command('navigate', 'body', { value: '/automations' })
     await control.command('waitFor', `[data-testid="${automationRow}"]`, {
       text: AUTOMATION_NAME,
       timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
@@ -674,10 +693,10 @@ async function verifyCloudAutomationLifecycle(
   const automationName = `${AUTOMATION_NAME} ${automationSuffix}`
   const completionText = `${AUTOMATION_COMPLETION_TEXT}_${expectedCompletionIndex}`
   assert.ok(
-    initialSnapshot.testIds.includes('automation-button'),
-    'Automations remained hidden behind the experimental-features preference'
+    initialSnapshot.testIds.includes('personal-stand-in-button'),
+    'The stand-in schedules entry remained hidden behind the experimental-features preference'
   )
-  await control.command('click', '[data-testid="automation-button"]')
+  await control.command('navigate', 'body', { value: '/automations' })
   await control.command('waitFor', '[data-testid="create-automation-button"]', {
     timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
   })

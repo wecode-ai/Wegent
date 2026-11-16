@@ -55,3 +55,55 @@ async fn named_project_inside_codex_directory_survives_list_refresh_and_restart(
         .iter()
         .all(|call| call["method"] != "thread/start"));
 }
+
+#[tokio::test]
+async fn restored_workspace_inside_linked_worktree_keeps_execution_directory() {
+    let _lock = env_lock().await;
+    let directory = tempfile::tempdir().unwrap();
+    let worktree = directory.path().join("linked-checkout");
+    let git_dir = directory.path().join("main/.git/worktrees/restore-test");
+    let executor_home = worktree.join("executor-home");
+    let restored = executor_home.join("restored-workspaces/task-1");
+    fs::create_dir_all(&git_dir).unwrap();
+    fs::create_dir_all(&restored).unwrap();
+    fs::write(
+        worktree.join(".git"),
+        format!("gitdir: {}\n", git_dir.display()),
+    )
+    .unwrap();
+    fs::write(git_dir.join("commondir"), "../..\n").unwrap();
+    let _home = EnvGuard::set("WEGENT_EXECUTOR_HOME", &executor_home.display().to_string());
+    let codex_home = directory.path().join("codex-home");
+    let _codex_home = EnvGuard::set("CODEX_HOME", &codex_home.display().to_string());
+    let threads = json!([{
+        "id": "restored-thread", "cwd": restored, "name": "Restored",
+        "createdAt": 1780000000000_i64, "updatedAt": 1780000200000_i64,
+        "status": "idle", "turns": []
+    }])
+    .to_string();
+    let fake_codex = write_fake_codex_with_threads(&directory.path().join("calls.jsonl"), &threads);
+    let handler = RuntimeWorkRpcHandler::new("device-1", fake_codex.display().to_string());
+    let project = handler.handle_runtime_rpc(json!({
+        "method": "runtime.projects.upsert_local",
+        "payload": {"runtime":"codex", "projectKey":"restore-project", "name":"Restore project", "roots":[worktree]}
+    })).await.unwrap();
+    let assigned = handler.handle_runtime_rpc(json!({
+        "method":"runtime.sidebar.tasks.reorder",
+        "payload":{"projectKey":project["projectKey"], "threadId":"restored-thread", "insertAtEnd":true}
+    })).await.unwrap();
+    assert_eq!(assigned["accepted"], true);
+    let listed = handler
+        .handle_runtime_rpc(json!({"method":"runtime.tasks.list", "payload":{}}))
+        .await
+        .unwrap();
+    let task = listed["workspaces"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .flat_map(|workspace| workspace["tasks"].as_array().unwrap())
+        .find(|task| task["taskId"] == "restored-thread")
+        .expect("assigned restore must be visible");
+    assert_eq!(task["workspacePath"], restored.to_string_lossy().as_ref());
+    assert_eq!(task["workspaceKind"], "workspace");
+    assert!(task.get("worktreeId").is_none_or(Value::is_null));
+}

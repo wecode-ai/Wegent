@@ -1,7 +1,7 @@
-import { APIRequestContext, expect, test } from '@playwright/test'
+import { APIRequestContext } from '@playwright/test'
+import { test, expect, EXECUTOR_USER, executorMockUrl } from '../../fixtures/executor-test'
 import { execFileSync } from 'node:child_process'
 import { gunzipSync } from 'node:zlib'
-import { ADMIN_USER } from '../../config/test-users'
 import { createApiClient, createBackendRequestHeaders } from '../../utils/api-client'
 import {
   Roots,
@@ -14,7 +14,7 @@ import {
 
 const API = process.env.E2E_API_URL || 'http://localhost:8000'
 const MANAGER = `${process.env.EXECUTOR_MANAGER_URL || 'http://localhost:8001'}/executor-manager`
-const MOCK = process.env.MOCK_MODEL_SERVER_URL || 'http://localhost:9999'
+const MOCK = executorMockUrl()
 const IMAGE = process.env.E2E_CLAUDE_EXECUTOR_IMAGE || 'wegent/e2e-claudecode-executor:latest'
 const TIMEOUT = 120_000
 
@@ -39,7 +39,10 @@ test.describe('Pipeline native session archive and continuation', () => {
         const followup = `ARCHIVE_RESUME_WITH_NATIVE_HISTORY_${prefix}`
         const interrupted = `CANCEL_FIRST_NATIVE_CLAUDE_TURN_${prefix}`
         const cleanup: Array<[string, string]> = []
-        const login = await createApiClient(request).login(ADMIN_USER.username, ADMIN_USER.password)
+        const login = await createApiClient(request).login(
+          EXECUTOR_USER.username,
+          EXECUTOR_USER.password
+        )
         expect(login.data?.access_token).toBeTruthy()
         const headers = createBackendRequestHeaders(login.data!.access_token)
         const internalToken =
@@ -51,15 +54,15 @@ test.describe('Pipeline native session archive and continuation', () => {
         let runtime: Runtime | undefined
         let sandboxCreated = false
         try {
-          // This suite has one worker; discard large requests from earlier specs.
+          // Discard only this worker's captured requests from earlier cases.
           await postJson(request, `${MOCK}/clear-requests`, {})
           const model = `${prefix}-model`
           const shell = `${prefix}-shell`
           const team = `${prefix}-team`
           const provider =
             engine === 'ClaudeCode'
-              ? process.env.E2E_CLAUDE_MODEL_SERVER_URL || MOCK
-              : process.env.E2E_CODEX_MODEL_SERVER_URL || MOCK
+              ? executorMockUrl(process.env.E2E_CLAUDE_MODEL_SERVER_URL)
+              : executorMockUrl(process.env.E2E_CODEX_MODEL_SERVER_URL)
           await postJson(
             request,
             `${API}/api/v1/namespaces/default/models`,
@@ -149,7 +152,7 @@ test.describe('Pipeline native session archive and continuation', () => {
               matchText: interrupted,
               responseContent: `INTERRUPTED_${prefix}`,
               chunkDelayMs: 0,
-              doneDelayMs: 180_000,
+              holdResponse: true,
             })
           }
           const task = await postJson(
@@ -288,12 +291,17 @@ test.describe('Pipeline native session archive and continuation', () => {
               .sort((a, b) => a.id - b.id)
             expect(stages.length).toBeGreaterThanOrEqual(2)
             sandboxCreated = true
-            const sandbox = await postJson(request, `${MANAGER}/sandboxes`, {
-              shell_type: engine,
-              user_id: user.id,
-              user_name: user.user_name,
-              metadata: { task_id: taskId, subtask_id: stages[stages.length - 1].id },
-            })
+            const sandbox = await postJson(
+              request,
+              `${MANAGER}/sandboxes`,
+              {
+                shell_type: engine,
+                user_id: user.id,
+                user_name: user.user_name,
+                metadata: { task_id: taskId, subtask_id: stages[stages.length - 1].id },
+              },
+              createBackendRequestHeaders()
+            )
             // Tool sandboxes and task executors have distinct heartbeat bindings.
             expect(sandbox.container_name).not.toBe(runtime.container_name)
             const sandboxRuntime = await resolveRuntime(
@@ -406,12 +414,15 @@ test.describe('Pipeline native session archive and continuation', () => {
           // Delete only resources created by this scenario, even after assertion failures.
           const failures: string[] = []
           if (sandboxCreated) {
-            const deleted = await request.delete(`${MANAGER}/sandboxes/${taskId}`)
+            const deleted = await request.delete(`${MANAGER}/sandboxes/${taskId}`, {
+              headers: createBackendRequestHeaders(),
+            })
             if (![200, 404].includes(deleted.status()))
               failures.push(`sandbox: ${await deleted.text()}`)
           }
           if (runtime) {
             const deleted = await request.post(`${MANAGER}/executor/delete`, {
+              headers: createBackendRequestHeaders(),
               data: {
                 executor_name: runtime.container_name,
                 executor_namespace: runtime.executor_namespace,

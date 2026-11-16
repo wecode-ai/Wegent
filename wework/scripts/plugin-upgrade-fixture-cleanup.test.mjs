@@ -1,3 +1,5 @@
+// @vitest-environment node
+
 import assert from 'node:assert/strict'
 import { afterEach, test, vi } from 'vitest'
 import { cleanupPluginUpgradeFixtures } from '../e2e/desktop/modules/plugin-upgrade-fixture-cleanup.mjs'

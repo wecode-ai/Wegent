@@ -1,11 +1,13 @@
 import assert from 'node:assert/strict'
 import { waitForSnapshot } from './conversation-layout.mjs'
 import { DEFAULT_STEP_TIMEOUT_MS, WORKBENCH_READY_TIMEOUT_MS, withTimeout } from './shared.mjs'
+import { setGoalDraftForTabTransfer, verifyTransferredGoalDraft } from './goal-draft-flows.mjs'
 
 async function returnTab(control, detached, tabId, draft, waitForDraft) {
   const selector = `[data-testid="workspace-tab-select-${tabId}"]`
   const composer = `[data-testid="workspace-tab-content-${tabId}"] [data-testid="chat-message-input"]`
   await detached.command('waitFor', composer, { visible: true, timeoutMs: DEFAULT_STEP_TIMEOUT_MS })
+  await setGoalDraftForTabTransfer(detached, `[data-testid="workspace-tab-content-${tabId}"]`)
   await detached.command('fill', composer, { value: draft })
   await waitForDraft(
     detached,
@@ -18,6 +20,7 @@ async function returnTab(control, detached, tabId, draft, waitForDraft) {
   await control.command('waitFor', selector, { timeoutMs: DEFAULT_STEP_TIMEOUT_MS })
   await control.command('waitFor', composer, { timeoutMs: DEFAULT_STEP_TIMEOUT_MS })
   assert.equal(await control.command('getValue', composer), draft)
+  await verifyTransferredGoalDraft(control, `[data-testid="workspace-tab-content-${tabId}"]`)
   await waitForSnapshot(
     control,
     snapshot => snapshot.testIds.filter(id => id === `workspace-tab-${tabId}`).length === 1,

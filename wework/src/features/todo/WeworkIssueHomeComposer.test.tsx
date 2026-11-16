@@ -1,9 +1,9 @@
-import { createRef } from 'react'
-import { render, screen, waitFor, act } from '@testing-library/react'
+import { act, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { describe, expect, test, vi } from 'vitest'
-import { IssueHomeComposer, type IssueHomeTaskComposerProps } from '@wegent/collaboration/platform'
 import { createCollaborationTranslator } from '@wegent/collaboration'
+import { IssueHomeComposer, type IssueHomeTaskComposerProps } from '@wegent/collaboration/platform'
+import { createRef } from 'react'
+import { describe, expect, test, vi } from 'vitest'
 import { WeworkIssueHomeComposer } from './WeworkIssueHomeComposer'
 
 vi.mock('@/api/dsh/desktopHost', () => ({
@@ -22,6 +22,7 @@ const createProps = (): IssueHomeTaskComposerProps => ({
   attachments: [],
   onFileSelect: vi.fn(),
   onRemoveAttachment: vi.fn(),
+  onRemovePendingFile: vi.fn(),
   projectLabel: '目标项目',
   projectId: 'p1',
   projects: [
@@ -32,24 +33,6 @@ const createProps = (): IssueHomeTaskComposerProps => ({
 })
 
 describe('Wework Issue home task composer', () => {
-  test('keeps assignment controls in the issue composer without a separate stand-in entry', () => {
-    const props = createProps()
-    render(<WeworkIssueHomeComposer {...props} ownerControl={<button>Choose owner</button>} />)
-    expect(screen.getByRole('button', { name: 'Choose owner' })).toBeInTheDocument()
-    expect(screen.queryByTestId('issue-stand-in-control')).not.toBeInTheDocument()
-    expect(screen.queryByText('交给我的分身')).not.toBeInTheDocument()
-  })
-  test('renders the shared execution environment notice above the editor', () => {
-    const props = createProps()
-    props.environmentNotice = <div data-testid="environment-notice">环境提示</div>
-
-    render(<WeworkIssueHomeComposer {...props} />)
-
-    const notice = screen.getByTestId('environment-notice')
-    const input = screen.getByTestId('collaboration-home-issue-content')
-    expect(notice.compareDocumentPosition(input) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
-  })
-
   test('distinguishes same-name local and cloud projects and retains the selected space', async () => {
     const props = createProps()
     props.projects = props.projects.map(project => ({ ...project, name: '同名项目' }))
@@ -58,17 +41,17 @@ describe('Wework Issue home task composer', () => {
     ] as IssueHomeTaskComposerProps['workspaces']
     const { rerender } = render(<WeworkIssueHomeComposer {...props} />)
     const trigger = screen.getByTestId('collaboration-issue-project-trigger')
-    expect(trigger).toHaveTextContent('本地空间')
+    expect(trigger).toHaveAccessibleName('目标项目: 同名项目 · 本地分组')
     await userEvent.click(trigger)
-    expect(screen.getByTestId('collaboration-issue-project-p1')).toHaveTextContent('本地空间')
+    expect(screen.getByTestId('collaboration-issue-project-p1')).toHaveTextContent('本地分组')
     expect(screen.getByTestId('collaboration-issue-project-p2')).toHaveTextContent(
-      '云端空间 · 研发团队'
+      '云端分组 · 研发团队'
     )
     await userEvent.click(screen.getByTestId('collaboration-issue-project-p2'))
     expect(props.onSelectProject).toHaveBeenCalledWith('p2')
     rerender(<WeworkIssueHomeComposer {...props} projectId="p2" />)
-    expect(trigger).toHaveTextContent('云端空间 · 研发团队')
-    expect(trigger).toHaveAccessibleName('目标项目: 同名项目 · 云端空间 · 研发团队')
+    expect(trigger).toHaveTextContent('同名项目')
+    expect(trigger).toHaveAccessibleName('目标项目: 同名项目 · 云端分组 · 研发团队')
     await userEvent.click(trigger)
     expect(screen.getByTestId('collaboration-issue-project-p2')).toHaveAttribute(
       'aria-pressed',
@@ -150,15 +133,24 @@ describe('Wework Issue home task composer', () => {
 
     expect(screen.getByTestId('collaboration-issue-owner')).toHaveTextContent('交付小队')
   })
-  test('renders the approved centered home and keeps guides from submitting', async () => {
+  test('keeps recording and task creation as peer modes without submitting the draft', async () => {
     const props = createProps()
-    render(<WeworkIssueHomeComposer {...props} />)
-    expect(screen.getByRole('heading', { level: 1 })).toHaveTextContent('连接想法，推进协作')
+    render(
+      <WeworkIssueHomeComposer
+        {...props}
+        renderTaskComposer={() => <span>Full task composer</span>}
+      />
+    )
+    expect(screen.queryByRole('heading', { level: 1 })).not.toBeInTheDocument()
     expect(screen.queryByText('标题会根据内容自动生成')).not.toBeInTheDocument()
-    expect(screen.getByRole('heading', { level: 1 }).parentElement).toHaveClass('text-center')
     expect(screen.queryByTestId('collaboration-issue-guidance-toggle')).not.toBeInTheDocument()
-    await userEvent.click(screen.getByTestId('collaboration-issue-guide-human'))
-    expect(screen.getByTestId('collaboration-home-issue-content')).toHaveTextContent('希望改进：')
+    expect(screen.getByTestId('personal-home-record-mode')).toHaveAttribute('aria-selected', 'true')
+    await userEvent.click(screen.getByTestId('personal-home-new-issue'))
+    expect(screen.getByTestId('personal-home-new-issue')).toHaveAttribute('aria-selected', 'true')
+    expect(screen.getByText('Full task composer')).toBeVisible()
+    await userEvent.click(screen.getByTestId('personal-home-record-mode'))
+    expect(screen.getByTestId('personal-home-record-mode')).toHaveAttribute('aria-selected', 'true')
+    expect(screen.getByTestId('collaboration-home-issue-content')).toBeVisible()
     expect(props.onSubmit).not.toHaveBeenCalled()
   })
 
@@ -205,33 +197,6 @@ describe('Wework Issue home task composer', () => {
     )
     await userEvent.click(screen.getByTestId('collaboration-home-create-issue'))
     expect(props.onSubmit).toHaveBeenCalledWith(expect.stringContaining('wework-issue://p1/i1'))
-  })
-  test('keeps the project selector inside the shared composer above its editor', async () => {
-    const props = createProps()
-    render(<WeworkIssueHomeComposer {...props} />)
-    expect(screen.queryByTestId('desktop-empty-composer-frame')).not.toBeInTheDocument()
-    expect(screen.getByTestId('collaboration-issue-workspace')).toBeInTheDocument()
-    expect(screen.getByTestId('project-chat-composer')).toContainElement(
-      screen.getByTestId('collaboration-home-issue-content')
-    )
-    expect(screen.getByTestId('project-chat-composer')).toHaveAttribute(
-      'data-presentation',
-      'document'
-    )
-    expect(screen.getByTestId('collaboration-home-issue-content')).toHaveClass('min-h-32')
-    const projectTrigger = screen.getByTestId('collaboration-issue-project-trigger')
-    expect(projectTrigger).toHaveTextContent('项目一')
-    expect(screen.getByTestId('project-chat-composer')).toContainElement(projectTrigger)
-    expect(
-      projectTrigger.compareDocumentPosition(
-        screen.getByTestId('collaboration-home-issue-content')
-      ) & Node.DOCUMENT_POSITION_FOLLOWING
-    ).toBeTruthy()
-    expect(screen.getByTestId('collaboration-home-create-issue')).toHaveTextContent('创建 Issue')
-    await userEvent.click(projectTrigger)
-    await userEvent.click(screen.getByTestId('collaboration-issue-project-p2'))
-    expect(props.onSelectProject).toHaveBeenCalledWith('p2')
-    expect(screen.queryByTestId('collaboration-issue-project-picker')).not.toBeInTheDocument()
   })
 
   test('submits the live draft and restores it after creation fails', async () => {

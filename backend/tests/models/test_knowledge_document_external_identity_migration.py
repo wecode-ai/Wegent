@@ -22,8 +22,10 @@ from app.models.knowledge import KnowledgeDocumentExternalSource
 
 def _load_migration() -> ModuleType:
     path = (
-        Path(__file__).parents[2]
-        / "alembic"
+        Path(__file__).parents[2].parent
+        / "backend-rs"
+        / "migrations"
+        / "reference"
         / "versions"
         / "20260826_c5d6e7f8a9b0_add_knowledge_document_external_identity.py"
     )
@@ -210,7 +212,9 @@ def test_unique_index_rejects_duplicate_external_identity(
 def test_no_external_snapshot_mapping_table_or_dual_write_path() -> None:
     """The final implementation must not reintroduce the snapshot mapping design."""
     backend_root = Path(__file__).parents[2]
-    for path in (backend_root / "alembic" / "versions").glob("*.py"):
+    for path in (
+        backend_root.parent / "backend-rs" / "migrations" / "reference" / "versions"
+    ).glob("*.py"):
         assert "external_knowledge_snapshots" not in path.read_text(), path.name
     for path in (backend_root / "app" / "models").glob("*.py"):
         assert "ExternalKnowledgeSnapshot" not in path.read_text(), path.name

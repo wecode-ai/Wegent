@@ -38,10 +38,11 @@ def fingerprint(value: str) -> str:
 class Gate:
     entered: threading.Event = field(default_factory=threading.Event)
     release: threading.Event = field(default_factory=threading.Event)
+    timeout: float = 12
 
     async def wait(self) -> None:
         self.entered.set()
-        if not await asyncio.to_thread(self.release.wait, 12):
+        if not await asyncio.to_thread(self.release.wait, self.timeout):
             raise RuntimeError("E2E coordinator failed to release external request")
 
 
@@ -57,14 +58,15 @@ class DingTalkProvider:
         self.gates: dict[tuple[str, str], Gate] = {}
         self.versions: dict[str, int] = {}
         self.personal: dict[str, str] = {}
+        self.denied_nodes: set[tuple[str, str]] = set()
         self.loop: asyncio.AbstractEventLoop | None = None
         self.thread: threading.Thread | None = None
 
     def resource(self, actor: str, service: str) -> str:
         return f"{ORIGIN}/mcp/{actor}/{service}"
 
-    def gate(self, kind: str, actor: str) -> Gate:
-        gate = Gate()
+    def gate(self, kind: str, actor: str, *, timeout: float = 12) -> Gate:
+        gate = Gate(timeout=timeout)
         self.gates[kind, actor] = gate
         return gate
 
@@ -235,6 +237,7 @@ class DingTalkProvider:
             return web.Response(status=401)
         if method.startswith("notifications/"):
             return web.Response(status=202)
+        result: dict[str, Any]
         if method == "initialize":
             result = {
                 "protocolVersion": "2025-03-26",
@@ -262,7 +265,10 @@ class DingTalkProvider:
                 service=service,
                 name=name,
                 access=fingerprint(bearer),
+                node_id=args.get("nodeId"),
             )
+            if gate := self.gates.get((name, actor)):
+                await gate.wait()
             payload = self.tool(actor, service, name, args)
             result = {
                 "content": [{"type": "text", "text": json.dumps(payload)}],
@@ -277,6 +283,12 @@ class DingTalkProvider:
     def tool(
         self, actor: str, service: str, name: str, args: dict[str, Any]
     ) -> dict[str, Any]:
+        if (actor, args.get("nodeId")) in self.denied_nodes:
+            return {
+                "success": False,
+                "errorCode": "permissionDenied",
+                "errorMsg": "Access denied",
+            }
         if name == "list_nodes":
             return {"items": [self.info(actor, node_id) for node_id in NODES]}
         if name == "get_document_info":

@@ -3,6 +3,8 @@
 
 """Resolve comment and group sessions through durable Issue identities."""
 
+import hashlib
+import json
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -32,12 +34,24 @@ class BoundCommentSession:
     runtime_task_id: str
     agent_id: str
     runtime_request: dict[str, Any]
+    assigner_user_id: int | None = None
     id: None = None
     team_id: int = 0
     executor_type: str = "project_robot"
     automation_run_id: str = ""
     runtime_selection: dict[str, Any] = field(default_factory=dict)
     runtime_origin_context: dict[str, Any] = field(default_factory=dict)
+
+
+def resumed_manager_task_id(manager_task_id: str, round_id: str) -> str:
+    """Encode a manager lineage within the persisted Runtime ID's 255 characters."""
+    candidate = f"{manager_task_id}-manager-after-{round_id}"
+    if len(candidate) <= 255:
+        return candidate
+    identity = json.dumps(
+        [manager_task_id, round_id], ensure_ascii=False, separators=(",", ":")
+    )
+    return f"collaboration-manager-{hashlib.sha256(identity.encode()).hexdigest()}"
 
 
 def collaboration_manager_task_id(
@@ -83,7 +97,7 @@ def collaboration_manager_task_id(
             current = recorded
         if row.id == activity.id:
             break
-        current = f"{current}-manager-after-{round_id}"
+        current = resumed_manager_task_id(current, round_id)
         known_ids.add(current)
     recorded = activity.runtime_task_id or (activity.metadata_json or {}).get(
         "manager_runtime_task_id"
@@ -171,6 +185,7 @@ def resolve_collaboration_manager_session(
                 409, "The manager reply no longer matches its execution"
             )
         return BoundCommentSession(
+            assigner_user_id=source.assigner_user_id,
             executor_owner_user_id=source.executor_owner_user_id,
             runtime_device_id=source.runtime_device_id,
             runtime_task_id=task_id,
@@ -201,6 +216,7 @@ def resolve_collaboration_manager_session(
         execution_device_id=dispatch.runtime_device_id,
     )
     return BoundCommentSession(
+        assigner_user_id=dispatch.assigner_user_id,
         executor_owner_user_id=dispatch.executor_owner_user_id,
         runtime_device_id=dispatch.runtime_device_id,
         runtime_task_id=task_id,
@@ -338,6 +354,7 @@ def resolve_collaboration_member_session(
         }
     )
     return BoundCommentSession(
+        assigner_user_id=dispatch.assigner_user_id,
         executor_owner_user_id=dispatch.executor_owner_user_id,
         runtime_device_id=target.runtime_device_id,
         runtime_task_id=target.runtime_task_id,
@@ -413,6 +430,7 @@ def resolve_bound_comment_session(
         raise HTTPException(409, "The comment has no valid execution binding")
     selection = binding.model_selection or {}
     team_id = (binding.metadata_json or {}).get("wegent_team_id")
+    # A manual binding proves Runtime ownership, not the original execution grant.
     return BoundCommentSession(
         executor_owner_user_id=binding.task_user_id,
         runtime_device_id=binding.device_id,

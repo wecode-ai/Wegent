@@ -4,6 +4,12 @@ const mocks = vi.hoisted(() => ({
   deviceId: 'device-a',
   failCodex: false,
   emptyCodex: false,
+  personalInstalled: false,
+  stalePersonal: false,
+}))
+
+vi.mock('@/api/local/runtimeAuthStatus', () => ({
+  getLocalCodexAuthStatus: vi.fn().mockResolvedValue({ sha256: 'test-account' }),
 }))
 
 vi.mock('@/lib/runtime-environment', () => ({
@@ -16,20 +22,44 @@ vi.mock('@/desktop/localExecutor', () => ({
   ensureBundledPluginMarketplaceRegistered: async () => {},
   getInitializedBundledPluginMarketplace: () => null,
   requestLocalExecutor: async (method: string, params: { method?: string }) => {
+    if (method === 'executor.plugins.links.list') return []
+    if (method === 'executor.plugins.personal.list')
+      return {
+        marketplaceId: 'wework-personal',
+        marketplacePath: '/personal',
+        plugins: mocks.personalInstalled
+          ? [{ name: 'personal-tool', pluginPath: '/personal/plugins/personal-tool' }]
+          : [],
+      }
+    if (method === 'executor.codex_home.config.read')
+      return {
+        enabledPluginKeys: mocks.personalInstalled ? ['personal-tool@wework-personal'] : [],
+      }
     const source = method === 'codex.app_server_request' ? params.method : method
     if (source === 'executor.plugins.store.list') return { storePath: '/store', plugins: [] }
     if (source === 'plugin/installed') {
       if (mocks.failCodex) throw new Error('Codex membership unavailable')
       return {
-        marketplaces: mocks.emptyCodex
-          ? []
-          : [
-              {
-                name: 'openai-curated-remote',
-                path: '/remote',
-                plugins: [{ name: 'codex-tool', installed: true, enabled: true }],
-              },
-            ],
+        marketplaces: [
+          ...(mocks.emptyCodex
+            ? []
+            : [
+                {
+                  name: 'openai-curated-remote',
+                  path: '/remote',
+                  plugins: [{ name: 'codex-tool', installed: true, enabled: true }],
+                },
+              ]),
+          ...(mocks.stalePersonal
+            ? [
+                {
+                  name: 'wework-personal',
+                  path: '/personal',
+                  plugins: [{ name: 'personal-tool', installed: true, enabled: true }],
+                },
+              ]
+            : []),
+        ],
       }
     }
     throw new Error(`Unexpected inventory source: ${source}`)
@@ -60,6 +90,8 @@ beforeEach(() => {
   mocks.deviceId = 'device-a'
   mocks.failCodex = false
   mocks.emptyCodex = false
+  mocks.personalInstalled = false
+  mocks.stalePersonal = false
   vi.resetModules()
 })
 
@@ -69,6 +101,42 @@ afterEach(async () => {
 })
 
 describe('persistent installed source recovery', () => {
+  test('rebuilds personal absence from disk across repeated renderer restarts', async () => {
+    mocks.emptyCodex = true
+    mocks.personalInstalled = true
+    mocks.stalePersonal = true
+    let session = await inventorySession()
+    await session.refresh()
+    expect(session.getPluginMarketplaceCache('account-a')?.installedPlugins).toHaveLength(1)
+    session.flushPluginMarketplaceCachePersist()
+
+    mocks.personalInstalled = false
+    vi.resetModules()
+    session = await inventorySession()
+    mocks.failCodex = true
+    await expect(session.refresh()).rejects.toThrow('incomplete')
+    expect(session.getPluginMarketplaceCache('account-a')?.installedPlugins).toEqual([])
+    session.flushPluginMarketplaceCachePersist()
+
+    vi.resetModules()
+    session = await inventorySession()
+    mocks.failCodex = false
+    await session.refresh()
+    expect(session.getPluginMarketplaceCache('account-a')?.installedPlugins).toEqual([])
+    expect(
+      session.getPluginMarketplaceCache('account-a')?.localInstalledSourceStatus?.personal
+    ).toBe('fulfilled')
+
+    // A real disk/configuration change, rather than the runtime's old record, permits reinstall.
+    mocks.personalInstalled = true
+    await session.refresh()
+    expect(
+      session
+        .getPluginMarketplaceCache('account-a')
+        ?.installedPlugins.map(plugin => plugin.spec.source.pluginKey)
+    ).toEqual(['personal-tool'])
+  })
+
   test('retains failed Codex membership across restart, then clears only on successful empty reads', async () => {
     let session = await inventorySession()
     await session.refresh()

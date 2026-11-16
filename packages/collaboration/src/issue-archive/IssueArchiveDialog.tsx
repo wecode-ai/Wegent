@@ -2,6 +2,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
+import { useLayoutEffect, useRef } from "react";
 import type { CollaborationTranslate } from "../i18n";
 import { collaborationTestIds } from "../testIds";
 
@@ -24,6 +25,19 @@ export function IssueArchiveDialog({
   title?: string;
   translate: CollaborationTranslate;
 }) {
+  const dialogRef = useRef<HTMLDialogElement>(null);
+  const cancelRef = useRef<HTMLButtonElement>(null);
+  useLayoutEffect(() => {
+    const previous = document.activeElement;
+    const dialog = dialogRef.current!;
+    dialog.showModal();
+    cancelRef.current?.focus();
+    return () => {
+      dialog.close();
+      if (previous instanceof HTMLElement && previous.isConnected)
+        previous.focus();
+    };
+  }, []);
   const dialogTitle = translate(
     count > 1
       ? "todo.archive_completed_tasks_title"
@@ -32,12 +46,18 @@ export function IssueArchiveDialog({
   );
 
   return (
-    <div
+    <dialog
+      ref={dialogRef}
       aria-label={dialogTitle}
       aria-modal="true"
-      className="fixed inset-0 z-modal flex items-center justify-center bg-black/35 p-6"
+      className="fixed inset-0 z-modal m-0 flex h-full max-h-none w-full max-w-none items-center justify-center border-0 bg-transparent p-6 text-inherit backdrop:bg-black/35"
       data-testid={collaborationTestIds.issueArchiveDialog}
       role="dialog"
+      onCancel={(event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        if (!busy) onCancel();
+      }}
       onMouseDown={(event) => {
         if (!busy && event.currentTarget === event.target) onCancel();
       }}
@@ -61,10 +81,16 @@ export function IssueArchiveDialog({
                     ? "todo.archive_issue_children_description"
                     : "todo.archive_issue_description",
                   hasChildren
-                    ? "“{{title}}”及同批已完成子任务将从看板中归档。"
+                    ? "“{{title}}”及其子任务将从看板中归档。"
                     : "“{{title}}”将从看板中归档。",
                   { title: title ?? "" },
                 )}
+          </p>
+          <p className="mt-2 text-xs leading-5 text-text-muted">
+            {translate(
+              "todo.delete_issue_execution_hint",
+              "该任务正在执行的 AI 运行会被停止。",
+            )}
           </p>
           <p className="mt-2 text-xs leading-5 text-text-muted">
             {translate(
@@ -83,6 +109,7 @@ export function IssueArchiveDialog({
           ) : null}
           <div className="mt-6 flex justify-end gap-2">
             <button
+              ref={cancelRef}
               className="h-9 rounded-lg border border-border px-4 text-sm text-text-primary hover:bg-muted disabled:opacity-50"
               data-testid={collaborationTestIds.issueArchiveCancel}
               disabled={busy}
@@ -105,6 +132,6 @@ export function IssueArchiveDialog({
           </div>
         </div>
       </div>
-    </div>
+    </dialog>
   );
 }

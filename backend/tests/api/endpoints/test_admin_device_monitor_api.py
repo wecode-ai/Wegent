@@ -180,6 +180,37 @@ def test_admin_device_monitor_matches_version_filter():
 
 
 @pytest.mark.asyncio
+async def test_admin_device_monitor_reads_app_status_by_record_id(
+    test_db: Session, test_admin_user: User, test_user: User
+):
+    app = _create_device_kind(test_db, test_user.id, "desktop", "Desktop", "app")
+    key = f"device:online:{test_user.id}:app-record-{app.id}"
+
+    with patch.object(
+        device_monitor.cache_manager,
+        "mget_or_raise",
+        new=AsyncMock(return_value={key: {"status": "online"}}),
+    ) as get_status:
+        response = await device_monitor.get_all_devices(
+            page=1,
+            limit=20,
+            status=None,
+            device_type=None,
+            bind_shell=None,
+            search=None,
+            version_op=None,
+            version=None,
+            db=test_db,
+            current_user=test_admin_user,
+        )
+
+    get_status.assert_awaited_once_with([key])
+    assert [(item.id, item.status.value) for item in response.items] == [
+        (app.id, "online")
+    ]
+
+
+@pytest.mark.asyncio
 async def test_admin_device_monitor_restarts_all_cloud_devices(
     test_db: Session,
     test_admin_user: User,

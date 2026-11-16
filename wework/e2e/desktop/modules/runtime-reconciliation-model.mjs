@@ -23,11 +23,13 @@ function deferred() {
 function modelCase(marker, order) {
   marker = `${marker}_${order}`
   const prefix = `${marker}_PARTIAL`
-  const tail = ` Final output is complete: ${'0123456789 abcdefghijklmnopqrstuvwxyz '.repeat(48)}${marker}_END`
+  const changeRequest = 'https://github.com/example/project/pull/123'
+  const tail = ` ${changeRequest} Final output is complete: ${'0123456789 abcdefghijklmnopqrstuvwxyz '.repeat(48)}${marker}_END`
   return {
     order,
     marker,
     prefix,
+    changeRequest,
     tail,
     text: prefix + tail,
     continuePrompt: `${marker}_CONTINUE`,

@@ -2,11 +2,11 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
-"""Backend helpers for continuing WeWork private IM conversations in tasks."""
+"""Shared task-card execution parameters and message source metadata."""
 
 import logging
 from copy import deepcopy
-from typing import Any, Sequence
+from typing import Any
 
 from fastapi import HTTPException, status
 from sqlalchemy.orm import Session
@@ -14,136 +14,16 @@ from sqlalchemy.orm import Session
 from app.core.constants import CLIENT_ORIGIN_WEWORK, KIND_TEAM
 from app.models.im_session import IMPrivateSession
 from app.models.kind import Kind
-from app.models.project import Project
-from app.models.resource_member import MemberStatus, ResourceMember
-from app.models.share_link import ResourceType
 from app.models.task import TaskResource
 from app.models.user import User
 from app.schemas.kind import Task
-from app.services.chat.storage.task_manager import (
-    TaskCreationParams,
-    TaskCreationResult,
-    create_chat_task,
-)
-from app.services.chat.wework_task_defaults import (
-    apply_existing_wework_task_defaults,
-    apply_wework_task_defaults,
-    apply_wework_task_device_defaults,
-)
-from app.services.im.session_service import im_session_service
-from app.stores.tasks import task_store
+from app.services.chat.storage.task_manager import TaskCreationParams
+from app.services.chat.wework_task_defaults import apply_existing_wework_task_defaults
 
 logger = logging.getLogger(__name__)
 
 IM_SOURCE = "im"
 DEFAULT_TASK_TYPE = "chat"
-
-
-def validate_personal_wework_task(
-    db: Session,
-    user_id: int,
-    task_id: int,
-) -> TaskResource:
-    """Return an active owner-only WeWork personal task or raise HTTP errors."""
-
-    task = task_store.get_task_by_states(
-        db,
-        task_id=task_id,
-        states=[TaskResource.STATE_ACTIVE],
-        kind="Task",
-        user_id=user_id,
-        client_origin=CLIENT_ORIGIN_WEWORK,
-    )
-    if task is None:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Task not found",
-        )
-
-    if task.is_group_chat:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Only personal WeWork tasks can be bound to private IM sessions",
-        )
-
-    if _has_approved_task_members(db, task.id):
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Shared tasks cannot be bound to private IM sessions",
-        )
-
-    return task
-
-
-async def bind_task_to_sessions(
-    db: Session,
-    user_id: int,
-    task_id: int,
-    session_keys: Sequence[str],
-) -> list[str]:
-    """Bind current user's private IM sessions to a validated WeWork task."""
-
-    task = validate_personal_wework_task(db, user_id, task_id)
-    sessions = await load_user_private_sessions_by_keys(
-        db,
-        user_id=user_id,
-        session_keys=session_keys,
-    )
-    for session in sessions:
-        await im_session_service.bind_active_task(db, session=session, task_id=task.id)
-    return [str(session_key) for session_key in session_keys]
-
-
-async def load_user_private_sessions_by_keys(
-    db: Session,
-    *,
-    user_id: int,
-    session_keys: Sequence[str],
-) -> list[IMPrivateSession]:
-    """Load current user's private sessions and preserve caller order."""
-
-    return await im_session_service.load_user_sessions_by_keys(
-        db,
-        user_id=user_id,
-        session_keys=session_keys,
-    )
-
-
-def list_recent_wework_tasks(
-    db: Session,
-    user_id: int,
-    limit: int = 5,
-) -> list[dict[str, Any]]:
-    """List recent active personal WeWork tasks for private IM switching."""
-
-    tasks = task_store.list_recent_owner_only_tasks(
-        db,
-        user_id=user_id,
-        client_origin=CLIENT_ORIGIN_WEWORK,
-        limit=limit,
-    )
-    return [{"id": task.id, "title": get_task_title(task)} for task in tasks]
-
-
-def list_wework_projects(
-    db: Session,
-    user_id: int,
-    limit: int = 8,
-) -> list[dict[str, Any]]:
-    """List active WeWork projects for private IM task creation."""
-
-    projects = (
-        db.query(Project)
-        .filter(
-            Project.user_id == user_id,
-            Project.client_origin == CLIENT_ORIGIN_WEWORK,
-            Project.is_active == True,
-        )
-        .order_by(Project.updated_at.desc(), Project.id.desc())
-        .limit(limit)
-        .all()
-    )
-    return [{"id": project.id, "name": project.name} for project in projects]
 
 
 def get_task_title(task: TaskResource) -> str:
@@ -249,84 +129,6 @@ async def resolve_existing_task_params(
         message_source=message_source,
     )
     return params
-
-
-async def build_new_task_params(
-    db: Session,
-    *,
-    user: User,
-    message: str,
-    title: str | None = None,
-    project_id: int | None = None,
-    task_type: str | None = None,
-    message_source: dict[str, Any] | None = None,
-    inherit_wework_model_selection: bool = True,
-) -> TaskCreationParams:
-    """Build TaskCreationParams for creating a personal WeWork task from IM."""
-
-    params = TaskCreationParams(
-        message=message,
-        title=title,
-        task_type=task_type or DEFAULT_TASK_TYPE,
-        is_group_chat=False,
-        project_id=project_id,
-        client_origin=CLIENT_ORIGIN_WEWORK,
-        source=IM_SOURCE,
-        message_source=deepcopy(message_source) if message_source is not None else None,
-    )
-    if not inherit_wework_model_selection:
-        return await apply_wework_task_device_defaults(
-            db,
-            user=user,
-            params=params,
-        )
-    return await apply_wework_task_defaults(db, user=user, params=params)
-
-
-async def append_message_to_task(
-    db: Session,
-    *,
-    user: User,
-    task_id: int,
-    message: str,
-    message_source: dict[str, Any] | None,
-) -> TaskCreationResult:
-    """Append a private IM message to an existing WeWork task and trigger AI."""
-
-    task = validate_personal_wework_task(db, user.id, task_id)
-    team = get_task_team(db, task)
-    task_params = await resolve_existing_task_params(
-        db,
-        user=user,
-        task=task,
-        message=message,
-        message_source=message_source,
-    )
-    result = await create_chat_task(
-        db=db,
-        user=user,
-        team=team,
-        message=message,
-        params=task_params,
-        task_id=task.id,
-        should_trigger_ai=True,
-        source=IM_SOURCE,
-    )
-    setattr(result, "task_params", task_params)
-    return result
-
-
-def _has_approved_task_members(db: Session, task_id: int) -> bool:
-    return (
-        db.query(ResourceMember.id)
-        .filter(
-            ResourceMember.resource_type == ResourceType.TASK.value,
-            ResourceMember.resource_id == task_id,
-            ResourceMember.status == MemberStatus.APPROVED.value,
-        )
-        .first()
-        is not None
-    )
 
 
 def _get_task_type(task: TaskResource) -> str:

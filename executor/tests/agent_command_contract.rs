@@ -14,6 +14,9 @@ use wegent_executor::{
     protocol::ExecutionRequest,
 };
 
+// Run the shared pre-main host environment scrubber in this integration binary.
+use wegent_executor_test_support as _;
+
 fn env_lock() -> MutexGuard<'static, ()> {
     static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
     LOCK.get_or_init(|| Mutex::new(()))

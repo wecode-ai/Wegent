@@ -159,6 +159,8 @@ fn shared_index_reload_preserves_process_local_execution_state() {
         task.runtime_handle["collaborationMemberRuntimeProfiles"] = serde_json::json!([{
             "runtimePayload": {"executionRequest": {"model_config": {"api_key": "memory-only"}}}
         }]);
+        task.runtime_handle["collaborationCoordinatorIdentity"] =
+            serde_json::json!({"authToken":"memory-only-coordinator-token"});
     });
     peer_store.update_task("owner-task", |task| {
         task.title = "Updated owner task".to_owned();
@@ -187,6 +189,10 @@ fn shared_index_reload_preserves_process_local_execution_state() {
     );
     assert_eq!(owner_task.runtime_handle["queuePosition"], Value::from(2));
     assert_eq!(
+        owner_task.runtime_handle["collaborationCoordinatorIdentity"]["authToken"],
+        "memory-only-coordinator-token"
+    );
+    assert_eq!(
         owner_task.runtime_handle["lastError"],
         Value::from("temporary error")
     );
@@ -209,6 +215,9 @@ fn shared_index_reload_preserves_process_local_execution_state() {
     assert!(!persisted_owner.contains_key("running"));
     assert!(persisted_owner["runtime_handle"]
         .get("collaborationMemberRuntimeProfiles")
+        .is_none());
+    assert!(persisted_owner["runtime_handle"]
+        .get("collaborationCoordinatorIdentity")
         .is_none());
     assert!(!persisted_owner.contains_key("status"));
     assert!(!persisted_owner.contains_key("thread_status"));
@@ -600,4 +609,73 @@ fn claude_restart_never_resurrects_a_running_process() {
     assert_eq!(restored.status, "interrupted");
     assert!(!restored.running);
     assert_eq!(restored.completed_at, None);
+}
+
+#[test]
+fn codex_terminal_turn_survives_cold_store_without_native_liveness() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("index.json");
+    let store = RuntimeWorkStore::new(path.clone());
+    let mut task = RuntimeTaskLink::new_pending("task".into(), "/tmp/task".into(), "Task".into());
+    task.runtime = "codex".into();
+    task.status = "done".into();
+    task.turn_status = Some("completed".into());
+    task.completed_at = Some(1234);
+    task.runtime_handle["lastTurnId"] = serde_json::json!("finished-turn");
+    store.upsert_task(task);
+    let restored = RuntimeWorkStore::new(path.clone())
+        .get_task("task")
+        .unwrap();
+    assert_eq!(restored.status, "done");
+    assert_eq!(restored.turn_status.as_deref(), Some("completed"));
+    assert_eq!(restored.completed_at, Some(1234));
+    assert!(!restored.running);
+    assert!(restored.execution_state.is_none());
+
+    for queued in [false, true] {
+        store.update_task("task", |task| {
+            task.execution_state = None;
+            task.running = false;
+            task.status = "done".into();
+            task.completed_at = Some(1234);
+            if queued {
+                crate::runtime_work::lifecycle::queue_native_execution(task, 1, false);
+            } else {
+                crate::runtime_work::lifecycle::begin_native_request(task);
+            }
+        });
+        let restarted = RuntimeWorkStore::new(path.clone())
+            .get_task("task")
+            .unwrap();
+        assert_ne!(restarted.status, "done");
+        assert!(restarted.completed_at.is_none());
+        assert!(restarted.execution_state.is_none());
+    }
+}
+
+#[test]
+fn codex_terminal_fact_cannot_restore_another_turn_or_active_native_request() {
+    let mut task = RuntimeTaskLink::new_pending("task".into(), "/tmp/task".into(), "Task".into());
+    task.runtime = "codex".into();
+    task.status = "done".into();
+    task.completed_at = Some(1234);
+    task.runtime_handle["lastTurnId"] = serde_json::json!("old-turn");
+    let terminal = PersistedLocalExecution::from_runtime(&task).unwrap();
+    task.status = "active".into();
+    task.completed_at = None;
+    task.runtime_handle["lastTurnId"] = serde_json::json!("new-turn");
+    terminal.clone().restore(&mut task);
+    assert_eq!(task.status, "active");
+    assert!(task.completed_at.is_none());
+    task.status = "running".into();
+    task.running = true;
+    assert!(PersistedLocalExecution::from_runtime(&task).is_none());
+    task.status = "queued".into();
+    task.running = false;
+    assert!(PersistedLocalExecution::from_runtime(&task).is_none());
+    task.runtime_handle["lastTurnId"] = serde_json::json!("old-turn");
+    crate::runtime_work::lifecycle::queue_native_execution(&mut task, 1, false);
+    terminal.restore(&mut task);
+    assert_eq!(task.status, "queued");
+    assert!(task.completed_at.is_none());
 }

@@ -216,7 +216,10 @@ export function createLocalProjectChatClient(
         task_id: input.taskId,
         agent_id: agentId,
         trigger_message_id: trigger.message_id,
-        payload,
+        payload: {
+          ...payload,
+          ...(input.humanRequestId ? { human_request_id: input.humanRequestId } : {}),
+        },
       })
     }
     const updated = await request<LocalCommentRecord[]>('todos.comment.list', {

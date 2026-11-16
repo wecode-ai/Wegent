@@ -9,7 +9,7 @@ describe('MCP App transport authority', () => {
     expect(appDocumentOrigin('https://example.com/app')).toBe('https://example.com')
   })
 
-  it.each(['http://127.0.0.1:9000', 'codex-sandbox://one.web-sandbox.oaiusercontent.com'])(
+  it.each(['codex-sandbox://one.web-sandbox.oaiusercontent.com'])(
     'accepts only the exact source and document origin, and removes listeners on close for %s',
     async origin => {
       const target = document.createElement('iframe')

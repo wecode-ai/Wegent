@@ -1,3 +1,5 @@
+// @vitest-environment node
+
 import { beforeEach, describe, expect, test, vi } from 'vitest'
 import {
   toInstalledPlugin,
@@ -10,6 +12,10 @@ import {
 } from './codexPlugins'
 
 const mocks = vi.hoisted(() => ({ request: vi.fn(), personalPath: '' }))
+
+vi.mock('@/api/local/runtimeAuthStatus', () => ({
+  getLocalCodexAuthStatus: vi.fn().mockResolvedValue({ sha256: 'test-account' }),
+}))
 
 vi.mock('@/lib/runtime-environment', () => ({
   isDesktopRuntime: () => true,
@@ -64,6 +70,15 @@ beforeEach(() => {
   mocks.request.mockReset()
   mocks.personalPath = ''
   mocks.request.mockImplementation(async (method: string, params?: { method?: string }) => {
+    if (method === 'executor.plugins.personal.list')
+      return {
+        marketplaceId: 'wework-personal',
+        marketplacePath: personal.path,
+        plugins: [
+          { name: membership.name, pluginPath: personal.path + '/plugins/' + membership.name },
+        ],
+      }
+    if (method === 'executor.codex_home.config.read') return { enabledPluginKeys: [membership.id] }
     if (method === 'executor.plugins.store.list')
       return { storePath: '/executor/store', plugins: [] }
     if (method === 'executor.plugins.links.list') return []

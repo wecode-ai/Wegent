@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import { createServer } from 'node:http'
 
 import { createSingleRootLocalProject, selectE2EModel } from '../modules/shared.mjs'
+import { verifyCodexStartupHistory } from '../modules/codex-startup-history.mjs'
 
 const MODEL_ORIGIN = 'http://wework-system-proxy.invalid'
 const PROMPT = 'WEWORK_DESKTOP_E2E_SYSTEM_PROXY'
@@ -157,6 +158,7 @@ export async function createDesktopScenario({
         text: COMPLETION,
         timeoutMs: uiTimeoutMs,
       })
+      if (!pac) await verifyCodexStartupHistory(control, proxyUrl, COMPLETION, uiTimeoutMs)
 
       await control.command('navigate', 'body', { value: '/settings/general' })
       await control.command('waitFor', '[data-testid="settings-nav-proxy"]', {

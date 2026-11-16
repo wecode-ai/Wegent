@@ -4,6 +4,29 @@ import {
   validateUpgradeCatalog,
 } from '../../electron/src/runtime/upgrade-policy.mjs'
 
+export function releasePublicationChannels(channel, policy = {}) {
+  if (!['stable', 'beta'].includes(channel)) throw new Error('Invalid release channel')
+  if (policy.releasePurpose === undefined) return releaseUpgradeChannels(channel)
+  if (policy.releasePurpose !== 'bridge' || channel !== 'stable')
+    throw new Error('Bridge releases publish only to stable')
+  return ['stable']
+}
+
+export function releaseVerificationChannels(
+  channel,
+  selected = '',
+  sourceVersion = '',
+  policy = {}
+) {
+  if (!['stable', 'beta'].includes(channel)) throw new Error('Invalid release channel')
+  const channels = sourceVersion
+    ? releaseUpgradeChannels(channel, sourceVersion)
+    : releasePublicationChannels(channel, policy)
+  if (selected && !channels.includes(selected))
+    throw new Error('Verification channel is outside the target release channels')
+  return selected ? [selected] : channels
+}
+
 /** Production promotion accepts exact delivered packages, never regression fixture results. */
 export function verifiedUpgradeEdge({
   from,
@@ -16,6 +39,7 @@ export function verifiedUpgradeEdge({
   arch,
   channel,
 }) {
+  const manifest = evidence.manifestRecovery
   if (
     from.fixture ||
     to.fixture ||
@@ -37,6 +61,14 @@ export function verifiedUpgradeEdge({
     evidence.channel !== channel ||
     evidence.upgrade !== 'passed' ||
     evidence.rollback !== 'passed' ||
+    manifest?.schemaVersion !== 2 ||
+    manifest.restarted !== true ||
+    manifest.rolledBack !== true ||
+    typeof manifest.backup !== 'string' ||
+    typeof manifest.historicalBackup !== 'string' ||
+    !manifest.backup.startsWith('manifest.json.empty-') ||
+    !manifest.historicalBackup.startsWith('manifest.json.empty-') ||
+    manifest.backup === manifest.historicalBackup ||
     compareVersions(from.version, to.version) >= 0 ||
     compareVersions(from.version, to.minSourceVersion) < 0
   ) {
@@ -69,10 +101,23 @@ export function upgradeSource(catalogs, version) {
   return candidates[0]
 }
 
+/** Select catalog channels independently of the target package's release label. */
+export function releaseUpgradeChannels(targetChannel, sourceVersion) {
+  if (sourceVersion?.includes('-beta.')) return ['beta']
+  if (sourceVersion) return [targetChannel]
+  return targetChannel === 'stable' ? ['stable', 'beta'] : ['beta']
+}
+
+export function validateReleaseUpgradeTarget(target) {
+  if (compareVersions(target.minSourceVersion, target.version) > 0)
+    throw new Error(
+      `The minimum upgrade source cannot be newer than the target: ${target.minSourceVersion} > ${target.version}`
+    )
+}
+
 /** Select candidates automatically; only real-package E2E may authorize their edges. */
 export function releaseUpgradePlan(catalogs, target, channel) {
-  if (compareVersions(target.minSourceVersion, target.version) > 0)
-    throw new Error('The minimum upgrade source cannot be newer than the target')
+  validateReleaseUpgradeTarget(target)
   const published = catalogs.filter(Boolean).map(validateUpgradeCatalog)
   const selectedCatalogs =
     channel === 'stable' ? published.filter(catalog => catalog.channel === 'stable') : published

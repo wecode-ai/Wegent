@@ -19,10 +19,14 @@ import {
   getRuntimeTaskAddress,
   getRuntimeTaskWorkspaceTitle,
 } from '@/components/layout/runtimeTaskSidebarHelpers'
-import { getRuntimeTaskNotificationText } from './runtimeTaskNotificationContent'
+import {
+  getRuntimeTaskNotificationText,
+  runtimeTaskNotificationCategory,
+} from './runtimeTaskNotificationContent'
 import { sendSystemNotification } from './runtimeTaskSystemNotifications'
 import { isMainWindowFocused, subscribeMainWindowFocus } from '@/desktop/windowFocus'
 import { standInOrigin } from '@/features/notifications/standInNotifications'
+import { isStandInIdentity, useStandInMessageReminders } from './useStandInMessageReminders'
 import { useUnlistedStandInTasks } from '@/features/notifications/useUnlistedStandInTasks'
 import type { StandInExecutorApi } from '@/api/standIn'
 import type { WorkbenchServices } from './workbenchServices'
@@ -42,6 +46,7 @@ export interface RuntimeTaskReminderItem {
 }
 
 export interface RuntimeTaskReminderState {
+  unreadMessageCounts?: ReadonlyMap<string, number>
   unreadTaskKeys: ReadonlySet<string>
   unreadCount: number
   hasRunningTasks: boolean
@@ -217,29 +222,38 @@ export function useRuntimeTaskReminders({
     return [...listedItems, ...unlisted]
   }, [listedItems, lifecycleSnapshot.tasks])
   const itemsByKey = useMemo(() => new Map(items.map(item => [item.key, item])), [items])
+  const unreadMessageCounts = useStandInMessageReminders(
+    items,
+    lifecycleStore,
+    notificationPreferences,
+    runtimeApi
+  )
   const visibleUnreadTaskKeys = useMemo(
     () =>
-      getVisibleRuntimeTaskUnreadKeys(
-        listedItems.filter(item => notificationPreferences.tasks.in_app || standInOrigin(item)),
-        lifecycleSnapshot.unreadTaskKeys
-      ),
-    [listedItems, lifecycleSnapshot.unreadTaskKeys, notificationPreferences.tasks.in_app]
+      new Set([
+        ...getVisibleRuntimeTaskUnreadKeys(
+          listedItems.filter(
+            item =>
+              !isStandInIdentity(item) &&
+              (notificationPreferences[runtimeTaskNotificationCategory(item)].in_app ||
+                standInOrigin(item))
+          ),
+          lifecycleSnapshot.unreadTaskKeys
+        ),
+        ...[...unreadMessageCounts].filter(([, count]) => count > 0).map(([key]) => key),
+      ]),
+    [listedItems, lifecycleSnapshot.unreadTaskKeys, notificationPreferences, unreadMessageCounts]
   )
 
   useEffect(() => {
-    if (notificationPreferences.tasks.in_app) return
     for (const item of items) {
       if (standInOrigin(item)) continue
+      if (notificationPreferences[runtimeTaskNotificationCategory(item)].in_app) continue
       if (lifecycleSnapshot.unreadTaskKeys.has(item.key)) {
         lifecycleStore.markRead(item.address)
       }
     }
-  }, [
-    items,
-    lifecycleSnapshot.unreadTaskKeys,
-    lifecycleStore,
-    notificationPreferences.tasks.in_app,
-  ])
+  }, [items, lifecycleSnapshot.unreadTaskKeys, lifecycleStore, notificationPreferences])
 
   useEffect(() => {
     const previousUnreadTaskKeys = previousUnreadTaskKeysRef.current
@@ -253,10 +267,11 @@ export function useRuntimeTaskReminders({
     for (const key of lifecycleSnapshot.runningTaskKeys) {
       notifiedTaskKeysRef.current.delete(key)
     }
-    if (!notificationPreferences.tasks.system) return
     if (windowFocusedRef.current) return
     for (const item of newlyUnreadItems) {
+      if (isStandInIdentity(item)) continue
       if (standInOrigin(item)) continue
+      if (!notificationPreferences[runtimeTaskNotificationCategory(item)].system) continue
       if (item.lifecycle?.interactionStatus || item.task.interactionStatus) continue
       if (notifiedTaskKeysRef.current.has(item.key)) continue
       notifiedTaskKeysRef.current.add(item.key)
@@ -276,13 +291,17 @@ export function useRuntimeTaskReminders({
     itemsByKey,
     lifecycleSnapshot.runningTaskKeys,
     lifecycleSnapshot.unreadTaskKeys,
-    notificationPreferences.tasks.system,
+    notificationPreferences,
   ])
 
   return useMemo(
     () => ({
       unreadTaskKeys: visibleUnreadTaskKeys,
-      unreadCount: visibleUnreadTaskKeys.size,
+      unreadMessageCounts,
+      unreadCount: [...visibleUnreadTaskKeys].reduce(
+        (total, key) => total + (unreadMessageCounts.get(key) ?? 1),
+        0
+      ),
       hasRunningTasks: lifecycleSnapshot.runningTaskKeys.size > 0,
       preferences,
       items,
@@ -294,6 +313,7 @@ export function useRuntimeTaskReminders({
       lifecycleStore,
       preferences,
       visibleUnreadTaskKeys,
+      unreadMessageCounts,
     ]
   )
 }

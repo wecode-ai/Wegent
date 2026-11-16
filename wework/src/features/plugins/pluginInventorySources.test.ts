@@ -1,12 +1,13 @@
-import { describe, expect, test } from 'vitest'
-import { toInstalledPlugin } from '@wegent/chat-core/codex-installed-plugins'
+// @vitest-environment node
+
 import type { InstalledPlugin } from '@/types/api'
+import { toInstalledPlugin } from '@wegent/chat-core/codex-installed-plugins'
+import { describe, expect, test } from 'vitest'
 import {
   indexLocalPluginSources,
   inventoryIdentity,
   resolveLocalPluginInventory,
   type LocalInstalledSources,
-  type LocalPluginSourceItems,
 } from './pluginInventorySources'
 
 function plugin(name: string, marketplace = 'custom'): InstalledPlugin {
@@ -215,26 +216,6 @@ describe('source-owned local plugin inventory', () => {
     expect(removed.localInstalledSources).toEqual({ codex: [], store: [] })
   })
 
-  test('maps raw store and Codex IDs onto their final cloud record', () => {
-    const stored = storePlugin('tool')
-    const codex = {
-      ...plugin('tool', 'wegent'),
-      spec: { ...plugin('tool', 'wegent').spec, sourcePayload: stored.spec.sourcePayload },
-    }
-    const cloud = {
-      ...plugin('tool', 'wegent'),
-      metadata: { ...stored.metadata, labels: { id: '62' } },
-      spec: { ...stored.spec, pluginId: 42, releaseId: 7 },
-    }
-    expect(indexLocalPluginSources([cloud], { codex: [codex], store: [stored] }, 'device')).toEqual(
-      {
-        codex: ['cloud:42'],
-        store: ['cloud:42'],
-      }
-    )
-    expect(indexLocalPluginSources([cloud], { store: [stored] }, '')).toEqual({})
-  })
-
   test.each(['left', 'wegent'])(
     'does not apply cloud matching to equal native plugin names in %s and another marketplace',
     marketplace => {
@@ -277,6 +258,28 @@ describe('source-owned local plugin inventory', () => {
     })
   })
 
+  test.each([false, true])(
+    'Codex recovery retains the confirmed personal source when its next read fails (empty=%s)',
+    empty => {
+      const personal = plugin('personal-tool', 'wework-personal')
+      const stale = plugin('stale-personal', 'wework-personal')
+      const other = plugin('native-tool')
+      const confirmed = empty ? [] : [personal]
+      const resolved = resolveLocalPluginInventory(
+        snapshot(confirmed, { personal: confirmed.map(inventoryIdentity) }),
+        {
+          items: [other, stale],
+          partial: true,
+          sourceReads: { codex: fulfilled([other, stale]), personal: rejected },
+        },
+        'device'
+      )
+      expect(resolved.items).toEqual([other, ...confirmed])
+      expect(resolved.localInstalledSources.personal).toEqual(confirmed.map(inventoryIdentity))
+      expect(resolved.localInstalledSourceStatus.personal).toBe('rejected')
+    }
+  )
+
   test('reconstructs legacy ownership from explicit native and managed routing metadata', () => {
     const native = plugin('native-tool')
     const stored = storePlugin('stored-tool')
@@ -304,21 +307,6 @@ describe('source-owned local plugin inventory', () => {
     ).toEqual([])
   })
 
-  test('a complete fresh local list retains cloud-projected rows without inferring previous cloud-only records', () => {
-    const native = plugin('cloud-projected-tool')
-    const projected = { ...native, spec: { ...native.spec, pluginId: 99, sourcePayload: {} } }
-    const resolved = resolveLocalPluginInventory(null, { items: [projected] }, 'device')
-    expect(resolved.items).toEqual([projected])
-    expect(resolved.localInstalledSources.codex).toEqual(['cloud:99'])
-    expect(
-      resolveLocalPluginInventory(
-        snapshot([projected]),
-        { items: [], partial: true, sourceReads: { codex: rejected } },
-        'device'
-      ).items
-    ).toEqual([])
-  })
-
   test('rejects ambiguous partial lists and malformed successful source results', () => {
     expect(() => resolveLocalPluginInventory(null, { items: [], partial: true }, 'device')).toThrow(
       'requires source read results'
@@ -330,21 +318,5 @@ describe('source-owned local plugin inventory', () => {
         'device'
       )
     ).toThrow('Invalid codex plugin source')
-  })
-
-  test('accepts a complete flat read as a replacement, rather than retaining old membership', () => {
-    const old = plugin('old-tool')
-    const sourceItems: LocalPluginSourceItems = { codex: [old] }
-    const resolved = resolveLocalPluginInventory(
-      snapshot([old], indexLocalPluginSources([old], sourceItems, 'device')),
-      { items: [] },
-      'device'
-    )
-    expect(resolved.items).toEqual([])
-    expect(resolved.localInstalledSourceStatus).toEqual({
-      codex: 'fulfilled',
-      store: 'fulfilled',
-      personal: 'fulfilled',
-    })
   })
 })

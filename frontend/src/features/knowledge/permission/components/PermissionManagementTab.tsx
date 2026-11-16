@@ -4,8 +4,8 @@
 
 'use client'
 
-import { useEffect, useState } from 'react'
-import { Check, X, UserPlus, Pencil, Trash2, User, Users, Clock } from 'lucide-react'
+import { useEffect, useState, useRef } from 'react'
+import { Check, X, UserPlus, Pencil, Trash2, User, Users } from 'lucide-react'
 
 import { getPermissionTabs, subscribePermissionTabs } from '../permission-tab-registry'
 import { Button } from '@/components/ui/button'
@@ -19,16 +19,17 @@ import {
   SelectValue,
 } from '@/components/ui/select'
 import { useTranslation } from '@/hooks/useTranslation'
-import { useKnowledgePermissions } from '../hooks/useKnowledgePermissions'
-import { AddUserDialog } from './add-user-dialog'
-import { AddNamespaceDialog } from './add-namespace-dialog'
+import {
+  PermissionManagementScope,
+  usePermissionManagementController,
+  type PermissionManagementProps,
+} from './permission-management-controller'
+import { PermissionRequests } from './PermissionRequests'
+import { KnowledgeGrantForm } from './KnowledgeGrantForm'
+import { Input } from '@/components/ui/input'
+import { KnowledgeGrantDialog } from './KnowledgeGrantDialog'
 import { ASSIGNABLE_ROLES } from '@/types/base-role'
-import type {
-  MemberRole,
-  PendingPermissionInfo,
-  PermissionUserInfo,
-  ApprovedPermissionsByRole,
-} from '@/types/knowledge'
+import type { MemberRole, PermissionUserInfo, ApprovedPermissionsByRole } from '@/types/knowledge'
 
 /**
  * Build role-grouped members by applying a filter to each role list.
@@ -46,10 +47,7 @@ function buildRoleGroups(
   }
 }
 
-interface PermissionManagementTabProps {
-  kbId: number
-  /** The namespace this KB belongs to; groups in this namespace are excluded from group authorization */
-  kbNamespace?: string
+interface PermissionManagementTabProps extends PermissionManagementProps {
   /**
    * Extension tabs rendered alongside standard tabs (Personal/Groups).
    * Used by internal deployments to add entity-type permission panels.
@@ -61,11 +59,23 @@ interface PermissionManagementTabProps {
   }>
 }
 
-export function PermissionManagementTab({
+export function PermissionManagementTab(props: PermissionManagementTabProps) {
+  return (
+    <PermissionManagementScope {...props}>
+      {session => <PermissionManagementSession {...props} {...session} />}
+    </PermissionManagementScope>
+  )
+}
+
+function PermissionManagementSession({
   kbId,
   kbNamespace,
+  refreshKey,
   extensionTabs,
-}: PermissionManagementTabProps) {
+  onChanged,
+  onAccessDenied,
+  isCurrentUi,
+}: PermissionManagementTabProps & { isCurrentUi: () => boolean }) {
   const { t } = useTranslation('knowledge')
 
   // Safe translation helper that falls back when key is not found
@@ -74,14 +84,12 @@ export function PermissionManagementTab({
     return v && v !== key ? v : fallback
   }
 
-  const [showAddUser, setShowAddUser] = useState(false)
-  const [showAddNamespace, setShowAddNamespace] = useState(false)
+  const [showAdd, setShowAdd] = useState(false)
+  const [search, setSearch] = useState('')
+  const addTrigger = useRef<HTMLButtonElement>(null)
   const [editingId, setEditingId] = useState<number | null>(null)
   const [editingRole, setEditingRole] = useState<MemberRole>('Reporter')
   const [activeTab, setActiveTab] = useState<string>('user')
-  // Track selected approval roles for pending requests
-  const [approvalRoles, setApprovalRoles] = useState<Record<number, MemberRole>>({})
-
   const {
     permissions,
     loading,
@@ -91,12 +99,17 @@ export function PermissionManagementTab({
     updatePermission,
     deletePermission,
     clearError,
-  } = useKnowledgePermissions({ kbId, includePendingRequests: true })
-
-  // Fetch permissions on mount
-  useEffect(() => {
-    fetchPermissions()
-  }, [fetchPermissions])
+    approvalRoles,
+    setApprovalRole,
+    membersChanged: handleExternalChanged,
+  } = usePermissionManagementController({
+    kbId,
+    kbNamespace,
+    refreshKey,
+    onChanged,
+    onAccessDenied,
+    isCurrentUi,
+  })
 
   // Load optional KB extensions (e.g., org_department in internal builds)
   useEffect(() => {
@@ -107,38 +120,10 @@ export function PermissionManagementTab({
     })
   }, [])
 
-  // Initialize approval roles when pending requests change
-  useEffect(() => {
-    if (permissions?.pending) {
-      setApprovalRoles(prev => {
-        const additions: Record<number, MemberRole> = {}
-        permissions.pending.forEach(p => {
-          if (!(p.id in prev)) {
-            additions[p.id] = p.role || 'Reporter'
-          }
-        })
-        return Object.keys(additions).length ? { ...prev, ...additions } : prev
-      })
-    }
-  }, [permissions?.pending])
-
-  const handleApprovalRoleChange = (permissionId: number, role: MemberRole) => {
-    setApprovalRoles(prev => ({ ...prev, [permissionId]: role }))
-  }
-
-  const handleApprove = async (permission: PendingPermissionInfo) => {
-    try {
-      const role = approvalRoles[permission.id] || permission.role || 'Reporter'
-      await reviewPermission(permission.id, 'approve', role)
-    } catch (_err) {
-      // Error is handled by the hook
-    }
-  }
-
   const handleUpdateRole = async (permissionId: number, role: MemberRole) => {
     try {
       await updatePermission(permissionId, role)
-      setEditingId(null)
+      if (isCurrentUi()) setEditingId(null)
     } catch (_err) {
       // Error is handled by the hook
     }
@@ -158,14 +143,6 @@ export function PermissionManagementTab({
     setEditingRole(permission.role || 'Reporter')
   }
 
-  const handleReject = async (permission: PendingPermissionInfo) => {
-    try {
-      await reviewPermission(permission.id, 'reject')
-    } catch (_err) {
-      // Error is handled by the hook
-    }
-  }
-
   const cancelEditing = () => {
     setEditingId(null)
   }
@@ -176,18 +153,33 @@ export function PermissionManagementTab({
     return subscribePermissionTabs(() => setExternalTabs(getPermissionTabs()))
   }, [])
 
-  if (loading && !permissions) {
+  if (!permissions) {
     return (
-      <div className="flex items-center justify-center py-12">
-        <Spinner />
+      <div className="p-4" role={error ? 'alert' : 'status'}>
+        {error ? (
+          <>
+            <p>{t('document.navigation.membersFailed')}</p>
+            <Button
+              variant="outline"
+              className="min-h-11 min-w-11"
+              data-testid="retry-knowledge-members"
+              onClick={() => void fetchPermissions()}
+            >
+              {t('document.navigation.retry')}
+            </Button>
+          </>
+        ) : (
+          <Spinner />
+        )}
       </div>
     )
   }
 
-  const pendingCount = permissions?.pending.length || 0
-
   // Separate namespace members from user members
-  const allApproved = permissions?.approved
+  const query = search.trim().toLocaleLowerCase()
+  const matches = (member: PermissionUserInfo) =>
+    [member.display_name, member.email].some(value => value?.toLocaleLowerCase().includes(query))
+  const allApproved = buildRoleGroups(permissions.approved, matches)
 
   // Filter namespace members into role groups for group display — must be before namespaceGroupCount
   const filterNamespaceIn = (users: PermissionUserInfo[]) =>
@@ -205,17 +197,6 @@ export function PermissionManagementTab({
   const namespaceGroupCount = namespaceRoleGroups
     ? Object.values(namespaceRoleGroups).reduce((sum, arr) => sum + arr.length, 0)
     : 0
-
-  const boundNamespaceIds = namespaceRoleGroups
-    ? Array.from(
-        new Set(
-          Object.values(namespaceRoleGroups)
-            .flat()
-            .map(m => m.entity_id)
-            .filter((id): id is string => !!id)
-        )
-      )
-    : []
 
   // Filter namespace members out of role groups for user display
   const filterNamespaceOut = (users: PermissionUserInfo[]) =>
@@ -245,24 +226,72 @@ export function PermissionManagementTab({
     }
   }
 
+  const visibleGroups =
+    activeTab === 'user'
+      ? userRoleGroups
+      : activeTab === 'namespace'
+        ? namespaceRoleGroups
+        : externalRoleGroups[activeTab.replace('ext-reg-', '')]
+  const matchedCount = visibleGroups
+    ? Object.values(visibleGroups).reduce((sum, members) => sum + members.length, 0)
+    : 0
+
   return (
-    <div className="space-y-6 p-4">
+    <div className="min-w-0 space-y-6 p-4 max-md:px-0">
       {/* Error Message */}
       {error && (
         <div className="bg-error/10 text-error px-4 py-2 rounded-lg text-sm flex justify-between items-center">
           <span>{error}</span>
-          <button onClick={clearError} className="text-error/70 hover:text-error">
+          <Button
+            variant="outline"
+            className="min-h-11 min-w-11"
+            data-testid="retry-knowledge-members"
+            onClick={() => void fetchPermissions()}
+          >
+            {t('document.navigation.retry')}
+          </Button>
+          <button
+            type="button"
+            onClick={clearError}
+            className="min-h-11 min-w-11 flex items-center justify-center text-error/70 hover:text-error"
+            data-testid="permission-dismiss-error"
+            aria-label={t('document.navigation.dismissError')}
+          >
             <X className="w-4 h-4" />
           </button>
         </div>
       )}
 
+      <div className="flex flex-wrap items-center gap-2">
+        <Input
+          value={search}
+          onChange={event => setSearch(event.target.value)}
+          placeholder={t('document.permission.searchMembers')}
+          aria-label={t('document.permission.searchMembers')}
+          data-testid="knowledge-member-search"
+          className="min-h-11 min-w-0 flex-1 basis-40"
+        />
+        <Button
+          ref={addTrigger}
+          variant="primary"
+          className="min-h-11 min-w-11"
+          data-testid="permission-add-collaborator"
+          onClick={() => setShowAdd(true)}
+        >
+          <UserPlus className="mr-2 h-4 w-4" />
+          {t('document.permission.addCollaborator')}
+        </Button>
+      </div>
+      <p role="status" data-testid="knowledge-member-count" className="text-sm text-text-muted">
+        {t('document.permission.matchingMembers', { count: matchedCount })}
+      </p>
+
       {/* Tabs */}
-      <div className="flex border-b border-border">
+      <div className="flex overflow-x-auto border-b border-border">
         <button
           type="button"
           onClick={() => setActiveTab('user')}
-          className={`flex items-center gap-1.5 px-3 py-2 text-sm font-medium border-b-2 transition-colors ${
+          className={`flex min-h-11 min-w-11 shrink-0 items-center gap-1.5 px-3 py-2 text-sm font-medium border-b-2 transition-colors ${
             activeTab === 'user'
               ? 'border-primary text-primary'
               : 'border-transparent text-text-muted hover:text-text-primary'
@@ -280,7 +309,7 @@ export function PermissionManagementTab({
         <button
           type="button"
           onClick={() => setActiveTab('namespace')}
-          className={`flex items-center gap-1.5 px-3 py-2 text-sm font-medium border-b-2 transition-colors ${
+          className={`flex min-h-11 min-w-11 shrink-0 items-center gap-1.5 px-3 py-2 text-sm font-medium border-b-2 transition-colors ${
             activeTab === 'namespace'
               ? 'border-primary text-primary'
               : 'border-transparent text-text-muted hover:text-text-primary'
@@ -301,9 +330,10 @@ export function PermissionManagementTab({
           return (
             <button
               key={tabValue}
+              data-testid={`permission-tab-${tabValue}`}
               type="button"
               onClick={() => setActiveTab(tabValue)}
-              className={`flex items-center gap-1.5 px-3 py-2 text-sm font-medium border-b-2 transition-colors ${
+              className={`flex min-h-11 min-w-11 shrink-0 items-center gap-1.5 px-3 py-2 text-sm font-medium border-b-2 transition-colors ${
                 activeTab === tabValue
                   ? 'border-primary text-primary'
                   : 'border-transparent text-text-muted hover:text-text-primary'
@@ -324,9 +354,10 @@ export function PermissionManagementTab({
           return (
             <button
               key={tabValue}
+              data-testid={`permission-tab-${tabValue}`}
               type="button"
               onClick={() => setActiveTab(tabValue)}
-              className={`flex items-center gap-1.5 px-3 py-2 text-sm font-medium border-b-2 transition-colors ${
+              className={`flex min-h-11 min-w-11 shrink-0 items-center gap-1.5 px-3 py-2 text-sm font-medium border-b-2 transition-colors ${
                 activeTab === tabValue
                   ? 'border-primary text-primary'
                   : 'border-transparent text-text-muted hover:text-text-primary'
@@ -347,87 +378,17 @@ export function PermissionManagementTab({
       {/* ===== User Tab ===== */}
       {activeTab === 'user' && (
         <div className="space-y-4">
-          {/* Pending Requests Section */}
-          <Card padding="default" className="space-y-4">
-            <div className="flex items-center gap-2 text-sm font-medium">
-              <Clock className="w-4 h-4 text-warning" />
-              {t('document.permission.pendingRequests')}
-              {pendingCount > 0 && (
-                <span className="bg-warning/10 text-warning px-2 py-0.5 rounded-full text-xs">
-                  {pendingCount}
-                </span>
-              )}
-            </div>
-
-            {pendingCount === 0 ? (
-              <p className="text-sm text-text-muted py-4 text-center">
-                {t('document.permission.noPendingRequests')}
-              </p>
-            ) : (
-              <div className="space-y-2">
-                {permissions?.pending.map(permission => (
-                  <div
-                    key={permission.id}
-                    className="flex items-center justify-between p-3 bg-muted rounded-lg"
-                  >
-                    <div className="flex-1">
-                      <div className="font-medium text-sm">{permission.username}</div>
-                      <div className="text-xs text-text-muted">
-                        {permission.email || t('document.permission.noEmail')}
-                      </div>
-                      <div className="text-xs text-text-muted mt-1">
-                        {t('document.permission.requesting')}:{' '}
-                        {permission.role
-                          ? t(`document.permission.role.${permission.role}`)
-                          : t('document.permission.role.Reporter')}
-                      </div>
-                    </div>
-                    <div className="flex items-center gap-2">
-                      <Select
-                        value={approvalRoles[permission.id] || permission.role || 'Reporter'}
-                        onValueChange={value =>
-                          handleApprovalRoleChange(permission.id, value as MemberRole)
-                        }
-                      >
-                        <SelectTrigger className="w-28 h-11 min-w-[44px]">
-                          <SelectValue />
-                        </SelectTrigger>
-                        <SelectContent>
-                          {ASSIGNABLE_ROLES.map(role => (
-                            <SelectItem key={role} value={role}>
-                              {t(`document.permission.role.${role}`)}
-                            </SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
-                      <Button
-                        variant="ghost"
-                        size="icon"
-                        className="h-11 min-w-[44px] text-success hover:text-success hover:bg-success/10"
-                        onClick={() => handleApprove(permission)}
-                        disabled={loading}
-                      >
-                        <Check className="w-4 h-4" />
-                      </Button>
-                      <Button
-                        variant="ghost"
-                        size="icon"
-                        className="h-11 min-w-[44px] text-error hover:text-error hover:bg-error/10"
-                        onClick={() => handleReject(permission)}
-                        disabled={loading}
-                      >
-                        <X className="w-4 h-4" />
-                      </Button>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            )}
-          </Card>
+          <PermissionRequests
+            roles={approvalRoles}
+            onRoleChange={setApprovalRole}
+            pending={permissions.pending}
+            loading={loading}
+            onReview={reviewPermission}
+          />
 
           {/* Approved Users Section */}
           <Card padding="default" className="space-y-4">
-            <div className="flex items-center justify-between">
+            <div className="flex flex-wrap items-center justify-between gap-2">
               <div className="flex items-center gap-2 text-sm font-medium">
                 <Users className="w-4 h-4 text-primary" />
                 {t('document.permission.approvedUsers')}
@@ -437,93 +398,38 @@ export function PermissionManagementTab({
                   </span>
                 )}
               </div>
-              <Button variant="outline" size="sm" onClick={() => setShowAddUser(true)}>
-                <UserPlus className="w-4 h-4 mr-2" />
-                {loc('document.permission.addUser', '添加用户')}
-              </Button>
             </div>
 
             {approvedCount === 0 ? (
               <p className="text-sm text-text-muted py-4 text-center">
-                {t('document.permission.noApprovedUsers')}
+                {t(
+                  query
+                    ? 'document.permission.noMatchingMembers'
+                    : 'document.permission.noApprovedUsers'
+                )}
               </p>
             ) : (
               <div className="space-y-4">
-                {(userRoleGroups?.Owner?.length || 0) > 0 && (
-                  <PermissionGroup
-                    title={t('document.permission.role.Owner')}
-                    users={userRoleGroups!.Owner}
-                    editingId={editingId}
-                    editingRole={editingRole}
-                    setEditingRole={setEditingRole}
-                    onStartEditing={startEditing}
-                    onCancelEditing={cancelEditing}
-                    onUpdateRole={handleUpdateRole}
-                    onDelete={handleDelete}
-                    loading={loading}
-                    t={t}
-                  />
-                )}
-                {(userRoleGroups?.Maintainer?.length || 0) > 0 && (
-                  <PermissionGroup
-                    title={t('document.permission.role.Maintainer')}
-                    users={userRoleGroups!.Maintainer}
-                    editingId={editingId}
-                    editingRole={editingRole}
-                    setEditingRole={setEditingRole}
-                    onStartEditing={startEditing}
-                    onCancelEditing={cancelEditing}
-                    onUpdateRole={handleUpdateRole}
-                    onDelete={handleDelete}
-                    loading={loading}
-                    t={t}
-                  />
-                )}
-                {(userRoleGroups?.Developer?.length || 0) > 0 && (
-                  <PermissionGroup
-                    title={t('document.permission.role.Developer')}
-                    users={userRoleGroups!.Developer}
-                    editingId={editingId}
-                    editingRole={editingRole}
-                    setEditingRole={setEditingRole}
-                    onStartEditing={startEditing}
-                    onCancelEditing={cancelEditing}
-                    onUpdateRole={handleUpdateRole}
-                    onDelete={handleDelete}
-                    loading={loading}
-                    t={t}
-                  />
-                )}
-                {(userRoleGroups?.Reporter?.length || 0) > 0 && (
-                  <PermissionGroup
-                    title={t('document.permission.role.Reporter')}
-                    users={userRoleGroups!.Reporter}
-                    editingId={editingId}
-                    editingRole={editingRole}
-                    setEditingRole={setEditingRole}
-                    onStartEditing={startEditing}
-                    onCancelEditing={cancelEditing}
-                    onUpdateRole={handleUpdateRole}
-                    onDelete={handleDelete}
-                    loading={loading}
-                    t={t}
-                  />
-                )}
-                {(userRoleGroups?.RestrictedAnalyst?.length || 0) > 0 && (
-                  <PermissionGroup
-                    title={t('document.permission.role.RestrictedAnalyst')}
-                    users={userRoleGroups!.RestrictedAnalyst}
-                    editingId={editingId}
-                    editingRole={editingRole}
-                    setEditingRole={setEditingRole}
-                    onStartEditing={startEditing}
-                    onCancelEditing={cancelEditing}
-                    onUpdateRole={handleUpdateRole}
-                    onDelete={handleDelete}
-                    loading={loading}
-                    t={t}
-                  />
-                )}
+                {userRoleGroups &&
+                  Object.entries(userRoleGroups).map(
+                    ([role, users]) =>
+                      users.length > 0 && (
+                        <PermissionGroup
+                          key={role}
+                          title={t(`document.permission.role.${role}`)}
+                          users={users}
+                          editingId={editingId}
+                          editingRole={editingRole}
+                          setEditingRole={setEditingRole}
+                          onStartEditing={startEditing}
+                          onCancelEditing={cancelEditing}
+                          onUpdateRole={handleUpdateRole}
+                          onDelete={handleDelete}
+                          loading={loading}
+                          t={t}
+                        />
+                      )
+                  )}
               </div>
             )}
           </Card>
@@ -534,7 +440,7 @@ export function PermissionManagementTab({
       {activeTab === 'namespace' && (
         <div className="space-y-4">
           <Card padding="default" className="space-y-4">
-            <div className="flex items-center justify-between">
+            <div className="flex flex-wrap items-center justify-between gap-2">
               <div className="flex items-center gap-2 text-sm font-medium">
                 <Users className="w-4 h-4 text-primary" />
                 {loc('document.permission.namespaceMembers', '群组')}
@@ -544,93 +450,36 @@ export function PermissionManagementTab({
                   </span>
                 )}
               </div>
-              <Button variant="outline" size="sm" onClick={() => setShowAddNamespace(true)}>
-                <UserPlus className="w-4 h-4 mr-2" />
-                {loc('document.permission.addNamespace', '添加群组')}
-              </Button>
             </div>
 
             {namespaceGroupCount === 0 ? (
               <p className="text-sm text-text-muted py-4 text-center">
-                {loc('document.permission.noNamespacePermissions', '暂无群组权限')}
+                {query
+                  ? t('document.permission.noMatchingMembers')
+                  : loc('document.permission.noNamespacePermissions', '暂无群组权限')}
               </p>
             ) : (
               <div className="space-y-4">
-                {(namespaceRoleGroups?.Owner?.length || 0) > 0 && (
-                  <PermissionGroup
-                    title={t('document.permission.role.Owner')}
-                    users={namespaceRoleGroups!.Owner}
-                    editingId={editingId}
-                    editingRole={editingRole}
-                    setEditingRole={setEditingRole}
-                    onStartEditing={startEditing}
-                    onCancelEditing={cancelEditing}
-                    onUpdateRole={handleUpdateRole}
-                    onDelete={handleDelete}
-                    loading={loading}
-                    t={t}
-                  />
-                )}
-                {(namespaceRoleGroups?.Maintainer?.length || 0) > 0 && (
-                  <PermissionGroup
-                    title={t('document.permission.role.Maintainer')}
-                    users={namespaceRoleGroups!.Maintainer}
-                    editingId={editingId}
-                    editingRole={editingRole}
-                    setEditingRole={setEditingRole}
-                    onStartEditing={startEditing}
-                    onCancelEditing={cancelEditing}
-                    onUpdateRole={handleUpdateRole}
-                    onDelete={handleDelete}
-                    loading={loading}
-                    t={t}
-                  />
-                )}
-                {(namespaceRoleGroups?.Developer?.length || 0) > 0 && (
-                  <PermissionGroup
-                    title={t('document.permission.role.Developer')}
-                    users={namespaceRoleGroups!.Developer}
-                    editingId={editingId}
-                    editingRole={editingRole}
-                    setEditingRole={setEditingRole}
-                    onStartEditing={startEditing}
-                    onCancelEditing={cancelEditing}
-                    onUpdateRole={handleUpdateRole}
-                    onDelete={handleDelete}
-                    loading={loading}
-                    t={t}
-                  />
-                )}
-                {(namespaceRoleGroups?.Reporter?.length || 0) > 0 && (
-                  <PermissionGroup
-                    title={t('document.permission.role.Reporter')}
-                    users={namespaceRoleGroups!.Reporter}
-                    editingId={editingId}
-                    editingRole={editingRole}
-                    setEditingRole={setEditingRole}
-                    onStartEditing={startEditing}
-                    onCancelEditing={cancelEditing}
-                    onUpdateRole={handleUpdateRole}
-                    onDelete={handleDelete}
-                    loading={loading}
-                    t={t}
-                  />
-                )}
-                {(namespaceRoleGroups?.RestrictedAnalyst?.length || 0) > 0 && (
-                  <PermissionGroup
-                    title={t('document.permission.role.RestrictedAnalyst')}
-                    users={namespaceRoleGroups!.RestrictedAnalyst}
-                    editingId={editingId}
-                    editingRole={editingRole}
-                    setEditingRole={setEditingRole}
-                    onStartEditing={startEditing}
-                    onCancelEditing={cancelEditing}
-                    onUpdateRole={handleUpdateRole}
-                    onDelete={handleDelete}
-                    loading={loading}
-                    t={t}
-                  />
-                )}
+                {namespaceRoleGroups &&
+                  Object.entries(namespaceRoleGroups).map(
+                    ([role, users]) =>
+                      users.length > 0 && (
+                        <PermissionGroup
+                          key={role}
+                          title={t(`document.permission.role.${role}`)}
+                          users={users}
+                          editingId={editingId}
+                          editingRole={editingRole}
+                          setEditingRole={setEditingRole}
+                          onStartEditing={startEditing}
+                          onCancelEditing={cancelEditing}
+                          onUpdateRole={handleUpdateRole}
+                          onDelete={handleDelete}
+                          loading={loading}
+                          t={t}
+                        />
+                      )
+                  )}
               </div>
             )}
           </Card>
@@ -653,94 +502,40 @@ export function PermissionManagementTab({
         return activeTab === tabValue ? (
           <div key={tabValue} className="space-y-4">
             <Card padding="default" className="space-y-4">
-              <div className="flex items-center justify-between">
+              <div className="flex flex-wrap items-center justify-between gap-2">
                 <div className="flex items-center gap-2 text-sm font-medium">
                   {tab.icon}
                   {loc(tab.labelKey, tab.label || tab.type)}
                 </div>
-                {tab.renderAddButton && tab.renderAddButton({ kbId, onSuccess: fetchPermissions })}
               </div>
               {tabCount === 0 ? (
                 <p className="text-sm text-text-muted py-4 text-center">
-                  {loc('document.permission.noApprovedUsers', '暂无已授权用户')}
+                  {query
+                    ? t('document.permission.noMatchingMembers')
+                    : loc('document.permission.noApprovedUsers', '暂无已授权用户')}
                 </p>
               ) : (
                 <div className="space-y-4">
-                  {(tabGroups?.Owner?.length || 0) > 0 && (
-                    <PermissionGroup
-                      title={t('document.permission.role.Owner')}
-                      users={tabGroups!.Owner}
-                      editingId={editingId}
-                      editingRole={editingRole}
-                      setEditingRole={setEditingRole}
-                      onStartEditing={startEditing}
-                      onCancelEditing={cancelEditing}
-                      onUpdateRole={handleUpdateRole}
-                      onDelete={handleDelete}
-                      loading={loading}
-                      t={t}
-                    />
-                  )}
-                  {(tabGroups?.Maintainer?.length || 0) > 0 && (
-                    <PermissionGroup
-                      title={t('document.permission.role.Maintainer')}
-                      users={tabGroups!.Maintainer}
-                      editingId={editingId}
-                      editingRole={editingRole}
-                      setEditingRole={setEditingRole}
-                      onStartEditing={startEditing}
-                      onCancelEditing={cancelEditing}
-                      onUpdateRole={handleUpdateRole}
-                      onDelete={handleDelete}
-                      loading={loading}
-                      t={t}
-                    />
-                  )}
-                  {(tabGroups?.Developer?.length || 0) > 0 && (
-                    <PermissionGroup
-                      title={t('document.permission.role.Developer')}
-                      users={tabGroups!.Developer}
-                      editingId={editingId}
-                      editingRole={editingRole}
-                      setEditingRole={setEditingRole}
-                      onStartEditing={startEditing}
-                      onCancelEditing={cancelEditing}
-                      onUpdateRole={handleUpdateRole}
-                      onDelete={handleDelete}
-                      loading={loading}
-                      t={t}
-                    />
-                  )}
-                  {(tabGroups?.Reporter?.length || 0) > 0 && (
-                    <PermissionGroup
-                      title={t('document.permission.role.Reporter')}
-                      users={tabGroups!.Reporter}
-                      editingId={editingId}
-                      editingRole={editingRole}
-                      setEditingRole={setEditingRole}
-                      onStartEditing={startEditing}
-                      onCancelEditing={cancelEditing}
-                      onUpdateRole={handleUpdateRole}
-                      onDelete={handleDelete}
-                      loading={loading}
-                      t={t}
-                    />
-                  )}
-                  {(tabGroups?.RestrictedAnalyst?.length || 0) > 0 && (
-                    <PermissionGroup
-                      title={t('document.permission.role.RestrictedAnalyst')}
-                      users={tabGroups!.RestrictedAnalyst}
-                      editingId={editingId}
-                      editingRole={editingRole}
-                      setEditingRole={setEditingRole}
-                      onStartEditing={startEditing}
-                      onCancelEditing={cancelEditing}
-                      onUpdateRole={handleUpdateRole}
-                      onDelete={handleDelete}
-                      loading={loading}
-                      t={t}
-                    />
-                  )}
+                  {tabGroups &&
+                    Object.entries(tabGroups).map(
+                      ([role, users]) =>
+                        users.length > 0 && (
+                          <PermissionGroup
+                            key={role}
+                            title={t(`document.permission.role.${role}`)}
+                            users={users}
+                            editingId={editingId}
+                            editingRole={editingRole}
+                            setEditingRole={setEditingRole}
+                            onStartEditing={startEditing}
+                            onCancelEditing={cancelEditing}
+                            onUpdateRole={handleUpdateRole}
+                            onDelete={handleDelete}
+                            loading={loading}
+                            t={t}
+                          />
+                        )
+                    )}
                 </div>
               )}
             </Card>
@@ -748,23 +543,21 @@ export function PermissionManagementTab({
         ) : null
       })}
 
-      {/* Add User Dialog */}
-      <AddUserDialog
-        open={showAddUser}
-        onOpenChange={setShowAddUser}
-        kbId={kbId}
-        onSuccess={fetchPermissions}
-      />
-
-      {/* Add Namespace Dialog */}
-      <AddNamespaceDialog
-        open={showAddNamespace}
-        onOpenChange={setShowAddNamespace}
-        kbId={kbId}
-        onSuccess={fetchPermissions}
-        excludedNamespaceId={kbNamespace}
-        boundNamespaceIds={boundNamespaceIds}
-      />
+      {showAdd && (
+        <KnowledgeGrantDialog trigger={addTrigger} onClose={() => setShowAdd(false)}>
+          <KnowledgeGrantForm
+            kbId={kbId}
+            kbNamespace={kbNamespace}
+            boundNamespaceIds={Object.values(permissions.approved)
+              .flat()
+              .filter(member => member.entity_type === 'namespace')
+              .flatMap(member => (member.entity_id ? [member.entity_id] : []))}
+            onChanged={handleExternalChanged}
+            onAccessDenied={onAccessDenied}
+            onCancel={() => setShowAdd(false)}
+          />
+        </KnowledgeGrantDialog>
+      )}
     </div>
   )
 }
@@ -804,9 +597,9 @@ export function PermissionGroup({
         {users.map(user => (
           <div
             key={user.id}
-            className="group flex items-center justify-between p-2 rounded-lg hover:bg-muted transition-colors"
+            className="group flex min-w-0 flex-wrap items-center justify-between gap-2 p-2 rounded-lg hover:bg-muted transition-colors"
           >
-            <div className="flex-1 min-w-0">
+            <div className="min-w-0 flex-1 basis-32">
               <div className="font-medium text-sm truncate">{user.display_name}</div>
               {user.email && <div className="text-xs text-text-muted truncate">{user.email}</div>}
             </div>
@@ -828,6 +621,8 @@ export function PermissionGroup({
                   variant="ghost"
                   size="icon"
                   className="h-11 min-w-[44px] text-success"
+                  aria-label={t('document.navigation.savePermission')}
+                  data-testid={`permission-save-${user.id}`}
                   onClick={() => onUpdateRole(user.id, editingRole)}
                   disabled={loading}
                 >
@@ -837,6 +632,8 @@ export function PermissionGroup({
                   variant="ghost"
                   size="icon"
                   className="h-11 min-w-[44px]"
+                  aria-label={t('document.navigation.cancelPermission')}
+                  data-testid={`permission-cancel-${user.id}`}
                   onClick={onCancelEditing}
                   disabled={loading}
                 >
@@ -844,11 +641,13 @@ export function PermissionGroup({
                 </Button>
               </div>
             ) : (
-              <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 focus-within:opacity-100">
+              <div className="flex items-center gap-1 md:opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 focus-within:opacity-100">
                 <Button
                   variant="ghost"
                   size="icon"
                   className="h-11 min-w-[44px]"
+                  data-testid={`permission-edit-${user.id}`}
+                  aria-label={t('document.permission.modify')}
                   onClick={() => onStartEditing(user)}
                   title={t('document.permission.modify')}
                 >
@@ -858,6 +657,8 @@ export function PermissionGroup({
                   variant="ghost"
                   size="icon"
                   className="h-11 min-w-[44px] text-error hover:text-error"
+                  data-testid={`permission-delete-${user.id}`}
+                  aria-label={t('document.permission.remove')}
                   onClick={() => onDelete(user.id)}
                   title={t('document.permission.remove')}
                 >

@@ -148,6 +148,115 @@ def mysql_url() -> Iterator[str]:
         admin.dispose()
 
 
+def test_my_work_legacy_and_explicit_ordering_page_on_mysql(mysql_url: str) -> None:
+    from app.services.loop_items.service import loop_item_service
+    from tests.services.test_loop_item_assignment import _make_project
+    from tests.services.test_my_work_pagination import add_items
+
+    engine = sa.create_engine(mysql_url)
+    Base.metadata.create_all(engine)
+    try:
+        with Session(engine, expire_on_commit=False) as db:
+            owner = User(user_name="my-work-owner", password_hash="unused")
+            db.add(owner)
+            db.commit()
+            project = _make_project(db, owner)
+            items = add_items(db, project, owner.id, 2)
+            for order in (
+                None,
+                "recent",
+                "attention",
+                "activity",
+                "priority",
+                "assignment",
+            ):
+                first, cursor = loop_item_service.list_my_work_page(
+                    db, owner.id, limit=1, order=order
+                )
+                assert cursor is not None
+                second, final_cursor = loop_item_service.list_my_work_page(
+                    db, owner.id, limit=1, cursor=cursor, order=order
+                )
+                assert [row["id"] for row in first + second] == [
+                    item.id for item in reversed(items)
+                ]
+                assert final_cursor is None
+    finally:
+        engine.dispose()
+
+
+def test_manager_decision_completes_dispatch_after_concurrent_heartbeat(
+    mysql_url: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The decision must use a current read, including under REPEATABLE READ."""
+    from app.models.loop_item_execution import LoopItemExecution
+    from app.schemas.delivery import LoopItemUpdate
+    from app.services.collaboration_manager_decisions import (
+        apply_collaboration_manager_decision,
+    )
+    from app.services.loop_items.service import loop_item_service
+    from tests.services.test_loop_item_assignment import (
+        _collaboration_group,
+        _make_project,
+    )
+
+    monkeypatch.setattr("app.core.async_utils.schedule_async_task", lambda *args: None)
+    engine = sa.create_engine(mysql_url, isolation_level="REPEATABLE READ")
+    try:
+        Base.metadata.create_all(engine)
+        with Session(engine, expire_on_commit=False) as db:
+            owner = User(user_name="manager-owner", password_hash="unused")
+            db.add(owner)
+            db.commit()
+            project = _make_project(db, owner)
+            group, manager, _member = _collaboration_group(db, project, owner)
+            monkeypatch.setattr(
+                "app.services.workspaces.service.workspace_service.list_project_collaboration_groups",
+                lambda *args, **kwargs: [group],
+            )
+            item = loop_item_service.create(
+                db, project.id, owner.id, LoopItemCreate(title="Concurrent decision")
+            )
+            loop_item_service.update(
+                db,
+                item.id,
+                owner.id,
+                LoopItemUpdate(version=item.version, assignee_group_id=group["id"]),
+            )
+            dispatch = db.query(LoopItemExecution).filter_by(loop_item_id=item.id).one()
+            assert db.connection().get_isolation_level() == "REPEATABLE READ"
+            old_version = dispatch.version
+            with Session(engine) as heartbeat:
+                heartbeat.query(LoopItemExecution).filter_by(id=dispatch.id).update(
+                    {LoopItemExecution.version: LoopItemExecution.version + 1},
+                    synchronize_session=False,
+                )
+                heartbeat.commit()
+            assert db.get(LoopItemExecution, dispatch.id).version == old_version
+
+            decision = dict(
+                project_id=project.id,
+                item_id=item.id,
+                user_id=owner.id,
+                dispatch_id=dispatch.runtime_origin_context["dispatch_id"],
+                manager_agent_id=manager.id,
+                idempotency_key="review-work",
+                target_status="in_review",
+                reason="Work is ready for review",
+            )
+            apply_collaboration_manager_decision(db, **decision)
+            db.refresh(dispatch)
+            assert dispatch.status == "completed"
+            assert dispatch.termination_reason == "manager_status_decision"
+            assert item.status == "in_review"
+            completed_version = dispatch.version
+            apply_collaboration_manager_decision(db, **decision)
+            db.refresh(dispatch)
+            assert dispatch.version == completed_version
+    finally:
+        engine.dispose()
+
+
 def test_concurrent_issue_creation_refreshes_preloaded_project_sequence(
     mysql_url: str,
 ) -> None:

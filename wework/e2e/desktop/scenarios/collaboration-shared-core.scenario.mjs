@@ -1,4 +1,12 @@
+import { showAllCollaborationIssues } from '../modules/collaboration-board-flows.mjs'
+import { revealCollaborationSidebarElement } from '../modules/collaboration-sidebar-navigation.mjs'
+import { verifyCommentAssignmentTargets } from '../modules/comment-assignment-targets.mjs'
 import assert from 'node:assert/strict'
+import {
+  handlePersonalHomeModel,
+  openCollaborationIssueCreation,
+} from '../modules/collaboration-personal-home.mjs'
+import { verifyCollaborationDeviceCleanup } from '../modules/collaboration-device-cleanup.mjs'
 
 import { ensureExperimentalFeaturesEnabled } from '../modules/preferences-automation-flows.mjs'
 import { createBoardReplyModelRegression } from '../modules/board-reply-model.mjs'
@@ -31,6 +39,7 @@ import {
   openDirectProjectCreation,
   configureFirstProjectExecutionEnvironment,
   selectCollaborationDomain,
+  selectCollaborationProjectView,
 } from '../modules/workspace-flows.mjs'
 const ACTIVE_WORKBENCH_SELECTOR = '[data-workspace-tab-content][aria-hidden="false"]'
 const WORKSPACE_NAME = '协作共享核心空间'
@@ -52,13 +61,13 @@ async function verifyCurrentTableAssignment(control, scoped, issueId, assigneeNa
     visible: false,
     timeoutMs,
   })
-  await control.command('click', scoped('[data-testid="collaboration-tab-table"]'))
+  await selectCollaborationProjectView(control, scoped('').trim(), 'table', timeoutMs)
   await control.command(
     'waitFor',
     scoped(`[data-testid="collaboration-issue-table-row-${issueId}"]`),
     { text: assigneeName, timeoutMs }
   )
-  await control.command('click', scoped('[data-testid="collaboration-tab-board"]'))
+  await selectCollaborationProjectView(control, scoped('').trim(), 'board', timeoutMs)
   await control.command('clickWhenEnabled', scoped(`[data-testid="cloud-todo-card-${issueId}"]`), {
     timeoutMs,
   })
@@ -254,7 +263,12 @@ export function createDesktopScenario({
 
   return {
     requiresCloudEnvironment: true,
-    handleHttp: boardReplyModel.handleHttp,
+    async handleHttp(request, response, url) {
+      return (
+        (await handlePersonalHomeModel(request, response, url)) ||
+        boardReplyModel.handleHttp(request, response, url)
+      )
+    },
 
     async prepareCloud(cloud) {
       backendUrl = cloud.backendUrl
@@ -322,6 +336,10 @@ export function createDesktopScenario({
         await projectOnlyNavigation.verify(control, scoped)
         await capture(control, 'collaboration-shared-core-project-only-navigation.png')
 
+        await revealCollaborationSidebarElement(
+          control,
+          scoped('[data-testid="collaboration-primary-devices"]')
+        )
         await control.command('click', scoped('[data-testid="collaboration-primary-devices"]'))
         const deviceRow = scoped(`[data-testid="collaboration-devices-row-${remoteDevice.id}"]`)
         await control.command('waitFor', deviceRow, { visible: true, timeoutMs: uiTimeoutMs })
@@ -355,6 +373,13 @@ export function createDesktopScenario({
           /尚未添加设备|当前没有云端设备/,
           'A cached device catalog rendered a false empty state'
         )
+        await verifyCollaborationDeviceCleanup({
+          cloud: cloudEnvironment,
+          control,
+          scoped,
+          timeoutMs: uiTimeoutMs,
+          capture: name => capture(control, name),
+        })
         await control.command('click', scoped('[data-testid="collaboration-primary-home"]'))
 
         const workspaceName = `${WORKSPACE_NAME}-${process.pid}`
@@ -535,7 +560,7 @@ export function createDesktopScenario({
             plugins: [],
           }),
         })
-        await control.command('click', scoped('[data-testid="collaboration-primary-home"]'))
+        await openCollaborationIssueCreation(control, scoped)
         await control.command('waitFor', scoped('[data-testid="collaboration-issue-workspace"]'), {
           timeoutMs: uiTimeoutMs,
         })
@@ -565,7 +590,7 @@ export function createDesktopScenario({
           uiTimeoutMs,
           remoteDevice.id
         )
-        await control.command('click', scoped('[data-testid="collaboration-primary-home"]'))
+        await openCollaborationIssueCreation(control, scoped)
         await control.command('waitFor', scoped('[data-testid="collaboration-issue-workspace"]'), {
           timeoutMs: uiTimeoutMs,
         })
@@ -631,9 +656,10 @@ export function createDesktopScenario({
           text: project.name,
           timeoutMs: uiTimeoutMs,
         })
-        await control.command('click', scoped('[data-testid="collaboration-tab-board"]'))
+        await selectCollaborationProjectView(control, scoped('').trim(), 'board', uiTimeoutMs)
         const maintainerProject = await request(`/api/v1/cloud-projects/${project.id}`)
         assert.equal(maintainerProject.access_role, 'Maintainer')
+        await showAllCollaborationIssues(control, scoped('').trim())
         await verifyPersonalBoardGrouping(control, {
           scoped,
           request,
@@ -641,6 +667,7 @@ export function createDesktopScenario({
           groupBy: 'priority',
         })
         await selectProjectBoardGrouping(control, scoped, 'status')
+        await showAllCollaborationIssues(control, scoped('').trim())
         await capture(control, 'collaboration-shared-core-personal-board-views.png')
         await verifyMultiTagBoardDrag(control, { scoped, request, project, uiTimeoutMs })
         await control.command('waitFor', scoped('[data-testid="collaboration-issue-create"]'), {
@@ -707,6 +734,15 @@ export function createDesktopScenario({
           owner,
           agent,
           scoped,
+        })
+        await verifyCommentAssignmentTargets(control, {
+          request,
+          project,
+          issue,
+          owner,
+          agent,
+          scoped,
+          capture,
         })
         await capture(control, 'collaboration-shared-core-05-shared-issue-detail.png')
         const activitySelector = scoped(`[data-testid="cloud-task-activity-${issue.id}"]`)
@@ -839,9 +875,19 @@ export function createDesktopScenario({
           timeoutMs: uiTimeoutMs,
         })
         await control.command('waitFor', scoped('[data-testid="cloud-todo-create-task"]'), {
-          text: '新建任务',
+          text: '创建任务',
           timeoutMs: uiTimeoutMs,
         })
+        assert.equal(
+          Number(
+            await control.command(
+              'getElementCount',
+              scoped('[data-testid="cloud-todo-create-task"]')
+            )
+          ),
+          1,
+          'Personal task creation must have one entry in the linked Tasks section'
+        )
         const personalTaskSnapshot = await snapshot(control)
         assert.ok(
           personalTaskSnapshot.testIds.includes('cloud-task-activity-composer'),

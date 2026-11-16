@@ -2,23 +2,12 @@ import {
   createCloudRuntimeIpcClient,
   type CloudRuntimeIpcClient,
 } from '../vendor/chat-core/runtime-ipc.js'
+import { requireCloudCredentialOwner } from './cloud-connection-profile.js'
 
 interface Target {
   apiBaseUrl: string
   socketBaseUrl: string
   socketPath: string
-}
-
-export async function readMcpAppConnection(storage: {
-  read(): Promise<Record<string, string>>
-}): Promise<unknown> {
-  const raw = (await storage.read())['wework.cloudConnection']
-  if (!raw) return null
-  try {
-    return JSON.parse(raw)
-  } catch {
-    throw new Error('Stored cloud connection is invalid')
-  }
 }
 
 /** Native cleanup uses the same authenticated transport as the conversation. */
@@ -29,13 +18,13 @@ export class McpAppRuntime {
       client: CloudRuntimeIpcClient
       credential: { token: string }
       target: string
-      account: number | string | undefined
+      account: number
     }
   >()
 
   constructor(
     private readonly localRequest: (payload: Record<string, unknown>) => Promise<unknown>,
-    private readonly refreshToken: (apiBaseUrl: string) => Promise<string>,
+    private readonly refreshToken: (apiBaseUrl: string, expectedUserId: number) => Promise<string>,
     private readonly connection: () => Promise<unknown>
   ) {}
 
@@ -73,12 +62,12 @@ export class McpAppRuntime {
       )
     )
       throw new Error('MCP App Runtime target is not configured')
-    const account = connection.user?.id
+    const account = requireCloudCredentialOwner(connection, route.apiBaseUrl)
     if (entry && entry.account !== account) throw new Error('MCP App Runtime account changed')
     const token =
       connection.credentialMode !== 'desktop_refresh' && connection.token
         ? connection.token
-        : await this.refreshToken(route.apiBaseUrl)
+        : await this.refreshToken(route.apiBaseUrl, account)
     if (!entry) {
       const credential = { token }
       const client = createCloudRuntimeIpcClient({

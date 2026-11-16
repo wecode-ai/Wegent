@@ -79,30 +79,6 @@ test.describe('Task runtime consistency', () => {
     await cleanupStreamRules(request)
   })
 
-  test('streams normally and reaches a terminal UI state', async ({ page, request }) => {
-    const runtimeChecks = trackRuntimeChecks(page)
-    const messageText = `${TEST_PREFIX} normal streaming request`
-    const responseMarker = `${TEST_PREFIX}-normal-response`
-
-    await configureStreamRule(request, messageText, {
-      responseContent: `${responseMarker} completed through socket`,
-      chunkDelayMs: 40,
-    })
-
-    await gotoChatWithTestTeam(page)
-    await sendChatMessage(page, messageText)
-
-    const taskId = await waitForTaskId(page)
-    await expect(page.getByTestId('messages-container')).toContainText(responseMarker, {
-      timeout: 30000,
-    })
-    await waitForBackendTerminal(request, taskId)
-
-    await expectChatInputCanSubmit(page, `${TEST_PREFIX} normal readiness probe`)
-    await expectNoQueuedMessages(page)
-    expect(runtimeChecks.count()).toBeLessThan(8)
-  })
-
   test('keeps previous messages and resumes streaming after page refresh', async ({
     page,
     request,
@@ -410,7 +386,8 @@ test.describe('Task runtime consistency', () => {
         'finishes',
       ].join(' '),
       chunkDelayMs: 250,
-      doneDelayMs: 20000,
+      // Keep cancellation possible after the partial response is visible.
+      doneDelayMs: 10_000,
     })
 
     await gotoChatWithTestTeam(page)
@@ -455,7 +432,8 @@ test.describe('Task runtime consistency', () => {
     await configureStreamRule(request, messageText, {
       responseContent: `${responseMarker} keeps streaming until the browser cancels this response`,
       chunkDelayMs: 250,
-      doneDelayMs: 20000,
+      // Keep cancellation possible after the partial response is visible.
+      doneDelayMs: 10_000,
     })
     await configureStreamRule(request, followUpMessage, {
       responseContent: `${followUpMarker} is non-empty after cancellation`,

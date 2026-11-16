@@ -132,6 +132,27 @@ where
                     if command_key == "task_artifact" {
                         return Some(json!(crate::artifact_workspace::command(payload).await));
                     }
+                    if command_key == "git_clone" {
+                        let args = payload["args"]
+                            .as_array()
+                            .map(|args| {
+                                args.iter()
+                                    .filter_map(Value::as_str)
+                                    .map(str::to_owned)
+                                    .collect::<Vec<_>>()
+                            })
+                            .unwrap_or_default();
+                        let request = CommandRequest::from_value(payload);
+                        let result = crate::local::git_access::execute_clone(
+                            &args,
+                            request.cwd.as_deref().map(std::path::Path::new),
+                            &request.env,
+                            request.timeout_seconds,
+                            request.max_output_bytes,
+                        )
+                        .await;
+                        return Some(json!(result));
+                    }
                     if command_key == "environment_prepare" {
                         let args = payload
                             .get("args")
@@ -196,14 +217,25 @@ where
 
     pub(super) fn runtime_rpc_handler(&self) -> EventHandler {
         let runtime_work_handler = self.runtime_work_handler.clone();
+        let config = self.client.config.clone();
+        let remote_task_access = self.client.remote_task_access.clone();
         Arc::new(move |payload| {
             let runtime_work_handler = runtime_work_handler.clone();
+            let config = config.clone();
+            let remote_task_access = remote_task_access.clone();
             Box::pin(async move {
                 let method = payload
                     .get("method")
                     .and_then(Value::as_str)
                     .unwrap_or("<missing>")
                     .to_owned();
+                if config.device_type == "app" {
+                    // Scoped grants are issued by the Backend after validating the caller.
+                    let access_scope = payload.get("appTaskAccessScope").and_then(Value::as_str);
+                    if let Err(error) = remote_task_access.authorize(&method, access_scope) {
+                        return Some(runtime_error_response(error));
+                    }
+                }
                 let request_id = payload
                     .get("request_id")
                     .and_then(Value::as_str)

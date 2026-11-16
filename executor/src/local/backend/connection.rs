@@ -12,14 +12,20 @@ where
     pub async fn run_forever(mut self) -> Result<(), String> {
         self.connection_status.store(false, Ordering::Release);
         let auth_home = crate::config::paths::executor_home();
-        let _auth_broker = crate::plugin_account_auth::broker::start(
-            self.client.transport.clone(),
-            auth_home,
-            self.connection_status.clone(),
-            matches!(self.client.config.device_type.as_str(), "cloud" | "remote"),
-        )
-        .await
-        .map_err(|error| error.to_string())?;
+        let _auth_broker = if self.external_plugin_auth_broker {
+            None
+        } else {
+            Some(
+                crate::plugin_account_auth::broker::start(
+                    self.client.transport.clone(),
+                    auth_home,
+                    self.connection_status.clone(),
+                    matches!(self.client.config.device_type.as_str(), "cloud" | "remote"),
+                )
+                .await
+                .map_err(|error| error.to_string())?,
+            )
+        };
         if let Some(event_hub) = self.runtime_event_hub.take() {
             self.start_runtime_event_forwarder(event_hub);
         }
@@ -170,6 +176,8 @@ where
             let tick = tokio::select! {
                 _ = sleep_until(next_connection_status_poll_at) => RunnerTick::ConnectionStatus,
                 _ = sleep_until(next_heartbeat_at) => RunnerTick::Heartbeat,
+                _ = self.client.remote_task_access.changed(),
+                    if self.client.config.device_type == "app" => RunnerTick::Heartbeat,
                 _ = sleep_until(next_runtime_work_poll_at) => RunnerTick::RuntimeWork,
                 _ = sleep_until(next_plugin_reconcile_at) => RunnerTick::PluginReconcile,
                 result = &mut terminal_relay => {

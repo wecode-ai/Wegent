@@ -67,8 +67,8 @@ from app.schemas.workspace import (
     WorkspaceExecutionEnvironmentResponse,
 )
 from app.services.cloud_files import cloud_file_service
-from app.services.cloud_projects import cloud_project_service
 from app.services.cloud_projects.responses import project_response as _project_response
+from app.services.cloud_projects.service import cloud_project_service
 from app.services.loop_item_events import publish_loop_item_changed
 from app.services.loop_items.external_provider import external_loop_item_provider
 from app.services.loop_items.provider_router import loop_item_provider_router
@@ -488,17 +488,6 @@ def archive_cloud_project(
     current_user: User = Depends(get_current_user),
 ) -> None:
     cloud_project_service.archive(db, project_id, current_user.id, version)
-
-
-# MIGRATION-CANDIDATE(api="GET /api/v1/cloud-projects/*/members"): remove after final confirmation.
-# @router.get("/{project_id}/members", response_model=list[CloudProjectMemberResponse])
-def list_cloud_project_members(
-    project_id: int,
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user_jwt_apikey_tasktoken),
-) -> list[CloudProjectMemberResponse]:
-    members = cloud_project_service.list_members(db, project_id, current_user.id)
-    return [CloudProjectMemberResponse.model_validate(member) for member in members]
 
 
 @router.post(

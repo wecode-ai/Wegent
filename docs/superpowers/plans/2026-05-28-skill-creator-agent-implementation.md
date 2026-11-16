@@ -16,11 +16,11 @@ sidebar_position: 3
 
 ## File Structure
 
-- `backend/init_data/skills/skill-creator/scripts/list_publish_targets.sh`
+- `backend-rs/init_data/skills/skill-creator/scripts/list_publish_targets.sh`
   - New script that reads `TASK_INFO` and `TASK_API_DOMAIN`, calls `/api/groups`, and emits JSON publish targets.
-- `backend/init_data/skills/skill-creator/SKILL.md`
+- `backend-rs/init_data/skills/skill-creator/SKILL.md`
   - Existing Skill instructions. Add the Wegent card-based publish target workflow.
-- `backend/init_data/02-public-resources.yaml`
+- `backend-rs/init_data/02-public-resources.yaml`
   - Existing public CRD seed file. Add `skill-creator-ghost`, `skill-creator-bot`, and `skill-creator-team`.
 - `backend/tests/init_data/test_skill_creator_agent_resources.py`
   - New tests for public CRD registration, Skill instruction content, and Skill ZIP validation.
@@ -346,12 +346,12 @@ git commit -m "test: cover skill creator agent resources"
 ## Task 2: Add Publish Target Discovery Script
 
 **Files:**
-- Create: `backend/init_data/skills/skill-creator/scripts/list_publish_targets.sh`
+- Create: `backend-rs/init_data/skills/skill-creator/scripts/list_publish_targets.sh`
 - Test: `backend/tests/init_data/skills/skill_creator/test_list_publish_targets.py`
 
 - [ ] **Step 1: Implement `list_publish_targets.sh`**
 
-Create `backend/init_data/skills/skill-creator/scripts/list_publish_targets.sh` with this content:
+Create `backend-rs/init_data/skills/skill-creator/scripts/list_publish_targets.sh` with this content:
 
 ```bash
 #!/bin/bash
@@ -452,7 +452,7 @@ echo "$GROUPS_RESPONSE" | jq '{
 Run:
 
 ```bash
-chmod +x backend/init_data/skills/skill-creator/scripts/list_publish_targets.sh
+chmod +x backend-rs/init_data/skills/skill-creator/scripts/list_publish_targets.sh
 ```
 
 - [ ] **Step 3: Run the script tests**
@@ -470,7 +470,7 @@ Expected: all tests in `test_list_publish_targets.py` pass.
 
 ```bash
 git add \
-  backend/init_data/skills/skill-creator/scripts/list_publish_targets.sh \
+  backend-rs/init_data/skills/skill-creator/scripts/list_publish_targets.sh \
   backend/tests/init_data/skills/skill_creator/test_list_publish_targets.py
 git commit -m "feat(skills): list skill publish targets"
 ```
@@ -478,12 +478,12 @@ git commit -m "feat(skills): list skill publish targets"
 ## Task 3: Document Card-Based Publishing in `skill-creator`
 
 **Files:**
-- Modify: `backend/init_data/skills/skill-creator/SKILL.md`
+- Modify: `backend-rs/init_data/skills/skill-creator/SKILL.md`
 - Test: `backend/tests/init_data/test_skill_creator_agent_resources.py`
 
 - [ ] **Step 1: Add the Wegent publish target workflow section**
 
-In `backend/init_data/skills/skill-creator/SKILL.md`, insert this section immediately before `## Distribution Scripts`:
+In `backend-rs/init_data/skills/skill-creator/SKILL.md`, insert this section immediately before `## Distribution Scripts`:
 
 ```markdown
 ## Wegent Publish Target Selection
@@ -593,19 +593,19 @@ Expected: both selected tests pass.
 - [ ] **Step 3: Commit the Skill instruction update**
 
 ```bash
-git add backend/init_data/skills/skill-creator/SKILL.md
+git add backend-rs/init_data/skills/skill-creator/SKILL.md
 git commit -m "docs(skills): document skill publish card flow"
 ```
 
 ## Task 4: Register the Built-In Skill Creator Agent
 
 **Files:**
-- Modify: `backend/init_data/02-public-resources.yaml`
+- Modify: `backend-rs/init_data/02-public-resources.yaml`
 - Test: `backend/tests/init_data/test_skill_creator_agent_resources.py`
 
 - [ ] **Step 1: Add public Ghost/Bot/Team resources**
 
-Append this YAML block to `backend/init_data/02-public-resources.yaml` after the existing `wegent-wework` Team resource:
+Append this YAML block to `backend-rs/init_data/02-public-resources.yaml` after the existing `wegent-wework` Team resource:
 
 ```yaml
 ---
@@ -700,16 +700,16 @@ Expected: the test passes.
 - [ ] **Step 3: Commit the built-in agent resources**
 
 ```bash
-git add backend/init_data/02-public-resources.yaml
+git add backend-rs/init_data/02-public-resources.yaml
 git commit -m "feat(init): add skill creator agent"
 ```
 
 ## Task 5: Final Verification
 
 **Files:**
-- Verify: `backend/init_data/02-public-resources.yaml`
-- Verify: `backend/init_data/skills/skill-creator/SKILL.md`
-- Verify: `backend/init_data/skills/skill-creator/scripts/list_publish_targets.sh`
+- Verify: `backend-rs/init_data/02-public-resources.yaml`
+- Verify: `backend-rs/init_data/skills/skill-creator/SKILL.md`
+- Verify: `backend-rs/init_data/skills/skill-creator/scripts/list_publish_targets.sh`
 - Verify: `backend/tests/init_data/test_skill_creator_agent_resources.py`
 - Verify: `backend/tests/init_data/skills/skill_creator/test_list_publish_targets.py`
 
@@ -742,7 +742,7 @@ Expected: all selected tests pass.
 Run missing-auth check:
 
 ```bash
-cd backend/init_data/skills/skill-creator/scripts
+cd backend-rs/init_data/skills/skill-creator/scripts
 env -u TASK_INFO bash ./list_publish_targets.sh
 ```
 
@@ -755,7 +755,7 @@ Expected:
 Run personal fallback check with invalid group response:
 
 ```bash
-cd backend/init_data/skills/skill-creator/scripts
+cd backend-rs/init_data/skills/skill-creator/scripts
 TMP_BIN="$(mktemp -d)"
 cat > "$TMP_BIN/curl" <<'SH'
 #!/bin/sh
@@ -796,7 +796,7 @@ python3 - <<'PY'
 from pathlib import Path
 import yaml
 
-path = Path("backend/init_data/02-public-resources.yaml")
+path = Path("backend-rs/init_data/02-public-resources.yaml")
 docs = [doc for doc in yaml.safe_load_all(path.read_text()) if isinstance(doc, dict)]
 names = {(doc.get("kind"), doc.get("metadata", {}).get("name")) for doc in docs}
 required = {
@@ -822,7 +822,7 @@ YAML parse OK
 If any verification step required fixes, commit the focused fix:
 
 ```bash
-git add backend/init_data backend/tests/init_data
+git add backend-rs/init_data backend/tests/init_data
 git commit -m "fix: stabilize skill creator agent setup"
 ```
 

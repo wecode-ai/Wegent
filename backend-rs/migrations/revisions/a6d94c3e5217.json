@@ -1,0 +1,46 @@
+{
+  "revision": "a6d94c3e5217",
+  "parents": [
+    "051cd1f603d6"
+  ],
+  "source": "20260724_a6d94c3e5217_add_loop_items.py",
+  "upgrade": [
+    {
+      "sql": [
+        "CREATE TABLE loop_items (\n    id VARCHAR(64) NOT NULL, \n    resource_type VARCHAR(24) NOT NULL, \n    project_space VARCHAR(100) NOT NULL DEFAULT 'default', \n    cloud_project_id VARCHAR(64), \n    parent_id VARCHAR(64), \n    loop_item_id VARCHAR(64), \n    delivery_id VARCHAR(64), \n    public_id VARCHAR(36), \n    project_key VARCHAR(16), \n    name VARCHAR(255), \n    title VARCHAR(255), \n    description TEXT NOT NULL, \n    storage_prefix VARCHAR(512), \n    sequence_number INTEGER, \n    next_item_number INTEGER, \n    created_by_user_id INTEGER, \n    updated_by_user_id INTEGER, \n    assignee_user_id INTEGER, \n    user_id INTEGER, \n    added_by_user_id INTEGER, \n    source VARCHAR(20), \n    status VARCHAR(32), \n    priority VARCHAR(20), \n    due_at DATETIME, \n    sort_order INTEGER NOT NULL DEFAULT '0', \n    current_delivery_id VARCHAR(64), \n    local_project_id INTEGER, \n    device_id VARCHAR(100), \n    is_default BOOL, \n    task_user_id INTEGER, \n    task_id VARCHAR(255), \n    task_title VARCHAR(255), \n    backend_task_id BIGINT, \n    linked_by_user_id INTEGER, \n    linked_at DATETIME, \n    unlinked_at DATETIME, \n    path VARCHAR(700), \n    kind VARCHAR(32), \n    display_name VARCHAR(255), \n    relative_path VARCHAR(700), \n    object_key VARCHAR(1400), \n    content_type VARCHAR(255), \n    size_bytes BIGINT, \n    sha256 VARCHAR(64), \n    source_task_binding_id VARCHAR(64), \n    source_task_snapshot JSON, \n    markdown_object_key VARCHAR(1024), \n    chat_object_key VARCHAR(1024), \n    manifest_object_key VARCHAR(1024), \n    metadata JSON, \n    version INTEGER NOT NULL DEFAULT '1', \n    created_at DATETIME NOT NULL DEFAULT now(), \n    updated_at DATETIME NOT NULL DEFAULT now(), \n    completed_at DATETIME, \n    delivered_at DATETIME, \n    PRIMARY KEY (id), \n    FOREIGN KEY(cloud_project_id) REFERENCES loop_items (id) ON DELETE CASCADE, \n    FOREIGN KEY(parent_id) REFERENCES loop_items (id) ON DELETE CASCADE, \n    FOREIGN KEY(loop_item_id) REFERENCES loop_items (id) ON DELETE CASCADE, \n    FOREIGN KEY(delivery_id) REFERENCES loop_items (id) ON DELETE CASCADE, \n    FOREIGN KEY(local_project_id) REFERENCES projects (id) ON DELETE CASCADE, \n    FOREIGN KEY(backend_task_id) REFERENCES tasks (id) ON DELETE SET NULL, \n    UNIQUE (public_id), \n    UNIQUE (project_key), \n    UNIQUE (storage_prefix)\n)CHARSET=utf8mb4 ENGINE=InnoDB"
+      ]
+    },
+    {
+      "sql": [
+        "CREATE INDEX idx_loop_items_project_type ON loop_items (cloud_project_id, resource_type)"
+      ]
+    },
+    {
+      "sql": [
+        "CREATE INDEX idx_loop_items_parent_type ON loop_items (parent_id, resource_type, sort_order)"
+      ]
+    },
+    {
+      "sql": [
+        "CREATE INDEX idx_loop_items_project_path ON loop_items (cloud_project_id, path)"
+      ]
+    },
+    {
+      "sql": [
+        "CREATE INDEX ix_loop_items_resource_type ON loop_items (resource_type)"
+      ]
+    },
+    {
+      "sql": [
+        "CREATE INDEX ix_loop_items_project_space ON loop_items (project_space)"
+      ]
+    }
+  ],
+  "downgrade": [
+    {
+      "sql": [
+        "DROP TABLE loop_items"
+      ]
+    }
+  ]
+}

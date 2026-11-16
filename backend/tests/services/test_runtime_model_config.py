@@ -253,9 +253,9 @@ def test_cloud_runtime_protocol_comes_from_model_crd(
             "https://wegent.example/api/runtime-work/llm-responses-proxy"
         )
         assert resolved["default_headers"]["X-Wegent-Model-User-Id"] == "0"
-    assert config["native_tool_search"] is (expected == "openai-responses")
-    assert config["native_namespace_tools"] is (expected == "openai-responses")
-    assert config["tool_profile"] == "custom"
+    assert config["native_tool_search"] is False
+    assert config["native_namespace_tools"] is False
+    assert config["tool_profile"] == "function"
 
 
 def test_cloud_runtime_can_bridge_standard_responses_tools(

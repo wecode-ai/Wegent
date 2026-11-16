@@ -5,7 +5,7 @@
 'use client'
 
 import * as React from 'react'
-import { useState, useEffect, useMemo, useCallback, useContext, useRef } from 'react'
+import { useState, useEffect, useMemo, useCallback, useContext } from 'react'
 import { ChevronDown, Loader2, GitBranch as GitBranchIcon, X } from 'lucide-react'
 import { useRouter } from 'next/navigation'
 import { motion, AnimatePresence } from 'framer-motion'
@@ -120,9 +120,6 @@ export default function UnifiedRepositorySelector({
   const [branchLoading, setBranchLoading] = useState(false)
   const [branchError, setBranchError] = useState<string | null>(null)
   const [userCleared, setUserCleared] = useState(false)
-
-  // Track previous requiresWorkspace value to detect changes (e.g., team switch)
-  const prevRequiresWorkspaceRef = useRef(requiresWorkspace)
 
   // Try to get context, but don't throw if not available
   const taskContext = useContext(TaskSessionContext)
@@ -290,23 +287,6 @@ export default function UnifiedRepositorySelector({
     }
   }, [isOpen, selectedRepo, resetSearch])
 
-  // Auto-open popover when requiresWorkspace changes from false to true (e.g., team switch)
-  // and no repo is currently selected.
-  // For existing tasks loaded from URL, do not auto-open on refresh; repository restoration
-  // is handled by useRepositorySearch and this avoids disruptive popup flicker.
-  useEffect(() => {
-    const prevValue = prevRequiresWorkspaceRef.current
-    prevRequiresWorkspaceRef.current = requiresWorkspace
-
-    // If changed from false to true and no repo selected, auto-open
-    const isExistingTask = Boolean(selectedTaskDetail?.id)
-    if (!prevValue && requiresWorkspace && !selectedRepo && !isExistingTask) {
-      setTimeout(() => {
-        setIsOpen(true)
-      }, 100)
-    }
-  }, [requiresWorkspace, selectedRepo, selectedTaskDetail?.id])
-
   // Navigate to settings page
   const handleIntegrationClick = () => {
     router.push(paths.settings.integrations.getHref())
@@ -349,24 +329,11 @@ export default function UnifiedRepositorySelector({
     setCurrentView('repo')
   }, [])
 
-  // Handle requires workspace toggle
-  const handleRequiresWorkspaceToggle = useCallback(
-    (checked: boolean) => {
-      onRequiresWorkspaceChange?.(checked)
-      // When turning off workspace requirement, clear the selected repo and branch
-      if (!checked) {
-        onRepoChange(null)
-        onBranchChange(null)
-      } else {
-        // When turning on workspace requirement, auto-open the popover
-        // Use setTimeout to ensure the toggle animation completes first
-        setTimeout(() => {
-          setIsOpen(true)
-        }, 100)
-      }
-    },
-    [onRequiresWorkspaceChange, onRepoChange, onBranchChange]
-  )
+  const handleClearRepository = useCallback(() => {
+    onRequiresWorkspaceChange?.(false)
+    onRepoChange(null)
+    onBranchChange(null)
+  }, [onRequiresWorkspaceChange, onRepoChange, onBranchChange])
 
   // Determine the display text
   const getDisplayText = useCallback(() => {
@@ -424,6 +391,18 @@ export default function UnifiedRepositorySelector({
             <TooltipTrigger asChild>
               <PopoverTrigger asChild>
                 <div
+                  data-testid="repository-selector-trigger"
+                  role="button"
+                  tabIndex={disabled ? -1 : 0}
+                  aria-label={tooltipContent}
+                  aria-disabled={disabled}
+                  onKeyDown={event => {
+                    if (disabled || event.target !== event.currentTarget) return
+                    if (event.key === 'Enter' || event.key === ' ') {
+                      event.preventDefault()
+                      event.currentTarget.click()
+                    }
+                  }}
                   className={cn(
                     'group flex items-center gap-1 min-w-0 rounded-full pl-2 pr-2 py-2 h-9',
                     'transition-all duration-200 cursor-pointer',
@@ -432,7 +411,7 @@ export default function UnifiedRepositorySelector({
                       ? 'text-error bg-error/5 hover:bg-error/10'
                       : 'bg-transparent text-text-primary hover:bg-hover',
                     isLoading ? 'animate-pulse' : '',
-                    'focus:outline-none focus:ring-0',
+                    'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2',
                     (disabled || isLoading) && 'cursor-not-allowed opacity-50'
                   )}
                 >
@@ -461,7 +440,7 @@ export default function UnifiedRepositorySelector({
                               className="hidden group-hover:flex items-center justify-center h-4 w-4 rounded-full hover:bg-hover text-text-muted hover:text-text-primary transition-colors"
                               onClick={e => {
                                 e.stopPropagation()
-                                handleRequiresWorkspaceToggle(false)
+                                handleClearRepository()
                               }}
                             >
                               <X className="h-3 w-3" />
@@ -539,7 +518,7 @@ export default function UnifiedRepositorySelector({
                     // Only show clear button if we have a way to toggle workspace requirement
                     // And currently workspace IS required (so we can clear it)
                     onRequiresWorkspaceChange && requiresWorkspace
-                      ? () => handleRequiresWorkspaceToggle(false)
+                      ? handleClearRepository
                       : undefined
                   }
                 />

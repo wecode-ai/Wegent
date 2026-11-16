@@ -1,0 +1,12 @@
+{
+  "order": 58000,
+  "scenario": "./scenarios/collaboration-local-group-coordinate.scenario.mjs",
+  "scenarioOnly": true,
+  "ci": {
+    "core": {
+      "order": 51000,
+      "shard": 4,
+      "position": 11000
+    }
+  }
+}

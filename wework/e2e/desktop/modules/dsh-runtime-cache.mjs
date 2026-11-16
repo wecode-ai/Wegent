@@ -18,6 +18,7 @@ export async function verifyDefaultOnlyDshPackage(resourceRoot, runtimeRoot) {
     false,
     'The scenario must start without downloaded runtime archives'
   )
+  return legacy
 }
 
 export async function verifyDownloadedDshRuntimeCache(runtimeRoot, version) {

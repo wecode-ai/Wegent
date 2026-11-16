@@ -6,8 +6,9 @@
 //! (`app.api.endpoints.adapter.tasks.get_public_shared_task` ->
 //! `SharedTaskService.get_public_shared_task`).
 //!
-//! The route is unauthenticated: it decodes the share token into
-//! `(user_id, task_id)`, resolves the active owned task, then projects the
+//! Opaque tokens grant anonymous access; legacy tokens require a valid session
+//! and current task membership. The persisted link resolves the active owned task,
+//! then projects the
 //! public read-only view — the sharer name, the team display config, the
 //! non-deleted subtasks with their public contexts, and the task creation
 //! time. A token that does not decode is the route's `400 Invalid share link
@@ -21,11 +22,10 @@ use brz_http_server::StatusCode;
 use brz_json::OpaqueJson;
 use brz_mysql::{FromMysqlRow, Json, MysqlRow};
 
-use crate::attachments::share_token::decode_payload;
 use crate::http_compat::FastApiError;
 use crate::state::AppState;
 use crate::task_detail_api::repository::{ContextRow, list_contexts};
-use crate::task_detail_api::views::context_brief;
+use crate::task_detail_api::views::context_brief_fields;
 
 /// `ContextType.KNOWLEDGE_BASE.value`: the context type the public view omits.
 const KNOWLEDGE_BASE: &str = "knowledge_base";
@@ -152,28 +152,39 @@ struct TeamKindRow {
     kinds_json: Json<OpaqueJson>,
 }
 
-/// GET /api/tasks/share/public: the source declares no authentication
-/// dependency, so the route is public.
-#[brz_http_server::get("/api/tasks/share/public", access = public)]
+/// GET /api/tasks/share/public: optional session for version-aware authorization.
+#[brz_http_server::get("/api/tasks/share/public", access = optional)]
 async fn get_public_shared_task(
     #[inject(state)] state: &AppState,
     query: brz_http_server::Query<PublicShareQuery>,
+    #[auth] current_user: Option<crate::auth::OptionalSessionUser>,
 ) -> Result<PublicSharedTaskResponse, FastApiError> {
     let Some(token) = query.token.as_deref() else {
         return Err(missing_token());
     };
-    run(state, token).await
+    run(
+        state,
+        token,
+        current_user.as_ref().map(|user| i64::from(user.id)),
+    )
+    .await
 }
 
 /// The endpoint flow after route dispatch.
-async fn run(state: &AppState, token: &str) -> Result<PublicSharedTaskResponse, FastApiError> {
-    // `urllib.parse.unquote` + `_aes_decrypt` + the `"{user_id}#{task_id}"`
-    // parse. Every failure is the route's `400 Invalid share link format`.
-    let Some(info) = decode_payload(token) else {
+async fn run(
+    state: &AppState,
+    token: &str,
+    viewer_id: Option<i64>,
+) -> Result<PublicSharedTaskResponse, FastApiError> {
+    let share_link = crate::share_access::find_task_share_link(state, token)
+        .await
+        .map_err(internal)?;
+    let Some(info) = share_link else {
         return Err(bad_request(INVALID_SHARE_LINK));
     };
-    let user_id = info.user_id;
-    let task_id = info.task_id;
+    let user_id = info.created_by_user_id;
+    let task_id = info.resource_id;
+    crate::share_access::require_task_access(state, info.token_version, task_id, viewer_id).await?;
 
     // `task_store.get_task_by_states(states=is_active_query(), user_id=user_id)`.
     let task = state
@@ -401,7 +412,10 @@ fn public_context(context: ContextRow) -> Option<PublicContextData> {
     ) {
         return None;
     }
-    let brief = context_brief(&context);
+    // `shared_task.py` builds `ctx_dict` directly, without
+    // `SubtaskContextBrief.from_model`, so the public projection has no enum
+    // validation.
+    let brief = context_brief_fields(&context);
     Some(PublicContextData {
         id: context.subtask_contexts_id,
         context_type: context.subtask_contexts_context_type.clone(),

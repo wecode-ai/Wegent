@@ -2,28 +2,10 @@ import { randomBytes } from 'node:crypto'
 import { createServer, type Server } from 'node:http'
 import { chmod, mkdir, rename, rm, writeFile } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
+import { ComputerUseDriverProcess } from './computer-use-driver-process.js'
 
 const RUNTIME_FILE = 'computer-use-bridge.json'
 const MAX_BODY_BYTES = 8 * 1024 * 1024
-
-interface CuaDriver {
-  callTool(
-    name: string,
-    argumentsJson: string,
-    options?: { signal?: AbortSignal }
-  ): Promise<{
-    text: string
-    images: Array<{ mimeType: string; dataBase64: string }>
-    structuredJson?: string
-    isError: boolean
-    errorCode?: string
-    degraded: boolean
-    rawJson: string
-  }>
-  listToolsJson(): Promise<string>
-  shutdown(): Promise<void>
-  uniffiDestroy?: () => void
-}
 
 interface PermissionStatus {
   accessibility: boolean
@@ -42,25 +24,33 @@ export interface ComputerUseStatus {
 }
 
 export class ComputerUseService {
-  private driver: CuaDriver | null = null
+  private driver: ComputerUseDriverProcess | null = null
+  private driverFailed = false
   private server: Server | null = null
   private runtimePath: string | null = null
   private currentTool: string | null = null
   private currentActionController: AbortController | null = null
+  private readonly operationControllers = new Set<AbortController>()
   private error: string | null = null
   private enabled = false
+  private initialized = false
   private operation = Promise.resolve()
+  private nextOperationId = 0
 
+  /** Keep the host deadline below the MCP client's 120-second HTTP budget. */
   constructor(
     private readonly executorHome: string,
-    private readonly platform: NodeJS.Platform = process.platform
+    private readonly platform: NodeJS.Platform = process.platform,
+    private readonly operationTimeoutMs = 90_000
   ) {}
 
   async status(): Promise<ComputerUseStatus> {
-    if (this.enabled && !this.driver && !this.server) {
-      await this.serial(() => this.start())
-    }
-    return this.snapshot()
+    return this.serial(async () => {
+      if (this.enabled && !this.driverFailed && !this.driver && !this.server) {
+        await this.start()
+      }
+      return this.snapshot()
+    })
   }
 
   private async snapshot(): Promise<ComputerUseStatus> {
@@ -79,11 +69,25 @@ export class ComputerUseService {
 
   setEnabled(enabled: boolean): Promise<ComputerUseStatus> {
     return this.serial(async () => {
-      this.enabled = enabled
-      if (enabled) await this.start()
-      else await this.stopInternal()
-      return this.snapshot()
+      this.initialized = true
+      return this.applyEnabled(enabled)
     })
+  }
+
+  /** Lazy startup must not overwrite an earlier user choice or restart its failed driver. */
+  restoreEnabled(enabled: boolean): Promise<ComputerUseStatus> {
+    return this.serial(async () => {
+      if (this.initialized) return this.snapshot()
+      this.initialized = true
+      return this.applyEnabled(enabled)
+    })
+  }
+
+  private async applyEnabled(enabled: boolean): Promise<ComputerUseStatus> {
+    this.enabled = enabled
+    if (enabled) await this.start()
+    else await this.stopInternal()
+    return this.snapshot()
   }
 
   async requestPermissions(): Promise<ComputerUseStatus> {
@@ -99,9 +103,9 @@ export class ComputerUseService {
     await openMacOSScreenRecordingSettings()
   }
 
+  /** Cancel the action without clearing admission before its driver call settles. */
   async stopCurrentAction(): Promise<ComputerUseStatus> {
-    this.currentActionController?.abort()
-    this.currentTool = null
+    this.currentActionController?.abort(new Error('Computer use action stopped by user'))
     return this.snapshot()
   }
 
@@ -111,9 +115,10 @@ export class ComputerUseService {
 
   private async start(): Promise<void> {
     if (this.driver && this.server) return
+    this.driverFailed = false
     this.error = null
     const runtimePath = this.runtimeRecordPath()
-    let driver: CuaDriver | null = null
+    let driver: ComputerUseDriverProcess | null = null
     let server: Server | null = null
     try {
       await rm(runtimePath, { force: true })
@@ -123,8 +128,14 @@ export class ComputerUseService {
       }
       const permissions = await this.permissions()
       if (!permissions.accessibility || !permissions.screenRecording) return
-      const { CuaDriver } = await import('@trycua/cua-driver')
-      const createdDriver = CuaDriver.create(undefined) as CuaDriver
+      const createdDriver = await ComputerUseDriverProcess.create(error => {
+        void this.serial(async () => {
+          if (!driver || this.driver !== driver) return
+          await this.stopInternal()
+          this.driverFailed = true
+          this.error = error.message
+        })
+      })
       driver = createdDriver
       const token = randomBytes(32).toString('base64url')
       const createdServer = createServer((request, response) => {
@@ -151,16 +162,17 @@ export class ComputerUseService {
       this.server = createdServer
       this.runtimePath = runtimePath
     } catch (error) {
+      this.driverFailed = true
       this.error = errorMessage(error)
       await Promise.allSettled([
         rm(runtimePath, { force: true }),
         server ? closeServer(server) : Promise.resolve(),
         driver?.shutdown(),
       ])
-      driver?.uniffiDestroy?.()
     }
   }
 
+  /** Close admission and cancel both tool execution and discovery before shutdown. */
   private async stopInternal(): Promise<void> {
     const driver = this.driver
     const server = this.server
@@ -169,14 +181,15 @@ export class ComputerUseService {
     this.server = null
     this.runtimePath = null
     this.currentTool = null
-    this.currentActionController?.abort()
+    for (const controller of this.operationControllers) {
+      controller.abort(new Error('Computer use service stopped'))
+    }
     this.currentActionController = null
     await Promise.allSettled([
       runtimePath ? rm(runtimePath, { force: true }) : Promise.resolve(),
       server ? closeServer(server) : Promise.resolve(),
       driver?.shutdown(),
     ])
-    driver?.uniffiDestroy?.()
   }
 
   private async permissions(): Promise<PermissionStatus> {
@@ -193,11 +206,12 @@ export class ComputerUseService {
     }
   }
 
+  /** Authenticate bridge operations and retain single-action admission through cancellation. */
   private async handleRequest(
     request: import('node:http').IncomingMessage,
     response: import('node:http').ServerResponse,
     token: string,
-    driver: CuaDriver
+    driver: ComputerUseDriverProcess
   ): Promise<void> {
     response.setHeader('content-type', 'application/json')
     if (request.headers.authorization !== `Bearer ${token}`) {
@@ -212,7 +226,9 @@ export class ComputerUseService {
     try {
       const body = await readJsonBody(request)
       if (body.action === 'listTools') {
-        const catalog = JSON.parse(await driver.listToolsJson()) as { tools?: unknown }
+        const catalog = JSON.parse(
+          await this.runOperation('listTools', response, signal => driver.listToolsJson({ signal }))
+        ) as { tools?: unknown }
         if (!Array.isArray(catalog.tools)) throw new Error('CUA tool catalog is invalid')
         writeResponse(response, 200, { ok: true, data: catalog.tools })
         return
@@ -224,21 +240,96 @@ export class ComputerUseService {
         throw new Error('Another computer use action is already running')
       }
       this.currentTool = body.name
+      this.error = null
       const controller = new AbortController()
       actionController = controller
       this.currentActionController = controller
-      const result = await driver.callTool(body.name, JSON.stringify(body.arguments ?? {}), {
-        signal: controller.signal,
-      })
+      const result = await this.runOperation(
+        body.name,
+        response,
+        signal =>
+          driver.callTool(body.name as string, JSON.stringify(body.arguments ?? {}), { signal }),
+        controller
+      )
       writeResponse(response, 200, { ok: true, data: result })
     } catch (error) {
-      this.error = errorMessage(error)
-      writeResponse(response, 200, { ok: false, error: this.error })
+      const message = errorMessage(error)
+      if (this.driver === driver) this.error = message
+      writeResponse(response, 200, { ok: false, error: message })
     } finally {
       if (actionController && this.currentActionController === actionController) {
         this.currentActionController = null
         this.currentTool = null
       }
+    }
+  }
+
+  /** Bind a driver operation to its HTTP connection, deadline, and owning generation. */
+  private async runOperation<Result>(
+    name: string,
+    response: import('node:http').ServerResponse,
+    operation: (signal: AbortSignal) => Promise<Result>,
+    actionController?: AbortController
+  ): Promise<Result> {
+    const controller = actionController ?? new AbortController()
+    const driver = this.driver
+    let operationStarted = false
+    const startedAt = Date.now()
+    const operationId = ++this.nextOperationId
+    this.operationControllers.add(controller)
+    const log = (stage: string): void => {
+      console.info('[computer-use]', {
+        operationId,
+        pid: process.pid,
+        nativePid: driver?.pid,
+        tool: name,
+        stage,
+        elapsedMs: Date.now() - startedAt,
+      })
+    }
+    /** A normally completed response must not cancel the completed driver call. */
+    const disconnected = (): void => {
+      if (!response.writableFinished) {
+        controller.abort(new Error('Computer use client disconnected'))
+      }
+    }
+    /** Cancellation cannot prove that a dispatched action had no native side effects. */
+    const cancellationMessage = (): string => {
+      const reason = errorMessage(controller.signal.reason)
+      return actionController && operationStarted ? `${reason}; action outcome is unknown` : reason
+    }
+    /** Reply promptly while keeping shutdown errors out of a newer driver generation. */
+    const aborted = (): void => {
+      log('cancelled')
+      const message = cancellationMessage()
+      if (this.driver === driver) this.error = message
+      writeResponse(response, 200, { ok: false, error: message })
+    }
+    response.once('close', disconnected)
+    controller.signal.addEventListener('abort', aborted, { once: true })
+    const timeout = setTimeout(() => {
+      controller.abort(
+        new Error(`Computer use ${name} timed out after ${this.operationTimeoutMs}ms`)
+      )
+    }, this.operationTimeoutMs)
+    timeout.unref()
+    log('started')
+    try {
+      if (response.destroyed) disconnected()
+      controller.signal.throwIfAborted()
+      operationStarted = true
+      const result = await operation(controller.signal)
+      controller.signal.throwIfAborted()
+      log('completed')
+      return result
+    } catch (error) {
+      log('failed')
+      throw controller.signal.aborted ? new Error(cancellationMessage(), { cause: error }) : error
+    } finally {
+      this.operationControllers.delete(controller)
+      clearTimeout(timeout)
+      response.off('close', disconnected)
+      controller.signal.removeEventListener('abort', aborted)
     }
   }
 
@@ -286,11 +377,13 @@ async function writeRuntimeRecord(path: string, record: Record<string, unknown>)
   await chmod(path, 0o600)
 }
 
+/** Ignore replies after cancellation or disconnection has already ended the response. */
 function writeResponse(
   response: import('node:http').ServerResponse,
   status: number,
   body: Record<string, unknown>
 ): void {
+  if (response.destroyed || response.writableEnded) return
   response.statusCode = status
   response.end(JSON.stringify(body))
 }

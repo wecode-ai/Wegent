@@ -45,6 +45,7 @@ export type {
 export type { RuntimePaneTranscript } from '@wegent/chat-core/runtime-transcript-page'
 import type { RuntimePaneTranscript } from '@wegent/chat-core/runtime-transcript-page'
 export interface RuntimePaneTranscriptLoadOptions {
+  signal?: AbortSignal
   threadOnly?: boolean
   limit?: number
   beforeCursor?: string | null
@@ -125,11 +126,17 @@ export interface CloudWorkStatus {
   updatedAt: string | null
 }
 
+export interface RuntimeWorkLoadState {
+  phase: 'loading' | 'refreshing' | 'ready' | 'error'
+  error: string | null
+}
+
 export interface WorkbenchState {
   user: User | null
   projects: ProjectWithTasks[]
   devices: DeviceInfo[]
   runtimeWork: RuntimeWorkListResponse | null
+  runtimeWorkLoad: RuntimeWorkLoadState
   currentProject: ProjectWithTasks | null
   currentRuntimeTask: RuntimeTaskAddress | null
   standaloneChatKey: number

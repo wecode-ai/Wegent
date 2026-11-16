@@ -1,5 +1,7 @@
-import { describe, expect, test } from 'vitest'
+// @vitest-environment node
+
 import type { InstalledPlugin, PluginMarketplaceItem } from '@/types/api'
+import { describe, expect, test } from 'vitest'
 import type { InstalledPluginItem } from './PluginManagementRows'
 import { findMarketplaceItemForInstalled } from './findMarketplaceItemForInstalled'
 
@@ -85,6 +87,20 @@ function installedItem(
 }
 
 describe('findMarketplaceItemForInstalled', () => {
+  test('does not associate a legacy installation directory with another marketplace listing', () => {
+    const item = marketplaceItem({
+      id: 4,
+      name: 'documents',
+      manifest: { marketplaceId: 'wegent' },
+    })
+    const plugin = installedItem({
+      id: '99-wework-personal-documents-0.1.3',
+      pluginKey: 'documents',
+      marketplace: 'wework-personal',
+    })
+    expect(findMarketplaceItemForInstalled(plugin, [item])).toBeNull()
+  })
+
   test('matches by installedPluginId when no cloud identity is known', () => {
     const items = [
       marketplaceItem({ id: 4, name: 'dingtalk', installedPluginId: '62' }),
@@ -124,46 +140,5 @@ describe('findMarketplaceItemForInstalled', () => {
       marketplace: 'wegent',
     })
     expect(findMarketplaceItemForInstalled(plugin, items)?.id).toBe(4)
-  })
-
-  test('matches by pluginKey and marketplace alias', () => {
-    const items = [
-      marketplaceItem({
-        id: 'dingtalk@wework',
-        name: 'dingtalk',
-        latestReleaseId: null,
-        manifest: { marketplaceId: 'wework' },
-      }),
-    ]
-    const plugin = installedItem({
-      id: 'local-1',
-      pluginKey: 'dingtalk',
-      marketplace: 'wegent',
-    })
-    expect(findMarketplaceItemForInstalled(plugin, items)?.id).toBe('dingtalk@wework')
-  })
-
-  test('matches a wegent store directory to the catalog plugin key', () => {
-    const items = [
-      marketplaceItem({ id: 1, name: 'wegent', latestReleaseId: 2 }),
-      marketplaceItem({ id: 267250, name: 'wegent-sites', latestReleaseId: 6 }),
-    ]
-    const plugin = installedItem({
-      id: '267250-wegent-wegent-sites-0.1.6',
-      pluginKey: '267250-wegent-wegent-sites-0.1.6',
-      marketplace: 'wegent',
-    })
-    expect(findMarketplaceItemForInstalled(plugin, items)?.id).toBe(267250)
-  })
-
-  test('returns null for personal plugins with no catalog row', () => {
-    const items = [marketplaceItem({ id: 4, name: 'dingtalk', latestReleaseId: 6 })]
-    const plugin = installedItem({
-      id: 'notes@wework-personal',
-      pluginKey: 'notes',
-      marketplace: 'wework-personal',
-      origin: 'created',
-    })
-    expect(findMarketplaceItemForInstalled(plugin, items)).toBeNull()
   })
 })

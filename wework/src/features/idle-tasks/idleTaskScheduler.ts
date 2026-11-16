@@ -17,6 +17,7 @@ export interface IdleSystemPressure {
   cpuLoadRatio: number
   freeMemoryRatio: number
   userIdleSeconds: number
+  enforceSystemLoadLimits?: boolean
 }
 
 export interface IdleTaskSchedulerHost {
@@ -142,8 +143,9 @@ export class IdleTaskScheduler {
       this.running ||
       activitySnapshot !== this.lastUserActivityAt ||
       !pressure ||
-      pressure.cpuLoadRatio > MAX_CPU_LOAD_RATIO ||
-      pressure.freeMemoryRatio < MIN_FREE_MEMORY_RATIO ||
+      (pressure.enforceSystemLoadLimits !== false &&
+        (pressure.cpuLoadRatio > MAX_CPU_LOAD_RATIO ||
+          pressure.freeMemoryRatio < MIN_FREE_MEMORY_RATIO)) ||
       pressure.userIdleSeconds < MIN_SYSTEM_IDLE_SECONDS
     ) {
       this.scheduleDrain(PRESSURE_RETRY_DELAY_MS)

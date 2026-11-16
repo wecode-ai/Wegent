@@ -6,7 +6,7 @@ import uuid
 from concurrent.futures import ThreadPoolExecutor
 from threading import Barrier
 
-from sqlalchemy import create_engine, event
+from sqlalchemy import create_engine, event, text
 from sqlalchemy.engine import Engine, make_url
 from sqlalchemy.orm import Session
 
@@ -260,6 +260,41 @@ def verify_existing_assignment_serialization(engine: Engine) -> None:
     print("MySQL: existing Issue assignments retain serialized current reads")
 
 
+def verify_independent_reassignments(engine: Engine) -> None:
+    """An unrelated uncommitted history must not block reassignment."""
+    from app.models.delivery import LoopItem
+    from app.services.issue_assignments import issue_assignment_service
+
+    # Sparse comments among many Issue rows reproduce the index-merge plan
+    # that waited on another Issue's history in the platform E2E suite.
+    with Session(engine) as db:
+        db.add_all(
+            LoopItem(id=f"sparse-{index}", cloud_project_id="project", title="Sparse")
+            for index in range(2000)
+        )
+        db.add_all(
+            LoopItem(id=key, cloud_project_id="project", title=key)
+            for key in ("reassign-0", "reassign-1")
+        )
+        db.commit()
+        assert record(db, "reassign-0")
+        assert record(db, "reassign-1")
+        db.commit()
+    with Session(engine) as holder, Session(engine) as independent:
+        assert record(holder, "reassign-0", "2")
+        independent.execute(text("SET SESSION innodb_lock_wait_timeout = 2"))
+        assert record(independent, "reassign-1", "2")
+        independent.commit()
+        holder.rollback()
+    with Session(engine) as db:
+        active = issue_assignment_service.active_for_issues(
+            db, ["reassign-0", "reassign-1"]
+        )
+        assert [event.member_id for event in active["reassign-0"]] == ["1"]
+        assert [event.member_id for event in active["reassign-1"]] == ["2"]
+    print("MySQL: unrelated uncommitted histories do not block reassignment")
+
+
 def main() -> None:
     url = make_url(os.environ["ISSUE_ASSIGNMENT_TEST_MYSQL_URL"])
     if url.get_backend_name() != "mysql" or url.host not in {
@@ -290,6 +325,7 @@ def main() -> None:
         verify_independent_issues(engine)
         verify_same_issue(engine)
         verify_reassignment_and_rollback(engine)
+        verify_independent_reassignments(engine)
         with engine.connect() as connection:
             assert (
                 connection.exec_driver_sql(

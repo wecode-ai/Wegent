@@ -1,3 +1,4 @@
+import { selectedToolCall } from './model-tool-calls.mjs'
 import assert from 'node:assert/strict'
 import { readFile } from 'node:fs/promises'
 import { join } from 'node:path'
@@ -369,17 +370,15 @@ export function createVisualizationScrollChecks({ workspacePath, uiTimeoutMs }) 
         stage = 'awaiting-tool-output'
         response.writeHead(200, { 'Content-Type': 'text/event-stream; charset=utf-8' })
         response.end(
-          sse([
-            responseCreated(id),
-            ...functionCall(CALL_ID, tool.name, tool.arguments),
-            responseCompleted(id),
-          ])
+          sse([responseCreated(id), ...selectedToolCall(CALL_ID, tool), responseCompleted(id)])
         )
         return true
       }
       assert.equal(stage, 'awaiting-tool-output')
       const output = body.input.find(
-        item => item?.type === 'function_call_output' && item.call_id === CALL_ID
+        item =>
+          ['function_call_output', 'custom_tool_call_output'].includes(item?.type) &&
+          item.call_id === CALL_ID
       )
       assert.ok(
         JSON.stringify(output?.output).includes(WRITTEN),

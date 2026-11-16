@@ -20,7 +20,7 @@ const messages: WorkbenchMessage[] = [
   },
 ]
 
-function renderList() {
+function renderList(overrides: Partial<MessageListProps> = {}) {
   const onAddSelectionToConversation = vi.fn()
   const onAskSelectionInSidebar = vi.fn()
   const renderMessage = vi.spyOn(assistantMessageModule, 'AssistantMessage')
@@ -33,6 +33,7 @@ function renderList() {
     },
     onAddSelectionToConversation,
     onAskSelectionInSidebar,
+    ...overrides,
   }
   render(
     <ConversationTranslationProvider translate={createCollaborationTranslator('en')}>
@@ -81,6 +82,22 @@ afterEach(() => {
 })
 
 describe('message selection while editing elsewhere', () => {
+  test('offers the scoped answer action without requiring unrelated selection actions', async () => {
+    const fill = vi.fn()
+    const { content } = renderList({
+      onAddSelectionToConversation: undefined,
+      onAskSelectionInSidebar: undefined,
+      onFillSelectionToAnswer: fill,
+    })
+    selectText(content, 'this response')
+    fireEvent.mouseUp(content)
+    expect(screen.queryByTestId('add-selection-to-conversation-button')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('ask-selection-in-sidebar-button')).not.toBeInTheDocument()
+    await userEvent.click(screen.getByTestId('fill-selection-to-answer-button'))
+    expect(fill).toHaveBeenCalledExactlyOnceWith('this response')
+    expect(document.getSelection()?.isCollapsed).toBe(true)
+    expect(screen.queryByTestId('message-selection-actions')).not.toBeInTheDocument()
+  })
   test.each(['conversation-find-input', 'outside-textarea', 'outside-editor'])(
     'ignores retained response selections while editing %s',
     async editorTestId => {

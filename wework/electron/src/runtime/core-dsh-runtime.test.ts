@@ -210,8 +210,11 @@ describe('core DSH runtime', () => {
             '@wegent/dsh-secure-storage',
             '@wegent/dsh-terminal-runtime',
             '@wegent/dsh-plugin-runtime',
+            '@wegent/dsh-connection-host',
             '@wegent/dsh-connection-runtime',
+            '@wegent/dsh-coordination-runtime',
             '@wegent/dsh-connection-dingtalk',
+            '@wegent/dsh-connection-git',
             '@wegent/dsh-app-wework',
             '@deepseek-ai/dsh-web-app',
             '@wegent/dsh-executor-runtime',
@@ -371,7 +374,7 @@ describe('core DSH runtime', () => {
 
     const profileRoot = join(second.dshHome, 'profiles', 'wework-core')
     expect(await readFile(join(profileRoot, 'cordis.patch.yml'), 'utf8')).toBe(
-      '- id: client-hmr\n  disabled: true\n'
+      '- id: client-hmr\n  disabled: true\n- id: hmr\n  disabled: true\n'
     )
     const manifest = JSON.parse(await readFile(join(profileRoot, 'package.json'), 'utf8'))
     expect(manifest.dependencies['@wegent/dsh-app-wework']).toBe(
@@ -426,7 +429,9 @@ describe('core DSH runtime', () => {
     })
 
     await expect(readFile(join(pluginCopyRoot, 'local-helper.js'), 'utf8')).resolves.toBe('local')
-    await expect(readFile(patchPath, 'utf8')).resolves.toBe('- id: client-hmr\n  disabled: true\n')
+    await expect(readFile(patchPath, 'utf8')).resolves.toBe(
+      '- id: client-hmr\n  disabled: true\n- id: hmr\n  disabled: true\n'
+    )
     await root.remove()
   })
 
@@ -679,8 +684,11 @@ describe('core DSH runtime', () => {
       '@wegent/dsh-terminal-runtime',
       '@wegent/dsh-transcript-sync',
       '@wegent/dsh-plugin-runtime',
+      '@wegent/dsh-connection-host',
       '@wegent/dsh-connection-runtime',
+      '@wegent/dsh-coordination-runtime',
       '@wegent/dsh-connection-dingtalk',
+      '@wegent/dsh-connection-git',
       '@wework/dsh-browser-auth',
     ])
     expect(manifest.dsh.profile.bundles).toEqual([
@@ -691,8 +699,11 @@ describe('core DSH runtime', () => {
       '@wegent/dsh-secure-storage',
       '@wegent/dsh-terminal-runtime',
       '@wegent/dsh-plugin-runtime',
+      '@wegent/dsh-connection-host',
       '@wegent/dsh-connection-runtime',
+      '@wegent/dsh-coordination-runtime',
       '@wegent/dsh-connection-dingtalk',
+      '@wegent/dsh-connection-git',
       '@wegent/dsh-app-wework',
       '@deepseek-ai/dsh-web-app',
       '@wegent/dsh-executor-runtime',

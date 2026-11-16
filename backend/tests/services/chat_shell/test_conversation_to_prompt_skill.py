@@ -7,7 +7,8 @@ from pathlib import Path
 
 def test_conversation_to_prompt_skill_exists():
     skill_dir = (
-        Path(__file__).resolve().parents[3]
+        Path(__file__).resolve().parents[3].parent
+        / "backend-rs"
         / "init_data"
         / "skills"
         / "conversation_to_prompt"
@@ -20,7 +21,8 @@ def test_conversation_to_prompt_skill_exists():
 
 def test_conversation_to_prompt_skill_contract_sections():
     skill_md_path = (
-        Path(__file__).resolve().parents[3]
+        Path(__file__).resolve().parents[3].parent
+        / "backend-rs"
         / "init_data"
         / "skills"
         / "conversation_to_prompt"

@@ -17,6 +17,7 @@ import {
   getDefaultModelOptions,
   getModelDisplayLabel,
   getSelectedModelDisplayLabel,
+  getSelectedReasoningOption,
   groupModelsByFamily,
   inferModelFamily,
   isCodexOfficialModel,
@@ -46,7 +47,6 @@ import {
   isCloudModel,
   codexProviderId,
   desktopFastModeState,
-  desktopModelControl,
   getModelPowerPresets,
   isSelectedPowerSetting,
   isVisibleModelSelectorControl,
@@ -55,6 +55,7 @@ import {
   selectedControlOption,
 } from "./model-selector-utils";
 import styles from "./ModelSelector.module.css";
+import { useEscapeKey } from "../markdown/useEscapeKey";
 
 const MAIN_MENU_WIDTH = 320;
 const MAIN_MENU_TRIGGER_GAP = 8;
@@ -314,16 +315,7 @@ export function ModelSelector({
     return () => document.removeEventListener("pointerdown", handlePointerDown);
   }, [closeMenu, isMobile, open]);
 
-  useEffect(() => {
-    if (!open || isMobile) return;
-
-    const handleKeyDown = (event: globalThis.KeyboardEvent) => {
-      if (event.key === "Escape") closeMenu();
-    };
-
-    document.addEventListener("keydown", handleKeyDown);
-    return () => document.removeEventListener("keydown", handleKeyDown);
-  }, [closeMenu, isMobile, open]);
+  useEscapeKey(closeMenu, open && !isMobile, desktopMenuWrapperRef);
 
   const emptyModelLabel = t("workbench.no_models", "No models available");
   const selectedModelLabel = selectedModel
@@ -372,8 +364,9 @@ export function ModelSelector({
   const selectedReasoningValue =
     normalizeModelOptionValue("reasoning", selectedModelOptions.reasoning) ??
     reasoningControl?.defaultValue;
-  const selectedReasoningOption = reasoningControl?.options.find(
-    (option) => option.value === selectedReasoningValue,
+  const selectedReasoningOption = getSelectedReasoningOption(
+    selectedModel,
+    selectedModelOptions,
   );
   const selectedReasoningLabel = selectedReasoningOption
     ? selectedReasoningOption.labelKey
@@ -393,10 +386,6 @@ export function ModelSelector({
   const fastModeState = desktopFastModeState(
     speedControl,
     selectedModelOptions,
-  );
-  const desktopReasoningControl = desktopModelControl(
-    reasoningControl,
-    selectedModel,
   );
   const desktopModelGroups = familyGroups;
   const localChatGptModelGroups = desktopModelGroups.flatMap((group) => {
@@ -420,10 +409,10 @@ export function ModelSelector({
   const advancedReasoningAvailable =
     useModelPowerSlider ||
     (modelSelectionMode === "model" &&
-      (desktopReasoningControl?.options.length ?? 0) >= 2);
+      (reasoningControl?.options.length ?? 0) >= 2);
   const showExplicitEffortSelection =
     modelSelectionMode === "model" &&
-    (desktopReasoningControl?.options.length ?? 0) >= 2;
+    (reasoningControl?.options.length ?? 0) >= 2;
   const resolvedDesktopMenuView = advancedReasoningAvailable
     ? desktopMenuView
     : "advanced";
@@ -707,15 +696,15 @@ export function ModelSelector({
 
   function selectExplicitModel(model: UnifiedModel | null) {
     if (!model) return handleSelectModel(null);
-    const modelOptions =
+    const baseOptions =
       selectedModel &&
       inferModelFamily(model) === inferModelFamily(selectedModel)
-        ? normalizeModelOptions(model, selectedModelOptions)
+        ? selectedModelOptions
         : getDefaultModelOptions(model);
-    const options = {
-      ...modelOptions,
+    const options = normalizeModelOptions(model, {
+      ...baseOptions,
       [MODEL_SELECTION_OPTION]: "model",
-    };
+    });
     const applied = onSelectModelAndOptions
       ? onSelectModelAndOptions(model, options)
       : handleSelectModel(model);
@@ -890,7 +879,7 @@ export function ModelSelector({
                           Boolean(defaultPowerPreset)
                         }
                         fastModeState={fastModeState}
-                        control={desktopReasoningControl}
+                        control={reasoningControl}
                         onOpenModels={() => setDesktopMenuView("advanced")}
                         onReset={selectDefaultModel}
                         onInteractionChange={setPowerSliderInteracting}

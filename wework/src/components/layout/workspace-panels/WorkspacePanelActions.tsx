@@ -401,6 +401,7 @@ export const WorkspacePanelActions = memo(function WorkspacePanelActions({
               availability={
                 (openerAvailability ?? {}) as Record<LocalWorkspaceOpenerId, boolean | undefined>
               }
+              preferredOpener={preferredOpener}
               labels={openerLabels}
               onChooseOther={handleChooseOther}
               onOpen={refreshLocalWorkspaceOpeners}
@@ -448,6 +449,7 @@ export const WorkspacePanelActions = memo(function WorkspacePanelActions({
                 onClick={onToggleRightPanelExpanded}
                 className={cn(
                   DESKTOP_TOP_BAR_BUTTON_CLASS,
+                  'disabled:opacity-50',
                   rightPanelExpanded && 'bg-muted text-text-primary'
                 )}
                 aria-label={rightPanelExpandedTitle}
@@ -489,6 +491,7 @@ export const WorkspacePanelActions = memo(function WorkspacePanelActions({
                 onClick={onToggleRightPanel}
                 className={cn(
                   DESKTOP_TOP_BAR_BUTTON_CLASS,
+                  'disabled:opacity-50',
                   rightPanelOpen && 'bg-muted text-text-primary'
                 )}
                 aria-label={rightPanelTitle}
@@ -521,7 +524,7 @@ function CodeServerErrorDialog({ message, onClose }: { message: string; onClose:
         onClick={event => event.stopPropagation()}
       >
         <div className="flex items-start gap-3">
-          <div className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-red-500/10 text-red-500">
+          <div className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-destructive/10 text-destructive wework:bg-red-500/10 wework:text-red-500">
             <AlertCircle className="h-4 w-4" />
           </div>
           <div className="min-w-0 flex-1">

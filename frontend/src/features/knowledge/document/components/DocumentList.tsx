@@ -33,6 +33,8 @@ import { DocumentUpload } from './DocumentUpload'
 import { KnowledgeBaseIcon } from './KnowledgeBaseIcon'
 
 import { DeleteDocumentDialog } from './DeleteDocumentDialog'
+import { BatchDeletionDialog } from './BatchDeletionDialog'
+import { useBatchDeletion } from '../hooks/useBatchDeletion'
 import { EditDocumentDialog } from './EditDocumentDialog'
 import { RetrievalTestDialog } from './RetrievalTestDialog'
 import { ReanalyzeMultimodalDialog } from '@/features/knowledge/multimodal/components/ReanalyzeMultimodalDialog'
@@ -93,7 +95,7 @@ export { shouldDisableDocumentBatchActions } from '../hooks/useKnowledgeResource
 
 const failClosedDocumentProtection: DocumentProtection = {
   original_download_allowed: false,
-  watermark_text: null,
+  watermark_text: '',
 }
 
 interface DocumentProtectionState {
@@ -497,7 +499,6 @@ export function DocumentList({
     resetSelectionForNavigation()
     setIsExpandAllView(prev => !prev)
   }, [isExpandAllView, resetSelectionForNavigation])
-  const [batchLoading, setBatchLoading] = useState(false)
   const [showSearchPopover, setShowSearchPopover] = useState(false)
   // Track if initialDocPath has been handled
   const [initialDocPathHandled, setInitialDocPathHandled] = useState(false)
@@ -826,15 +827,12 @@ export function DocumentList({
     }
   }
 
-  const handleDelete = async () => {
+  const handleDelete = async (continueOnExternalFailure = false) => {
     if (!deletingDoc) return
-    try {
-      await remove(deletingDoc.id)
-      setDeletingDoc(null)
-      onDocumentsChanged?.()
-    } catch {
-      // Error handled by hook
-    }
+    const targetId = deletingDoc.id
+    if (!(await remove(targetId, continueOnExternalFailure))) return
+    setDeletingDoc(current => (current?.id === targetId ? null : current))
+    onDocumentsChanged?.()
   }
   // Batch selection handlers
   const handleSelectDoc = (doc: KnowledgeDocument, selected: boolean) => {
@@ -881,19 +879,33 @@ export function DocumentList({
   const usesAllAvailableDocuments = selectionIsControlled && selectedDocumentIds.size === 0
 
   // Batch operations using batch API
+  const batchDeletion = useBatchDeletion({
+    scope: JSON.stringify([knowledgeBase.id, currentFolderId, isExpandAllView]),
+    run: batchDelete,
+    onResult: (result, aggregate) => {
+      const deletedIds = new Set(
+        result.items.filter(item => item.content_deleted).map(item => item.document_id)
+      )
+      const selection = new Set([...selectedDocumentIds].filter(id => !deletedIds.has(id)))
+      if (selectionIsControlled) onSelectionChange?.([...selection])
+      else setDocumentSelection(selection)
+      if (!aggregate.failed_count && !aggregate.unconfirmed_count) {
+        toast({
+          title: t('document.deletion.batchSummary', {
+            deleted: aggregate.success_count,
+            unconfirmed: 0,
+            failed: 0,
+          }),
+        })
+      }
+      if (result.success_count > 0) onDocumentsChanged?.()
+    },
+  })
+  const batchLoading = batchDeletion.loading
   const handleBatchDelete = async () => {
     const payload = getSelectionPayload()
-    if (payload.documentIds.length === 0 || payload.folderIds.length > 0) return
-    setBatchLoading(true)
-    try {
-      await batchDelete(payload.documentIds)
-      resetSelection()
-      onDocumentsChanged?.()
-    } catch {
-      // Error handled by hook
-    } finally {
-      setBatchLoading(false)
-    }
+    if (!payload.documentIds.length || payload.folderIds.length) return
+    await batchDeletion.start(payload.documentIds)
   }
 
   // Handle web document re-fetch
@@ -1127,7 +1139,7 @@ export function DocumentList({
   return (
     <div className={sourceWorkspace ? 'space-y-3' : 'space-y-4'}>
       {/* Header - Wegent style */}
-      <div className={`flex items-center gap-3 ${sourceWorkspace ? 'lg:pr-10' : ''}`}>
+      <div className={`flex flex-wrap items-center gap-3 ${sourceWorkspace ? 'lg:pr-10' : ''}`}>
         {onBack && (
           <button
             onClick={onBack}
@@ -1139,7 +1151,7 @@ export function DocumentList({
         {/* Type icon - based on current kb type */}
         <KnowledgeBaseIcon kbType={knowledgeBase.kb_type} className="w-5 h-5 flex-shrink-0" />
         <div className="flex-1 min-w-0">
-          <div className="flex items-center gap-1.5">
+          <div className="flex flex-wrap items-center gap-1.5">
             {/* Group name prefix with click handler */}
             {groupInfo && (
               <>
@@ -1153,7 +1165,7 @@ export function DocumentList({
                 <span className="text-text-muted">/</span>
               </>
             )}
-            <h2 className="text-base font-medium text-text-primary truncate">
+            <h2 className="truncate text-base font-medium text-text-primary max-md:order-first max-md:w-full max-md:whitespace-normal max-md:break-words">
               {knowledgeBase.name}
             </h2>
             {/* Summary tooltip - keep visible when manual summary exists after AI failure */}
@@ -1246,7 +1258,7 @@ export function DocumentList({
             {isExpandAllView ? t('document.tree.layeredNav') : t('document.tree.expandAll')}
           </Button>
         )}
-        {headerActions}
+        {headerActions && <div className="w-full md:w-auto">{headerActions}</div>}
       </div>
       {canManageAllDocuments && !sourceWorkspace && (
         <EditKnowledgeBaseSummaryDialog {...editorDialogProps} />
@@ -1529,6 +1541,7 @@ export function DocumentList({
                       <Button
                         variant="destructive"
                         size="sm"
+                        data-testid="batch-delete-documents"
                         onClick={handleBatchDelete}
                         disabled={documentBatchActionsDisabled || batchLoading}
                       >
@@ -1784,6 +1797,14 @@ export function DocumentList({
           setEditingDoc(null)
           refresh()
         }}
+      />
+
+      <BatchDeletionDialog
+        result={batchDeletion.result}
+        loading={batchDeletion.loading}
+        error={batchDeletion.error}
+        onContinue={batchDeletion.continueDeletion}
+        onClose={batchDeletion.close}
       />
 
       <DeleteDocumentDialog

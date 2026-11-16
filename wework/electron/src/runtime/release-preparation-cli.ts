@@ -2,6 +2,7 @@ import { readFile } from 'node:fs/promises'
 import { dirname, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { prepareReleaseEnvironment } from './release-preparation.js'
+import { RELEASE_PREPARATION_PROGRESS_PREFIX } from './release-preparation-progress.mjs'
 
 try {
   if (process.env.ELECTRON_RUN_AS_NODE !== '1' || !process.versions.electron)
@@ -14,7 +15,10 @@ try {
     resolve(dirname(fileURLToPath(import.meta.url)), '../../..'),
     metadata.version,
     metadata.weworkDataSchema,
-    metadata.weworkReadableDataSchemas
+    metadata.weworkReadableDataSchemas,
+    event => {
+      process.stdout.write(`${RELEASE_PREPARATION_PROGRESS_PREFIX}${JSON.stringify(event)}\n`)
+    }
   )
 } catch (error) {
   console.error(

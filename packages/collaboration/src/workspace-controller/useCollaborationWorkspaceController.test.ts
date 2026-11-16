@@ -562,7 +562,11 @@ describe("collaboration workspace controller", () => {
     expect(state.issues).toEqual([unread]);
     expect(state.projectItems[project.id]).toEqual([unread]);
     await commands.markIssueRead(unread);
-    expect(api.issues.markRead).toHaveBeenCalledExactlyOnceWith(issue.id);
+    expect(api.issues.markRead).toHaveBeenCalledExactlyOnceWith(
+      issue.id,
+      undefined,
+      unread.content_revision,
+    );
     expect(state.selectedIssue).toEqual(read);
   });
 
@@ -608,7 +612,11 @@ describe("collaboration workspace controller", () => {
       response.resolve({ ...unread, is_unread: false });
       await Promise.all([previewRead, detailRead]);
 
-      expect(api.issues.markRead).toHaveBeenCalledExactlyOnceWith(issue.id);
+      expect(api.issues.markRead).toHaveBeenCalledExactlyOnceWith(
+        issue.id,
+        undefined,
+        unread.content_revision,
+      );
       expect(state.issues).toEqual([newer]);
       expect(state.selectedIssue).toBeNull();
     },

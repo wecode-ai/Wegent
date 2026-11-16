@@ -247,6 +247,8 @@ describe("visible Issue read state", () => {
     readSequence = 0,
     unreadRevision,
     onReadSequence,
+    collapsed,
+    visibilityRevision,
   }: {
     items?: ProjectChatMessage[];
     loading?: boolean;
@@ -254,6 +256,8 @@ describe("visible Issue read state", () => {
     readSequence?: number;
     unreadRevision?: number;
     onReadSequence: (sequence: number) => Promise<void> | void;
+    collapsed?: { first: number; last: number };
+    visibilityRevision?: number;
   }) {
     const { listRef } = useIssueActivityScroll({
       messages: items,
@@ -262,6 +266,7 @@ describe("visible Issue read state", () => {
       readSequence,
       unreadRevision,
       onReadSequence,
+      visibilityRevision,
       cardTestIdPrefix: "card-",
     });
     return (
@@ -273,12 +278,24 @@ describe("visible Issue read state", () => {
         data-testid="list"
       >
         {!loading &&
-          items.map((item) => (
-            <div
-              key={item.messageId}
-              data-activity-sequence={item.sequenceNumber}
-            />
-          ))}
+          items.map((item) =>
+            collapsed &&
+            item.sequenceNumber >= collapsed.first &&
+            item.sequenceNumber <= collapsed.last ? (
+              item.sequenceNumber === collapsed.first ? (
+                <div
+                  key="collapsed"
+                  data-activity-collapsed-first-sequence={collapsed.first}
+                  data-activity-collapsed-last-sequence={collapsed.last}
+                />
+              ) : null
+            ) : (
+              <div
+                key={item.messageId}
+                data-activity-sequence={item.sequenceNumber}
+              />
+            ),
+          )}
       </div>
     );
   }
@@ -309,7 +326,10 @@ describe("visible Issue read state", () => {
     });
     vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(
       function () {
-        const sequence = Number(this.dataset.activitySequence);
+        const sequence = Number(
+          this.dataset.activitySequence ??
+            this.dataset.activityCollapsedFirstSequence,
+        );
         return sequence
           ? rect(positions.get(sequence) ?? 600, 100)
           : rect(0, viewportHeight);
@@ -324,6 +344,70 @@ describe("visible Issue read state", () => {
     act(() => root.unmount());
     container.remove();
     vi.restoreAllMocks();
+  });
+
+  it("lands on the unread collapsed range and does not acknowledge hidden activity until expansion", async () => {
+    const onReadSequence = vi.fn().mockResolvedValue(undefined);
+    const items = Array.from({ length: 30 }, (_, index) => ({
+      ...message(`item-${index}`),
+      sequenceNumber: index + 1,
+    }));
+    positions = new Map([
+      [3, 120],
+      [21, 50],
+    ]);
+    await act(async () =>
+      root.render(
+        <Fixture
+          items={items}
+          readSequence={5}
+          unreadRevision={2}
+          collapsed={{ first: 3, last: 20 }}
+          onReadSequence={onReadSequence}
+          visibilityRevision={0}
+        />,
+      ),
+    );
+    await flushFrames();
+    expect((container.firstElementChild as HTMLElement).scrollTop).toBe(120);
+    expect(onReadSequence).not.toHaveBeenCalled();
+    await act(async () =>
+      root.render(
+        <Fixture
+          items={items}
+          readSequence={5}
+          unreadRevision={2}
+          onReadSequence={onReadSequence}
+          visibilityRevision={1}
+        />,
+      ),
+    );
+    await flushFrames();
+    expect(onReadSequence).toHaveBeenLastCalledWith(21);
+  });
+
+  it("allows read progress beyond a collapsed range that was already read", async () => {
+    const onReadSequence = vi.fn().mockResolvedValue(undefined);
+    const items = Array.from({ length: 30 }, (_, index) => ({
+      ...message(`item-${index}`),
+      sequenceNumber: index + 1,
+    }));
+    positions = new Map([
+      [3, 120],
+      [21, 50],
+    ]);
+    await act(async () =>
+      root.render(
+        <Fixture
+          items={items}
+          readSequence={20}
+          collapsed={{ first: 3, last: 20 }}
+          onReadSequence={onReadSequence}
+        />,
+      ),
+    );
+    await flushFrames();
+    expect(onReadSequence).toHaveBeenLastCalledWith(21);
   });
 
   it("persists an empty unread Issue only after loading and avoids duplicate requests", async () => {

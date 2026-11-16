@@ -35,10 +35,13 @@ pub async fn build(app: Arc<AppState>) -> Result<brz_http_server::Router<AppAuth
             .await
             .context("failed to connect runtime-check dependencies")?;
     let models_unified_config = models_unified::config::AppConfig::from_env();
-    let models_unified_state =
-        super::models_unified::build(app.mysql.clone(), &models_unified_config, app.erp.clone())
-            .await
-            .context("failed to connect models-unified dependencies")?;
+    let models_unified_state = super::models_unified::build(
+        app.mysql.clone(),
+        &models_unified_config,
+        app.entity_resolvers.clone(),
+    )
+    .await
+    .context("failed to connect models-unified dependencies")?;
 
     // `POST /api/runtime-work/llm-responses-proxy/responses` forwards every
     // `x-wegent-upstream-header-*` header, which the function API's named-header
@@ -47,25 +50,75 @@ pub async fn build(app: Arc<AppState>) -> Result<brz_http_server::Router<AppAuth
     let llm_responses_proxy = crate::llm_proxy::LlmResponsesProxyRoute::new(Arc::clone(&app))
         .context("failed to initialize the LLM proxy transport")?;
 
+    let sites = Arc::clone(&app.sites);
+    let git = Arc::new(wegent_git_repositories::GitState {
+        git_repositories: Arc::clone(&app.git_repositories),
+        repository_tokens: Arc::clone(&app.repository_tokens),
+    });
+    let capabilities = Arc::new(wegent_capabilities::state::AppState {
+        mysql: app.mysql.clone(),
+        redis: app.redis.clone(),
+        task_store: Arc::clone(&app.task_store),
+        erp: Arc::clone(&app.erp),
+        entity_resolvers: app.entity_resolvers.clone(),
+    });
+    let users = Arc::new(wegent_backend_users::state::AppState {
+        mysql: app.mysql.clone(),
+        auth: app.auth.clone(),
+        user_profile: Arc::clone(&app.user_profile),
+        user_git_info: Arc::clone(&app.user_git_info),
+        user_git_info_mask: Arc::clone(&app.user_git_info_mask),
+        user_reader: Arc::clone(&app.user_reader),
+        git_http: app.git_repositories.client(),
+    });
+    let authentication = Arc::new(wegent_authentication::state::AppState {
+        mysql: app.mysql.clone(),
+        redis: app.redis.clone(),
+        auth: app.auth.clone(),
+        frontend_url: app.oidc_config.frontend_url.clone(),
+    });
+    let oidc = Arc::new(wegent_oidc::state::AppState {
+        mysql: app.mysql.clone(),
+        redis: app.redis.clone(),
+        auth: app.auth.clone(),
+        oidc_config: app.oidc_config.clone(),
+        oidc: Arc::clone(&app.oidc),
+        oidc_callback: Arc::clone(&app.oidc_callback),
+        seed_tasks: Arc::clone(&app.seed_tasks),
+        onboarding: Arc::new(wegent_onboarding::state::AppState {
+            mysql: app.mysql.clone(),
+            redis: app.redis.clone(),
+            entity_resolvers: app.entity_resolvers.clone(),
+            task_store: Arc::clone(&app.task_store),
+        }),
+    });
     let handler = brz_http_server::handlers!(state = app)
         .map_err(|error| anyhow::anyhow!("API route registration failed: {error}"))?
         .merge(
-            brz_http_server::handlers!(rws = status_state; group = remote_workspace_status)
+            wegent_remote_workspace::routes(status_state, tree_state)
+                .context("failed to register workspace routes")?,
+        )
+        .merge(
+            wegent_runtime_check::routes(runtime_check_state)
                 .map_err(|error| anyhow::anyhow!("API route registration failed: {error}"))?,
         )
         .merge(
-            brz_http_server::handlers!(rwt = tree_state; group = remote_workspace_tree)
+            wegent_models::routes(models_unified_state)
                 .map_err(|error| anyhow::anyhow!("API route registration failed: {error}"))?,
         )
         .merge(
-            brz_http_server::handlers!(rc = runtime_check_state; group = runtime_check)
-                .map_err(|error| anyhow::anyhow!("API route registration failed: {error}"))?,
+            wegent_capabilities::routes(capabilities)
+                .context("failed to register capability routes")?,
         )
+        .merge(wegent_backend_users::routes(users).context("failed to register user routes")?)
         .merge(
-            brz_http_server::handlers!(mu = models_unified_state; group = models_unified)
-                .map_err(|error| anyhow::anyhow!("API route registration failed: {error}"))?,
+            wegent_authentication::routes(authentication)
+                .context("failed to register authentication routes")?,
         )
-        .merge(llm_responses_proxy);
+        .merge(wegent_oidc::routes(oidc).context("failed to register OIDC routes")?)
+        .merge(llm_responses_proxy)
+        .merge(wegent_git_repositories::routes(git).context("failed to register Git routes")?)
+        .merge(wegent_sites::routes(sites).context("failed to register Sites routes")?);
 
     Ok(handler)
 }

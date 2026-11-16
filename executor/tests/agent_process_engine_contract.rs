@@ -27,6 +27,11 @@ use wegent_executor::{
 
 #[path = "agent_process_engine_contract/claude_capabilities.rs"]
 mod claude_capabilities;
+#[path = "agent_process_engine_contract/file_changes.rs"]
+mod file_changes;
+
+#[path = "agent_process_engine_contract/claude_concurrency.rs"]
+mod claude_concurrency;
 
 fn env_lock() -> &'static tokio::sync::Mutex<()> {
     static LOCK: OnceLock<tokio::sync::Mutex<()>> = OnceLock::new();
@@ -532,6 +537,7 @@ async fn assert_git_clone_failure_contract(failure: GitCloneFailure) {
     let workspace_root = unique_dir("claude-git-timeout-workspace-root");
     let bin_dir = unique_dir("claude-git-timeout-bin");
     let git_environment = unique_dir("claude-git-timeout-marker").join("git-env.txt");
+    let preflight_environment = git_environment.with_file_name("preflight-env.txt");
     let claude_marker = unique_dir("claude-git-timeout-claude").join("ran.txt");
     fs::create_dir_all(&bin_dir).unwrap();
     fs::create_dir_all(git_environment.parent().unwrap()).unwrap();
@@ -540,6 +546,11 @@ async fn assert_git_clone_failure_contract(failure: GitCloneFailure) {
         &fake_git,
         format!(
             r#"#!/bin/sh
+if [ "$1" = "ls-remote" ]; then
+  if [ "$2" != "--" ] || [ "$3" != "https://github.com/wecode-ai/Wegent.git" ] || [ "$4" != "HEAD" ]; then exit 21; fi
+  printf '%s\n%s\n%s\n' "$GIT_TERMINAL_PROMPT" "$GIT_HTTP_LOW_SPEED_LIMIT" "$GIT_HTTP_LOW_SPEED_TIME" > '{}'
+  exit 0
+fi
 if [ "$1" = "clone" ]; then
   {}
   DEST="$3"
@@ -549,6 +560,7 @@ if [ "$1" = "clone" ]; then
 fi
 exit 20
 "#,
+            preflight_environment.display(),
             if matches!(failure, GitCloneFailure::TimeoutBeforeSetup) {
                 "sleep 30 &\n  wait $!"
             } else {
@@ -605,6 +617,10 @@ printf '%s\n' '{{"type":"assistant","message":{{"content":[{{"type":"text","text
 
     let outcome = engine.run(with_backend_identity(request)).await;
 
+    assert_eq!(
+        fs::read_to_string(preflight_environment).unwrap(),
+        "0\n2048\n5\n"
+    );
     if times_out {
         assert!(
             matches!(
@@ -841,7 +857,14 @@ printf '%s\n' '{"type":"assistant","message":{"content":[{"type":"text","text":"
 
 fn write_fake_executable(name: &str, content: &str) -> PathBuf {
     let path = std::env::temp_dir().join(format!("{name}-{}", std::process::id()));
-    let content = if name.starts_with("fake-claude") && !content.contains(r#""type":"result""#) {
+    write_fake_executable_at(path, content)
+}
+
+fn write_fake_executable_at(path: PathBuf, content: &str) -> PathBuf {
+    let is_claude = path
+        .file_name()
+        .is_some_and(|name| name.to_string_lossy().starts_with("fake-claude"));
+    let content = if is_claude && !content.contains(r#""type":"result""#) {
         format!(
             "{content}\nprintf '%s\\n' '{{\"type\":\"result\",\"subtype\":\"success\",\"is_error\":false,\"stop_reason\":\"end_turn\"}}'\n"
         )

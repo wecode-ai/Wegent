@@ -171,7 +171,11 @@
     "loading_diff_message": "加载中...",
     "no_changes_between_branches": "分支之间未发现变更",
     "execution_timeline": "执行时间线",
-    "no_repository": "该任务未关联代码仓库"
+    "no_repository": "该任务未关联代码仓库",
+    "task_file_changes": "任务累计文件变更",
+    "file_changes_unavailable": "该任务未保存文件变更数据。",
+    "snapshot_failed": "未能采集任务文件变更。",
+    "diff_truncated": "任务累计文件变更，差异内容较大，仅显示部分内容。"
   },
   "thinking": {
     "execution_completed": "执行完成",

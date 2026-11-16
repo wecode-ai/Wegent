@@ -5,6 +5,7 @@ import { parseDocument, stringify } from 'yaml'
 import type { CollaborationGroup, CollaborationGroupMember, CollaborationProject } from '../types'
 import type { ProjectCreateCollaborationGroupDraft } from '../project-create/types'
 import type { CollaborationLocale } from '../i18n'
+import type { WorkspaceProjectAgent } from '../ports/SharedWorkspaceApi'
 import type { CollaborationTemplate, TemplateRoleAssignments, TemplateGroup } from './types'
 import { isTagNameTooLong } from '../tagging'
 import { defaultBoardViewId } from '../project-board/projectBoardViews'
@@ -59,6 +60,7 @@ function group(value: unknown, index: number): TemplateGroup {
       'name',
       'responsibility',
       'defaultKind',
+      'agentKey',
     ])
     if (
       role.defaultKind !== undefined &&
@@ -70,6 +72,9 @@ function group(value: unknown, index: number): TemplateGroup {
       key: key(role.key, `${path}.role.key`),
       name: text(role.name, `${path}.role.name`, true, 200),
       responsibility: text(role.responsibility, `${path}.role.responsibility`, false),
+      ...(role.agentKey === undefined
+        ? {}
+        : { agentKey: key(role.agentKey, `${path}.role.agentKey`) }),
       ...(role.defaultKind ? { defaultKind: role.defaultKind as 'human' | 'agent' } : {}),
     }
   })
@@ -143,13 +148,75 @@ export function validateTemplate(value: unknown): CollaborationTemplate {
   ])
   if (spec.category !== 'collaboration') throw new Error('spec.category')
   const resources = object(spec.resources, 'resources', ['collaboration'])
-  const collaboration = object(resources.collaboration, 'collaboration', ['project', 'groups'])
+  const collaboration = object(resources.collaboration, 'collaboration', [
+    'project',
+    'groups',
+    'agents',
+  ])
   const project = object(collaboration.project, 'project', [
     'name',
     'description',
     'taskAssignment',
     'board',
   ])
+  const agents =
+    collaboration.agents === undefined
+      ? undefined
+      : array(collaboration.agents, 'agents', 100).map(value => {
+          const agent = object(value, 'agent', [
+            'key',
+            'name',
+            'runtime',
+            'systemPrompt',
+            'capabilityDescription',
+            'executionMode',
+            'workspacePolicy',
+            'maxConcurrentExecutions',
+          ])
+          if (agent.runtime !== 'codex' && agent.runtime !== 'claude_code')
+            throw new Error('agent.runtime')
+          if (
+            agent.executionMode !== undefined &&
+            agent.executionMode !== 'auto' &&
+            agent.executionMode !== 'manual_approval'
+          )
+            throw new Error('agent.executionMode')
+          if (
+            agent.workspacePolicy !== undefined &&
+            agent.workspacePolicy !== 'project' &&
+            agent.workspacePolicy !== 'git_worktree'
+          )
+            throw new Error('agent.workspacePolicy')
+          if (
+            agent.maxConcurrentExecutions !== undefined &&
+            (!Number.isInteger(agent.maxConcurrentExecutions) ||
+              Number(agent.maxConcurrentExecutions) < 1 ||
+              Number(agent.maxConcurrentExecutions) > 20)
+          )
+            throw new Error('agent.maxConcurrentExecutions')
+          return {
+            ...(agent.executionMode
+              ? { executionMode: agent.executionMode as 'auto' | 'manual_approval' }
+              : {}),
+            ...(agent.workspacePolicy
+              ? { workspacePolicy: agent.workspacePolicy as 'project' | 'git_worktree' }
+              : {}),
+            ...(agent.maxConcurrentExecutions === undefined
+              ? {}
+              : { maxConcurrentExecutions: Number(agent.maxConcurrentExecutions) }),
+            key: key(agent.key, 'agent.key'),
+            name: text(agent.name, 'agent.name', true, 100),
+            runtime: agent.runtime as 'codex' | 'claude_code',
+            systemPrompt: text(agent.systemPrompt, 'agent.systemPrompt', false),
+            capabilityDescription: text(
+              agent.capabilityDescription,
+              'agent.capabilityDescription',
+              false,
+              2000
+            ),
+          }
+        })
+  unique(agents?.map(agent => agent.key) ?? [], 'agents.key')
   const groups = array(collaboration.groups, 'groups', 10).map(group)
   unique(
     groups.map(group => group.key),
@@ -159,6 +226,15 @@ export function validateTemplate(value: unknown): CollaborationTemplate {
     groups.map(group => group.name.trim()),
     'groups.name'
   )
+  for (const group of groups) {
+    for (const role of group.roles) {
+      if (
+        role.agentKey &&
+        (role.defaultKind === 'human' || !agents?.some(agent => agent.key === role.agentKey))
+      )
+        throw new Error('role.agentKey')
+    }
+  }
   const settings: Partial<CollaborationTemplate['spec']['resources']['collaboration']['project']> =
     {}
   if (project.taskAssignment !== undefined) {
@@ -215,6 +291,7 @@ export function validateTemplate(value: unknown): CollaborationTemplate {
             description: text(project.description, 'project.description', false),
             ...settings,
           },
+          ...(agents ? { agents } : {}),
           groups,
         },
       },
@@ -294,8 +371,31 @@ export function templateFromProject(
   >,
   groups: CollaborationGroup[],
   name: string,
-  locale: CollaborationLocale = 'en'
+  locale: CollaborationLocale = 'en',
+  projectAgents: WorkspaceProjectAgent[] = []
 ): CollaborationTemplate {
+  const used = new Set(
+    groups
+      .flatMap(group => [group.leader, ...group.members])
+      .filter(member => member.kind === 'agent')
+      .map(member => member.id)
+  )
+  const portable = projectAgents
+    .filter(agent => used.has(String(agent.team_id ?? agent.id)))
+    .map((agent, index) => ({
+      id: String(agent.team_id ?? agent.id),
+      key: `agent-${index + 1}`,
+      name: agent.name,
+      runtime: agent.runtime,
+      systemPrompt: agent.systemPrompt ?? '',
+      ...(agent.executionMode ? { executionMode: agent.executionMode } : {}),
+      ...(agent.workspacePolicy ? { workspacePolicy: agent.workspacePolicy } : {}),
+      ...(agent.maxConcurrentExecutions
+        ? { maxConcurrentExecutions: agent.maxConcurrentExecutions }
+        : {}),
+      capabilityDescription:
+        typeof agent.capabilityDescription === 'string' ? agent.capabilityDescription : '',
+    }))
   const converted = groups.map((group, index): TemplateGroup => {
     const participants = [
       group.leader,
@@ -316,19 +416,25 @@ export function templateFromProject(
       description: group.description,
       instructions: group.instructions ?? '',
       leaderRole: 'role-0',
-      roles: participants.map((member, index) => ({
-        key: `role-${index}`,
-        name:
-          index === 0
-            ? locale === 'zh-CN'
-              ? '小组负责人'
-              : 'Coordinator'
-            : locale === 'zh-CN'
-              ? `协作成员 ${index}`
-              : `Contributor ${index}`,
-        responsibility: member.responsibility,
-        defaultKind: member.kind,
-      })),
+      roles: participants.map((member, index) => {
+        const agent =
+          member.kind === 'agent' ? portable.find(agent => agent.id === member.id) : undefined
+        return {
+          key: `role-${index}`,
+          name:
+            agent?.name ??
+            (index === 0
+              ? locale === 'zh-CN'
+                ? '小组负责人'
+                : 'Coordinator'
+              : locale === 'zh-CN'
+                ? `协作成员 ${index}`
+                : `Contributor ${index}`),
+          responsibility: member.responsibility || agent?.capabilityDescription || '',
+          defaultKind: member.kind,
+          ...(agent ? { agentKey: agent.key } : {}),
+        }
+      }),
       stages: group.stages.map(stage => ({
         key: stage.id,
         name: stage.name,
@@ -392,9 +498,21 @@ export function templateFromProject(
               : {}),
             ...(board ? { board } : {}),
           },
+          ...(portable.length ? { agents: portable.map(({ id: _, ...agent }) => agent) } : {}),
           groups: converted,
         },
       },
     },
   })
+}
+
+export function downloadTemplate(document: CollaborationTemplate, filename: string): void {
+  const url = URL.createObjectURL(
+    new Blob([exportTemplate(document)], { type: 'application/yaml;charset=utf-8' })
+  )
+  const link = window.document.createElement('a')
+  link.href = url
+  link.download = filename
+  link.click()
+  window.setTimeout(() => URL.revokeObjectURL(url), 1000)
 }

@@ -17,12 +17,15 @@ For terminal events (DONE, ERROR, CANCELLED), StatusUpdatingEmitter handles:
 2. Publishing TaskCompletedEvent for unified handling by SubscriptionTaskCompletionHandler
 """
 
+import json
 import logging
 from typing import Any, Optional
 
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 
+from app.core.async_utils import run_in_threadpool_with_cleanup
+from app.core.cache import cache_manager
 from app.db.session import SessionLocal
 from app.models.task import TaskResource
 from app.services.channels.callback import forward_event_to_channel_callbacks
@@ -37,8 +40,8 @@ from app.services.chat.storage import session_manager
 from app.services.execution.emitters.status_updating import StatusUpdatingEmitter
 from app.services.execution.emitters.websocket import WebSocketResultEmitter
 from app.services.execution.response_parser import ResponsesAPIEventParser
-from app.stores.tasks import task_store
-from shared.models import EventType
+from app.stores.tasks import subtask_store, task_store
+from shared.models import EventType, ExecutionEvent
 
 logger = logging.getLogger(__name__)
 
@@ -53,6 +56,57 @@ _TASK_STATUS_EVENT_TYPES = {
     EventType.CANCEL.value,
     EventType.CANCELLED.value,
 }
+
+
+_TERMINAL_STATUSES = {
+    EventType.DONE.value: "COMPLETED",
+    EventType.ERROR.value: "FAILED",
+    EventType.CANCELLED.value: "CANCELLED",
+    EventType.CANCEL.value: "CANCELLED",
+}
+
+
+def _restore_committed_callback(event: ExecutionEvent) -> bool:
+    expected = _TERMINAL_STATUSES.get(event.type)
+    if expected is None:
+        return False
+    with SessionLocal() as db:
+        row = subtask_store.get_basic_by_id_for_update(db, subtask_id=event.subtask_id)
+        if row is None or row.task_id != event.task_id or row.status.value != expected:
+            return False
+        event.result = row.result
+        event.error = row.error_message
+        if expected == "FAILED":
+            event.error_code = (row.result or {}).get("error_type")
+        return True
+
+
+async def _publish_terminal_callback(event: ExecutionEvent) -> None:
+    key = f"wegent:terminal-delivery:{event.task_id}:{event.subtask_id}:callback"
+    async with cache_manager._client_context() as redis:
+        await redis.eval(
+            "if redis.call('EXISTS', KEYS[1]) == 1 then return 0 end; "
+            "redis.call('SET', KEYS[1], '1', 'EX', '604800'); "
+            "local published = redis.pcall('PUBLISH', ARGV[1], ARGV[2]); "
+            "if type(published) == 'table' and published.err then "
+            "redis.call('DEL', KEYS[1]); return published end; return 1",
+            1,
+            key,
+            f"callback:channel:{event.subtask_id}",
+            json.dumps(event.to_dict()),
+        )
+
+
+async def _publish_callback(event: ExecutionEvent, stale: bool) -> bool:
+    if event.type not in _TERMINAL_STATUSES:
+        await session_manager.publish_callback_event(event.subtask_id, event)
+        return True
+    if stale:
+        if await run_in_threadpool_with_cleanup(_restore_committed_callback, event):
+            await _publish_terminal_callback(event)
+        return False
+    await _publish_terminal_callback(event)
+    return True
 
 
 def _get_task_status_user_id(task_id: int, event_type: str) -> Optional[int]:
@@ -162,10 +216,8 @@ async def handle_callback(
         )
         await emitter.emit(event)
         await emitter.close()
-
-        # Publish to callback stream channel for any active SSE consumers
-        # (e.g., v1/responses with stream=True for ClaudeCode/Agno/Dify tasks)
-        await session_manager.publish_callback_event(request.subtask_id, event)
+        if not await _publish_callback(event, emitter.terminal_transition_lost):
+            return CallbackResponse()
 
         logger.debug(
             f"[Callback] Event emitted: type={event.type}, "
@@ -268,12 +320,9 @@ async def handle_batch_callback(
             )
             await emitter.emit(event)
             await emitter.close()
-
-            # Publish to the callback stream channel so active OpenAI
-            # v1/responses SSE consumers receive the device events. Without
-            # this, a batch reporting executor updates the database while the
-            # response stream stalls after its first events.
-            await session_manager.publish_callback_event(request.subtask_id, event)
+            if not await _publish_callback(event, emitter.terminal_transition_lost):
+                skipped += 1
+                continue
 
             processed += 1
 

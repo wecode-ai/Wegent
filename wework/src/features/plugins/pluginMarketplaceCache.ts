@@ -76,6 +76,18 @@ interface PersistedMarketplaceCacheStore {
 
 let snapshot: PluginMarketplaceCacheSnapshot | null = null
 let scopeRevision = 0
+let inventoryMutationVersion = 0
+let accountEpoch = 0
+
+/** Logout invalidates directory metadata without coupling it to plugin mutations. */
+export function getPluginMarketplaceAccountEpoch(): number {
+  return accountEpoch
+}
+
+/** Session fence shared by native inventory readers; presentation refreshes do not advance it. */
+export function getPluginInventoryMutationVersion(): number {
+  return inventoryMutationVersion
+}
 
 function adoptSnapshot(next: PluginMarketplaceCacheSnapshot | null): void {
   if (!next || snapshot?.cacheKey !== next.cacheKey || snapshot?.deviceId !== next.deviceId)
@@ -444,6 +456,7 @@ export function setPluginMarketplaceCache(
   next: PluginMarketplaceCacheSnapshot,
   options?: { persistImmediately?: boolean; mutation?: boolean; remoteCatalog?: boolean }
 ): void {
+  if (options?.mutation) inventoryMutationVersion += 1
   // Catalog refreshes do not own app authorization. Preserve that source only
   // within the same account and device; explicit empty arrays clear it.
   const previous = getPluginMarketplaceCache(next.cacheKey)
@@ -643,6 +656,8 @@ export function removePluginMarketplaceInstallation(
 }
 
 export function clearPluginMarketplaceCache(): void {
+  accountEpoch += 1
+  inventoryMutationVersion += 1
   clearPersistTimer()
   pendingPersist = null
   lastPersistedSignature = ''
@@ -669,6 +684,7 @@ export function subscribePluginMarketplaceCache(listener: MarketplaceCacheListen
 
 /** Test helper: drop memory without clearing durable storage. */
 export function resetPluginMarketplaceCacheMemory(): void {
+  inventoryMutationVersion += 1
   flushPluginMarketplaceCachePersist()
   adoptSnapshot(null)
 }

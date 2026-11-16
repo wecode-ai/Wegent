@@ -1,0 +1,5 @@
+{
+  "order": 38000,
+  "scenario": "./scenarios/coordination-runtime.scenario.mjs",
+  "scenarioOnly": true
+}

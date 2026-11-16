@@ -40,6 +40,7 @@ export type BackgroundExecutionStatus =
 export interface CronTriggerConfig {
   expression: string
   timezone?: string
+  workday_only?: boolean
 }
 
 export interface IntervalTriggerConfig {
@@ -275,6 +276,10 @@ export interface BackgroundExecution {
   task_type?: string
   // Permission field - indicates if current user can delete this execution
   can_delete?: boolean
+  // True when the list endpoint cut prompt to the requested preview length
+  prompt_truncated?: boolean
+  // True when the list endpoint cut result_summary to the requested preview length
+  result_summary_truncated?: boolean
   // Silent execution flag - indicates if this execution completed silently
   is_silent?: boolean
 }

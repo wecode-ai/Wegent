@@ -5,7 +5,7 @@
 'use client'
 
 import { useState, useEffect, useRef } from 'react'
-import { BookOpen, Code2, Database, User, Building2, Users, FileText } from 'lucide-react'
+import { BookOpen, Code2, Database, FileText } from 'lucide-react'
 import {
   Dialog,
   DialogContent,
@@ -47,6 +47,8 @@ import { GenerationTaskRow } from '@/features/knowledge/code-wiki/GenerationTask
 import { GenerationStrategySelect } from '@/features/knowledge/code-wiki/GenerationStrategySelect'
 import { getKnowledgeBaseRetrievalProfile } from '@/apis/knowledge'
 import { KnowledgeBaseForm } from './KnowledgeBaseForm'
+import { useCreationLocationRefresh } from '../hooks/useCreationLocationRefresh'
+import { KnowledgeCreateSpaceSelect } from './KnowledgeCreateSpaceSelect'
 import { DingtalkAutoSyncSetting } from './DingtalkAutoSyncSetting'
 import { createDefaultRetrievalConfig } from './retrievalConfig'
 import { useMultimodalKBConfig } from '@/features/knowledge/multimodal/hooks/useMultimodalKBConfig'
@@ -84,19 +86,9 @@ interface CreateKnowledgeBaseDialogProps {
   defaultGroupId?: string
   /** Whether to show group selector (true when creating from "All" page) */
   showGroupSelector?: boolean
-}
-
-/** Get icon for group type */
-function GroupTypeIcon({ type }: { type: 'personal' | 'group' | 'organization' }) {
-  switch (type) {
-    case 'personal':
-      return <User className="w-4 h-4" />
-    case 'organization':
-      return <Building2 className="w-4 h-4" />
-    case 'group':
-    default:
-      return <Users className="w-4 h-4" />
-  }
+  onRefreshGroups?: () => Promise<void>
+  groupsLoading?: boolean
+  groupsFailed?: boolean
 }
 
 /** Documents are uploaded and organised; code is generated from a repository. */
@@ -126,8 +118,14 @@ export function CreateKnowledgeBaseDialog({
   availableGroups,
   defaultGroupId,
   showGroupSelector = false,
+  onRefreshGroups,
+  groupsLoading = false,
+  groupsFailed = false,
 }: CreateKnowledgeBaseDialogProps) {
   const { t } = useTranslation()
+  const locations = useCreationLocationRefresh(open && showGroupSelector, onRefreshGroups)
+  const refreshingLocations = groupsLoading || locations.refreshing
+  const failedLocations = groupsFailed || locations.failed
   const [name, setName] = useState('')
   const [description, setDescription] = useState('')
   const [directAccessRequirement, setDirectAccessRequirement] =
@@ -193,16 +191,23 @@ export function CreateKnowledgeBaseDialog({
 
   // Get the selected group for retrieval scope
   const selectedGroup = availableGroups?.find(g => g.id === selectedGroupId)
+  const previousLocation = useRef<AvailableGroup | undefined>(selectedGroup)
+  if (selectedGroup) previousLocation.current = selectedGroup
+  const retrievalLocation =
+    selectedGroup ??
+    (previousLocation.current?.id === selectedGroupId ? previousLocation.current : undefined)
   const effectiveScope =
-    showGroupSelector && selectedGroup ? selectedGroup.type : scope || 'personal'
+    showGroupSelector && retrievalLocation ? retrievalLocation.type : scope || 'personal'
   const effectiveGroupName =
-    showGroupSelector && selectedGroup && selectedGroup.type === 'group'
-      ? selectedGroup.name
+    showGroupSelector && retrievalLocation && retrievalLocation.type === 'group'
+      ? retrievalLocation.name
       : groupName
 
-  // Reset selectedKbType and selectedGroupId when dialog opens
+  const wasOpen = useRef(false)
+
+  // Reset only on opening, never when a refresh changes default location props.
   useEffect(() => {
-    if (open) {
+    if (open && !wasOpen.current) {
       setSelectedKbType(initialKbType)
       setKind('document')
       setSource(createEmptySource())
@@ -220,6 +225,7 @@ export function CreateKnowledgeBaseDialog({
       profileAppliedRef.current = false
       retrievalConfigChangedRef.current = false
     }
+    wasOpen.current = open
   }, [open, initialKbType, defaultGroupId])
 
   useEffect(() => {
@@ -248,8 +254,18 @@ export function CreateKnowledgeBaseDialog({
     setSelectedKbType(newType)
   }
 
+  const needsLocationVerification = showGroupSelector
+    ? selectedGroupId !== 'personal'
+    : scope === 'group' || scope === 'organization'
+  const locationBlocked = needsLocationVerification && (refreshingLocations || failedLocations)
+
   const handleSubmit = async () => {
+    if (locationBlocked) return
     setError('')
+    if (showGroupSelector && (!selectedGroup || !selectedGroup.canCreate)) {
+      setError(t('knowledge:document.creation.spaceUnavailable'))
+      return
+    }
     setSummaryModelError('')
     setExecutionModelError('')
     clearMultimodalError()
@@ -448,7 +464,13 @@ export function CreateKnowledgeBaseDialog({
   return (
     <Dialog open={open} onOpenChange={handleOpenChange}>
       <DialogContent
-        className="max-w-3xl max-h-[90vh] overflow-hidden flex flex-col"
+        onPointerDownCapture={locations.onReturnInteraction}
+        onKeyDownCapture={locations.onReturnInteraction}
+        className="w-[calc(100%_-_1rem)] max-w-3xl max-h-[90dvh] overflow-hidden flex flex-col"
+        closeButtonProps={{
+          className: 'right-2 top-2 flex h-11 w-11 items-center justify-center',
+          'data-testid': 'close-create-kb',
+        }}
         data-testid="create-kb-dialog"
       >
         <DialogHeader>
@@ -491,6 +513,41 @@ export function CreateKnowledgeBaseDialog({
               </button>
             ))}
           </div>
+          {showGroupSelector && (!selectedGroup || !selectedGroup.canCreate) && (
+            <div role="alert" className="text-sm text-error">
+              {t('knowledge:document.creation.spaceUnavailable')}
+              <Button
+                type="button"
+                variant="outline"
+                className="min-h-11 min-w-11"
+                data-testid="create-in-personal-space"
+                onClick={() => {
+                  setSelectedGroupId('personal')
+                }}
+              >
+                {t('knowledge:document.creation.choosePersonal')}
+              </Button>
+            </div>
+          )}
+          {refreshingLocations && (
+            <p role="status" className="text-sm text-text-muted">
+              {t('knowledge:document.creation.refreshingLocations')}
+            </p>
+          )}
+          {failedLocations && (
+            <div role="alert" className="text-sm text-error">
+              {t('knowledge:document.creation.refreshLocationsFailed')}
+              <Button
+                type="button"
+                variant="outline"
+                className="min-h-11 min-w-11"
+                data-testid="retry-creation-locations"
+                onClick={() => void locations.retry()}
+              >
+                {t('common:actions.retry')}
+              </Button>
+            </div>
+          )}
           <KnowledgeBaseForm
             advancedExtras={
               kind === 'code' ? (
@@ -726,33 +783,25 @@ export function CreateKnowledgeBaseDialog({
                   <SimpleConfigRow
                     label={
                       <>
-                        {t('knowledge:document.knowledgeBase.targetGroup', '归属')}{' '}
+                        {t('knowledge:document.navigation.space')}{' '}
                         <span className="text-red-400">*</span>
                       </>
                     }
                   >
-                    <Select value={selectedGroupId} onValueChange={setSelectedGroupId}>
-                      <SelectTrigger data-testid="group-selector" className="bg-base">
-                        <SelectValue
-                          placeholder={t(
-                            'knowledge:document.knowledgeBase.selectGroup',
-                            '选择分组'
-                          )}
-                        />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {availableGroups
-                          .filter(g => g.canCreate)
-                          .map(group => (
-                            <SelectItem key={group.id} value={group.id}>
-                              <div className="flex items-center gap-2">
-                                <GroupTypeIcon type={group.type} />
-                                <span>{group.displayName}</span>
-                              </div>
-                            </SelectItem>
-                          ))}
-                      </SelectContent>
-                    </Select>
+                    <div className="min-w-0 w-full space-y-2">
+                      <KnowledgeCreateSpaceSelect
+                        spaces={availableGroups}
+                        value={selectedGroupId}
+                        onValueChange={setSelectedGroupId}
+                        onManageOrganizations={locations.onManage}
+                        onOpenLocations={locations.onReturnInteraction}
+                      />
+                      {selectedGroup?.type === 'group' && selectedGroup.canCreate && (
+                        <p role="status" className="text-xs text-text-muted">
+                          {t('knowledge:document.creation.inheritsTeam')}
+                        </p>
+                      )}
+                    </div>
                   </SimpleConfigRow>
                 )}
               </>
@@ -835,7 +884,11 @@ export function CreateKnowledgeBaseDialog({
           <Button
             onClick={handleSubmit}
             variant="primary"
-            disabled={loading}
+            disabled={
+              loading ||
+              locationBlocked ||
+              (showGroupSelector && (!selectedGroup || !selectedGroup.canCreate))
+            }
             className="h-11 min-w-[44px]"
             data-testid="submit-create-kb"
           >

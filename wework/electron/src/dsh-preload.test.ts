@@ -17,6 +17,42 @@ async function preloadSource() {
 }
 
 describe('DSH preload', () => {
+  test('routes candidate lifecycle and expected owner through the credential IPC boundary', async () => {
+    const exposeInMainWorld = vi.fn()
+    const invoke = vi.fn()
+    const compiled = transpileModule(await preloadSource(), {
+      compilerOptions: { module: ModuleKind.CommonJS },
+    }).outputText
+    runInNewContext(compiled, {
+      exports: {},
+      process: { env: {} },
+      location: { protocol: 'http:' },
+      require: () => ({ contextBridge: { exposeInMainWorld }, ipcRenderer: { invoke } }),
+    })
+    const credentials = exposeInMainWorld.mock.calls.find(
+      ([name]) => name === 'weworkElectronCloudCredentials'
+    )![1]
+    expect(credentials.getDevicePublicKey).toBeUndefined()
+    credentials.prepareAuthorization('https://cloud.example/api')
+    credentials.claimAuthorization({
+      authorizationId: 'candidate',
+      sessionId: 'session',
+      pollToken: 'poll',
+    })
+    credentials.commitAuthorization('candidate', 7)
+    credentials.discardAuthorization('candidate')
+    credentials.refreshAccessToken('https://cloud.example/api', 7)
+    expect(invoke.mock.calls).toEqual([
+      ['cloud-credentials:prepare-authorization', 'https://cloud.example/api'],
+      [
+        'cloud-credentials:claim-authorization',
+        { authorizationId: 'candidate', sessionId: 'session', pollToken: 'poll' },
+      ],
+      ['cloud-credentials:commit-authorization', 'candidate', 7],
+      ['cloud-credentials:discard-authorization', 'candidate'],
+      ['cloud-credentials:refresh-access-token', 'https://cloud.example/api', 7],
+    ])
+  })
   test.each([
     [{}, false],
     [{ VITE_WEWORK_E2E: 'true' }, false],

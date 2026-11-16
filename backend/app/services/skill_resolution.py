@@ -13,16 +13,39 @@ from app.schemas.namespace import GroupRole
 from app.services.group_permission import check_group_permission
 
 
+def get_runtime_skill_shells(skill: Kind) -> list[str] | None:
+    """Project the package's Shell support onto the execution request."""
+    spec = (getattr(skill, "json", None) or {}).get("spec", {})
+    shells = spec.get("bindShells")
+    # Codex already handles the built-in form MCP, whose shipped metadata predates
+    # Codex support. Keep the stored package and same-name user packages intact.
+    if (
+        shells
+        and "ClaudeCode" in shells
+        and "Codex" not in shells
+        and "wegent-interactive-form-question" in (spec.get("mcpServers") or {})
+        and skill.user_id == 0
+        and getattr(skill, "namespace", None) == "default"
+        and getattr(skill, "name", None) == "interactive"
+    ):
+        return [*shells, "Codex"]
+    return shells
+
+
 def build_skill_ref_meta(skill: Kind) -> Dict[str, Any]:
     """Convert a skill Kind row into runtime skill reference metadata."""
     skill_json = getattr(skill, "json", {}) or {}
     file_hash = skill_json.get("status", {}).get("fileHash")
-    return {
+    reference = {
         "skill_id": skill.id,
         "namespace": skill.namespace or "default",
         "is_public": skill.user_id == 0,
         "content_hash": f"sha256:{file_hash}" if file_hash else None,
     }
+    bind_shells = get_runtime_skill_shells(skill)
+    if bind_shells:
+        reference["bind_shells"] = list(bind_shells)
+    return reference
 
 
 def find_skill_by_name(

@@ -51,6 +51,9 @@ export interface SharedWorkspaceHttpApi {
     | "createCollaborationGroup"
     | "updateCollaborationGroup"
     | "removeCollaborationGroup"
+    | "listExecutionEnvironments"
+    | "addExecutionEnvironment"
+    | "removeExecutionEnvironment"
   >;
   comments: SharedWorkspaceCommentsApi;
   assignments: SharedWorkspaceAssignmentsApi;
@@ -81,7 +84,7 @@ export function workspaceHttpRequestBody(value: unknown): unknown {
       // Runtime/provider option names are opaque API values.
       return [
         wireKey,
-        wireKey === "model_options" || wireKey === "board_views"
+        ["model_options", "board_views", "mcp_servers"].includes(wireKey)
           ? nested
           : workspaceHttpRequestBody(nested),
       ];
@@ -111,7 +114,12 @@ function keysToCamelCase(value: unknown): unknown {
       const viewKey = camelCaseKey(key);
       return [
         viewKey,
-        ["modelOptions", "modelPolicy", "executionPolicy"].includes(viewKey)
+        [
+          "modelOptions",
+          "modelPolicy",
+          "executionPolicy",
+          "mcpServers",
+        ].includes(viewKey)
           ? nested
           : keysToCamelCase(nested),
       ];
@@ -223,6 +231,8 @@ export function createSharedWorkspaceHttpApi(
   transport: SharedWorkspaceHttpTransport,
 ): SharedWorkspaceHttpApi {
   const cache = getClientRequestCache(transport);
+  const invalidateExecutionEnvironments = () =>
+    cache.invalidate("/v1/resources/execution-environments");
   const get = <T>(endpoint: string, maxAgeMs?: number) => {
     // A save-time revalidation must not join an older in-flight catalog read.
     if (maxAgeMs === 0) cache.invalidate(endpoint);
@@ -382,17 +392,18 @@ export function createSharedWorkspaceHttpApi(
         );
       },
       async addExecutionEnvironment(workspaceId, input) {
-        return mapCollaborationExecutionEnvironmentDto(
-          await transport.post(
-            `/v1/workspaces/${encoded(workspaceId)}/execution-environments`,
-            workspaceHttpRequestBody({ deviceId: input.deviceId }),
-          ),
+        const saved = await transport.post(
+          `/v1/workspaces/${encoded(workspaceId)}/execution-environments`,
+          workspaceHttpRequestBody({ deviceId: input.deviceId }),
         );
+        invalidateExecutionEnvironments();
+        return mapCollaborationExecutionEnvironmentDto(record(saved));
       },
       async removeExecutionEnvironment(workspaceId, deviceId) {
         await transport.delete(
           `/v1/workspaces/${encoded(workspaceId)}/execution-environments/${encoded(deviceId)}`,
         );
+        invalidateExecutionEnvironments();
       },
       async initializeExecutionEnvironment(workspaceId, input) {
         return mapCollaborationWorkspaceDto(
@@ -416,7 +427,12 @@ export function createSharedWorkspaceHttpApi(
             ...(device.app_device_id
               ? { app_device_id: device.app_device_id }
               : {}),
+            ...(device.runtime_instance_id
+              ? { runtime_instance_id: device.runtime_instance_id }
+              : {}),
             name: device.name,
+            last_seen_at: device.last_seen_at ?? null,
+            workspace_ids: device.workspace_ids ?? [],
             kind:
               device.device_type === "cloud" || device.device_type === "remote"
                 ? ("cloud_host" as const)
@@ -431,6 +447,20 @@ export function createSharedWorkspaceHttpApi(
             updated_at: "",
           }));
         },
+      },
+      async removeDevice(device) {
+        if (
+          !Number.isSafeInteger(device.device_id) ||
+          Number(device.device_id) <= 0
+        ) {
+          throw new Error("Device registration ID is required");
+        }
+        await transport.delete(
+          `/devices/records/${device.device_id}?offline_only=true`,
+        );
+        cache.invalidate("/v1/resources");
+        cache.invalidate("/v1/workspaces/");
+        cache.invalidate("/v1/cloud-projects/");
       },
       async list() {
         return mapCollaborationPlatformResourcesDto(
@@ -471,6 +501,28 @@ export function createSharedWorkspaceHttpApi(
       },
     },
     projects: {
+      async listExecutionEnvironments(projectId) {
+        const response = await transport.get<{ items: unknown[] }>(
+          `/v1/cloud-projects/${encoded(projectId)}/execution-environments`,
+        );
+        return response.items.map((item) =>
+          mapCollaborationExecutionEnvironmentDto(record(item)),
+        );
+      },
+      async addExecutionEnvironment(projectId, deviceId) {
+        const saved = await transport.post(
+          `/v1/cloud-projects/${encoded(projectId)}/execution-environments`,
+          { device_id: deviceId },
+        );
+        invalidateExecutionEnvironments();
+        return mapCollaborationExecutionEnvironmentDto(record(saved));
+      },
+      async removeExecutionEnvironment(projectId, deviceId) {
+        await transport.delete(
+          `/v1/cloud-projects/${encoded(projectId)}/execution-environments/${encoded(deviceId)}`,
+        );
+        invalidateExecutionEnvironments();
+      },
       async listCollaborationGroups(projectId) {
         const response = await transport.get<{ items: unknown[] }>(
           `/v1/cloud-projects/${encoded(projectId)}/collaboration-groups`,
@@ -552,6 +604,13 @@ export function createSharedWorkspaceHttpApi(
       },
     },
     agents: {
+      async remove(projectId, agentId, version) {
+        await transport.delete(
+          `/v1/cloud-projects/${encoded(projectId)}/chat-agents/${encoded(agentId)}`,
+          { version },
+        );
+        invalidateAgents(projectId);
+      },
       async list(projectId, options) {
         const response = await get<unknown[]>(
           `/v1/cloud-projects/${encoded(projectId)}/chat-agents${options?.includeArchived ? "?include_archived=true" : ""}`,

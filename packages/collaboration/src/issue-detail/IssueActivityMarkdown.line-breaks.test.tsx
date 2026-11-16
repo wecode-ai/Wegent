@@ -100,3 +100,19 @@ it('keeps ordinary assistant Markdown unchanged and updates line-break preferenc
   await act(async () => root.render(<AssistantMarkdown content={content} />))
   expect(container.querySelectorAll('br')).toHaveLength(0)
 })
+
+it('anchors document Markdown blocks to source lines only when requested', async () => {
+  const content = '# Heading\n\nParagraph\n\n- item\n\nClosing paragraph.'
+  await act(async () => root.render(<AssistantMarkdown content={content} variant="document" />))
+  expect(container.querySelectorAll('[data-source-line]')).toHaveLength(0)
+
+  await act(async () =>
+    root.render(<AssistantMarkdown content={content} variant="document" sourceLineAnchors />)
+  )
+  expect(container.querySelector('[data-source-line="1"]')?.textContent).toBe('Heading')
+  expect(container.querySelector('[data-source-line="3"]')?.textContent).toBe('Paragraph')
+  expect(container.querySelector('[data-source-line="5"]')?.textContent).toContain('item')
+  expect(container.querySelector('[data-source-line="7"]')?.textContent).toBe(
+    'Closing paragraph.'
+  )
+})

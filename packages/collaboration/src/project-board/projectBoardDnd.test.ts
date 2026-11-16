@@ -1,22 +1,54 @@
 import { describe, expect, it } from 'vitest'
 import type { DragEndEvent } from '@dnd-kit/core'
-import { projectBoardDragItemId, projectBoardDrop } from './projectBoardDnd'
+import { projectBoardDragItemId, projectBoardDrop, projectBoardRowDropId } from './projectBoardDnd'
 
 function event(over: DragEndEvent['over']): Pick<DragEndEvent, 'active' | 'over'> {
   return {
     active: {
       id: JSON.stringify(['tag', 'tag-red', 'moving']),
-      data: { current: { itemId: 'moving', columnKey: 'tag-red', groupBy: 'tag' } },
+      data: {
+        current: { itemId: 'moving', columnKey: 'tag-red', groupBy: 'tag' },
+      },
     } as DragEndEvent['active'],
     over,
   }
 }
 
 describe('project board drop identity', () => {
+  it('carries row ownership for empty cells without conflating parent and lane IDs', () => {
+    const targetParentId = 'parent:with/slashes'
+    const columnKey = 'tag:design/研发'
+    expect(
+      projectBoardDrop(
+        event({
+          id: projectBoardRowDropId(targetParentId, columnKey),
+          data: { current: undefined },
+        } as DragEndEvent['over'])
+      )
+    ).toMatchObject({ targetParentId, columnDropKey: columnKey })
+    expect(
+      projectBoardDrop(
+        event({
+          id: projectBoardRowDropId(null, columnKey),
+          data: { current: undefined },
+        } as DragEndEvent['over'])
+      )
+    ).toMatchObject({ targetParentId: null })
+    expect(
+      projectBoardDrop(
+        event({
+          id: 'todo-row-column:not-json',
+          data: { current: undefined },
+        } as DragEndEvent['over'])
+      )
+    ).toMatchObject({ columnDropKey: null })
+  })
   it('retains the source and actual target column for multi-tag cards', () => {
     const drop = event({
       id: 'todo-card:rendered-copy',
-      data: { current: { itemId: 'target', columnKey: 'tag-blue', groupBy: 'tag' } },
+      data: {
+        current: { itemId: 'target', columnKey: 'tag-blue', groupBy: 'tag' },
+      },
     } as DragEndEvent['over'])
     expect(projectBoardDragItemId(drop.active)).toBe('moving')
     expect(projectBoardDrop(drop)).toEqual({
@@ -41,7 +73,10 @@ describe('project board drop identity', () => {
       columnDropKey: 'tag-untagged',
       sourceColumnKey: 'tag-red',
     })
-    expect(projectBoardDrop(event(null))).toMatchObject({ beforeItemId: null, columnDropKey: null })
+    expect(projectBoardDrop(event(null))).toMatchObject({
+      beforeItemId: null,
+      columnDropKey: null,
+    })
   })
 
   it('requires explicit Issue metadata instead of parsing a rendered card identity', () => {
@@ -51,6 +86,9 @@ describe('project board drop identity', () => {
     } as DragEndEvent['over'])
     drop.active.data.current = undefined
     expect(projectBoardDragItemId(drop.active)).toBeNull()
-    expect(projectBoardDrop(drop)).toMatchObject({ activeItemId: null, beforeItemId: null })
+    expect(projectBoardDrop(drop)).toMatchObject({
+      activeItemId: null,
+      beforeItemId: null,
+    })
   })
 })

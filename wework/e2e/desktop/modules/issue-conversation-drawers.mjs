@@ -1,8 +1,75 @@
 import assert from 'node:assert/strict'
+import { createDevtoolsClient } from '../../../scripts/ai-verify-devtools.mjs'
 import { getSingleElementMetrics } from './conversation-layout.mjs'
 import { join, resultDir, writeFile } from './shared.mjs'
 
 async function sampleDrawerMotion(control, scope, action, direction, timeoutMs, reduced = false) {
+  try {
+    await captureDrawerMotion(control, scope, action, direction, timeoutMs, reduced)
+  } catch (error) {
+    await captureDrawerFailure(direction, timeoutMs)
+    throw error
+  }
+}
+
+async function captureDrawerFailure(direction, timeoutMs) {
+  let client
+  let target
+  try {
+    client = await createDevtoolsClient(resultDir, timeoutMs)
+    target = (await client({ action: 'targets' })).find(
+      entry =>
+        entry.type === 'window' &&
+        !entry.url.startsWith('devtools:') &&
+        !entry.url.includes('startup-splash')
+    )?.id
+    if (!target) throw new Error('The main renderer is unavailable')
+    // Buffered browser timings survive the missed frame without profiling the
+    // transition itself or changing its scheduling and acceptance assertions.
+    const result = await client({
+      action: 'command',
+      target,
+      method: 'Runtime.evaluate',
+      params: {
+        awaitPromise: true,
+        returnByValue: true,
+        expression: `new Promise(resolve => {
+        const supported = PerformanceObserver.supportedEntryTypes.includes('long-animation-frame')
+        if (!supported) { resolve({ supported }); return }
+        const frames = []
+        const observer = new PerformanceObserver(list => frames.push(...list.getEntries()))
+        observer.observe({ type: 'long-animation-frame', buffered: true })
+        setTimeout(() => {
+          frames.push(...observer.takeRecords())
+          observer.disconnect()
+          resolve({ supported, timeOrigin: performance.timeOrigin, frames: frames.map(frame => ({
+            startTime: frame.startTime, duration: frame.duration,
+            blockingDuration: frame.blockingDuration,
+            renderStart: frame.renderStart, styleAndLayoutStart: frame.styleAndLayoutStart,
+            scripts: frame.scripts.map(script => ({
+              duration: script.duration, invoker: script.invoker, invokerType: script.invokerType,
+              sourceFunctionName: script.sourceFunctionName,
+              sourceURL: script.sourceURL ? new URL(script.sourceURL).origin + new URL(script.sourceURL).pathname : '',
+              sourceCharPosition: script.sourceCharPosition,
+              forcedStyleAndLayoutDuration: script.forcedStyleAndLayoutDuration
+            }))
+          })) })
+        }, 0)
+      })`,
+      },
+    })
+    await writeFile(
+      join(resultDir, `issue-drawers-${direction}-long-frames.json`),
+      JSON.stringify(result, null, 2)
+    )
+  } catch {
+    console.info('[issue-drawers] Browser timing diagnostics unavailable')
+  } finally {
+    if (target) await client({ action: 'detach', target }).catch(() => {})
+  }
+}
+
+async function captureDrawerMotion(control, scope, action, direction, timeoutMs, reduced = false) {
   await control.command(
     'startElementMetricsSampling',
     scope('[data-testid="issue-drawer-workspace"]'),

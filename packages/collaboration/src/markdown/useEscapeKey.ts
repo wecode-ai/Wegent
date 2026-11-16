@@ -7,7 +7,7 @@ function topLayer() {
   let top: HTMLElement | null = null;
   for (const ref of layers) {
     const node = ref.current;
-    if (!node?.isConnected) continue;
+    if (!node?.isConnected || node.closest("[inert], [hidden]")) continue;
     // Children stay above their parent even when their effects mount first.
     if (!top || !node.contains(top)) top = node;
   }
@@ -30,6 +30,7 @@ export function useEscapeKey(
 
     const handleKeyDown = (event: KeyboardEvent) => {
       if (event.key !== "Escape") return;
+      if (scope?.current?.closest("[inert], [hidden]")) return;
       const top = topLayer();
       if (event.defaultPrevented || isImeComposingEvent(event)) return;
       if (top && top !== scope?.current) return;

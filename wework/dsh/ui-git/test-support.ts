@@ -1,5 +1,5 @@
 import { WEWORK_DSH_SLOTS } from '@/features/dsh-runtime/dshUiSlots'
-import { installDshUiTestContributions } from '@/test/setup'
+import { installDshUiTestContributions } from '@/test/setup.dom'
 
 export async function installGitUiTestContributions() {
   const settingsPages = window.__WEWORK_DSH_UI__?.getEntries(WEWORK_DSH_SLOTS.settingsPage) ?? []

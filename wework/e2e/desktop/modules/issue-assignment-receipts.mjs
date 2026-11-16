@@ -2,16 +2,19 @@ import assert from 'node:assert/strict'
 import { requestExecutor } from './executor-rpc.mjs'
 import { reloadMainWindow } from './workspace-flows.mjs'
 import { verifyAssignmentActivityReceipts } from './assignment-activity-receipts.mjs'
+import { waitForLocalStandInTask } from './stand-in-status-flows.mjs'
 
 const CONTENT = '[data-workspace-tab-content][aria-hidden="false"]'
 const RECEIPTS = `${CONTENT} [data-testid="issue-assignment-receipts"]`
+const STAND_IN_RECEIPT = `${RECEIPTS} [title^="助理已接收"]`
 
 export async function verifyIssueAssignmentReceipts(
   control,
   projectId,
   uiTimeoutMs,
   captureScreenshot,
-  userId
+  userId,
+  modelResponseTimeoutMs
 ) {
   const rpc = (method, params) => requestExecutor(control, method, params, uiTimeoutMs)
   const dismissInbox = async () => {
@@ -69,21 +72,38 @@ export async function verifyIssueAssignmentReceipts(
   assert.equal((await load())[0].stand_in_received_at, null)
   await control.command(
     'waitFor',
-    `${CONTENT} [data-testid="cloud-todo-detail-assignee"] [data-testid="issue-assignment-receipts"] svg[data-figure="human"]`
+    `${CONTENT} [data-testid="issue-property-grid"] dd:has([data-testid="cloud-todo-detail-assignee"]) [data-testid="issue-assignment-receipts"] svg[data-figure="human"]`
+  )
+  assert.equal(
+    await control.command(
+      'getElementCount',
+      `${CONTENT} [data-testid="cloud-todo-detail-assignee"] [data-testid="issue-assignment-receipts"]`
+    ),
+    '0',
+    'Assignment receipts must remain outside the assignee selector trigger'
   )
   await capture('assignment-receipts-02-human-read.png')
 
-  await rpc('runtime.stand_in.run', { ...params, issueId: issue.id })
-  await control.command('waitFor', RECEIPTS, { text: '分身已接收' })
+  const delegated = await rpc('runtime.stand_in.run', { ...params, issueId: issue.id })
+  await control.command('waitFor', RECEIPTS, { text: '助理已接收' })
   await control.command('waitFor', RECEIPTS, { text: '本人已读' })
   const both = (await load())[0]
-  await verifyAssignmentActivityReceipts(control, '分身已接收')
+  await verifyAssignmentActivityReceipts(control, '助理已接收')
   assert.ok(both.human_read_at && both.stand_in_received_at)
   await control.command('waitFor', `${RECEIPTS} svg[data-figure="stand-in"]`)
   await capture('assignment-receipts-03-both-received.png')
+  // The completed turn updates the Issue version and replaces receipt nodes.
+  // Verify immediate reception first, then interact with the final owner state.
+  const binding = await waitForLocalStandInTask(rpc, issue, modelResponseTimeoutMs)
+  assert.equal(binding.task_id, delegated.taskId)
+  await control.command('waitFor', `${CONTENT} [data-testid="cloud-todo-detail-status"]`, {
+    value: 'in_review',
+  })
+  await verifyAssignmentActivityReceipts(control, '助理已接收')
   await dismissInbox()
-  await control.command('hover', `${RECEIPTS} [title^="分身已接收"]`)
-  await control.command('waitFor', '[role="tooltip"]', { text: '分身已接收' })
+  await control.command('waitFor', STAND_IN_RECEIPT)
+  await control.command('hover', STAND_IN_RECEIPT)
+  await control.command('waitFor', '[role="tooltip"]', { text: '助理已接收' })
   assert.equal(
     await control.command('getElementCount', '[data-testid="global-icon-button-tooltip"]'),
     '0'
@@ -99,9 +119,9 @@ export async function verifyIssueAssignmentReceipts(
   await control.command('click', '[data-testid="appearance-mode-dark"]')
   await control.command('waitFor', 'html[data-theme="dark"]')
   await open()
-  await control.command('waitFor', RECEIPTS, { text: '分身已接收' })
+  await control.command('waitFor', RECEIPTS, { text: '助理已接收' })
   await capture('assignment-receipts-03-dark.png')
-  await verifyAssignmentActivityReceipts(control, '分身已接收')
+  await verifyAssignmentActivityReceipts(control, '助理已接收')
   await close()
   await control.command('navigate', 'body', { value: '/settings/appearance' })
   await control.command('waitFor', '[data-testid="appearance-settings-page"]')
@@ -111,10 +131,10 @@ export async function verifyIssueAssignmentReceipts(
   await close()
   await reloadMainWindow(control, 'Receipt verification must reconnect after reload')
   await open()
-  await control.command('waitFor', RECEIPTS, { text: '分身已接收' })
+  await control.command('waitFor', RECEIPTS, { text: '助理已接收' })
   assert.deepEqual((await load())[0], both, 'Reload must preserve both first-reception timestamps')
   await capture('assignment-receipts-04-persisted.png')
-  await verifyAssignmentActivityReceipts(control, '分身已接收')
+  await verifyAssignmentActivityReceipts(control, '助理已接收')
   await close()
 
   issue = await rpc('todos.get', { project_id: projectId, task_id: issue.id })
@@ -139,10 +159,10 @@ export async function verifyCloudAssignmentReceipts(
   captureScreenshot,
   cloud
 ) {
-  await control.command('waitFor', RECEIPTS, { text: '分身已接收' })
+  await control.command('waitFor', RECEIPTS, { text: '助理已接收' })
   await control.command('waitFor', RECEIPTS, { text: '本人已读' })
   const assignments = await request(`/v1/loop-items/${issueId}/assignments`)
-  await verifyAssignmentActivityReceipts(control, '分身已接收')
+  await verifyAssignmentActivityReceipts(control, '助理已接收')
   assert.ok(assignments.items.some(row => row.human_read_at && row.stand_in_received_at))
   await captureScreenshot(control, 'assignment-receipts-cloud-both.png', CONTENT)
   await verifyIndexedReceipts(issueId, assignments, request, cloud.database)

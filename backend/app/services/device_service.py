@@ -19,7 +19,7 @@ different device types (local, cloud, etc.) in the future.
 
 import copy
 import logging
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
 from sqlalchemy import and_
@@ -133,6 +133,8 @@ class DeviceService:
         runtime_instance_id: Optional[str] = None,
         runtime_capacity: Optional[Dict[str, Any]] = None,
         runtime_features: Optional[Dict[str, Any]] = None,
+        *,
+        socket_id: str | None = None,
     ) -> bool:
         """Refresh device heartbeat in Redis (extend TTL) and update running task IDs.
 
@@ -157,6 +159,7 @@ class DeviceService:
             runtime_instance_id=runtime_instance_id,
             runtime_capacity=runtime_capacity,
             runtime_features=runtime_features,
+            socket_id=socket_id,
         )
 
     @staticmethod
@@ -175,7 +178,7 @@ class DeviceService:
 
     @staticmethod
     async def update_device_status_in_redis(
-        user_id: int, device_id: str, status: str
+        user_id: int, device_id: str, status: str, *, socket_id: str
     ) -> bool:
         """Update device status in Redis.
 
@@ -192,6 +195,7 @@ class DeviceService:
             user_id=user_id,
             device_id=device_id,
             status=status,
+            socket_id=socket_id,
         )
 
     @staticmethod
@@ -413,6 +417,9 @@ class DeviceService:
                 device_json["spec"]["bindShell"] = bind_shell
             elif "bindShell" not in device_json["spec"]:
                 device_json["spec"]["bindShell"] = "claudecode"
+            device_json.setdefault("status", {})["lastSeenAt"] = datetime.now(
+                timezone.utc
+            ).isoformat(timespec="microseconds")
             device_kind.json = device_json
             flag_modified(device_kind, "json")
             device_kind.updated_at = datetime.now()
@@ -471,6 +478,9 @@ class DeviceService:
                 },
                 "status": {
                     "state": "Available",
+                    "lastSeenAt": datetime.now(timezone.utc).isoformat(
+                        timespec="microseconds"
+                    ),
                 },
             }
             if update_runtime_transfer_port:

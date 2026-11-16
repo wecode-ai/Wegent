@@ -10,6 +10,7 @@ import type {
   WeworkExtensionHost,
   WeworkKeybindingContribution,
   WeworkMenuContribution,
+  WeworkTelemetrySink,
 } from '../../../dsh/app-wework/client'
 
 import type { Context } from '@deepseek-ai/cordis'
@@ -108,6 +109,33 @@ export function subscribeDshExtensions(listener: () => void): () => void {
   return host.subscribe(listener)
 }
 
+export function getDshTelemetrySinks(): readonly WeworkTelemetrySink[] {
+  return getDshExtensionHost()?.telemetry.sinks.list() ?? []
+}
+
+export const DSH_EXTENSION_HOST_CHANGE_EVENT = 'wework-dsh-extension-host-change'
+
+export function subscribeDshTelemetrySinks(listener: () => void): () => void {
+  let currentHost: WeworkExtensionHost | null = null
+  let unsubscribe = () => {}
+  const bind = () => {
+    const host = getDshExtensionHost()
+    if (host === currentHost) return
+    unsubscribe()
+    currentHost = host
+    unsubscribe = host?.telemetry.sinks.subscribe(listener) ?? (() => {})
+    // The host may already own sinks; flush once the subscription attaches.
+    if (host) listener()
+  }
+  bind()
+  window.addEventListener(DSH_EXTENSION_HOST_CHANGE_EVENT, bind)
+  return () => {
+    window.removeEventListener(DSH_EXTENSION_HOST_CHANGE_EVENT, bind)
+    unsubscribe()
+    currentHost = null
+  }
+}
+
 export function getDshKeybindingDefaults(platform: DesktopPlatform): readonly KeybindingCommand[] {
   const host = getDshExtensionHost()
   if (!host) return []
@@ -131,4 +159,5 @@ export type {
   WeworkMenuTitle,
   WeworkResolvedMenuContribution,
   WeworkResolvedComposerReferenceContribution,
+  WeworkTelemetrySink,
 } from '../../../dsh/app-wework/client'

@@ -106,8 +106,8 @@ class SmartAppSubmissionInitRequest(BaseModel):
     summary: str = Field(min_length=1, max_length=500)
     descriptionMd: str = Field(default="", max_length=8192)
     tags: list[str] = Field(min_length=1, max_length=3)
-    iconDataUrl: str = Field(min_length=1)
-    screenshotDataUrls: list[str] = Field(default_factory=list, max_length=5)
+    iconDataUrl: str | None = Field(default=None, min_length=1)
+    screenshotDataUrls: list[str] | None = Field(default=None, max_length=5)
     releaseNotes: str = Field(default="", max_length=4096)
     extensions: dict[str, Any] = Field(default_factory=dict)
     releaseExtensions: dict[str, Any] = Field(default_factory=dict)
@@ -118,6 +118,8 @@ class SmartAppSubmissionInitRequest(BaseModel):
     def validate_scope(self) -> "SmartAppSubmissionInitRequest":
         if self.smartAppId is None and self.scope not in {"restricted", "public"}:
             raise ValueError("New Smart apps must be restricted or public")
+        if self.smartAppId is None and not self.iconDataUrl:
+            raise ValueError("New Smart apps require an icon")
         if self.scope == "restricted" and not self.targets:
             raise ValueError("Restricted sharing requires at least one target")
         if self.scope in {"private", "public"} and self.targets:

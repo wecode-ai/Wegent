@@ -14,8 +14,6 @@ from app.schemas.runtime_transcript_transport import RuntimeTranscriptChunkRespo
 from app.schemas.runtime_work import (
     ArchivedConversationsListRequest,
     ArchivedConversationsListResponse,
-    BindRuntimeTaskIMSessionsRequest,
-    BindRuntimeTaskIMSessionsResponse,
     DeviceWorkspacePrepareRequest,
     DeviceWorkspacePrepareResponse,
     DeviceWorkspaceResponse,
@@ -429,39 +427,6 @@ async def send_runtime_guidance_endpoint(
     )
 
 
-@router.post(
-    "/im-sessions",
-    response_model=BindRuntimeTaskIMSessionsResponse,
-    response_model_by_alias=True,
-)
-@trace_async("runtime_work.bind_im_sessions", "runtime_work.api")
-async def bind_runtime_task_im_sessions_endpoint(
-    request: BindRuntimeTaskIMSessionsRequest,
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
-):
-    """Bind private IM sessions to a native runtime LocalTask address."""
-
-    set_span_attribute("user.id", current_user.id)
-    set_span_attribute("runtime.device_id", request.address.device_id)
-    set_span_attribute("runtime.local_task_id", request.address.local_task_id)
-    set_span_attribute("runtime.im_session_count", len(request.session_keys))
-    add_span_event(
-        "runtime_work.im_sessions.bind",
-        {
-            "user.id": current_user.id,
-            "runtime.device_id": request.address.device_id,
-            "runtime.local_task_id": request.address.local_task_id,
-            "runtime.im_session_count": len(request.session_keys),
-        },
-    )
-    return await runtime_work_service.bind_runtime_task_to_im_sessions(
-        db=db,
-        user_id=current_user.id,
-        request=request,
-    )
-
-
 @router.put(
     "/im-notifications/global",
     response_model=RuntimeIMNotificationSettingsResponse,
@@ -803,7 +768,7 @@ async def materialize_runtime_task_endpoint(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    """Compile a Team task for direct dispatch by a local runtime."""
+    """Compile an authorized task for direct dispatch by a local runtime."""
 
     compiled = runtime_work_service.materialize_runtime_task_create(
         db=db,
@@ -812,12 +777,14 @@ async def materialize_runtime_task_endpoint(
     )
     return RuntimeTaskMaterializeResponse(
         payload=compiled.payload,
-        runtimeHandle={"wegentTeam": {"id": compiled.team_id}},
+        runtimeHandle=(
+            {"wegentTeam": {"id": compiled.team_id}}
+            if compiled.team_id is not None
+            else None
+        ),
     )
 
 
-# MIGRATION-CANDIDATE(api="POST /api/runtime-work/llm-responses-proxy/responses"): remove after final confirmation.
-# @router.post("/llm-responses-proxy/responses")
 @router.post("/llm-responses-proxy/chat/completions")
 @router.post("/llm-responses-proxy/messages")
 @router.post("/llm-responses-proxy/v1/messages")

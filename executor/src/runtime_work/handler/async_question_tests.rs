@@ -5,6 +5,25 @@
 use super::*;
 
 #[test]
+fn question_publication_retries_auth_timeout_and_rate_limit_failures() {
+    for code in [401, 403, 408, 425, 429, 500, 502, 503, 504] {
+        assert!(
+            !super::super::async_questions::is_permanent_question_rejection(
+                reqwest::StatusCode::from_u16(code).unwrap()
+            ),
+            "{code} must remain queued"
+        );
+    }
+    for code in [400, 404, 409, 422] {
+        assert!(
+            super::super::async_questions::is_permanent_question_rejection(
+                reqwest::StatusCode::from_u16(code).unwrap()
+            )
+        );
+    }
+}
+
+#[test]
 fn nested_async_question_does_not_mark_the_parent_waiting() {
     let (handler, root) = isolated_runtime_work_handler("nested-async-question");
     let task_id = "parent-task";

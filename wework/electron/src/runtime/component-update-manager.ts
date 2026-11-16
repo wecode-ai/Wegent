@@ -19,6 +19,10 @@ import { cloudFetch } from '../host/lazy-cloud-fetch.js'
 import { copyManagedPlugin } from './managed-plugin-files.js'
 import { pipeline } from 'node:stream/promises'
 import { publishImmutableDirectory } from './immutable-directory.js'
+import {
+  materializeBundledComponentArchive,
+  type BundledComponentArchive,
+} from './bundled-component-archive.js'
 import * as tar from 'tar'
 import { hashComponentPath, sha256 } from './component-content-hash.js'
 
@@ -44,6 +48,7 @@ interface PackagedComponent {
   version: string
   path: string
   sha256: string
+  archive?: BundledComponentArchive
 }
 
 interface PackagedComponentManifest {
@@ -531,16 +536,14 @@ export class ComponentUpdateManager {
         const contentSha256 = active?.contentSha256 ?? packagedComponent.sha256
         let path: string
         if (!active) {
-          path = join(this.resourcesRoot, packagedComponent.path)
-          await stat(path)
+          path = await this.packagedComponentPath(id, packagedComponent)
         } else {
           const root = this.componentRoot(id, active.archiveSha256)
           const managedPath = active.entryPath === '.' ? root : join(root, active.entryPath)
           if (await componentMatches(managedPath, active.contentSha256)) {
             path = managedPath
           } else if (active.contentSha256 === packagedComponent.sha256) {
-            path = join(this.resourcesRoot, packagedComponent.path)
-            await stat(path)
+            path = await this.packagedComponentPath(id, packagedComponent)
           } else {
             throw new Error(`Managed component checksum mismatch: ${id}`)
           }
@@ -548,6 +551,22 @@ export class ComponentUpdateManager {
         return { id, path, contentSha256 }
       })
     )
+  }
+
+  private async packagedComponentPath(
+    id: ManagedComponentId,
+    component: PackagedComponent
+  ): Promise<string> {
+    if (component.archive)
+      return materializeBundledComponentArchive(
+        this.resourcesRoot,
+        join(this.root, 'packaged', id),
+        component.archive,
+        component.sha256
+      )
+    const path = join(this.resourcesRoot, component.path)
+    await stat(path)
+    return path
   }
 
   private async composeCorePlugins(

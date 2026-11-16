@@ -39,6 +39,15 @@ test('upgrade acceptance inherits only OS settings and the test driver/model ser
   })
 })
 
+test('preserves an explicitly isolated macOS native Home', () => {
+  const environment = upgradeUserEnvironment(
+    { CFFIXED_USER_HOME: '/isolated-native-home' },
+    '/isolated-workbench-home'
+  )
+  assert.equal(environment.CFFIXED_USER_HOME, '/isolated-native-home')
+  assert.equal(environment.HOME, '/isolated-workbench-home')
+})
+
 test('preserves Windows environment spelling without losing its executable search path', () => {
   const environment = upgradeUserEnvironment(
     {

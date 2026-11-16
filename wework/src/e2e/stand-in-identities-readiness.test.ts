@@ -1,6 +1,15 @@
+// @vitest-environment node
+
 import { expect, test, vi } from 'vitest'
 
 import { createDesktopScenario } from '../../e2e/desktop/scenarios/stand-in-identities.scenario.mjs'
+
+vi.mock('../../e2e/desktop/modules/stand-in-dingtalk-fixture.mjs', () => ({
+  createStandInDingTalkFixture: () => ({
+    prepareApp: vi.fn(),
+    install: vi.fn().mockResolvedValue(undefined),
+  }),
+}))
 
 vi.mock('../../e2e/desktop/modules/shared.mjs', () => ({
   selectE2EModel: vi.fn(),
@@ -59,18 +68,28 @@ test('waits for role settings to load before opening source connections', async 
   })
   const reachedConnections = new Error('Source connections are ready')
   const command = vi.fn(async (action: string, selector: string) => {
+    if (action === 'getText') return '收到，我来拟定评审角色。'
+    if (action === 'getElementCount') return '0'
     if (selector === '[data-testid="stand-in-connections-open"]') {
       expect(action).toBe('clickWhenEnabled')
       waitingStarted()
       await loading
     }
-    if (selector === '[data-testid="stand-in-add-connection"]') throw reachedConnections
+    if (selector === '[data-testid="stand-in-connection-type-picker"]') throw reachedConnections
   })
-  const verified = expect(scenario.verify({ command })).rejects.toBe(reachedConnections)
+  const verified = scenario.verify({ command }).catch((error: unknown) => error)
 
-  await waiting
-  expect(command).not.toHaveBeenCalledWith('click', '[data-testid="stand-in-add-connection"]')
+  await Promise.race([
+    waiting,
+    verified.then((error: unknown) => {
+      throw error
+    }),
+  ])
+  expect(command).not.toHaveBeenCalledWith(
+    'waitFor',
+    '[data-testid="stand-in-connection-type-picker"]'
+  )
   settingsLoaded()
-  await verified
-  expect(command).toHaveBeenCalledWith('click', '[data-testid="stand-in-add-connection"]')
+  expect(await verified).toBe(reachedConnections)
+  expect(command).toHaveBeenCalledWith('waitFor', '[data-testid="stand-in-connection-type-picker"]')
 })

@@ -2,9 +2,16 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
+// @vitest-environment jsdom
+
+import { act } from "react";
+import { createRoot } from "react-dom/client";
 import { describe, expect, it, vi } from "vitest";
 
-import { formatIssueAttachmentSize } from "./IssueDetailCore";
+import {
+  IssueDetailAttachments,
+  formatIssueAttachmentSize,
+} from "./IssueDetailCore";
 import {
   issueAssigneeTarget,
   parseIssueAssigneeTarget,
@@ -36,6 +43,91 @@ describe("IssueDetailCore", () => {
     expect(formatIssueAttachmentSize(512)).toBe("512 B");
     expect(formatIssueAttachmentSize(1536)).toBe("1.5 KB");
     expect(formatIssueAttachmentSize(2.5 * 1024 * 1024)).toBe("2.5 MB");
+  });
+
+  it("keeps a decoded attachment URL stable when the preview loader is recreated", async () => {
+    const container = document.createElement("div");
+    document.body.append(container);
+    const root = createRoot(container);
+    const originalCreateObjectURL = URL.createObjectURL;
+    const originalRevokeObjectURL = URL.revokeObjectURL;
+    const createObjectURL = vi.fn(() => "blob:attachment-preview");
+    const revokeObjectURL = vi.fn();
+    Object.defineProperty(URL, "createObjectURL", {
+      configurable: true,
+      value: createObjectURL,
+    });
+    Object.defineProperty(URL, "revokeObjectURL", {
+      configurable: true,
+      value: revokeObjectURL,
+    });
+
+    const labels = {
+      title: "附件",
+      upload: "上传",
+      uploading: "上传中",
+      empty: "暂无附件",
+      dropzone: "拖放文件",
+      downloading: "下载中",
+      download: (name: string) => `下载 ${name}`,
+      remove: (name: string) => `删除 ${name}`,
+    };
+    const renderAttachments = (loadPreview: (id: string) => Promise<Blob>) =>
+      root.render(
+        <IssueDetailAttachments
+          attachments={[
+            {
+              id: "attachment-1",
+              displayName: "image.png",
+              contentType: "image/png",
+              sizeBytes: 1,
+            },
+          ]}
+          busy={false}
+          error={null}
+          editable={false}
+          labels={labels}
+          testIdPrefix="issue-attachment"
+          onAdd={vi.fn(async () => undefined)}
+          loadPreview={loadPreview}
+          onRemove={vi.fn(async () => undefined)}
+        />,
+      );
+
+    try {
+      const firstLoad = vi.fn(
+        async () => new Blob(["first"], { type: "image/png" }),
+      );
+      await act(async () => renderAttachments(firstLoad));
+      await vi.waitFor(() => expect(firstLoad).toHaveBeenCalledOnce());
+      await vi.waitFor(() =>
+        expect(
+          container.querySelector<HTMLImageElement>(
+            '[data-testid="issue-detail-attachment-thumbnail-attachment-1"]',
+          )?.src,
+        ).toBe("blob:attachment-preview"),
+      );
+
+      const recreatedLoad = vi.fn(
+        async () => new Blob(["second"], { type: "image/png" }),
+      );
+      await act(async () => renderAttachments(recreatedLoad));
+      expect(recreatedLoad).not.toHaveBeenCalled();
+      expect(revokeObjectURL).not.toHaveBeenCalled();
+
+      await act(async () => root.unmount());
+      expect(revokeObjectURL).toHaveBeenCalledWith("blob:attachment-preview");
+    } finally {
+      Object.defineProperty(URL, "createObjectURL", {
+        configurable: true,
+        value: originalCreateObjectURL,
+      });
+      Object.defineProperty(URL, "revokeObjectURL", {
+        configurable: true,
+        value: originalRevokeObjectURL,
+      });
+      container.remove();
+    }
   });
 
   it("persists core fields before assigning against the returned version", async () => {

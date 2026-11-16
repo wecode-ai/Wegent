@@ -12,8 +12,13 @@ const fixture = vi.hoisted(() => ({
   enabled: true,
   installed: true,
   version: '1.0.0',
+  account: 'test-account',
   request: vi.fn(),
 }))
+vi.mock('@/api/local/runtimeAuthStatus', () => ({
+  getLocalCodexAuthStatus: vi.fn(async () => ({ sha256: fixture.account })),
+}))
+
 vi.mock('@/lib/runtime-environment', () => ({
   isDesktopRuntime: () => true,
   isElectronRuntime: () => true,
@@ -60,6 +65,7 @@ beforeEach(() => {
   fixture.enabled = true
   fixture.installed = true
   fixture.version = '1.0.0'
+  fixture.account = 'test-account'
   fixture.request.mockReset().mockImplementation(async (method, params) => {
     if (method === 'executor.plugins.store.list')
       return {
@@ -101,6 +107,107 @@ function inventoryState() {
 }
 
 describe('plugin detail cache ownership', () => {
+  test('installed and marketplace consumers share the same versioned detail read', async () => {
+    const api = createLocalCodexPluginApi()
+    const state = await api.readState({ mergeAllMarketplaces: true, refresh: true })
+    const plugin = state.installedPlugins[0]
+    await Promise.all([
+      api.readInstalledPluginDetail(plugin),
+      api.readMarketplacePluginDetail(marketplace, 'tool', {
+        version: JSON.stringify([plugin.spec.version, plugin.spec.releaseId]),
+      }),
+    ])
+    expect(
+      fixture.request.mock.calls.filter(
+        ([method, params]) =>
+          method === 'codex.app_server_request' && params.method === 'plugin/read'
+      )
+    ).toHaveLength(1)
+  })
+
+  test('API adapters merge detail reads and reuse successful presentation data', async () => {
+    const readers = Array.from({ length: 11 }, () =>
+      createLocalCodexPluginApi().readMarketplacePluginDetail(marketplace, 'tool', { version: '1' })
+    )
+    await Promise.all(readers)
+    await createLocalCodexPluginApi().readMarketplacePluginDetail(marketplace, 'tool', {
+      version: '1',
+    })
+    const reads = () =>
+      fixture.request.mock.calls.filter(
+        ([method, params]) =>
+          method === 'codex.app_server_request' && params.method === 'plugin/read'
+      )
+    expect(reads()).toHaveLength(1)
+    await createLocalCodexPluginApi().readMarketplacePluginDetail(marketplace, 'tool', {
+      version: '2',
+    })
+    expect(reads()).toHaveLength(2)
+    for (const account of ['account-b', 'test-account']) {
+      fixture.account = account
+      await createLocalCodexPluginApi().readMarketplacePluginDetail(marketplace, 'tool', {
+        version: '2',
+      })
+    }
+    expect(reads()).toHaveLength(4)
+    fixture.deviceId = 'device-b'
+    await createLocalCodexPluginApi().readMarketplacePluginDetail(marketplace, 'tool', {
+      version: '2',
+    })
+    expect(reads()).toHaveLength(5)
+  })
+
+  test('an account switch during plugin/read rejects the old response', async () => {
+    let release!: (value: unknown) => void
+    const original = fixture.request.getMockImplementation()!
+    fixture.request.mockImplementation((method, params) => {
+      if (method === 'codex.app_server_request' && params.method === 'plugin/read')
+        return new Promise(resolve => {
+          release = resolve
+        })
+      return original(method, params)
+    })
+    const pending = expect(
+      createLocalCodexPluginApi().readMarketplacePluginDetail(marketplace, 'tool')
+    ).rejects.toThrow('changed')
+    await vi.waitFor(() => expect(release).toBeTypeOf('function'))
+    fixture.account = 'account-b'
+    release(detail())
+    await pending
+  })
+  test.each(['installed', 'marketplace'] as const)(
+    '%s detail sends the marketplace manifest rather than its directory to Codex',
+    async entry => {
+      const request = fixture.request.getMockImplementation()!
+      const manifest = '/plugins/custom/.agents/plugins/marketplace.json'
+      fixture.request.mockImplementation(async (method, params) => {
+        if (
+          method === 'codex.app_server_request' &&
+          params.method === 'plugin/read' &&
+          params.params.marketplacePath !== manifest
+        ) {
+          throw new Error('failed to read marketplace file: Is a directory')
+        }
+        return request(method, params)
+      })
+      const api = createLocalCodexPluginApi()
+      const state = await api.readState({ mergeAllMarketplaces: true, refresh: true })
+
+      if (entry === 'installed') await api.readInstalledPluginDetail(state.installedPlugins[0])
+      else await api.readMarketplacePluginDetail(marketplace, 'tool')
+
+      expect(fixture.request).toHaveBeenCalledWith('codex.app_server_request', {
+        method: 'plugin/read',
+        params: { marketplacePath: manifest, remoteMarketplaceName: null, pluginName: 'tool' },
+      })
+      expect(
+        peekLocalInstalledPluginInventory()!.items[0].spec.components.skills.map(
+          skill => skill.name
+        )
+      ).toEqual(['expanded'])
+    }
+  )
+
   test.each(['installed', 'marketplace'] as const)(
     '%s detail enriches presentation while preserving inventory fields',
     async entry => {
@@ -190,11 +297,15 @@ describe('plugin detail cache ownership', () => {
           else expect(expected.inventory?.items).toEqual([])
         }
         release(response)
-        await pending
+        if (['device', 'device-round-trip', 'invalidate'].includes(change)) {
+          await expect(pending).rejects.toThrow('changed')
+        } else {
+          await pending
+        }
         expect(inventoryState(), change).toEqual(expected)
       } finally {
         release(response)
-        await pending
+        await Promise.allSettled([pending])
         fixture.request.mockImplementation(original)
       }
     }

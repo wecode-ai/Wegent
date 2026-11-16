@@ -39,6 +39,7 @@ use brz_mysql::{FromMysqlRow, Json, Mysql, MysqlResult};
 use serde::Serialize;
 
 use crate::http_compat::FastApiError;
+use crate::sql_support::DecimalCount;
 use crate::state::AppState;
 use brz_json::OpaqueJson;
 
@@ -85,6 +86,87 @@ async fn list_artifacts(
 /// `_execute`'s 404 mapping for `ArtifactNotFoundError`.
 fn not_found(detail: &str) -> FastApiError {
     FastApiError::detail(brz_http_server::StatusCode::NOT_FOUND, detail)
+}
+
+pub(crate) async fn resolve_node_scope(
+    state: &AppState,
+    user_id: i64,
+    knowledge_base_id: i64,
+    artifact_id: &str,
+    node_id: &str,
+) -> Result<(String, Vec<i64>), FastApiError> {
+    let kb = access::knowledge_base_record(&state.mysql, knowledge_base_id)
+        .await
+        .map_err(internal)?
+        .ok_or_else(|| not_found("Knowledge base not found"))?;
+    if !access::knowledge_base_access(
+        &state.mysql,
+        state.redis.as_ref(),
+        &state.entity_resolvers,
+        &kb,
+        user_id,
+    )
+    .await
+    .map_err(internal)?
+    {
+        return Err(not_found("Knowledge base not found"));
+    }
+    #[derive(FromMysqlRow)]
+    struct NodeArtifact {
+        artifact_type: String,
+        status: String,
+        content: Option<String>,
+        source_document_ids: Option<brz_mysql::Json<Vec<i64>>>,
+    }
+    let artifact: NodeArtifact = state.mysql.fetch_optional(
+        "SELECT artifact_type, status, content, source_document_ids FROM knowledge_artifacts WHERE knowledge_base_id=? AND artifact_id=?",
+        (knowledge_base_id, artifact_id),
+    ).await.map_err(internal)?.ok_or_else(|| not_found("Artifact not found"))?;
+    let invalid = |message| FastApiError::detail(brz_http_server::StatusCode::BAD_REQUEST, message);
+    if artifact.status != "succeeded" || artifact.artifact_type != "mind_map" {
+        return Err(invalid("Interactive mind map is not available"));
+    }
+    let content: serde_json::Value =
+        serde_json::from_str(artifact.content.as_deref().unwrap_or_default())
+            .map_err(|_| invalid("This mind map does not support interactive questions"))?;
+    let nodes = content["nodes"]
+        .as_array()
+        .filter(|nodes| !nodes.is_empty())
+        .ok_or_else(|| invalid("This mind map does not support interactive questions"))?;
+    if !nodes
+        .iter()
+        .any(|node| node["id"].as_str().map(str::trim) == Some(node_id))
+    {
+        return Err(invalid("Mind map node not found"));
+    }
+    let mut sources = artifact
+        .source_document_ids
+        .map_or_else(Vec::new, |ids| ids.0);
+    let available: Vec<(i64,)> = state.mysql.fetch_all(
+        "SELECT id FROM knowledge_documents WHERE kind_id=? AND index_status='success' AND is_active=true AND JSON_CONTAINS(?, CAST(id AS JSON))",
+        (knowledge_base_id, serde_json::to_string(&sources).map_err(internal)?),
+    ).await.map_err(internal)?;
+    let available: std::collections::HashSet<i64> = available.into_iter().map(|(id,)| id).collect();
+    sources.retain(|id| available.contains(id));
+    if sources.is_empty() {
+        return Err(invalid("Mind map source documents are no longer available"));
+    }
+    let document = kb.kinds_json.to_value();
+    let name = match document["spec"]["name"]
+        .as_str()
+        .filter(|name| !name.is_empty())
+    {
+        Some(name) => name.to_owned(),
+        None => {
+            let (name,): (String,) = state
+                .mysql
+                .fetch_one("SELECT name FROM kinds WHERE id=?", (knowledge_base_id,))
+                .await
+                .map_err(internal)?;
+            name
+        }
+    };
+    Ok((name, sources))
 }
 
 /// `ArtifactService.list`: read access, the stored rows, capabilities, and
@@ -282,16 +364,19 @@ where
 }
 
 /// `_document_source_counts`: usable (active + success) and processing
-/// document counts for the knowledge base. `sum` renders DECIMAL columns;
-/// the source converts None to 0 like `int(value or 0)`.
+/// document counts for the knowledge base. Both `sum` aggregates render
+/// DECIMAL columns; the statement has no `GROUP BY`, so a knowledge base with
+/// no documents still returns one row whose sums are SQL NULL. The `Option`
+/// fields make the derive read them with `MysqlRow::get` (NULL → `None`), and
+/// `DecimalCount::or_zero` applies the source's `int(value or 0)`.
 async fn document_source_counts<M>(mysql: &M, knowledge_base_id: i64) -> MysqlResult<(i64, i64)>
 where
     M: Mysql,
 {
     #[derive(Debug, FromMysqlRow)]
     struct CountRow {
-        sum_1: Option<String>,
-        sum_2: Option<String>,
+        sum_1: Option<DecimalCount>,
+        sum_2: Option<DecimalCount>,
     }
     let row: Option<CountRow> = mysql
         .fetch_optional(
@@ -309,21 +394,10 @@ where
     let Some(row) = row else {
         return Ok((0, 0));
     };
-    Ok((decimal_count(row.sum_1), decimal_count(row.sum_2)))
-}
-
-/// `int(value or 0)` over a SQLAlchemy `sum()` DECIMAL. The driver renders the
-/// decimal as text; a replayed response can carry a fractional form (`1.0`),
-/// so fall back to a numeric parse that truncates toward zero like Python's
-/// `int(Decimal)`.
-fn decimal_count(value: Option<String>) -> i64 {
-    let Some(text) = value else {
-        return 0;
-    };
-    let text = text.trim();
-    text.parse::<i64>()
-        .or_else(|_| text.parse::<f64>().map(|number| number.trunc() as i64))
-        .unwrap_or(0)
+    Ok((
+        DecimalCount::or_zero(row.sum_1),
+        DecimalCount::or_zero(row.sum_2),
+    ))
 }
 
 /// `KnowledgeArtifactListResponse` (`app.schemas.knowledge_artifact`), in the
@@ -481,17 +555,6 @@ mod tests {
         let unmanaged = artifact_response(&artifact, false);
         assert!(!unmanaged.can_retry);
         assert!(!unmanaged.can_delete);
-    }
-
-    #[test]
-    fn decimal_count_truncates_a_replayed_fraction() {
-        // A live DECIMAL `sum()` renders `1`, but a replayed response can carry
-        // the fractional form `1.0`; `int(Decimal)` truncates both to 1.
-        assert_eq!(decimal_count(Some("1".to_string())), 1);
-        assert_eq!(decimal_count(Some("1.0".to_string())), 1);
-        assert_eq!(decimal_count(Some("0.0".to_string())), 0);
-        assert_eq!(decimal_count(Some(" 2 ".to_string())), 2);
-        assert_eq!(decimal_count(None), 0);
     }
 
     #[test]

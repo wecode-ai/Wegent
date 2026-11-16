@@ -10,10 +10,14 @@ from typing import Any, Callable
 
 import httpx
 import socketio
+from mcp import ClientSession
+from mcp.client.streamable_http import streamablehttp_client
+from mcp.types import TextContent
 from sqlalchemy import text
 
 from app.db.session import SessionLocal
 from app.models.user import User
+from app.services.auth import create_task_token
 from app.services.user_mcp_service import user_mcp_service
 from e2e_checks.dingtalk_oauth.provider import DingTalkProvider, fingerprint
 from tests.e2e.knowledge_remote_index_support import (
@@ -51,6 +55,25 @@ def assert_test_database() -> None:
         assert url.get_backend_name() == "mysql"
         assert url.host in {"localhost", "127.0.0.1", "mysql"}
         assert "test" in (url.database or ""), "E2E requires a disposable test database"
+
+
+async def call_knowledge_tool(
+    actor: Actor, name: str, arguments: dict[str, Any]
+) -> dict[str, Any]:
+    token = create_task_token(0, 0, actor.id, actor.name)
+    async with streamablehttp_client(
+        BACKEND_URL + "/mcp/knowledge/sse",
+        headers={"Authorization": f"Bearer {token}"},
+    ) as (reader, writer, _):
+        async with ClientSession(reader, writer) as session:
+            await session.initialize()
+            result = await session.call_tool(name, arguments)
+            assert not result.isError, "Knowledge MCP transport returned a tool error"
+            content = result.content[0]
+            assert isinstance(
+                content, TextContent
+            ), "Knowledge MCP did not return JSON text"
+            return json.loads(content.text)
 
 
 @dataclass

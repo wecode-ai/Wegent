@@ -1,3 +1,5 @@
+// @vitest-environment node
+
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { DeviceInfo, RuntimeTaskAddress } from '@/types/api'
 import type { RuntimeConversationTurn, RuntimePaneQueuedMessage } from '@/types/workbench'

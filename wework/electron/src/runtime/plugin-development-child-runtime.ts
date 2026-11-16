@@ -10,6 +10,7 @@ interface PluginDevelopmentChildRuntimeOptions {
   focus: () => Promise<void>
   openDevTools: () => void
   restartCoreDsh: () => Promise<void>
+  resumePythonAfterLogin: () => Promise<void>
   requestStop: () => void
   getCoreDshPid: () => number | null
   isShuttingDown: () => boolean
@@ -27,6 +28,15 @@ export class PluginDevelopmentChildRuntime {
   constructor(private readonly options: PluginDevelopmentChildRuntimeOptions) {}
 
   async handleCommand(command: string): Promise<void> {
+    if (command === 'python-login') {
+      if (this.options.isShuttingDown()) return
+      try {
+        await this.options.resumePythonAfterLogin()
+      } catch {
+        console.warn('[python-runtime] Login-triggered preparation failed')
+      }
+      return
+    }
     if (command === 'focus') {
       await this.options.focus()
       return

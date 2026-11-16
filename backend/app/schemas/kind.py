@@ -183,6 +183,9 @@ class SkillRefMeta(BaseModel):
         None,
         description="SHA256 content hash of the skill ZIP package, prefixed with sha256:",
     )
+    bind_shells: Optional[List[str]] = Field(
+        default=None, exclude_if=lambda value: value is None
+    )
 
 
 class KnowledgeBaseDefaultRef(BaseModel):

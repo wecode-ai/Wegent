@@ -1,0 +1,63 @@
+name: Build shared real object storage for E2E
+description: Build the pinned MinIO binary once and distribute it through the current workflow artifact.
+inputs:
+  save-cache:
+    description: Allow cache writes from the main branch.
+    required: false
+    default: "false"
+runs:
+  using: composite
+  steps:
+    - name: Restore published real object storage
+      id: published
+      shell: bash
+      run: |
+        .github/scripts/restore-ci-downloads.sh
+        if [[ -x "$RUNNER_TEMP/wework-minio/bin/minio" ]]; then
+          echo "cache-hit=true" >> "$GITHUB_OUTPUT"
+        fi
+
+    - name: Restore pinned MinIO build
+      id: minio
+      uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830
+      with:
+        path: ${{ runner.temp }}/wework-minio/bin
+        key: ${{ runner.os }}-${{ runner.arch }}-minio-9e49d5e7a648f00e26f2246f4dc28e6b07f8c84a-go-1.25.9-static-v1
+
+    - name: Set up Go for real object storage
+      if: steps.minio.outputs.cache-hit != 'true' && steps.published.outputs.cache-hit != 'true'
+      uses: actions/setup-go@v6
+      with:
+        go-version: "1.25.9"
+        cache: false
+
+    - name: Build real object storage
+      if: steps.minio.outputs.cache-hit != 'true' && steps.published.outputs.cache-hit != 'true'
+      shell: bash
+      env:
+        GOBIN: ${{ runner.temp }}/wework-minio/bin
+        CGO_ENABLED: "0"
+      run: go install github.com/minio/minio@9e49d5e7a648f00e26f2246f4dc28e6b07f8c84a
+
+    - name: Save real object storage
+      if: inputs.save-cache == 'true' && steps.minio.outputs.cache-hit != 'true'
+      uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830
+      with:
+        path: ${{ runner.temp }}/wework-minio/bin
+        key: ${{ steps.minio.outputs.cache-primary-key }}
+
+    - name: Verify real object storage
+      shell: bash
+      env:
+        WEWORK_E2E_MINIO_BIN: ${{ runner.temp }}/wework-minio/bin/minio
+      run: |
+        test -x "$WEWORK_E2E_MINIO_BIN"
+        "$WEWORK_E2E_MINIO_BIN" --version
+
+    - name: Upload shared real object storage
+      uses: actions/upload-artifact@v4
+      with:
+        name: wework-desktop-minio-e2e
+        path: ${{ runner.temp }}/wework-minio/bin/minio
+        if-no-files-found: error
+        retention-days: 1

@@ -397,7 +397,7 @@ fn encrypted_keys_and_custom_headers_use_the_request_user() {
         return;
     }
     let encrypted =
-        crate::git_repositories::crypto::encrypt_git_token("updated-private-key").unwrap();
+        wegent_identity::repository_credentials::encrypt_git_token("updated-private-key").unwrap();
     let spec = json!({"protocol":"systemone", "modelConfig":{"DEFAULT_HEADERS":{"x-tenant":"old"}, "env": {
         "api_key": encrypted, "base_url":"https://example.test/v1", "model_id":"provider-model",
         "custom_headers":{"x-tenant":"${user.user_name}", "x-user-id":"${user.id}"}

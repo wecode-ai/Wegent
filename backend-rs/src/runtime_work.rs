@@ -34,7 +34,7 @@ use std::time::Duration;
 use base64::Engine as _;
 use brz_json::adapters::python_truthy;
 use brz_redis::Redis as _;
-use serde_json::{Map, Value};
+use serde_json::{Map, Value, json};
 
 use crate::auth::SessionUser;
 use crate::device_identity::{DeviceType as RouteDeviceType, resolve_runtime_route_identity};
@@ -289,6 +289,93 @@ pub(crate) async fn call_runtime_method(
     payload: Value,
     timeout_seconds: u64,
 ) -> Result<Value, RuntimeCallError> {
+    call_runtime_method_envelope(
+        state,
+        user_id,
+        socket_id,
+        json!({"method":method,"payload":payload}),
+        timeout_seconds,
+    )
+    .await
+}
+
+pub(crate) async fn call_runtime_method_envelope(
+    state: &AppState,
+    user_id: i64,
+    socket_id: &str,
+    request: Value,
+    timeout_seconds: u64,
+) -> Result<Value, RuntimeCallError> {
+    let deadline = Duration::from_secs(timeout_seconds + SOCKET_ACK_GRACE_SECONDS);
+    let ack = call_runtime_envelope(
+        state,
+        user_id,
+        socket_id,
+        LOCAL_EXECUTOR_NAMESPACE,
+        request,
+        deadline,
+    )
+    .await?;
+    decode_runtime_rpc_response(ack).map_err(|_| RuntimeCallError::Decode)
+}
+
+/// The transport half of one `sio.call(event, envelope, to=socket_id,
+/// namespace=namespace, timeout=wait)`: register the callback waiter, publish
+/// the adapter emit, and return the single acknowledgement argument.
+///
+/// Callers that bypass `runtime_rpc_service.call` own the source's exact
+/// timeout (for example `reconcile_device_executions` calls `sio.call` with a
+/// plain 15 seconds and does not decode the gzip envelope).
+pub(crate) async fn call_runtime_rpc(
+    state: &AppState,
+    user_id: i64,
+    socket_id: &str,
+    namespace: &str,
+    method: &str,
+    payload: Value,
+    wait: Duration,
+) -> Result<Value, RuntimeCallError> {
+    call_runtime_envelope(
+        state,
+        user_id,
+        socket_id,
+        namespace,
+        json!({"method":method,"payload":payload}),
+        wait,
+    )
+    .await
+}
+
+async fn call_runtime_envelope(
+    state: &AppState,
+    user_id: i64,
+    socket_id: &str,
+    namespace: &str,
+    request: Value,
+    wait: Duration,
+) -> Result<Value, RuntimeCallError> {
+    call_socketio_event(
+        state,
+        user_id,
+        socket_id,
+        namespace,
+        RUNTIME_RPC_EVENT,
+        request,
+        wait,
+    )
+    .await
+}
+
+pub(crate) async fn call_socketio_event(
+    state: &AppState,
+    user_id: i64,
+    socket_id: &str,
+    namespace: &str,
+    event: &str,
+    request: Value,
+    wait: Duration,
+) -> Result<Value, RuntimeCallError> {
+    let method = request["method"].as_str().unwrap_or(event).to_owned();
     let Some(rpc) = state.socketio_rpc.as_ref() else {
         return Err(RuntimeCallError::Unavailable(
             "socketio_rpc_unavailable".to_string(),
@@ -299,20 +386,27 @@ pub(crate) async fn call_runtime_method(
             "socketio_rpc_unavailable".to_string(),
         ));
     };
-    let call = rpc
-        .begin(socket_id, LOCAL_EXECUTOR_NAMESPACE)
-        .map_err(|error| {
-            tracing::warn!(%error, user_id, method, "runtime RPC callback registration failed");
-            RuntimeCallError::Unavailable("socketio_rpc_unavailable".to_string())
-        })?;
-    let mut request = Map::new();
-    request.insert("method".to_string(), Value::String(method.to_string()));
-    request.insert("payload".to_string(), payload);
-    let data = python_dumps(&Value::Array(vec![Value::Object(request)]));
+    let call = rpc.begin(socket_id, namespace).map_err(|error| {
+        tracing::warn!(%error, user_id, method, "runtime RPC callback registration failed");
+        RuntimeCallError::Unavailable("socketio_rpc_unavailable".to_string())
+    })?;
+    // The callback sequencer orders the ACK -> callback publishes behind the
+    // earlier calls this process issued and still awaits. Register the exact
+    // identity and this call's own acknowledgement budget at the allocation
+    // point, so the sequencer waits for it only as long as the call itself can
+    // still be acknowledged, never for a guessed missing id.
+    rpc.in_flight().register(
+        crate::socketio_emit::host_id(),
+        namespace,
+        socket_id,
+        call.id(),
+        tokio::time::Instant::now() + wait,
+    );
+    let data = python_dumps(&Value::Array(vec![request]));
     let message = emit_message_with_callback(
-        RUNTIME_RPC_EVENT,
+        event,
         &data,
-        LOCAL_EXECUTOR_NAMESPACE,
+        namespace,
         socket_id,
         Some((socket_id, call.id())),
     );
@@ -322,11 +416,8 @@ pub(crate) async fn call_runtime_method(
             "socketio_rpc_unavailable".to_string(),
         ));
     }
-    let deadline = timeout_seconds + SOCKET_ACK_GRACE_SECONDS;
-    match call.wait(Duration::from_secs(deadline)).await {
-        Ok(args) => {
-            decode_runtime_rpc_response(ack_argument(args)).map_err(|_| RuntimeCallError::Decode)
-        }
+    match call.wait(wait).await {
+        Ok(args) => Ok(ack_argument(args)),
         Err(crate::socketio_rpc::RpcError::Timeout) => Err(RuntimeCallError::Timeout),
         Err(error) => {
             tracing::warn!(%error, user_id, method, "runtime RPC failed");
@@ -423,7 +514,6 @@ mod tests {
         LocalTaskSummary, iter_runtime_workspaces, local_task_summary, normalize_workspace_path,
         runtime_task_kind_fields, runtime_workspace_kind_fields, task_workspace_path,
     };
-    use serde_json::json;
 
     fn map(value: Value) -> Map<String, Value> {
         value.as_object().expect("object").clone()

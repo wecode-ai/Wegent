@@ -11,7 +11,7 @@ const require = createRequire(import.meta.url)
 const SCRIPT = `
 (async () => {
   const [operation, source, destination, tarModule] = process.argv.slice(1)
-  const tar = operation === 'extract' ? require(tarModule) : null
+  const tar = operation === 'extract' && process.platform !== 'win32' ? require(tarModule) : null
   process.noAsar = true
   const fs = require('node:fs/promises')
   if (operation === 'copy' && process.platform === 'darwin') {
@@ -28,6 +28,16 @@ const SCRIPT = `
     verbatimSymlinks:true,
   })
   else if (operation === 'remove') await fs.rm(source, {recursive:true,force:true})
+  else if (operation === 'extract' && process.platform === 'win32') {
+    const path = require('node:path')
+    const systemRoot = process.env.SystemRoot
+    if (!systemRoot || !path.isAbsolute(systemRoot)) throw new Error('Windows SystemRoot is unavailable')
+    const { stderr } = await require('node:util').promisify(require('node:child_process').execFile)(
+      path.join(systemRoot, 'System32', 'tar.exe'), ['-xf', source, '-C', destination],
+      {timeout:290_000,maxBuffer:1024*1024,windowsHide:true}
+    )
+    if (stderr.trim()) throw new Error('Archive extraction warning: ' + stderr.trim())
+  }
   else if (operation === 'extract') await tar.extract({file:source,cwd:destination,strict:true})
   else throw new Error('Invalid physical release operation')
 })().catch(error => { console.error(error); process.exitCode = 1 })

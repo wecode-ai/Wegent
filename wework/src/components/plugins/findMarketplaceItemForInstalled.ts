@@ -1,14 +1,11 @@
 import type { InstalledPlugin, PluginMarketplaceItem } from '@/types/api'
-import { isWegentCloudMarketplace } from '@/features/plugins/pluginNavigation'
 import type { InstalledPluginItem } from './PluginManagementRows'
 import { linkedCloudPluginId, storeDirMatchesPluginKey } from './installedPluginMerge'
-import { installedPluginMarketplaceId, marketplaceItemMarketplaceId } from './pluginDistribution'
-
-function normalizedMarketplaceId(value: string | null | undefined): string {
-  const trimmed = (value ?? '').trim().toLowerCase()
-  if (!trimmed) return ''
-  return isWegentCloudMarketplace(trimmed) ? 'wegent' : trimmed
-}
+import {
+  installedPluginMarketplaceId,
+  marketplaceItemMarketplaceId,
+  normalizedMarketplaceId,
+} from './pluginDistribution'
 
 function installedPluginKey(plugin: InstalledPlugin): string {
   return String(plugin.spec.source.pluginKey || plugin.metadata.name || '')
@@ -48,19 +45,23 @@ export function findMarketplaceItemForInstalledPlugin(
 
   const key = installedPluginKey(plugin)
   const marketplace = normalizedMarketplaceId(installedPluginMarketplaceId(plugin))
+  const matchesMarketplace = (item: PluginMarketplaceItem) => {
+    const itemMarketplace =
+      normalizedMarketplaceId(marketplaceItemMarketplaceId(item)) ||
+      (item.latestReleaseId != null ? 'wegent' : '')
+    return !marketplace || itemMarketplace === marketplace
+  }
   if (key && marketplace) {
     const byIdentity = items.find(item => {
       const itemKey = item.name.trim().toLowerCase()
       if (itemKey !== key) return false
-      const itemMarketplace =
-        normalizedMarketplaceId(marketplaceItemMarketplaceId(item)) ||
-        (item.latestReleaseId != null ? 'wegent' : '')
-      return itemMarketplace === marketplace
+      return matchesMarketplace(item)
     })
     if (byIdentity) return byIdentity
   }
 
   const storeDirCandidates = items.filter(item => {
+    if (!matchesMarketplace(item)) return false
     return (
       storeDirMatchesPluginKey(String(installedId ?? ''), item.name) ||
       storeDirMatchesPluginKey(String(plugin.metadata.name || ''), item.name) ||

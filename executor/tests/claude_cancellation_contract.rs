@@ -54,6 +54,8 @@ async fn claude_timeout_kills_process_before_late_side_effect() {
             .arg("-c")
             .arg(format!("sleep 5; printf leaked > {}", marker.display())),
         1,
+        std::sync::Arc::new(wegent_executor::process_environment::CredentialEnvironment),
+        env!("CARGO_PKG_VERSION"),
     );
 
     let started = Instant::now();
@@ -81,7 +83,7 @@ async fn claude_timeout_does_not_persist_interrupted_session_id() {
             r#"printf '%s\n' '{"type":"system","subtype":"init","session_id":"interrupted-session"}'; sleep 5"#,
         ),
         1,
-    );
+     std::sync::Arc::new(wegent_executor::process_environment::CredentialEnvironment), env!("CARGO_PKG_VERSION"));
     let request = ExecutionRequest {
         task_id: "9101".to_owned(),
         bot: json!([{"id": 4101, "shell_type": "ClaudeCode"}]),

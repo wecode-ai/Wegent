@@ -23,7 +23,7 @@ import { mergeRuntimeConversationTurns } from './runtimeConversationTurns'
 const MAX_CONVERSATION_CACHE_ENTRIES = 50
 export const MAX_RUNTIME_SUBAGENT_STATUSES = 256
 const TERMINAL_CONVERSATION_IDLE_TTL_MS = 5 * 60 * 1000
-type Listener = (action?: RuntimePaneMessageAction) => void
+type Listener = (action?: RuntimePaneMessageAction, coalesced?: boolean) => void
 interface Subscription {
   key: string
   listener: Listener
@@ -270,8 +270,15 @@ export function subscribeRuntimeConversation(
   }
 }
 
-export function notifyRuntimeConversation(key: string, action?: RuntimePaneMessageAction): void {
-  listenersByConversation.get(key)?.forEach(subscription => subscription.listener(action))
+export function notifyRuntimeConversation(
+  key: string,
+  action?: RuntimePaneMessageAction,
+  coalesced = false
+): void {
+  listenersByConversation.get(key)?.forEach(subscription => {
+    if (coalesced) subscription.listener(action, true)
+    else subscription.listener(action)
+  })
 }
 
 export function cacheRuntimeConversationTurns(key: string, turns: RuntimeConversationTurn[]): void {
@@ -346,6 +353,10 @@ export function evictRuntimeConversationKey(key: string): void {
 
 export function markRuntimeConversationArchived(key: string): void {
   archivedConversationKeys.add(key)
+}
+
+export function isRuntimeConversationArchived(address: RuntimeTaskAddress): boolean {
+  return archivedConversationKeys.has(runtimeConversationKey(address))
 }
 
 export function unmarkRuntimeConversationArchived(key: string): void {

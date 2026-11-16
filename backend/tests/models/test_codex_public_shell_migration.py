@@ -18,8 +18,10 @@ from alembic.runtime.migration import MigrationContext
 def _load_migration() -> ModuleType:
     """Load the migration module directly for isolated data conversion tests."""
     path = (
-        Path(__file__).parents[2]
-        / "alembic"
+        Path(__file__).parents[2].parent
+        / "backend-rs"
+        / "migrations"
+        / "reference"
         / "versions"
         / "20260916_c9d4e7f1a2b3_add_codex_public_shell.py"
     )

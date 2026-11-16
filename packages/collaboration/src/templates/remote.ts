@@ -13,6 +13,7 @@ export interface TemplateHttpClient {
   get<T>(path: string): Promise<T>
   post<T>(path: string, body?: unknown): Promise<T>
   put<T>(path: string, body?: unknown): Promise<T>
+  delete<T>(path: string): Promise<T>
 }
 
 export function createCollaborationTemplateRemote(
@@ -55,6 +56,9 @@ export function createCollaborationTemplateRemote(
       await client.post(`/resource-library/listings/${id}/install`, {
         target_namespace: 'default',
       })
+    },
+    async delete(id) {
+      await client.delete(`/v1/collaboration-templates/${id}`)
     },
     async publish(id, version) {
       const record = await client.get<TemplateRecord>(`/v1/collaboration-templates/${id}`)

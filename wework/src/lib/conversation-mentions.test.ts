@@ -1,9 +1,11 @@
+// @vitest-environment node
+
+import type { RuntimeTaskAddress } from '@/types/api'
 import { describe, expect, test, vi } from 'vitest'
-import type { RuntimeTaskAddress, RuntimeWorkListResponse } from '@/types/api'
 import {
   appendConversationMentionContext,
-  buildConversationMentionCandidates,
   createConversationMentionReference,
+  parseConversationMentionHref,
   parseConversationMentions,
 } from './conversation-mentions'
 
@@ -31,6 +33,32 @@ describe('conversation mentions', () => {
     ])
   })
 
+  test('parses a conversation mention href into a runtime task address', () => {
+    const reference = createConversationMentionReference('Source chat', SOURCE_ADDRESS)
+    const href = reference.slice(reference.indexOf('](') + 2, -1)
+
+    expect(parseConversationMentionHref(href)).toEqual({
+      ...SOURCE_ADDRESS,
+      runtimeHandle: null,
+    })
+    expect(parseConversationMentionHref('https://example.com')).toBeNull()
+  })
+
+  test('preserves Issue execution context in a conversation reference', () => {
+    const address: RuntimeTaskAddress = {
+      ...SOURCE_ADDRESS,
+      issueExecution: { projectId: 'project-1', issueId: 'issue-1' },
+      projectSession: { projectId: 'project-1', issueId: 'issue-1' },
+    }
+    const reference = createConversationMentionReference('Issue chat', address)
+    const href = reference.slice(reference.indexOf('](') + 2, -1)
+
+    expect(parseConversationMentionHref(href)).toEqual({
+      ...address,
+      runtimeHandle: null,
+    })
+  })
+
   test('keeps runtime metadata parentheses inside the atomic reference', () => {
     const address: RuntimeTaskAddress = {
       ...SOURCE_ADDRESS,
@@ -50,64 +78,6 @@ describe('conversation mentions', () => {
         reference,
       },
     ])
-  })
-
-  test('builds candidates from project and standalone conversations', () => {
-    const runtimeWork: RuntimeWorkListResponse = {
-      projects: [
-        {
-          project: { key: 'project-1', name: 'Wegent' },
-          deviceWorkspaces: [
-            {
-              deviceId: 'local-device',
-              available: true,
-              workspacePath: '/workspace/project',
-              tasks: [
-                {
-                  taskId: 'current-task',
-                  title: 'Current',
-                  runtime: 'codex',
-                  workspacePath: '/workspace/project',
-                  updatedAt: '2026-07-27T08:00:00Z',
-                },
-                {
-                  taskId: 'older-task',
-                  title: 'Older task',
-                  runtime: 'codex',
-                  workspacePath: '/workspace/project',
-                  updatedAt: '2026-07-26T08:00:00Z',
-                },
-              ],
-            },
-          ],
-        },
-      ],
-      chats: [
-        {
-          deviceId: 'remote-device',
-          available: true,
-          workspacePath: '/workspace/chat',
-          tasks: [
-            {
-              taskId: 'recent-task',
-              title: 'Recent chat',
-              runtime: 'codex',
-              workspacePath: '/workspace/chat',
-              updatedAt: '2026-07-27T09:00:00Z',
-            },
-          ],
-        },
-      ],
-      totalTasks: 3,
-    }
-
-    const candidates = buildConversationMentionCandidates(runtimeWork, {
-      deviceId: 'local-device',
-      taskId: 'current-task',
-    })
-
-    expect(candidates.map(candidate => candidate.title)).toEqual(['Recent chat', 'Older task'])
-    expect(candidates[1].projectName).toBe('Wegent')
   })
 
   test('loads transcript text as explicitly untrusted background context', async () => {

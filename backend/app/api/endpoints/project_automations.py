@@ -27,7 +27,7 @@ from app.schemas.workspace import (
 from app.services.project_automations import (
     project_automation_service,
 )
-from app.services.workspaces import workspace_service
+from app.services.workspaces.service import workspace_service
 
 router = APIRouter()
 

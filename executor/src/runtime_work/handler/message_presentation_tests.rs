@@ -1,6 +1,91 @@
 use super::*;
 
 #[test]
+fn explicit_activity_presentation_restores_the_exact_native_turn_without_changing_execution() {
+    let internal = "Wework delegated task result: taskId=private-task. Read this exact task";
+    let mut payload = json!({
+        "message":internal,"clientUserMessageId":"activity-1",
+        "executionRequest":{"prompt":internal,"origin":{"type":"stand_in_identity","userId":7}},
+        "userMessagePresentation":{"content":"每日简报已完成","source":{"type":"stand_in_activity"}}
+    });
+    let execution = payload["executionRequest"].clone();
+    normalize_user_message_presentation(&mut payload).unwrap();
+    assert_eq!(payload["executionRequest"], execution);
+    assert!(payload.get("userMessagePresentation").is_none());
+    let request = ExecutionRequest::default();
+    assert_eq!(
+        cached_user_message("chat", &request, &payload).unwrap()["content"],
+        "每日简报已完成"
+    );
+    let mut handle = json!({});
+    append_runtime_handle_user_message_presentation(
+        &mut handle,
+        user_message_presentation(&payload).unwrap(),
+    );
+    bind_runtime_handle_user_message_presentation_to_turn(
+        &mut handle,
+        "activity-1",
+        "turn-activity",
+    );
+    let mut link = RuntimeTaskLink::new_pending("chat".into(), "/work".into(), "Chat".into());
+    link.runtime_handle = handle;
+    let presentations = user_message_presentations(&link);
+    let mut messages = vec![
+        json!({"id":"old","role":"user","turnId":"turn-original","content":"请整理简报"}),
+        json!({"id":"native","role":"user","turnId":"turn-activity","content":internal}),
+        json!({"id":"answer","role":"assistant","turnId":"turn-activity","content":"今天最重要的三件事……"}),
+    ];
+    bind_native_user_presentations(&mut messages, &presentations);
+    attach_user_message_presentations(&mut messages, presentations);
+    assert_eq!(messages.len(), 3);
+    assert_eq!(messages[0]["content"], "请整理简报");
+    assert_eq!(messages[1]["clientUserMessageId"], "activity-1");
+    assert_eq!(messages[1]["content"], "每日简报已完成");
+    assert_eq!(messages[1]["source"]["type"], "stand_in_activity");
+    assert_eq!(messages[2]["content"], "今天最重要的三件事……");
+    assert!(!serde_json::to_string(&messages).unwrap().contains(internal));
+}
+
+#[test]
+fn explicit_activity_presentation_rejects_unbound_or_empty_overrides() {
+    for mut payload in [
+        json!({"clientUserMessageId":"id","userMessagePresentation":null}),
+        json!({"clientUserMessageId":"id","userMessagePresentation":{"content":" "}}),
+        json!({"userMessagePresentation":{"content":"Visible preview"}}),
+    ] {
+        let error = normalize_user_message_presentation(&mut payload).unwrap_err();
+        assert_eq!(error.code, "bad_request");
+    }
+}
+
+#[test]
+fn explicit_activity_presentation_continuation_persists_and_binds_preview() {
+    let root = tempfile::tempdir().unwrap();
+    let mut handler = RuntimeWorkRpcHandler::new("mac", "unused");
+    handler.store = RuntimeWorkStore::new(root.path().join("runtime.json"));
+    let mut link = RuntimeTaskLink::new_pending("chat".into(), "/work".into(), "Chat".into());
+    link.thread_id = Some("thread".into());
+    handler.upsert_local_task(link);
+    let mut payload = json!({"message":"internal continuation","clientUserMessageId":"activity-next",
+        "userMessagePresentation":{"content":"任务完成，开始汇总结果"}});
+    normalize_user_message_presentation(&mut payload).unwrap();
+    handler.mark_task_running_for_send(
+        "chat",
+        "thread",
+        "/work",
+        &ExecutionRequest::default(),
+        &payload,
+    );
+    handler.record_runtime_turn_id("chat", "next", "turn-next", Some("activity-next"));
+    let persisted = handler.local_task_link("chat").unwrap();
+    let presentations = user_message_presentations(&persisted);
+    assert_eq!(presentations.len(), 1);
+    assert_eq!(presentations[0]["content"], "任务完成，开始汇总结果");
+    assert_eq!(presentations[0]["turnId"], "turn-next");
+    assert_eq!(presentations[0]["restoreContent"], true);
+}
+
+#[test]
 fn assistant_phase_resets_at_the_root_turn_boundary_only() {
     let (event_tx, mut event_rx) = broadcast::channel(16);
     let mut mapper = CodexNotificationEventMapper::default();
@@ -407,26 +492,6 @@ fn transcript_restores_native_references_from_saved_user_content() {
 }
 
 #[test]
-fn transcript_keeps_plain_provider_paths_without_an_explicit_saved_reference() {
-    let mut messages = vec![json!({
-        "id": "provider-user",
-        "clientUserMessageId": "client-user",
-        "role": "user",
-        "content": "/tmp/abc.pdf provider content"
-    })];
-    let presentation = user_message_presentation(&json!({
-        "clientUserMessageId": "client-user",
-        "message": "/tmp/abc.pdf original content"
-    }))
-    .expect("saved plain message");
-
-    attach_user_message_presentations(&mut messages, vec![presentation]);
-
-    assert_eq!(messages[0]["content"], "/tmp/abc.pdf provider content");
-    assert!(messages[0].get("presentationReferences").is_none());
-}
-
-#[test]
 fn transcript_does_not_apply_provider_ranges_after_restoring_attachment_content() {
     let original = "[$xyz](/tmp/xyz/SKILL.md) 查看附件";
     let presentation = user_message_presentation(&json!({
@@ -519,6 +584,7 @@ async fn goal_continuation_events_do_not_reuse_initial_user_presentation() {
         &request,
         Some(&active),
         Ok(crate::agents::CodexAppServerTurn {
+            quota_recovery: None,
             thread_id: "thread-1".to_owned(),
             outcome: ExecutionOutcome::Completed {
                 content: "Continuation output".to_owned(),

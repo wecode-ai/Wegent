@@ -1,0 +1,12 @@
+{
+  "order": 195000,
+  "scenario": "./scenarios/git-commit-generation.scenario.mjs",
+  "scenarioOnly": true,
+  "ci": {
+    "core": {
+      "order": 143000,
+      "shard": 5,
+      "position": 15000
+    }
+  }
+}

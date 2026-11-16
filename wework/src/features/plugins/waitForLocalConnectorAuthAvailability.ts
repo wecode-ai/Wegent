@@ -47,7 +47,7 @@ export async function waitForLocalConnectorAuthAvailability(
   const probe =
     options.probe ??
     ((currentTarget: LocalConnectorAuthTarget) =>
-      localConnectorAuthHealth(currentTarget, { bypassCache: true }))
+      localConnectorAuthHealth(currentTarget, { bypassCache: true, prepareRuntime: true }))
   const wait = options.wait ?? waitForDelay
 
   for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {

@@ -56,6 +56,10 @@ def api(test_db, test_user, monkeypatch):
     app = FastAPI()
     app.include_router(wework_api.router, prefix="/api")
     app.include_router(openapi_responses.router, prefix=f"{PREFIX}/responses")
+    # Exercise the retained reference after production ownership moves to Rust.
+    app.add_api_route(
+        f"{PREFIX}/responses", openapi_responses.create_response, methods=["POST"]
+    )
     app.dependency_overrides[get_db] = lambda: test_db
     monkeypatch.setattr(openapi_responses.limiter, "enabled", False)
     monkeypatch.setattr(
@@ -285,6 +289,64 @@ def test_conversation_paging_always_exposes_latest_turn(api):
     assert detail["has_more"] is True
 
 
+def test_hidden_model_continues_an_existing_conversation(api, test_db, monkeypatch):
+    """A model hidden after the first turn keeps serving its conversation."""
+    from app.models.kind import Kind
+
+    model = Kind(
+        user_id=0,
+        kind="Model",
+        name="model-1",
+        namespace="default",
+        is_active=True,
+        json={
+            "apiVersion": "agent.wecode.io/v1",
+            "kind": "Model",
+            "metadata": {"name": "model-1", "namespace": "default"},
+            "spec": {
+                "isVisible": True,
+                "isWeworkAvailable": True,
+                "modelType": "llm",
+                "modelConfig": {
+                    "env": {"model": "openai", "model_id": "model-1-upstream"}
+                },
+            },
+        },
+    )
+    test_db.add(model)
+    test_db.commit()
+
+    first = submit(api).json()
+    finish(api, first["id"])
+    task_id = ResponseIdentity.parse(first["id"]).task_id
+    api.tasks[task_id]["modelSelection"] = {
+        "modelName": "model-1",
+        "modelType": "public",
+        "options": {
+            "weworkCloudModelNamespace": "default",
+            "weworkCloudModelResourceUserId": 0,
+        },
+    }
+
+    model.json["spec"]["isVisible"] = False
+    test_db.add(model)
+    test_db.commit()
+    monkeypatch.setattr(models, "catalog", lambda *_: [])
+
+    second = submit(api, conversation=first["conversation"]["id"], execution=None)
+
+    assert second.status_code == 200, second.text
+    api.create.assert_awaited_once()
+    api.send.assert_awaited_once()
+    selection = api.send.await_args.kwargs["request"].model_selection
+    assert selection.model_name == "model-1"
+    assert selection.model_type == "public"
+    assert selection.options == {
+        "weworkCloudModelNamespace": "default",
+        "weworkCloudModelResourceUserId": 0,
+    }
+
+
 @pytest.mark.parametrize("mode", ["stream", "blocking"])
 def test_subscribe_before_dispatch_preserves_fast_output_and_cleans_up(api, mode):
     create = api.create.side_effect
@@ -347,9 +409,9 @@ def test_unsupported_or_invalid_input_fails_before_dispatch(api, fields):
     api.create.assert_not_awaited()
 
 
-def test_python_backend_registers_restored_public_responses_route(test_app):
+def test_python_backend_keeps_conversations_after_responses_cutover(test_app):
     paths = {route.path for route in test_app.routes if hasattr(route, "path")}
-    assert f"{PREFIX}/responses" in paths
+    assert f"{PREFIX}/responses" not in paths
     assert f"{PREFIX}/conversations" in paths
     assert "/v1/api/wework/responses" not in paths
 

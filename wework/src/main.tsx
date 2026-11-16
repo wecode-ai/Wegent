@@ -30,12 +30,16 @@ import { installFrontendRecoveryBridge } from '@/lib/frontendRecovery'
 import { DshClientContextProvider } from '@/features/dsh-runtime/DshClientContextProvider'
 import { initializeDesktopLocalStoragePersistence } from '@/desktop/localStoragePersistence'
 import { reportDesktopStartupFailure } from '@/desktop/startupFailure'
+import { applyAppearance } from '@/features/appearance/applyAppearance'
+import { readStoredAppearance } from '@/features/appearance/storage'
 
 import type { Context } from '@deepseek-ai/cordis'
 
 interface WeworkAppRuntime {
   mount(container: HTMLElement, context: Context): Promise<() => void>
 }
+
+applyAppearance(readStoredAppearance())
 
 const rendererStartupStartedAt = performance.now()
 
@@ -123,6 +127,7 @@ const desktopStorageReady = (async () => {
   logRendererStartupStep('renderer-storage-initialize', 'started')
   try {
     await initializeDesktopLocalStoragePersistence()
+    applyAppearance(readStoredAppearance())
     await initializeProviderModelConfiguration()
     logRendererStartupStep('renderer-storage-initialize', 'completed')
     return null

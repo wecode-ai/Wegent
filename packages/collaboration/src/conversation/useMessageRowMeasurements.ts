@@ -1,4 +1,4 @@
-import { useCallback, useLayoutEffect, useRef } from 'react'
+import { useCallback, useLayoutEffect } from 'react'
 import type { RefObject } from 'react'
 import type { ConversationVirtualizer } from './useConversationVirtualizer'
 import type { VirtualMessageMeasurement } from './MessageList'
@@ -67,7 +67,6 @@ export function useMessageRowMeasurements(
   virtualizer: ConversationVirtualizer,
   enabled: boolean
 ) {
-  const pending = useRef(new Set<HTMLElement>())
   const measureRows = useCallback(
     (rows: HTMLElement[]) => {
       if (!enabled) return
@@ -75,7 +74,13 @@ export function useMessageRowMeasurements(
       // Read the complete initial batch before registering rows can update virtual layout.
       attached.forEach(row => initialBounds.set(row, row.getBoundingClientRect()))
       attached.forEach(row => {
-        if (virtualizer.isScrolling) pending.current.add(row)
+        // Native scroll observation can still be active during task restoration.
+        // Commit the same DOM measurement before paint; measureElement otherwise
+        // defers it until ResizeObserver and exposes the estimated row for a frame.
+        const index = Number(row.dataset.index)
+        const size = virtualizer.options.measureElement(row, undefined, virtualizer)
+        const item = virtualizer.getVirtualItems().find(item => item.index === index)
+        if (item && item.size !== size) virtualizer.resizeItem(index, size)
         virtualizer.measureElement(row)
         initialBounds.delete(row)
       })
@@ -94,14 +99,7 @@ export function useMessageRowMeasurements(
         virtualizer.elementsCache.get(virtualizer.options.getItemKey(Number(row.dataset.index))) !==
         row
     )
-    for (const row of pending.current) {
-      if (!listRef.current?.contains(row)) pending.current.delete(row)
-    }
-    if (!virtualizer.isScrolling) {
-      changed.push(...pending.current)
-      pending.current.clear()
-    }
-    if (changed.length) measureRows([...new Set(changed)])
+    if (changed.length) measureRows(changed)
   })
   const measureRow = useCallback((row: HTMLElement) => measureRows([row]), [measureRows])
   return { measureRow, measureRows }

@@ -59,6 +59,82 @@ describe('createHttpClient', () => {
     }
   })
 
+  test('replays failed-assignment recovery only after the user confirms the selection', async () => {
+    const choose = vi.fn(async () => ({}))
+    const unregister = registerRunnerSelectionHandler(choose)
+    fetchMock
+      .mockResolvedValueOnce({
+        ok: false,
+        status: 422,
+        text: async () =>
+          JSON.stringify({
+            detail: {
+              error_code: 'ISSUE_RUNNER_CONFLICT',
+              message: 'Bound runner differs',
+              runner_selection_request: {
+                runtime: 'codex',
+                execution_policy: { mode: 'fixed', environment_id: '2' },
+                model_policy: { mode: 'user_select' },
+                environments: [],
+                cloud_models: [],
+                cloud_only: false,
+                recovery_from_environment_id: '1',
+              },
+            },
+          }),
+      })
+      .mockResolvedValueOnce({ ok: true, status: 200, json: async () => ({ version: 2 }) })
+    try {
+      await createHttpClient({ baseUrl: 'https://cloud.example/api' }).post('/assignments', {
+        version: 1,
+      })
+      expect(choose).toHaveBeenCalledOnce()
+      expect(JSON.parse(fetchMock.mock.calls[0][1].body)).toEqual({ version: 1 })
+      expect(JSON.parse(fetchMock.mock.calls[1][1].body)).toEqual({
+        version: 1,
+        runner_selection: { recovery_from_environment_id: '1' },
+      })
+    } finally {
+      unregister()
+    }
+  })
+
+  test('cancelling recovery keeps the original routing rejection and never replays', async () => {
+    const unregister = registerRunnerSelectionHandler(async () => {
+      throw new Error('Cancelled')
+    })
+    fetchMock.mockResolvedValueOnce({
+      ok: false,
+      status: 422,
+      text: async () =>
+        JSON.stringify({
+          detail: {
+            error_code: 'ISSUE_RUNNER_CONFLICT',
+            message: 'Bound runner differs',
+            runner_selection_request: {
+              runtime: 'codex',
+              execution_policy: { mode: 'fixed', environment_id: '2' },
+              model_policy: { mode: 'user_select' },
+              environments: [],
+              cloud_models: [],
+              cloud_only: false,
+              recovery_from_environment_id: '1',
+            },
+          },
+        }),
+    })
+    try {
+      await expect(
+        createHttpClient({ baseUrl: 'https://cloud.example/api' }).post('/assignments', {
+          version: 1,
+        })
+      ).rejects.toMatchObject({ detail: { error_code: 'ISSUE_RUNNER_CONFLICT' } })
+      expect(fetchMock).toHaveBeenCalledOnce()
+    } finally {
+      unregister()
+    }
+  })
+
   test('cancels account-owned requests through the client lifetime signal', async () => {
     const controller = new AbortController()
     fetchMock.mockImplementation(
@@ -75,6 +151,52 @@ describe('createHttpClient', () => {
 
     await rejected
     expect(fetchMock.mock.calls[0][1].signal).toBe(controller.signal)
+  })
+
+  test.each(['account', 'request'] as const)(
+    'preserves %s cancellation when a request has both lifetime and view signals',
+    async owner => {
+      const account = new AbortController()
+      const request = new AbortController()
+      fetchMock.mockImplementation(
+        (_url, init) =>
+          new Promise((_resolve, reject) => {
+            init.signal.throwIfAborted()
+            init.signal.addEventListener('abort', () => reject(init.signal.reason), { once: true })
+          })
+      )
+      const client = createHttpClient({ baseUrl: '/api', signal: account.signal })
+      const pending = client.post('/runtime-work/transcript', {}, { signal: request.signal })
+      const rejected = expect(pending).rejects.toMatchObject({ name: 'AbortError' })
+      const active = owner === 'account' ? account : request
+      const other = owner === 'account' ? request : account
+      active.abort()
+      await rejected
+      expect(other.signal.aborted).toBe(false)
+      expect(fetchMock.mock.calls[0][1].signal.reason).toBe(active.signal.reason)
+    }
+  )
+
+  test('cancelling a view leaves another account-owned request usable', async () => {
+    const account = new AbortController()
+    const view = new AbortController()
+    const completions: Array<(value: unknown) => void> = []
+    fetchMock.mockImplementation(
+      (_url, init) =>
+        new Promise((resolve, reject) => {
+          completions.push(resolve)
+          init.signal.addEventListener('abort', () => reject(init.signal.reason), { once: true })
+        })
+    )
+    const client = createHttpClient({ baseUrl: '/api', signal: account.signal })
+    const read = client.post('/runtime-work/transcript', {}, { signal: view.signal })
+    const readRejected = expect(read).rejects.toMatchObject({ name: 'AbortError' })
+    const control = client.get('/runtime-work')
+    view.abort()
+    await readRejected
+    expect(account.signal.aborted).toBe(false)
+    completions[1]({ ok: true, status: 200, json: async () => ({ tasks: [] }) })
+    await expect(control).resolves.toEqual({ tasks: [] })
   })
 
   test('adds auth token and parses json responses', async () => {

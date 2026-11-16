@@ -169,12 +169,20 @@ class PluginAuthLocalLifecycleService:
             )
             db.add(row)
         previous = (row.json or {}).get("spec", {})
-        row.json = {
-            "spec": {
-                "enabled": enabled,
-                "pendingLogins": previous.get("pendingLogins", {}) if enabled else {},
-            }
+        spec = {
+            "enabled": enabled,
+            "pendingLogins": previous.get("pendingLogins", {}) if enabled else {},
         }
+        if "pendingNativeLogins" in previous:
+            spec["pendingNativeLogins"] = (
+                previous["pendingNativeLogins"] if enabled else {}
+            )
+        if "revision" in previous:
+            revision = previous["revision"]
+            if type(revision) is not int or not 0 <= revision < 2**63 - 1:
+                raise PluginAccountAuthError("plugin_auth_revision_conflict")
+            spec["revision"] = revision + 1
+        row.json = {"spec": spec}
         db.flush()
 
     @staticmethod

@@ -4,6 +4,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from '@/hooks/useTranslation'
 import { isImeEnterEvent } from '@/lib/ime'
 import { cn } from '@/lib/utils'
+import { isPrimaryStandInConversation } from '@/lib/runtime-task-visibility'
 import {
   WORKBENCH_CLOUD_SEARCH_RESULTS_EVENT,
   type WorkbenchCloudSearchResultsDetail,
@@ -273,6 +274,7 @@ function mergeSearchItems(
   const merged = new Map<string, RuntimeWorkSearchItem>()
   const candidates = [...primary, ...secondary]
   candidates.forEach(item => {
+    if (isPrimaryStandInConversation(item.address)) return
     const key = [
       item.address.deviceId,
       item.address.taskId,

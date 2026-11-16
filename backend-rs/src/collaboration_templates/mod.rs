@@ -184,6 +184,26 @@ enum SaveResult {
     Conflict,
 }
 
+#[brz_http_server::delete("/api/v1/collaboration-templates/:template_id")]
+async fn delete_template(
+    #[inject(state)] state: &AppState,
+    #[auth] user: SessionUser,
+    template_id: i64,
+) -> Result<Value, FastApiError> {
+    let user_id = i64::from(user.id);
+    state.mysql.with_transaction(async |tx| {
+        // Use the same identity lock as save; deletion must not race with a save.
+        let _: Option<IdRow> = tx.fetch_optional("SELECT id FROM users WHERE id=? FOR UPDATE", (user_id,)).await?;
+        let row: Option<Row> = tx.fetch_optional(format!("SELECT {COLUMNS} FROM kinds WHERE id=? AND user_id=? AND namespace='default' AND kind='Template' AND is_active=true FOR UPDATE"), (template_id,user_id)).await?;
+        if let Some(row) = row.filter(collaboration) {
+            tx.execute("UPDATE kinds SET is_active=false,updated_at=NOW() WHERE id=? AND user_id=? AND namespace=? AND name=? AND kind='Template'", (row.id,user_id,row.namespace.as_str(),row.name.as_str())).await?;
+        }
+        Ok(())
+    }).await.map_err(internal)?;
+    // Idempotent and non-disclosing, including retries after local cache failures.
+    Ok(json!({"deleted": true}))
+}
+
 #[brz_http_server::put("/api/v1/collaboration-templates/:name")]
 async fn save_template(
     #[inject(state)] state: &AppState,

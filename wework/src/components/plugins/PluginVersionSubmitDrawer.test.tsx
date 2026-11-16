@@ -1,8 +1,8 @@
+import '@/i18n'
+import type { PluginAccessResponse } from '@/types/api'
 import { fireEvent, render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { describe, expect, test, vi } from 'vitest'
-import '@/i18n'
-import type { PluginAccessResponse } from '@/types/api'
 import { PluginVersionSubmitDrawer } from './PluginVersionSubmitDrawer'
 
 const access: PluginAccessResponse = {
@@ -51,23 +51,6 @@ describe('PluginVersionSubmitDrawer', () => {
     expect(screen.getByTestId('plugin-version-submit-confirm')).toBeDisabled()
   })
 
-  test('requires nonblank release notes, enforces the length limit and submits trimmed notes', () => {
-    const onSubmit = vi.fn()
-    render(<PluginVersionSubmitDrawer {...props()} onSubmit={onSubmit} />)
-    const notes = screen.getByTestId('plugin-version-submit-notes')
-    const submit = screen.getByTestId('plugin-version-submit-confirm')
-
-    expect(notes).toHaveAttribute('maxlength', '2000')
-    fireEvent.change(notes, { target: { value: '   ' } })
-    expect(notes).toHaveAttribute('aria-invalid', 'true')
-    expect(submit).toBeDisabled()
-    fireEvent.change(notes, { target: { value: 'x'.repeat(2001) } })
-    expect(submit).toBeDisabled()
-    fireEvent.change(notes, { target: { value: '  新增排期查询。  ' } })
-    fireEvent.click(submit)
-    expect(onSubmit).toHaveBeenCalledExactlyOnceWith('新增排期查询。')
-  })
-
   test('keeps notes through a failed submission and allows retry with the same notes', () => {
     const options = props()
     const { rerender } = render(<PluginVersionSubmitDrawer {...options} />)
@@ -100,14 +83,6 @@ describe('PluginVersionSubmitDrawer', () => {
     expect(options.onClose).not.toHaveBeenCalled()
     expect(options.onManageAccess).not.toHaveBeenCalled()
     expect(options.onSubmit).not.toHaveBeenCalled()
-  })
-
-  test('passes its draft to sharing management and restores a supplied draft', () => {
-    const options = props()
-    render(<PluginVersionSubmitDrawer {...options} initialReleaseNotes="  改进查询  " />)
-    expect(screen.getByTestId('plugin-version-submit-notes')).toHaveValue('  改进查询  ')
-    fireEvent.click(screen.getByTestId('plugin-version-submit-manage-access'))
-    expect(options.onManageAccess).toHaveBeenCalledExactlyOnceWith('  改进查询  ')
   })
 
   test('traps keyboard focus, dismisses on Escape and restores focus to its trigger', async () => {

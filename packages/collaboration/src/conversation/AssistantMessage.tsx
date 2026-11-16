@@ -59,10 +59,13 @@ import {
 export function AssistantMessage({
   imageServices,
   renderVisualization,
+  assistantMessageStyle = "plain",
+  showProcessingStatus = true,
   message,
   runtimeTurn,
   conversationKey,
   isActiveTurn = false,
+  isHistoricalTurn = false,
   forceExpanded = false,
   devices,
   onRetryFailedMessage,
@@ -81,6 +84,8 @@ export function AssistantMessage({
   onFork,
 }: {
   imageServices: AttachmentImageServices<Attachment>;
+  assistantMessageStyle?: "plain" | "bubble";
+  showProcessingStatus?: boolean;
   renderVisualization?: (
     part: { file: string; mode?: "wide"; title?: string },
     message: WorkbenchMessage,
@@ -89,6 +94,7 @@ export function AssistantMessage({
   runtimeTurn?: RuntimeConversationTurn;
   conversationKey?: string | number | null;
   isActiveTurn?: boolean;
+  isHistoricalTurn?: boolean;
   forceExpanded?: boolean;
   devices: Array<{ device_id: string; status: string }>;
   onRetryFailedMessage?: (message: WorkbenchMessage) => void;
@@ -125,7 +131,7 @@ export function AssistantMessage({
   const interactions = useToolInteractionServices();
   const isCancelled = isCancelledAssistantMessage(message);
   const stoppedElapsedDuration =
-    isCancelled && message.stoppedNotice !== false
+    showProcessingStatus && isCancelled && message.stoppedNotice !== false
       ? getStoppedElapsedDuration(message, runtimeTurn)
       : null;
   const shouldShowStoppedNotice =
@@ -152,13 +158,17 @@ export function AssistantMessage({
   const hasProcessingActivity =
     hasBlocks || message.blocks?.some((block) => block.type === "thinking");
   const hasVisibleContent = Boolean(visibleContent.trim());
-  const isStreaming = !isCancelled && message.status === "streaming";
+  const isStreaming =
+    !isHistoricalTurn && !isCancelled && message.status === "streaming";
   const activeThinkingContent = isStreaming
     ? getRuntimeMessageActiveThinking(message)
     : "";
   const hasRunningBlocks = hasRunningProcessingBlocks(displayBlocks);
   const isAssistantSettled =
-    isCancelled || message.status === "done" || message.status === "failed";
+    isHistoricalTurn ||
+    isCancelled ||
+    message.status === "done" ||
+    message.status === "failed";
   const isAssistantRunning =
     !isAssistantSettled && (isStreaming || hasRunningBlocks);
   const canShowFinalArtifacts = !isAssistantRunning;
@@ -188,6 +198,7 @@ export function AssistantMessage({
     expandedToolDetailStateKeys,
   );
   const usesFinalProcessingShell =
+    showProcessingStatus &&
     hasBlocks &&
     !isAssistantRunning &&
     !isActiveTurn &&
@@ -297,6 +308,11 @@ export function AssistantMessage({
               data-runtime-item-id={segment.id}
               data-message-selectable-text
               data-testid="assistant-message-content"
+              className={
+                assistantMessageStyle === "bubble"
+                  ? "w-fit max-w-full rounded-3xl bg-muted px-4 py-3"
+                  : undefined
+              }
               data-search-region-id={segment.id}
             >
               <AssistantMarkdown
@@ -406,12 +422,13 @@ export function AssistantMessage({
                 : t("assistant_status.stopped")}
             </div>
           ) : null}
-          {(hasProcessingActivity ||
+          {showProcessingStatus &&
+          (hasProcessingActivity ||
             (message.status === "failed" && hasTurnDuration)) &&
           !isCancelled &&
           !usesFinalProcessingShell ? (
             <div
-              className="mb-3 w-full border-b border-border pb-2 text-sm text-text-muted"
+              className="mb-3 w-full pb-2 text-sm text-text-muted"
               data-testid="live-processing-timeline"
             >
               {processingDurationLabel}
@@ -419,7 +436,7 @@ export function AssistantMessage({
           ) : null}
           {usesFinalProcessingShell ? (
             <div
-              className="mb-3 min-w-0 w-full border-b border-border pb-2"
+              className="mb-3 min-w-0 w-full pb-2"
               data-testid="final-processing-timeline"
             >
               <button
@@ -448,11 +465,11 @@ export function AssistantMessage({
           {displayBlocks.map((block) =>
             block.type === "tool" && block.mcpServer ? (
               <Fragment key={`mcp-app:${block.id}`}>
-                {interactions.renderMcpApp?.(block)}
+                {interactions.renderMcpApp?.(block, message.turnId)}
               </Fragment>
             ) : null,
           )}
-          {shouldShowThinking && !hasVisibleContent && (
+          {showProcessingStatus && shouldShowThinking && !hasVisibleContent && (
             <AssistantThinkingIndicator content={activeThinkingContent} />
           )}
           {generatedImages.length > 0 ? (
@@ -470,6 +487,11 @@ export function AssistantMessage({
               }
               data-message-selectable-text
               data-testid="assistant-message-content"
+              className={
+                assistantMessageStyle === "bubble"
+                  ? "w-fit max-w-full rounded-3xl bg-muted px-4 py-3"
+                  : undefined
+              }
               data-search-region-id={renderProjection.finalRegion.id}
             >
               <AssistantMarkdown

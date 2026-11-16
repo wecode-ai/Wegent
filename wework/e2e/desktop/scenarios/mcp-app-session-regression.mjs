@@ -1,6 +1,18 @@
 import assert from 'node:assert/strict'
 import { runtimeTransportGates } from '../modules/runtime-transport-gates.mjs'
 
+/** Verify the exact app result within the caller's UI or executor-recovery deadline. */
+export async function waitForMcpAppText(frameAction, text, deadline) {
+  let actual
+  do {
+    actual = await frameAction('text', '#status')
+    if (actual === text) return
+    await new Promise(resolve => setTimeout(resolve, 100))
+  } while (Date.now() < deadline)
+  assert.equal(actual, text)
+}
+
+/** Verify a late initialization cannot dispose a replacement app's retained native session. */
 export async function verifyMcpReplacementSession(control, callId, sessionIds, timeoutMs) {
   const gates = runtimeTransportGates(control)
   const scope = `[data-testid="mcp-app"][data-mcp-call-id="${callId}"]`

@@ -838,7 +838,7 @@ function LocalProjectEditDialogContent({
           </p>
         )}
         {error && (
-          <p role="alert" className="mt-3 text-sm text-red-500">
+          <p role="alert" className="mt-3 text-sm text-destructive wework:text-red-500">
             {error}
           </p>
         )}
@@ -848,7 +848,7 @@ function LocalProjectEditDialogContent({
             data-testid="delete-local-project-button"
             disabled={submitting}
             onClick={onDelete}
-            className="h-9 rounded-lg bg-red-500/10 px-3 text-sm font-medium text-red-500 hover:bg-red-500/15 disabled:opacity-50"
+            className="h-9 rounded-lg bg-destructive/10 px-3 text-sm font-medium text-destructive hover:bg-destructive/15 disabled:opacity-50 wework:bg-red-500/10 wework:text-red-500 wework:hover:bg-red-500/15"
           >
             {t('workbench.delete_project', '删除项目')}
           </button>

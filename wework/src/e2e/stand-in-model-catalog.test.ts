@@ -1,3 +1,5 @@
+// @vitest-environment node
+
 import { afterEach, expect, test, vi } from 'vitest'
 import { CLOUD_PUBLIC_MODEL_NAME } from '../../e2e/desktop/modules/shared.mjs'
 import { createDesktopScenario } from '../../e2e/desktop/scenarios/stand-in-model-catalog.scenario.mjs'

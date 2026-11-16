@@ -1,11 +1,15 @@
+import { selectedToolCall } from '../modules/model-tool-calls.mjs'
+import { createDesktopScenario as createConsecutiveQuestions } from './consecutive-questions.scenario.mjs'
 import assert from 'node:assert/strict'
 import { writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 
 import { mcpElicitationConfigToml } from '../modules/desktop-build-flows.mjs'
 import {
+  assertElicitationToolResult,
   currentTurnHasToolOutput,
   currentTurnHasToolSearchResult,
+  lastUserMessageBody,
 } from '../modules/runtime-input-answer-model.mjs'
 import {
   assistantMessage,
@@ -46,15 +50,6 @@ function deferred() {
     resolve = resolvePromise
   })
   return { promise, resolve }
-}
-
-function lastUserMessageBody(body) {
-  const input = Array.isArray(body.input) ? body.input : []
-  for (let index = input.length - 1; index >= 0; index -= 1) {
-    if (input[index]?.role === 'user') return JSON.stringify(input[index])
-  }
-  const messages = Array.isArray(body.messages) ? body.messages : []
-  return messages.length > 0 ? JSON.stringify(messages.at(-1)) : ''
 }
 
 function hasAcceptedQuestionAnswer(messages) {
@@ -285,7 +280,7 @@ async function startNewChat(control, composer, timeoutMs) {
   await selectE2EModel(control, DEFAULT_MODEL_ID, DEFAULT_MODEL_LABEL, WORKBENCH)
 }
 
-export function createDesktopScenario({ resultDir, uiTimeoutMs, modelResponseTimeoutMs }) {
+function createPersistenceScenario({ resultDir, uiTimeoutMs, modelResponseTimeoutMs }) {
   const evidencePath = join(resultDir, 'runtime-input-answer-evidence.jsonl')
   const pendingGates = new Set()
   let activeContinuationGate = null
@@ -311,12 +306,9 @@ export function createDesktopScenario({ resultDir, uiTimeoutMs, modelResponseTim
     modelRequestCount += 1
     const responseId = `wework-input-answer-${modelRequestCount}-${Date.now()}`
     if (currentTurnHasToolOutput(body, TOOL_CALL_ID)) {
-      assert.ok(
-        JSON.stringify(body).includes('E2E_MCP_ELICITATION_ACCEPTED:owner'),
-        'The real MCP server did not return the accepted audience to the model'
-      )
       const gate = activeContinuationGate
       assert.ok(gate, 'The terminal continuation arrived without a release gate')
+      assertElicitationToolResult(body, TOOL_CALL_ID, gate.cancelled === true)
       await gate.promise
       response.writeHead(200, { 'Content-Type': 'text/event-stream; charset=utf-8' })
       response.end(
@@ -334,7 +326,7 @@ export function createDesktopScenario({ resultDir, uiTimeoutMs, modelResponseTim
     )
     if (namespaceAdvertised || currentTurnHasToolSearchResult(body, TOOL_NAMESPACE)) {
       const tool = selectMcpTool(body, TOOL_NAMESPACE, TOOL_NAME, {})
-      events = namespacedFunctionCall(TOOL_CALL_ID, tool.namespace, tool.name, tool.arguments)
+      events = selectedToolCall(TOOL_CALL_ID, tool)
     } else {
       events = toolSearchResponseEvents(SEARCH_CALL_ID, selectToolSearch(body, TOOL_NAME))
     }
@@ -484,6 +476,8 @@ export function createDesktopScenario({ resultDir, uiTimeoutMs, modelResponseTim
 
       await startNewChat(control, ACTIVE_COMPOSER_SELECTOR, taskTimeoutMs)
       const rejectionGate = deferred()
+      // Cancellation can return the real MCP result before turn interruption settles.
+      rejectionGate.cancelled = true
       activeContinuationGate = rejectionGate
       await openElicitation(control, WORKBENCH, ACTIVE_COMPOSER_SELECTOR, taskTimeoutMs, resultDir)
       const rejectionTask = await waitForWorkbenchDebugState(
@@ -594,6 +588,22 @@ export function createDesktopScenario({ resultDir, uiTimeoutMs, modelResponseTim
         'An archived conversation was restored by its late input answer',
         taskTimeoutMs
       )
+    },
+  }
+}
+
+export function createDesktopScenario(options) {
+  const persistence = createPersistenceScenario(options)
+  const consecutive = createConsecutiveQuestions(options)
+  return {
+    ...persistence,
+    async handleHttp(request, response, url) {
+      if (await consecutive.handleHttp(request, response, url)) return true
+      return persistence.handleHttp(request, response, url)
+    },
+    async verify(control) {
+      await persistence.verify(control)
+      await consecutive.verify(control)
     },
   }
 }

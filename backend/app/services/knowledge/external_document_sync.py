@@ -376,6 +376,32 @@ class ExternalDocumentSyncModule:
             connection_report.eligible += 1
         return candidates
 
+    @staticmethod
+    def _report_check(document_id, document, decision, error_code=None) -> None:
+        from celery import current_task
+
+        from shared.event_reporting.catalogs.knowledge import loaded_scalar, observe
+
+        observe(
+            "knowledge.external.document.checked",
+            lambda: {
+                "kb_id": loaded_scalar(document, "kind_id"),
+                "document_id": document_id,
+                "status": "completed",
+                "error_code": error_code,
+                "data": {
+                    "decision": decision,
+                    "provider": loaded_scalar(
+                        loaded_scalar(document, "external_source"), "external_provider"
+                    ),
+                    "task_id": getattr(
+                        getattr(current_task, "request", None), "id", None
+                    ),
+                    "trigger": "scheduled",
+                },
+            },
+        )
+
     async def _apply_inspection_results(
         self,
         db: Session,
@@ -405,10 +431,12 @@ class ExternalDocumentSyncModule:
             if document is None or not self._still_matches(document, candidate):
                 report.skipped += 1
                 connection_report.skipped += 1
+                self._report_check(document_id, document, "stale_or_missing")
                 continue
             if document_id in skipped_document_ids:
                 report.skipped += 1
                 connection_report.skipped += 1
+                self._report_check(document_id, document, "skipped")
                 continue
             state = states.get(document_id)
             if state is None:
@@ -422,6 +450,12 @@ class ExternalDocumentSyncModule:
                     document,
                     last_checked_at=_utc_iso(),
                     last_error_code="external_sync_result_missing",
+                )
+                self._report_check(
+                    document_id,
+                    document,
+                    "check_failed",
+                    "external_sync_result_missing",
                 )
                 continue
             refresh = await self._apply_state(
@@ -458,6 +492,9 @@ class ExternalDocumentSyncModule:
     ) -> PendingExternalRefresh | None:
         now = _utc_iso()
         if state.error_code or not state.exists:
+            self._report_check(
+                document.id, document, "source_unavailable", state.error_code
+            )
             if not state.exists and state.error_code == "external_source_missing":
                 report.source_missing += 1
                 connection_report.source_missing += 1
@@ -497,6 +534,7 @@ class ExternalDocumentSyncModule:
                 remote_version,
                 sync.get("last_error_code"),
             )
+            self._report_check(document.id, document, "nonretryable_version")
             return None
         metadata = dict(state.metadata or {})
         if metadata.get("title"):
@@ -524,12 +562,18 @@ class ExternalDocumentSyncModule:
         ):
             report.unchanged += 1
             connection_report.unchanged += 1
+            self._report_check(document.id, document, "unchanged")
             return None
 
         report.updates_detected += 1
         connection_report.updates_detected += 1
         refresh_required = (
             remote_version != sync.get("content_version") or not document.attachment_id
+        )
+        self._report_check(
+            document.id,
+            document,
+            "refresh_required" if refresh_required else "reindex_required",
         )
         logger.info(
             "[External Sync] update detected document_id=%s knowledge_base_id=%s "
@@ -566,7 +610,7 @@ class ExternalDocumentSyncModule:
             if owner is None:
                 raise ValueError("Document owner no longer exists")
             knowledge_orchestrator.reindex_document(
-                db=db, user=owner, document_id=document.id
+                db=db, user=owner, document_id=document.id, trigger="external_sync"
             )
             report.reindexed += 1
             connection_report.reindex_queued += 1

@@ -1,7 +1,7 @@
 import { Button } from '@/components/ui/button'
 import { useCallback, useEffect, useEffectEvent, useLayoutEffect, useRef, useState } from 'react'
 import { AppBridge, type McpUiDisplayMode } from '@modelcontextprotocol/ext-apps/app-bridge'
-import { Maximize2, Minimize2, RefreshCw, X } from 'lucide-react'
+import { AlertCircle, Maximize2, Minimize2, RefreshCw, X } from 'lucide-react'
 import { dequal } from 'dequal'
 import type {
   McpAppDescriptor,
@@ -20,6 +20,11 @@ import { appDocumentOrigin, appDocumentTransport } from './transport'
 import { legacyWidgetDocument } from './legacyBridge'
 import { appDisplayModes, appHostContext, appInitialDisplayMode } from './hostContext'
 import { requestEmbeddedBrowserOpen } from '@/lib/embedded-browser'
+import { openAppNavigation } from './appNavigation'
+import {
+  forwardVisualizationWheel,
+  withVisualizationWheel,
+} from '@/components/chat/inlineVisualizationScroll'
 
 function record(value: unknown): Record<string, unknown> {
   return value !== null && typeof value === 'object' && !Array.isArray(value)
@@ -60,6 +65,7 @@ async function createAppDocument(
 
 export function McpAppHost({
   block,
+  turnId,
   address,
   api,
   onMessage,
@@ -67,6 +73,7 @@ export function McpAppHost({
   onDisplayModeChange,
 }: {
   block: ToolBlock
+  turnId?: string
   address: RuntimeTaskAddress
   api: RuntimeMcpAppsApi
   onMessage?: (text: string) => Promise<void>
@@ -85,6 +92,7 @@ export function McpAppHost({
   const [height, setHeight] = useState(400)
   const frame = useRef<HTMLIFrameElement>(null)
   const [document, setDocument] = useState<AppDocument>()
+  const [wheelToken] = useState(() => crypto.randomUUID())
   const [initializedDocument, setInitializedDocument] = useState<string>()
   const bridge = useRef<AppBridge>(null)
   const teardownSent = useRef(false)
@@ -96,6 +104,7 @@ export function McpAppHost({
     invokeDesktopHost('mcpApps.retainSession', {
       address,
       callId: block.id,
+      turnId,
       sessionId,
       windowLabel: getDesktopWindowLabel(),
       target: api.getMcpAppSessionTarget?.(address),
@@ -103,7 +112,7 @@ export function McpAppHost({
   )
   const requestApp = useEffectEvent(async (data: Partial<McpAppRequest>) => {
     if (data.sessionId) await retainSession(data.sessionId)
-    return api.requestMcpApp({ ...data, address, callId: block.id })
+    return api.requestMcpApp({ ...data, address, callId: block.id, turnId })
   })
   const hasMessage = onMessage !== undefined
   const hasContext = onContext !== undefined
@@ -137,10 +146,19 @@ export function McpAppHost({
   }, [closed, panelDismissed, mode, onDisplayModeChange, dismissPanel])
 
   const discovered = useRef(false)
+  const attemptedDiscovery = useRef<unknown>(undefined)
+  const discoveryInput = useEffectEvent(() => ({
+    address,
+    turnId,
+    callId: block.id,
+    status: block.status,
+    output: block.toolOutput,
+  }))
   const discoveryPending = useRef(false)
   const discoveryEpoch = useRef(0)
   useEffect(
     () => () => {
+      attemptedDiscovery.current = undefined
       discoveryEpoch.current++
       discoveryPending.current = false
     },
@@ -148,6 +166,9 @@ export function McpAppHost({
   )
   useEffect(() => {
     if (discovered.current || discoveryPending.current) return
+    const input = discoveryInput()
+    if (dequal(attemptedDiscovery.current, input)) return
+    attemptedDiscovery.current = input
     const epoch = discoveryEpoch.current
     const status = block.status
     discoveryPending.current = true
@@ -178,9 +199,9 @@ export function McpAppHost({
         if (epoch !== discoveryEpoch.current) return
         discoveryPending.current = false
         // Schedule after clearing pending so the next effect cannot lose this transition.
-        if (!discovered.current && status !== latest().block.status) setAttempt(value => value + 1)
+        if (!discovered.current && !dequal(input, discoveryInput())) setAttempt(value => value + 1)
       })
-  }, [address.deviceId, address.taskId, block.id, block.status, block.toolOutput, attempt])
+  }, [address.deviceId, address.taskId, block.id, block.status, block.toolOutput, turnId, attempt])
 
   useEffect(() => {
     if (!app || closed) return
@@ -229,7 +250,10 @@ export function McpAppHost({
       const initialMode = appInitialDisplayMode(descriptor)
       if (!initialMode) throw new Error(t('mcp_apps.unsupported_display_mode'))
       created = await createAppDocument(
-        content.mimeType === 'text/html+skybridge' ? legacyWidgetDocument(html) : html,
+        withVisualizationWheel(
+          content.mimeType === 'text/html+skybridge' ? legacyWidgetDocument(html) : html,
+          wheelToken
+        ),
         metadata,
         descriptor.sessionId
       )
@@ -250,7 +274,7 @@ export function McpAppHost({
           console.info('[Wework] MCP App document release failed', { name: error.name })
         })
     }
-  }, [descriptor, closed, t])
+  }, [descriptor, closed, t, wheelToken])
 
   const synchronizeToolData = useEffectEvent(async () => {
     const app = bridge.current
@@ -313,6 +337,7 @@ export function McpAppHost({
     app.onlistresources = params => request('resources/list', params)
     app.onlistresourcetemplates = params => request('resources/templates/list', params)
     app.onopenlink = async ({ url }) => {
+      if (url.startsWith('wework://')) return { isError: !openAppNavigation(url) }
       if (!['https:', 'http:'].includes(new URL(url).protocol)) return { isError: true }
       return { isError: !requestEmbeddedBrowserOpen(url) }
     }
@@ -388,8 +413,20 @@ export function McpAppHost({
       if (active) setFailure(error.message)
     }
     const element = frame.current
+    const origin = appDocumentOrigin(document.url)
+    const onWheel = (event: MessageEvent) => {
+      if (
+        element.isConnected &&
+        latest().mode === 'inline' &&
+        event.source === element.contentWindow &&
+        event.origin === origin
+      ) {
+        forwardVisualizationWheel(element, event.data, wheelToken)
+      }
+    }
+    window.addEventListener('message', onWheel)
     void app
-      .connect(appDocumentTransport(element.contentWindow!, appDocumentOrigin(document.url)))
+      .connect(appDocumentTransport(element.contentWindow!, origin))
       .then(() => {
         // Listen before loading a document that can initialize immediately.
         if (active && element.src !== document.url) element.src = document.url
@@ -404,7 +441,7 @@ export function McpAppHost({
     const observer = new MutationObserver(updateContext)
     observer.observe(window.document.documentElement, {
       attributes: true,
-      attributeFilter: ['class'],
+      attributeFilter: ['class', 'style', 'data-theme', 'data-appearance-theme'],
     })
     return () => {
       active = false
@@ -413,6 +450,7 @@ export function McpAppHost({
       sentResult.current = undefined
       observer.disconnect()
       resize.disconnect()
+      window.removeEventListener('message', onWheel)
       bridge.current = null
       if (teardownSent.current) void app.close()
       else
@@ -421,7 +459,7 @@ export function McpAppHost({
           .catch(() => {})
           .finally(() => app.close())
     }
-  }, [document, descriptor, block.id, t, hasMessage, hasContext, closeApp])
+  }, [document, descriptor, block.id, t, hasMessage, hasContext, closeApp, wheelToken])
 
   useEffect(() => {
     void synchronizeToolData().catch(error => setFailure(error.message))
@@ -434,26 +472,53 @@ export function McpAppHost({
 
   if (!app) return null
   const availableModes = appDisplayModes(descriptor)
-  const title = app.tool?.title ?? app.server ?? t('mcp_apps.title')
+  const resultTitle = [block.toolOutput, descriptor?.result]
+    .map(result => record(record(result).structuredContent).title)
+    .find((value): value is string => typeof value === 'string' && value.trim().length > 0)
+  const title = resultTitle ?? app.tool?.title ?? app.server ?? t('mcp_apps.title')
   const metadata = record(descriptor?.resource.contents[0]?._meta)
   const prefersBorder =
     (record(metadata.ui).prefersBorder ?? metadata['openai/widgetPrefersBorder']) !== false
+  const discoveryFailed = !descriptor && Boolean(failure)
   return (
     <section
       data-testid="mcp-app"
       data-mcp-call-id={block.id}
       data-display-mode={mode}
       className={
-        mode === 'fullscreen' && !closed && !panelDismissed
-          ? 'flex h-full min-h-0 flex-1 flex-col bg-background text-text-primary'
-          : mode === 'pip' && !closed
-            ? 'fixed bottom-4 right-4 z-critical w-96 overflow-hidden rounded-xl border border-border bg-background text-text-primary shadow-lg'
-            : `my-2 overflow-hidden bg-background text-text-primary ${prefersBorder ? 'rounded-lg shadow-sm outline-1 -outline-offset-1 outline-border' : ''}`
+        discoveryFailed
+          ? 'my-1 min-w-0 text-sm font-normal text-text-muted'
+          : mode === 'fullscreen' && !closed && !panelDismissed
+            ? 'flex h-full min-h-0 flex-1 flex-col bg-background text-text-primary'
+            : mode === 'pip' && !closed
+              ? 'fixed bottom-4 right-4 z-critical w-96 overflow-hidden rounded-xl border border-border bg-background text-text-primary shadow-lg'
+              : `my-2 overflow-hidden bg-background text-text-primary ${prefersBorder ? 'rounded-lg shadow-sm outline-1 -outline-offset-1 outline-border' : ''}`
       }
     >
       {(mode !== 'fullscreen' || closed || panelDismissed || failure || !document) && (
-        <div className="flex h-9 items-center gap-2 border-b border-border px-3">
-          <span className="min-w-0 flex-1 truncate text-sm">{title}</span>
+        <div
+          className={
+            discoveryFailed
+              ? 'flex min-h-7 items-start gap-1.5'
+              : 'flex h-9 items-center gap-2 border-b border-border px-3'
+          }
+        >
+          {discoveryFailed && <AlertCircle className="mt-1.5 size-4 shrink-0" aria-hidden="true" />}
+          <span
+            className={
+              discoveryFailed
+                ? 'min-w-0 flex-1 py-1 leading-5 [overflow-wrap:anywhere]'
+                : 'min-w-0 flex-1 truncate text-sm'
+            }
+          >
+            {discoveryFailed ? (
+              <span role="alert">
+                {title} · {failure}
+              </span>
+            ) : (
+              title
+            )}
+          </span>
           {failure && (
             <Button
               variant="ghost"
@@ -464,6 +529,7 @@ export function McpAppHost({
               aria-label={t('mcp_apps.retry')}
               onClick={() => {
                 discovered.current = false
+                attemptedDiscovery.current = undefined
                 setApp(undefined)
                 setDescriptor(undefined)
                 setFailure(undefined)
@@ -474,39 +540,42 @@ export function McpAppHost({
               <RefreshCw className="size-4" />
             </Button>
           )}
-          <Button
-            variant="ghost"
-            size="icon"
-            className="h-7 w-7 text-text-secondary"
-            data-testid="mcp-app-expand"
-            disabled={!closed && !panelDismissed && availableModes.length < 2}
-            title={t('mcp_apps.expand')}
-            aria-label={t('mcp_apps.expand')}
-            onClick={() => {
-              if (closed) {
-                discovered.current = false
-                setApp(undefined)
-                setDescriptor(undefined)
-                setFailure(undefined)
-                setAttempt(value => value + 1)
-              }
-              setClosed(false)
-              setPanelDismissed(false)
-              setMode(value =>
-                value === 'fullscreen'
-                  ? (availableModes.find(mode => mode !== value) ?? value)
-                  : availableModes.includes('fullscreen')
-                    ? 'fullscreen'
-                    : (availableModes.find(mode => mode !== value) ?? value)
-              )
-            }}
-          >
-            {mode === 'fullscreen' && !panelDismissed && !closed ? (
-              <Minimize2 className="size-4" />
-            ) : (
-              <Maximize2 className="size-4" />
-            )}
-          </Button>
+          {!discoveryFailed && (
+            <Button
+              variant="ghost"
+              size="icon"
+              className="h-7 w-7 text-text-secondary"
+              data-testid="mcp-app-expand"
+              disabled={!closed && !panelDismissed && availableModes.length < 2}
+              title={t('mcp_apps.expand')}
+              aria-label={t('mcp_apps.expand')}
+              onClick={() => {
+                if (closed) {
+                  discovered.current = false
+                  attemptedDiscovery.current = undefined
+                  setApp(undefined)
+                  setDescriptor(undefined)
+                  setFailure(undefined)
+                  setAttempt(value => value + 1)
+                }
+                setClosed(false)
+                setPanelDismissed(false)
+                setMode(value =>
+                  value === 'fullscreen'
+                    ? (availableModes.find(mode => mode !== value) ?? value)
+                    : availableModes.includes('fullscreen')
+                      ? 'fullscreen'
+                      : (availableModes.find(mode => mode !== value) ?? value)
+                )
+              }}
+            >
+              {mode === 'fullscreen' && !panelDismissed && !closed ? (
+                <Minimize2 className="size-4" />
+              ) : (
+                <Maximize2 className="size-4" />
+              )}
+            </Button>
+          )}
           {!closed && (
             <Button
               variant="ghost"
@@ -525,7 +594,7 @@ export function McpAppHost({
           )}
         </div>
       )}
-      {failure && (
+      {failure && !discoveryFailed && (
         <p role="alert" className="p-3 text-sm text-text-secondary">
           {failure}
         </p>

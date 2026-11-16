@@ -2,15 +2,21 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } fr
 import type { ComposerCloudMentionCandidate } from '@/components/chat/composer/composerMentionCandidates'
 import type { CloudLoopItem, CloudProject } from '@/api/deliveries'
 import {
-  findProjectSpaceContextForTask,
+  findProjectSpaceContextForTaskInStores,
   isDefaultWorkItemProject,
+  ProjectSpaceTaskContextUnavailableError,
+  projectSpaceForRuntimeTask,
+  projectSpaceTaskContextApisForTask,
   publishProjectSpaceTaskBindingChanged,
   projectSpaceKey,
   projectSpaceRef,
+  rememberProjectSpaceTaskBinding,
   runtimeCloudProjectId,
+  subscribeProjectSpaceTaskBindingChanged,
   subscribeProjectSpaceTaskContextChanged,
   type ProjectSpaceApi,
   type ProjectSpaceTaskContextApi,
+  type ProjectSpaceTaskBindingChange,
 } from '@/features/todo/projectSpaceSelection'
 import {
   projectSpaceContentRoute,
@@ -32,9 +38,9 @@ import type {
 import {
   createCloudProjectTaskRuntimeApi,
   projectTaskRuntimeApiForProject,
-  rememberProjectTaskStore,
   type ProjectTaskRuntimeApi,
 } from '@/features/workbench/projectTaskTracking'
+import { useProjectSpaceProjects } from './useProjectSpaceProjects'
 
 interface PendingTodoBinding {
   paneKey: string
@@ -155,7 +161,6 @@ function pendingBindingTargetsTask(address: RuntimeTaskAddress): boolean {
 }
 
 function publishBoundProjectSpaceContext(update: BoundProjectSpaceContextUpdate) {
-  rememberProjectTaskStore(update.task, update.project.project_store)
   publishProjectSpaceTaskBindingChanged({
     task: update.task,
     project: projectSpaceRef(update.project),
@@ -167,18 +172,19 @@ function publishBoundProjectSpaceContext(update: BoundProjectSpaceContextUpdate)
 }
 
 async function waitForPendingProjectSpaceContext(
-  apis: ProjectSpaceTaskContextApi[],
+  lookup: () => ReturnType<ProjectSpaceTaskContextApi['findCloudContextForTask']>,
   task: RuntimeTaskAddress,
   shouldContinue: () => boolean
 ) {
   let lastError: unknown
   for (let attempt = 0; attempt <= PENDING_BINDING_CONTEXT_RETRY_LIMIT; attempt += 1) {
     try {
-      return await findProjectSpaceContextForTask(apis, task)
+      return await lookup()
     } catch (error) {
       lastError = error
       if (
         attempt === PENDING_BINDING_CONTEXT_RETRY_LIMIT ||
+        error instanceof ProjectSpaceTaskContextUnavailableError ||
         !shouldContinue() ||
         !pendingBindingTargetsTask(task)
       ) {
@@ -313,25 +319,46 @@ export function useWorkbenchCloudProjectContext({
       (api, index): api is ProjectSpaceApi => Boolean(api) && candidates.indexOf(api) === index
     )
   }, [cloudProjectSpaceApi, deliveryApi, localProjectSpaceApi])
-  const todoBindingApis = useMemo(
-    () =>
-      [
+  const contextApisForTask = useCallback(
+    (task: RuntimeTaskAddress | null) =>
+      projectSpaceTaskContextApisForTask<ProjectTaskRuntimeApi>(
+        task,
         localProjectSpaceApi,
-        workspaceRuntimePort ? createCloudProjectTaskRuntimeApi(workspaceRuntimePort) : undefined,
-      ].filter((api): api is ProjectTaskRuntimeApi => Boolean(api)),
+        workspaceRuntimePort ? createCloudProjectTaskRuntimeApi(workspaceRuntimePort) : undefined
+      ),
+    [localProjectSpaceApi, workspaceRuntimePort]
+  )
+  const todoBindingApis = useMemo(() => contextApisForTask(null), [contextApisForTask])
+  const findContextForTask = useCallback(
+    (task: RuntimeTaskAddress) =>
+      findProjectSpaceContextForTaskInStores<ProjectTaskRuntimeApi>(
+        task,
+        localProjectSpaceApi,
+        workspaceRuntimePort ? createCloudProjectTaskRuntimeApi(workspaceRuntimePort) : undefined
+      ),
     [localProjectSpaceApi, workspaceRuntimePort]
   )
   const currentRuntimeDeviceId = currentRuntimeTask?.deviceId
   const currentRuntimeTaskId = currentRuntimeTask?.taskId
+  const contextSessionProjectId = currentRuntimeTask?.projectSession?.projectId
+  const contextSessionIssueId = currentRuntimeTask?.projectSession?.issueId
   const contextRuntimeTask = useMemo<RuntimeTaskAddress | null>(
     () =>
       currentRuntimeDeviceId && currentRuntimeTaskId
         ? {
             deviceId: currentRuntimeDeviceId,
             taskId: currentRuntimeTaskId,
+            ...(contextSessionProjectId !== undefined && contextSessionIssueId !== undefined
+              ? {
+                  projectSession: {
+                    projectId: contextSessionProjectId,
+                    issueId: contextSessionIssueId,
+                  },
+                }
+              : {}),
           }
         : null,
-    [currentRuntimeDeviceId, currentRuntimeTaskId]
+    [contextSessionIssueId, contextSessionProjectId, currentRuntimeDeviceId, currentRuntimeTaskId]
   )
   const currentContextTaskKey = contextRuntimeTask ? runtimeTaskKey(contextRuntimeTask) : null
   const contextMountedRef = useRef(true)
@@ -343,6 +370,18 @@ export function useWorkbenchCloudProjectContext({
   }, [currentContextTaskKey, currentRuntimeTask])
   const contextLookupGenerationRef = useRef(0)
   const contextLookupTaskKeyRef = useRef<string | null>(null)
+  const resolvedContextPublicationRef = useRef<ProjectSpaceTaskBindingChange | null>(null)
+  const recordResolvedContext = useCallback((task: RuntimeTaskAddress, project: CloudProject) => {
+    const reference = projectSpaceRef(project)
+    if (!rememberProjectSpaceTaskBinding(task, reference)) return
+    const change: ProjectSpaceTaskBindingChange = { task, project: reference, type: 'bound' }
+    resolvedContextPublicationRef.current = change
+    try {
+      publishProjectSpaceTaskBindingChanged(change)
+    } finally {
+      resolvedContextPublicationRef.current = null
+    }
+  }, [])
   useEffect(
     () => () => {
       contextMountedRef.current = false
@@ -369,7 +408,8 @@ export function useWorkbenchCloudProjectContext({
     pendingProjectForTask(contextRuntimeTask, paneKey)
   )
   const [todoBindingError, setTodoBindingError] = useState<string | null>(null)
-  const [cloudProjects, setCloudProjects] = useState<CloudProject[]>([])
+  const [contextAvailabilityError, setContextAvailabilityError] = useState<string | null>(null)
+  const cloudProjects = useProjectSpaceProjects(contextActive, projectSpaceDataApis)
   const [dismissedDefaultCloudProjectKey, setDismissedDefaultCloudProjectKey] = useState<
     string | null
   >(null)
@@ -450,15 +490,33 @@ export function useWorkbenchCloudProjectContext({
 
   useEffect(() => {
     if (!contextRuntimeTask) return
-    return subscribeProjectSpaceTaskContextChanged(({ task }) => {
+    const invalidateContext = (task: RuntimeTaskAddress) => {
       if (
         task.deviceId !== contextRuntimeTask.deviceId ||
         task.taskId !== contextRuntimeTask.taskId
       ) {
-        return
+        return false
       }
+      contextLookupGenerationRef.current += 1
       setContextRefreshKey(current => current + 1)
+      return true
+    }
+    const unsubscribeContext = subscribeProjectSpaceTaskContextChanged(({ task }) => {
+      invalidateContext(task)
     })
+    const unsubscribeBinding = subscribeProjectSpaceTaskBindingChanged(change => {
+      if (change === resolvedContextPublicationRef.current) return
+      const { task, type } = change
+      if (!invalidateContext(task) || type !== 'unbound' || projectSpaceForRuntimeTask(task)) return
+      setBoundCloudItem(null)
+      setBoundCloudProject(null)
+      setBoundRuntimeTaskAddress(null)
+      setDeliveryItem(null)
+    })
+    return () => {
+      unsubscribeContext()
+      unsubscribeBinding()
+    }
   }, [contextRuntimeTask])
 
   const projectSpaceApiFor = useCallback(
@@ -473,7 +531,7 @@ export function useWorkbenchCloudProjectContext({
     let active = true
     const lookupGeneration = contextLookupGenerationRef.current + 1
     contextLookupGenerationRef.current = lookupGeneration
-    if (!contextActive || !contextRuntimeTask) {
+    if (!contextRuntimeTask) {
       contextLookupTaskKeyRef.current = null
       queueMicrotask(() => {
         if (!active) return
@@ -481,6 +539,7 @@ export function useWorkbenchCloudProjectContext({
         setBoundCloudProject(null)
         setBoundRuntimeTaskAddress(null)
         setDeliveryItem(null)
+        setContextAvailabilityError(null)
       })
       return () => {
         active = false
@@ -493,11 +552,27 @@ export function useWorkbenchCloudProjectContext({
       setBoundCloudProject(null)
       setBoundRuntimeTaskAddress(null)
       setDeliveryItem(null)
+      setContextAvailabilityError(null)
     }
-    const contextApis = todoBindingApis
-    if (contextApis.length > 0) {
+    if (!contextActive) {
+      return () => {
+        active = false
+      }
+    }
+    if (
+      todoBindingApis.length > 0 ||
+      contextRuntimeTask.projectSession ||
+      projectSpaceForRuntimeTask(contextRuntimeTask)
+    ) {
       const lookupStartedAt = performance.now()
-      void waitForPendingProjectSpaceContext(contextApis, contextRuntimeTask, () => active)
+      void waitForPendingProjectSpaceContext(
+        () =>
+          findContextForTask(
+            runtimeTaskAddressForBinding(contextRuntimeTask, currentRuntimeTaskRef.current)
+          ),
+        contextRuntimeTask,
+        () => active
+      )
         .then(context => {
           logRuntimeTaskCreateStage('project-space-context-resolved', {
             taskId: contextRuntimeTask.taskId,
@@ -508,13 +583,8 @@ export function useWorkbenchCloudProjectContext({
             applied: active && contextLookupGenerationRef.current === lookupGeneration,
           })
           if (!active || contextLookupGenerationRef.current !== lookupGeneration) return
-          if (rememberProjectTaskStore(contextRuntimeTask, context.project.project_store)) {
-            publishProjectSpaceTaskBindingChanged({
-              task: contextRuntimeTask,
-              project: projectSpaceRef(context.project),
-              type: 'bound',
-            })
-          }
+          recordResolvedContext(contextRuntimeTask, context.project)
+          setContextAvailabilityError(null)
           setBoundCloudProject(context.project)
           setBoundCloudItem(context.loop_item)
           setBoundRuntimeTaskAddress(
@@ -536,6 +606,15 @@ export function useWorkbenchCloudProjectContext({
         })
         .catch(error => {
           if (!active || contextLookupGenerationRef.current !== lookupGeneration) return
+          if (error instanceof ProjectSpaceTaskContextUnavailableError) {
+            setBoundCloudItem(null)
+            setBoundCloudProject(null)
+            setBoundRuntimeTaskAddress(null)
+            setDeliveryItem(null)
+            setContextAvailabilityError(
+              t('workbench.cloud_project_bind_failed', '关联项目空间失败')
+            )
+          }
           logRuntimeTaskCreateStage('project-space-context-failed', {
             taskId: contextRuntimeTask.taskId,
             deviceId: contextRuntimeTask.deviceId,
@@ -584,8 +663,11 @@ export function useWorkbenchCloudProjectContext({
     contextActive,
     contextRefreshKey,
     contextRuntimeTask,
+    findContextForTask,
     paneKey,
     setPendingCloudContext,
+    recordResolvedContext,
+    t,
     todoBindingApis,
     userId,
   ])
@@ -763,48 +845,6 @@ export function useWorkbenchCloudProjectContext({
     cloudMentionState?.todoId === (composerTodoItem?.id ?? `project:${composerCloudProject.id}`)
       ? cloudMentionState.candidates
       : []
-
-  useEffect(() => {
-    if (!contextActive) return
-    let active = true
-    const apis = projectSpaceDataApis
-    if (!apis.length) {
-      queueMicrotask(() => {
-        if (active) setCloudProjects([])
-      })
-      return () => {
-        active = false
-      }
-    }
-    const projectsByApi: Array<CloudProject[] | undefined> = new Array(apis.length)
-    const publishSettledProjects = () => {
-      if (!active) return
-      const candidates = projectsByApi.flatMap(projects => projects ?? [])
-      setCloudProjects(
-        candidates.filter(
-          (candidate, index) =>
-            candidates.findIndex(
-              other => other.id === candidate.id && other.project_store === candidate.project_store
-            ) === index
-        )
-      )
-    }
-    apis.forEach((api, index) => {
-      void Promise.resolve()
-        .then(() => api.listCloudProjects())
-        .then(result => {
-          projectsByApi[index] = result.items
-          publishSettledProjects()
-        })
-        .catch(() => {
-          projectsByApi[index] = []
-          publishSettledProjects()
-        })
-    })
-    return () => {
-      active = false
-    }
-  }, [contextActive, projectSpaceDataApis])
 
   useEffect(() => {
     const pendingAutoJoin = pendingAutoJoinResolutionRef.current
@@ -1044,17 +1084,26 @@ export function useWorkbenchCloudProjectContext({
       let refreshedCloudAdditionalContext = cloudAdditionalContext
       let refreshedCloudProject = boundCloudProject
       let refreshedCloudItem = boundCloudItem
-      if (contextRuntimeTask && todoBindingApis.length > 0) {
+      if (
+        contextRuntimeTask &&
+        (todoBindingApis.length > 0 ||
+          contextRuntimeTask.projectSession ||
+          projectSpaceForRuntimeTask(contextRuntimeTask))
+      ) {
         const refreshTaskKey = runtimeTaskKey(contextRuntimeTask)
         const refreshGeneration = contextLookupGenerationRef.current + 1
         contextLookupGenerationRef.current = refreshGeneration
         try {
-          const context = await findProjectSpaceContextForTask(todoBindingApis, contextRuntimeTask)
+          const context = await findContextForTask(
+            runtimeTaskAddressForBinding(contextRuntimeTask, currentRuntimeTaskRef.current)
+          )
           if (
             contextMountedRef.current &&
             currentContextTaskKeyRef.current === refreshTaskKey &&
             contextLookupGenerationRef.current === refreshGeneration
           ) {
+            recordResolvedContext(contextRuntimeTask, context.project)
+            setContextAvailabilityError(null)
             setBoundCloudProject(context.project)
             setBoundCloudItem(context.loop_item)
             setDeliveryItem(
@@ -1070,6 +1119,11 @@ export function useWorkbenchCloudProjectContext({
             context.loop_item
           )
         } catch (error) {
+          if (error instanceof ProjectSpaceTaskContextUnavailableError) {
+            const message = t('workbench.cloud_project_bind_failed', '关联项目空间失败')
+            setContextAvailabilityError(message)
+            throw new Error(message, { cause: error })
+          }
           console.warn('[Wework] Failed to refresh project-space context before send', {
             task: contextRuntimeTask,
             error,
@@ -1143,6 +1197,7 @@ export function useWorkbenchCloudProjectContext({
       boundCloudProject,
       cloudAdditionalContext,
       contextRuntimeTask,
+      findContextForTask,
       defaultCloudProjectSelectionKey,
       defaultProject,
       defaultWorkItemProject,
@@ -1150,7 +1205,9 @@ export function useWorkbenchCloudProjectContext({
       pendingCloudProject,
       pendingTodoItem,
       paneKey,
+      recordResolvedContext,
       setPendingCloudContext,
+      t,
       todoBindingApis,
     ]
   )
@@ -1166,7 +1223,10 @@ export function useWorkbenchCloudProjectContext({
   }, [activeDeliveryItem])
 
   const clearCloudActionNotice = useCallback(() => setCloudActionNotice(null), [])
-  const clearTodoBindingError = useCallback(() => setTodoBindingError(null), [])
+  const clearTodoBindingError = useCallback(() => {
+    setTodoBindingError(null)
+    setContextAvailabilityError(null)
+  }, [])
   const closeDeliveryDialog = useCallback(() => setDeliveryDialogOpen(false), [])
 
   const handleTodoBound = useCallback(
@@ -1240,7 +1300,7 @@ export function useWorkbenchCloudProjectContext({
     closeTaskBoardAssociation,
     associateRuntimeTaskWithNewItem,
     associateRuntimeTaskWithExistingItem,
-    todoBindingError,
+    todoBindingError: todoBindingError ?? contextAvailabilityError,
     visibleCloudMentionCandidates,
   }
 }

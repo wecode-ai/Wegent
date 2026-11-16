@@ -32,6 +32,15 @@ export function StandInProposalSources({
       : t('standIn.workspace.inherited_policy')
   const sourceKey = (row: NonNullable<Sources['connections']>[number]) =>
     JSON.stringify([row.providerId, row.profile, row.kind, row.id])
+  const configuration = (row?: NonNullable<Sources['connections']>[number]) =>
+    [
+      row?.configurationSummary ?? t('standIn.workspace.connection_default_configuration'),
+      ...(row?.excludedResources?.length
+        ? [
+            `${t('standIn.workspace.connection_blacklist')}: ${row.excludedResources.map(item => item.name).join(', ')}`,
+          ]
+        : []),
+    ].join(' · ')
   const before = previous?.connections ?? []
   const after = identity.connections ?? []
   const changed = after.filter(
@@ -56,34 +65,53 @@ export function StandInProposalSources({
   return (
     <div className="space-y-2 text-sm">
       {changed.map(row => (
-        <p key={sourceKey(row)}>
-          <span className="text-text-muted">
-            {t(
-              before.some(old => sourceKey(old) === sourceKey(row))
-                ? 'standIn.workspace.connection_updated'
-                : 'standIn.workspace.connection_added'
+        <div key={sourceKey(row)} className="space-y-1">
+          <p>
+            <span className="text-text-muted">
+              {t(
+                before.some(old => sourceKey(old) === sourceKey(row))
+                  ? 'standIn.workspace.connection_updated'
+                  : 'standIn.workspace.connection_added'
+              )}
+              ：
+            </span>
+            {row.name}
+            <span className="text-text-secondary">
+              {' '}
+              ·{' '}
+              {row.providerId && row.providerId !== '@wegent/dsh-connection-dingtalk/dingtalk'
+                ? row.kind
+                : t(
+                    row.kind === 'group'
+                      ? 'standIn.workspace.group_mentions'
+                      : 'standIn.workspace.direct_messages'
+                  )}{' '}
+              · {policyName(row.policy)}
+            </span>
+          </p>
+          <p
+            className="whitespace-pre-wrap break-words text-text-secondary"
+            data-testid="stand-in-proposal-connection-configuration"
+          >
+            {before.some(old => sourceKey(old) === sourceKey(row)) && (
+              <>
+                {t('standIn.workspace.before_change')}：
+                {configuration(before.find(old => sourceKey(old) === sourceKey(row)))}
+                {' → '}
+              </>
             )}
-            ：
-          </span>
-          {row.name}
-          <span className="text-text-secondary">
-            {' '}
-            ·{' '}
-            {row.providerId && row.providerId !== '@wegent/dsh-connection-dingtalk/dingtalk'
-              ? row.kind
-              : t(
-                  row.kind === 'group'
-                    ? 'standIn.workspace.group_mentions'
-                    : 'standIn.workspace.direct_messages'
-                )}{' '}
-            · {policyName(row.policy)}
-          </span>
-        </p>
+            {t('standIn.workspace.after_change')}：{configuration(row)}
+          </p>
+        </div>
       ))}
       {removed.map(row => (
         <p key={sourceKey(row)}>
           <span className="text-text-muted">{t('standIn.workspace.connection_removed')}：</span>
           {row.name}
+          <span className="text-text-secondary">
+            {' · '}
+            {row.configurationSummary ?? t('standIn.workspace.connection_default_configuration')}
+          </span>
         </p>
       ))}
       {collaborationChanged && (

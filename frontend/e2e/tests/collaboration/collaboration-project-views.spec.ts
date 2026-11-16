@@ -4,12 +4,68 @@
 
 import { expect, test, type Page, type Request } from '@playwright/test'
 import { ADMIN_USER, REGULAR_USER } from '../../config/test-users'
+import { createApiClient } from '../../utils/api-client'
 import { projectTest, type Resource } from '../../utils/collaboration-project-fixture'
-import { dragCollaborationIssueToColumn, webApi } from '../../utils/collaboration-test-support'
+import {
+  dragCollaborationIssueToColumn,
+  showAllProjectIssues,
+  webApi,
+} from '../../utils/collaboration-test-support'
 
 async function dragIssueToLane(page: Page, issueId: string, source: string, target: string) {
   return dragCollaborationIssueToColumn(page, issueId, target, source)
 }
+
+projectTest(
+  'rejects subtree archiving through an editable parent with a private descendant',
+  async ({ page, request, scheduledProject: { path, issueId } }) => {
+    const projectId = path.split('/').at(-1)!
+    const child = await webApi<Resource>(page, `/api/v1/cloud-projects/${projectId}/loop-items`, {
+      method: 'POST',
+      body: { title: 'Visible child', parent_id: issueId },
+    })
+    const createdGrandchild = await webApi<Resource>(
+      page,
+      `/api/v1/cloud-projects/${projectId}/loop-items`,
+      {
+        method: 'POST',
+        body: { title: 'Private grandchild', parent_id: child.id },
+      }
+    )
+    const grandchild = await webApi<Resource>(page, `/api/v1/loop-items/${createdGrandchild.id}`, {
+      method: 'PATCH',
+      body: { version: createdGrandchild.version, security_level: 'related' },
+    })
+    type ArchivedIssue = Resource & { status: string; parent_id: string | null }
+    const ids = [issueId, child.id, grandchild.id]
+    const readTree = () =>
+      Promise.all(ids.map(id => webApi<ArchivedIssue>(page, `/api/v1/loop-items/${id}`)))
+    const before = await readTree()
+    const member = createApiClient(request)
+    expect((await member.login(REGULAR_USER.username, REGULAR_USER.password, 1)).status).toBe(200)
+    expect(
+      (await member.get<{ can_edit: boolean }>(`/api/v1/loop-items/${issueId}`)).data?.can_edit
+    ).toBe(true)
+    expect((await member.get(`/api/v1/loop-items/${grandchild.id}`)).status).toBe(404)
+
+    expect((await member.delete(`/api/v1/loop-items/${issueId}`)).status).toBe(404)
+    const snapshot = (items: ArchivedIssue[]) =>
+      items.map(({ id, version, status, parent_id }) => ({ id, version, status, parent_id }))
+    expect(snapshot(await readTree())).toEqual(snapshot(before))
+
+    await webApi(page, `/api/v1/loop-items/${issueId}`, { method: 'DELETE' })
+    expect((await member.post(`/api/v1/loop-items/${issueId}/restore`)).status).toBe(404)
+    const restored = await webApi<{ items: ArchivedIssue[] }>(
+      page,
+      `/api/v1/loop-items/${issueId}/restore`,
+      { method: 'POST' }
+    )
+    expect(restored.items.map(item => item.id).sort()).toEqual([...ids].sort())
+    expect(restored.items.map(({ id, status, parent_id }) => ({ id, status, parent_id }))).toEqual(
+      expect.arrayContaining(before.map(({ id, status, parent_id }) => ({ id, status, parent_id })))
+    )
+  }
+)
 
 projectTest(
   'rejected robot starts preserve the board and detail status',
@@ -37,7 +93,7 @@ projectTest(
     await page.goto(path)
     await dragIssueToLane(page, created.id, 'inbox', 'in_progress')
     await expect(page.getByTestId('collaboration-board').getByRole('alert')).toContainText(
-      /机器人没有符合配置且获项目授权的执行环境|No project-authorized execution environment matches this agent/
+      /项目设置 → 执行环境|Project settings → Execution environments/
     )
     await expect(
       page.getByTestId('cloud-todo-column-inbox').getByTestId(`cloud-todo-card-${created.id}`)
@@ -56,7 +112,6 @@ projectTest(
       .getByTestId(`cloud-todo-card-${created.id}`)
       .click()
     await page.getByTestId('cloud-todo-detail-status').selectOption('in_progress')
-    await page.getByTestId('cloud-todo-save').click()
     await expect(page.getByTestId('cloud-todo-save-error')).toContainText(
       /项目授权|project-authorized/
     )
@@ -146,12 +201,14 @@ projectTest(
     })
 
     await page.goto(path)
+    await showAllProjectIssues(page)
     const sort = page.getByTestId('cloud-board-sort-by-pending')
     const completedSort = page.getByTestId('cloud-board-sort-by-completed')
     const assertOrder = async (lane: string, ids: string[]) => {
       const cards = page
         .getByTestId(`cloud-todo-column-${lane}`)
         .locator('article[data-testid^="collaboration-issue-"]')
+      await showAllProjectIssues(page)
       await expect(cards).toHaveCount(ids.length)
       for (const [index, id] of ids.entries()) {
         await expect(cards.nth(index)).toHaveAttribute('data-testid', `collaboration-issue-${id}`)
@@ -277,6 +334,7 @@ for (const hiddenSiblings of [false, true])
           ).toBe('Developer')
         }
         await page.goto(path)
+        await showAllProjectIssues(page)
         const sort = page.getByTestId('cloud-board-sort-by-pending')
         await sort.click()
         await page.getByTestId('cloud-board-sort-by-pending-manual').click()
@@ -285,6 +343,7 @@ for (const hiddenSiblings of [false, true])
           .getByTestId('cloud-todo-column-pending')
           .locator('article[data-testid^="collaboration-issue-"]')
         const expectOrder = async (ids = [second.id, issueId, third.id]) => {
+          await showAllProjectIssues(page)
           await expect(cards).toHaveCount(3)
           for (const [index, id] of ids.entries())
             await expect(cards.nth(index)).toHaveAttribute(
@@ -468,6 +527,7 @@ for (const groupBy of ['priority', 'assignee', 'tag'] as const) {
         },
       })
       await page.goto(path)
+      await showAllProjectIssues(page)
       await page.getByTestId('cloud-board-group-by').click()
       await page.getByTestId(`cloud-board-group-option-${groupBy}`).click()
       const lane =
@@ -484,6 +544,7 @@ for (const groupBy of ['priority', 'assignee', 'tag'] as const) {
             : 'tag-other'
       const sort = page.getByTestId(`cloud-board-sort-by-${lane}`)
       const assertOrder = async (ids: string[]) => {
+        await showAllProjectIssues(page)
         const cards = page
           .getByTestId(`cloud-todo-column-${lane}`)
           .locator('article[data-testid^="collaboration-issue-"]')
@@ -549,7 +610,13 @@ for (const groupBy of ['priority', 'assignee', 'tag'] as const) {
       await pendingSort.click()
       await page.getByTestId('cloud-board-sort-by-pending-manual').click()
       await pendingSort.click()
+      const beforeReorder = page.waitForResponse(
+        response =>
+          response.request().method() === 'PATCH' &&
+          response.url().endsWith(`/loop-items/${first.id}`)
+      )
       await dragBefore(page, 'pending', first.id, 'pending', outside.id)
+      expect((await beforeReorder).ok()).toBe(true)
       await assertSavedMove('pending', first.id)
       await expect
         .poll(async () => {
@@ -560,7 +627,13 @@ for (const groupBy of ['priority', 'assignee', 'tag'] as const) {
           )
         })
         .toBe(true)
+      const tailReorder = page.waitForResponse(
+        response =>
+          response.request().method() === 'PATCH' &&
+          response.url().endsWith(`/loop-items/${first.id}`)
+      )
       await dragBefore(page, 'pending', first.id, 'pending', null)
+      expect((await tailReorder).ok()).toBe(true)
       await assertSavedMove('pending', first.id)
       await expect
         .poll(async () => {

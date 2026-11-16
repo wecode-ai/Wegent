@@ -118,7 +118,7 @@ export function AddMarketDialog({
                 href="https://developers.openai.com/plugins/build/plugins"
                 target="_blank"
                 rel="noreferrer"
-                className="font-medium text-blue-600 hover:underline"
+                className="font-medium text-focus hover:underline wework:text-blue-600"
               >
                 {t('common.learn_more', '了解更多')}
               </a>
@@ -156,7 +156,7 @@ export function AddMarketDialog({
                 className={[
                   'h-10 w-full rounded-lg border bg-background px-3 text-sm text-text-primary outline-none transition-colors placeholder:text-text-muted',
                   sourceError
-                    ? 'border-red-500/70 focus:border-red-500 focus:ring-2 focus:ring-red-500/15'
+                    ? 'border-destructive/70 focus:border-destructive focus:ring-2 focus:ring-destructive/15 wework:border-red-500/70 wework:focus:border-red-500 wework:focus:ring-red-500/15'
                     : 'border-border/45 keyboard:focus:border-focus/70 keyboard:focus:ring-2 keyboard:focus:ring-focus/15',
                 ].join(' ')}
               />
@@ -164,7 +164,7 @@ export function AddMarketDialog({
                 id="plugins-marketplace-source-note"
                 className={[
                   'mt-1.5 block text-xs leading-4',
-                  sourceError ? 'text-red-600' : 'text-text-muted',
+                  sourceError ? 'text-destructive wework:text-red-600' : 'text-text-muted',
                 ].join(' ')}
               >
                 {sourceError

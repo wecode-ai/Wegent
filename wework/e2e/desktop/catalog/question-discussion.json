@@ -1,0 +1,6 @@
+{
+  "order": 130050,
+  "scenario": "./scenarios/question-discussion.scenario.mjs",
+  "scenarioOnly": true,
+  "ci": { "core": { "order": 79500, "shard": 10, "position": 2500 } }
+}

@@ -40,6 +40,7 @@ from app.services.execution.skill_generation import (
     apply_skill_generation_to_skills,
 )
 from app.services.execution.skill_mcp import extract_skill_mcp_servers
+from app.services.execution_permission_scope import execution_resource_scope
 from app.services.ghost_capabilities import (
     MergedGhostCapabilities,
     load_ghost_chain,
@@ -58,6 +59,7 @@ from app.services.skill_resolution import (
     build_skill_ref_meta,
     find_skill_by_name,
     find_skill_by_ref,
+    get_runtime_skill_shells,
 )
 from app.services.user_mcp_oauth import is_secure_mcp_url, user_mcp_oauth_service
 from app.services.user_mcp_service import MCP_AUTH_MODE_OAUTH, user_mcp_service
@@ -431,15 +433,24 @@ class TaskRequestBuilder:
         # Get collaboration model
         collaboration_model = team_crd.spec.collaborationModel or "solo"
 
-        # Merge user-selected skills into bot_config so Executor downloads them
-        if bot_config and resolved_skills:
-            all_skill_names = [s["name"] for s in resolved_skills]
-            existing_skills = set(bot_config[0].get("skills", []))
-            for name in all_skill_names:
-                if name not in existing_skills:
-                    bot_config[0].setdefault("skills", []).append(name)
-                    existing_skills.add(name)
-            self._sync_skill_refs_to_bot_configs(bot_config, skill_refs)
+        if (
+            collaboration_model == "coordinate"
+            and bot_config
+            and bot_config[0].get("shell_type") in {"ClaudeCode", "Codex"}
+        ):
+            self._extend_resolved_skills_from_bot_configs(
+                bot_configs=bot_config,
+                resolved_skills=resolved_skills,
+                skill_refs=skill_refs,
+                team=team,
+                user=user,
+            )
+        self._merge_runtime_skills(
+            bot_configs=bot_config,
+            resolved_skills=resolved_skills,
+            skill_refs=skill_refs,
+            team=team,
+        )
 
         # Generate task-scoped identities before finalizing MCP capabilities.
         auth_token = self._generate_auth_token(task, subtask, user)
@@ -470,13 +481,6 @@ class TaskRequestBuilder:
             shell_type = bot_config[0].get("shell_type", "")
             if shell_type in {"ClaudeCode", "Codex"}:
                 if collaboration_model == "coordinate":
-                    self._extend_resolved_skills_from_bot_configs(
-                        bot_configs=bot_config,
-                        resolved_skills=resolved_skills,
-                        skill_refs=skill_refs,
-                        team=team,
-                        user=user,
-                    )
                     self._merge_coordinate_capabilities_into_leader(bot_config)
                     self._sync_skill_refs_to_bot_configs(bot_config, skill_refs)
                 self._prepare_mcp_for_coding_executor(bot_config[0], resolved_skills)
@@ -562,6 +566,7 @@ class TaskRequestBuilder:
 
         execution_request = ExecutionRequest(
             task_id=task.id,
+            task_title=task.json.get("spec", {}).get("title"),
             subtask_id=subtask.id,
             team_id=team.id,
             team_name=team.name,
@@ -913,6 +918,13 @@ class TaskRequestBuilder:
                 team=team,
                 user=user,
             )
+
+        self._merge_runtime_skills(
+            bot_configs=request.bot,
+            resolved_skills=resolved_skills,
+            skill_refs=skill_refs,
+            team=team,
+        )
 
         preload_skill_refs = {
             name: skill_refs[name]
@@ -1340,6 +1352,7 @@ class TaskRequestBuilder:
 
         return model_config
 
+    @execution_resource_scope()
     def _get_secondary_model_config(
         self,
         bot: Kind,
@@ -1530,6 +1543,7 @@ class TaskRequestBuilder:
         shell_info = self._resolve_shell_info(bot, user_id)
         return shell_info["shell_type"]
 
+    @execution_resource_scope()
     def _resolve_shell_info(self, bot: Kind, user_id: int) -> dict:
         """Resolve shell info from bot's shellRef.
 
@@ -1728,6 +1742,9 @@ class TaskRequestBuilder:
                                     f"Preloaded Skill not found: {skill_name}"
                                 )
                             skill_refs[skill_name] = build_skill_ref_meta(preload_skill)
+                            skills[-1] = self._build_skill_data(
+                                preload_skill, user=user
+                            )
                         logger.info(
                             "[_get_bot_skills] Skill '%s' added to preload and user_selected (from Ghost)",
                             skill_name,
@@ -1780,6 +1797,16 @@ class TaskRequestBuilder:
                         skill_refs[skill_name] = build_skill_ref_meta(
                             resolved_selected_skill
                         )
+                        skills = [
+                            (
+                                self._build_skill_data(
+                                    resolved_selected_skill, user=user
+                                )
+                                if item["name"] == skill_name
+                                else item
+                            )
+                            for item in skills
+                        ]
                     logger.info(
                         "[_get_bot_skills] Skill '%s' added to preload and user_selected (user selected, already in Ghost)",
                         skill_name,
@@ -2000,6 +2027,9 @@ class TaskRequestBuilder:
         }
 
         # Include optional fields if present
+        runtime_shells = get_runtime_skill_shells(skill)
+        if runtime_shells:
+            skill_data["bindShells"] = runtime_shells
         if skill_crd.spec.config:
             skill_data["config"] = skill_crd.spec.config
 
@@ -2290,6 +2320,7 @@ class TaskRequestBuilder:
                 "plugins": ghost_plugins,
                 "skills": ghost_skills,
                 "skill_refs": ghost_skill_refs,
+                "preload_skills": (list(merged.preload_skills) if ghost_skills else []),
                 "capability_mode": bot_spec.capability_mode,
                 "role": member.role if member and member.role else "worker",
                 "base_image": base_image,
@@ -2315,6 +2346,44 @@ class TaskRequestBuilder:
             )
 
         return bot_configs
+
+    def _merge_runtime_skills(
+        self,
+        *,
+        bot_configs: list[dict] | None,
+        resolved_skills: list[dict],
+        skill_refs: dict[str, dict],
+        team: Kind,
+    ) -> None:
+        """Merge resolved Skills while preserving each Bot's exact references."""
+        if not bot_configs:
+            return
+        leader = bot_configs[0]
+        leader["skills"] = list(
+            dict.fromkeys(
+                [*(leader.get("skills") or []), *(s["name"] for s in resolved_skills)]
+            )
+        )
+        leader["skill_refs"] = {**(leader.get("skill_refs") or {}), **skill_refs}
+        for index, config in enumerate(bot_configs):
+            references = config.setdefault("skill_refs", {})
+            for name in config.get("skills") or []:
+                current = references.get(name)
+                resolved = skill_refs.get(name)
+                if resolved and (
+                    not current or self._skill_refs_match(current, resolved)
+                ):
+                    references[name] = resolved
+                elif current:
+                    skill = self._find_attached_skill_by_ref(
+                        name, skill_id=current.get("skill_id")
+                    )
+                    if skill:
+                        references[name] = build_skill_ref_meta(skill)
+                elif index:
+                    skill = self._find_skill(name, team)
+                    if skill:
+                        references[name] = build_skill_ref_meta(skill)
 
     @staticmethod
     def _sync_skill_refs_to_bot_configs(

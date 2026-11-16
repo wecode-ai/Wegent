@@ -6,7 +6,13 @@ import {
   DESKTOP_CHECKPOINT_GROUPS,
   expandDesktopCheckpoints,
 } from './checkpoints.mjs'
-import { UPGRADE_CHECKPOINTS, UPGRADE_CHECKPOINT_GROUP } from './upgrade-suite.mjs'
+import {
+  UPGRADE_CHECKPOINTS,
+  UPGRADE_CHECKPOINT_GROUP,
+  UPGRADE_PACKAGE_CHECKPOINTS,
+  UPGRADE_DIAGNOSTIC_CHECKPOINTS,
+  upgradeVerificationCheckpoint,
+} from './upgrade-suite.mjs'
 
 test('Responses retains standalone selection and shares an existing CI Cloud lifecycle', () => {
   assert.deepEqual(expandDesktopCheckpoints(['responses-api-gateway']), ['responses-api-gateway'])
@@ -18,22 +24,55 @@ test('Responses retains standalone selection and shares an existing CI Cloud lif
   }
 })
 
-test('upgrade verification has one maintained group for all supported operating systems', () => {
+test('Windows certifies the core round trip while macOS retains complete recovery coverage', () => {
   assert.deepEqual(expandDesktopCheckpoints([UPGRADE_CHECKPOINT_GROUP]), UPGRADE_CHECKPOINTS)
+  assert.deepEqual(expandDesktopCheckpoints([upgradeVerificationCheckpoint('windows')]), [
+    'app-rollback',
+  ])
+  assert.deepEqual(
+    expandDesktopCheckpoints([upgradeVerificationCheckpoint('macos')]),
+    UPGRADE_CHECKPOINTS
+  )
+  assert.throws(
+    () => upgradeVerificationCheckpoint('linux'),
+    /Unsupported upgrade verification platform/
+  )
   for (const checkpoint of UPGRADE_CHECKPOINTS) assert.ok(DESKTOP_CHECKPOINTS.includes(checkpoint))
+})
+
+test('source diagnostics use the shared package runner without certifying upgrade edges', () => {
+  for (const checkpoint of ['app-update-refresh', 'app-update-retry']) {
+    assert.ok(DESKTOP_CHECKPOINTS.includes(checkpoint))
+    assert.ok(UPGRADE_DIAGNOSTIC_CHECKPOINTS.includes(checkpoint))
+    assert.equal(UPGRADE_PACKAGE_CHECKPOINTS.includes(checkpoint), false)
+  }
 })
 
 test('the existing CI profile checkpoint includes the original and model catalog regressions', () => {
   assert.deepEqual(expandDesktopCheckpoints(['stand-in-profile']), [
     'stand-in-profile-settings',
     'stand-in-model-catalog',
+    'stand-in-processing',
+    'coordination-runtime',
+    'coordination-arrangements',
+    'project-coordinator-publication',
+    'project-coordination',
   ])
 })
 
 test('group expansion preserves ordering and runs each checkpoint once', () => {
   assert.deepEqual(
     expandDesktopCheckpoints(['stand-in-profile', 'stand-in-model-catalog', 'stand-in-controls']),
-    ['stand-in-profile-settings', 'stand-in-model-catalog', 'stand-in-controls']
+    [
+      'stand-in-profile-settings',
+      'stand-in-model-catalog',
+      'stand-in-processing',
+      'coordination-runtime',
+      'coordination-arrangements',
+      'project-coordinator-publication',
+      'project-coordination',
+      'stand-in-controls',
+    ]
   )
 })
 
@@ -49,4 +88,12 @@ test('every group member is registered and no unknown checkpoint is silently dis
     for (const member of members) assert.ok(DESKTOP_CHECKPOINTS.includes(member), member)
   }
   assert.deepEqual(expandDesktopCheckpoints(['unknown']), ['unknown'])
+})
+
+test('Git connection checkpoint exposes the runner verification contract', async () => {
+  assert.ok(DESKTOP_CHECKPOINTS.includes('stand-in-git'))
+  const { createDesktopScenario } = await import('./scenarios/stand-in-git.scenario.mjs')
+  const scenario = createDesktopScenario({ uiTimeoutMs: 10000, captureScreenshot: () => {} })
+  assert.equal(typeof scenario.verify, 'function')
+  assert.equal(scenario.requiresCloudEnvironment, true)
 })

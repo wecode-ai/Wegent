@@ -163,7 +163,7 @@ export function KnowledgeSidebar({
       data-testid="knowledge-sidebar"
     >
       {/* Search trigger with collapse button */}
-      <div className="p-3 border-b border-border flex items-center gap-2">
+      <div className="px-3 py-2 border-b border-border flex items-center gap-2">
         <div className="flex-1">
           <SearchTrigger onOpen={handleOpenSearch} />
         </div>
@@ -172,7 +172,7 @@ export function KnowledgeSidebar({
             variant="ghost"
             size="sm"
             onClick={onCollapse}
-            className="h-8 w-8 p-0 flex-shrink-0"
+            className="min-h-11 min-w-11 md:min-h-9 md:min-w-9 p-0 flex-shrink-0"
             title={t('document.tree.collapseTree')}
             data-testid="knowledge-sidebar-collapse-button"
           >
@@ -210,7 +210,11 @@ export function KnowledgeSidebar({
           groups={groups}
           isLoading={isGroupsLoading}
           selectedGroupId={selectedGroupId}
-          isAllSelected={viewMode === 'all'}
+          isAllSelected={
+            viewMode === 'all' ||
+            viewMode === 'groups' ||
+            Boolean(selectedGroupId?.startsWith('group-'))
+          }
           isGroupsSelected={viewMode === 'groups'}
           selectedSourceViewId={selectedSourceViewId}
           isExpanded={sectionStates.groups}
@@ -220,7 +224,7 @@ export function KnowledgeSidebar({
           onSelectGroups={onSelectGroups}
           onSelectSourceView={onSelectSourceView}
           sourceViews={sourceViews}
-          totalKbCount={summary?.total_count ?? groups.reduce((sum, g) => sum + g.kbCount, 0)}
+          totalKbCount={summary?.total_count}
           summary={summary}
         />
       </div>

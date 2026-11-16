@@ -15,6 +15,7 @@ from sqlalchemy.orm import Session
 from app.models.kind import Kind
 from app.models.namespace import Namespace
 from app.models.resource_member import ResourceMember
+from app.services.adapters.task_kinds.task_detail_helpers import get_bots_for_subtasks
 from app.services.adapters.team_kinds import team_kinds_service
 from app.services.execution.readiness_context import TeamReadinessContext
 from app.services.execution.team_readiness import validate_team_execution_readiness
@@ -165,6 +166,64 @@ def _resource(kind: str, name: str, spec: dict, user_id: int = 1) -> Kind:
             "spec": spec,
         },
     )
+
+
+@pytest.mark.parametrize("collation", ["utf8mb4_0900_ai_ci", "utf8mb4_unicode_ci"])
+def test_recovered_shell_references_preserve_exact_user_ids(
+    mysql_db: Session, collation: str
+) -> None:
+    """Recover approved Shells across collations without accepting ID prefixes."""
+    mysql_db.execute(text(f"SET NAMES utf8mb4 COLLATE {collation}"))
+    bots = []
+    for name, entity_id in [("approved", "11"), ("padded", "011"), ("suffix", "11x")]:
+        shell = _resource(
+            "Shell", name, {"shellType": "ClaudeCode", "supportModel": []}, user_id=99
+        )
+        mysql_db.add(shell)
+        mysql_db.flush()
+        mysql_db.add(
+            ResourceMember(
+                resource_type="Shell",
+                resource_id=shell.id,
+                entity_type="user",
+                entity_id=entity_id,
+                role="Reporter",
+                status="approved",
+            )
+        )
+        bots.append(
+            _resource(
+                "Bot",
+                name,
+                {
+                    "ghostRef": {"name": "ghost", "namespace": "default"},
+                    "shellRef": {"name": name, "namespace": "default"},
+                },
+                user_id=11,
+            )
+        )
+    bots.append(
+        _resource(
+            "Bot",
+            "other-owner",
+            {
+                "ghostRef": {"name": "ghost", "namespace": "default"},
+                "shellRef": {"name": "approved", "namespace": "default"},
+            },
+            user_id=12,
+        )
+    )
+    mysql_db.add_all(bots)
+    mysql_db.flush()
+
+    summaries = get_bots_for_subtasks(mysql_db, {bot.id for bot in bots})
+
+    assert [summaries[bot.id]["shell_type"] for bot in bots] == [
+        "ClaudeCode",
+        "",
+        "",
+        "",
+    ]
 
 
 @pytest.mark.parametrize("collation", ["utf8mb4_0900_ai_ci", "utf8mb4_unicode_ci"])

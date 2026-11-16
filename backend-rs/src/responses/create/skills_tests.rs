@@ -72,6 +72,7 @@ fn ref_meta_derives_from_the_kind_row() {
                 "sha256:d9f8d69053873ea444f69e871cf9ce542d8315869b0f1b0bfe3aa00c26c50caa"
                     .to_string()
             ),
+            bind_shells: None,
         }
     );
 }
@@ -500,6 +501,33 @@ async fn user_default_binding_read_binds_the_user_id_as_an_integer() {
     assert_eq!(queries[0].first_integer, Some(6582));
 }
 
+/// `list_user_default_skill_refs` (`skill_binding_service.py:477-487`): the
+/// ref carries the package's runtime shells so the request builder can filter
+/// the binding against the bot's Shell before `_get_bot_skills`; a package
+/// without `bindShells` omits the key entirely.
+#[test]
+fn binding_refs_carry_the_declared_runtime_shells() {
+    let restricted = named_skill_row("web-tools", 0, "default", json!({"bindShells": ["Chat"]}));
+    assert_eq!(
+        binding_reference(&restricted, false),
+        json!({
+            "skill_id": 187_624,
+            "name": "web-tools",
+            "namespace": "default",
+            "is_public": true,
+            "bind_shells": ["Chat"],
+        })
+    );
+    assert_eq!(
+        binding_reference(&restricted, true)["force_preload"],
+        json!(true)
+    );
+    let unrestricted = named_skill_row("notes", 0, "default", json!({"description": "d"}));
+    let reference = binding_reference(&unrestricted, false);
+    assert_eq!(reference.get("bind_shells"), None);
+    assert_eq!(reference.get("force_preload"), None);
+}
+
 fn named_skill_row(name: &str, kinds_user_id: i64, namespace: &str, spec: Value) -> SkillKindRow {
     SkillKindRow {
         kinds_id: 187_624,
@@ -910,4 +938,72 @@ async fn unconfigured_runtime_skill_requests_no_token() {
     assert!(!data.as_object().expect("object").contains_key("mcpServers"));
     assert_eq!(data["configuration_required"], json!(true));
     assert!(tokens.calls().is_empty());
+}
+
+#[test]
+fn the_skill_ref_projects_the_declared_bind_shells() {
+    let row = SkillKindRow {
+        kinds_id: 42,
+        kinds_user_id: 0,
+        kinds_kind: "Skill".to_string(),
+        kinds_name: "docx".to_string(),
+        kinds_namespace: "default".to_string(),
+        kinds_json: Json(json!({"spec": {"bindShells": ["ClaudeCode"]}})),
+        kinds_is_active: 1,
+        kinds_created_at: None,
+        kinds_updated_at: None,
+    };
+    let meta = SkillRefMeta::from_kind(&row);
+    assert_eq!(meta.bind_shells, Some(vec!["ClaudeCode".to_string()]));
+    let serialized = serde_json::to_value(&meta).expect("serializes");
+    assert_eq!(serialized["bind_shells"], json!(["ClaudeCode"]));
+}
+
+#[test]
+fn an_explicitly_empty_bind_shells_list_is_preserved_for_the_device_payload() {
+    let row = SkillKindRow {
+        kinds_id: 42,
+        kinds_user_id: 1,
+        kinds_kind: "Skill".to_string(),
+        kinds_name: "docx".to_string(),
+        kinds_namespace: "default".to_string(),
+        kinds_json: Json(json!({"spec": {"bindShells": []}})),
+        kinds_is_active: 1,
+        kinds_created_at: None,
+        kinds_updated_at: None,
+    };
+    // `get_runtime_skill_shells` returns the stored empty list as-is, so the
+    // device payload must be able to emit `[]` rather than collapse to null.
+    assert_eq!(
+        project_runtime_skill_shells(&row.kinds_json.0, 1, "default", "docx"),
+        Some(Vec::new())
+    );
+    // The skill ref only adds the key for a non-empty list.
+    let meta = SkillRefMeta::from_kind(&row);
+    assert_eq!(meta.bind_shells, None);
+    assert_eq!(
+        serde_json::to_value(&meta)
+            .expect("serializes")
+            .get("bind_shells"),
+        None
+    );
+}
+
+/// `skill_resolution.get_runtime_skill_shells` applies to `skill_configs`
+/// too: the built-in public `default` interactive-form Skill keeps its
+/// shipped Codex compatibility, so `bindShells` and the ref's `bind_shells`
+/// never disagree for the same Skill.
+#[test]
+fn the_interactive_skill_keeps_its_codex_binding_in_the_config() {
+    let row = named_skill_row(
+        "interactive",
+        0,
+        "default",
+        json!({
+            "bindShells": ["ClaudeCode"],
+            "mcpServers": {"wegent-interactive-form-question": {}},
+        }),
+    );
+    let data = build_skill_data(&row, Some("")).expect("skill data");
+    assert_eq!(data["bindShells"], json!(["ClaudeCode", "Codex"]));
 }

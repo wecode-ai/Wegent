@@ -1,13 +1,13 @@
-import { act, cleanup, render, screen } from '@testing-library/react'
-import { afterEach, expect, test, vi } from 'vitest'
-import { MessageList } from './MessageList'
 import type { WorkbenchMessage } from '@/types/workbench'
+import { act, cleanup, render } from '@testing-library/react'
 import {
   cacheConversationVirtualMeasurements,
   clearConversationViewportCache,
 } from '@wegent/collaboration/conversation/conversationViewportCache'
-import type { ConversationVirtualizer } from '@wegent/collaboration/conversation/useConversationVirtualizer'
 import * as pretext from '@wegent/collaboration/conversation/messagePretextLayout'
+import type { ConversationVirtualizer } from '@wegent/collaboration/conversation/useConversationVirtualizer'
+import { afterEach, expect, test, vi } from 'vitest'
+import { MessageList } from './MessageList'
 
 vi.mock('@/lib/runtime-environment', () => ({
   isDesktopRuntime: () => true,
@@ -95,12 +95,24 @@ function fixture() {
   }
 }
 
-test('hydrates the real virtualizer only after validating the message column', () => {
+test('exposes only existing numeric virtualizer state for on-demand failure diagnostics', () => {
   const current = fixture()
+  current.props.scrollElementRef.current.dataset.testid = 'diagnostic-viewport'
   const view = render(<MessageList {...current.props} />)
-  expect(current.engine.current!.itemSizeCache.get('message-0')).toBe(987)
-  expect(current.estimate).not.toHaveBeenCalled()
-  view.unmount()
+  const list = view.container.querySelector<HTMLElement>('[data-conversation-message-list]')!
+  const engine = current.engine.current!
+
+  expect(list.dataset.conversationLayoutWidth).toBe('800')
+  expect(list.dataset.conversationMessageCount).toBe('20')
+  expect(list.dataset.conversationVisibleCount).toBe('20')
+  expect(list.dataset.conversationVirtualMessages).toBe('true')
+  expect(list.dataset.conversationViewportReady).toBe('true')
+  expect(list.dataset.conversationVirtualizerEnabled).toBe('true')
+  expect(list.dataset.conversationVirtualRowCount).toBe(String(engine.getVirtualItems().length))
+  expect(JSON.parse(list.dataset.conversationVirtualRange!)).toEqual(engine.range)
+  expect(JSON.parse(list.dataset.conversationScrollRect!)).toEqual(engine.scrollRect)
+  expect(list.dataset.conversationScrollConnected).toBe('false')
+  expect(list.dataset.conversationScrollElement).toBe('diagnostic-viewport')
 })
 
 test.each(['reopen', 'resize'] as const)(
@@ -119,11 +131,55 @@ test.each(['reopen', 'resize'] as const)(
   }
 )
 
-test('measures and renders when the first messages arrive after an empty mount', () => {
-  const current = fixture()
-  const view = render(<MessageList {...current.props} messages={[]} />)
-  expect(view.container).toBeEmptyDOMElement()
-  view.rerender(<MessageList {...current.props} />)
-  expect(current.engine.current).not.toBeNull()
-  expect(screen.getAllByTestId('message-user').length).toBeGreaterThan(0)
-})
+test.each([600, 24])(
+  'keeps retained rows in normal flow while measurements lag actual height %s',
+  height => {
+    const current = fixture()
+    const heights = new Map<number, number>()
+    const bounds = vi
+      .spyOn(HTMLElement.prototype, 'getBoundingClientRect')
+      .mockImplementation(function (this: HTMLElement) {
+        return new DOMRect(
+          0,
+          0,
+          800,
+          this.hasAttribute('data-message-row')
+            ? (heights.get(Number(this.dataset.index)) ?? 100)
+            : 0
+        )
+      })
+    const view = render(<MessageList {...current.props} />)
+    const row = view.container.querySelector<HTMLElement>('[data-message-row]')!
+    const index = Number(row.dataset.index)
+    const message = current.props.messages[index]
+    const before = current.engine.current!.getTotalSize()
+    expect(current.engine.current!.itemSizeCache.get(message.id)).toBe(100)
+
+    heights.set(index, height)
+    const messages = current.props.messages.map((item, position) =>
+      position === index ? { ...item, content: 'A longer updated message' } : item
+    )
+    view.rerender(<MessageList {...current.props} messages={messages} />)
+
+    expect(view.container.querySelector(`[data-index="${index}"]`)).toBe(row)
+    expect(current.engine.current!.itemSizeCache.get(message.id)).toBe(100)
+    expect(current.engine.current!.getTotalSize()).toBe(before)
+    expect(row.parentElement!.style.height).toBe('')
+    expect(row.style.position).toBe('')
+    expect(row.style.transform).toBe('')
+    const reservedHeight = [...row.parentElement!.children].reduce((sum, child) => {
+      const element = child as HTMLElement
+      return (
+        sum +
+        (Number.parseFloat(element.style.marginTop) || 0) +
+        (element.hasAttribute('data-message-row')
+          ? (heights.get(Number(element.dataset.index)) ?? 100)
+          : Number.parseFloat(element.style.height) || 0)
+      )
+    }, 0)
+    expect(reservedHeight).toBe(before + height - 100)
+    bounds.mockClear()
+    view.rerender(<MessageList {...current.props} messages={[...messages]} />)
+    expect(bounds.mock.calls).toHaveLength(0)
+  }
+)

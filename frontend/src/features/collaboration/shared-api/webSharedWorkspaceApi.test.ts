@@ -16,6 +16,17 @@ function createClient() {
 }
 
 describe('workspace resource configuration adapter', () => {
+  it('forwards the observed content revision with an Issue read receipt', async () => {
+    const client = createClient()
+    client.post.mockResolvedValue({ id: 'issue-1', is_unread: true })
+    const api = createWebSharedWorkspaceApi(client, { getBlob: jest.fn() })
+    await api.issues.markRead('issue-1', 4, 7)
+    expect(client.post).toHaveBeenCalledWith('/v1/loop-items/issue-1/read', {
+      activity_sequence: 4,
+      content_revision: 7,
+    })
+  })
+
   it('preserves opaque view extensions and lane sort IDs in project updates', async () => {
     const client = createClient()
     client.patch.mockResolvedValue({})

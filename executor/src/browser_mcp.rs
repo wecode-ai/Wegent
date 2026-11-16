@@ -37,6 +37,9 @@ const BROWSER_LABEL_ENV: &str = "WEWORK_EMBEDDED_BROWSER_LABEL";
 const BROWSER_SESSION_ID_ENV: &str = "WEWORK_EMBEDDED_BROWSER_SESSION_ID";
 const BRIDGE_CONNECT_TIMEOUT_SECONDS: u64 = 5;
 const BRIDGE_REQUEST_TIMEOUT_SECONDS: u64 = 45;
+const BROWSER_APPROVAL_TIMEOUT_SECONDS: u64 = 60;
+pub(crate) const BROWSER_TOOL_TIMEOUT_SECONDS: u64 =
+    BRIDGE_REQUEST_TIMEOUT_SECONDS + BROWSER_APPROVAL_TIMEOUT_SECONDS + 15;
 const BROWSER_MCP_LOG_FILE: &str = "wework-browser-mcp.log";
 pub const WEWORK_BROWSER_MCP_SERVER_NAME: &str = "wework_browser";
 static REQUEST_SEQUENCE: AtomicU64 = AtomicU64::new(1);
@@ -213,23 +216,6 @@ pub(crate) async fn handle_request_with_context(
         }
         _ => id.map(|id| error_response(id, -32601, format!("Unknown method: {method}"))),
     }
-}
-
-#[cfg(test)]
-async fn handle_request(
-    client: &reqwest::Client,
-    request: &Value,
-    sequence: u64,
-    started: Instant,
-) -> Option<Value> {
-    handle_request_with_context(
-        client,
-        request,
-        &BrowserMcpRequestContext::new(None, "browser-test-session".to_owned()),
-        sequence,
-        started,
-    )
-    .await
 }
 
 async fn execute_tool(
@@ -637,13 +623,14 @@ async fn send_bridge_request(
             "{}/browser",
             identity.base_url.trim_end_matches('/')
         ))
-        .json(payload);
+        .json(payload)
+        .timeout(bridge_request_timeout(payload));
     if let Some(token) = identity.token.as_deref() {
         request = request.bearer_auth(token);
     }
     let response = request.send().await.map_err(|error| BridgeRequestError {
         message: format!(
-            "Embedded browser bridge is unavailable at {}: {error}. The Wework built-in browser panel may be closed or restarting; ask the user to open the browser panel, then retry.",
+            "Embedded browser bridge is unavailable at {}: {error:#}. The Wework built-in browser panel may be closed or restarting; ask the user to open the browser panel, then retry.",
             identity.base_url
         ),
         refresh_identity: true,
@@ -659,6 +646,16 @@ async fn send_bridge_request(
         });
     }
     Ok(response)
+}
+
+fn bridge_request_timeout(payload: &Value) -> Duration {
+    // Mutating calls retain their original action budget while a human approves.
+    let approval_seconds = if bridge_payload_is_read_only(payload) {
+        0
+    } else {
+        BROWSER_APPROVAL_TIMEOUT_SECONDS
+    };
+    Duration::from_secs(BRIDGE_REQUEST_TIMEOUT_SECONDS + approval_seconds)
 }
 
 fn bridge_payload_is_read_only(payload: &Value) -> bool {

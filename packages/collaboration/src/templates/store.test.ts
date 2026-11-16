@@ -30,6 +30,7 @@ function remote(): CollaborationTemplateRemote {
     get: vi.fn(),
     install: vi.fn(),
     publish: vi.fn(),
+    delete: vi.fn(),
     save: vi.fn(async document => ({
       id: 42,
       ownerId: 7,
@@ -41,6 +42,140 @@ function remote(): CollaborationTemplateRemote {
 }
 
 describe('scoped template store', () => {
+  it('deletes offline imports durably and keeps builtins', async () => {
+    const cache = persistence()
+    const store = new CollaborationTemplateStore({
+      scope: 'local:7',
+      ownerId: 7,
+      persistence: cache,
+    })
+    const record = await store.save(personal(), 7)
+    await store.delete(record)
+    expect(await cache.read()).toEqual([])
+    const reloaded = new CollaborationTemplateStore({
+      scope: 'local:7',
+      ownerId: 7,
+      persistence: cache,
+    })
+    await reloaded.load()
+    expect(reloaded.getSnapshot().records.every(item => item.source === 'builtin')).toBe(true)
+  })
+
+  it('keeps synced templates on remote failure and allows retry', async () => {
+    const backend = remote()
+    const cache = persistence()
+    const store = new CollaborationTemplateStore({
+      scope: 'backend:7',
+      ownerId: 7,
+      remote: backend,
+      persistence: cache,
+    })
+    const record = await store.save(personal(), 7)
+    vi.mocked(backend.delete).mockRejectedValueOnce(new Error('offline'))
+    await expect(store.delete(record)).rejects.toThrow('offline')
+    expect(await cache.read()).toHaveLength(1)
+    await store.delete(record)
+    expect(backend.delete).toHaveBeenLastCalledWith(42)
+    expect(await cache.read()).toEqual([])
+  })
+
+  it('rejects builtin, downloaded and cross-account deletion', async () => {
+    const backend = remote()
+    const store = new CollaborationTemplateStore({
+      scope: 'backend:7',
+      ownerId: 7,
+      remote: backend,
+      persistence: persistence(),
+    })
+    for (const record of [
+      builtinCollaborationTemplates()[0],
+      {
+        id: 42,
+        ownerId: 8,
+        source: 'personal' as const,
+        document: personal(),
+        revision: '1',
+      },
+      {
+        id: 42,
+        ownerId: 7,
+        source: 'downloaded' as const,
+        document: personal(),
+        revision: '1',
+      },
+    ])
+      await expect(store.delete(record)).rejects.toThrow('invalid_template_scope')
+    expect(backend.delete).not.toHaveBeenCalled()
+  })
+
+  it('waits for synchronization before deleting the assigned server id', async () => {
+    const backend = remote()
+    let release!: () => void
+    const held = new Promise<void>(resolve => {
+      release = resolve
+    })
+    vi.mocked(backend.save).mockImplementationOnce(async document => {
+      await held
+      return {
+        id: 42,
+        ownerId: 7,
+        document,
+        source: 'personal',
+        revision: '1',
+      }
+    })
+    const cache = persistence()
+    const store = new CollaborationTemplateStore({
+      scope: 'backend:7',
+      ownerId: 7,
+      remote: backend,
+      persistence: cache,
+    })
+    const saving = store.save(personal(), 7)
+    await vi.waitFor(() => expect(backend.save).toHaveBeenCalledOnce())
+    const draft = store.getSnapshot().records.find(item => item.pendingSync)!
+    const deleting = store.delete(draft)
+    release()
+    await Promise.all([saving, deleting])
+    expect(backend.delete).toHaveBeenCalledWith(42)
+    expect(await cache.read()).toEqual([])
+  })
+
+  it('requires a connection to delete a synced template', async () => {
+    const cache = persistence()
+    const online = new CollaborationTemplateStore({
+      scope: 'backend:7',
+      ownerId: 7,
+      remote: remote(),
+      persistence: cache,
+    })
+    const record = await online.save(personal(), 7)
+    const offline = new CollaborationTemplateStore({
+      scope: 'backend:7',
+      ownerId: 7,
+      persistence: cache,
+    })
+    await expect(offline.delete(record)).rejects.toThrow('connection_required')
+    expect(await cache.read()).toHaveLength(1)
+  })
+
+  it('retries an idempotent cloud deletion when local persistence failed', async () => {
+    const backend = remote()
+    const cache = persistence()
+    const store = new CollaborationTemplateStore({
+      scope: 'backend:7',
+      ownerId: 7,
+      remote: backend,
+      persistence: cache,
+    })
+    const record = await store.save(personal(), 7)
+    cache.write.mockRejectedValueOnce(new Error('disk full'))
+    await expect(store.delete(record)).rejects.toThrow('disk full')
+    expect(store.getSnapshot().records).toContainEqual(record)
+    await store.delete(record)
+    expect(await cache.read()).toEqual([])
+    expect(backend.delete).toHaveBeenCalledTimes(2)
+  })
   it('downloads an account reference without reinstalling a withdrawn template', async () => {
     const backend = remote()
     const document = personal('installed-workflow')
@@ -70,7 +205,10 @@ describe('scoped template store', () => {
       persistence: persistence(),
       remote: backend,
     })
-    await expect(store.download(42)).resolves.toMatchObject({ id: 42, pendingSync: false })
+    await expect(store.download(42)).resolves.toMatchObject({
+      id: 42,
+      pendingSync: false,
+    })
     expect(backend.install).not.toHaveBeenCalled()
     expect(backend.get).toHaveBeenCalledTimes(2)
   })
@@ -82,7 +220,13 @@ describe('scoped template store', () => {
     })
     vi.mocked(backend.save).mockImplementationOnce(async document => {
       await held
-      return { id: 41, ownerId: 7, document, source: 'personal', revision: '1' }
+      return {
+        id: 41,
+        ownerId: 7,
+        document,
+        source: 'personal',
+        revision: '1',
+      }
     })
     const store = new CollaborationTemplateStore({
       scope: 'backend:7',

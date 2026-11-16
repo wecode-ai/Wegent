@@ -1,0 +1,13 @@
+{
+  "order": 92000,
+  "scenario": "./scenarios/project-assignment-notification.scenario.mjs",
+  "scenarioOnly": true,
+  "resources": ["macos-inspector-foreground"],
+  "ci": {
+    "core": {
+      "order": 67000,
+      "shard": 2,
+      "position": 1000
+    }
+  }
+}

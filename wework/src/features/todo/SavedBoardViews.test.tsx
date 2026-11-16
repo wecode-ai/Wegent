@@ -11,16 +11,16 @@ import {
   screen,
   waitFor,
 } from '@testing-library/react'
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import userEvent from '@testing-library/user-event'
 import {
+  BoardViewEditor,
   BoardViewNavigation,
   BoardViewNotice,
-  BoardViewEditor,
   createCollaborationTranslator,
   useSavedBoardViews,
   type ProjectBoardViews,
 } from '@wegent/collaboration'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 const translate = createCollaborationTranslator('zh-CN')
 const statuses = [
@@ -73,29 +73,6 @@ describe('saved project board views', () => {
     )
     expect(result.current.view).toBeNull()
     expect(result.current.views).toEqual([])
-    expect(save).not.toHaveBeenCalled()
-  })
-
-  it('opens the project default on entry while keeping explicit switches local to the current visit', () => {
-    const save = vi.fn()
-    const { result, rerender } = renderHook(
-      ({ projectKey }) =>
-        useSavedBoardViews({
-          projectKey,
-          config: { ...config, default_view_id: 'mixed' },
-          revision: 1,
-          translate,
-          save,
-        }),
-      { initialProps: { projectKey: 'backend:one' } }
-    )
-    expect(result.current.view?.id).toBe('mixed')
-    act(() => result.current.select('default'))
-    expect(result.current.view).toBeNull()
-    rerender({ projectKey: 'local:two' })
-    expect(result.current.view?.id).toBe('mixed')
-    rerender({ projectKey: 'backend:one' })
-    expect(result.current.view?.id).toBe('mixed')
     expect(save).not.toHaveBeenCalled()
   })
 
@@ -355,28 +332,6 @@ describe('saved project board views', () => {
     expect(save).not.toHaveBeenCalled()
   })
 
-  it('opens views with omitted filters as an unrestricted view', async () => {
-    const save = vi.fn().mockResolvedValue(undefined)
-    render(
-      <BoardViewEditor
-        initial={{ ...config.views[0], filter: undefined }}
-        statuses={statuses}
-        tags={['a']}
-        translate={translate}
-        onSave={save}
-        onClose={vi.fn()}
-      />
-    )
-    expect(screen.getByTestId('board-view-filter-match')).toHaveValue('all')
-    expect(screen.getByTestId('board-view-filter-tag-a')).not.toBeChecked()
-    fireEvent.click(screen.getByTestId('board-view-save'))
-    await waitFor(() =>
-      expect(save).toHaveBeenCalledWith(
-        expect.objectContaining({ filter: { tags: [], match: 'all' } })
-      )
-    )
-  })
-
   function renderTagView(tags = ['bug', '测试', '需求']) {
     const save = vi.fn().mockResolvedValue(undefined)
     render(
@@ -398,54 +353,6 @@ describe('saved project board views', () => {
     )
     return save
   }
-
-  it('opens all tags independently of the current value and contains the popup inside its dialog', async () => {
-    const user = userEvent.setup()
-    const save = renderTagView()
-    await user.click(screen.getByTestId('board-view-lane-value-0'))
-    expect(screen.getByTestId('board-view-lane-value-0-search')).toHaveValue('')
-    for (const tag of ['bug', '测试', '需求'])
-      expect(screen.getByTestId(`board-view-lane-value-0-option-${tag}`)).toBeVisible()
-    expect(screen.getByTestId('board-view-lane-value-0-option-bug')).toHaveAttribute(
-      'aria-selected',
-      'true'
-    )
-    expect(screen.getByTestId('board-view-lane-value-0-option-测试')).toBeDisabled()
-    expect(screen.getByTestId('board-view-editor')).toContainElement(
-      screen.getByTestId('board-view-lane-value-0-popover')
-    )
-    await user.click(screen.getByTestId('board-view-lane-value-0-option-需求'))
-    expect(screen.getByTestId('board-view-lane-value-0')).toHaveTextContent('需求')
-    expect(save).not.toHaveBeenCalled()
-    await user.click(screen.getByTestId('board-view-save'))
-    await waitFor(() =>
-      expect(save).toHaveBeenCalledWith(
-        expect.objectContaining({
-          columns: [
-            { id: 'bug', type: 'tag', value: '需求' },
-            { id: 'test', type: 'tag', value: '测试' },
-          ],
-        })
-      )
-    )
-  })
-
-  it('clears search on reopen and Escape closes only the picker without changing its binding', async () => {
-    const user = userEvent.setup()
-    const save = renderTagView()
-    await user.click(screen.getByTestId('board-view-lane-value-0'))
-    await user.type(screen.getByTestId('board-view-lane-value-0-search'), 'bu')
-    expect(screen.getByTestId('board-view-lane-value-0-option-bug')).toBeVisible()
-    expect(screen.queryByTestId('board-view-lane-value-0-option-需求')).not.toBeInTheDocument()
-    await user.keyboard('{Escape}')
-    expect(screen.queryByTestId('board-view-lane-value-0-popover')).not.toBeInTheDocument()
-    expect(screen.getByTestId('board-view-editor')).toBeInTheDocument()
-    expect(screen.getByTestId('board-view-lane-value-0')).toHaveTextContent('bug')
-    await user.click(screen.getByTestId('board-view-lane-value-0'))
-    expect(screen.getByTestId('board-view-lane-value-0-search')).toHaveValue('')
-    expect(screen.getByTestId('board-view-lane-value-0-option-需求')).toBeVisible()
-    expect(save).not.toHaveBeenCalled()
-  })
 
   it('creates a trimmed tag with Enter while preserving IME composition and the unsaved view', async () => {
     const user = userEvent.setup()

@@ -114,15 +114,6 @@ impl UserMcpAccessTokens for StubTokens {
     }
 }
 
-fn binding_context() -> SkillBindingContext<'static> {
-    SkillBindingContext {
-        mode: "chat",
-        agent_id: 900_100,
-        project_id: None,
-        group_namespace: None,
-    }
-}
-
 /// `_get_bot_for_subtask` (`request_builder.py:1128-1140`): the subtask's
 /// first bot id is read with the Bot + active predicates. The recorded
 /// statement renders `is_active = 1` (a truthy column filter) and binds the
@@ -298,9 +289,8 @@ async fn the_late_ghost_chain_feeds_the_skill_compilation() {
         &tokens,
         false,
         "user:6510",
-        &binding_context(),
         None,
-        false,
+        None,
     )
     .await
     .expect("skills");

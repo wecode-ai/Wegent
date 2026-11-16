@@ -32,9 +32,9 @@ import { apiKeyApis, ApiKey, ApiKeyCreated } from '@/apis/api-keys'
 
 // Install script URLs from GitHub
 const INSTALL_SCRIPT_URL_UNIX =
-  'https://github.com/wecode-ai/Wegent/releases/latest/download/local_executor_install.sh'
+  'https://raw.githubusercontent.com/wecode-ai/Wegent/main/executor/scripts/local_executor_install.sh'
 const INSTALL_SCRIPT_URL_WINDOWS =
-  'https://github.com/wecode-ai/Wegent/releases/latest/download/local_executor_install.ps1'
+  'https://raw.githubusercontent.com/wecode-ai/Wegent/main/executor/scripts/local_executor_install.ps1'
 
 type OsType = 'macos' | 'linux' | 'windows'
 

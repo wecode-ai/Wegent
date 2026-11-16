@@ -10,11 +10,11 @@ import {
   ChevronDown,
   Search,
 } from "lucide-react";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 
 import { canEditCollaborationIssue } from "../permissions";
 import type { CollaborationAssignment, CollaborationIssue } from "../types";
-import type { IssueStatusFailure } from './bulkIssueStatus'
+import type { IssueStatusFailure } from "./bulkIssueStatus";
 
 type IssueTableSortKey =
   | "title"
@@ -56,12 +56,14 @@ export function ProjectIssueTable({
   batchStatusLabel = "Change status",
   batchApplyLabel = "Apply",
   batchDeleteLabel = "Archive selected",
-  batchFailedLabel = 'Status update failed',
+  batchFailedLabel = "Status update failed",
   availableStatuses,
   statusName = (status) => status,
   onCreate,
   canDelete = () => true,
   onDelete,
+  renderBulkActions,
+  toolbarAction,
   onBulkStatusChange,
   onBulkDelete,
   onOpen,
@@ -90,12 +92,14 @@ export function ProjectIssueTable({
   batchStatusLabel?: string;
   batchApplyLabel?: string;
   batchDeleteLabel?: string;
-  batchFailedLabel?: string
+  batchFailedLabel?: string;
   availableStatuses?: readonly string[];
   statusName?(status: string): string;
   onCreate?(): void;
   canDelete?(issue: CollaborationIssue): boolean;
   onDelete?(issue: CollaborationIssue): void;
+  renderBulkActions?(issues: CollaborationIssue[]): ReactNode;
+  toolbarAction?: ReactNode;
   onBulkStatusChange?(
     issues: CollaborationIssue[],
     status: string,
@@ -113,8 +117,8 @@ export function ProjectIssueTable({
   );
   const [batchStatus, setBatchStatus] = useState("");
   const [batchBusy, setBatchBusy] = useState(false);
-  const [batchFailures, setBatchFailures] = useState<IssueStatusFailure[]>([])
-  const batchScope = useRef({})
+  const [batchFailures, setBatchFailures] = useState<IssueStatusFailure[]>([]);
+  const batchScope = useRef({});
   const selectAllRef = useRef<HTMLInputElement>(null);
   const currentAssignmentByIssueId = useMemo(
     () =>
@@ -157,7 +161,7 @@ export function ProjectIssueTable({
     [availableStatuses, currentAssignmentByIssueId, issues],
   );
   useEffect(() => {
-    batchScope.current = {}
+    batchScope.current = {};
     setQuery("");
     setStatusFilter("");
     setAssigneeFilter("");
@@ -165,11 +169,11 @@ export function ProjectIssueTable({
     setSort(null);
     setSelectedIssueIds(new Set());
     setBatchStatus("");
-    setBatchFailures([])
-    setBatchBusy(false)
+    setBatchFailures([]);
+    setBatchBusy(false);
     return () => {
-      batchScope.current = {}
-    }
+      batchScope.current = {};
+    };
   }, [projectKey]);
   useEffect(() => {
     if (statusFilter && !filterOptions.statuses.includes(statusFilter)) {
@@ -316,24 +320,24 @@ export function ProjectIssueTable({
       return;
     }
     setBatchBusy(true);
-    setBatchFailures([])
-    const scope = batchScope.current
+    setBatchFailures([]);
+    const scope = batchScope.current;
     try {
-      const failures = await onBulkStatusChange(selectedIssues, batchStatus)
-      if (batchScope.current !== scope) return
-      setBatchFailures(failures)
-      setSelectedIssueIds(new Set(failures.map(failure => failure.issueId)))
-      if (failures.length === 0) setBatchStatus('')
+      const failures = await onBulkStatusChange(selectedIssues, batchStatus);
+      if (batchScope.current !== scope) return;
+      setBatchFailures(failures);
+      setSelectedIssueIds(new Set(failures.map((failure) => failure.issueId)));
+      if (failures.length === 0) setBatchStatus("");
     } catch (error) {
-      if (batchScope.current !== scope) return
+      if (batchScope.current !== scope) return;
       setBatchFailures(
-        selectedIssues.map(issue => ({
+        selectedIssues.map((issue) => ({
           issueId: issue.id,
           message: error instanceof Error ? error.message : batchFailedLabel,
-        }))
-      )
+        })),
+      );
     } finally {
-      if (batchScope.current === scope) setBatchBusy(false)
+      if (batchScope.current === scope) setBatchBusy(false);
     }
   };
   const toggleSort = (key: IssueTableSortKey) => {
@@ -371,26 +375,6 @@ export function ProjectIssueTable({
         ? "descending"
         : "none";
 
-  if (issues.length === 0) {
-    return (
-      <div
-        className="collaboration-platform-empty"
-        data-testid="collaboration-issue-table-empty"
-      >
-        <strong>{emptyLabel}</strong>
-        {onCreate && createLabel ? (
-          <button
-            type="button"
-            className="collaboration-primary-button"
-            data-testid="collaboration-issue-table-empty-create"
-            onClick={onCreate}
-          >
-            {createLabel}
-          </button>
-        ) : null}
-      </div>
-    );
-  }
   return (
     <div className="collaboration-issue-table-wrap">
       <div className="collaboration-issue-table-toolbar">
@@ -404,6 +388,21 @@ export function ProjectIssueTable({
             onChange={(event) => setQuery(event.target.value)}
           />
         </label>
+        {toolbarAction}
+        {onCreate && createLabel ? (
+          <button
+            type="button"
+            className="collaboration-primary-button"
+            data-testid={
+              issues.length === 0
+                ? "collaboration-issue-table-empty-create"
+                : "collaboration-issue-table-create"
+            }
+            onClick={onCreate}
+          >
+            {createLabel}
+          </button>
+        ) : null}
         {selectedIssues.length > 0 ? (
           <div
             className="collaboration-issue-table-batch"
@@ -412,8 +411,9 @@ export function ProjectIssueTable({
             <strong>
               {selectedIssues.length} {selectedLabel}
             </strong>
+            {renderBulkActions?.(selectedIssues)}
             {onBulkStatusChange ? (
-              <>
+              <div className="collaboration-issue-table-batch-group">
                 <select
                   aria-label={batchStatusLabel}
                   data-testid="collaboration-issue-table-batch-status"
@@ -436,7 +436,7 @@ export function ProjectIssueTable({
                 >
                   {batchApplyLabel}
                 </button>
-              </>
+              </div>
             ) : null}
             {onBulkDelete ? (
               <button
@@ -450,16 +450,6 @@ export function ProjectIssueTable({
             ) : null}
           </div>
         ) : null}
-        {onCreate && createLabel ? (
-          <button
-            type="button"
-            className="collaboration-primary-button"
-            data-testid="collaboration-issue-table-create"
-            onClick={onCreate}
-          >
-            {createLabel}
-          </button>
-        ) : null}
       </div>
       {batchFailures.length > 0 ? (
         <div
@@ -469,230 +459,242 @@ export function ProjectIssueTable({
         >
           <strong>{batchFailedLabel}</strong>
           <ul>
-            {batchFailures.map(failure => (
+            {batchFailures.map((failure) => (
               <li key={failure.issueId}>
-                {issues.find(issue => issue.id === failure.issueId)?.title ?? failure.issueId}:{' '}
-                {failure.message}
+                {issues.find((issue) => issue.id === failure.issueId)?.title ??
+                  failure.issueId}
+                : {failure.message}
               </li>
             ))}
           </ul>
         </div>
       ) : null}
-      <table
-        className="collaboration-issue-table"
-        data-testid="collaboration-issue-table"
-      >
-        <colgroup>
-          <col className="collaboration-issue-table-col-select" />
-          <col className="collaboration-issue-table-col-title" />
-          <col className="collaboration-issue-table-col-status" />
-          <col className="collaboration-issue-table-col-assignee" />
-          <col className="collaboration-issue-table-col-tags" />
-          <col className="collaboration-issue-table-col-start" />
-          <col className="collaboration-issue-table-col-due" />
-          {executionLabel ? (
-            <col className="collaboration-issue-table-col-execution" />
-          ) : null}
-          <col className="collaboration-issue-table-col-updated" />
-          {onDelete ? (
-            <col className="collaboration-issue-table-col-actions" />
-          ) : null}
-        </colgroup>
-        <thead>
-          <tr>
-            <th className="collaboration-issue-table-select">
-              <input
-                ref={selectAllRef}
-                type="checkbox"
-                aria-label={selectAllLabel}
-                data-testid="collaboration-issue-table-select-all"
-                checked={allVisibleSelected}
-                disabled={selectableVisibleIssues.length === 0}
-                onChange={toggleAllVisible}
-              />
-            </th>
-            <th aria-sort={ariaSort("title")}>
-              {sortButton("title", issueLabel)}
-            </th>
-            <th aria-sort={ariaSort("status")}>
-              <div className="collaboration-issue-table-header-controls">
-                {sortButton("status", statusLabel)}
-                <label
-                  className={`collaboration-issue-table-header-filter ${
-                    statusFilter ? "is-active" : ""
-                  }`}
-                >
-                  <ChevronDown aria-hidden="true" />
-                  <select
-                    aria-label={statusLabel}
-                    data-testid="collaboration-issue-table-status-filter"
-                    value={statusFilter}
-                    onChange={(event) => setStatusFilter(event.target.value)}
-                  >
-                    <option value="">
-                      {allLabel} {statusLabel}
-                    </option>
-                    {filterOptions.statuses.map((status) => (
-                      <option key={status} value={status}>
-                        {statusName(status)}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-              </div>
-            </th>
-            <th aria-sort={ariaSort("assignee")}>
-              <div className="collaboration-issue-table-header-controls">
-                {sortButton("assignee", assignmentsLabel)}
-                <label
-                  className={`collaboration-issue-table-header-filter ${
-                    assigneeFilter ? "is-active" : ""
-                  }`}
-                >
-                  <ChevronDown aria-hidden="true" />
-                  <select
-                    aria-label={assignmentsLabel}
-                    data-testid="collaboration-issue-table-assignee-filter"
-                    value={assigneeFilter}
-                    onChange={(event) => setAssigneeFilter(event.target.value)}
-                  >
-                    <option value="">
-                      {allLabel} {assignmentsLabel}
-                    </option>
-                    {filterOptions.assignees.map(([id, name]) => (
-                      <option key={id} value={id}>
-                        {name}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-              </div>
-            </th>
-            <th aria-sort={ariaSort("tags")}>
-              <div className="collaboration-issue-table-header-controls">
-                {sortButton("tags", tagLabel)}
-                <label
-                  className={`collaboration-issue-table-header-filter ${
-                    tagFilter ? "is-active" : ""
-                  }`}
-                >
-                  <ChevronDown aria-hidden="true" />
-                  <select
-                    aria-label={tagLabel}
-                    data-testid="collaboration-issue-table-tag-filter"
-                    value={tagFilter}
-                    onChange={(event) => setTagFilter(event.target.value)}
-                  >
-                    <option value="">
-                      {allLabel} {tagLabel}
-                    </option>
-                    {filterOptions.tags.map((tag) => (
-                      <option key={tag} value={tag}>
-                        {tag}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-              </div>
-            </th>
-            <th aria-sort={ariaSort("start_at")}>
-              {sortButton("start_at", startAtLabel)}
-            </th>
-            <th aria-sort={ariaSort("due_at")}>
-              {sortButton("due_at", dueAtLabel)}
-            </th>
+      {issues.length === 0 ? (
+        <div
+          className="collaboration-platform-empty"
+          data-testid="collaboration-issue-table-empty"
+        >
+          <strong>{emptyLabel}</strong>
+        </div>
+      ) : (
+        <table
+          className="collaboration-issue-table"
+          data-testid="collaboration-issue-table"
+        >
+          <colgroup>
+            <col className="collaboration-issue-table-col-select" />
+            <col className="collaboration-issue-table-col-title" />
+            <col className="collaboration-issue-table-col-status" />
+            <col className="collaboration-issue-table-col-assignee" />
+            <col className="collaboration-issue-table-col-tags" />
+            <col className="collaboration-issue-table-col-start" />
+            <col className="collaboration-issue-table-col-due" />
             {executionLabel ? (
-              <th aria-sort={ariaSort("execution")}>
-                {sortButton("execution", executionLabel)}
-              </th>
+              <col className="collaboration-issue-table-col-execution" />
             ) : null}
-            <th aria-sort={ariaSort("updated_at")}>
-              {sortButton("updated_at", updatedLabel)}
-            </th>
+            <col className="collaboration-issue-table-col-updated" />
             {onDelete ? (
-              <th className="collaboration-issue-table-actions-head">
-                {actionsLabel}
-              </th>
+              <col className="collaboration-issue-table-col-actions" />
             ) : null}
-          </tr>
-        </thead>
-        <tbody>
-          {visibleIssues.map((issue) => {
-            const currentAssignment = currentAssignmentByIssueId[issue.id];
-            return (
-              <tr
-                key={issue.id}
-                data-testid={`collaboration-issue-table-row-${issue.id}`}
-              >
-                <td className="collaboration-issue-table-select">
-                  <input
-                    type="checkbox"
-                    aria-label={`${selectIssueLabel} ${issue.title}`}
-                    data-testid={`collaboration-issue-table-select-${issue.id}`}
-                    checked={selectedIssueIds.has(issue.id)}
-                    disabled={!canEditCollaborationIssue(issue)}
-                    onChange={() => toggleIssue(issue)}
-                  />
-                </td>
-                <td>
-                  <button
-                    type="button"
-                    title={issue.title}
-                    onClick={() => onOpen(issue)}
+          </colgroup>
+          <thead>
+            <tr>
+              <th className="collaboration-issue-table-select">
+                <input
+                  ref={selectAllRef}
+                  type="checkbox"
+                  aria-label={selectAllLabel}
+                  data-testid="collaboration-issue-table-select-all"
+                  checked={allVisibleSelected}
+                  disabled={selectableVisibleIssues.length === 0}
+                  onChange={toggleAllVisible}
+                />
+              </th>
+              <th aria-sort={ariaSort("title")}>
+                {sortButton("title", issueLabel)}
+              </th>
+              <th aria-sort={ariaSort("status")}>
+                <div className="collaboration-issue-table-header-controls">
+                  {sortButton("status", statusLabel)}
+                  <label
+                    className={`collaboration-issue-table-header-filter ${
+                      statusFilter ? "is-active" : ""
+                    }`}
                   >
-                    {showIssueKey ? (
-                      <span className="collaboration-issue-key">
-                        {projectKey
-                          ? `${projectKey}-${issue.sequence_number}`
-                          : `#${issue.sequence_number}`}
+                    <ChevronDown aria-hidden="true" />
+                    <select
+                      aria-label={statusLabel}
+                      data-testid="collaboration-issue-table-status-filter"
+                      value={statusFilter}
+                      onChange={(event) => setStatusFilter(event.target.value)}
+                    >
+                      <option value="">
+                        {allLabel} {statusLabel}
+                      </option>
+                      {filterOptions.statuses.map((status) => (
+                        <option key={status} value={status}>
+                          {statusName(status)}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                </div>
+              </th>
+              <th aria-sort={ariaSort("assignee")}>
+                <div className="collaboration-issue-table-header-controls">
+                  {sortButton("assignee", assignmentsLabel)}
+                  <label
+                    className={`collaboration-issue-table-header-filter ${
+                      assigneeFilter ? "is-active" : ""
+                    }`}
+                  >
+                    <ChevronDown aria-hidden="true" />
+                    <select
+                      aria-label={assignmentsLabel}
+                      data-testid="collaboration-issue-table-assignee-filter"
+                      value={assigneeFilter}
+                      onChange={(event) =>
+                        setAssigneeFilter(event.target.value)
+                      }
+                    >
+                      <option value="">
+                        {allLabel} {assignmentsLabel}
+                      </option>
+                      {filterOptions.assignees.map(([id, name]) => (
+                        <option key={id} value={id}>
+                          {name}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                </div>
+              </th>
+              <th aria-sort={ariaSort("tags")}>
+                <div className="collaboration-issue-table-header-controls">
+                  {sortButton("tags", tagLabel)}
+                  <label
+                    className={`collaboration-issue-table-header-filter ${
+                      tagFilter ? "is-active" : ""
+                    }`}
+                  >
+                    <ChevronDown aria-hidden="true" />
+                    <select
+                      aria-label={tagLabel}
+                      data-testid="collaboration-issue-table-tag-filter"
+                      value={tagFilter}
+                      onChange={(event) => setTagFilter(event.target.value)}
+                    >
+                      <option value="">
+                        {allLabel} {tagLabel}
+                      </option>
+                      {filterOptions.tags.map((tag) => (
+                        <option key={tag} value={tag}>
+                          {tag}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                </div>
+              </th>
+              <th aria-sort={ariaSort("start_at")}>
+                {sortButton("start_at", startAtLabel)}
+              </th>
+              <th aria-sort={ariaSort("due_at")}>
+                {sortButton("due_at", dueAtLabel)}
+              </th>
+              {executionLabel ? (
+                <th aria-sort={ariaSort("execution")}>
+                  {sortButton("execution", executionLabel)}
+                </th>
+              ) : null}
+              <th aria-sort={ariaSort("updated_at")}>
+                {sortButton("updated_at", updatedLabel)}
+              </th>
+              {onDelete ? (
+                <th className="collaboration-issue-table-actions-head">
+                  {actionsLabel}
+                </th>
+              ) : null}
+            </tr>
+          </thead>
+          <tbody>
+            {visibleIssues.map((issue) => {
+              const currentAssignment = currentAssignmentByIssueId[issue.id];
+              return (
+                <tr
+                  key={issue.id}
+                  data-testid={`collaboration-issue-table-row-${issue.id}`}
+                >
+                  <td className="collaboration-issue-table-select">
+                    <input
+                      type="checkbox"
+                      aria-label={`${selectIssueLabel} ${issue.title}`}
+                      data-testid={`collaboration-issue-table-select-${issue.id}`}
+                      checked={selectedIssueIds.has(issue.id)}
+                      disabled={!canEditCollaborationIssue(issue)}
+                      onChange={() => toggleIssue(issue)}
+                    />
+                  </td>
+                  <td>
+                    <button
+                      type="button"
+                      title={issue.title}
+                      onClick={() => onOpen(issue)}
+                    >
+                      {showIssueKey ? (
+                        <span className="collaboration-issue-key">
+                          {projectKey
+                            ? `${projectKey}-${issue.sequence_number}`
+                            : `#${issue.sequence_number}`}
+                        </span>
+                      ) : null}
+                      <span className="collaboration-issue-title">
+                        {issue.title}
                       </span>
-                    ) : null}
-                    <span className="collaboration-issue-title">
-                      {issue.title}
-                    </span>
-                  </button>
-                </td>
-                <td>{statusName(issue.status)}</td>
-                <td>{currentAssignment?.target_name || "—"}</td>
-                <td>{issue.tags?.length ? issue.tags.join(", ") : "—"}</td>
-                <td className="collaboration-issue-table-date">
-                  {issue.start_at?.slice(0, 10) || "—"}
-                </td>
-                <td className="collaboration-issue-table-date">
-                  {issue.due_at?.slice(0, 10) || "—"}
-                </td>
-                {executionLabel ? (
-                  <td
-                    data-testid={`collaboration-issue-table-execution-${issue.id}`}
-                    title={issue.execution_error || undefined}
-                  >
-                    {issue.execution_state || "—"}
+                    </button>
                   </td>
-                ) : null}
-                <td className="collaboration-issue-table-updated">
-                  {issue.updated_at.slice(0, 10)}
-                </td>
-                {onDelete ? (
-                  <td className="collaboration-issue-table-actions">
-                    {canEditCollaborationIssue(issue) && canDelete(issue) ? (
-                      <button
-                        aria-label={deleteLabel}
-                        className="collaboration-issue-table-delete"
-                        data-testid={`collaboration-issue-table-delete-${issue.id}`}
-                        onClick={() => onDelete(issue)}
-                        title={deleteLabel}
-                        type="button"
-                      >
-                        <Archive aria-hidden="true" />
-                      </button>
-                    ) : null}
+                  <td>{statusName(issue.status)}</td>
+                  <td>{currentAssignment?.target_name || "—"}</td>
+                  <td>{issue.tags?.length ? issue.tags.join(", ") : "—"}</td>
+                  <td className="collaboration-issue-table-date">
+                    {issue.start_at?.slice(0, 10) || "—"}
                   </td>
-                ) : null}
-              </tr>
-            );
-          })}
-        </tbody>
-      </table>
+                  <td className="collaboration-issue-table-date">
+                    {issue.due_at?.slice(0, 10) || "—"}
+                  </td>
+                  {executionLabel ? (
+                    <td
+                      data-testid={`collaboration-issue-table-execution-${issue.id}`}
+                      title={issue.execution_error || undefined}
+                    >
+                      {issue.execution_state || "—"}
+                    </td>
+                  ) : null}
+                  <td className="collaboration-issue-table-updated">
+                    {issue.updated_at.slice(0, 10)}
+                  </td>
+                  {onDelete ? (
+                    <td className="collaboration-issue-table-actions">
+                      {canEditCollaborationIssue(issue) && canDelete(issue) ? (
+                        <button
+                          aria-label={deleteLabel}
+                          className="collaboration-issue-table-delete"
+                          data-testid={`collaboration-issue-table-delete-${issue.id}`}
+                          onClick={() => onDelete(issue)}
+                          title={deleteLabel}
+                          type="button"
+                        >
+                          <Archive aria-hidden="true" />
+                        </button>
+                      ) : null}
+                    </td>
+                  ) : null}
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      )}
     </div>
   );
 }

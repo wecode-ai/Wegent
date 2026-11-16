@@ -91,6 +91,7 @@ fn tag_rule_only_runs_for_a_new_matching_tag() {
             &project_id,
             &task.id,
             TaskUpdate {
+                milestone_id: None,
                 version: task.version,
                 tags: Some(vec!["ready".into()]),
                 ..Default::default()
@@ -102,6 +103,7 @@ fn tag_rule_only_runs_for_a_new_matching_tag() {
             &project_id,
             &task.id,
             TaskUpdate {
+                milestone_id: None,
                 version: task.version,
                 tags: Some(vec!["ready".into()]),
                 ..Default::default()

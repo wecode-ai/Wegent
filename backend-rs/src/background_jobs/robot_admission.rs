@@ -23,6 +23,11 @@ pub(super) async fn prepare(app: &AppState) -> Result<usize> {
             break;
         }
         if !authority::authorized(app, &row).await? {
+            tracing::info!(
+                execution_id = row.id,
+                item_id = row.loop_item_id,
+                "Queued assignment authorization revoked"
+            );
             state::cancel(app, &row, "Execution authorization revoked").await?;
             continue;
         }
@@ -32,9 +37,21 @@ pub(super) async fn prepare(app: &AppState) -> Result<usize> {
                 let messages=app.mysql.with_transaction(async|tx|{
                     // Preserve the Issue -> execution lock order used by claims.
                     let issue:Option<Node>=tx.fetch_optional(format!("SELECT {} FROM loop_items WHERE id=? AND resource_type='task' FOR UPDATE SKIP LOCKED",store::COLUMNS),(row.loop_item_id.as_str(),)).await?;
-                    if issue.is_none(){return Ok(projection::Effects::default());}
+                    let Some(issue) = issue else { return Ok(projection::Effects::default()) };
                     let current:Option<Execution>=tx.fetch_optional(format!("SELECT {COLUMNS} FROM loop_item_executions WHERE id=? AND status='queued' FOR UPDATE"),(row.id,)).await?;
                     let Some(current)=current.filter(|current|current.version==row.version&&current.assignment_pending())else{return Ok(projection::Effects::default());};
+                    let authorized = authority::authorized_on(app, &mut &mut *tx, &current, Some(&issue))
+                        .await
+                        .map_err(|error| brz_mysql::MysqlError::InvalidQuery { reason: error.to_string() })?;
+                    if !authorized {
+                        return Ok(projection::Effects::default());
+                    }
+                    let valid = super::super::project::runner_recovery::revalidate_on(
+                        &mut &mut *tx, &issue, &plan.payload["runtime_selection"], current.id,
+                    ).await.map_err(|error| brz_mysql::MysqlError::InvalidQuery { reason: error.to_string() })?;
+                    if !valid {
+                        return Ok(projection::Effects::default());
+                    }
                     let mut update=current;
                     if let Some(runtime)=plan.runtime_device.as_ref(){update.runtime_device_id=runtime.clone();}
                     let message=state::prepared_on(tx,app,&update,&plan.status,&plan.payload,plan.owner,plan.team,&plan.environment,&plan.device).await?;
@@ -46,6 +63,11 @@ pub(super) async fn prepare(app: &AppState) -> Result<usize> {
                 if authority::infrastructure(&error) {
                     return Err(error);
                 }
+                tracing::info!(
+                    execution_id = row.id,
+                    item_id = row.loop_item_id,
+                    "Queued assignment configuration unavailable"
+                );
                 state::fail_preparation(app, &row, &error.to_string()).await?;
             }
         }
@@ -94,15 +116,8 @@ async fn plan(app: &AppState, row: &Execution) -> Result<Option<Plan>> {
     let continuation = if request["continuation"].is_null() {
         None
     } else {
-        let Some(source) = continuation(
-            app,
-            row,
-            &issue,
-            &agent,
-            &request["continuation"],
-            &mut context,
-        )
-        .await?
+        let Some(source) =
+            continuation(app, row, &agent, &request["continuation"], &mut context).await?
         else {
             return Ok(None);
         };
@@ -119,9 +134,17 @@ async fn plan(app: &AppState, row: &Execution) -> Result<Option<Plan>> {
         row.assigner_user_id,
         context,
         &instruction,
+        continuation
+            .as_ref()
+            .map(|source| source.environment_id.as_str()),
     )
     .await?;
-    if plan.device_id.is_empty()
+    if let Some(source) = &continuation {
+        plan.runtime_selection["resolved_environment_id"] = json!(source.environment_id);
+        plan.owner = source.owner;
+        plan.device_id.clone_from(&source.device);
+        plan.environment = profile::environment(app, source.owner, &source.device).await?;
+    } else if plan.device_id.is_empty()
         && !plan.runtime_selection["runner_routing"].is_object()
         && plan.environment != "wegent"
     {
@@ -156,6 +179,9 @@ async fn plan(app: &AppState, row: &Execution) -> Result<Option<Plan>> {
                 row.assigner_user_id,
                 &plan.context["runner_selection"],
                 false,
+                continuation
+                    .as_ref()
+                    .map(|source| source.environment_id.as_str()),
             )
             .await?;
     }
@@ -166,10 +192,11 @@ async fn plan(app: &AppState, row: &Execution) -> Result<Option<Plan>> {
     };
     let mut payload = json!({"schema_version":2,"runtime_selection":plan.runtime_selection,"origin_context":plan.context});
     let mut runtime_device = None;
-    let mut owner = plan.owner;
-    if let Some(source) = continuation {
-        owner = source.owner;
+    if let Some(mut source) = continuation {
         runtime_device = Some(source.device.clone());
+        if source.compile_member_profile {
+            source.request = profile::build(app, &issue, row.id, &plan).await?;
+        }
         payload["runtime_request"] = continued_request(row.id, &source, &plan.context)?;
     } else if !plan.device_id.is_empty() {
         let existing = row.intent()["runtime_request"].clone();
@@ -181,7 +208,7 @@ async fn plan(app: &AppState, row: &Execution) -> Result<Option<Plan>> {
             };
     }
     Ok(Some(Plan {
-        owner,
+        owner: plan.owner,
         team: plan.team_id,
         environment: plan.environment,
         device: plan.device_id,
@@ -194,14 +221,15 @@ async fn plan(app: &AppState, row: &Execution) -> Result<Option<Plan>> {
 struct Continuation {
     owner: i64,
     device: String,
+    environment_id: String,
     task: String,
     request: Value,
+    compile_member_profile: bool,
 }
 
 async fn continuation(
     app: &AppState,
     row: &Execution,
-    issue: &Node,
     agent: &Node,
     source: &Value,
     context: &mut Value,
@@ -234,7 +262,6 @@ async fn continuation(
         source["runtime_request"] = original.intent()["runtime_request"].clone();
         source["runtime_selection"] = original.selection();
     }
-    let binding=super::super::project::routing::issue_binding(app,issue).await?.context("ISSUE_RUNNER_CONFIGURATION_REQUIRED: The original session's environment must be restored before replying")?;
     let owner = grants::integer(&source["owner_user_id"]).context("Original owner unavailable")?;
     let device = source["runtime_device_id"]
         .as_str()
@@ -243,13 +270,12 @@ async fn continuation(
     let active = crate::device_identity::resolve_owned_device_alias(&app.mysql, owner, device)
         .await?
         .context("Original environment unavailable")?;
-    if active.id.to_string() != binding {
-        bail!(
-            "ISSUE_RUNNER_CONFLICT: The comment session belongs to a different environment than this Issue"
-        )
-    }
+    let binding = active.id.to_string();
     let request = &source["runtime_request"];
-    if !request.is_object() || request.as_object().unwrap().is_empty() {
+    let compile_member_profile = source["compile_member_profile"] == true
+        && context["dispatch_kind"] == "collaboration_group"
+        && context["dispatch_role"] == "member";
+    if !compile_member_profile && request.as_object().is_none_or(serde_json::Map::is_empty) {
         bail!("The original execution configuration is unavailable")
     }
     context["runtime_subject_user_id"] = json!(owner);
@@ -294,11 +320,13 @@ async fn continuation(
     Ok(Some(Continuation {
         owner,
         device: device.to_owned(),
+        environment_id: binding,
         task: source["runtime_task_id"]
             .as_str()
             .context("Original session identity unavailable")?
             .to_owned(),
         request: request.clone(),
+        compile_member_profile,
     }))
 }
 
@@ -333,8 +361,10 @@ mod tests {
     fn reply_reuses_the_original_session_and_configuration_with_fresh_comment_input() {
         let source = Continuation {
             owner: 7,
+            environment_id: "17".into(),
             device: "original-device".into(),
             task: "original-task".into(),
+            compile_member_profile: false,
             request: json!({"schemaVersion":2,"runtime":"codex","message":"old prompt","newSession":true,
                 "modelSelection":{"modelName":"model-a"},"workspacePath":"/project","attachmentIds":[4],
                 "origin":{"cloudProjectId":"9","type":"board_task"}}),

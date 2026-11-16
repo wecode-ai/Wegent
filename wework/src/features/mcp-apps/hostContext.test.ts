@@ -1,6 +1,6 @@
-import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { McpAppDescriptor } from '@/api/mcpApps'
-import { appDisplayModes, appHostContext, appInitialDisplayMode } from './hostContext'
+import { afterEach, describe, expect, it, vi } from 'vitest'
+import { appHostContext, appInitialDisplayMode } from './hostContext'
 
 const descriptor = (modes?: unknown) =>
   ({
@@ -16,6 +16,15 @@ afterEach(() => {
 })
 
 describe('MCP App host context', () => {
+  it('returns the source card saved model context separately from its original tool input', () => {
+    const frame = document.createElement('iframe')
+    const app = descriptor()
+    expect(appHostContext(frame, 'inline', app, 'call').modelContext).toBeUndefined()
+    app.arguments = { title: 'Generated form', html: '<form></form>', tools: [] }
+    app.modelContext = { structuredContent: { state: { view: 'results' } } }
+    expect(appHostContext(frame, 'inline', app, 'call').modelContext).toEqual(app.modelContext)
+    expect(app.arguments).toEqual({ title: 'Generated form', html: '<form></form>', tools: [] })
+  })
   it('reports the right panel bounds instead of the whole window', () => {
     const frame = document.createElement('iframe')
     vi.spyOn(frame, 'getBoundingClientRect').mockReturnValue({ width: 640, height: 480 } as DOMRect)
@@ -25,11 +34,6 @@ describe('MCP App host context', () => {
       maxWidth: 640,
       maxHeight: 480,
     })
-  })
-  it('honors explicit display mode restrictions, including unsupported-only declarations', () => {
-    expect(appDisplayModes(descriptor())).toEqual(['inline', 'fullscreen', 'pip'])
-    expect(appDisplayModes(descriptor(['fullscreen']))).toEqual(['fullscreen'])
-    expect(appDisplayModes(descriptor(['other']))).toEqual([])
   })
   it('selects the same initial modes as the ChatGPT host', () => {
     expect(appInitialDisplayMode(descriptor())).toBe('inline')

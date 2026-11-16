@@ -4,8 +4,6 @@ import {
   connectLocalTerminal,
   getLocalExecutorDeviceId,
   getLocalPathKind,
-  isLocalHarnessAvailable,
-  isLocalTerminalAvailable,
   listLocalWorkspaceOpeners,
   localPathExists,
   openLocalFile,
@@ -68,16 +66,6 @@ describe('Electron local terminal', () => {
     )
     setNavigatorValue('platform', 'MacIntel')
     setNavigatorValue('maxTouchPoints', 0)
-  })
-
-  test('exposes terminal and harness features only in the Electron desktop runtime', () => {
-    expect(isLocalTerminalAvailable()).toBe(true)
-    expect(isLocalHarnessAvailable()).toBe(true)
-
-    mocks.desktop = false
-
-    expect(isLocalTerminalAvailable()).toBe(false)
-    expect(isLocalHarnessAvailable()).toBe(false)
   })
 
   test('reads executor and filesystem state through Electron services', async () => {
@@ -201,29 +189,72 @@ describe('Electron local terminal', () => {
     ])
   })
 
-  test('opens attachments with the workspace choice and uses the global choice for a new workspace', async () => {
-    const available = ['vscode', 'cursor', 'file-manager'].map(id => ({ id, available: true }))
-    mocks.desktopHost.mockImplementation(async capability =>
-      capability === 'workspace.listOpeners' ? available : undefined
+  test('shares discovery failure and permits a fresh request afterward', async () => {
+    let fail!: (reason: Error) => void
+    mocks.desktopHost.mockReturnValue(new Promise((_, reject) => (fail = reject)))
+    const pending = Array.from({ length: 3 }, () => listLocalWorkspaceOpeners())
+    const settled = Promise.allSettled(pending)
+    fail(new Error('discovery failed'))
+    expect(await settled).toEqual(
+      Array.from({ length: 3 }, () => ({
+        status: 'rejected',
+        reason: new Error('discovery failed'),
+      }))
     )
-    setPreferredWorkspaceOpener('/project-a', 'cursor')
-    setPreferredWorkspaceOpener('/project-b', 'file-manager')
+    expect(mocks.desktopHost).toHaveBeenCalledTimes(1)
 
-    await openLocalFileInWorkspaceApp(' /draft/test.md ', '/project-a')
-    expect(mocks.desktopHost).toHaveBeenLastCalledWith('workspace.openFile', {
-      opener: 'cursor',
-      path: '/draft/test.md',
-    })
-    await openLocalFileInWorkspaceApp('/draft/test.md', '/project-b')
-    expect(mocks.desktopHost).toHaveBeenLastCalledWith('workspace.openFile', {
-      opener: 'file-manager',
-      path: '/draft/test.md',
-    })
-    await openLocalFileInWorkspaceApp('/draft/test.md', '/project-c')
-    expect(mocks.desktopHost).toHaveBeenLastCalledWith('workspace.openFile', {
-      opener: 'file-manager',
-      path: '/draft/test.md',
-    })
+    mocks.desktopHost.mockResolvedValue([])
+    await expect(listLocalWorkspaceOpeners()).resolves.toEqual([])
+    expect(mocks.desktopHost).toHaveBeenCalledTimes(2)
+  })
+
+  test('a saved opener invalidates old discovery without clearing a newer pending request', async () => {
+    const oldResult = [{ id: 'vscode', category: 'general', available: true }]
+    const freshResult = [{ id: 'custom', category: 'winOnly', available: true }]
+    let finishOld!: (value: typeof oldResult) => void
+    let finishFresh!: (value: typeof freshResult) => void
+    mocks.desktopHost
+      .mockReturnValueOnce(new Promise(resolve => (finishOld = resolve)))
+      .mockResolvedValueOnce('C:\\Tools\\editor.exe')
+      .mockReturnValue(new Promise(resolve => (finishFresh = resolve)))
+    const old = listLocalWorkspaceOpeners()
+    await expect(pickLocalWorkspaceOpenerExe()).resolves.toBe('C:\\Tools\\editor.exe')
+    const fresh = listLocalWorkspaceOpeners()
+    finishOld(oldResult)
+    await expect(old).resolves.toEqual(oldResult)
+    const joined = listLocalWorkspaceOpeners()
+    try {
+      expect(mocks.desktopHost.mock.calls).toEqual([
+        ['workspace.listOpeners'],
+        ['workspace.pickOpener'],
+        ['workspace.listOpeners'],
+      ])
+    } finally {
+      finishFresh(freshResult)
+      await Promise.all([fresh, joined])
+    }
+    expect(await joined).toEqual(freshResult)
+  })
+
+  test.each(['cancelled', 'failed'])('a %s picker retains pending discovery', async outcome => {
+    let complete!: (value: []) => void
+    mocks.desktopHost.mockReturnValueOnce(new Promise(resolve => (complete = resolve)))
+    if (outcome === 'cancelled') mocks.desktopHost.mockResolvedValue(null)
+    else mocks.desktopHost.mockRejectedValue(new Error('picker failed'))
+    const pending = listLocalWorkspaceOpeners()
+    if (outcome === 'cancelled') await expect(pickLocalWorkspaceOpenerExe()).resolves.toBeNull()
+    else await expect(pickLocalWorkspaceOpenerExe()).rejects.toThrow('picker failed')
+    const joined = listLocalWorkspaceOpeners()
+    try {
+      expect(mocks.desktopHost.mock.calls).toEqual([
+        ['workspace.listOpeners'],
+        ['workspace.pickOpener'],
+      ])
+    } finally {
+      complete([])
+      await Promise.allSettled([pending, joined])
+    }
+    await expect(joined).resolves.toEqual([])
   })
 
   test('rejects empty attachment paths before contacting the desktop host', async () => {

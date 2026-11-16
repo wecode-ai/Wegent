@@ -1,0 +1,9 @@
+{
+  "revision": "d47dd270f4b6",
+  "parents": [
+    "64356fbc03dd"
+  ],
+  "source": "20260820_d47dd270f4b6_rename_knowledge_base_retrieval_profile.py",
+  "upgrade": null,
+  "downgrade": null
+}

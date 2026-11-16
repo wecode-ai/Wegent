@@ -16,13 +16,31 @@ pub(super) fn space_context_grant(
         .and_then(Value::as_str)
         .and_then(space_context_role);
     let dispatch_id = origin_value("dispatchId", "dispatch_id").and_then(id_value);
-    // Human assignments and stand-ins retain personal execution authority. Their
-    // dispatch IDs correlate workflow activity, rather than confer an agent role.
+    // Stand-in identity is checked against the owned conversation before execution.
+    // Assignment and dispatch IDs correlate work without defining its authority.
     let human_assignment = origin_value("humanAssignmentId", "human_assignment_id")
         .and_then(id_value)
         .is_some();
+    // Match the canonical identity fields validated by the conversation handler.
+    let stand_in_conversation = origin
+        .and_then(|value| value.get("initiatedBy"))
+        .and_then(Value::as_str)
+        == Some("stand_in")
+        && origin.and_then(|value| value.get("publicConversation")) == Some(&Value::Bool(true))
+        && origin
+            .and_then(|value| value.get("standInId"))
+            .and_then(id_value)
+            .is_some()
+        && origin
+            .and_then(|value| value.get("userId"))
+            .and_then(Value::as_i64)
+            .is_some()
+        && origin.is_some_and(|value| {
+            value.get("type").and_then(Value::as_str) == Some("issue_dispatch")
+        });
     let dispatched = has_role
         || (!human_assignment
+            && !stand_in_conversation
             && (dispatch_id.is_some()
                 || origin.is_some_and(|value| {
                     value.get("type").and_then(Value::as_str) == Some("issue_dispatch")
@@ -37,7 +55,7 @@ pub(super) fn space_context_grant(
         .and_then(id_value)
         .or_else(|| origin_value("cloudProjectId", "cloud_project_id").and_then(id_value));
     let item_id = origin_value("loopItemId", "loop_item_id").and_then(id_value);
-    if dispatched && (space_id.is_none() || item_id.is_none()) {
+    if (dispatched || stand_in_conversation) && (space_id.is_none() || item_id.is_none()) {
         return Err("Issue dispatch requires a bound project space and board item".to_owned());
     }
     let Some(space_id) = space_id else {
@@ -162,6 +180,50 @@ mod tests {
     }
 
     #[test]
+    fn stand_in_conversations_keep_personal_scope_without_assignment() {
+        let origin = json!({
+            "type":"issue_dispatch", "initiatedBy":"stand_in", "publicConversation":true,
+            "standInId":"review", "userId":7, "cloudProjectId":"space-1",
+            "loopItemId":"issue-1", "dispatchId":"historical-dispatch"
+        });
+        for role in [
+            Value::Null,
+            json!("executor"),
+            json!("manager"),
+            json!("unknown"),
+        ] {
+            let mut request = ExecutionRequest::default();
+            request.extra.insert("origin".into(), origin.clone());
+            request.extra.get_mut("origin").unwrap()["dispatchRole"] = role.clone();
+            let grant = space_context_grant(&request);
+            if role == "unknown" {
+                assert!(grant.is_err());
+            } else {
+                let grant = grant.unwrap().unwrap();
+                assert_eq!(grant.space_id.as_deref(), Some("space-1"));
+                assert_eq!(grant.item_id.as_deref(), Some("issue-1"));
+                assert_eq!(grant.dispatch_id.as_deref(), Some("historical-dispatch"));
+                assert_eq!(grant.role, role.as_str().and_then(space_context_role));
+                assert_eq!(grant.categories.is_empty(), role.is_null());
+                assert!(space_mcp_client_config(&request).is_ok());
+            }
+        }
+        for field in [
+            "publicConversation",
+            "standInId",
+            "userId",
+            "cloudProjectId",
+            "loopItemId",
+        ] {
+            let mut request = ExecutionRequest::default();
+            let mut missing = origin.clone();
+            missing.as_object_mut().unwrap().remove(field);
+            request.extra.insert("origin".into(), missing);
+            assert!(space_context_grant(&request).is_err(), "{field}");
+        }
+    }
+
+    #[test]
     fn invalid_dispatch_context_never_becomes_a_personal_context() {
         for role in [
             json!("executor"),
@@ -198,6 +260,27 @@ mod tests {
             let mut request = ExecutionRequest::default();
             request.extra.insert("origin".into(), origin);
             assert!(space_context_grant(&request).is_err());
+        }
+    }
+
+    #[test]
+    fn stand_in_identity_aliases_cannot_bypass_conversation_authorization() {
+        for (canonical, alias) in [
+            ("initiatedBy", "initiated_by"),
+            ("publicConversation", "public_conversation"),
+            ("standInId", "stand_in_id"),
+            ("userId", "user_id"),
+        ] {
+            let mut origin = json!({
+                "type":"issue_dispatch", "initiatedBy":"stand_in", "publicConversation":true,
+                "standInId":"review", "userId":7, "cloudProjectId":"space-1", "loopItemId":"issue-1"
+            });
+            let value = origin.as_object_mut().unwrap().remove(canonical).unwrap();
+            origin[alias] = value;
+            let mut request = ExecutionRequest::default();
+            request.extra.insert("origin".into(), origin);
+            assert!(space_context_grant(&request).is_err(), "{alias}");
+            assert!(space_mcp_client_config(&request).is_err(), "{alias}");
         }
     }
 }

@@ -31,7 +31,8 @@ use crate::user_reader::{UserByIdReader, UserRecord};
 mod api_key;
 pub(crate) use api_key::{
     ApiKeyReloadRow, AuthenticatedKey, UserLookup, authenticate_api_key, reload_api_key_on,
-    reload_current_user, resolve_authenticated_key_on,
+    reload_current_user, reload_personal_api_objects, resolve_authenticated_key_on,
+    verify_personal_api_key_on,
 };
 use api_key::{resolve_personal_user, resolve_service_user, split_key_with_username};
 

@@ -12,7 +12,7 @@ use super::{
 };
 use crate::AppState;
 
-pub(super) async fn cancel(
+pub(crate) async fn cancel(
     state: &AppState,
     row: &Execution,
     note: &str,
@@ -35,6 +35,7 @@ pub(super) async fn cancel(
     if !changed {
         return Ok(None);
     }
+    tracing::info!(execution_id = row.id, previous_status = %row.status, reason = note, "Robot execution cancellation recorded");
     Ok(state
         .mysql
         .fetch_optional(
@@ -44,7 +45,19 @@ pub(super) async fn cancel(
         .await?)
 }
 
-pub(super) async fn fail_preparation(state: &AppState, row: &Execution, error: &str) -> Result<()> {
+/// Preserve a queued execution when its immutable calendar cannot classify today.
+pub(crate) async fn defer_workday(state: &AppState, row: &Execution, error: &str) -> Result<()> {
+    if row.error_message == error {
+        return Ok(());
+    }
+    state.mysql.execute(
+        "UPDATE loop_item_executions SET error_message=?,execution_note='workday_calendar_unavailable',updated_at=UTC_TIMESTAMP(6) WHERE id=? AND status=? AND version=?",
+        (error,row.id,row.status.as_str(),row.version),
+    ).await?;
+    Ok(())
+}
+
+pub(crate) async fn fail_preparation(state: &AppState, row: &Execution, error: &str) -> Result<()> {
     let detail: String = error.chars().take(2000).collect();
     let messages=state.mysql.with_transaction(async|tx|{
         let now=Utc::now().naive_utc();
@@ -86,7 +99,7 @@ pub(super) async fn recover(state: &AppState) -> Result<(usize, usize)> {
 
 pub(super) async fn stalled(state: &AppState) -> Result<Vec<Execution>> {
     let threshold = Utc::now().naive_utc() - chrono::Duration::minutes(20);
-    let rows:Vec<Execution>=state.mysql.fetch_all(format!("SELECT {COLUMNS} FROM loop_item_executions WHERE status='running' AND started_at IS NOT NULL AND started_at<?"),(threshold,)).await?;
+    let rows:Vec<Execution>=state.mysql.fetch_all(format!("SELECT {COLUMNS} FROM loop_item_executions WHERE status='running' AND started_at>'1970-01-01 00:00:01' AND started_at<?"),(threshold,)).await?;
     let mut stalled = Vec::new();
     for row in rows {
         let Some(produced) = has_text(state, &row).await? else {
@@ -169,13 +182,24 @@ pub(super) async fn prepared_on(
     if result.rows_affected == 0 {
         return Ok(Effects::default());
     }
+    tracing::info!(
+        execution_id = row.id,
+        item_id = row.loop_item_id,
+        status,
+        environment,
+        device,
+        routed = payload["runtime_selection"]["runner_routing"].is_object(),
+        "Queued assignment prepared"
+    );
     let mut effects = Effects::default();
     if let Some(mut message) = projection::linked(tx, row).await? {
         if !message.metadata.0.is_object() {
             message.metadata.0 = json!({});
         }
         message.metadata.0["run_status"] = json!(status);
-        tx.execute("UPDATE project_chat_messages SET runtime_device_id=?,runtime_task_id=?,metadata=?,updated_at=UTC_TIMESTAMP(6) WHERE id=?",(row.runtime_device_id.as_str(),row.runtime_task_id.as_str(),brz_mysql::Json(&message.metadata.0),message.id)).await?;
+        message.updated_at =
+            crate::socketio::project_chat_messages::database_timestamp(Utc::now().naive_utc());
+        tx.execute("UPDATE project_chat_messages SET runtime_device_id=?,runtime_task_id=?,metadata=?,updated_at=? WHERE id=?",(row.runtime_device_id.as_str(),row.runtime_task_id.as_str(),brz_mysql::Json(&message.metadata.0),message.updated_at,message.id)).await?;
         effects.messages.push(message);
     }
     if matches!(status, "pending_approval" | "waiting_runtime")

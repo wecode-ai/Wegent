@@ -60,7 +60,22 @@ path prefixes, or templates with `:parameter` and terminal `*path` segments.
 Named parameters match one nonempty path segment, so unrelated Python paths
 under the same prefix remain with Python.
 
+Set `WEGENT_RS_UNIQUE_APP_DEVICE_NAMES=1` if a legacy MySQL schema enforces
+uniqueness on `kinds (user_id, kind, name, namespace)`. Rust App device
+registration then returns an identity conflict before attempting an insert.
+An installation with the exact stored Runtime and App IDs can also restore
+a legacy Local or Remote record as an App record.
+The default preserves separate record-scoped routes for installations that
+share a logical device ID.
+
 ## Observability foundation
+
+MySQL migration and default-data initialization run from the Rust executable
+before HTTP and background consumers start. The hybrid launcher then starts
+Python with initialization owned by Rust. Historical Alembic revision IDs and
+`alembic_version` remain compatible; migration execution uses embedded SQL and
+native Rust data transformations. See the [database migration guide](../docs/en/wegent/developer-guide/rust-database-migrations.md)
+for commands, configuration and verification.
 
 The Rust binary initializes `brz-logs`, writing its `info.log`, `warn.log`, and
 `error.log` files to a `rust` subdirectory of the Backend `LOG_DIR` supplied by
@@ -118,12 +133,11 @@ allocate independently of metric recording.
 
 ## Background jobs
 
-Rust 后台任务复用 `SCHEDULED_TASKS_ENABLED`（本进程调度）和 `EMBEDDED_CELERY_ENABLED`（本进程原生 worker），默认均为 `true`。`WEGENT_RS_JOB_ALLOWLIST` 默认空，只限制 Rust 执行范围，因此默认不运行任务。Python 保留全部 Celery 行为，不转投任务，Rust 不消费 Celery 队列；部署时避免同一执行族并行调度。通用调度框架与 Redis provider 独立发布，业务适配留在 Wegent；配置与验证步骤见[中文指南](docs/zh/background-jobs.md)。
+Rust 后台任务复用 `SCHEDULED_TASKS_ENABLED`（本进程调度）和 `EMBEDDED_CELERY_ENABLED`（本进程原生 worker），默认均为 `true`。`WEGENT_RS_JOB_ALLOWLIST` 未配置时应用只启用原生设备注册清理 `device_registration_retention`；显式设置为空可禁用全部 Rust 任务，显式列表需包含该名称才启用清理。迁移任务族仍须逐项启用。Python 保留全部 Celery 行为，不转投任务，Rust 不消费 Celery 队列；部署时避免同一执行族并行调度。通用调度框架与 Redis provider 独立发布，业务适配留在 Wegent；配置与验证步骤见[中文指南](docs/zh/background-jobs.md)。
 
 Rust background jobs reuse `SCHEDULED_TASKS_ENABLED` for this process's scheduler
 and `EMBEDDED_CELERY_ENABLED` for its native worker, both defaulting to `true`.
-`WEGENT_RS_JOB_ALLOWLIST` defaults to empty and limits only Rust execution, so
-Rust runs no jobs by default. Python retains all Celery behavior without task
+`WEGENT_RS_JOB_ALLOWLIST` enables only native device registration retention when unset. An explicit empty value disables all Rust jobs. Explicit lists must include `device_registration_retention` to enable retention. Migrated Python job families remain opt-in. Python retains all Celery behavior without task
 forwarding, and Rust does not consume Celery queues. Avoid scheduling the same
 family concurrently in both processes. The scheduling core and Redis provider
 are separate packages; Wegent owns its business adapters. See the

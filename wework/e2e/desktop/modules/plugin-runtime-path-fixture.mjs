@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { lstat, mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises'
+import { lstat, mkdir, readFile, realpath, rename, rm, writeFile } from 'node:fs/promises'
 import { isAbsolute, join, relative, resolve, sep } from 'node:path'
 import { testId } from './plugin-regression-fixture.mjs'
 
@@ -63,6 +63,7 @@ export async function createBusinessPackage(root, slug, version) {
       version,
       description: `Recovery fixture ${slug}`,
       skills: './skills/',
+      keywords: ['runtime-recovery', 'business-command'],
     })
   )
   await writeFile(
@@ -75,6 +76,48 @@ export async function createBusinessPackage(root, slug, version) {
     `printf '%s\\n' 'PLUGIN_RECOVERY_OK:${slug}:${version}'\n`
   )
   return root
+}
+
+export async function rewriteRuntimeManifests(resultDir, entry, transform) {
+  const changes = []
+  const boundary = await realpath(resultDir)
+  const runtimes = new Set([entry.runtime.codex_link, entry.runtime.claude_link].filter(Boolean))
+  for (const runtime of runtimes) {
+    isolatedPath(resultDir, runtime)
+    assert.equal((await lstat(runtime)).isSymbolicLink(), false)
+    for (const relative of ['.codex-plugin/plugin.json', '.claude-plugin/plugin.json']) {
+      const path = join(runtime, relative)
+      isolatedPath(boundary, await realpath(path))
+      assert.equal((await lstat(path)).isFile(), true)
+      const original = await readFile(path)
+      const metadata = JSON.parse(original)
+      const updated = Buffer.from(JSON.stringify(transform(metadata, relative), null, 4) + '\n')
+      await writeFile(path, updated)
+      changes.push({ path, original, updated })
+    }
+  }
+  assert.ok(changes.length >= 2, 'Fixture must cover both root plugin manifests')
+  return changes
+}
+
+export async function reformatRuntimeManifests(resultDir, entry) {
+  function reverseObjectKeys(value) {
+    if (Array.isArray(value)) return value.map(reverseObjectKeys)
+    if (value && typeof value === 'object') {
+      return Object.fromEntries(
+        Object.entries(value)
+          .reverse()
+          .map(([key, item]) => [key, reverseObjectKeys(item)])
+      )
+    }
+    return value
+  }
+  const changes = await rewriteRuntimeManifests(resultDir, entry, reverseObjectKeys)
+  for (const { original, updated } of changes) {
+    assert.notDeepEqual(original, updated, 'Formatting fixture did not change file bytes')
+    assert.deepEqual(JSON.parse(original), JSON.parse(updated), 'Formatting changed JSON semantics')
+  }
+  return changes
 }
 
 /** Move the real installed files, deliberately retaining all recorded absolute paths. */

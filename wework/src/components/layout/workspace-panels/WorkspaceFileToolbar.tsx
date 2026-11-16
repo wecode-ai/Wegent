@@ -13,7 +13,10 @@ import {
   revealLocalFile,
   type LocalWorkspaceOpenerAvailability,
 } from '@/lib/local-terminal'
-import type { LocalWorkspaceOpenerId } from '@/lib/local-workspace-openers'
+import {
+  prioritizeWorkspaceOpener,
+  type LocalWorkspaceOpenerId,
+} from '@/lib/local-workspace-openers'
 import {
   resolveWorkspaceOpener,
   setPreferredWorkspaceOpener,
@@ -222,7 +225,7 @@ export function WorkspaceFileToolbar({
   }, [isDirectory, local, path])
 
   const applicationItems = (filePath: string): ActionMenuItem[] =>
-    (openers ?? []).map(opener => ({
+    prioritizeWorkspaceOpener(openers ?? [], preferred).map(opener => ({
       testId: `workspace-file-open-file-option-${opener.label ?? opener.id}`,
       label: (
         <>
@@ -417,7 +420,7 @@ export function WorkspaceFileToolbar({
         <div
           role="alert"
           data-testid="workspace-file-action-error"
-          className="flex shrink-0 items-center gap-2 border-b border-border px-3 py-2 text-sm text-red-600"
+          className="flex shrink-0 items-center gap-2 border-b border-border px-3 py-2 text-sm text-destructive wework:text-red-600"
         >
           <span className="min-w-0 flex-1 break-words">{actionError}</span>
           <button

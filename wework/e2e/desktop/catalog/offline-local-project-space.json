@@ -1,0 +1,12 @@
+{
+  "order": 94000,
+  "scenario": "./scenarios/offline-local-project-space.scenario.mjs",
+  "scenarioOnly": true,
+  "ci": {
+    "core": {
+      "order": 69000,
+      "shard": 7,
+      "position": 9000
+    }
+  }
+}

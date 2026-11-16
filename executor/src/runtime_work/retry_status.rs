@@ -19,6 +19,9 @@ pub(super) fn codex_notification_resumes_turn(method: &str) -> bool {
 
 fn retry_reason(params: &Value) -> &'static str {
     let info = params.pointer("/error/codexErrorInfo");
+    if info.and_then(Value::as_str) == Some("serverOverloaded") {
+        return "overload";
+    }
     if info.and_then(Value::as_str) == Some("rateLimitExceeded")
         || info.is_some_and(|info| {
             info.as_object().is_some_and(|variants| {
@@ -49,6 +52,31 @@ impl CodexNotificationEventMapper {
         }
     }
 
+    /// Finish the retry status when the root turn completes.
+    ///
+    /// A proxy retry wait normally clears itself when the request stops
+    /// waiting, but that notification is lost when the request is cancelled
+    /// with the turn. A completed root turn cannot still be waiting for a model
+    /// retry, so finish the block instead of leaving it streaming forever.
+    pub(super) fn clear_completed_turn_retry_waits(
+        &mut self,
+        context: &EventEmitContext<'_>,
+        params: &Value,
+    ) {
+        if let (Some(root_thread_id), Some(thread_id)) =
+            (self.root_thread_id.as_deref(), stream_thread_id(params))
+        {
+            if root_thread_id != thread_id {
+                return;
+            }
+        }
+        if self.proxy_retry_wait_ids.is_empty() {
+            return;
+        }
+        self.proxy_retry_wait_ids.clear();
+        self.refresh_reconnecting(context);
+    }
+
     pub(super) fn refresh_reconnecting(&mut self, context: &EventEmitContext<'_>) {
         let params = if !self.proxy_retry_wait_ids.is_empty() {
             Some(json!({"error": {"codexErrorInfo": "rateLimitExceeded"}}))
@@ -73,6 +101,8 @@ impl CodexNotificationEventMapper {
             "model_kind": string_field(&context.request.model_config, "wework_model_kind")
                 .or_else(|| string_field(&context.request.model_config, "weworkModelKind")),
             "retry_reason": retry_reason(params),
+            "retry_at": params.get("retryAt"),
+            "retry_attempt": params.get("retryAttempt"),
         });
         let (event, data) = if let Some(id) = self.reconnecting_block_id.as_ref() {
             (
@@ -148,7 +178,6 @@ mod tests {
         }
         for info in [
             Value::Null,
-            json!("serverOverloaded"),
             json!({"httpConnectionFailed": {"httpStatusCode": 503}}),
         ] {
             assert_eq!(
@@ -156,6 +185,10 @@ mod tests {
                 "connection"
             );
         }
+        assert_eq!(
+            retry_reason(&json!({"error":{"codexErrorInfo":"serverOverloaded"}})),
+            "overload"
+        );
     }
 
     #[test]
@@ -306,6 +339,81 @@ mod tests {
         assert_eq!(
             event_rx.try_recv().unwrap()["payload"]["data"]["updates"]["status"],
             "done"
+        );
+    }
+
+    #[test]
+    fn root_turn_completion_finishes_an_uncleared_proxy_retry_wait() {
+        let (event_tx, mut event_rx) = broadcast::channel(8);
+        let mut mapper = CodexNotificationEventMapper::default();
+        mapper.observe_root_thread_id("root");
+        mapper.map(
+            &Some(event_tx.clone()),
+            "device",
+            "task",
+            &ExecutionRequest::default(),
+            json!({
+                "method": crate::server::local_model_proxy::retry_notifications::METHOD,
+                "params": {
+                    "threadId": "root",
+                    "waitId": "request-1",
+                    "waiting": true,
+                    "error": { "codexErrorInfo": "rateLimitExceeded" },
+                },
+            }),
+        );
+        assert_eq!(
+            event_rx.try_recv().unwrap()["event"],
+            "response.block.created"
+        );
+        // The request's own clear notification was lost with the turn.
+        mapper.map(
+            &Some(event_tx),
+            "device",
+            "task",
+            &ExecutionRequest::default(),
+            json!({"method": "turn/completed", "params": {"threadId": "root"}}),
+        );
+        assert_eq!(
+            event_rx.try_recv().unwrap()["payload"]["data"]["updates"]["status"],
+            "done"
+        );
+    }
+
+    #[test]
+    fn child_turn_completion_keeps_the_root_retry_wait() {
+        let (event_tx, mut event_rx) = broadcast::channel(8);
+        let mut mapper = CodexNotificationEventMapper::default();
+        mapper.observe_root_thread_id("root");
+        mapper.map(
+            &Some(event_tx.clone()),
+            "device",
+            "task",
+            &ExecutionRequest::default(),
+            json!({
+                "method": crate::server::local_model_proxy::retry_notifications::METHOD,
+                "params": {
+                    "threadId": "root",
+                    "waitId": "request-1",
+                    "waiting": true,
+                    "error": { "codexErrorInfo": "rateLimitExceeded" },
+                },
+            }),
+        );
+        assert_eq!(
+            event_rx.try_recv().unwrap()["event"],
+            "response.block.created"
+        );
+        mapper.map(
+            &Some(event_tx),
+            "device",
+            "task",
+            &ExecutionRequest::default(),
+            json!({"method": "turn/completed", "params": {"threadId": "child"}}),
+        );
+        assert!(
+            event_rx.try_recv().is_err(),
+            "A child turn completion cleared the root retry wait"
         );
     }
 

@@ -1,14 +1,19 @@
 import { randomUUID } from 'node:crypto'
 import { LocalEndpointTransport } from './local-endpoint-transport.js'
+import { isCancellableRuntimeRead } from './read-cancellation.js'
 
 const DEFAULT_REQUEST_TIMEOUT_MS = 120_000
 export class ExecutorRuntimeError extends Error {
-  constructor(code, message, retryable = false, details = {}) {
+  constructor(code, message, retryable = false, details = {}, retryAfterMs, providerCode) {
     super(message)
     this.name = 'ExecutorRuntimeError'
     this.code = code
     this.retryable = retryable
     this.details = details
+    if (typeof providerCode === 'string' && /^[A-Za-z0-9_.:-]{1,64}$/.test(providerCode))
+      this.providerCode = providerCode
+    if (Number.isSafeInteger(retryAfterMs) && retryAfterMs >= 1 && retryAfterMs <= 3600000)
+      this.retryAfterMs = retryAfterMs
   }
 }
 
@@ -69,11 +74,12 @@ export class ExecutorRuntimeClient {
     return this.description
   }
 
-  request(method, params = {}, timeoutMs = this.requestTimeoutMs, requestId) {
+  request(method, params = {}, timeoutMs, requestId, options = {}) {
+    timeoutMs ??= executorRequestTimeoutMs(method, this.requestTimeoutMs)
     if (method !== 'executor.protocol.describe') {
       if (!this.description && this.negotiationPromise) {
         return this.negotiationPromise.then(() =>
-          this.request(method, params, timeoutMs, requestId)
+          this.request(method, params, timeoutMs, requestId, options)
         )
       }
       if (!this.description) {
@@ -89,6 +95,13 @@ export class ExecutorRuntimeClient {
       )
     }
     const id = requestId?.trim() || randomUUID()
+    const cancellable = isCancellableRuntimeRead(method)
+    const signal = cancellable ? options.signal : undefined
+    if (signal?.aborted) {
+      return Promise.reject(
+        new ExecutorRuntimeError('request_cancelled', 'Executor read cancelled')
+      )
+    }
     if (this.pending.has(id)) {
       return Promise.reject(
         new ExecutorRuntimeError(
@@ -98,20 +111,32 @@ export class ExecutorRuntimeClient {
       )
     }
     return new Promise((resolve, reject) => {
+      const cancel = () => {
+        this.cancelRead(id)
+        this.rejectPending(
+          id,
+          new ExecutorRuntimeError('request_cancelled', 'Executor read cancelled')
+        )
+      }
       const timer = setTimeout(() => {
-        this.pending.delete(id)
-        reject(
+        if (cancellable) this.cancelRead(id)
+        this.rejectPending(
+          id,
           new ExecutorRuntimeError('request_timeout', `Executor request ${method} timed out`, true)
         )
       }, timeoutMs)
       timer.unref()
-      this.pending.set(id, { resolve, reject, timer })
+      const cleanup = () => {
+        clearTimeout(timer)
+        signal?.removeEventListener('abort', cancel)
+      }
+      this.pending.set(id, { resolve, reject, cleanup })
+      signal?.addEventListener('abort', cancel, { once: true })
       try {
         this.transport.send({ type: 'request', id, method, params })
       } catch (error) {
-        clearTimeout(timer)
-        this.pending.delete(id)
-        reject(
+        this.rejectPending(
+          id,
           new ExecutorRuntimeError(
             'transport_unavailable',
             error instanceof Error ? error.message : String(error),
@@ -120,6 +145,27 @@ export class ExecutorRuntimeClient {
         )
       }
     })
+  }
+
+  cancelRead(id) {
+    if (!this.pending.has(id)) return
+    try {
+      this.transport.send({ type: 'cancel', id })
+    } catch (error) {
+      // A disconnected socket already drops its connection-owned read work.
+      console.debug('[wework-executor-runtime] Read cancellation transport unavailable', {
+        request_id: id,
+        error_type: error instanceof Error ? error.name : typeof error,
+      })
+    }
+  }
+
+  rejectPending(id, error) {
+    const pending = this.pending.get(id)
+    if (!pending) return
+    this.pending.delete(id)
+    pending.cleanup()
+    pending.reject(error)
   }
 
   async negotiate() {
@@ -153,7 +199,7 @@ export class ExecutorRuntimeClient {
     if (message?.type === 'response' && typeof message.id === 'string') {
       const pending = this.pending.get(message.id)
       if (!pending) return
-      clearTimeout(pending.timer)
+      pending.cleanup()
       this.pending.delete(message.id)
       if (message.ok) {
         pending.resolve(message.result)
@@ -163,7 +209,9 @@ export class ExecutorRuntimeClient {
             message.error?.code ?? 'executor_request_failed',
             message.error?.message ?? 'Executor request failed',
             message.error?.retryable ?? false,
-            message.error?.details ?? {}
+            message.error?.details ?? {},
+            message.error?.retryAfterMs,
+            message.error?.providerCode
           )
         )
       }
@@ -199,11 +247,20 @@ export class ExecutorRuntimeClient {
 
   failPending(error) {
     for (const pending of this.pending.values()) {
-      clearTimeout(pending.timer)
+      pending.cleanup()
       pending.reject(error)
     }
     this.pending.clear()
   }
+}
+
+export function executorRequestTimeoutMs(method, defaultTimeoutMs) {
+  const preparesPython =
+    method === 'executor.plugin_auth.migrate' ||
+    method === 'executor.plugin_auth.run' ||
+    method === 'runtime.connections.cli' ||
+    method.startsWith('runtime.local_connector_auth.')
+  return preparesPython ? 21 * 60_000 + 5_000 : defaultTimeoutMs
 }
 
 function validRendererMethods(methods) {

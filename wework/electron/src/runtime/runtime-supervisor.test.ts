@@ -55,15 +55,53 @@ describe('RuntimeSupervisor', () => {
     )
   })
 
+  test.each(['exited', 'signaled'] as const)(
+    'stops descendants after their process-group leader has %s',
+    async state => {
+      vi.useFakeTimers()
+      await withLinuxProcessGroup(
+        killed => [linuxStat(12, killed ? 'Z' : 'S')],
+        async (child, kill) => {
+          if (state === 'exited') child.exitCode = 0
+          else child.signalCode = 'SIGTERM'
+
+          const stopped = terminateProcessTree(child, 50)
+          await vi.advanceTimersByTimeAsync(75)
+          await stopped
+
+          expect(kill).toHaveBeenCalledWith(-42, 'SIGTERM')
+          expect(kill).toHaveBeenCalledWith(-42, 'SIGKILL')
+        }
+      )
+    }
+  )
+
   test('rejects when Linux process-group members cannot be inspected', async () => {
     await withLinuxProcessGroup(
       () => {
         throw Object.assign(new Error('Permission denied'), { code: 'EACCES' })
       },
-      async child => {
+      async (child, kill) => {
         await expect(terminateProcessTree(child, 25)).rejects.toMatchObject({
           code: 'EACCES',
         })
+        expect(kill).toHaveBeenCalledWith(-42, 'SIGKILL')
+      }
+    )
+  })
+
+  test('waits for forced cleanup before reporting a graceful-inspection error', async () => {
+    let inspectedAfterKill = false
+    await withLinuxProcessGroup(
+      killed => {
+        if (!killed) throw Object.assign(new Error('Permission denied'), { code: 'EACCES' })
+        inspectedAfterKill = true
+        return [linuxStat(12, 'Z')]
+      },
+      async (child, kill) => {
+        await expect(terminateProcessTree(child, 50)).rejects.toMatchObject({ code: 'EACCES' })
+        expect(kill).toHaveBeenCalledWith(-42, 'SIGKILL')
+        expect(inspectedAfterKill).toBe(true)
       }
     )
   })

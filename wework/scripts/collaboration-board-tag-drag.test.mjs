@@ -1,3 +1,5 @@
+// @vitest-environment node
+
 import assert from 'node:assert/strict'
 import { afterEach, expect, test, vi } from 'vitest'
 

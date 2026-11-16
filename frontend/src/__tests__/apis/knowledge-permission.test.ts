@@ -68,3 +68,38 @@ describe('knowledgePermissionApi.listPermissions', () => {
     ])
   })
 })
+
+it('reads only the current user permission sources through the existing share endpoint', async () => {
+  const sources = {
+    has_access: true,
+    effective_role: 'Reporter',
+    is_creator: false,
+    sources: [{ source_type: 'group_membership', display_name: 'Engineering', role: 'Reporter' }],
+  }
+  jest.mocked(client.get).mockClear()
+  jest.mocked(client.get).mockResolvedValueOnce(sources)
+  await expect(knowledgePermissionApi.getMyPermissionSources(27)).resolves.toEqual(sources)
+  expect(client.get).toHaveBeenCalledTimes(1)
+  expect(client.get).toHaveBeenCalledWith('/share/KnowledgeBase/27/my-permission-sources')
+})
+
+it('preserves authorization context without loading pending approvals for readers', async () => {
+  jest.mocked(client.get).mockClear()
+  const creator = { user_id: 1, display_name: 'Creator' }
+  const inherited = [
+    {
+      source_type: 'group_membership',
+      entity_type: 'namespace',
+      entity_id: '9',
+      display_name: 'Team',
+      role: null,
+    },
+  ]
+  jest
+    .mocked(client.get)
+    .mockResolvedValueOnce({ members: [], total: 0, creator, inherited_sources: inherited })
+  const result = await knowledgePermissionApi.listPermissions(27)
+  expect(result.creator).toEqual(creator)
+  expect(result.inherited_sources).toEqual(inherited)
+  expect(client.get).toHaveBeenCalledTimes(1)
+})

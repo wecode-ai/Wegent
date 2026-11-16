@@ -19,6 +19,7 @@ classify_path() {
       executor/src/local/plugin_creator.rs | \
       executor/src/process/mod.rs | \
       executor/tests/plugin_account_auth_contract.rs | \
+      executor/tests/plugin_account_runtime_isolation.rs | \
       .github/scripts/classify-plugin-auth-sdk.sh | \
       .github/workflows/plugin-auth-sdk.yml)
       plugin_auth_sdk=true

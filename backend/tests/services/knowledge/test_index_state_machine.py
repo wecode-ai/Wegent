@@ -29,7 +29,11 @@ from app.services.knowledge.index_state_machine import (
     prepare_external_refresh_enqueue,
 )
 from app.services.knowledge.knowledge_service import KnowledgeService
-from app.services.knowledge.processing_errors import build_processing_error
+from app.services.knowledge.processing_errors import (
+    build_processing_error,
+    map_indexing_exception,
+)
+from app.services.rag.remote_gateway import RemoteRagGatewayError
 
 
 def _create_knowledge_base(test_db: Session, test_user: User) -> Kind:
@@ -479,6 +483,40 @@ def test_mark_document_index_failed_persists_error_and_preserves_source_config(
     assert document.index_status == DocumentIndexStatus.FAILED
     assert document.source_config["converted_attachment_id"] == 99
     assert document.processing_error_payload["code"] == "indexing_failed"
+    assert document.processing_error_payload["generation"] == 2
+
+
+def test_oversized_remote_row_finishes_as_nonretryable_index_failure(
+    test_db: Session, test_user: User
+):
+    knowledge_base = _create_knowledge_base(test_db, test_user)
+    document = _create_document(
+        test_db,
+        test_user,
+        knowledge_base,
+        index_status=DocumentIndexStatus.INDEXING,
+        index_generation=2,
+    )
+    document.source_config = {"converted_attachment_id": 99}
+    test_db.commit()
+    error = RemoteRagGatewayError(
+        "Milvus row exceeds message budget; content was not truncated",
+        code="milvus_row_too_large",
+        retryable=False,
+        status_code=400,
+        details={"serialized_bytes": 12000, "effective_budget_bytes": 8000},
+    )
+
+    finalized = mark_document_index_failed(
+        test_db, document.id, 2, error=map_indexing_exception(error, generation=2)
+    )
+
+    test_db.refresh(document)
+    assert finalized is True
+    assert document.index_status == DocumentIndexStatus.FAILED
+    assert document.source_config["converted_attachment_id"] == 99
+    assert document.processing_error_payload["code"] == "milvus_row_too_large"
+    assert document.processing_error_payload["retryable"] is False
     assert document.processing_error_payload["generation"] == 2
 
 

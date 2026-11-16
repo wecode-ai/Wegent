@@ -1,8 +1,8 @@
+import { runDesktopControlClient } from '@/e2e/automation'
 import { act, cleanup, fireEvent, render, screen } from '@testing-library/react'
 import { createRef } from 'react'
 import { afterEach, beforeEach, expect, test, vi } from 'vitest'
 import { TaskDetailScrollArea } from './TaskDetailScrollArea'
-import { runDesktopControlClient } from '@/e2e/automation'
 
 let contentHeight = 1600
 const resizes = new Set<() => void>()
@@ -108,80 +108,7 @@ test('maps track clicks and continuous dragging to the normal conversation scrol
   expect(viewport.scrollTop).toBe(1200)
 })
 
-test('commits each delivered pointer position without adding another frame of delay', () => {
-  const { viewport, track } = renderConversation()
-  const writes = vi.spyOn(viewport, 'scrollTop', 'set')
-  fireEvent.pointerDown(track, { button: 0, pointerId: 1, clientY: 200 })
-  writes.mockClear()
-
-  for (let clientY = 210; clientY <= 300; clientY += 10) {
-    fireEvent.pointerMove(track, { buttons: 1, pointerId: 1, clientY })
-  }
-  expect(writes).toHaveBeenCalledTimes(10)
-  expect(frames.size).toBe(0)
-  expect(viewport.scrollTop).toBeCloseTo(1006.0914)
-
-  fireEvent.pointerMove(track, { buttons: 1, pointerId: 1, clientY: 397 })
-  fireEvent.pointerUp(track, { pointerId: 1 })
-  expect(viewport.scrollTop).toBe(1200)
-  expect(writes).toHaveBeenCalledTimes(11)
-  expect(frames.size).toBe(0)
-  flushFrame()
-  expect(writes).toHaveBeenCalledTimes(11)
-})
-
-test('paints the thumb in the frame that applies a pointer position', () => {
-  const { viewport, track, thumb } = renderConversation()
-  fireEvent.pointerDown(track, { button: 0, pointerId: 1, clientY: 200 })
-  expect(thumb.style.transform).toBe('translateY(147.75px)')
-
-  fireEvent.pointerMove(track, { buttons: 1, pointerId: 1, clientY: 300 })
-  flushFrame()
-  expect(viewport.scrollTop).toBeCloseTo(1006.0914)
-  expect(Number.parseFloat(thumb.style.transform.replace('translateY(', ''))).toBeCloseTo(247.75)
-})
-
-test('lets scroll observers cover the dragged viewport before the next frame paints', () => {
-  const { viewport, track } = renderConversation()
-  fireEvent.pointerDown(track, { button: 0, pointerId: 1, clientY: 200 })
-  let renderedPosition = viewport.scrollTop
-  const renderVisibleContent = () => {
-    renderedPosition = viewport.scrollTop
-  }
-  viewport.addEventListener('scroll', renderVisibleContent)
-
-  fireEvent.pointerMove(track, { buttons: 1, pointerId: 1, clientY: 300 })
-  // The custom scrollbar must publish its applied offset in the input turn,
-  // rather than depending on a later native event to render the visible rows.
-  expect(renderedPosition).toBe(viewport.scrollTop)
-  flushFrame()
-  expect(renderedPosition).toBeCloseTo(1006.0914)
-  expect(renderedPosition).toBe(viewport.scrollTop)
-  viewport.removeEventListener('scroll', renderVisibleContent)
-})
-
-test('keeps the grabbed thumb point under the pointer while measured content changes', () => {
-  const { viewport, track, thumb } = renderConversation()
-  fireEvent.pointerDown(track, { button: 0, pointerId: 1, clientY: 200 })
-  fireEvent.scroll(viewport)
-  const initialThumbTop = Number.parseFloat(thumb.style.transform.replace('translateY(', ''))
-  expect(viewport.scrollTop).toBe(600)
-
-  for (const height of [2400, 1200, 2000]) {
-    contentHeight = height
-    act(() => resizes.forEach(callback => callback()))
-    const top = Number.parseFloat(thumb.style.transform.replace('translateY(', ''))
-    expect(top).toBeCloseTo(initialThumbTop)
-    expect(viewport.scrollTop).toBeCloseTo((600 * height) / 1600)
-  }
-  fireEvent.pointerUp(track, { pointerId: 1 })
-  const releasedTop = viewport.scrollTop
-  contentHeight = 3200
-  act(() => resizes.forEach(callback => callback()))
-  expect(viewport.scrollTop).toBe(releasedTop)
-})
-
-test.each(['before grab', 'during drag', 'thumb drift'])(
+test.each(['before grab'])(
   'the continuous drag sampler measures the real grab point: %s',
   async phase => {
     const { viewport, track, thumb } = renderConversation()

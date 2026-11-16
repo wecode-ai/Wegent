@@ -140,6 +140,7 @@ struct NotificationPreferences {
     tasks: ChannelPreference,
     collaboration: ChannelPreference,
     general: ChannelPreference,
+    stand_in: ChannelPreference,
 }
 
 impl Default for NotificationPreferences {
@@ -148,6 +149,11 @@ impl Default for NotificationPreferences {
             tasks: ChannelPreference::TASKS,
             collaboration: ChannelPreference::COLLABORATION,
             general: ChannelPreference::GENERAL,
+            stand_in: ChannelPreference {
+                in_app: Some(true),
+                system: Some(true),
+                im: None,
+            },
         }
     }
 }
@@ -195,6 +201,7 @@ fn notification_preferences(preferences_column: &str) -> NotificationPreferences
         tasks: merge_category(defaults.tasks, raw.get("tasks")),
         collaboration: merge_category(defaults.collaboration, raw.get("collaboration")),
         general: merge_category(defaults.general, raw.get("general")),
+        stand_in: merge_category(defaults.stand_in, raw.get("stand_in")),
     }
 }
 
@@ -466,7 +473,8 @@ mod tests {
     /// The recorded `GET` body for a user with no stored preferences.
     const RECORDED_DEFAULT_BODY: &str = "{\"tasks\":{\"in_app\":true,\"system\":false,\
         \"im\":null},\"collaboration\":{\"in_app\":true,\"system\":true,\"im\":true},\
-        \"general\":{\"in_app\":true,\"system\":null,\"im\":true}}";
+        \"general\":{\"in_app\":true,\"system\":null,\"im\":true},\
+        \"stand_in\":{\"in_app\":true,\"system\":true,\"im\":null}}";
 
     fn user(preferences: &str) -> SessionUser {
         SessionUser(crate::auth::UserRow {
@@ -533,6 +541,25 @@ mod tests {
         assert_eq!(value.collaboration.in_app, Some(true));
         assert_eq!(value.collaboration.im, Some(true));
         assert_eq!(value.tasks, ChannelPreference::TASKS);
+    }
+
+    #[test]
+    fn personal_stand_in_defaults_and_explicit_opt_out_do_not_change_other_categories() {
+        let defaults = notification_preferences(
+            r#"{"wework_notification_preferences":{"tasks":{"system":false}}}"#,
+        );
+        assert_eq!(defaults.stand_in.system, Some(true));
+        assert_eq!(defaults.stand_in.in_app, Some(true));
+        assert_eq!(defaults.stand_in.im, None);
+        assert_eq!(defaults.tasks.system, Some(false));
+        let disabled = notification_preferences(
+            r#"{"wework_notification_preferences":{"stand_in":{"system":false,"in_app":false}}}"#,
+        );
+        assert_eq!(disabled.stand_in.system, Some(false));
+        assert_eq!(disabled.stand_in.in_app, Some(false));
+        assert_eq!(disabled.tasks, defaults.tasks);
+        assert_eq!(disabled.collaboration, defaults.collaboration);
+        assert_eq!(disabled.general, defaults.general);
     }
 
     #[test]

@@ -3,7 +3,10 @@ import type { ToolBlock } from '@wegent/chat-core/runtime-conversation'
 import type { McpAppConversationServices } from '@/api/mcpApps'
 import { McpAppsProvider, McpAppSlot } from '@/features/mcp-apps/McpAppsProvider'
 import { useTranslation } from '@/hooks/useTranslation'
-import { ToolInteractionServicesProvider } from '@wegent/collaboration/conversation'
+import {
+  ToolInteractionServicesProvider,
+  useToolInteractionServices,
+} from '@wegent/collaboration/conversation'
 import { MarkdownServicesProvider } from '@wegent/collaboration/markdown'
 import {
   devicePathBasename,
@@ -17,6 +20,7 @@ import { track } from '@/telemetry/client'
 import { DesktopConversationTranslation } from './DesktopConversationTranslation'
 import { useDesktopMarkdownServices } from './useDesktopMarkdownServices'
 import { useWorkspaceFileReader } from './WorkspaceFileReaderContext'
+import { DesktopGitAccountConfigurationProvider } from '@/components/settings/DesktopGitAccountConfigurationProvider'
 
 interface ToolImageTarget {
   deviceId: string
@@ -49,15 +53,20 @@ export function DesktopToolServices({
   mcpApp?: McpAppConversationServices
 }) {
   const { t } = useTranslation('common')
+  const inheritedServices = useToolInteractionServices()
   const markdown = useDesktopMarkdownServices()
   const readWorkspaceFileChunk = useWorkspaceFileReader()
   const deviceId = imageTarget?.deviceId
   const workspacePath = imageTarget?.workspacePath
   const toolServices = useMemo(() => {
     const base = {
+      ...inheritedServices,
       ...services,
+      requestUserInputSource: mcpApp?.address ?? inheritedServices.requestUserInputSource,
       renderMcpApp: mcpApp
-        ? (block: ToolBlock) => <McpAppSlot key={block.id} block={block} />
+        ? (block: ToolBlock, turnId?: string) => (
+            <McpAppSlot key={block.id} block={block} turnId={turnId} />
+          )
         : undefined,
     }
     if (!deviceId || !workspacePath) return base
@@ -84,7 +93,7 @@ export function DesktopToolServices({
         })
       },
     }
-  }, [deviceId, workspacePath, readWorkspaceFileChunk, mcpApp])
+  }, [deviceId, workspacePath, readWorkspaceFileChunk, mcpApp, inheritedServices])
   const sendMessage = mcpApp?.sendMessage
   const messageAdmission = useRef<McpAppConversationServices | undefined>(undefined)
   useLayoutEffect(() => {
@@ -134,7 +143,9 @@ export function DesktopToolServices({
     <DesktopConversationTranslation>
       <MarkdownServicesProvider value={markdown}>
         <ToolInteractionServicesProvider value={toolServices}>
-          {content}
+          <DesktopGitAccountConfigurationProvider deviceId={imageTarget?.deviceId} conversation>
+            {content}
+          </DesktopGitAccountConfigurationProvider>
         </ToolInteractionServicesProvider>
       </MarkdownServicesProvider>
     </DesktopConversationTranslation>

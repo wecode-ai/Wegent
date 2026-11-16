@@ -1,8 +1,10 @@
+// @vitest-environment node
+
 import { describe, expect, it } from 'vitest'
 import {
   createDefaultLocalModelCatalogEntry,
-  DEFAULT_CUSTOM_MODEL_BASE_INSTRUCTIONS,
   normalizeLocalModelCatalogEntry,
+  providerModelCatalogEntry,
 } from './localModelCatalog'
 
 describe('localModelCatalog', () => {
@@ -29,10 +31,9 @@ describe('localModelCatalog', () => {
       supports_search_tool: true,
     })
     expect(Object.keys(entry).length).toBeGreaterThanOrEqual(30)
-    expect(DEFAULT_CUSTOM_MODEL_BASE_INSTRUCTIONS.length).toBeGreaterThan(10_000)
-    expect(DEFAULT_CUSTOM_MODEL_BASE_INSTRUCTIONS).toContain('# Working with the user')
-    expect(DEFAULT_CUSTOM_MODEL_BASE_INSTRUCTIONS).toContain('# Rules for getting work done')
-    expect(DEFAULT_CUSTOM_MODEL_BASE_INSTRUCTIONS).not.toContain('based on GPT-5')
+    expect(entry).not.toHaveProperty('base_instructions')
+    expect(entry).not.toHaveProperty('include_skills_usage_instructions')
+    expect(entry.tool_mode).toBe('code_mode_only')
   })
 
   it('keeps reasoning summary capability compatible across Codex catalog versions', () => {
@@ -57,6 +58,7 @@ describe('localModelCatalog', () => {
         supports_parallel_tool_calls: true,
         input_modalities: ['text', 'image'],
         custom_future_field: { enabled: true },
+        base_instructions: 'User-authored instructions',
       },
       {
         id: 'custom-id',
@@ -72,6 +74,31 @@ describe('localModelCatalog', () => {
       supports_parallel_tool_calls: true,
       input_modalities: ['text', 'image'],
       custom_future_field: { enabled: true },
+      base_instructions: 'User-authored instructions',
     })
   })
+})
+
+it('shares provider catalog defaults and preserves explicit overrides across PC and Mobile', () => {
+  const model = {
+    id: 'stable',
+    model_id: 'upstream',
+    context_window: 128000,
+    tool_profile: 'function' as const,
+  }
+  expect(providerModelCatalogEntry(model)).toMatchObject({
+    slug: 'wework-custom-stable',
+    context_window: 128000,
+    display_name: 'upstream',
+  })
+  expect(providerModelCatalogEntry({ ...model, provider_profile_id: 'deepseek' })).toBeUndefined()
+  const catalog_entry = {
+    ...createDefaultLocalModelCatalogEntry({
+      id: 'stable',
+      displayName: 'Upstream',
+      toolProfile: 'function',
+    }),
+    default_reasoning_level: 'high',
+  }
+  expect(providerModelCatalogEntry({ ...model, catalog_entry })).toBe(catalog_entry)
 })

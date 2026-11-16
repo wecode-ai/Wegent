@@ -45,6 +45,7 @@ class SubscriptionCallbackGateway(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls) -> None:
+        """Verify the real gateway services and capture their shared clients."""
         state = dict(
             line.split("=", 1)
             for line in Path(os.environ["WEGENT_HYBRID_STATE_FILE"])
@@ -161,13 +162,20 @@ class SubscriptionCallbackGateway(unittest.TestCase):
             )
             db.add_all([subtask, execution])
             db.commit()
-            self.task_id, self.subtask_id, self.execution_id = (
+            (
+                self.task_id,
+                self.subtask_id,
+                self.execution_id,
+                self.fixture_subscription_id,
+            ) = (
                 task.id,
                 subtask.id,
                 execution.id,
+                subscription.id,
             )
 
     def _cleanup(self) -> None:
+        """Remove all rows owned by this test user."""
         with SessionLocal() as db:
             for model in (BackgroundExecution, Subtask, TaskResource, Kind):
                 db.query(model).filter(model.user_id == self.user_id).delete(
@@ -198,6 +206,7 @@ class SubscriptionCallbackGateway(unittest.TestCase):
             }
 
     def _callback(self, event_type: str, data: dict, expected: str) -> dict:
+        """Send a callback and wait for durable state and handler receipt."""
         before = self._snapshot()
         for field in ("execution_status", "task_status", "subtask_status"):
             self.assertEqual(before[field], "RUNNING", before)
@@ -229,6 +238,7 @@ class SubscriptionCallbackGateway(unittest.TestCase):
         return after
 
     def _assert_handler_receipt(self, expected: str) -> None:
+        """Wait for the migrated Rust handler to log this callback receipt."""
         # Breeze flushes asynchronously; require the migrated handler's receipt
         # for this exact callback as well as its durable database side effects.
         deadline = time.monotonic() + 5
@@ -276,12 +286,20 @@ class SubscriptionCallbackGateway(unittest.TestCase):
     def test_cancelled_callback_persists_subscription_cancellation(self) -> None:
         self._callback("response.incomplete", {}, "CANCELLED")
 
-    def _subscription_tool(self, name: str, arguments: dict) -> dict:
+    def _subscription_tool(
+        self,
+        name: str,
+        arguments: dict,
+        *,
+        user_id: int | None = None,
+        user_name: str | None = None,
+    ) -> dict:
+        """Call a real subscription MCP tool as the requested user."""
         token = create_task_token(
             task_id=self.task_id,
             subtask_id=self.subtask_id,
-            user_id=self.user_id,
-            user_name=self.marker,
+            user_id=user_id or self.user_id,
+            user_name=user_name or self.marker,
         )
         response = self.mcp_client.post(
             "/api/mcp/subscription/sse",
@@ -301,6 +319,11 @@ class SubscriptionCallbackGateway(unittest.TestCase):
         self.assertNotIn("error", rpc, rpc)
         self.assertFalse(rpc["result"].get("isError", False), rpc)
         return json.loads(rpc["result"]["content"][0]["text"])
+
+    def _cleanup_user(self, user_id: int) -> None:
+        with SessionLocal() as db:
+            db.query(User).filter(User.id == user_id).delete(synchronize_session=False)
+            db.commit()
 
     def _prepare_subscription_mcp(self) -> None:
         with SessionLocal() as db:
@@ -329,6 +352,7 @@ class SubscriptionCallbackGateway(unittest.TestCase):
             )
 
     def test_subscription_mcp_preview_and_confirmed_create(self) -> None:
+        """Cover subscription creation, reads, filtering, and isolation."""
         self._prepare_subscription_mcp()
         arguments = {
             "display_name": self.marker,
@@ -389,7 +413,145 @@ class SubscriptionCallbackGateway(unittest.TestCase):
             )
         with Redis.from_url(os.environ["REDIS_URL"]) as redis:
             self.assertFalse(redis.exists(key), "Creation must consume its preview")
-        self.evidence.append({"preview_id": preview_id, "created": created})
+        subscription_id = created["subscription"]["id"]
+
+        fetched = self._subscription_tool(
+            "get_subscription", {"subscription_id": subscription_id}
+        )
+        self.assertTrue(fetched["success"], fetched)
+        self.assertEqual(fetched["subscription"]["id"], subscription_id)
+        self.assertEqual(fetched["subscription"]["prompt_template"], self.marker)
+        self.assertTrue(fetched["subscription"]["enabled"])
+        self.assertTrue(fetched["subscription"]["is_active"])
+        self.assertEqual(fetched["subscription"]["execution_count"], 0)
+        self.assertIsNotNone(fetched["subscription"]["next_execution_time"])
+
+        with SessionLocal() as db:
+            db.get(Kind, self.fixture_subscription_id).updated_at = datetime(2021, 1, 1)
+            db.get(Kind, subscription_id).updated_at = datetime(2020, 1, 1)
+            db.commit()
+
+        listed = self._subscription_tool("list_subscriptions", {})
+        self.assertTrue(listed["success"], listed)
+        self.assertEqual(listed["total"], 2)
+        self.assertEqual(listed["returned"], 2)
+        self.assertEqual(
+            {item["id"] for item in listed["items"]},
+            {self.fixture_subscription_id, subscription_id},
+        )
+        self.assertTrue(all(item["is_active"] for item in listed["items"]))
+        self.assertTrue(all(not item["is_rental"] for item in listed["items"]))
+
+        enabled_list = self._subscription_tool(
+            "list_subscriptions", {"enabled": True, "trigger_type": "one_time"}
+        )
+        self.assertTrue(enabled_list["success"], enabled_list)
+        self.assertEqual(enabled_list["total"], 1)
+        self.assertEqual(enabled_list["returned"], 1)
+        self.assertEqual(enabled_list["items"][0]["id"], subscription_id)
+        self.assertEqual(enabled_list["items"][0]["trigger_type"], "one_time")
+        self.assertNotIn("prompt_template", enabled_list["items"][0])
+
+        page = self._subscription_tool("list_subscriptions", {"offset": 1, "limit": 1})
+        self.assertTrue(page["success"], page)
+        self.assertEqual(page["total"], 2)
+        self.assertEqual(page["returned"], 1)
+        self.assertEqual(page["items"][0]["id"], subscription_id)
+        first_page = self._subscription_tool(
+            "list_subscriptions", {"offset": 0, "limit": 1}
+        )
+        self.assertTrue(first_page["success"], first_page)
+        self.assertEqual(first_page["returned"], 1)
+        self.assertEqual(first_page["items"][0]["id"], self.fixture_subscription_id)
+
+        with SessionLocal() as db:
+            owner_subscription = db.get(Kind, self.fixture_subscription_id)
+            rental_json = json.loads(json.dumps(owner_subscription.json))
+            rental_internal = rental_json.setdefault("_internal", {})
+            rental_internal["is_rental"] = True
+            rental_json["_internal"] = rental_internal
+            db.add(
+                Kind(
+                    user_id=self.user_id,
+                    kind="Subscription",
+                    name=f"{self.marker}-rental",
+                    namespace="default",
+                    is_active=True,
+                    json=rental_json,
+                )
+            )
+            db.commit()
+
+        rental_excluded = self._subscription_tool("list_subscriptions", {})
+        self.assertTrue(rental_excluded["success"], rental_excluded)
+        self.assertEqual(rental_excluded["total"], 2)
+        self.assertNotIn(
+            f"{self.marker}-rental",
+            {item["name"] for item in rental_excluded["items"]},
+        )
+
+        with SessionLocal() as db:
+            other_user_name = f"{self.marker[:44]}-other"
+            other_user = User(
+                user_name=other_user_name,
+                password_hash=get_password_hash(secrets.token_urlsafe(24)),
+                role="user",
+                auth_source="password",
+                is_active=True,
+            )
+            db.add(other_user)
+            db.commit()
+            self.addCleanup(self._cleanup_user, other_user.id)
+            other_user_id = other_user.id
+
+        other_get = self._subscription_tool(
+            "get_subscription",
+            {"subscription_id": subscription_id},
+            user_id=other_user_id,
+            user_name=other_user_name,
+        )
+        self.assertFalse(other_get["success"], other_get)
+        self.assertIn("not found", other_get["error"])
+        other_list = self._subscription_tool(
+            "list_subscriptions",
+            {},
+            user_id=other_user_id,
+            user_name=other_user_name,
+        )
+        self.assertTrue(other_list["success"], other_list)
+        self.assertEqual(other_list["total"], 0)
+        self.assertEqual(other_list["items"], [])
+
+        with SessionLocal() as db:
+            deleted = db.get(Kind, subscription_id)
+            deleted.is_active = False
+            deleted_internal = deleted.json.setdefault("_internal", {})
+            deleted_internal["enabled"] = False
+            deleted.json["_internal"] = deleted_internal
+            db.commit()
+
+        deleted_get = self._subscription_tool(
+            "get_subscription", {"subscription_id": subscription_id}
+        )
+        self.assertFalse(deleted_get["success"], deleted_get)
+        self.assertIn("not found", deleted_get["error"])
+        deleted_list = self._subscription_tool(
+            "list_subscriptions", {"trigger_type": "one_time"}
+        )
+        self.assertTrue(deleted_list["success"], deleted_list)
+        self.assertEqual(deleted_list["total"], 0)
+
+        self.evidence.append(
+            {
+                "preview_id": preview_id,
+                "created": created,
+                "fetched": fetched,
+                "listed": listed,
+                "rental_excluded": rental_excluded,
+                "other_get": other_get,
+                "deleted_get": deleted_get,
+            }
+        )
 
 
 if __name__ == "__main__":

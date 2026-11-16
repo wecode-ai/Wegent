@@ -13,7 +13,7 @@ import {
   parseBlockedBuildMatcher,
   validateCoreDshDevelopmentPlugin,
 } from './core-dsh-plugin-manager.js'
-import { temporaryDirectory } from './test-helpers.js'
+import { temporaryDirectory, testNodeEnvironment } from './test-helpers.js'
 import { prepareElectronNodeRuntime } from './electron-node-runtime.js'
 
 vi.mock('node:child_process', { spy: true })
@@ -460,6 +460,9 @@ try {
     expect(await readFile(join(fixture.profileRoot, 'cordis.patch.yml'), 'utf8')).toContain(
       '- id: client-hmr\n  disabled: false'
     )
+    expect(await readFile(join(fixture.profileRoot, 'cordis.patch.yml'), 'utf8')).toContain(
+      '- id: hmr\n  disabled: false'
+    )
     expect(await fixture.userBundles()).toEqual(['dsh-alpha', 'dsh-beta', 'dsh-development'])
     await fixture.remove()
   })
@@ -617,7 +620,7 @@ async function createFixture(
         runtimeRoot,
         dshEntry: join(runtimeRoot, 'dsh.js'),
         nodeCommand: process.execPath,
-        environment: options.environment ?? {},
+        environment: testNodeEnvironment(options.environment),
         runCommand: options.realCommands
           ? undefined
           : (options.runCommand ??

@@ -2,10 +2,16 @@ import assert from 'node:assert/strict'
 
 import {
   inCollaborationSidebar,
+  expandCollaborationSpaces,
+  revealCollaborationSidebarElement,
   openDirectProjectCreation,
   openProjectAgentCreator,
   selectCloudAgentModel,
 } from './workspace-flows.mjs'
+import {
+  collaborationProjectViewSelector,
+  selectCollaborationProjectView,
+} from './collaboration-project-navigation.mjs'
 
 export async function waitForValue(load, predicate, message, timeoutMs) {
   const deadline = Date.now() + timeoutMs
@@ -69,15 +75,22 @@ export async function createWorkspaceAndProject(
     visible: false,
     timeoutMs,
   })
-  await control.command('waitFor', scoped('[data-testid="collaboration-tab-board"]'), { timeoutMs })
+  await control.command('waitFor', collaborationProjectViewSelector(contentSelector, 'board'), {
+    timeoutMs,
+  })
   return project
 }
 
 export async function openWorkspaceAgentConfiguration(control, contentSelector, workspaceId) {
   const scoped = selector => `${contentSelector} ${selector}`
   const sidebar = selector => inCollaborationSidebar(selector, contentSelector)
+  await expandCollaborationSpaces(control, contentSelector)
   const workspaceTree = sidebar(`[data-testid="collaboration-workspace-tree-${workspaceId}"]`)
-  await control.command('hover', `${workspaceTree} .collaboration-workspace-row`)
+  await revealCollaborationSidebarElement(
+    control,
+    `${workspaceTree} .collaboration-workspace-identity`
+  )
+  await control.command('hover', `${workspaceTree} .collaboration-workspace-identity`)
   // Only the active Workspace exposes the untagged trigger, so match both forms.
   await control.command(
     'clickWhenEnabled',
@@ -169,9 +182,7 @@ export async function createAndAssignCloudIssue(
   }
 ) {
   const scoped = selector => `${contentSelector} ${selector}`
-  await control.command('clickWhenEnabled', scoped('[data-testid="collaboration-tab-board"]'), {
-    timeoutMs,
-  })
+  await selectCollaborationProjectView(control, contentSelector, 'board', timeoutMs)
   await control.command('click', scoped('[data-testid="collaboration-issue-create"]'))
   await control.command('fill', scoped('[data-testid="cloud-todo-title"]'), { value: title })
   await control.command('fill', scoped('[data-testid="cloud-todo-detail-description"]'), {
@@ -200,9 +211,6 @@ export async function createAndAssignCloudIssue(
   )
   if (!assignDuringCreate) {
     await selectAssignee()
-    await control.command('clickWhenEnabled', scoped('[data-testid="cloud-todo-save"]'), {
-      timeoutMs,
-    })
   }
   return issue
 }

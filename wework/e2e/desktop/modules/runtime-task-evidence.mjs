@@ -1,3 +1,24 @@
+export function runtimeCompletionReceiptPatterns(taskId) {
+  const task = JSON.stringify(taskId).replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+  const receipt = fields =>
+    new RegExp(
+      `^.*Runtime task create diagnostic (?=[^\\n]*"taskId":${task}(?:,|}))${fields.map(field => `(?=[^\\n]*${field})`).join('')}[^\\n]*$`,
+      'm'
+    )
+  return [
+    receipt([
+      '"stage":"runtime-terminal-received"',
+      '"event":"response.completed"',
+      '"matchedSubscriptionCount":[1-9][0-9]*(?:,|})',
+    ]),
+    receipt([
+      '"stage":"runtime-stream-owner"',
+      '"action":"assistant-settled"',
+      '"activeRegistrations":[1-9][0-9]*(?:,|})',
+    ]),
+  ]
+}
+
 export function findRuntimeWorkTask(runtimeWork, taskId) {
   const workspaces = Array.isArray(runtimeWork.workspaces)
     ? runtimeWork.workspaces
@@ -28,19 +49,38 @@ export async function waitForForkTaskRow(control, sourceTaskId, timeoutMs) {
 }
 
 export async function waitForCompletedRuntimeTaskThread(control, taskId, timeoutMs) {
+  const task = await waitForOwnerTask(
+    async id =>
+      findRuntimeWorkTask(JSON.parse(await control.command('getLocalRuntimeWork', 'body')), id),
+    taskId,
+    task => typeof task?.threadId === 'string' && task.threadId.trim() && task.running === false,
+    `The owning executor did not expose a completed Codex thread for task ${taskId} within ${timeoutMs}ms`,
+    timeoutMs
+  )
+  return task.threadId.trim()
+}
+
+export function waitForRunningRuntimeTask(readTask, taskId, timeoutMs) {
+  return waitForOwnerTask(
+    readTask,
+    taskId,
+    task => (task?.taskId ?? task?.task_id) === taskId && task.running === true,
+    `The owning executor did not expose running task ${taskId} within ${timeoutMs}ms`,
+    timeoutMs
+  )
+}
+
+async function waitForOwnerTask(readTask, taskId, ready, message, timeoutMs) {
   const deadline = Date.now() + timeoutMs
   let observedTask = null
-  const timeoutError = () =>
-    new Error(
-      `The owning executor did not expose a completed Codex thread for task ${taskId} within ${timeoutMs}ms: ${JSON.stringify(observedTask)}`
-    )
+  const timeoutError = () => new Error(`${message}: ${JSON.stringify(observedTask)}`)
 
   while (Date.now() < deadline) {
     let requestTimer
-    let response
+    let task
     try {
-      response = await Promise.race([
-        control.command('getLocalRuntimeWork', 'body'),
+      task = await Promise.race([
+        readTask(taskId),
         new Promise((_, reject) => {
           requestTimer = setTimeout(() => reject(timeoutError()), deadline - Date.now())
         }),
@@ -49,14 +89,15 @@ export async function waitForCompletedRuntimeTaskThread(control, taskId, timeout
       clearTimeout(requestTimer)
     }
     if (Date.now() >= deadline) throw timeoutError()
-    const task = findRuntimeWorkTask(JSON.parse(response), taskId)
     const threadId = typeof task?.threadId === 'string' ? task.threadId.trim() : null
     observedTask = {
       taskId: task?.taskId ?? task?.task_id ?? null,
       threadId,
       running: task?.running ?? null,
+      completedAt: task?.completedAt ?? null,
+      updatedAt: task?.updatedAt ?? null,
     }
-    if (threadId && task.running === false) return threadId
+    if (ready(task)) return task
     await new Promise(resolve => setTimeout(resolve, Math.min(100, deadline - Date.now())))
   }
   throw timeoutError()

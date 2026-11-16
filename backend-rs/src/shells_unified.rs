@@ -292,7 +292,7 @@ async fn get_user_groups(state: &AppState, user_id: i64) -> Result<Vec<String>, 
         erp: state.erp.as_ref(),
         redis: state.redis.as_ref(),
     };
-    let resolved = user_group_memberships(&state.mysql, &erp, user_id)
+    let resolved = user_group_memberships(&state.mysql, &erp, &state.entity_resolvers, user_id)
         .await
         .map_err(dependency_error)?;
     let roles = effective_roles(&resolved.memberships, &resolved.active_names);

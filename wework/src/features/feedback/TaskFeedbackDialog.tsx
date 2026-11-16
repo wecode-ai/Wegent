@@ -573,7 +573,7 @@ function TaskFeedbackDialogContent({
                   required
                   aria-required="true"
                   rows={5}
-                  className="mt-2 w-full resize-none rounded-lg border border-border bg-background px-3 py-2 text-sm outline-none keyboard:focus:border-blue-500"
+                  className="mt-2 w-full resize-none rounded-lg border border-border bg-background px-3 py-2 text-sm outline-none keyboard:focus:border-focus wework:keyboard:focus:border-blue-500"
                 />
               </label>
               <div>
@@ -647,7 +647,9 @@ function TaskFeedbackDialogContent({
                     key={group.label}
                     className={cn(
                       'rounded-lg border p-3',
-                      group.sensitive ? 'border-red-500/40' : 'border-border/60'
+                      group.sensitive
+                        ? 'border-destructive/40 wework:border-red-500/40'
+                        : 'border-border/60'
                     )}
                   >
                     <label
@@ -675,7 +677,9 @@ function TaskFeedbackDialogContent({
                       <GroupIcon
                         className={cn(
                           'h-4 w-4 shrink-0',
-                          group.sensitive ? 'text-red-500' : 'text-text-secondary'
+                          group.sensitive
+                            ? 'text-destructive wework:text-red-500'
+                            : 'text-text-secondary'
                         )}
                       />
                       <span className="min-w-0 flex-1">
@@ -683,7 +687,9 @@ function TaskFeedbackDialogContent({
                         <span
                           className={cn(
                             'block text-xs',
-                            group.sensitive ? 'text-red-500/80' : 'text-text-secondary'
+                            group.sensitive
+                              ? 'text-destructive/80 wework:text-red-500/80'
+                              : 'text-text-secondary'
                           )}
                         >
                           {disabled ? t('workbench.feedback_requires_task') : group.description}
@@ -700,7 +706,9 @@ function TaskFeedbackDialogContent({
           </>
         )}
 
-        {error ? <p className="mt-3 text-xs text-red-500">{error}</p> : null}
+        {error ? (
+          <p className="mt-3 text-xs text-destructive wework:text-red-500">{error}</p>
+        ) : null}
         <div className="mt-4 flex shrink-0 justify-end gap-2">
           {phase === 'preview' ? (
             <button
@@ -894,7 +902,7 @@ function FeedbackPreviewList({
             <p
               className={cn(
                 'mb-1 flex items-center gap-1.5 px-1 text-xs font-medium',
-                section.sensitive ? 'text-red-500' : 'text-text-secondary'
+                section.sensitive ? 'text-destructive wework:text-red-500' : 'text-text-secondary'
               )}
             >
               {section.sensitive ? <ShieldAlert className="h-3.5 w-3.5" /> : null}
@@ -944,7 +952,12 @@ function PreviewGroupItem({
   const sensitive = group.section !== 'standard'
   const totalBytes = group.entries.reduce((sum, entry) => sum + entry.sizeBytes, 0)
   return (
-    <li className={cn('rounded-lg border', sensitive ? 'border-red-500/40' : 'border-border/60')}>
+    <li
+      className={cn(
+        'rounded-lg border',
+        sensitive ? 'border-destructive/40 wework:border-red-500/40' : 'border-border/60'
+      )}
+    >
       <button
         type="button"
         data-testid={`task-feedback-preview-category-${group.key}`}
@@ -952,14 +965,17 @@ function PreviewGroupItem({
         className="flex w-full items-center gap-3 px-3 py-2.5 text-left hover:bg-muted"
       >
         <Icon
-          className={cn('h-4 w-4 shrink-0', sensitive ? 'text-red-500' : 'text-text-secondary')}
+          className={cn(
+            'h-4 w-4 shrink-0',
+            sensitive ? 'text-destructive wework:text-red-500' : 'text-text-secondary'
+          )}
         />
         <span className="min-w-0 flex-1">
           <span className="block text-sm font-medium">{group.label}</span>
           <span
             className={cn(
               'block truncate text-xs',
-              sensitive ? 'text-red-500/80' : 'text-text-secondary'
+              sensitive ? 'text-destructive/80 wework:text-red-500/80' : 'text-text-secondary'
             )}
           >
             {group.description}
@@ -973,7 +989,12 @@ function PreviewGroupItem({
         )}
       </button>
       {expanded ? (
-        <ul className={cn('border-t', sensitive ? 'border-red-500/40' : 'border-border/60')}>
+        <ul
+          className={cn(
+            'border-t',
+            sensitive ? 'border-destructive/40 wework:border-red-500/40' : 'border-border/60'
+          )}
+        >
           {group.entries.map(entry => {
             const entryExpanded = expandedEntry === entry.archivePath
             return (

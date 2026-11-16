@@ -48,6 +48,7 @@ export interface ComposerTextInputProps {
   scrollContainerClassName?: string
   onKeyDown?: (event: KeyboardEvent, snapshot: ComposerEditorSnapshot) => boolean | void
   onOpenMentionPlugin?: (reference: PluginReference) => void
+  onOpenMentionReference?: (href: string, label: string) => void
   editorServices?: ComposerEditorServices
   transferServices?: ComposerTransferServices
 }
@@ -76,6 +77,7 @@ export function ComposerTextInput({
   scrollContainerClassName,
   onKeyDown,
   onOpenMentionPlugin,
+  onOpenMentionReference,
   editorServices,
   transferServices,
 }: ComposerTextInputProps) {
@@ -155,6 +157,7 @@ export function ComposerTextInput({
         onDrop={transfers.handleDrop}
         onEditComposerLink={links.editComposerLink}
         onOpenMentionPlugin={onOpenMentionPlugin}
+        onOpenMentionReference={onOpenMentionReference}
         onClick={() => undefined}
         onFocus={() => undefined}
         disabled={disabled}

@@ -4,6 +4,14 @@ import { join } from 'node:path'
 import { afterEach, expect, test, vi } from 'vitest'
 import { recoverReleaseLayout } from './release-layout-recovery.js'
 import { releaseBridgeUserData } from './release-handoff.js'
+import { usesLegacyReleaseLayout } from './legacy-release-layout.mjs'
+
+test('legacy pending-activation fixtures apply only to delivered legacy selectors', () => {
+  for (const version of ['0.5.13-beta.8', '0.6.2', '0.6.3', '0.6.4-beta.1'])
+    expect(usesLegacyReleaseLayout(version)).toBe(true)
+  for (const version of ['0.6.4-beta.2', '0.6.4-beta.4', '0.6.4'])
+    expect(usesLegacyReleaseLayout(version)).toBe(false)
+})
 const parentProcess = vi.hoisted(() => ({ executable: vi.fn() }))
 vi.mock('./release-parent-process.js', () => ({
   releaseParentExecutable: parentProcess.executable,
@@ -15,7 +23,7 @@ afterEach(async () => {
   for (const home of homes.splice(0)) await rm(home, { recursive: true, force: true })
 })
 
-async function fixture() {
+async function fixture(version = '0.6.3') {
   const home = await realpath(await mkdtemp(join(tmpdir(), 'release-layout-')))
   homes.push(home)
   const desktop = join(home, '.wegent/workbench/wework/default')
@@ -23,7 +31,7 @@ async function fixture() {
   const source: DesktopRelease = {
     schemaVersion: 1,
     id: 'installed-source',
-    version: '0.6.3',
+    version,
     executable: join(home, 'installed/host'),
     resources: join(home, 'installed/resources'),
     runtimeRoot: join(home, 'runtime'),
@@ -49,44 +57,61 @@ async function fixture() {
   return { home, desktop, store, source, target, environment: { HOME: home } }
 }
 
-test('target preparation repairs the unstarted shipped-client activation without restoring data', async () => {
-  const { desktop, store, source, target, environment } = await fixture()
+test.each(['0.6.3', '0.5.13-beta.8'])(
+  'target preparation repairs the %s unstarted activation without restoring data',
+  async version => {
+    const { desktop, store, source, environment } = await fixture(version)
+    const activation = (await store.activation())!
+    await recoverReleaseLayout(store, source.profileRoot, source.dataSchema, environment)
+    expect(await releaseBridgeUserData(store, source.executable, join(desktop, 'user-data'))).toBe(
+      join(desktop, 'user-data')
+    )
+    expect(
+      await releaseBridgeUserData(store, '/unknown/host', join(desktop, 'user-data'))
+    ).toBeNull()
+
+    expect(await realpath(join(desktop, 'releases'))).toBe(await realpath(store.root))
+    expect((await store.active())?.id).toBe(source.id)
+    expect(await store.activation()).toBeNull()
+    expect(
+      JSON.parse(await readFile(join(store.root, 'recovery', `${activation.token}.json`), 'utf8'))
+    ).toEqual(activation)
+    expect(await store.rollbackHistory()).toEqual([])
+    expect(await readFile(join(source.profileRoot, 'live-data'), 'utf8')).toBe('latest source data')
+    // Repeating preparation reuses the same bridge and does not change source data.
+    await recoverReleaseLayout(store, source.profileRoot, source.dataSchema, environment)
+  }
+)
+
+test('recovers an owned unstarted activation even when the source does not need layout bridges', async () => {
+  const { desktop, store, source, environment } = await fixture('0.6.4-beta.2')
   const activation = (await store.activation())!
   await recoverReleaseLayout(store, source.profileRoot, source.dataSchema, environment)
-  expect(await releaseBridgeUserData(store, source.executable, join(desktop, 'user-data'))).toBe(
-    join(desktop, 'user-data')
-  )
-  expect(await releaseBridgeUserData(store, '/unknown/host', join(desktop, 'user-data'))).toBeNull()
-
-  expect(await realpath(join(desktop, 'releases'))).toBe(await realpath(store.root))
-  expect((await store.active())?.id).toBe(source.id)
   expect(await store.activation()).toBeNull()
+  expect((await store.active())?.id).toBe(source.id)
   expect(
     JSON.parse(await readFile(join(store.root, 'recovery', `${activation.token}.json`), 'utf8'))
   ).toEqual(activation)
-  expect(JSON.parse(await readFile(join(store.root, 'rolled-back-versions.json'), 'utf8'))).toEqual(
-    [target.version]
-  )
+  await expect(readFile(join(desktop, 'releases'))).rejects.toMatchObject({ code: 'ENOENT' })
   expect(await readFile(join(source.profileRoot, 'live-data'), 'utf8')).toBe('latest source data')
-  // Repeating preparation reuses the same bridge and does not change source data.
-  await recoverReleaseLayout(store, source.profileRoot, source.dataSchema, environment)
 })
 
-test.each(['attempted', 'data-opened', 'healthy', 'failed'])(
-  'never cancels an activation with a matching %s marker',
-  async marker => {
-    const { store, source, target, environment } = await fixture()
-    const activation = (await store.activation())!
-    await atomicReleaseWrite(join(store.root, marker), activation.token)
+test.each(
+  ['0.6.3', '0.5.13-beta.8'].flatMap(version =>
+    ['attempted', 'data-opened', 'healthy', 'failed'].map(marker => [version, marker])
+  )
+)('never cancels a %s activation with a matching %s marker', async (version, marker) => {
+  const { store, source, target, environment } = await fixture(version)
+  const activation = (await store.activation())!
+  await atomicReleaseWrite(join(store.root, marker), activation.token)
 
-    await expect(
-      recoverReleaseLayout(store, source.profileRoot, source.dataSchema, environment)
-    ).rejects.toThrow('supervised recovery')
-    expect(await store.activation()).toEqual(activation)
-    expect((await store.active())?.id).toBe(target.id)
-    expect(await readFile(join(source.profileRoot, 'live-data'), 'utf8')).toBe('latest source data')
-  }
-)
+  await expect(
+    recoverReleaseLayout(store, source.profileRoot, source.dataSchema, environment)
+  ).rejects.toThrow('supervised recovery')
+  expect(await store.activation()).toEqual(activation)
+  expect((await store.active())?.id).toBe(target.id)
+  expect(await readFile(join(source.profileRoot, 'live-data'), 'utf8')).toBe('latest source data')
+})
 
 test('never touches an explicit userData override', async () => {
   const { store, source, environment } = await fixture()

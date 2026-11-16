@@ -39,6 +39,7 @@ const emptyGroups: CollaborationGroup[] = [];
 
 type PendingFile = Attachment & ComposerAttachment & { id: number; file: File };
 export interface IssueHomeTaskComposerProps {
+  active?: boolean;
   projects: CollaborationProject[];
   workspaces?: CollaborationWorkspace[];
   projectId: string;
@@ -62,6 +63,15 @@ export interface IssueHomeTaskComposerProps {
   attachments: Attachment[];
   onFileSelect(files: File | File[]): void;
   onRemoveAttachment(id: number): void;
+  pendingFiles?: File[];
+  onRemovePendingFile(file: File): void;
+  onResetDraft?(): void;
+  onPendingChange?(pending: boolean): void;
+  projectControl?: ReactNode;
+  onTaskCreated?(
+    issue: CollaborationIssue,
+    task: import("../ports/SharedWorkspaceApi").WorkspaceRuntimeTaskAddress,
+  ): void;
 }
 const images: AttachmentImageServices<PendingFile> = {
   identity: (item) => String(item.id),
@@ -98,7 +108,9 @@ export function IssueHomeComposer({
   error,
   environmentNotice,
   renderTaskComposer,
+  currentUserId,
 }: {
+  currentUserId?: number;
   ref: Ref<ComposerInputHandle>;
   value: string;
   onChange(value: string): void;
@@ -142,8 +154,18 @@ export function IssueHomeComposer({
     [],
   );
   const candidates = useMemo(
-    () => issueHomeOwners(projectId, members, agents, groups, translate),
-    [members, agents, groups, projectId, translate],
+    () =>
+      issueHomeOwners(projectId, members, agents, groups, translate).map(
+        (candidate) =>
+          candidate.owner.kind === "user" &&
+          String(candidate.owner.id) === String(currentUserId)
+            ? {
+                ...candidate,
+                title: `${candidate.title} · ${translate("issue_creation.do_myself", "我来做")}`,
+              }
+            : candidate,
+      ),
+    [members, agents, groups, projectId, translate, currentUserId],
   );
   const addFiles = (input: File | File[]) => {
     const batch = (Array.isArray(input) ? input : [input]).map((file) => {
@@ -167,8 +189,18 @@ export function IssueHomeComposer({
     });
     setFiles((current) => [...current, ...batch]);
   };
+  const removeFiles = (matches: (item: PendingFile) => boolean) => {
+    for (const item of files.filter(matches)) {
+      if (
+        item.local_preview_url &&
+        previews.current.delete(item.local_preview_url)
+      )
+        URL.revokeObjectURL(item.local_preview_url);
+    }
+    setFiles((current) => current.filter((item) => !matches(item)));
+  };
   const removeFile = (id: number | string) =>
-    setFiles((current) => current.filter((file) => file.id !== id));
+    removeFiles((item) => item.id === id);
   const issueCandidates = issues.map((issue) => ({
     id: `issue-${issue.id}`,
     type: "issue" as const,
@@ -193,6 +225,7 @@ export function IssueHomeComposer({
     ownerOverride?.projectId === projectId ? ownerOverride.id : automaticOwner;
   const ownerControl = (
     <IssueOwnerPicker
+      showLabel={Boolean(renderTaskComposer)}
       owners={candidates}
       value={ownerId}
       disabled={pending}
@@ -245,7 +278,7 @@ export function IssueHomeComposer({
           content.slice(mention.end);
       }
     }
-    return onSubmit(
+    const accepted = await onSubmit(
       content.trim(),
       candidates.find((candidate) => candidate.id === selectedOwner)?.owner ??
         null,
@@ -254,6 +287,18 @@ export function IssueHomeComposer({
         ? [standInDeviceId, ...(standInId ? [standInId] : [])]
         : []),
     );
+    if (accepted) {
+      resetDraft();
+      onChange("");
+    }
+    return accepted;
+  };
+  const resetDraft = () => {
+    removeFiles(() => true);
+    setOwnerOverride(null);
+    setAutomaticOwner(null);
+    for (const url of previews.current) URL.revokeObjectURL(url);
+    previews.current.clear();
   };
   const projectSelector = (
     <div className="flex min-h-10 items-center justify-center rounded-t-[26px] bg-surface px-4">
@@ -309,6 +354,10 @@ export function IssueHomeComposer({
             : error,
           members: [...candidates, ...issueCandidates],
           attachments: files,
+          pendingFiles: files.map((item) => item.file),
+          onRemovePendingFile: (file) =>
+            removeFiles((item) => item.file === file),
+          onResetDraft: resetDraft,
           onFileSelect: addFiles,
           onRemoveAttachment: removeFile,
         })}

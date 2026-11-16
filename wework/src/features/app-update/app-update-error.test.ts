@@ -1,3 +1,5 @@
+// @vitest-environment node
+
 import { describe, expect, test } from 'vitest'
 import { createAppUpdateError } from './app-update-error'
 
@@ -65,6 +67,39 @@ describe('createAppUpdateError', () => {
       kind: 'unsupported',
       code: 'APP_UPDATE_UNAVAILABLE',
       detail: null,
+    })
+  })
+
+  test('uses the structured preparation failure instead of the download wrapper', () => {
+    const failure = Object.assign(new Error('ENOENT: missing profile'), {
+      stage: 'prepare',
+      code: 'UPDATE_PROFILE_MISSING',
+      retryable: false,
+    })
+    expect(
+      createAppUpdateError(new Error(failure.message, { cause: failure }), 'download')
+    ).toMatchObject({
+      stage: 'prepare',
+      code: 'UPDATE_PROFILE_MISSING',
+      retryable: false,
+    })
+  })
+
+  test('reads structured host error details and rejects unknown stage names', () => {
+    const failure = Object.assign(new Error('Could not extract package'), {
+      code: 'UPDATE_EXTRACTION_FAILED',
+      details: { stage: 'extract', retryable: true },
+    })
+    expect(createAppUpdateError(failure, 'download')).toMatchObject({
+      stage: 'extract',
+      code: 'UPDATE_EXTRACTION_FAILED',
+      retryable: true,
+    })
+    expect(
+      createAppUpdateError(Object.assign(new Error('Failure'), { stage: 'unknown' }), 'download')
+    ).toMatchObject({
+      stage: 'download',
+      code: 'APP_UPDATE_DOWNLOAD_FAILED',
     })
   })
 })

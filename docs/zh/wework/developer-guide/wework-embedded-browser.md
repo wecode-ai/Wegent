@@ -16,6 +16,10 @@ Wework 的内置浏览器用于在桌面工作台右侧面板中展示可交互�
 
 Executor 启动 Codex 时会注入 browser MCP server 配置。模型调用浏览器工具时，MCP server 读取当前 bridge identity，向 Wework 进程内的 loopback bridge 发送受控请求。bridge 再在主线程调度 Electron browser view 的导航、页面检查、DOM 动作、等待和截图。
 
+历史读取、上下文压缩和 MCP App 操作也可能通过 `thread/resume` 冷恢复 Codex 会话。恢复时必须复用正常启动的任务级 MCP 配置，包括浏览器的任务 label、认证环境变量以及项目空间上下文，同时保留会话已有的模型设置。原生 Goal 可以在恢复后立即续跑；若只恢复 shell 环境而遗漏 MCP，浏览器面板仍可能显示页面，但模型拿不到浏览器工具。`embedded-browser` 桌面检查点会重启真实 app-server、刷新历史，并验证同一线程的浏览器和项目空间 MCP 均已连接，无需再发送用户消息。 检查点为浏览器所属的本机 Executor 创建独立任务，并等待在途历史读取结束后，空闲重启实际获准。
+
+后台任务的页面检查和 DOM 操作统一通过 Chromium `Runtime.evaluate` 返回结果，复用现有 debugger session 租约。隐藏 guest 中 Electron `executeJavaScript` 的脚本可能已经执行，但 isolated world 的回复 Promise 仍不完成；不得通过再次执行原操作唤醒回复，以免重复修改页面。求值必须等待页面 Promise、按值返回结果、传播异常，并保留已有 inspector 的连接。
+
 每个 Wework 进程启动时都会绑定独立的随机本地桥接端口，并把 bridge identity 原子写入当前 Executor home 的 `runtime/embedded-browser-bridge.json`。identity 包含 schema 版本、进程 PID、loopback 地址、认证 token 和启动时间。文件目录权限应限制为当前用户可读写，token 不得写入日志。MCP server 每次请求前读取最新 identity，并只接受 loopback 地址，避免同时运行的多个 Wework 实例把浏览器请求发送到错误窗口。
 
 Electron 启动 bridge 后必须把 runtime 文件路径传给托管 Executor。Executor 生成 Codex browser MCP 配置时只传递该文件路径，不得把当前 bridge URL 或 token 固化到配置中；否则 Electron 使用随机端口或 bridge 重启后，MCP 会继续连接过期地址，并绕过 runtime identity 的刷新机制。
@@ -23,6 +27,18 @@ Electron 启动 bridge 后必须把 runtime 文件路径传给托管 Executor。
 bridge 请求必须携带认证 token。`open` 和 `navigate` 只允许安全的网页 scheme；不要允许 `file:`、`javascript:` 或其它可以读取本机文件或执行任意脚本的地址进入 Agent 导航路径。
 
 bridge 支持有限并发。长时间 `waitFor` 不应阻塞独立的 `click`、`fill` 或 `inspect` 请求；超出并发上限时返回明确的忙碌错误，而不是让调用无限等待。
+
+### Agent 操作审批
+
+高风险操作在执行前暂停当前浏览器工具调用，Electron 主进程登记有效期为 60 秒的待审批请求，并在浏览器面板显示“继续”和“取消”。点击“继续”只执行该次调用已保存的原参数一次，执行结果直接返回原 MCP 调用，AI 不需要再次发起相同操作；点击“取消”、审批过期、页面导航、浏览器关闭或原连接断开均结束等待且不执行。旧的“保存授权、等待下次调用消费”路径已删除。后续 inspect、等待或其他操作的状态事件必须携带仍有效的待审批请求，不能让运行状态覆盖审批入口。`embedded-browser` 桌面 checkpoint 通过真实 MCP 调用验证等待、inspect、继续后原调用返回成功和页面只修改一次。
+
+同一浏览器有多个待审批操作时，面板显示最近登记的请求，inspect 保持该选择；处理后继续显示尚未处理的请求，每个批准仍只对应正在等待的原操作。
+
+用户接管浏览器时优先显示“恢复 AI”入口，暂停期间的 inspect 不得解除接管状态。恢复 AI 后重新显示仍有效的待审批请求，接管操作本身不批准或拒绝该请求。
+
+其他操作失败时保留错误状态、消息和错误码，包括以 `needs_user` 报告的 `wait_timeout`，同时继续提供待审批请求的批准/拒绝入口。只有空闲、运行中或本次操作确实要求审批时，才能用待审批信息生成状态提示。桌面回归在断言审批入口前，必须确认 renderer 已收到 inspect 后的宿主事件，不能只凭一段稳定时间推断事件已送达。
+
+浏览器 mutation 请求为这段人工审批等待单独增加 60 秒预算，原操作预算仍为 45 秒；仅浏览器 MCP 的工具总预算为 120 秒，观察类请求仍保持 45 秒。连接断开必须撤销待审批操作，不能在工具调用结束后继续执行。
 
 ### 多标签导航连线图
 
@@ -142,7 +158,11 @@ Agent 面向模型暴露的是浏览器动作工具，而不是底层 Chromium A
 - `frameId`、`selector` 或其它调试定位信息：仅用于诊断，不应要求模型依赖脆弱 selector。
 - `warnings`：说明遮挡、不可见、敏感输入、跨 frame 限制等风险。
 
+同源 iframe 会递归进入检查。节点的 `rect` 使用顶层视口 CSS 像素，已包含 iframe 边框和父级 transform 的缩放；动作结果的 `target.rect` 使用同一坐标空间，`localRect` 才是元素所在文档的坐标。坐标点击会按同样规则逐级进入 iframe，并且不会为了居中目标而滚动页面，避免 preview 和实际点击之间坐标失效。跨源 iframe 仍不可检查，旋转或斜切等非轴对齐 transform 只能近似换算，并返回 `frame_transform_approximate` 警告。
+
 动作工具优先使用 `inspect` 产生的 `ref`。当页面重排导致 `ref` 失效时，应返回可恢复错误，引导模型重新 `inspect`，不要静默猜测 selector。动作结果应描述观测到的效果，例如值变化、DOM 变化、URL 变化或只派发了事件但未观察到效果。
+
+失败结果会带回请求使用的 `inspectId`、`index`、`ref` 和当前可用的 inspect 列表。索引属于旧 inspect 时返回 `stale_inspect`，节点存在但不可操作时返回 `element_not_actionable`，避免把所有定位失败都归为 `element_not_found`。
 
 ## 任务绑定
 
@@ -161,6 +181,10 @@ Agent 面向模型暴露的是浏览器动作工具，而不是底层 Chromium A
 
 程序化首次打开必须把“面板已请求打开”和“原生 WebView 已可导航”视为两个不同阶段。bridge 应保存带 request ID 的待处理导航，等任务对应的浏览器宿主获得非零可见尺寸并进入 ready 状态后再执行；监听器晚于请求注册时，前端必须通过待处理请求快照恢复事件。只有原生 WebView 已导航到请求地址后才能向工具返回成功，不能仅因右侧面板或空白 WebView 已创建就报告成功。
 
+`state().url` 在加载期间包含请求意图，不能作为导航完成证据。Electron manager 保存当前 `navigationCompletion`；原生加载 Promise 可能在空白页交接时结束，因此还必须确认已提交的 URL 与当前请求目标匹配，且主 frame 已停止加载。重定向会把请求目标替换为最终提交的 URL，因此重定向后的 open 可以完成。bridge 的 `open` 等待完整就绪屏障并检查导航失败后，才允许工具继续 inspect。
+
+浏览器 guest 与其他 workbench surface 使用相同的平台后台策略，必须在两类 preload 分支的公共初始化路径设置。macOS/Linux 禁用 guest 后台节流，避免隐藏任务页面暂停脚本执行；Windows 保留默认可见性生命周期，继续使用现有的全局后台计时器策略。`embedded-browser` checkpoint 在后台 inspect 前读取并断言实际 guest 的策略，不能只检查主窗口配置。
+
 任务切换或组件卸载时，关闭请求必须携带预期的原生 label。过期 pane 只能关闭自己创建的 WebView，不能关闭已经迁移或由新 pane 接管的实例。非活跃任务可以提前创建隐藏且 ready 的浏览器，但不能显示在当前任务上方。
 
 ## 主界面浮层与地址栏同步
@@ -169,7 +193,7 @@ Electron 的嵌入页面必须由 React renderer 挂载 `<webview>`，并放在�
 
 仍使用独立原生 WebView 的桌面实现不能依赖 React `z-index`。当主界面浮层与这类浏览器区域相交时，浏览器面板必须把原生 WebView 设为不可见，并在浮层移除或不再相交后恢复。自定义浮层无法通过语义 role 或共享层级类识别时，应添加 `data-embedded-browser-occlusion`，不要在各业务组件中重复调用原生显示命令。
 
-页面状态轮询维护的是浏览器真实 URL，地址栏维护的是用户输入草稿。地址栏聚焦期间，轮询可以更新页面 URL、标题和图标，但不得覆盖输入草稿；失焦时再恢复真实 URL。新增导航或页面状态同步路径时必须保留这条边界。
+页面状态轮询维护的是浏览器真实 URL，地址栏维护的是用户输入草稿。地址栏聚焦期间，轮询可以更新页面 URL、标题和图标，但不得覆盖输入草稿；输入焦点真正离开地址栏时再恢复真实 URL。窗口失活产生的 `blur` 若仍保留该输入框的 DOM 焦点，不得清空编辑状态或回写旧 URL。新增导航或页面状态同步路径时必须保留这条边界。
 
 ## WebView 兼容性
 

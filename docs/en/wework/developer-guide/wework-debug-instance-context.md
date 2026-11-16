@@ -41,6 +41,8 @@ These values are written only when the Terminal session is created. Existing Ter
 - `WEWORK_APP_IDENTIFIER`: the generated Electron application identity. It is derived from the current worktree path and isolates the single-instance lock, application data, and macOS menu bar icon position. The launcher intentionally ignores an identity inherited from its parent App; use `WEWORK_DEV_APP_IDENTIFIER` only when an identity must explicitly be reused.
 - `WEWORK_USER_DATA_DIR`: the generated Electron user data directory. The launcher intentionally ignores a directory inherited from its parent App; use `WEWORK_DEV_USER_DATA_DIR` for an explicit override.
 
+Development startup clears inherited `WEWORK_RELEASE_ROOT`, `WEWORK_RELEASE_SUPERVISED`, `WEWORK_ACTIVE_RELEASE_ID`, and `WEWORK_COMPONENT_DATA_DIRECTORY` so its isolated directory cannot use an installed release’s activation state or component data.
+
 The macOS development launcher prepares a copy-on-write Electron App Bundle for
 each display name. Task shells use their injected title directly; terminals
 started from an existing runtime worktree can recover the title from the local
@@ -70,6 +72,22 @@ an isolated application domain, checks that exit preserves it, and checks the
 GUID and position after relaunch. Checking only the GUID misses this failure.
 
 The script also exports these values as `VITE_WEWORK_*` so the frontend can display them at runtime.
+
+## Cargo Build Isolation
+
+The macOS launcher and Unix Executor launchers use the same Cargo directory
+resolver. Build state is isolated by component and canonical worktree path,
+while sccache continues sharing compiled content. Cargo uses file timestamps
+to decide whether to rebuild. When worktrees share one `target`, older sources
+can incorrectly reuse another source tree's artifacts.
+
+`CARGO_TARGET_DIR` selects the cache location; launchers append
+`<component>/worktrees/<path-hash>`. Without it, they use
+`WEGENT_CARGO_TARGET_ROOT` or the default cache root.
+`WEGENT_DISABLE_SHARED_CARGO_TARGET=1` places artifacts in the current
+worktree's `target/<component>`. The macOS startup log shows the resolved
+`CARGO_TARGET_DIR`. Direct `cargo` commands bypass these launchers and must
+select a separate target directory themselves.
 
 ## Frontend Display
 

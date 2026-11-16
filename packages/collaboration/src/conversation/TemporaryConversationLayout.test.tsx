@@ -18,11 +18,12 @@ describe('shared temporary conversation layout', () => {
     act(() => root.unmount())
     container.remove()
   })
-  function render(count: number, showWorkbenchBackground = false) {
+  function render(count: number, showWorkbenchBackground = false, loading = false) {
     act(() =>
       root.render(
         <TemporaryConversationLayout
           messageCount={count}
+          loading={loading}
           emptyStateText="暂无会话消息"
           showWorkbenchBackground={showWorkbenchBackground}
           translate={createCollaborationTranslator('zh-CN')}
@@ -49,6 +50,17 @@ describe('shared temporary conversation layout', () => {
     expect(container.querySelector('textarea')).toBe(input)
     expect(input.value).toBe('尚未发送')
   })
+  it('reports an unfinished history read while cached messages remain visible', () => {
+    render(1, false, true)
+    const owner = container.querySelector('[data-testid="right-workspace-chat-panel"]')!
+    expect(owner.getAttribute('aria-busy')).toBe('true')
+    expect(container.querySelector('[data-testid="message-area"]')).not.toBeNull()
+    expect(container.querySelector('[data-testid="temporary-conversation-loading"]')).toBeNull()
+    const input = container.querySelector('textarea')!
+    render(1, false, false)
+    expect(owner.getAttribute('aria-busy')).toBe('false')
+    expect(container.querySelector('textarea')).toBe(input)
+  })
   it('keeps the composer surface translucent when the workbench background is visible', () => {
     render(0, true)
 
@@ -57,5 +69,17 @@ describe('shared temporary conversation layout', () => {
     )
     expect(composerShell?.className).toContain('bg-transparent')
     expect(composerShell?.className).not.toContain('bg-background')
+  })
+  it('reports pending history while cached messages remain visible', () => {
+    render(1, false, true)
+    const panel = container.querySelector('[data-testid="right-workspace-chat-panel"]')!
+    const composer = container.querySelector('textarea')
+    expect(panel.getAttribute('aria-busy')).toBe('true')
+    expect(container.querySelector('[data-testid="message-area"]')).not.toBeNull()
+
+    render(1)
+
+    expect(panel.getAttribute('aria-busy')).toBe('false')
+    expect(container.querySelector('textarea')).toBe(composer)
   })
 })

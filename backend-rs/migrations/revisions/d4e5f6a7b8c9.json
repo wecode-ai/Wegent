@@ -1,0 +1,161 @@
+{
+  "revision": "d4e5f6a7b8c9",
+  "parents": [
+    "a8b9c0d1e2f3"
+  ],
+  "source": "20260804_d4e5f6a7b8c9_add_plugin_marketplace_v2.py",
+  "upgrade": [
+    {
+      "sql": [
+        "CREATE TABLE plugins (\n    id BIGINT NOT NULL COMMENT 'Plugin primary key' AUTO_INCREMENT, \n    slug VARCHAR(100) NOT NULL COMMENT 'Stable unique marketplace slug' DEFAULT '', \n    name VARCHAR(100) NOT NULL COMMENT 'Canonical plugin name from manifest' DEFAULT '', \n    display_name VARCHAR(200) NOT NULL COMMENT 'Human-readable plugin title' DEFAULT '', \n    summary VARCHAR(500) NOT NULL COMMENT 'Short marketplace summary' DEFAULT '', \n    description_md VARCHAR(8192) NOT NULL COMMENT 'Markdown description; empty means unset' DEFAULT '', \n    listing_type VARCHAR(20) NOT NULL COMMENT 'Listing type: plugin or skill' DEFAULT 'plugin', \n    source_type VARCHAR(20) NOT NULL COMMENT 'Source type: native, mirror, or submission' DEFAULT 'native', \n    source_provider VARCHAR(50) NOT NULL COMMENT 'Source provider label, e.g. wework or codex' DEFAULT 'wework', \n    owner_user_id BIGINT NOT NULL COMMENT 'Owner user ID; 0 means platform-owned / unset' DEFAULT '0', \n    category VARCHAR(50) NOT NULL COMMENT 'Marketplace category; empty means unset' DEFAULT '', \n    keywords_json JSON NOT NULL COMMENT 'Search keywords JSON array; app writes [] when unset', \n    interface_json JSON NOT NULL COMMENT 'Composer/UI interface metadata JSON object; app writes {} when unset', \n    visibility VARCHAR(20) NOT NULL COMMENT 'Visibility: personal, workspace, or public' DEFAULT 'workspace', \n    allow_copy BOOL NOT NULL COMMENT 'Whether recipients may copy the plugin' DEFAULT 0, \n    status VARCHAR(30) NOT NULL COMMENT 'Lifecycle status: draft, published, etc.' DEFAULT 'draft', \n    latest_release_id BIGINT NOT NULL COMMENT 'Latest ready release ID; 0 means none' DEFAULT '0', \n    featured_rank INTEGER NOT NULL COMMENT 'Featured sort rank; 0 means not featured' DEFAULT '0', \n    created_at DATETIME(6) NOT NULL COMMENT 'Creation time' DEFAULT CURRENT_TIMESTAMP(6), \n    updated_at DATETIME(6) NOT NULL COMMENT 'Last update time' DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6), \n    published_at DATETIME(6) NOT NULL COMMENT 'First publish time; epoch means unpublished' DEFAULT '1970-01-01 00:00:00.000000', \n    PRIMARY KEY (id), \n    CONSTRAINT uniq_plugins_slug UNIQUE (slug)\n)CHARSET=utf8mb4 ENGINE=InnoDB COMMENT='Marketplace plugin catalog identities'"
+      ]
+    },
+    {
+      "sql": [
+        "CREATE INDEX idx_plugins_discovery ON plugins (status, visibility, featured_rank)"
+      ]
+    },
+    {
+      "sql": [
+        "CREATE INDEX idx_plugins_listing_category ON plugins (listing_type, category, status)"
+      ]
+    },
+    {
+      "sql": [
+        "CREATE INDEX idx_plugins_source ON plugins (source_provider, source_type)"
+      ]
+    },
+    {
+      "sql": [
+        "CREATE TABLE plugin_releases (\n    id BIGINT NOT NULL COMMENT 'Release primary key' AUTO_INCREMENT, \n    plugin_id BIGINT NOT NULL COMMENT 'Owning plugin ID' DEFAULT '0', \n    version VARCHAR(50) NOT NULL COMMENT 'Semver release version' DEFAULT '', \n    manifest_json JSON NOT NULL COMMENT 'Parsed package manifest JSON object; app writes {} when unset', \n    interface_json JSON NOT NULL COMMENT 'Release interface metadata JSON object; app writes {} when unset', \n    release_notes VARCHAR(4096) NOT NULL COMMENT 'Release notes; empty means unset' DEFAULT '', \n    storage_key VARCHAR(500) NOT NULL COMMENT 'Object storage key for the package zip' DEFAULT '', \n    sha256 VARCHAR(64) NOT NULL COMMENT 'Package content SHA-256 hex digest' DEFAULT '', \n    size_bytes BIGINT NOT NULL COMMENT 'Package size in bytes' DEFAULT '0', \n    status VARCHAR(20) NOT NULL COMMENT 'Release status: processing, ready, rejected, etc.' DEFAULT 'processing', \n    scan_status VARCHAR(20) NOT NULL COMMENT 'Security scan status: pending, passed, failed' DEFAULT 'pending', \n    scan_report_json JSON NOT NULL COMMENT 'Security scan report JSON object; app writes {} when unset', \n    created_by_user_id BIGINT NOT NULL COMMENT 'Creator user ID; 0 means system / unset' DEFAULT '0', \n    created_at DATETIME(6) NOT NULL COMMENT 'Creation time' DEFAULT CURRENT_TIMESTAMP(6), \n    published_at DATETIME(6) NOT NULL COMMENT 'Publish time; epoch means unpublished' DEFAULT '1970-01-01 00:00:00.000000', \n    PRIMARY KEY (id), \n    CONSTRAINT uniq_plugin_release_version UNIQUE (plugin_id, version)\n)CHARSET=utf8mb4 ENGINE=InnoDB COMMENT='Immutable marketplace plugin release packages'"
+      ]
+    },
+    {
+      "sql": [
+        "CREATE INDEX idx_plugin_releases_status ON plugin_releases (plugin_id, status, published_at)"
+      ]
+    },
+    {
+      "sql": [
+        "CREATE INDEX idx_plugin_releases_sha256 ON plugin_releases (sha256)"
+      ]
+    },
+    {
+      "sql": [
+        "CREATE TABLE plugin_upstreams (\n    id BIGINT NOT NULL COMMENT 'Upstream primary key' AUTO_INCREMENT, \n    plugin_id BIGINT NOT NULL COMMENT 'Mirrored local plugin ID' DEFAULT '0', \n    provider VARCHAR(50) NOT NULL COMMENT 'Upstream provider, e.g. codex' DEFAULT 'codex', \n    marketplace_name VARCHAR(100) NOT NULL COMMENT 'Remote marketplace name' DEFAULT '', \n    remote_plugin_id VARCHAR(200) NOT NULL COMMENT 'Remote plugin identifier' DEFAULT '', \n    upstream_url VARCHAR(500) NOT NULL COMMENT 'Package download URL' DEFAULT '', \n    license_info VARCHAR(500) NOT NULL COMMENT 'Upstream license summary; empty means unset' DEFAULT '', \n    sync_enabled BOOL NOT NULL COMMENT 'Whether automatic sync is enabled' DEFAULT 1, \n    sync_policy VARCHAR(30) NOT NULL COMMENT 'Sync policy: auto_after_scan or review_required' DEFAULT 'auto_after_scan', \n    last_seen_version VARCHAR(50) NOT NULL COMMENT 'Last observed remote version; empty means none' DEFAULT '', \n    last_checked_at DATETIME(6) NOT NULL COMMENT 'Last check time; epoch means never checked' DEFAULT '1970-01-01 00:00:00.000000', \n    last_synced_at DATETIME(6) NOT NULL COMMENT 'Last successful sync time; epoch means never synced' DEFAULT '1970-01-01 00:00:00.000000', \n    last_error VARCHAR(1000) NOT NULL COMMENT 'Last sync error message; empty means no error' DEFAULT '', \n    PRIMARY KEY (id), \n    CONSTRAINT uniq_plugin_upstreams_plugin_id UNIQUE (plugin_id), \n    CONSTRAINT uniq_plugin_upstream_source UNIQUE (provider, marketplace_name, remote_plugin_id)\n)CHARSET=utf8mb4 ENGINE=InnoDB COMMENT='Selective upstream mirror configuration'"
+      ]
+    },
+    {
+      "sql": [
+        "CREATE INDEX idx_plugin_upstreams_sync ON plugin_upstreams (sync_enabled, provider)"
+      ]
+    },
+    {
+      "sql": [
+        "CREATE TABLE plugin_submissions (\n    id BIGINT NOT NULL COMMENT 'Submission primary key' AUTO_INCREMENT, \n    plugin_id BIGINT NOT NULL COMMENT 'Target plugin ID' DEFAULT '0', \n    release_id BIGINT NOT NULL COMMENT 'Submitted release ID' DEFAULT '0', \n    submitter_user_id BIGINT NOT NULL COMMENT 'Submitter user ID' DEFAULT '0', \n    purpose VARCHAR(30) NOT NULL COMMENT 'Submission purpose' DEFAULT 'marketplace_publish', \n    status VARCHAR(20) NOT NULL COMMENT 'Review status: uploading, pending, approved, rejected' DEFAULT 'uploading', \n    reviewer_user_id BIGINT NOT NULL COMMENT 'Reviewer user ID; 0 means not reviewed' DEFAULT '0', \n    review_note VARCHAR(2000) NOT NULL COMMENT 'Reviewer note; empty means unset' DEFAULT '', \n    submitted_at DATETIME(6) NOT NULL COMMENT 'Submission time' DEFAULT CURRENT_TIMESTAMP(6), \n    reviewed_at DATETIME(6) NOT NULL COMMENT 'Review time; epoch means not reviewed' DEFAULT '1970-01-01 00:00:00.000000', \n    PRIMARY KEY (id), \n    CONSTRAINT uniq_plugin_submission_release UNIQUE (release_id)\n)CHARSET=utf8mb4 ENGINE=InnoDB COMMENT='Marketplace plugin publish review requests'"
+      ]
+    },
+    {
+      "sql": [
+        "CREATE INDEX idx_plugin_submissions_queue ON plugin_submissions (status, submitted_at)"
+      ]
+    },
+    {
+      "sql": [
+        "CREATE INDEX idx_plugin_submissions_submitter ON plugin_submissions (submitter_user_id, status)"
+      ]
+    },
+    {
+      "sql": [
+        "CREATE TABLE plugin_device_installations (\n    id BIGINT NOT NULL COMMENT 'Device installation primary key' AUTO_INCREMENT, \n    installed_kind_id INTEGER NOT NULL COMMENT 'InstalledPlugin kinds.id' DEFAULT '0', \n    user_id BIGINT NOT NULL COMMENT 'Account owner user ID' DEFAULT '0', \n    device_id VARCHAR(100) NOT NULL COMMENT 'Target device identifier' DEFAULT '', \n    desired_release_id BIGINT NOT NULL COMMENT 'Desired release ID for the device' DEFAULT '0', \n    actual_release_id BIGINT NOT NULL COMMENT 'Actually installed release ID; 0 means none' DEFAULT '0', \n    state VARCHAR(20) NOT NULL COMMENT 'Install state: pending, installed, failed, etc.' DEFAULT 'pending', \n    error_code VARCHAR(100) NOT NULL COMMENT 'Last error code; empty means no error' DEFAULT '', \n    error_message VARCHAR(1000) NOT NULL COMMENT 'Last error message; empty means no error' DEFAULT '', \n    attempt_count INTEGER NOT NULL COMMENT 'Sync attempt count' DEFAULT '0', \n    last_sync_at DATETIME(6) NOT NULL COMMENT 'Last sync time; epoch means never synced' DEFAULT '1970-01-01 00:00:00.000000', \n    updated_at DATETIME(6) NOT NULL COMMENT 'Last update time' DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6), \n    PRIMARY KEY (id), \n    CONSTRAINT uniq_plugin_device_installation UNIQUE (installed_kind_id, device_id)\n)CHARSET=utf8mb4 ENGINE=InnoDB COMMENT='Per-device materialization of installed plugin state'"
+      ]
+    },
+    {
+      "sql": [
+        "CREATE INDEX idx_plugin_device_user_state ON plugin_device_installations (user_id, state)"
+      ]
+    },
+    {
+      "sql": [
+        "CREATE INDEX idx_plugin_device_device ON plugin_device_installations (device_id, updated_at)"
+      ]
+    }
+  ],
+  "downgrade": [
+    {
+      "sql": [
+        "DROP INDEX idx_plugin_device_device ON plugin_device_installations"
+      ]
+    },
+    {
+      "sql": [
+        "DROP INDEX idx_plugin_device_user_state ON plugin_device_installations"
+      ]
+    },
+    {
+      "sql": [
+        "DROP TABLE plugin_device_installations"
+      ]
+    },
+    {
+      "sql": [
+        "DROP INDEX idx_plugin_submissions_submitter ON plugin_submissions"
+      ]
+    },
+    {
+      "sql": [
+        "DROP INDEX idx_plugin_submissions_queue ON plugin_submissions"
+      ]
+    },
+    {
+      "sql": [
+        "DROP TABLE plugin_submissions"
+      ]
+    },
+    {
+      "sql": [
+        "DROP INDEX idx_plugin_upstreams_sync ON plugin_upstreams"
+      ]
+    },
+    {
+      "sql": [
+        "DROP TABLE plugin_upstreams"
+      ]
+    },
+    {
+      "sql": [
+        "DROP INDEX idx_plugin_releases_sha256 ON plugin_releases"
+      ]
+    },
+    {
+      "sql": [
+        "DROP INDEX idx_plugin_releases_status ON plugin_releases"
+      ]
+    },
+    {
+      "sql": [
+        "DROP TABLE plugin_releases"
+      ]
+    },
+    {
+      "sql": [
+        "DROP INDEX idx_plugins_source ON plugins"
+      ]
+    },
+    {
+      "sql": [
+        "DROP INDEX idx_plugins_listing_category ON plugins"
+      ]
+    },
+    {
+      "sql": [
+        "DROP INDEX idx_plugins_discovery ON plugins"
+      ]
+    },
+    {
+      "sql": [
+        "DROP TABLE plugins"
+      ]
+    }
+  ]
+}

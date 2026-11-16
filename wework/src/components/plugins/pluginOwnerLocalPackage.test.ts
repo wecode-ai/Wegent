@@ -1,4 +1,7 @@
-import { describe, expect, test } from 'vitest'
+// @vitest-environment node
+
+import { afterEach, describe, expect, test, vi } from 'vitest'
+import * as localExecutor from '@/desktop/localExecutor'
 import type { InstalledPlugin } from '@/types/api'
 import type { InstalledPluginItem } from './PluginManagementRows'
 import {
@@ -69,6 +72,36 @@ function installedItem(overrides: {
 }
 
 describe('pluginOwnerLocalPackage', () => {
+  afterEach(() => vi.restoreAllMocks())
+
+  test('excludes bundled personal plugins from package sharing and editing', () => {
+    vi.spyOn(localExecutor, 'getInitializedBundledPluginMarketplace').mockReturnValue({
+      id: 'wework-personal',
+      path: '/tmp/wework-personal',
+      pluginCount: 3,
+      contentHash: 'bundled-hash',
+      defaultPluginNames: ['wework-space', 'smart-app-builder', 'wework-plugin-developer'],
+    })
+    for (const pluginKey of ['wework-space', 'smart-app-builder', 'wework-plugin-developer']) {
+      const plugin = installedItem({ id: pluginKey, origin: 'created', pluginKey })
+      plugin.raw.spec.source.marketplace = 'wework-personal'
+      expect(isPackableCreatedPlugin(plugin)).toBe(false)
+      expect(findPackableCreatedPlugin([plugin], [pluginKey])).toBeNull()
+      expect(
+        resolveContinueEditingPluginKey({ packableCreated: null, currentPlugin: plugin })
+      ).toBeNull()
+    }
+    const created = installedItem({ id: 'user-plugin', origin: 'created', pluginKey: 'my-tools' })
+    created.raw.spec.source.marketplace = 'wework-personal'
+    expect(isPackableCreatedPlugin(created)).toBe(true)
+    const sameName = installedItem({
+      id: 'other-source',
+      origin: 'created',
+      pluginKey: 'wework-space',
+    })
+    expect(isPackableCreatedPlugin(sameName)).toBe(true)
+  })
+
   test('finds packable created install by slug even when another market row is selected', () => {
     const market = installedItem({
       id: '101',

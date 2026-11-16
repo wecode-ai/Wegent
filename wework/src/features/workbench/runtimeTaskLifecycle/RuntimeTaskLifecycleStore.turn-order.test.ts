@@ -1,3 +1,5 @@
+// @vitest-environment node
+
 import { expect, test } from 'vitest'
 import type { RuntimeTaskSummary } from '@/types/api'
 import type { RuntimePaneTranscript } from '@/types/workbench'
@@ -184,41 +186,57 @@ test('cold history does not restore an earlier streaming turn before the latest 
   expect(store.getTask(address)?.derived.canSend).toBe(true)
 })
 
-test('cold completed metadata recovers the latest terminal identity despite older streaming history', () => {
-  const store = new RuntimeTaskLifecycleStore('cold-idle-completed-history')
-  const address = { deviceId: 'device-1', taskId: 'task-1' }
-  store.syncRuntimeTask(address, {
-    taskId: address.taskId,
-    title: 'Recovered conversation',
-    workspacePath: '/repo',
-    runtime: 'codex',
-    continuable: true,
-    executionState: null,
-    running: false,
-    status: 'done',
-    threadStatus: 'notLoaded',
-    turnStatus: 'completed',
-    completedAt: 3000,
-    updatedAt: 3000,
-  })
+test.each(['metadata-first', 'history-first'] as const)(
+  'cold restoration recovers terminal identity with older streaming history: %s',
+  order => {
+    const store = new RuntimeTaskLifecycleStore(`cold-completed-history-${order}`)
+    const address = { deviceId: 'device-1', taskId: 'task-1' }
+    const completedTask: RuntimeTaskSummary = {
+      taskId: address.taskId,
+      title: 'Recovered conversation',
+      workspacePath: '/repo',
+      runtime: 'codex',
+      continuable: true,
+      executionState: null,
+      running: false,
+      status: 'done',
+      threadStatus: 'notLoaded',
+      turnStatus: 'completed',
+      completedAt: 3000,
+      updatedAt: 3000,
+    }
+    store.syncRuntimeTask(address, {
+      ...completedTask,
+      status: 'active',
+      turnStatus: null,
+      completedAt: null,
+      updatedAt: 4000,
+    })
+    if (order === 'metadata-first') store.syncRuntimeTask(address, completedTask)
 
-  store.syncTranscript(address, {
-    messages: [],
-    running: true,
-    turns: [
-      { id: 'pre-restart-turn', items: [], status: 'streaming' },
-      { id: 'follow-up-turn', items: [], status: 'done', completedAt: 3000 },
-    ],
-  })
+    store.syncTranscript(address, {
+      messages: [],
+      running: true,
+      turns: [
+        { id: 'pre-restart-turn', items: [], status: 'streaming' },
+        { id: 'follow-up-turn', items: [], status: 'done', completedAt: 3000 },
+      ],
+    })
 
-  const snapshot = store.getTask(address)
-  expect(snapshot?.turn.latestId).toBe('follow-up-turn')
-  expect(snapshot?.turn.outcome).toBe('succeeded')
-  expect(snapshot?.turn.active).toBe(false)
-  expect(snapshot?.execution.phase).toBe('idle')
-  expect(snapshot?.derived.isBusy).toBe(false)
-  expect(snapshot?.derived.canSend).toBe(true)
-})
+    expect(store.getTask(address)?.turn.latestId).toBe('follow-up-turn')
+    if (order === 'history-first') {
+      expect(store.getTask(address)?.derived.isBusy).toBe(true)
+      store.syncRuntimeTask(address, completedTask)
+    }
+    const snapshot = store.getTask(address)
+    expect(snapshot?.turn.latestId).toBe('follow-up-turn')
+    expect(snapshot?.turn.outcome).toBe('succeeded')
+    expect(snapshot?.turn.active).toBe(false)
+    expect(snapshot?.execution.phase).toBe('idle')
+    expect(snapshot?.derived.isBusy).toBe(false)
+    expect(snapshot?.derived.canSend).toBe(true)
+  }
+)
 
 test.each(['earlier-turn', 'unobserved-turn'])(
   'historical running evidence cannot replace a known later completion with %s',

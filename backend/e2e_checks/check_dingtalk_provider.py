@@ -14,8 +14,16 @@ from urllib.parse import parse_qs, urlsplit
 import httpx
 from mcp import ClientSession
 from mcp.client.streamable_http import streamablehttp_client
+from mcp.types import CallToolResult, TextContent
 
 from e2e_checks.dingtalk_oauth.provider import ORIGIN, DingTalkProvider
+
+
+def tool_payload(result: CallToolResult) -> dict:
+    assert not result.isError
+    content = result.content[0]
+    assert isinstance(content, TextContent)
+    return json.loads(content.text)
 
 
 async def read(resource: str, access: str) -> None:
@@ -32,11 +40,50 @@ async def read(resource: str, access: str) -> None:
             }
             result = await session.call_tool("get_document_content", {"nodeId": "doc"})
             assert not result.isError
-            assert json.loads(result.content[0].text)["success"] is True
-            assert "DINGTALK-check-doc-V1" in result.content[0].text
+            assert tool_payload(result)["success"] is True
+            assert "DINGTALK-check-doc-V1" in tool_payload(result)["markdown"]
             info = await session.call_tool("get_document_info", {"nodeId": "doc"})
             assert not info.isError
-            assert json.loads(info.content[0].text)["success"] is True
+            assert tool_payload(info)["success"] is True
+
+
+async def check_source_denial(
+    provider: DingTalkProvider, resource: str, access: str
+) -> None:
+    provider.denied_nodes = {("check", "doc")}
+    try:
+        async with streamablehttp_client(
+            resource, headers={"Authorization": f"Bearer {access}"}
+        ) as (reader, writer, _):
+            async with ClientSession(reader, writer) as session:
+                await session.initialize()
+                result = await session.call_tool("get_document_info", {"nodeId": "doc"})
+                payload = tool_payload(result)
+                assert payload["success"] is False
+                assert payload["errorCode"] == "permissionDenied"
+    finally:
+        provider.denied_nodes.clear()
+
+
+async def check_content_gate(
+    provider: DingTalkProvider, resource: str, access: str
+) -> None:
+    gate = provider.gate("get_document_content", "check")
+    async with streamablehttp_client(
+        resource, headers={"Authorization": f"Bearer {access}"}
+    ) as (reader, writer, _):
+        async with ClientSession(reader, writer) as session:
+            await session.initialize()
+            pending = asyncio.create_task(
+                session.call_tool("get_document_content", {"nodeId": "doc"})
+            )
+            try:
+                assert await asyncio.to_thread(gate.entered.wait, 2)
+                assert not pending.done()
+            finally:
+                gate.release.set()
+                result = await pending
+            assert tool_payload(result)["success"] is True
 
 
 def check() -> None:
@@ -86,6 +133,8 @@ def check() -> None:
             assert client.post("/token", data=exchange).status_code == 400
             tokens = issued.json()
             asyncio.run(read(resource, tokens["access_token"]))
+            asyncio.run(check_source_denial(provider, resource, tokens["access_token"]))
+            asyncio.run(check_content_gate(provider, resource, tokens["access_token"]))
             for wrong in [
                 provider.resource("someone-else", "docs"),
                 provider.resource("check", "table"),

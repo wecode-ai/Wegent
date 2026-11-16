@@ -92,6 +92,26 @@ fn macos_max_files_per_process() -> Option<libc::rlim_t> {
 fn raise_open_files_soft_limit() {}
 
 fn main() {
+    if env::args().nth(1).as_deref() == Some("--workbench-codex-providers-migrate") {
+        wegent_executor::logging::reserve_executor_stdout_for_protocol();
+        let args: Vec<_> = env::args().skip(2).collect();
+        let result = match args.as_slice() {
+            [request, stopped, version]
+                if stopped == "--executor-stopped" && version == "--version" =>
+            {
+                wegent_executor::local::codex_provider_migration::run(request)
+            }
+            _ => Err("Codex provider migration requires a request and --executor-stopped".into()),
+        };
+        match result {
+            Ok(response) => println!("{response}"),
+            Err(error) => {
+                eprintln!("{error}");
+                std::process::exit(1);
+            }
+        }
+        return;
+    }
     let app_startup = env::var_os("WEGENT_APP_IPC_ENDPOINT").is_some();
     if app_startup {
         eprintln!("executor startup: process entered");
@@ -158,6 +178,15 @@ fn main() {
         return;
     }
     raise_open_files_soft_limit();
+    if wegent_executor::plugin_python::is_plugin_python_command() {
+        match runtime().block_on(wegent_executor::plugin_python::run()) {
+            Ok(code) => std::process::exit(code),
+            Err(error) => {
+                eprintln!("plugin Python execution failed: {error}");
+                std::process::exit(1);
+            }
+        }
+    }
     if wegent_executor::artifact_cli::is_artifact_command() {
         if let Err(error) = runtime().block_on(wegent_executor::artifact_cli::run()) {
             eprintln!("artifact command failed: {error}");

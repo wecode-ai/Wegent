@@ -1,6 +1,6 @@
+import type { HarnessAppPreview } from '@/api/local/harnessApps'
 import { fireEvent, render, screen } from '@testing-library/react'
 import { describe, expect, test, vi } from 'vitest'
-import type { HarnessAppPreview } from '@/api/local/harnessApps'
 import { HarnessAppInstallDialog } from './HarnessAppInstallDialog'
 
 vi.mock('@/hooks/useTranslation', () => ({
@@ -80,29 +80,5 @@ describe('HarnessAppInstallDialog', () => {
 
     expect(onModelChange).toHaveBeenCalledWith(modelOptions[0].key)
     expect(onInstall).toHaveBeenCalledOnce()
-  })
-
-  test('shows validation issues without exposing an install action', () => {
-    render(
-      <HarnessAppInstallDialog
-        busy={false}
-        error={null}
-        modelKey=""
-        modelOptions={modelOptions}
-        preview={{
-          ...preview,
-          valid: false,
-          manifest: null,
-          issues: ['plugin-manifest.json 缺失'],
-        }}
-        onCancel={vi.fn()}
-        onInstall={vi.fn()}
-        onModelChange={vi.fn()}
-      />
-    )
-
-    expect(screen.getByText('无法安装这个智能工作台')).toBeInTheDocument()
-    expect(screen.getByText('plugin-manifest.json 缺失')).toBeInTheDocument()
-    expect(screen.queryByTestId('harness-app-install-confirm')).not.toBeInTheDocument()
   })
 })

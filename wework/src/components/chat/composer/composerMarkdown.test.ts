@@ -1,3 +1,5 @@
+// @vitest-environment node
+
 import { describe, expect, test, vi } from 'vitest'
 import { Mark } from 'prosemirror-model'
 import { EditorState } from 'prosemirror-state'

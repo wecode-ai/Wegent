@@ -1,6 +1,0 @@
-// SPDX-FileCopyrightText: 2025 Weibo, Inc.
-//
-// SPDX-License-Identifier: Apache-2.0
-
-pub mod device;
-pub mod paths;

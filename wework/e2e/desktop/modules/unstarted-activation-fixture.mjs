@@ -1,10 +1,29 @@
 import assert from 'node:assert/strict'
 import { execFile } from 'node:child_process'
-import { writeFile, readFile } from 'node:fs/promises'
-import { dirname, join, resolve } from 'node:path'
+import { mkdir, symlink, writeFile, readFile } from 'node:fs/promises'
+import { dirname, isAbsolute, join, relative, resolve } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { promisify } from 'node:util'
 import { upgradeUserEnvironment } from './upgrade-user-environment.mjs'
+
+/** Legacy hosts derive component ownership from the selected slot itself. */
+export async function retainUnstartedSourceComponents(dataDirectory, slot, components) {
+  const installed = join(dataDirectory, 'managed-components')
+  const retained = join(slot, 'managed-components')
+  const paths = Object.entries(components).map(([name, path]) => {
+    const child = relative(installed, path)
+    const owned =
+      child !== '..' &&
+      !child.startsWith(`..${process.platform === 'win32' ? '\\' : '/'}`) &&
+      !isAbsolute(child)
+    return [name, owned ? join(retained, child) : path, owned]
+  })
+  if (paths.some(([, , owned]) => owned)) {
+    await mkdir(slot, { recursive: true })
+    await symlink(installed, retained, process.platform === 'win32' ? 'junction' : 'dir')
+  }
+  return Object.fromEntries(paths.map(([name, path]) => [name, path]))
+}
 
 /** Called only after the shared restart helper has stopped every source writer. */
 export async function seedUnstartedActivation({
@@ -16,12 +35,19 @@ export async function seedUnstartedActivation({
   from,
   homePath,
 }) {
+  // A retained installation owns the pending transaction's preparation API.
+  // The running legacy package may predate retainReleaseProfile entirely.
+  const preparationExecutable = from.installedSource?.executable ?? running.hostExecutable
   const resources =
     process.platform === 'darwin'
       ? resolve(dirname(running.hostExecutable), '../Resources')
       : join(dirname(running.hostExecutable), 'resources')
+  const preparationResources =
+    process.platform === 'darwin'
+      ? resolve(dirname(preparationExecutable), '../Resources')
+      : join(dirname(preparationExecutable), 'resources')
   const module = name =>
-    JSON.stringify(pathToFileURL(join(resources, 'app.asar/dist/runtime', name)).href)
+    JSON.stringify(pathToFileURL(join(preparationResources, 'app.asar/dist/runtime', name)).href)
   const source = {
     schemaVersion: 1,
     id: 'installed-unstarted-source',
@@ -29,18 +55,22 @@ export async function seedUnstartedActivation({
     executable: running.hostExecutable,
     resources,
     runtimeRoot: running.runtimeRoot,
-    componentDataDirectory: dataDirectory,
+    componentDataDirectory: join(root, 'slots/installed-unstarted-source'),
     profileRoot: join(root, 'slots/installed-unstarted-source/retained-profile'),
     dataSchema: from.dataSchema,
     readableDataSchemas: from.readableDataSchemas,
   }
-  const components = {
-    coreDsh: running.coreDshPath,
-    weworkCorePlugins: running.corePluginsPath,
-    executor: running.executorPath,
-    codex: running.codexPath,
-    dws: running.dwsPath,
-  }
+  const components = await retainUnstartedSourceComponents(
+    dataDirectory,
+    source.componentDataDirectory,
+    {
+      coreDsh: running.coreDshPath,
+      weworkCorePlugins: running.corePluginsPath,
+      executor: running.executorPath,
+      codex: running.codexPath,
+      dws: running.dwsPath,
+    }
+  )
   const script = join(resultDir, 'seed-unstarted-activation.mjs')
   await writeFile(
     script,
@@ -60,7 +90,7 @@ await retainReleaseProfile(${JSON.stringify(dataDirectory)}, source.profileRoot)
 await store.activate(target, snapshot)
 `
   )
-  await promisify(execFile)(running.hostExecutable, [script], {
+  await promisify(execFile)(preparationExecutable, [script], {
     env: { ...upgradeUserEnvironment(process.env, homePath), ELECTRON_RUN_AS_NODE: '1' },
     timeout: 30_000,
     maxBuffer: 1024 * 1024,

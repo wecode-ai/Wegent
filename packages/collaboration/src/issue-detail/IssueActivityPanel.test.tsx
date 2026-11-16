@@ -115,7 +115,7 @@ describe("IssueActivityPanel", () => {
         pending.forEach((callback) => callback(0));
       });
       if (succeeds) {
-        expect(markRead).toHaveBeenCalledExactlyOnceWith(issue.id, 0);
+        expect(markRead).toHaveBeenCalledExactlyOnceWith(issue.id, 0, 1);
         expect(onTaskRead).toHaveBeenCalledExactlyOnceWith(readIssue);
       } else {
         expect(markRead).not.toHaveBeenCalled();
@@ -902,6 +902,45 @@ describe("IssueActivityPanel", () => {
         ?.getAttribute("aria-label"),
     ).toBe("发送消息");
   });
+
+  it.each([true, false])(
+    "attributes assignment activity to its source (%s)",
+    (automated) => {
+      const assignment = {
+        id: "source-assignment",
+        issue_id: issue.id,
+        target_type: "human",
+        target_id: "7",
+        target_name: "李明",
+        body: "",
+        comment_id: null,
+        created_by_user_id: 52,
+        created_by_user_name: "qindi",
+        status: "active",
+        created_at: "2026-11-06T11:28:39Z",
+        updated_at: "2026-11-06T11:28:39Z",
+        ...(automated
+          ? {
+              automation: {
+                rule_id: "rule-1",
+                rule_name: "新事项分析",
+                run_id: "run-1",
+              },
+            }
+          : {}),
+      } satisfies CollaborationAssignment;
+      render(issue, { assignments: [assignment] });
+      const activity = container.querySelector(
+        '[data-testid="collaboration-assignment-source-assignment"]',
+      )!;
+      expect(activity.textContent).toContain(
+        automated ? "新事项分析" : "qindi",
+      );
+      expect(activity.textContent).not.toContain(
+        automated ? "qindi" : "新事项分析",
+      );
+    },
+  );
 
   it("submits a mention of an active assignee as a normal comment", async () => {
     const activeAssignment = {
