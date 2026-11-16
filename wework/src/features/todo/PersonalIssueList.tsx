@@ -1,4 +1,4 @@
-import { useLayoutEffect, useRef } from 'react'
+import { useLayoutEffect, useRef, type ReactNode } from 'react'
 import { Bell, FolderOpen } from 'lucide-react'
 import type {
   CollaborationProject,
@@ -32,6 +32,7 @@ export function PersonalIssueList({
   onOpenTask,
   recentIssue,
   hideEmpty = false,
+  emptyState,
   order,
 }: {
   userId: number
@@ -39,6 +40,7 @@ export function PersonalIssueList({
   active: boolean
   onOpenTask(issue: WorkspaceMyWorkItem, binding: WorkspaceTaskBinding): void
   hideEmpty?: boolean
+  emptyState?: ReactNode
   recentIssue?: WorkspaceMyWorkItem
   order: PersonalHomeIssueOrder
   state: ReturnType<typeof usePersonalHomeIssues>
@@ -136,9 +138,11 @@ export function PersonalIssueList({
           {t('personalHome.loading')}
         </p>
       )}
-      {!hideEmpty && !state.loading && !state.error && !groups.length && (
-        <p className="py-8 text-sm text-text-muted">{t('personalHome.empty')}</p>
-      )}
+      {!hideEmpty &&
+        !state.loading &&
+        !state.error &&
+        !groups.length &&
+        (emptyState ?? <p className="py-8 text-sm text-text-muted">{t('personalHome.empty')}</p>)}
       {groups.map(({ project, items }) => (
         <section
           key={project.id}
@@ -239,24 +243,20 @@ export function PersonalIssueList({
                   </>
                 }
                 summary={
-                  <>
-                    <PersonalHomeIssueActivity
-                      summary={
-                        <>
-                          {item.description ? (
-                            <p className="line-clamp-1 max-w-3xl whitespace-pre-wrap text-base leading-6 text-text-secondary">
-                              {item.description}
-                            </p>
-                          ) : undefined}
-                        </>
-                      }
-                      assignment={item.assignment_context}
-                      bindings={item.task_bindings}
-                      onOpenTask={binding => onOpenTask(item, binding)}
-                      issueId={item.id}
-                      active={active}
-                    />
-                  </>
+                  <PersonalHomeIssueActivity
+                    summary={
+                      item.description && item.description.trim() !== item.title.trim() ? (
+                        <p className="line-clamp-1 max-w-3xl whitespace-pre-wrap text-base leading-6 text-text-secondary">
+                          {item.description}
+                        </p>
+                      ) : undefined
+                    }
+                    assignment={item.assignment_context}
+                    bindings={item.task_bindings}
+                    onOpenTask={binding => onOpenTask(item, binding)}
+                    issueId={item.id}
+                    active={active}
+                  />
                 }
               />
             )

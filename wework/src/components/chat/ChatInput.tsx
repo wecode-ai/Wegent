@@ -120,6 +120,7 @@ export interface ProjectChatControls {
 }
 
 export interface ProjectWorkControls {
+  projectSelectorLabel?: string
   projects: ProjectWithTasks[]
   devices: DeviceInfo[]
   runtimeWork?: RuntimeWorkListResponse | null

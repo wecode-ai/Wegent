@@ -806,6 +806,7 @@ function PlatformHarness({
   renderIssueComposer,
   renderStandInPage,
   renderPersonalHome,
+  createIndependentIssue,
   openProjectConversation,
   currentUser,
   workspaceOwnerOptions,
@@ -821,6 +822,7 @@ function PlatformHarness({
   renderIssueComposer?: CollaborationPlatformHostAdapter["renderIssueComposer"];
   renderStandInPage?: CollaborationPlatformHostAdapter["renderStandInPage"];
   renderPersonalHome?: CollaborationPlatformHostAdapter["renderPersonalHome"];
+  createIndependentIssue?: CollaborationPlatformHostAdapter["createIndependentIssue"];
   openProjectConversation?: CollaborationPlatformHostAdapter["openProjectConversation"];
   currentUser?: CollaborationPlatformHostAdapter["currentUser"];
   api: SharedWorkspaceApi;
@@ -850,6 +852,7 @@ function PlatformHarness({
     renderIssueComposer,
     renderStandInPage,
     renderPersonalHome,
+    createIndependentIssue,
     openProjectConversation,
     currentUser,
     location,
@@ -2562,6 +2565,35 @@ describe("CollaborationPlatformApp real component flow", () => {
     expect(openProjectConversation).not.toHaveBeenCalled();
     expect(api.issues.create).not.toHaveBeenCalled();
   });
+
+  it.each([false, true])(
+    "starts an independent Issue without a project, empty workspace catalog: %s",
+    async (emptyWorkspaces) => {
+      const { api } = createApi({
+        initialProjects: [],
+        ...(emptyWorkspaces ? { initialWorkspaces: [] } : {}),
+      });
+      const createIndependentIssue = vi.fn();
+      await render(
+        <PlatformHarness
+          api={api}
+          createIndependentIssue={createIndependentIssue}
+        />,
+      );
+      expect(
+        byTestId("collaboration-first-issue-starter").textContent,
+      ).toContain("从第一件事开始");
+      expect(
+        container.querySelector(
+          '[data-testid="collaboration-first-project-create"]',
+        ),
+      ).toBeNull();
+      await click(byTestId("collaboration-first-issue-create"));
+      expect(createIndependentIssue).toHaveBeenCalledOnce();
+      expect(api.projects.create).not.toHaveBeenCalled();
+      expect(api.workspaces!.create).not.toHaveBeenCalled();
+    },
+  );
 
   it("starts the first project from collaboration home and preserves its workspace", async () => {
     const { api } = createApi({ initialProjects: [] });

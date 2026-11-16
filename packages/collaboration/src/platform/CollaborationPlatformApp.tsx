@@ -659,31 +659,45 @@ function WorkItemRow({
   );
 }
 
-function FirstProjectStarter({
+function FirstWorkStarter({
   messages,
   supportsLocalImport,
   onCreate,
+  onCreateIssue,
 }: {
   messages: PlatformMessages;
   supportsLocalImport: boolean;
   onCreate(mode: "blank" | "folder" | "existing"): void;
+  onCreateIssue?(): void;
 }) {
+  const title = onCreateIssue
+    ? messages.firstIssueHomeTitle
+    : messages.firstProjectHomeTitle;
   return (
     <section
       className="collaboration-first-project-starter"
-      data-testid="collaboration-first-project-starter"
+      data-testid={
+        onCreateIssue
+          ? "collaboration-first-issue-starter"
+          : "collaboration-first-project-starter"
+      }
     >
       <span className="collaboration-first-project-icon">
-        <FolderPlus aria-hidden="true" />
+        {onCreateIssue ? (
+          <SquarePen aria-hidden="true" />
+        ) : (
+          <FolderPlus aria-hidden="true" />
+        )}
       </span>
       <div className="collaboration-first-project-copy">
-        <h2>{messages.firstProjectHomeTitle}</h2>
-        <p>{messages.firstProjectHomeHint}</p>
+        <h2>{title}</h2>
+        <p>
+          {onCreateIssue
+            ? messages.firstIssueHomeHint
+            : messages.firstProjectHomeHint}
+        </p>
       </div>
-      <div
-        className="collaboration-first-project-guide"
-        aria-label={messages.firstProjectHomeTitle}
-      >
+      <div className="collaboration-first-project-guide" aria-label={title}>
         <span>
           <SquarePen aria-hidden="true" />
           {messages.firstProjectGuideCapture}
@@ -699,13 +713,25 @@ function FirstProjectStarter({
           {messages.firstProjectGuideTrack}
         </span>
       </div>
-      <ProjectCreationAction
-        className="collaboration-primary-button collaboration-first-project-create"
-        messages={messages}
-        onSelect={onCreate}
-        supportsLocalImport={supportsLocalImport}
-        testId="collaboration-first-project-create"
-      />
+      {onCreateIssue ? (
+        <button
+          type="button"
+          data-testid="collaboration-first-issue-create"
+          className="collaboration-primary-button collaboration-first-project-create"
+          onClick={onCreateIssue}
+        >
+          <SquarePen aria-hidden="true" />
+          {messages.createIndependentIssue}
+        </button>
+      ) : (
+        <ProjectCreationAction
+          className="collaboration-primary-button collaboration-first-project-create"
+          messages={messages}
+          onSelect={onCreate}
+          supportsLocalImport={supportsLocalImport}
+          testId="collaboration-first-project-create"
+        />
+      )}
     </section>
   );
 }
@@ -2288,6 +2314,7 @@ function CollaborationPlatformAppContent({
           }
         >
           {!domainWorkspaces.length &&
+          !host.createIndependentIssue &&
           host.capabilities.projectNavigation !== "projects" ? (
             <>
               <PageHeader
@@ -2314,7 +2341,8 @@ function CollaborationPlatformAppContent({
               />
             </>
           ) : !domainProjects.length ? (
-            <FirstProjectStarter
+            <FirstWorkStarter
+              onCreateIssue={host.createIndependentIssue}
               messages={messages}
               supportsLocalImport={Boolean(
                 host.renderProjectImporter &&

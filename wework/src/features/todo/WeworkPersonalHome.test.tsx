@@ -17,6 +17,73 @@ import type { ReactNode } from 'react'
 
 afterEach(cleanup)
 
+it('restores the sidebar draft and opens Issue details when the sidebar was collapsed', async () => {
+  await setup([source(vi.fn().mockResolvedValue([issue('visible')]))])
+  const draft = screen.getByLabelText('Stand-in draft')
+  fireEvent.change(draft, { target: { value: 'Keep this discussion' } })
+  const toggle = screen.getByTestId('personal-home-toggle-sidebar')
+  fireEvent.click(toggle)
+  expect(toggle).toHaveAttribute('aria-expanded', 'false')
+  expect(draft).toHaveAttribute('data-active', 'false')
+  fireEvent.click(toggle)
+  expect(toggle).toHaveAttribute('aria-expanded', 'true')
+  expect(screen.getByLabelText('Stand-in draft')).toBe(draft)
+  expect(draft).toHaveValue('Keep this discussion')
+  expect(draft).toHaveAttribute('data-active', 'true')
+  fireEvent.click(toggle)
+  fireEvent.click(await screen.findByTestId('personal-home-issue-visible'))
+  expect(toggle).toHaveAttribute('aria-expanded', 'true')
+  expect(screen.getByTestId('personal-home-tab-visible')).toHaveAttribute('aria-selected', 'true')
+})
+
+it('recovers from an empty assigned scope by showing all participating work', async () => {
+  const api = source()
+  vi.mocked(api.myWork!.page).mockImplementation(async input => ({
+    items: input.scope === 'assigned' ? [] : [issue('participating')],
+    nextCursor: null,
+  }))
+  await setup([api])
+  await screen.findByTestId('personal-home-empty')
+  expect(screen.getByTestId('personal-home-empty')).toHaveTextContent('No assigned items')
+  fireEvent.click(screen.getByTestId('personal-home-empty-action'))
+  await screen.findByTestId('personal-home-issue-participating')
+  expect(api.myWork!.page).toHaveBeenLastCalledWith(
+    expect.objectContaining({ scope: 'participating', includeCompleted: true })
+  )
+  expect(screen.queryByTestId('personal-home-empty')).not.toBeInTheDocument()
+})
+
+it.each([false, true])(
+  'focuses the current input mode from a confirmed empty participation list, task mode: %s',
+  async taskMode => {
+    const { props, rerender } = await setup([source()])
+    rerender(
+      <WeworkPersonalHome
+        {...props}
+        createIssue={
+          <>
+              <button role="tab" data-testid="personal-home-new-issue" aria-selected={taskMode}>
+              Create task
+            </button>
+            <textarea data-testid="collaboration-home-issue-content" hidden={taskMode} />
+            <textarea data-testid="personal-home-task-content" hidden={!taskMode} />
+          </>
+        }
+      />
+    )
+    await screen.findByTestId('personal-home-empty')
+    fireEvent.click(screen.getByTestId('personal-home-empty-action'))
+    await screen.findByText('No items you participate in yet')
+    expect(screen.getByTestId('personal-home-empty-action')).toHaveTextContent('Start writing')
+    fireEvent.click(screen.getByTestId('personal-home-empty-action'))
+    expect(
+      screen.getByTestId(
+        taskMode ? 'personal-home-task-content' : 'collaboration-home-issue-content'
+      )
+    ).toHaveFocus()
+  }
+)
+
 it('derives related Issue summary fields from its own project without copying the previous Issue', async () => {
   const original = { ...issue('original'), task_bindings: [] }
   const { renderIssueDetail } = await setup([source(vi.fn().mockResolvedValue([original]))])
@@ -450,7 +517,7 @@ it('keeps recording inline without replacing My work or the assistant', async ()
   expect(screen.getByText('Existing issue composer')).toBeInTheDocument()
   expect(screen.getByTestId('personal-home')).toBeInTheDocument()
   expect(screen.getByText('Embedded conversation')).toBeInTheDocument()
-  await waitFor(() => expect(screen.getByText('No matching issues')).toBeInTheDocument())
+  await screen.findByText('No assigned items in this view')
 })
 
 it('keeps human handoffs in the issue row without a duplicate pending-work section', async () => {

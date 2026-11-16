@@ -67,14 +67,16 @@ export function WeworkIssueHomeComposer({
         aria-haspopup="dialog"
         aria-label={
           selectedProject
-            ? `${props.projectLabel}: ${selectedProject.name} · ${projectLocation(selectedProject)}`
-            : props.projectLabel
+            ? `${t('personalHome.collaborationProject')}: ${selectedProject.name} · ${projectLocation(selectedProject)}`
+            : t('personalHome.collaborationProject')
         }
         onClick={event => setAnchor(event.currentTarget)}
         className="inline-flex min-h-11 min-w-0 max-w-full items-center gap-2 rounded-md px-2 text-sm text-text-secondary transition-colors hover:bg-text-primary/[0.04] hover:text-text-primary keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-primary md:min-h-7"
       >
         <ProjectIcon className="h-4 w-4 shrink-0 text-text-muted" aria-hidden="true" />
-        <span className="truncate">{selectedProject?.name}</span>
+        <span className="truncate">
+          {t('personalHome.collaborationProject')} · {selectedProject?.name}
+        </span>
         <ChevronDown className="h-4 w-4 shrink-0 text-text-muted" aria-hidden="true" />
       </button>
     </div>
@@ -218,7 +220,7 @@ export function WeworkIssueHomeComposer({
       {anchor && (
         <AnchorPopover
           anchor={anchor}
-          title={props.projectLabel}
+          title={t('personalHome.collaborationProject')}
           testId="collaboration-issue-project-picker"
           onClose={closePicker}
         >

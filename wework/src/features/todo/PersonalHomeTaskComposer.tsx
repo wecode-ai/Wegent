@@ -219,6 +219,7 @@ function ProjectTaskComposer({
     cacheDraft(input.current?.getValue() ?? source.restored)
   })
   const projectWork: ProjectWorkControls = {
+    projectSelectorLabel: t('personalHome.codeWorkspace'),
     projects: state.projects,
     devices: state.devices,
     runtimeWork: state.runtimeWork,

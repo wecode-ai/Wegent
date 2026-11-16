@@ -1,5 +1,16 @@
 {
   "personalHome": {
+    "codeWorkspace": "代码工作区（可选）",
+    "collaborationProject": "协作项目",
+    "showSidebar": "显示侧栏",
+    "hideSidebar": "收起侧栏",
+    "emptyAssigned": "当前列表没有分配给你的事项",
+    "emptyUnfinished": "当前没有你参与的未完成事项",
+    "emptyParticipation": "还没有你参与的事项",
+    "viewAllParticipation": "查看全部参与事项",
+    "startWriting": "开始填写",
+    "pendingCount": "{{count}} 待处理",
+    "runningCount": "{{count}} 进行中",
     "title": "我的",
     "subtitle": "你参与的事，和助理正在推进的事。",
     "assigned": "待我处理",

@@ -177,6 +177,23 @@ it('shows inbox failures and retries through a local recovery entry', async () =
   await screen.findByText('Work restored')
 })
 
+it('surfaces known running work in chat without counting another owner or starting another inbox read', async () => {
+  const own = work('own')
+  own.task = { ...own.task!, status: 'running', running: true }
+  const other = work('other')
+  other.task = {
+    ...other.task!,
+    status: 'running',
+    running: true,
+    runtimeHandle: { origin: { ...other.task!.runtimeHandle!.origin, userId: 8 } },
+  }
+  const { api } = await setup([own, other])
+  await screen.findByText('Work own')
+  fireEvent.click(screen.getByTestId('personal-home-assistant-view-toggle'))
+  expect(screen.getByTestId('personal-home-assistant-work-status')).toHaveTextContent('1 running')
+  expect(api.inbox).toHaveBeenCalledOnce()
+})
+
 it('groups work by role with active and terminal tasks in separate sections', async () => {
   const active = work('active')
   active.roleId = 'reviewer'
@@ -251,6 +268,11 @@ it('uses collaboration Issues for Needs my input and opens their original detail
   rerender(
     <StandInHomeWorkspace {...props} collaborationWork={{ pendingIssues: [issue], onOpenIssue }} />
   )
+  fireEvent.click(screen.getByTestId('personal-home-assistant-view-toggle'))
+  expect(screen.getByTestId('personal-home-assistant-work-status')).toHaveTextContent(
+    '1 awaiting you'
+  )
+  fireEvent.click(screen.getByTestId('personal-home-assistant-view-toggle'))
   expect(screen.getByTestId('personal-home-collaboration-pending')).toHaveTextContent(
     'Which release?'
   )

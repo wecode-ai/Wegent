@@ -322,6 +322,7 @@ export const ProjectChatComposer = forwardRef<ComposerTextareaHandle, ProjectCha
             projectWorkBar ??
             (showProjectWorkBar && projectWork && (
               <ProjectWorkBar
+                selectorLabel={projectWork.projectSelectorLabel}
                 projects={projectWork.projects}
                 devices={projectWork.devices}
                 runtimeWork={projectWork.runtimeWork}

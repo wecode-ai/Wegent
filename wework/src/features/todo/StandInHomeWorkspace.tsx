@@ -78,6 +78,8 @@ export function StandInHomeWorkspace(props: Props) {
       )
   )
   const roleIds = [...new Set(items.map(item => standInWorkRole(item)!))]
+  const runningCount = items.filter(item => standInState(item).status === 'running').length
+  const pendingCount = props.collaborationWork?.pendingIssues.length ?? 0
   const roleName = (id: string) =>
     id === '@primary' || id === 'default'
       ? t('personalHome.assistantRole')
@@ -91,7 +93,7 @@ export function StandInHomeWorkspace(props: Props) {
   }
   return (
     <div className="flex min-h-0 flex-1 flex-col" data-testid="personal-home-workspace">
-      <header className="flex min-h-11 items-center gap-2 border-b border-border px-4 py-2">
+      <header className="flex min-h-11 flex-wrap items-center gap-2 border-b border-border px-4 py-2">
         {view !== 'list' && view !== 'conversation' && (
           <button
             type="button"
@@ -116,6 +118,19 @@ export function StandInHomeWorkspace(props: Props) {
             className="inline-flex min-h-11 shrink-0 items-center rounded-md px-2 text-sm hover:bg-muted md:min-h-8"
           >
             {t(view === 'list' ? 'personalHome.conversation' : 'personalHome.workList')}
+            {view === 'conversation' && (pendingCount > 0 || runningCount > 0) && (
+              <span
+                data-testid="personal-home-assistant-work-status"
+                className="ml-1.5 inline-flex flex-wrap items-center gap-1 text-xs text-text-secondary"
+              >
+                {pendingCount > 0 && (
+                  <span>{t('personalHome.pendingCount', { count: pendingCount })}</span>
+                )}
+                {runningCount > 0 && (
+                  <span>{t('personalHome.runningCount', { count: runningCount })}</span>
+                )}
+              </span>
+            )}
           </button>
         )}
         {(view === 'list' || view === 'conversation') && (

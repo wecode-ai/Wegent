@@ -41,7 +41,8 @@ describe('Wework Issue home task composer', () => {
     ] as IssueHomeTaskComposerProps['workspaces']
     const { rerender } = render(<WeworkIssueHomeComposer {...props} />)
     const trigger = screen.getByTestId('collaboration-issue-project-trigger')
-    expect(trigger).toHaveAccessibleName('目标项目: 同名项目 · 本地分组')
+    expect(trigger).toHaveAccessibleName('协作项目: 同名项目 · 本地分组')
+    expect(trigger).toHaveTextContent('协作项目 · 同名项目')
     await userEvent.click(trigger)
     expect(screen.getByTestId('collaboration-issue-project-p1')).toHaveTextContent('本地分组')
     expect(screen.getByTestId('collaboration-issue-project-p2')).toHaveTextContent(
@@ -51,7 +52,7 @@ describe('Wework Issue home task composer', () => {
     expect(props.onSelectProject).toHaveBeenCalledWith('p2')
     rerender(<WeworkIssueHomeComposer {...props} projectId="p2" />)
     expect(trigger).toHaveTextContent('同名项目')
-    expect(trigger).toHaveAccessibleName('目标项目: 同名项目 · 云端分组 · 研发团队')
+    expect(trigger).toHaveAccessibleName('协作项目: 同名项目 · 云端分组 · 研发团队')
     await userEvent.click(trigger)
     expect(screen.getByTestId('collaboration-issue-project-p2')).toHaveAttribute(
       'aria-pressed',

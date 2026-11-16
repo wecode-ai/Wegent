@@ -2757,6 +2757,7 @@
 }
 
 .task-detail-new-comment[data-workflow="true"] {
+  container: issue-comment / inline-size;
   padding: 12px;
   font-weight: var(--font-weight-ui, 445);
 }
@@ -2809,7 +2810,7 @@
 .task-detail-comment-pending-actions {
   display: flex;
   align-items: center;
-  flex: 0 1 auto;
+  flex: 1 1 0;
   min-width: 0;
   gap: 6px;
 }
@@ -2916,7 +2917,29 @@
 }
 
 .task-detail-comment-action-picker > span:first-child {
-  flex-shrink: 0;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.task-detail-comment-send-icon {
+  display: none;
+}
+
+@container issue-comment (max-width: 420px) {
+  .task-detail-comment-submit-group .task-detail-comment-send {
+    width: 28px;
+    padding: 0;
+  }
+
+  .task-detail-comment-send-label,
+  .task-detail-comment-action-picker > span:first-child:not(:last-child) {
+    display: none;
+  }
+
+  .task-detail-comment-send-icon {
+    display: block;
+  }
 }
 
 .task-detail-comment-action-chip button:hover,
@@ -2945,9 +2968,17 @@
   .task-detail-new-comment[data-workflow="true"]
     .task-detail-new-comment-actions {
     flex-wrap: wrap;
+    gap: 8px;
+  }
+  .task-detail-comment-pending-actions {
+    flex-basis: 100%;
+    order: 1;
+    gap: 8px;
   }
   .task-detail-comment-action-chip button,
+  .task-detail-comment-action-chip .task-detail-comment-action-picker,
   .task-detail-comment-mode,
+  .task-detail-comment-submit-group .task-detail-comment-send,
   .task-detail-comment-submit-group button {
     min-width: 44px;
     min-height: 44px;

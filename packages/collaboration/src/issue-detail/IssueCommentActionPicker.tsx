@@ -33,7 +33,7 @@ export function IssueCommentActionPicker({
     <span className={`task-detail-comment-action-chip${value ? ' is-selected' : ''}`}>
       <IssueDetailSearchableSelect
         testId={testId}
-        accessibleLabel={label}
+        accessibleLabel={value ? `${label}: ${selected?.label ?? value}` : label}
         value={value}
         onChange={onChange}
         disabled={disabled}

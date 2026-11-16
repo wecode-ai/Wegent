@@ -1,5 +1,16 @@
 {
   "personalHome": {
+    "codeWorkspace": "Code workspace (optional)",
+    "collaborationProject": "Collaboration project",
+    "showSidebar": "Show sidebar",
+    "hideSidebar": "Hide sidebar",
+    "emptyAssigned": "No assigned items in this view",
+    "emptyUnfinished": "No unfinished items you participate in",
+    "emptyParticipation": "No items you participate in yet",
+    "viewAllParticipation": "View all participating items",
+    "startWriting": "Start writing",
+    "pendingCount": "{{count}} awaiting you",
+    "runningCount": "{{count}} running",
     "title": "My work",
     "subtitle": "Your issues and the work your assistant is moving forward.",
     "assigned": "Needs my action",

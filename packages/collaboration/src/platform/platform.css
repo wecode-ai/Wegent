@@ -867,7 +867,7 @@ button.collaboration-project-offline:hover {
 .collaboration-first-project-starter {
   display: flex;
   width: min(680px, 100%);
-  min-height: calc(100vh - 160px);
+  min-height: min(480px, 60vh);
   flex-direction: column;
   align-items: center;
   justify-content: center;

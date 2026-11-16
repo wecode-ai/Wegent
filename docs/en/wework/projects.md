@@ -80,6 +80,16 @@ Record an issue directly at the top of **Collaboration → My work**; choose the
 
 ### Personal collaboration home
 
+With no projects yet, the home starts with **Start with your first issue**. **New issue** opens the existing independent-Issue form without requiring a project. Independent Issues belong to the signed-in account; if disconnected, complete the existing sign-in flow first. Project association remains optional. To create or import a project, open **Projects → Personal group → Create project** in the sidebar; blank projects, local folders and existing projects remain available.
+
+**Collaboration project** selects where the Issue is saved; **Code workspace (optional)** in **Create task** selects the code directory used for execution. These selections are independent. Work that does not need a repository can run without a code directory. The recording area stays compact; mode switches retain drafts and attachments.
+
+On desktop, **Hide sidebar** beside the home heading gives the Issue list more space. **Show sidebar** restores the assistant or details without clearing unsent input. Opening or creating an Issue reveals the sidebar. Empty states identify the current assignment or unfinished scope. **View all participating items** selects Participating and All; when that scope is confirmed empty, **Start writing** focuses the current composer without submitting. Read failures retain the existing error and retry action rather than appearing empty.
+
+The **Assistant tasks** entry above the chat shows pending items from the visible Issue list and running counts from known collaboration tasks. Counts appear only for known work; unread task sources are not treated as zero. Opening it uses the existing work list without additional background polling.
+
+The Issue comment toolbar adapts to its own width: sending uses an arrow in narrow panes, while assignment and lane movement retain separate controls. Open either picker to inspect its selected target. Sending still commits staged changes together.
+
 The home defaults to a compact **Record an issue** composer. Choose a project, enter content, optionally assign it to a member, agent or team, and select **Record**. Recording does not directly launch a task; automatic handling of assigned Issues still follows the assistant settings. To begin immediately, select **Create task**; the draft and attachments carry into the Tasks composer with model, plugin, workspace, attachment, plan-mode and voice controls. Submitting automatically derives the Issue title from the content and creates the linked execution in one flow. Results use the existing Issue publication flow. The list stays visible and the new Issue and task open on the right. A rejected start retains the draft and retries the same Issue. Switching back to **Record an issue** preserves drafts.
 
 Collaboration opens **My work** with **Needs my action** selected, showing Issues whose assignee is you. Choose **Participating** for the broader participation list. Both scopes group issues by project and initially show **Unfinished** work. Choose **All** to include completed or cancelled issues. Pending questions explicitly addressed to you show **Needs my input** in the same list.

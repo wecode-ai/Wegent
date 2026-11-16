@@ -96,6 +96,7 @@ export interface ProjectWorkBarProps {
   buttonClassName?: string
   menuClassName?: string
   emptyLabel?: string
+  selectorLabel?: string
   showProjectSelector?: boolean
   // When false, the desktop trigger shows a static folder icon instead of the
   // hover-to-clear button (used when the current project is a default the user
@@ -129,6 +130,7 @@ export function ProjectWorkBar({
   buttonClassName,
   menuClassName,
   emptyLabel,
+  selectorLabel,
   showProjectSelector = true,
   showClearButton = true,
   projectMenuOpenSignal,
@@ -361,6 +363,7 @@ export function ProjectWorkBar({
   }, [getDeviceForProject, normalizedProjectQuery, runtimeProjectWorkById, sortedProjects])
   const projectWorkTriggerLabel =
     emptyLabel ??
+    selectorLabel ??
     (isMobile
       ? t('workbench.enter_project_work', '进入项目工作')
       : t('workbench.project_select_placeholder', '请选择项目'))
@@ -369,7 +372,10 @@ export function ProjectWorkBar({
     currentProject &&
     pendingProjectWorkspaceProjectId === currentProject.id &&
     !selectedDeviceWorkspace
-  const projectWorkTriggerAriaLabel = currentProject?.name ?? projectWorkTriggerLabel
+  const selectedProjectLabel = currentProject
+    ? [selectorLabel, currentProject.name].filter(Boolean).join(': ')
+    : projectWorkTriggerLabel
+  const projectWorkTriggerAriaLabel = selectedProjectLabel
 
   useOutsideClick(containerRef, open, closeMenu, outsideMenuRefs)
   useEffect(() => {
@@ -538,10 +544,8 @@ export function ProjectWorkBar({
               >
                 {isMobile &&
                   renderMobileSheetHeader(
-                    t('workbench.project_sheet_title', '选择项目'),
-                    currentProject?.name ??
-                      emptyLabel ??
-                      t('workbench.enter_project_work', '进入项目工作'),
+                    selectorLabel ?? t('workbench.project_sheet_title', '选择项目'),
+                    selectedProjectLabel,
                     closeMenu
                   )}
                 <div className={cn('flex min-h-0 flex-1 flex-col', isMobile && 'px-5 pb-5')}>
@@ -849,7 +853,7 @@ export function ProjectWorkBar({
               {currentProject ? (
                 <>
                   <ProjectFolderIcon project={currentProject} className="h-4 w-4" />
-                  <span className="max-w-[12rem] truncate">{currentProject.name}</span>
+                  <span className="max-w-[12rem] truncate">{selectedProjectLabel}</span>
                 </>
               ) : (
                 <>
@@ -895,7 +899,7 @@ export function ProjectWorkBar({
                 aria-expanded={open}
                 aria-label={projectWorkTriggerAriaLabel}
               >
-                <span className="max-w-[12rem] truncate">{currentProject.name}</span>
+                <span className="max-w-[12rem] truncate">{selectedProjectLabel}</span>
                 {pendingWorkspaceSelection ? (
                   <>
                     <span className="text-text-muted">·</span>
