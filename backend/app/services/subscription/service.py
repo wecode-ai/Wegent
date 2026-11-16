@@ -190,6 +190,26 @@ class SubscriptionService:
                     detail=f"Interval must be at least {min_interval} minutes",
                 )
         elif trigger_type == SubscriptionTriggerType.CRON:
+            if "workday_only" in trigger_config and not isinstance(
+                trigger_config["workday_only"], bool
+            ):
+                raise HTTPException(
+                    status_code=400, detail="workday_only must be a boolean"
+                )
+            if trigger_config.get("workday_only", False):
+                from app.schemas.subscription import CronTriggerConfig
+
+                try:
+                    validated = CronTriggerConfig.model_validate(trigger_config)
+                    if (
+                        calculate_next_execution_time(
+                            trigger_type, validated.model_dump()
+                        )
+                        is None
+                    ):
+                        raise ValueError("Invalid cron expression for workday schedule")
+                except ValueError as exc:
+                    raise HTTPException(status_code=400, detail=str(exc)) from exc
             # Validate cron expression minimum interval
             try:
                 from croniter import croniter

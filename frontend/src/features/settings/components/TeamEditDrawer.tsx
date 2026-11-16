@@ -12,7 +12,7 @@ import { Button } from '@/components/ui/button'
 import { Alert, AlertDescription } from '@/components/ui/alert'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { teamApis } from '@/apis/team'
-import { useTranslation } from 'react-i18next'
+import { useTranslation } from '@/hooks/useTranslation'
 import { Info, Loader2 } from 'lucide-react'
 import { Bot, Team, TeamBot } from '@/types/api'
 import BotEdit, { AgentType } from './BotEdit'
@@ -77,7 +77,7 @@ function PromptEdit({
   unsavedPrompts?: Record<string, string>
   setUnsavedPrompts?: React.Dispatch<React.SetStateAction<Record<string, string>>>
 }) {
-  const { t } = useTranslation()
+  const { t } = useTranslation('common')
   const [loading, setLoading] = React.useState(false)
 
   const drawerTitle = React.useMemo(() => {
@@ -380,6 +380,7 @@ export default function TeamEditDrawer(props: TeamEditDrawerProps) {
               allowedAgents={props.allowedAgents}
               scope={scope}
               groupName={groupName}
+              teamId={editingTeam?.id}
               targetGroupNames={props.targetGroupNames}
               crossNamespaceClone={props.crossNamespaceClone}
               targetGroupsLoading={props.targetGroupsLoading}

@@ -53,6 +53,18 @@ describe('session request cache', () => {
 })
 
 describe('shared cloud model requests', () => {
+  it('resolves one persisted model through the single-model endpoint', async () => {
+    const hiddenModel: UnifiedModel = { name: 'hidden model', type: 'public' }
+    const client = { get: vi.fn().mockResolvedValue(hiddenModel) }
+    const api = createModelApi(client)
+
+    await expect(api.getModel('hidden model', 'public')).resolves.toEqual(hiddenModel)
+    expect(client.get).toHaveBeenCalledWith(
+      '/models/unified/hidden%20model?model_type=public',
+      expect.objectContaining({ signal: expect.any(AbortSignal) })
+    )
+  })
+
   it('evicts a timed-out shared transport so refresh starts a new request and ignores late results', async () => {
     vi.useFakeTimers()
     try {

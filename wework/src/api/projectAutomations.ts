@@ -35,6 +35,7 @@ export interface ProjectAutomationRule {
   eventType: ProjectAutomationEventType | null
   eventConfig: Record<string, unknown>
   cronExpression: string | null
+  workdayOnly?: boolean
   timezone: string
   executionDeviceId: string | null
   runnerSelection?: RunnerSelection | null
@@ -80,6 +81,7 @@ export interface ProjectAutomationInput {
   eventType: ProjectAutomationEventType | null
   eventConfig: Record<string, unknown>
   cronExpression: string | null
+  workdayOnly?: boolean
   timezone: string
   executionDeviceId: string | null
   runnerSelection?: RunnerSelection | null

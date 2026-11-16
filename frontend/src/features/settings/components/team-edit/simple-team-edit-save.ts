@@ -15,6 +15,7 @@ export interface SimpleBotFormValue {
   name: string
   shellName: string
   modelName: string
+  modelId?: number | null
   modelType?: ModelTypeEnum
   modelNamespace?: string
   prompt: string
@@ -72,6 +73,7 @@ export function buildSimpleBotRequest(
     name: getSimpleBotName(form.name, teamName),
     shell_name: form.shellName,
     agent_config: agentConfig,
+    model_id: form.modelId ?? null,
     system_prompt: form.prompt.trim(),
     inherit_base_capabilities: form.inheritBaseCapabilities,
     capability_mode: hasFixedCapabilities ? 'manual' : 'follow_device',

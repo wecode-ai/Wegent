@@ -87,9 +87,25 @@ impl LocalTaskStore {
                 .collect::<Result<HashSet<_>, _>>()?;
             scopes
         };
-        let Some((candidate_id, _)) = candidates.into_iter().find(|(_, execution_scope)| {
-            execution_scope.is_empty() || !occupied_scopes.contains(execution_scope)
-        }) else {
+        let mut selected = None;
+        for (id, scope) in candidates {
+            if !scope.is_empty() && occupied_scopes.contains(&scope) {
+                continue;
+            }
+            let pending = execution_row(&connection, id)?;
+            if !super::local_automation::enforce_execution_workday(
+                &connection,
+                &pending,
+                Utc::now(),
+            )? {
+                continue;
+            }
+            selected = Some(id);
+            break;
+        }
+        let Some(candidate_id) = selected else {
+            drop(statement);
+            connection.commit()?;
             return Ok(None);
         };
         let now = now();
@@ -258,6 +274,10 @@ impl LocalTaskStore {
             return Ok(None);
         }
         project_coordination_commands::authorize_execution_on(&connection, &current)?;
+        if !super::local_automation::enforce_execution_workday(&connection, &current, Utc::now())? {
+            connection.commit()?;
+            return Ok(None);
+        }
         let timestamp = now();
         let changed = connection.execute(
             "UPDATE loop_item_executions
