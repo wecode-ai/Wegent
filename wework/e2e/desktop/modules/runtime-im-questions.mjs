@@ -212,7 +212,7 @@ export function createRuntimeImQuestions({ workspacePath, uiTimeoutMs, modelResp
               heldQuestionText,
               'A provider timeout must not hide a blocked Runtime event turn'
             )
-            if (!transientSendFailed) {
+            if (!transientSendFailed && text.includes(`${PREFIX}sync_question`)) {
               transientSendFailed = true
               heldQuestionText = text
               // Keep this provider request open while a later event must pass
