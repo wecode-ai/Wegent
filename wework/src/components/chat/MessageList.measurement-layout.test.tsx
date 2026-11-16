@@ -25,11 +25,13 @@ function fixture() {
   let width = 800
   vi.spyOn(HTMLElement.prototype, 'clientWidth', 'get').mockImplementation(() => width)
   const observers = new Map<Element, Set<ResizeObserverCallback>>()
+  const observedChunks: Element[] = []
   vi.stubGlobal(
     'ResizeObserver',
     class {
       constructor(private callback: ResizeObserverCallback) {}
       observe(element: Element) {
+        if (element.hasAttribute('data-markdown-window-chunk')) observedChunks.push(element)
         const callbacks = observers.get(element) ?? new Set()
         callbacks.add(this.callback)
         observers.set(element, callbacks)
@@ -87,6 +89,7 @@ function fixture() {
     props,
     engine,
     estimate,
+    observedChunks,
     narrow(column?: Element) {
       width = 400
       if (column)
@@ -94,6 +97,55 @@ function fixture() {
     },
   }
 }
+
+function assistantFixture() {
+  const current = fixture()
+  current.props.messages = [
+    {
+      id: 'assistant',
+      role: 'assistant',
+      content: 'Measured Markdown',
+      status: 'done',
+      createdAt: '',
+    },
+  ]
+  return current
+}
+
+test('keeps Markdown observers when only the conversation column width changes', () => {
+  const current = assistantFixture()
+  const view = render(<MessageList {...current.props} />)
+  const chunks = [...current.observedChunks]
+  expect(chunks.length).toBeGreaterThan(0)
+  const list = view.container.querySelector<HTMLElement>('[data-conversation-message-list]')!
+
+  current.narrow(list)
+
+  expect(list.dataset.conversationLayoutWidth).toBe('400')
+  expect(current.observedChunks).toEqual(chunks)
+  expect(view.container.querySelector('[data-markdown-window-chunk]')).toBe(chunks[0])
+})
+
+test.each(['conversation', 'style'] as const)(
+  'invalidates Markdown measurement scope for a different %s',
+  change => {
+    const current = assistantFixture()
+    const view = render(<MessageList {...current.props} />)
+    const observed = current.observedChunks.length
+    expect(observed).toBeGreaterThan(0)
+
+    view.rerender(
+      <MessageList
+        {...current.props}
+        {...(change === 'conversation'
+          ? { conversationKey: 'another-conversation' }
+          : { className: 'another-style' })}
+      />
+    )
+
+    expect(current.observedChunks.length).toBeGreaterThan(observed)
+  }
+)
 
 test('exposes only existing numeric virtualizer state for on-demand failure diagnostics', () => {
   const current = fixture()

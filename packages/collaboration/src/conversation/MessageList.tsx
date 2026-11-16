@@ -214,12 +214,9 @@ export const MessageList = memo(function MessageList({
     fontEpoch: getMessageFontMetricsRevision(),
   }))
   const layoutWidth = layout.width
-  const layoutKey = JSON.stringify([
-    layout.width,
-    className ?? null,
-    layout.typography,
-    layout.fontEpoch,
-  ])
+  const markdownLayout = [className ?? null, layout.typography, layout.fontEpoch]
+  const markdownLayoutKey = JSON.stringify(markdownLayout)
+  const layoutKey = JSON.stringify([layout.width, ...markdownLayout])
   const [editingMessageId, setEditingMessageId] = useState<string | null>(null)
   const [submittingEditMessageId, setSubmittingEditMessageId] = useState<string | null>(null)
   const resolvedMessages = useMemo(() => resolveAsyncRequestUserInputAnswers(messages), [messages])
@@ -405,10 +402,12 @@ export const MessageList = memo(function MessageList({
   )
   const markdownLayoutHandlerRef = useRef<(element: HTMLElement) => void>(() => {})
   const pendingMarkdownLayoutsRef = useRef(new Set<HTMLElement>())
+  // Chunk heights already include width in their cache key. Replacing this
+  // scope during resize would re-register observers inside virtual row delivery.
   const markdownWindowingState = useMemo(
     () => ({
       conversationKey,
-      layoutKey,
+      layoutKey: markdownLayoutKey,
       scope: createMarkdownWindowingScope(
         scrollElementRef,
         element => {
@@ -417,7 +416,7 @@ export const MessageList = memo(function MessageList({
         layout.typography.rootFontSize
       ),
     }),
-    [conversationKey, scrollElementRef, layoutKey, layout.typography.rootFontSize]
+    [conversationKey, scrollElementRef, markdownLayoutKey, layout.typography.rootFontSize]
   )
   markdownLayoutHandlerRef.current = element => {
     const list = listRef.current
@@ -827,9 +826,7 @@ export const MessageList = memo(function MessageList({
               forceExpanded={searchMessageId === message.id}
               // Waiting for the next assistant must not keep a completed turn's process open.
               isActiveTurn={
-                message.role === 'assistant' &&
-                message.status === 'streaming' &&
-                !isHistoricalTurn
+                message.role === 'assistant' && message.status === 'streaming' && !isHistoricalTurn
               }
               isHistoricalTurn={isHistoricalTurn}
               userMessageServices={userMessageServices}
