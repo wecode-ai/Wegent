@@ -132,7 +132,13 @@ it('protects an unfinished invalid project tag and permits saving after explicit
   await user.click(screen.getByTestId('stand-in-primary-save'))
   expect(props.onSave).toHaveBeenCalledWith(
     expect.objectContaining({
-      primary: expect.objectContaining({ collaboration: expect.objectContaining({ tags: [] }) }),
+      primary: expect.objectContaining({
+        collaboration: expect.objectContaining({
+          tags: [],
+          allProjects: true,
+          policy: expect.objectContaining({ immediate: false }),
+        }),
+      }),
     })
   )
 })

@@ -78,10 +78,14 @@ export function StandInPrimaryProfile({
   const { t } = useTranslation('common')
   const saved = settings.primary ?? { enabled: true, prompt: '', preferences: '' }
   const defaultRole = newStandInRole(settings.executionDeviceId, '@primary')
+  const defaultCollaboration = {
+    ...defaultRole.collaboration,
+    policy: { automatic: true, askBeforeAct: true, immediate: false },
+  }
   // Consolidate the old two-field profile without dropping either saved value.
   const original = {
     ...saved,
-    collaboration: saved.collaboration ?? defaultRole.collaboration,
+    collaboration: saved.collaboration ?? defaultCollaboration,
     calendar: saved.calendar,
     connections: saved.connections ?? [],
     prompt: '',
