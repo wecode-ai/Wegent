@@ -63,4 +63,23 @@ describe('canonical project chat comments adapter', () => {
     expect(subscribe).toHaveBeenCalledWith('project-1', 'EXP-1', 0, expect.any(Function))
     expect(unsubscribe).toHaveBeenCalledTimes(1)
   })
+
+  it('keeps verified assistant publication on the activity transport', async () => {
+    const publishActivity = vi.fn().mockResolvedValue({ id: 'comment-1' })
+    const comments = createProjectChatComments(
+      { send: vi.fn() } as unknown as ProjectChatClient,
+      async () => 'project-1',
+      publishActivity
+    )
+    await comments.createAssistantPublication!('EXP-1', 'Public conclusion', {
+      clientMessageId: 'publication-1',
+      projectId: 'project-1',
+      assistantSource: { deviceId: 'device-1', taskId: 'task-1' },
+    })
+    expect(publishActivity).toHaveBeenCalledExactlyOnceWith('EXP-1', 'Public conclusion', {
+      clientMessageId: 'publication-1',
+      projectId: 'project-1',
+      assistantSource: { deviceId: 'device-1', taskId: 'task-1' },
+    })
+  })
 })

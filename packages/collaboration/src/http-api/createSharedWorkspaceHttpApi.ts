@@ -24,6 +24,11 @@ import type {
   SharedWorkspaceGitRepositoriesApi,
   SharedWorkspaceProjectsApi,
   WorkspaceProjectAgent,
+  ProjectAssistantDispatchInput,
+  ProjectAssistantDispatchResult,
+  ProjectAssistantRosterEntry,
+  ProjectAssistantRosterInput,
+  AssistantParticipation,
 } from "../ports/SharedWorkspaceApi";
 import type {
   CollaborationGroup,
@@ -51,6 +56,10 @@ export interface SharedWorkspaceHttpApi {
     | "createCollaborationGroup"
     | "updateCollaborationGroup"
     | "removeCollaborationGroup"
+    | "listAssistantRoster"
+    | "saveAssistantRosterEntry"
+    | "createAssistantDispatch"
+    | "backfillAssistantParticipations"
   >;
   comments: SharedWorkspaceCommentsApi;
   assignments: SharedWorkspaceAssignmentsApi;
@@ -495,6 +504,34 @@ export function createSharedWorkspaceHttpApi(
       },
     },
     projects: {
+      listAssistantRoster(projectId) {
+        return transport.get<ProjectAssistantRosterEntry[]>(
+          `/v1/cloud-projects/${encoded(projectId)}/assistant-roster`,
+        );
+      },
+      saveAssistantRosterEntry(projectId, input: ProjectAssistantRosterInput) {
+        return transport.post<ProjectAssistantRosterEntry>(
+          `/v1/cloud-projects/${encoded(projectId)}/assistant-roster`,
+          input,
+        );
+      },
+      createAssistantDispatch(projectId, input: ProjectAssistantDispatchInput) {
+        return transport.post<ProjectAssistantDispatchResult>(
+          `/v1/cloud-projects/${encoded(projectId)}/assistant-dispatches`,
+          input,
+        );
+      },
+      backfillAssistantParticipations(projectId, input) {
+        return transport.post<{
+          dryRun: boolean;
+          created: number;
+          existing: number;
+          items: AssistantParticipation[];
+        }>(
+          `/v1/cloud-projects/${encoded(projectId)}/assistant-participations/backfill`,
+          { dryRun: input?.dryRun ?? true },
+        );
+      },
       async listCollaborationGroups(projectId) {
         const response = await transport.get<{ items: unknown[] }>(
           `/v1/cloud-projects/${encoded(projectId)}/collaboration-groups`,
@@ -536,10 +573,42 @@ export function createSharedWorkspaceHttpApi(
           `/v1/loop-items/${encoded(issueId)}/comments`,
         );
       },
-      create(issueId, body) {
+      create(issueId, body, options) {
+        if (options?.projectId) {
+          return transport.post<CollaborationComment>(
+            `/v1/cloud-projects/${encoded(options.projectId)}/loop-items/${encoded(issueId)}/activity-comments`,
+            {
+              body,
+              ...(options.clientMessageId
+                ? { client_message_id: options.clientMessageId }
+                : {}),
+              ...(options.assistantSource
+                ? {
+                    assistant_source: {
+                      device_id: options.assistantSource.deviceId,
+                      task_id: options.assistantSource.taskId,
+                    },
+                  }
+                : {}),
+            },
+          );
+        }
         return transport.post<CollaborationComment>(
           `/v1/loop-items/${encoded(issueId)}/comments`,
           { body },
+        );
+      },
+      createAssistantPublication(issueId, body, options) {
+        return transport.post<CollaborationComment>(
+          `/v1/cloud-projects/${encoded(options.projectId)}/loop-items/${encoded(issueId)}/activity-comments`,
+          {
+            body,
+            client_message_id: options.clientMessageId,
+            assistant_source: {
+              device_id: options.assistantSource.deviceId,
+              task_id: options.assistantSource.taskId,
+            },
+          },
         );
       },
     },

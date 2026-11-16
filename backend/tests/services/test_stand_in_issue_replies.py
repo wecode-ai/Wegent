@@ -111,6 +111,8 @@ def test_public_messages_are_separate_and_redelivery_is_idempotent(
         first.runtime_address is None
     ), "Publication must not expose a private transcript"
     assert first.metadata["execution_dispatch"] == "comment_only"
+    assert first.metadata["member_assistant_result"]["status"] == "completed"
+    assert first.metadata["member_assistant_result"]["summary"] == first.content
     assert result.sequence_number > first.sequence_number
     assert test_db.query(ProjectChatMessage).filter_by(sender_type="agent").count() == 2
     with pytest.raises(HTTPException) as error:
@@ -135,6 +137,40 @@ def test_public_reply_advances_issue_unread_once_without_marking_its_owner_read(
     test_db.refresh(issue)
     assert content_revision(issue.metadata_json) == before + 1
     assert issue.version == version
+
+
+@pytest.mark.parametrize(
+    ("automatic", "expected_status", "published"),
+    [(True, "completed", True), (False, "in_review", False)],
+)
+def test_dispatched_reply_follows_the_member_autonomy_policy(
+    test_db, test_user, scope, automatic, expected_status, published
+):
+    issue = scope[1]
+    issue.metadata_json = {
+        "assistant_dispatch_role": "member",
+        "assistant_endpoint_ref": f"local_wework:{test_user.id}:review",
+        "awaiting_public_summary": True,
+        "publish_policy": "summary_only",
+        "assistant_autonomy_policy": {
+            "automatic": automatic,
+            "ask_before_act": False,
+            "risk_ceiling": "low",
+        },
+    }
+    test_db.commit()
+    result = publish(
+        test_db,
+        test_user,
+        scope,
+        scope[-1].model_copy(update={"message_id": f"result-{automatic}"}),
+        "Verified summary",
+    )
+    test_db.refresh(issue)
+    assert issue.status == expected_status
+    assert result.generation_source == "ai"
+    assert result.publication_source == "ai"
+    assert result.confirmation_state == ("not_required" if published else "pending")
 
 
 def test_delayed_read_acknowledges_only_the_observed_public_content(

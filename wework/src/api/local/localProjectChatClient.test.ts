@@ -161,11 +161,63 @@ describe('createLocalProjectChatClient', () => {
     expect(request).not.toHaveBeenCalledWith('executions.enqueue', expect.anything())
   })
 
+  it.each(['agent_status', 'agent_chunk'])(
+    'does not reveal another owner private %s source',
+    async messageType => {
+      request.mockResolvedValue([
+        commentRecord({
+          sender_type: 'agent',
+          actor_user_id: '8',
+          message_type: messageType,
+          content: 'PRIVATE TOOL OUTPUT',
+          metadata: {
+            private_prompt: 'secret',
+            runtime_address: { deviceId: 'private-device', taskId: 'private-task' },
+          },
+        }),
+      ])
+      const client = createLocalProjectChatClient(request, {
+        currentUser: { id: 7, user_name: 'owner' },
+      })
+      const subscription = await client.subscribe('p1', 't1', 0, vi.fn())
+      const message = subscription.snapshot.messages[0]
+      expect(message.content).toBe('')
+      expect(message.runtimeAddress).toBeUndefined()
+      expect(message.metadata).toEqual({})
+      subscription.unsubscribe()
+    }
+  )
+
+  it('fails closed when a local agent message has no resolved actor', async () => {
+    request.mockResolvedValue([
+      commentRecord({
+        sender_type: 'agent',
+        sender_id: 'agent-1',
+        content: 'Public result',
+        metadata: {
+          private_prompt: 'must remain private',
+          runtime_address: { deviceId: 'private-device', taskId: 'private-task' },
+        },
+      }),
+    ])
+    const client = createLocalProjectChatClient(request, {
+      currentUser: { id: 7, user_name: 'owner' },
+    })
+    const subscription = await client.subscribe('p1', 't1', 0, vi.fn())
+    expect(subscription.snapshot.messages[0]).toMatchObject({
+      content: 'Public result',
+      metadata: {},
+      runtimeAddress: undefined,
+    })
+    subscription.unsubscribe()
+  })
+
   it('persists a continued turn on the existing runtime session', async () => {
     request.mockResolvedValue(
       commentRecord({
         message_id: 'agent-turn-2',
         sender_type: 'agent',
+        actor_user_id: '0',
         sender_id: 'a1',
         sender_name: 'Bot',
         status: 'streaming',
@@ -251,6 +303,7 @@ describe('createLocalProjectChatClient', () => {
       id: 2,
       message_id: 'm-2',
       sender_type: 'agent',
+      actor_user_id: '0',
       sender_id: 'a1',
       sender_name: 'Bot',
       content: '',
@@ -290,6 +343,7 @@ describe('createLocalProjectChatClient', () => {
     request.mockResolvedValue([
       commentRecord({
         sender_type: 'agent',
+        actor_user_id: '0',
         status: 'pending',
         metadata: {
           execution_id: 4,

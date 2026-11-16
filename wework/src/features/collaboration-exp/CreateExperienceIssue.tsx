@@ -5,6 +5,7 @@ import type {
   CollaborationIssue,
   CollaborationMember,
   CollaborationProject,
+  ProjectAssistantRosterEntry,
 } from '@wegent/collaboration'
 import { DEFAULT_WORK_ITEM_PROJECT_ID, isDefaultWorkItemProject } from '@/api/deliveries'
 import { DialogForm } from '@/components/common/DialogForm'
@@ -71,6 +72,13 @@ function CreateIssueForm({
   const [dueDate, setDueDate] = useState(tomorrowDate)
   const [selection, setSelection] = useState('standalone')
   const [assignee, setAssignee] = useState('self')
+  const [assistantRoster, setAssistantRoster] = useState<ProjectAssistantRosterEntry[]>([])
+  const [assistantRosterKey, setAssistantRosterKey] = useState('')
+  const [selectedAssistants, setSelectedAssistants] = useState<string[]>([])
+  const [dispatchIntent, setDispatchIntent] = useState<{
+    id: string
+    fingerprint: string
+  } | null>(null)
   const [pending, setPending] = useState(false)
   const pendingRef = useRef(false)
   const mounted = useRef(true)
@@ -141,6 +149,37 @@ function CreateIssueForm({
     }
   }, [source, targetId, retry, t])
 
+  useEffect(() => {
+    const currentKey = JSON.stringify([source?.store, targetId])
+    if (
+      !source ||
+      !targetId ||
+      source.store !== 'backend' ||
+      !source.api.projects.listAssistantRoster
+    ) {
+      return
+    }
+    let cancelled = false
+    void source.api.projects.listAssistantRoster(targetId).then(
+      entries => {
+        if (cancelled) return
+        setAssistantRoster(entries)
+        setAssistantRosterKey(currentKey)
+        setSelectedAssistants(current => current.filter(id => entries.some(row => row.id === id)))
+      },
+      cause => {
+        if (!cancelled) {
+          setAssistantRoster([])
+          setAssistantRosterKey(currentKey)
+          setError(errorText(cause))
+        }
+      }
+    )
+    return () => {
+      cancelled = true
+    }
+  }, [source, targetId, retry])
+
   const members =
     current?.members.filter(
       member => selectableMember(member) && ![viewerId, selfId].includes(member.user_id)
@@ -156,6 +195,8 @@ function CreateIssueForm({
     update()
     setAssignee('self')
     setError(null)
+    setSelectedAssistants([])
+    setDispatchIntent(null)
   }
 
   const submit = async () => {
@@ -189,13 +230,46 @@ function CreateIssueForm({
               member => String(member.user_id) === assignee && selectableMember(member)
             )?.user_id
       if (assigneeUserId === undefined) throw new Error(t('create.assigneeUnavailable'))
-      const issue = await source.api.issues.create(project.id, {
-        title: title.trim(),
-        description: summary.trim(),
-        assigneeUserId,
-        ...(dueDate ? { dueAt: dueDate } : {}),
-        ...(standalone && assignee === 'self' ? { personalTask: true } : {}),
-      })
+      const selectedRoster = assistantRoster.filter(entry => selectedAssistants.includes(entry.id))
+      let issue: CollaborationIssue
+      if (
+        selectedRoster.length > 0 &&
+        source.store === 'backend' &&
+        source.api.projects.createAssistantDispatch
+      ) {
+        const fingerprint = JSON.stringify([
+          title.trim(),
+          summary.trim(),
+          dueDate,
+          assignee,
+          selectedAssistants,
+        ])
+        const intentId =
+          dispatchIntent?.fingerprint === fingerprint ? dispatchIntent.id : crypto.randomUUID()
+        setDispatchIntent({ id: intentId, fingerprint })
+        const dispatch = await source.api.projects.createAssistantDispatch(project.id, {
+          intentId,
+          goal: title.trim(),
+          description: summary.trim(),
+          ...(dueDate ? { dueAt: dueDate } : {}),
+          managerUserId: assigneeUserId,
+          confirmationState: 'confirmed',
+          assignments: selectedRoster.map(entry => ({
+            rosterEntryId: entry.id,
+            userId: entry.userId,
+            brief: summary.trim() || title.trim(),
+          })),
+        })
+        issue = await source.api.issues.get(dispatch.rootIssueId)
+      } else {
+        issue = await source.api.issues.create(project.id, {
+          title: title.trim(),
+          description: summary.trim(),
+          assigneeUserId,
+          ...(dueDate ? { dueAt: dueDate } : {}),
+          ...(standalone && assignee === 'self' ? { personalTask: true } : {}),
+        })
+      }
       if (mounted.current) onCreated(projectScopeOf(project), issue)
     } catch (cause) {
       if (mounted.current) setError(errorText(cause))
@@ -323,6 +397,40 @@ function CreateIssueForm({
                 />
               </label>
             </div>
+            {assistantRosterKey === JSON.stringify([source?.store, targetId]) &&
+            assistantRoster.length > 0 ? (
+              <fieldset
+                className="experience-create-callout"
+                data-testid="collaboration-exp-create-assistant-roster"
+              >
+                <legend>{t('create.assistantRoster')}</legend>
+                {assistantRoster.map(entry => {
+                  const selected = selectedAssistants.includes(entry.id)
+                  return (
+                    <label key={entry.id}>
+                      <input
+                        type="checkbox"
+                        checked={selected}
+                        disabled={pending}
+                        data-testid={`collaboration-exp-create-assistant-${entry.id}`}
+                        onChange={() => {
+                          setDispatchIntent(null)
+                          setSelectedAssistants(current =>
+                            selected
+                              ? current.filter(id => id !== entry.id)
+                              : [...current, entry.id]
+                          )
+                        }}
+                      />
+                      <span>
+                        {entry.userName} · {entry.displayName}
+                      </span>
+                      <small>{t(`assistant.availability.${entry.availability}`)}</small>
+                    </label>
+                  )
+                })}
+              </fieldset>
+            ) : null}
             <div className="experience-create-callout">
               <ShieldCheck aria-hidden="true" />
               <span>{t('create.defaults')}</span>

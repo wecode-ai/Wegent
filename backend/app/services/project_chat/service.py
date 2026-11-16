@@ -979,7 +979,7 @@ class ProjectChatService:
             self._commit(db)
             for row in rows:
                 db.refresh(row)
-        return [self.to_view(row, db=db) for row in rows]
+        return [self.to_shared_view(row, db=db, viewer_user_id=user_id) for row in rows]
 
     def send(
         self,
@@ -2825,13 +2825,34 @@ class ProjectChatService:
 
     @staticmethod
     def to_view(row: ProjectChatMessage, *, db: Session) -> ProjectChatMessageView:
+        import hashlib
+
+        from app.services.project_chat.message_provenance import message_provenance
+
         runtime_address = None
+        provenance = message_provenance(db, row)
         if row.runtime_device_id and row.runtime_task_id:
             runtime_address = {
                 "deviceId": row.runtime_device_id,
                 "taskId": row.runtime_task_id,
             }
+        trace_ref = None
+        trace_state = "history-unavailable"
+        if row.runtime_device_id and row.runtime_task_id:
+            identity = "\0".join(
+                (
+                    row.project_id,
+                    row.task_id or "",
+                    row.runtime_device_id,
+                    row.runtime_task_id,
+                )
+            )
+            trace_ref = hashlib.sha256(identity.encode()).hexdigest()
+            trace_state = "available"
         return ProjectChatMessageView(
+            **provenance,
+            trace_ref=trace_ref,
+            trace_state=trace_state,
             sequence_number=row.id,
             message_id=row.message_id,
             client_message_id=row.client_message_id or None,
@@ -2853,6 +2874,36 @@ class ProjectChatService:
             status=row.status,
             created_at=database_datetime_as_utc(db, row.created_at).isoformat(),
             updated_at=database_datetime_as_utc(db, row.updated_at).isoformat(),
+        )
+
+    @classmethod
+    def to_shared_view(
+        cls, row: ProjectChatMessage, *, db: Session, viewer_user_id: int
+    ) -> ProjectChatMessageView:
+        """Render one member-specific shared view over the internal projection."""
+
+        from app.services.project_chat.message_provenance import (
+            shared_message_metadata,
+        )
+
+        view = cls.to_view(row, db=db)
+        if view.actor_user_id == str(viewer_user_id):
+            return view
+        return view.model_copy(
+            update={
+                "content": (
+                    ""
+                    if row.message_type in {"agent_status", "agent_chunk"}
+                    else view.content
+                ),
+                "metadata": shared_message_metadata(row.metadata_json),
+                "runtime_address": None,
+                "trace_state": (
+                    "restricted"
+                    if view.trace_ref is not None
+                    else "history-unavailable"
+                ),
+            }
         )
 
 

@@ -34,7 +34,10 @@ import {
   type SetStateAction,
 } from 'react'
 import { TemporaryConversationLayout } from '@wegent/collaboration/conversation'
-import { createCollaborationTranslator } from '@wegent/collaboration'
+import {
+  createCollaborationTranslator,
+  type AssistantInteractionRequest,
+} from '@wegent/collaboration'
 import { ScrollableMessageArea } from '@/components/chat/ScrollableMessageArea'
 import {
   RequestUserInputCard,
@@ -127,6 +130,12 @@ interface TemporaryChatPanelProps {
     message: string,
     options: RuntimeTaskComposerCreateOptions
   ) => Promise<RuntimeTaskAddress | false>
+  assistantSend?: (input: {
+    message: string
+    clientUserMessageId: string
+    attachmentIds?: number[]
+    runtimeOptions?: AssistantInteractionRequest['runtimeOptions']
+  }) => Promise<{ sent: boolean; error?: string | null }>
   onAddressChange?: (address: RuntimeTaskAddress | null) => void
   runtimeContext?: Pick<
     RuntimeSendRequest,
@@ -180,6 +189,7 @@ export function TemporaryChatPanel({
   controlledAddress,
   draft,
   createTask,
+  assistantSend,
   onAddressChange,
   runtimeContext,
   sendEphemeral = true,
@@ -925,10 +935,22 @@ export function TemporaryChatPanel({
             : null
           const result =
             guidanceResult ??
-            (await sendConversationMessage(
-              queuedMessage,
-              !queuedMessage.startNewSession && paneStatus.isBusy && options.interruptWhenBusy
-            ))
+            (assistantSend
+              ? await assistantSend({
+                  message,
+                  clientUserMessageId: queuedMessage.id,
+                  attachmentIds: remoteAttachmentIds(currentAttachments),
+                  runtimeOptions: {
+                    ...selectedModelFields,
+                    ...(localRuntimeAttachments(currentAttachments).length
+                      ? { attachments: localRuntimeAttachments(currentAttachments) }
+                      : {}),
+                  },
+                })
+              : await sendConversationMessage(
+                  queuedMessage,
+                  !queuedMessage.startNewSession && paneStatus.isBusy && options.interruptWhenBusy
+                ))
           if (!result.sent) {
             setError(result.error || t('workbench.project_chat_send_failed'))
             if (!transactionalDraft) setInput(current => current || message)
@@ -1119,6 +1141,7 @@ export function TemporaryChatPanel({
       historySource,
       scopedHistory.available,
       paneStatus.isBusy,
+      assistantSend,
       sendConversationMessage,
       sendRuntimePaneGuidance,
       t,

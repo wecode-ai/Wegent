@@ -41,15 +41,18 @@ function setup(store: ExperienceSource['store'] = 'local') {
   ]
   const get = vi.fn(async (id: string) => ({ ...project, id }))
   const listMembers = vi.fn().mockResolvedValue(members)
+  const listAssistantRoster = vi.fn().mockResolvedValue([])
+  const createAssistantDispatch = vi.fn()
   const issue = experienceIssueFixture({ id: 'created-issue', cloud_project_id: project.id })
   const create = vi.fn().mockResolvedValue(issue)
+  const getIssue = vi.fn().mockResolvedValue(issue)
   const source: ExperienceSource = {
     store,
     participationViewer: store === 'local' ? [0, 7] : 7,
     api: {
-      projects: { get },
+      projects: { get, listAssistantRoster, createAssistantDispatch },
       members: { list: listMembers },
-      issues: { create },
+      issues: { create, get: getIssue },
     } as unknown as SharedWorkspaceApi,
   }
   const onCreated = vi.fn()
@@ -66,7 +69,20 @@ function setup(store: ExperienceSource['store'] = 'local') {
     onCreated,
     onClose,
   }
-  return { source, props, get, create, listMembers, issue, project, onCreated, onClose }
+  return {
+    source,
+    props,
+    get,
+    create,
+    getIssue,
+    listMembers,
+    listAssistantRoster,
+    createAssistantDispatch,
+    issue,
+    project,
+    onCreated,
+    onClose,
+  }
 }
 
 async function enterGoal(title = 'Deliver the integration') {
@@ -216,6 +232,63 @@ describe('CreateExperienceIssue', () => {
       expect.objectContaining({ assigneeUserId: 8 })
     )
     expect(f.create.mock.calls[0][1]).not.toHaveProperty('personalTask')
+  })
+
+  it('creates a confirmed multi-assistant dispatch and opens its single root Issue', async () => {
+    const f = setup('backend')
+    f.listAssistantRoster.mockResolvedValue([
+      {
+        id: 'roster-colleague',
+        projectId: 'first-shared-project',
+        userId: 8,
+        userName: 'Colleague',
+        roleId: 'review',
+        endpointRef: 'local_wework:8:review',
+        endpointKind: 'local_wework',
+        displayName: 'Review assistant',
+        enabled: true,
+        capabilityTags: ['review'],
+        autonomyPolicy: { automatic: true, askBeforeAct: false },
+        availability: 'online',
+        version: 1,
+      },
+    ])
+    f.createAssistantDispatch.mockResolvedValue({
+      dispatchId: 'dispatch-1',
+      intentId: 'intent-1',
+      rootIssueId: 'root-issue',
+      managerUserId: 7,
+      children: [],
+      replayed: false,
+    })
+    render(<CreateExperienceIssue {...f.props} />)
+    chooseProject(f)
+    fireEvent.change(screen.getByTestId('collaboration-exp-create-summary'), {
+      target: { value: 'Review the migration safely' },
+    })
+    await enterGoal('Ship the migration')
+    fireEvent.click(
+      await screen.findByTestId('collaboration-exp-create-assistant-roster-colleague')
+    )
+    fireEvent.click(screen.getByTestId('collaboration-exp-create-submit'))
+    await waitFor(() => expect(f.onCreated).toHaveBeenCalledOnce())
+    expect(f.createAssistantDispatch).toHaveBeenCalledWith(
+      'first-shared-project',
+      expect.objectContaining({
+        goal: 'Ship the migration',
+        managerUserId: 7,
+        confirmationState: 'confirmed',
+        assignments: [
+          {
+            rosterEntryId: 'roster-colleague',
+            userId: 8,
+            brief: 'Review the migration safely',
+          },
+        ],
+      })
+    )
+    expect(f.getIssue).toHaveBeenCalledWith('root-issue')
+    expect(f.create).not.toHaveBeenCalled()
   })
 
   it('rejects a source returning another store instead of routing its object into this store', async () => {

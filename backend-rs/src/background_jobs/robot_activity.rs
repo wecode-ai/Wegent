@@ -47,6 +47,8 @@ pub(crate) async fn finish(
     };
     let mut metadata = task.meta();
     let applied = project_ai_state(&mut metadata, message, status, detail, now);
+    let auto_published =
+        apply_assistant_publication(&task.cloud_project_id, &mut metadata, message, status);
     issues::update_change_request_source(
         &mut metadata,
         &format!("activity:{}", message.message_id),
@@ -57,10 +59,65 @@ pub(crate) async fn finish(
     } else {
         false
     };
-    if applied || review || metadata != task.metadata.0 {
-        tx.execute("UPDATE loop_items SET metadata=?,status=?,completed_at=CASE WHEN ? THEN '1970-01-01 00:00:01' ELSE completed_at END,sort_order=CASE WHEN ? THEN 0 ELSE sort_order END,version=version+?,updated_at=CURRENT_TIMESTAMP(6) WHERE id=? AND resource_type='task'",(Json(metadata),if review{"in_review"}else{task.status.as_str()},review,review,i64::from(applied)+i64::from(review),task.id.as_str())).await?;
+    let dispatch_review = !auto_published
+        && status == "completed"
+        && metadata["assistant_dispatch_role"] == "member"
+        && append_review_history(tx, &task, &mut metadata, now).await?;
+    if applied || review || dispatch_review || auto_published || metadata != task.metadata.0 {
+        let (next_status, reset_sort) = if review || dispatch_review {
+            ("in_review", true)
+        } else if auto_published {
+            ("completed", true)
+        } else {
+            (task.status.as_str(), false)
+        };
+        tx.execute(
+            "UPDATE loop_items SET metadata=?,status=?,completed_at=CASE WHEN ? THEN '1970-01-01 00:00:01' WHEN ? THEN UTC_TIMESTAMP(6) ELSE completed_at END,sort_order=CASE WHEN ? THEN 0 ELSE sort_order END,version=version+?,updated_at=CURRENT_TIMESTAMP(6) WHERE id=? AND resource_type='task'",
+            (
+                Json(metadata),
+                next_status,
+                review || dispatch_review,
+                auto_published,
+                reset_sort,
+                i64::from(applied)
+                    + i64::from(review)
+                    + i64::from(dispatch_review)
+                    + i64::from(auto_published),
+                task.id.as_str(),
+            ),
+        )
+        .await?;
     }
     Ok(())
+}
+
+fn apply_assistant_publication(
+    project_id: &str,
+    metadata: &mut Value,
+    message: &mut Message,
+    status: &str,
+) -> bool {
+    let policy = &metadata["assistant_autonomy_policy"];
+    let authorized = status == "completed"
+        && metadata["awaiting_public_summary"] == true
+        && metadata["publish_policy"] == "summary_only"
+        && project_id == message.project_id
+        && !message.agent_id.is_empty()
+        && !message.content.trim().is_empty()
+        && policy["automatic"].as_bool() == Some(true)
+        && policy["ask_before_act"].as_bool() == Some(false)
+        && policy["risk_ceiling"] == "low";
+    if !authorized {
+        return false;
+    }
+    message.metadata.0["assistant_publication"] = json!({
+        "verified":true,
+        "published_by":"ai",
+        "policy":"automatic_low_risk",
+    });
+    metadata["awaiting_public_summary"] = json!(false);
+    metadata["assistant_publication_message_id"] = json!(message.message_id);
+    true
 }
 
 pub(crate) async fn project_runtime_completion(
@@ -455,5 +512,41 @@ pub(super) mod tests {
         assert_eq!(metadata["content_revision"], 8);
         assert_eq!(metadata["read_revisions"]["7"], 5);
         assert_eq!(metadata["custom"], "kept");
+    }
+
+    #[test]
+    fn only_explicit_low_risk_policy_can_auto_publish_the_assistant_summary() {
+        let mut metadata = json!({
+            "awaiting_public_summary":true,
+            "publish_policy":"summary_only",
+            "assistant_autonomy_policy":{
+                "automatic":true,
+                "ask_before_act":false,
+                "risk_ceiling":"low"
+            }
+        });
+        let mut completed = message();
+        completed.project_id = "project".into();
+        completed.content = "Verified summary".into();
+        assert!(apply_assistant_publication(
+            "project",
+            &mut metadata,
+            &mut completed,
+            "completed"
+        ));
+        assert_eq!(metadata["awaiting_public_summary"], false);
+        assert_eq!(
+            completed.metadata.0["assistant_publication"]["published_by"],
+            "ai"
+        );
+
+        metadata["awaiting_public_summary"] = json!(true);
+        metadata["assistant_autonomy_policy"]["ask_before_act"] = json!(true);
+        assert!(!apply_assistant_publication(
+            "project",
+            &mut metadata,
+            &mut completed,
+            "completed"
+        ));
     }
 }

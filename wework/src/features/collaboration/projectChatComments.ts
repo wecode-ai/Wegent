@@ -15,7 +15,8 @@ function commentOf(message: ProjectChatMessage) {
 /** Keep the existing comment port on its canonical Issue activity transport. */
 export function createProjectChatComments(
   client: ProjectChatClient,
-  issueProjectId: (issueId: string) => Promise<string>
+  issueProjectId: (issueId: string) => Promise<string>,
+  publishActivity?: SharedWorkspaceApi['comments']['create']
 ): SharedWorkspaceApi['comments'] {
   return {
     async list(issueId) {
@@ -38,5 +39,12 @@ export function createProjectChatComments(
         })
       )
     },
+    ...(publishActivity
+      ? {
+          createAssistantPublication(issueId, body, options) {
+            return publishActivity(issueId, body, options)
+          },
+        }
+      : {}),
   }
 }

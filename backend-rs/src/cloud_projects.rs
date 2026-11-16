@@ -37,6 +37,9 @@ mod execution_environments;
 /// `GET /api/v1/cloud-projects/{project_id}/collaboration-groups`.
 mod collaboration_groups;
 
+/// Project assistant roster and one-transaction Issue fan-out.
+mod assistant_roster;
+
 mod access;
 mod collaboration_access;
 pub(crate) use collaboration_access::access_sql as project_access_statement;

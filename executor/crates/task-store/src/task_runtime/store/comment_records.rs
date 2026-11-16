@@ -1,3 +1,4 @@
+use super::record_rows::enrich_comment_actor;
 use super::*;
 
 impl LocalTaskStore {
@@ -101,7 +102,9 @@ impl LocalTaskStore {
         })?;
         let mut comments = Vec::new();
         for comment in rows {
-            comments.push(comment?);
+            let mut comment = comment?;
+            enrich_comment_actor(&connection, &mut comment)?;
+            comments.push(comment);
         }
         Ok(comments)
     }
@@ -305,6 +308,7 @@ mod stand_in_reply_tests {
             .unwrap();
         assert!(result.sequence_number > first.sequence_number);
         assert_eq!(first.sender_type, "agent");
+        assert_eq!(first.actor_user_id.as_deref(), Some("7"));
         assert_eq!(first.metadata["execution_dispatch"], "comment_only");
         assert!(store
             .publish_stand_in_reply("mac", "conversation", 7, &origin, "first", "Changed")

@@ -4,6 +4,7 @@
 """MCP comments must use the activity stream consumed by the Issue UI."""
 
 from typing import Any
+from uuid import uuid4
 
 import pytest
 from fastapi import HTTPException
@@ -14,7 +15,8 @@ from sqlalchemy.orm import Session
 from app.core.security import create_access_token
 from app.mcp_server.tool_registry import _register_tool
 from app.mcp_server.tools import wework_space
-from app.models.delivery import CloudProject, LoopItem
+from app.models.delivery import CloudProject, LoopItem, LoopItemTaskBinding
+from app.models.kind import Kind
 from app.models.loop_item_execution import LoopItemExecution
 from app.models.project_chat_message import ProjectChatMessage
 from app.models.resource_member import ResourceMember
@@ -124,6 +126,70 @@ def test_native_comment_http_uses_activity_and_checks_project_scope(
             wrong_scope, headers=headers, json={"body": "Wrong"}
         ).status_code
         == 404
+    )
+
+
+def test_native_publication_derives_ai_generation_from_the_owned_runtime_binding(
+    test_client: TestClient,
+    test_db: Session,
+    test_user: User,
+    test_token: str,
+    issue_context: tuple[CloudProject, LoopItem],
+) -> None:
+    project, item = issue_context
+    device = Kind(
+        kind="Device",
+        name=f"assistant-publication-{uuid4().hex}",
+        namespace="default",
+        user_id=test_user.id,
+        is_active=True,
+        json={"spec": {"deviceType": "local"}},
+    )
+    test_db.add(device)
+    test_db.flush()
+    test_db.add(
+        LoopItemTaskBinding(
+            cloud_project_id=project.id,
+            loop_item_id=item.id,
+            task_user_id=test_user.id,
+            device_id=device.name,
+            task_id="private-assistant-task",
+            linked_by_user_id=test_user.id,
+        )
+    )
+    test_db.commit()
+    headers = {"Authorization": f"Bearer {test_token}"}
+    path = f"/api/v1/cloud-projects/{project.id}/loop-items/{item.id}/activity-comments"
+    response = test_client.post(
+        path,
+        headers=headers,
+        json={
+            "body": "Verified public conclusion",
+            "client_message_id": "publication-once",
+            "assistant_source": {
+                "device_id": device.name,
+                "task_id": "private-assistant-task",
+            },
+        },
+    )
+    assert response.status_code == 200, response.text
+    published = response.json()
+    assert published["generation_source"] == "ai"
+    assert published["publication_source"] == "human"
+    assert published["confirmation_state"] == "authorized"
+    assert (
+        test_client.post(
+            path,
+            headers=headers,
+            json={
+                "body": "Unavailable source",
+                "assistant_source": {
+                    "device_id": device.name,
+                    "task_id": "not-bound",
+                },
+            },
+        ).status_code
+        == 403
     )
 
 
