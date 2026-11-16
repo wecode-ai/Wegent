@@ -2,7 +2,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-import { useState } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 import type { CollaborationTranslate } from "../i18n";
 import type {
   WorkspaceGitBranch,
@@ -87,6 +87,11 @@ export function ProjectEnvironmentConfiguration({
   configurationDirty,
   saveConfiguration,
 }: Props) {
+  const configurationErrorId = useId();
+  const configurationErrorRef = useRef<HTMLParagraphElement>(null);
+  useEffect(() => {
+    if (configurationError) configurationErrorRef.current?.focus();
+  }, [configurationError]);
   const [showAdvancedRepositories, setShowAdvancedRepositories] =
     useState(false);
   return (
@@ -232,6 +237,14 @@ export function ProjectEnvironmentConfiguration({
                     <input
                       className="h-9 w-full rounded-lg border border-border bg-background px-3"
                       data-testid={`${testIdPrefix}-repository-name-${index}`}
+                      aria-invalid={Boolean(
+                        configurationError && !repository.name.trim(),
+                      )}
+                      aria-describedby={
+                        configurationError && !repository.name.trim()
+                          ? configurationErrorId
+                          : undefined
+                      }
                       disabled={!canManage || saving}
                       placeholder="Wegent"
                       value={repository.name}
@@ -249,6 +262,14 @@ export function ProjectEnvironmentConfiguration({
                     <input
                       className="h-9 w-full rounded-lg border border-border bg-background px-3"
                       data-testid={`${testIdPrefix}-repository-path-${index}`}
+                      aria-invalid={Boolean(
+                        configurationError && !repository.path.trim(),
+                      )}
+                      aria-describedby={
+                        configurationError && !repository.path.trim()
+                          ? configurationErrorId
+                          : undefined
+                      }
                       disabled={!canManage || saving}
                       placeholder={
                         repository.primary ? "wegent" : "deps/internal-sdk"
@@ -274,6 +295,14 @@ export function ProjectEnvironmentConfiguration({
                       <select
                         className="h-9 w-full rounded-lg border border-border bg-background px-3"
                         data-testid={`${testIdPrefix}-repository-url-${index}`}
+                        aria-invalid={Boolean(
+                          configurationError && !repository.url.trim(),
+                        )}
+                        aria-describedby={
+                          configurationError && !repository.url.trim()
+                            ? configurationErrorId
+                            : undefined
+                        }
                         disabled={!canManage || saving}
                         value={repositorySelectValue}
                         onChange={(event) => {
@@ -306,6 +335,14 @@ export function ProjectEnvironmentConfiguration({
                       <input
                         className="h-9 w-full rounded-lg border border-border bg-background px-3"
                         data-testid={`${testIdPrefix}-repository-url-${index}`}
+                        aria-invalid={Boolean(
+                          configurationError && !repository.url.trim(),
+                        )}
+                        aria-describedby={
+                          configurationError && !repository.url.trim()
+                            ? configurationErrorId
+                            : undefined
+                        }
                         disabled={!canManage || saving}
                         placeholder="https://github.com/org/repository.git"
                         value={repository.url}
@@ -431,33 +468,49 @@ export function ProjectEnvironmentConfiguration({
               data-testid={`${testIdPrefix}-setup-step-${index}`}
               key={step.id}
             >
-              <input
-                className="h-9 rounded-lg border border-border bg-background px-3 font-mono text-sm"
-                data-testid={`${testIdPrefix}-setup-command-${index}`}
-                disabled={!canManage || saving}
-                placeholder="pnpm install"
-                value={step.command}
-                onChange={(event) =>
-                  updateSetupStep(step.id, {
-                    command: event.target.value,
-                  })
-                }
-              />
-              <input
-                className="h-9 rounded-lg border border-border bg-background px-3 font-mono text-sm"
-                data-testid={`${testIdPrefix}-setup-directory-${index}`}
-                disabled={!canManage || saving}
-                placeholder={translate(
-                  "todo.execution_environment_setup_directory",
-                  "工作目录（留空使用默认目录）",
-                )}
-                value={step.working_directory}
-                onChange={(event) =>
-                  updateSetupStep(step.id, {
-                    working_directory: event.target.value,
-                  })
-                }
-              />
+              <label className="block min-w-0 text-xs text-text-secondary">
+                <span className="mb-1 block">
+                  {translate(
+                    "todo.execution_environment_setup_command",
+                    "初始化命令",
+                  )}
+                </span>
+                <input
+                  className="w-full h-11 md:h-9 rounded-lg border border-border bg-background px-3 font-mono text-sm"
+                  data-testid={`${testIdPrefix}-setup-command-${index}`}
+                  disabled={!canManage || saving}
+                  placeholder="pnpm install"
+                  value={step.command}
+                  onChange={(event) =>
+                    updateSetupStep(step.id, {
+                      command: event.target.value,
+                    })
+                  }
+                />
+              </label>
+              <label className="block min-w-0 text-xs text-text-secondary">
+                <span className="mb-1 block">
+                  {translate(
+                    "todo.execution_environment_setup_directory_label",
+                    "工作目录（可选）",
+                  )}
+                </span>
+                <input
+                  className="w-full h-11 md:h-9 rounded-lg border border-border bg-background px-3 font-mono text-sm"
+                  data-testid={`${testIdPrefix}-setup-directory-${index}`}
+                  disabled={!canManage || saving}
+                  placeholder={translate(
+                    "todo.execution_environment_setup_directory",
+                    "工作目录（留空使用默认目录）",
+                  )}
+                  value={step.working_directory}
+                  onChange={(event) =>
+                    updateSetupStep(step.id, {
+                      working_directory: event.target.value,
+                    })
+                  }
+                />
+              </label>
               {canManage ? (
                 <button
                   className="px-2 text-sm text-text-secondary hover:text-text-primary"
@@ -519,6 +572,9 @@ export function ProjectEnvironmentConfiguration({
           {configurationError ? (
             <p
               className="mr-auto text-sm text-destructive"
+              ref={configurationErrorRef}
+              id={configurationErrorId}
+              tabIndex={-1}
               data-testid={`${testIdPrefix}-configuration-error`}
               role="alert"
             >
@@ -548,7 +604,17 @@ export function ProjectEnvironmentConfiguration({
             data-testid={`${testIdPrefix}-save-configuration`}
             disabled={saving || !configurationDirty}
             type="button"
-            onClick={() => void saveConfiguration()}
+            onClick={() => {
+              if (
+                repositories.some(
+                  (repository) =>
+                    !repository.name.trim() || !repository.path.trim(),
+                )
+              )
+                setShowAdvancedRepositories(true);
+              configurationErrorRef.current?.focus();
+              void saveConfiguration();
+            }}
           >
             {translate(
               "todo.execution_environment_save_configuration",

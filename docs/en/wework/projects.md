@@ -7,6 +7,11 @@ sidebar_position: 3
 <a id="project-controls"></a>
 
 <!-- ui-source: ../packages/collaboration/src/project-manage/ProjectSettingsPage.tsx -->
+<!-- ui-source: ../packages/collaboration/src/platform/GroupConfigurationView.tsx -->
+<!-- ui-source: ../packages/collaboration/src/platform/GroupCreationDialog.tsx -->
+<!-- ui-source: ../packages/collaboration/src/platform/GroupRulesSection.tsx -->
+<!-- ui-source: ../packages/collaboration/src/project-manage/AutomaticProcessingDialogFooter.tsx -->
+<!-- ui-source: ../packages/collaboration/src/project-manage/ProjectEnvironmentConfiguration.tsx -->
 <!-- ui-source: ../packages/collaboration/src/platform/ResourceCatalogPage.tsx -->
 <!-- ui-source: ../packages/collaboration/src/templates/CollaborationTemplatePage.tsx -->
 <!-- ui-source: ../packages/collaboration/src/milestones/MilestonesPage.tsx -->
@@ -429,6 +434,12 @@ Calendar and Gantt filters, grouping, and sorting are first stored as personal s
 Switching between settings pages within the same project keeps unsaved drafts on visited pages, including execution-environment repositories and setup steps, and collaboration-group rules and stages. Returning lets you continue editing. Switching pages neither saves changes nor runs setup commands. Drafts are discarded when leaving project settings, switching projects, or reloading the app; use the owning page's Save action first.
 
 Opening a collaboration group shows its name and goal first, followed by summary rows for members, rules, environment requirements and sharing. Expand each row to edit; multiple regions can remain open. The footer shows whether changes are saved. **Discard changes** restores the saved configuration, and **Save** submits the changes. Expanding or collapsing a region never saves configuration.
+
+Reference stages have a **Stage description** and an **Executor**. Choosing **Back to groups** with unsaved changes offers **Continue editing** or **Discard and return**. Group sharing uses the last saved version and explicitly identifies unsaved changes; save the group first to include them.
+
+Agent, group-creation and automatic-rule dialogs keep Tab / Shift+Tab inside the active dialog. Escape closes the topmost layer and focus returns to its trigger. Deleting an automatic rule requires confirmation; canceling preserves it. Users without project management access can inspect rules through a read-only editor.
+
+Each setup step has **Setup command** and **Working directory (optional)** fields. An incomplete repository associates the validation error with its empty fields and focuses the error message. Complete or remove the repository and save again. Editing or saving configuration in settings does not execute setup commands. Initialize starts environment preparation.
 
 **Project members** manages human access. **AI team → Agents / Collaboration groups** manages execution and coordination. **Basic information → Tags → New tag** provides a persistent **Tag name** label; enter the name and submit **New tag**.
 

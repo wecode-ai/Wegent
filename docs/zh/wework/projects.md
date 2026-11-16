@@ -7,6 +7,11 @@ sidebar_position: 3
 <a id="project-controls"></a>
 
 <!-- ui-source: ../packages/collaboration/src/project-manage/ProjectSettingsPage.tsx -->
+<!-- ui-source: ../packages/collaboration/src/platform/GroupConfigurationView.tsx -->
+<!-- ui-source: ../packages/collaboration/src/platform/GroupCreationDialog.tsx -->
+<!-- ui-source: ../packages/collaboration/src/platform/GroupRulesSection.tsx -->
+<!-- ui-source: ../packages/collaboration/src/project-manage/AutomaticProcessingDialogFooter.tsx -->
+<!-- ui-source: ../packages/collaboration/src/project-manage/ProjectEnvironmentConfiguration.tsx -->
 <!-- ui-source: ../packages/collaboration/src/platform/ResourceCatalogPage.tsx -->
 <!-- ui-source: ../packages/collaboration/src/templates/CollaborationTemplatePage.tsx -->
 <!-- ui-source: ../packages/collaboration/src/milestones/MilestonesPage.tsx -->
@@ -382,6 +387,10 @@ Issue 的可见范围在创建项目、项目设置和单个 Issue 中配置。�
 
 打开协作小组后，名称和目标位于顶部，成员、协作规则、执行环境要求和配置共享按行显示摘要，可分别展开编辑。多个区域可以同时展开。底部显示配置是否已保存；点击**放弃修改**恢复当前已保存配置，点击**保存**提交本次修改。展开或收起区域不会保存配置。
 
+参考阶段可填写**阶段说明**并选择**执行者**。有未保存更改时点击**返回协作小组**，可选择**继续编辑**保留草稿，或**放弃并返回**。小组的配置共享使用上次保存的版本；有草稿时会明确提示，保存小组后再共享即可包含这些更改。
+
+智能体、小组创建及自动处理弹窗支持 Tab / Shift+Tab 在当前弹窗内循环，Escape 关闭最上层界面，关闭后返回打开它的按钮。删除自动处理规则需要再次确认；取消不会删除规则。没有项目管理权限时，仍可打开规则查看，只读字段不能提交修改。
+
 保存协作小组或自动处理规则后，可以直接返回基本信息继续编辑，无需重新加载应用。如果提示**配置已保存，但项目信息刷新失败。请重试刷新。**，点击**重试**只会重新读取项目信息，不会重复创建或提交配置。
 
 新建智能体的**运行设置 → 自动选择**使用云端模型。如果当前方式下没有可用模型，可点击**指定设备**打开同一个执行环境选择器，选择设备后使用该设备的本地模型；不会自动绑定设备。
@@ -389,6 +398,8 @@ Issue 的可见范围在创建项目、项目设置和单个 Issue 中配置。�
 在**配置共享 → 选择模板**中打开模板详情时，会在同一弹窗中展示；点击**返回模板列表**继续选择。**确认协作配置 → 调整成员**在角色摘要与编辑表单之间切换，避免重复展示。保存当前配置可使用**保存到我的模板**，导出仍使用**导出配置（YAML）**。
 
 在协作项目的 **项目设置 → 执行环境** 中，可按需添加代码仓库并初始化执行环境。没有代码仓库时可以使用空白工作目录；普通情况下选择仓库或输入 Git 地址即可，名称和目录会从仓库自动带出。只有要自定义名称、目录或分支时才展开 **高级选项**。初始化步骤同样按需添加，不需要为了保存配置填写占位内容。
+
+每个初始化步骤都有**初始化命令**和**工作目录（可选）**字段。保存时若仓库配置不完整，错误会关联到具体空字段，并聚焦错误提示；补全信息或移除该仓库后可再次保存。在设置界面填写和保存配置不会执行命令；点击初始化会开始准备环境。
 
 人工处理不要求先配置执行环境或填写额外表单。直接在 Issue 详情中选择状态或负责人，属性更改独立保存，不提交尚未保存的描述；讨论转派、归档与恢复的步骤见本页[项目操作](#project-controls)。
 

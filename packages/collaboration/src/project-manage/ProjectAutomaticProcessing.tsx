@@ -19,6 +19,9 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { collaborationMessages, type CollaborationTranslate } from '../i18n'
 import { projectStatuses } from '../board'
 import { Textarea } from '../controls/Textarea'
+import { useDialogKeyboard } from '../controls/useDialogKeyboard'
+import { DialogForm } from '../controls/DialogForm'
+import { ConfirmationDialog } from '../controls/ConfirmationDialog'
 import type {
   SharedWorkspaceApi,
   WorkspaceAutomationInput,
@@ -37,6 +40,7 @@ import {
   useProjectSettingsRefresh,
   ProjectSettingsRefreshFeedback,
 } from './useProjectSettingsRefresh'
+import { AutomaticProcessingDialogFooter } from './AutomaticProcessingDialogFooter'
 import { AutomaticProcessingTriggerFields } from './AutomaticProcessingTriggerFields'
 import {
   EMPTY_DRAFT,
@@ -66,7 +70,7 @@ function AutomaticProcessingSwitch({
     <button
       aria-checked={checked}
       aria-label={label}
-      className="inline-flex shrink-0 rounded-full focus-visible:outline-none keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-focus disabled:cursor-not-allowed disabled:opacity-50"
+      className="inline-flex h-11 w-11 items-center justify-center shrink-0 rounded-full md:h-8 md:w-9 focus-visible:outline-none keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-focus disabled:cursor-not-allowed disabled:opacity-50"
       data-testid={testId}
       disabled={disabled}
       onClick={() => onChange(!checked)}
@@ -118,6 +122,7 @@ export function ProjectAutomaticProcessing({
   const [hooks, setHooks] = useState<WorkspaceIncomingHook[]>([])
   const [draft, setDraft] = useState<AutomaticProcessingDraft>(EMPTY_DRAFT)
   const [editing, setEditing] = useState(false)
+  const [pendingRemoval, setPendingRemoval] = useState<WorkspaceAutomationRule | null>(null)
   const [targetPickerOpen, setTargetPickerOpen] = useState(false)
   const [targetQuery, setTargetQuery] = useState('')
   const [hooksLoading, setHooksLoading] = useState(false)
@@ -143,6 +148,15 @@ export function ProjectAutomaticProcessing({
         ? translate('todo.automatic_processing_unavailable', '当前项目暂不支持自动处理。')
         : '')
   const canManage = project.access_role === 'Owner' || project.access_role === 'Maintainer'
+  const closeEditor = () => {
+    if (saving) return
+    setTargetPickerOpen(false)
+    setTargetQuery('')
+    setEditing(false)
+    setDraft(EMPTY_DRAFT)
+  }
+  const editorRef = useDialogKeyboard<HTMLFormElement>(closeEditor, editing)
+
   const projectRefresh = useProjectSettingsRefresh(api, project.id, onProjectChange)
 
   async function reloadAfterMutation() {
@@ -435,6 +449,7 @@ export function ProjectAutomaticProcessing({
   }
 
   async function save() {
+    if (!canManage) return
     if (!valid || !api.automations) return
     setSaving(true)
     setError('')
@@ -465,7 +480,7 @@ export function ProjectAutomaticProcessing({
   }
 
   async function toggle(rule: WorkspaceAutomationRule) {
-    if (!api.automations) return
+    if (!api.automations || !canManage) return
     const ruleDraft = draftFromRule(rule)
     setSaving(true)
     setError('')
@@ -487,7 +502,7 @@ export function ProjectAutomaticProcessing({
   }
 
   async function remove(rule: WorkspaceAutomationRule) {
-    if (!api.automations) return
+    if (!api.automations || !canManage) return
     setSaving(true)
     setError('')
     try {
@@ -497,12 +512,6 @@ export function ProjectAutomaticProcessing({
         setDraft(EMPTY_DRAFT)
       }
       await reloadAfterMutation()
-    } catch (removeError) {
-      setError(
-        removeError instanceof Error
-          ? removeError.message
-          : translate('todo.automatic_processing_delete_failed', '删除自动处理失败')
-      )
     } finally {
       setSaving(false)
     }
@@ -533,6 +542,25 @@ export function ProjectAutomaticProcessing({
       testId="collaboration-project-automatic-processing-page"
       title={translate('todo.automatic_processing', '自动处理')}
     >
+      {pendingRemoval ? (
+        <ConfirmationDialog
+          title={translate('todo.delete_automatic_rule', '删除自动处理规则')}
+          subject={pendingRemoval.name}
+          description={translate(
+            'todo.delete_automatic_rule_description',
+            '删除后将停止此规则的后续自动处理，且无法恢复。'
+          )}
+          labels={{
+            cancel: translate('common.cancel', '取消'),
+            confirm: translate('common.delete', '删除'),
+            pending: translate('common.deleting', '删除中…'),
+            failed: translate('todo.automatic_processing_delete_failed', '删除自动处理失败'),
+          }}
+          testIdPrefix="automatic-processing-delete"
+          onClose={() => setPendingRemoval(null)}
+          onConfirm={() => remove(pendingRemoval)}
+        />
+      ) : null}
       <div className="space-y-4" data-testid="automatic-processing">
         <ProjectSettingsRefreshFeedback
           {...projectRefresh}
@@ -618,7 +646,7 @@ export function ProjectAutomaticProcessing({
                             className="flex h-8 w-8 items-center justify-center rounded-lg text-red-500 hover:bg-red-500/10 disabled:opacity-50"
                             data-testid={`automatic-processing-delete-${rule.id}`}
                             disabled={saving}
-                            onClick={() => void remove(rule)}
+                            onClick={() => setPendingRemoval(rule)}
                             type="button"
                           >
                             <Trash2 aria-hidden="true" className="h-4 w-4" />
@@ -640,21 +668,19 @@ export function ProjectAutomaticProcessing({
 
       {editing ? (
         <div className="collaboration-dialog-backdrop !bg-black/20">
-          <form
+          <DialogForm
+            ref={editorRef}
+            tabIndex={-1}
             aria-labelledby="automatic-processing-dialog-title"
             aria-modal="true"
             className="collaboration-dialog flex max-h-[calc(100vh-48px)] w-full max-w-[600px] flex-col overflow-hidden !rounded-2xl !p-0 !shadow-lg"
             data-testid="automatic-processing-form"
             onKeyDown={event => {
-              if (event.key === 'Escape' && !saving) {
-                if (targetPickerOpen) {
-                  event.stopPropagation()
-                  setTargetPickerOpen(false)
-                  setTargetQuery('')
-                  return
-                }
-                setEditing(false)
-                setDraft(EMPTY_DRAFT)
+              if (event.key === 'Escape' && targetPickerOpen && !saving) {
+                event.preventDefault()
+                event.stopPropagation()
+                setTargetPickerOpen(false)
+                setTargetQuery('')
               }
             }}
             onSubmit={event => {
@@ -665,27 +691,36 @@ export function ProjectAutomaticProcessing({
           >
             <header className="flex h-14 shrink-0 items-center justify-between border-b border-border px-5">
               <h2 className="heading-small !m-0" id="automatic-processing-dialog-title">
-                {draft.id
-                  ? translate('todo.edit_automatic_processing', '编辑自动处理')
-                  : translate('todo.create_automatic_processing', '新建自动处理')}
+                {!canManage
+                  ? translate('todo.view_automatic_processing', '查看自动处理')
+                  : draft.id
+                    ? translate('todo.edit_automatic_processing', '编辑自动处理')
+                    : translate('todo.create_automatic_processing', '新建自动处理')}
               </h2>
               <button
+                data-testid="automatic-processing-close"
                 aria-label={translate('common.close', '关闭')}
                 className="flex h-8 w-8 items-center justify-center rounded-lg text-text-secondary hover:bg-muted"
                 disabled={saving}
-                onClick={() => {
-                  setTargetPickerOpen(false)
-                  setTargetQuery('')
-                  setEditing(false)
-                  setDraft(EMPTY_DRAFT)
-                }}
+                onClick={closeEditor}
                 type="button"
               >
                 <X aria-hidden="true" className="h-4 w-4" />
               </button>
             </header>
 
-            <div className="min-h-0 flex-1 space-y-5 overflow-y-auto px-5 py-5">
+            <fieldset
+              disabled={!canManage}
+              className="m-0 min-h-0 min-w-0 flex-1 space-y-5 overflow-y-auto border-0 px-5 py-5"
+            >
+              {!canManage ? (
+                <p className="text-sm text-text-secondary">
+                  {translate(
+                    'todo.automatic_rule_read_only',
+                    '只读：你可以查看规则，只有项目管理者可以修改。'
+                  )}
+                </p>
+              ) : null}
               <div
                 className="rounded-xl border border-border bg-muted/40 px-4 py-3"
                 data-testid="automatic-processing-preview"
@@ -923,48 +958,18 @@ export function ProjectAutomaticProcessing({
                   {error}
                 </div>
               ) : null}
-            </div>
+            </fieldset>
 
-            <footer className="flex min-h-14 shrink-0 items-center !justify-between gap-4 border-t border-border px-5 py-3">
-              <label className="!flex cursor-pointer items-center gap-2 whitespace-nowrap text-sm text-text-secondary">
-                <input
-                  checked={draft.enabled}
-                  className="automatic-processing-checkbox !h-4 !min-h-0 !w-4 shrink-0 rounded border-border !p-0"
-                  data-testid="automatic-processing-enabled"
-                  disabled={saving}
-                  onChange={event => updateDraft({ enabled: event.target.checked })}
-                  type="checkbox"
-                />
-                {translate('todo.enable_after_creation', '创建后立即启用')}
-              </label>
-              <div className="flex items-center gap-2">
-                <button
-                  className="h-8 rounded-lg border border-border px-3 text-sm text-text-secondary hover:bg-muted"
-                  data-testid="automatic-processing-cancel"
-                  disabled={saving}
-                  onClick={() => {
-                    setEditing(false)
-                    setDraft(EMPTY_DRAFT)
-                  }}
-                  type="button"
-                >
-                  {translate('common.cancel', '取消')}
-                </button>
-                <button
-                  className="collaboration-primary-button"
-                  data-testid="automatic-processing-save"
-                  disabled={!valid || saving}
-                  type="submit"
-                >
-                  {saving
-                    ? translate('common.saving', '保存中…')
-                    : draft.id
-                      ? translate('common.save', '保存')
-                      : translate('todo.create_automatic_processing', '创建自动处理')}
-                </button>
-              </div>
-            </footer>
-          </form>
+            <AutomaticProcessingDialogFooter
+              draft={draft}
+              saving={saving}
+              canManage={canManage}
+              translate={translate}
+              onEnabledChange={enabled => updateDraft({ enabled })}
+              onClose={closeEditor}
+              valid={valid}
+            />
+          </DialogForm>
         </div>
       ) : null}
     </ProjectSettingsPage>

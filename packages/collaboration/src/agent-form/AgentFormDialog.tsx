@@ -6,6 +6,7 @@ import { ChevronRight, LoaderCircle, SlidersHorizontal, X } from 'lucide-react'
 import { useRef, useState, type ReactNode } from 'react'
 
 import { DialogForm } from '../controls/DialogForm'
+import { useDialogKeyboard } from '../controls/useDialogKeyboard'
 
 function classes(...values: Array<string | undefined>): string {
   return values.filter(Boolean).join(' ')
@@ -127,6 +128,9 @@ export function AgentFormDialog({
   testIds: AgentFormTestIds
   title: string
 }) {
+  const dialogRef = useDialogKeyboard<HTMLFormElement>(() => {
+    if (!busy) onClose()
+  })
   const titleId = `${testIds.dialog}-title`
   const [advancedOpen, setAdvancedOpen] = useState(false)
   const [activeTab, setActiveTab] = useState<'basic' | 'runtime'>('basic')
@@ -143,6 +147,8 @@ export function AgentFormDialog({
       }}
     >
       <DialogForm
+        ref={dialogRef}
+        tabIndex={-1}
         aria-labelledby={titleId}
         aria-modal="true"
         className="flex max-h-[90dvh] w-full max-w-[560px] flex-col overflow-hidden rounded-xl border border-border bg-popover text-text-primary shadow-xl"
@@ -331,6 +337,7 @@ export function AgentFormDialog({
           <div className="ml-auto flex shrink-0 items-center gap-2">
             <button
               className="h-11 rounded-lg px-3 text-sm text-text-primary hover:bg-muted disabled:opacity-40 md:h-9"
+              data-testid={`${testIds.dialog}-cancel`}
               disabled={busy}
               onClick={onClose}
               type="button"

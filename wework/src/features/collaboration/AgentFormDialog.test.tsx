@@ -67,3 +67,53 @@ it('waits for the Agent configuration before exposing editable fields', async ()
   await userEvent.click(screen.getByRole('button', { name: 'Save' }))
   expect(save).toHaveBeenCalledWith('Edited Agent')
 })
+
+it('does not submit the Agent when Enter belongs to a nested native dialog', async () => {
+  const user = userEvent.setup()
+  const save = vi.fn()
+  render(
+    <AgentFormDialog
+      busy={false}
+      title="Agent"
+      description="Configure an Agent"
+      ownerLabel="Local"
+      labels={{
+        advanced: 'Advanced',
+        advancedDescription: 'Settings',
+        cancel: 'Cancel',
+        close: 'Close',
+        owner: 'Owner',
+      }}
+      displayName={{
+        label: 'Agent name',
+        value: 'Agent',
+        onChange: () => {},
+        testId: 'agent-name',
+      }}
+      prompt={{ label: 'Instructions', value: '', onChange: () => {}, testId: 'agent-prompt' }}
+      advanced={
+        <dialog open aria-label="Nested template">
+          <input aria-label="Template name" defaultValue="Draft" />
+        </dialog>
+      }
+      onClose={() => {}}
+      onSave={save}
+      saveDisabled={false}
+      saveLabel="Save"
+      savingLabel="Saving"
+      testIds={{
+        backdrop: 'agent-backdrop',
+        close: 'agent-close',
+        dialog: 'agent-dialog',
+        error: 'agent-error',
+        save: 'agent-save',
+      }}
+    />
+  )
+  await user.click(screen.getByLabelText('Template name'))
+  await user.keyboard('{Enter}')
+  expect(save).not.toHaveBeenCalled()
+  await user.click(screen.getByLabelText('Agent name'))
+  await user.keyboard('{Enter}')
+  expect(save).toHaveBeenCalledOnce()
+})

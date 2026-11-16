@@ -476,7 +476,17 @@ const sharedMessages: Record<
     "todo.matching_tag": "标签",
     "todo.matching_tag_placeholder": "输入需要匹配的标签",
     "todo.trigger_tag_added": "添加标签后",
-    "todo.project_settings_refresh_failed": "配置已保存，但项目信息刷新失败。请重试刷新。",
+    "todo.delete_automatic_rule": "删除自动处理规则",
+    "todo.delete_automatic_rule_description":
+      "删除后将停止此规则的后续自动处理，且无法恢复。",
+    "todo.view_automatic_processing": "查看自动处理",
+    "todo.automatic_rule_read_only":
+      "只读：你可以查看规则，只有项目管理者可以修改。",
+    "todo.execution_environment_setup_command": "初始化命令",
+    "todo.execution_environment_setup_directory_label": "工作目录（可选）",
+    "common.deleting": "删除中…",
+    "todo.project_settings_refresh_failed":
+      "配置已保存，但项目信息刷新失败。请重试刷新。",
     "todo.tag_name_too_long": "标签名称不能超过 32 个字符",
     "todo.tag_limit_exceeded": "最多添加 20 个不同标签",
     "todo.confirm_rename": "确认重命名",
@@ -1069,7 +1079,18 @@ const sharedMessages: Record<
     "todo.matching_tag": "Tag",
     "todo.matching_tag_placeholder": "Enter the tag to match",
     "todo.trigger_tag_added": "Tag added",
-    "todo.project_settings_refresh_failed": "Configuration saved, but project details could not be refreshed. Retry the refresh.",
+    "todo.delete_automatic_rule": "Delete automatic rule",
+    "todo.delete_automatic_rule_description":
+      "Deleting stops future processing by this rule and cannot be undone.",
+    "todo.view_automatic_processing": "View automatic rule",
+    "todo.automatic_rule_read_only":
+      "Read only: you can view this rule. Project managers can change it.",
+    "todo.execution_environment_setup_command": "Setup command",
+    "todo.execution_environment_setup_directory_label":
+      "Working directory (optional)",
+    "common.deleting": "Deleting…",
+    "todo.project_settings_refresh_failed":
+      "Configuration saved, but project details could not be refreshed. Retry the refresh.",
     "todo.tag_name_too_long": "Tag names cannot exceed 32 characters",
     "todo.tag_limit_exceeded": "Cannot have more than 20 distinct tags",
     "todo.confirm_rename": "Confirm rename",

@@ -534,6 +534,15 @@ async function verifyAutomaticProcessingControls(
     scoped(`[data-testid="automatic-processing-delete-${rule.id}"]`),
     { timeoutMs }
   )
+  await control.command('waitFor', scoped('[data-testid="automatic-processing-delete-dialog"]'), {
+    visible: true,
+    timeoutMs,
+  })
+  await control.command(
+    'clickWhenEnabled',
+    scoped('[data-testid="automatic-processing-delete-confirm"]'),
+    { timeoutMs }
+  )
   await waitForValue(
     () => request(`/api/v1/cloud-projects/${projectId}/automations`),
     rules => !rules.some(candidate => candidate.id === rule.id),

@@ -46,7 +46,7 @@ export function ProjectSettingsShell({
 
   return (
     <div
-      className="flex h-full min-h-0 flex-1 flex-col overflow-hidden bg-background [--color-text-muted:var(--color-text-secondary)] md:flex-row"
+      className="collaboration-project-settings flex h-full min-h-0 flex-1 flex-col overflow-hidden bg-background [--color-text-muted:var(--color-text-secondary)] md:flex-row"
       data-testid={testId}
     >
       <aside className="flex w-full shrink-0 gap-1 overflow-x-auto border-b border-border px-3 py-2 md:block md:w-44 md:space-y-6 md:overflow-y-auto md:border-b-0 md:border-r md:py-5">

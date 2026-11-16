@@ -185,6 +185,48 @@ describe("WorkspaceCollaborationGroupsConfiguration", () => {
     expect(commands.updateCollaborationGroup).not.toHaveBeenCalled();
   });
 
+  it("requires an explicit choice before discarding a group draft on return", async () => {
+    await act(async () =>
+      root.render(
+        <WorkspaceCollaborationGroupsConfiguration
+          groups={[group]}
+          members={[humanMember]}
+          agents={[codexAgent, claudeAgent]}
+          locale="en"
+          commands={commands}
+          canManage
+          initialSelectedGroupId={group.id}
+        />,
+      ),
+    );
+    await change(
+      byTestId("collaboration-group-detail-name"),
+      "Unfinished name",
+    );
+    await click(byTestId("collaboration-group-detail-back"));
+    expect(byTestId("collaboration-group-unsaved-dialog")).not.toBeNull();
+    await click(byTestId("collaboration-group-unsaved-cancel"));
+    expect(
+      byTestId<HTMLInputElement>("collaboration-group-detail-name").value,
+    ).toBe("Unfinished name");
+    await click(byTestId("collaboration-group-detail-back"));
+    await click(byTestId("collaboration-group-unsaved-confirm"));
+    await click(byTestId("collaboration-group-manage-" + group.id));
+    expect(
+      byTestId<HTMLInputElement>("collaboration-group-detail-name").value,
+    ).toBe(group.name);
+    expect(commands.updateCollaborationGroup).not.toHaveBeenCalled();
+  });
+
+  it("keeps collaboration group membership read-only without management access", async () => {
+    await act(async () => root.render(<WorkspaceCollaborationGroupsConfiguration groups={[group]} members={[humanMember]} agents={[codexAgent, claudeAgent]} locale="en" commands={commands} canManage={false} initialSelectedGroupId={group.id} />));
+    expect(byTestId("collaboration-group-detail-save")).toBeNull();
+    expect(byTestId("collaboration-group-create-add-members")).toBeNull();
+    expect(byTestId<HTMLInputElement>("collaboration-group-create-responsibility-agent-2").disabled).toBe(true);
+    expect(byTestId("collaboration-group-remove-member-agent-2")).toBeNull();
+    expect(commands.updateCollaborationGroup).not.toHaveBeenCalled();
+  });
+
   async function change(
     element: HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement,
     value: string,

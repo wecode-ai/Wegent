@@ -1026,6 +1026,15 @@ component-level validation outlines to override the native-outline reset.
   source labels, counters or bordered profile cards that push editing below
   the first viewport. Template pickers replace their list with details in the
   same dialog; role summaries give way to their editing controls.
+- Group member editing uses aligned compact rows, with responsibilities and
+  participant identity visible together. The save bar follows the actual
+  settings scroll container, including when multiple configuration regions open.
+  Returning with unsaved changes requires an explicit discard choice. Group
+  sharing identifies that its snapshot uses the saved version.
+- Settings placeholders use the secondary foreground and full opacity. Validation
+  associates errors with their fields and focuses the error summary. Dialogs
+  share keyboard ownership, preserve nested native or popover boundaries, and
+  restore their trigger after closing, including fields that autofocus on mount.
 
 - Every field has an accessible name; ordinary settings fields also have a
   persistent visible label.

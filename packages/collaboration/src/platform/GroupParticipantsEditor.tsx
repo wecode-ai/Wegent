@@ -217,6 +217,8 @@ export function GroupParticipantsEditor({
   members,
   locale,
   compact = false,
+  inline = false,
+  readOnly = false,
   onLeaderChange,
   onMemberChange,
   onResponsibilityChange,
@@ -227,6 +229,8 @@ export function GroupParticipantsEditor({
   members: CollaborationGroup["members"];
   locale: keyof typeof copy;
   compact?: boolean;
+  inline?: boolean;
+  readOnly?: boolean;
   onLeaderChange(candidate: GroupCandidate): void;
   onMemberChange(candidate: GroupCandidate, selected: boolean): void;
   onResponsibilityChange(
@@ -259,6 +263,7 @@ export function GroupParticipantsEditor({
       <input
         data-testid={`collaboration-group-create-responsibility-${candidate.kind}-${candidate.id}`}
         aria-label={`${candidate.name} ${messages.responsibility}`}
+        disabled={readOnly}
         value={
           members.find(
             (member) => `${member.kind}:${member.id}` === candidate.value,
@@ -273,7 +278,7 @@ export function GroupParticipantsEditor({
   );
   return (
     <div
-      className={`collaboration-group-people-editor${compact ? " is-compact" : ""}`}
+      className={`collaboration-group-people-editor${compact ? " is-compact" : ""}${inline ? " is-inline" : ""}`}
     >
       <section aria-label={messages.members}>
         <div className="collaboration-group-people-heading">
@@ -286,15 +291,17 @@ export function GroupParticipantsEditor({
             </h4>
             <p>{messages.memberHint}</p>
           </div>
-          <ParticipantPicker
-            candidates={candidates.filter(
-              (candidate) => candidate.value !== leader,
-            )}
-            selected={selectedValues}
-            locale={locale}
-            onSelect={onMemberChange}
-            agentActions={agentActions}
-          />
+          {!readOnly ? (
+            <ParticipantPicker
+              candidates={candidates.filter(
+                (candidate) => candidate.value !== leader,
+              )}
+              selected={selectedValues}
+              locale={locale}
+              onSelect={onMemberChange}
+              agentActions={agentActions}
+            />
+          ) : null}
         </div>
         <div className="collaboration-group-selected-people">
           <CollaborationGroupRoster
@@ -308,7 +315,7 @@ export function GroupParticipantsEditor({
               candidate.leader ? null : responsibility(candidate)
             }
             renderActions={(candidate) =>
-              candidate.leader ? null : (
+              candidate.leader || readOnly ? null : (
                 <span className="collaboration-group-person-actions">
                   <button
                     type="button"

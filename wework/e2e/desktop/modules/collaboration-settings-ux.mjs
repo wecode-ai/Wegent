@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import { selectCollaborationProjectView } from './collaboration-project-navigation.mjs'
 import { requestExecutor } from './executor-rpc.mjs'
 import { DEFAULT_STEP_TIMEOUT_MS } from './shared.mjs'
+import { waitForBoardValue } from './collaboration-board-flows.mjs'
 
 // Reuse shared-core's real project and backend; this flow never saves the environment draft.
 export async function verifyCollaborationSettingsUx(control, { scoped, request, project }) {
@@ -89,6 +90,33 @@ async function addProjectTag(control, scoped, tag) {
   await control.command('waitFor', find(`cloud-project-tag-${tag}`), { visible: true })
 }
 
+async function assertKeyboardFocus(control, id) {
+  await waitForBoardValue(
+    () => control.command('getActiveElementTestId', 'body'),
+    id,
+    'Dialog keyboard focus must remain on ' + id,
+    DEFAULT_STEP_TIMEOUT_MS
+  )
+}
+
+async function verifyAgentDialogKeyboard(control, scoped) {
+  const find = id => scoped('[data-testid="' + id + '"]')
+  await control.command('click', find('collaboration-project-settings-agents'))
+  const ids = JSON.parse(await control.command('snapshot', scoped('').trim())).testIds
+  const editId = ids.find(id => id.startsWith('project-agent-edit-'))
+  assert.ok(editId, 'The scenario must have an editable project Agent')
+  await control.command('focusMainWindow', 'body')
+  await control.command('nativePress', find(editId), { key: 'Enter' })
+  await control.command('waitFor', find('cloud-project-chat-agent-editor'), { visible: true })
+  const save = find('cloud-project-chat-agent-save')
+  await control.command('waitFor', save + ':not(:disabled)', { visible: true })
+  await control.command('nativePress', save, { key: 'Tab' })
+  await assertKeyboardFocus(control, 'cloud-project-chat-agent-cancel')
+  await control.command('nativePress', find('cloud-project-chat-agent-cancel'), { key: 'Escape' })
+  await control.command('waitFor', find('cloud-project-chat-agent-editor'), { visible: false })
+  await assertKeyboardFocus(control, editId)
+}
+
 async function createDisabledSchedule(control, scoped) {
   const find = id => scoped(`[data-testid="${id}"]`)
   await control.command('clickWhenEnabled', find('automatic-processing-create'))
@@ -102,6 +130,13 @@ async function createDisabledSchedule(control, scoped) {
     ) > 0
   )
     await control.command('click', find('automatic-processing-enabled'))
+  await control.command('waitFor', find('automatic-processing-save') + ':not(:disabled)', {
+    visible: true,
+  })
+  await control.command('nativePress', find('automatic-processing-save'), { key: 'Tab' })
+  await assertKeyboardFocus(control, 'automatic-processing-close')
+  await control.command('nativePress', find('automatic-processing-close'), { key: 'Shift+Tab' })
+  await assertKeyboardFocus(control, 'automatic-processing-save')
   await control.command('clickWhenEnabled', find('automatic-processing-save'))
   await control.command('waitFor', find('automatic-processing-form'), { visible: false })
 }
@@ -129,9 +164,33 @@ async function verifyGroupInlineMaintenance(control, scoped) {
   await control.command('waitFor', find('cloud-project-members-panel'), { visible: true })
   await control.command('click', find('collaboration-project-settings-groups'))
   assert.equal(await control.command('getValue', instructions), draft)
+  await control.command('click', find('collaboration-group-detail-tab-sharing'))
+  await control.command('waitFor', find('group-template-saved-version-hint'), {
+    text: '上次保存的版本',
+  })
+  await control.command('click', find('collaboration-group-detail-back'))
+  await control.command('waitFor', find('collaboration-group-unsaved-dialog'), { visible: true })
+  await control.command('click', find('collaboration-group-unsaved-cancel'))
+  assert.equal(await control.command('getValue', instructions), draft)
   await control.command('clickWhenEnabled', find('collaboration-group-detail-discard'))
   assert.equal(await control.command('getValue', instructions), original)
   await control.command('waitFor', find('collaboration-group-save-status'), { text: '配置已保存' })
+  const detailId = await control.command(
+    'getAttribute',
+    scoped('[data-testid^="collaboration-group-detail-"]:has(> form)'),
+    { value: 'data-testid' }
+  )
+  const groupId = detailId.slice('collaboration-group-detail-'.length)
+  assert.ok(groupId)
+  await control.command('click', find('collaboration-group-detail-back'))
+  await control.command('nativePress', find('collaboration-group-open-create'), { key: 'Enter' })
+  await control.command('waitFor', find('collaboration-group-form'), { visible: true })
+  await control.command('nativePress', find('collaboration-group-create-cancel'), { key: 'Tab' })
+  await assertKeyboardFocus(control, 'collaboration-group-create-close')
+  await control.command('nativePress', find('collaboration-group-create-close'), { key: 'Escape' })
+  await control.command('waitFor', find('collaboration-group-form'), { visible: false })
+  await assertKeyboardFocus(control, 'collaboration-group-open-create')
+  await control.command('click', find('collaboration-group-manage-' + groupId))
 }
 
 export async function verifyLocalSettingsProjectVersion(control, { scoped, projectName }) {
@@ -144,6 +203,7 @@ export async function verifyLocalSettingsProjectVersion(control, { scoped, proje
   }
   const find = id => scoped(`[data-testid="${id}"]`)
   await selectCollaborationProjectView(control, scoped('').trim(), 'manage')
+  await verifyAgentDialogKeyboard(control, scoped)
   await verifyGroupInlineMaintenance(control, scoped)
   // The owning scenario just created a group. The first tag save must use that new Project version.
   await addProjectTag(control, scoped, 'settings-group-version')
@@ -170,6 +230,11 @@ export async function verifyLocalSettingsProjectVersion(control, { scoped, proje
   await addProjectTag(control, scoped, 'settings-rule-update')
   await control.command('click', find('collaboration-project-settings-automatic-processing'))
   await control.command('clickWhenEnabled', find(`automatic-processing-delete-${ruleId}`))
+  await control.command('waitFor', find('automatic-processing-delete-dialog'), { visible: true })
+  await control.command('click', find('automatic-processing-delete-cancel'))
+  await control.command('waitFor', find(`automatic-processing-rule-${ruleId}`), { visible: true })
+  await control.command('clickWhenEnabled', find(`automatic-processing-delete-${ruleId}`))
+  await control.command('clickWhenEnabled', find('automatic-processing-delete-confirm'))
   await control.command('waitFor', find(`automatic-processing-rule-${ruleId}`), { visible: false })
   await addProjectTag(control, scoped, 'settings-rule-delete')
   await selectCollaborationProjectView(control, scoped('').trim(), 'board')

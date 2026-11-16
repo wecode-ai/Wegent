@@ -1998,6 +1998,8 @@ button.collaboration-project-offline:hover {
 
 .collaboration-group-detail-dialog .collaboration-group-save-actions {
   position: sticky;
+  z-index: 1;
+  flex-wrap: wrap;
   bottom: 0;
   width: 100%;
   box-sizing: border-box;
@@ -3110,14 +3112,10 @@ button.collaboration-project-offline:hover {
 }
 
 .collaboration-group-person-responsibility > span {
-  position: absolute;
-  width: 1px;
-  height: 1px;
-  padding: 0;
-  overflow: hidden;
-  clip: rect(0, 0, 0, 0);
-  white-space: nowrap;
-  border: 0;
+  display: block;
+  margin-bottom: 4px;
+  color: rgb(var(--color-text-secondary));
+  font-size: var(--text-xs);
 }
 
 .collaboration-group-person-responsibility > input {
@@ -3435,6 +3433,7 @@ button.collaboration-project-offline:hover {
 }
 
 .collaboration-group-card-grid {
+  container-type: inline-size;
   display: grid;
   overflow: hidden;
   grid-template-columns: 1fr;
@@ -3543,7 +3542,7 @@ button.collaboration-project-offline:hover {
 .collaboration-group-profile-fields input,
 .collaboration-group-profile-fields select,
 .collaboration-group-profile-fields textarea,
-.collaboration-group-rule-editor > textarea,
+.collaboration-group-rule-editor textarea,
 .collaboration-group-stage-card input,
 .collaboration-group-stage-card textarea,
 .collaboration-group-stage-card select,
@@ -3575,7 +3574,7 @@ button.collaboration-project-offline:hover {
 
 .collaboration-group-detail-main {
   min-width: 0;
-  overflow: hidden;
+  overflow: visible;
   background: rgb(var(--color-bg-base));
 }
 
@@ -3640,7 +3639,10 @@ button.collaboration-project-offline:hover {
   padding: 0 0 20px 26px;
 }
 
-.collaboration-group-settings-section .collaboration-group-section-heading h3 {
+.collaboration-group-settings-section
+  > [role="region"]
+  > .collaboration-group-section-heading
+  h3 {
   display: none;
 }
 
@@ -3660,7 +3662,7 @@ button.collaboration-project-offline:hover {
   position: relative;
 }
 
-.collaboration-group-rule-editor > textarea {
+.collaboration-group-rule-editor textarea {
   min-height: 160px;
   resize: vertical;
   line-height: 1.6;
@@ -3931,6 +3933,7 @@ button.collaboration-project-offline:hover {
 }
 
 .collaboration-group-save-status {
+  flex: 1 1 130px;
   margin-right: auto;
   color: rgb(var(--color-text-secondary));
   font-size: var(--text-xs);
@@ -5108,4 +5111,127 @@ button.collaboration-project-offline:hover {
 
 .collaboration-management + .collaboration-platform-sidebar-footer {
   margin-top: 0;
+}
+
+.collaboration-project-settings input::placeholder,
+.collaboration-project-settings textarea::placeholder,
+.collaboration-group-people-editor input::placeholder,
+.collaboration-group-detail input::placeholder,
+.collaboration-group-detail textarea::placeholder {
+  color: rgb(var(--color-text-secondary));
+  opacity: 1;
+}
+
+.collaboration-group-people-editor.is-inline
+  .collaboration-group-people-heading
+  h4 {
+  display: none;
+}
+
+.collaboration-group-people-editor.is-inline
+  .collaboration-group-people-heading
+  p {
+  margin: 0;
+}
+
+.collaboration-group-people-editor.is-inline .collaboration-group-roster {
+  gap: 0;
+}
+
+.collaboration-group-people-editor.is-inline .collaboration-group-roster-item {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 0;
+  border: 0;
+  border-bottom: 1px solid rgb(var(--color-border));
+  border-radius: 0;
+}
+
+.collaboration-group-people-editor.is-inline
+  .collaboration-group-roster-heading {
+  display: contents;
+}
+
+.collaboration-group-people-editor.is-inline
+  .collaboration-group-roster-identity {
+  grid-column: 1;
+  grid-row: 1;
+}
+
+.collaboration-group-people-editor.is-inline
+  .collaboration-group-person-responsibility {
+  grid-column: 2;
+  grid-row: 1;
+  margin: 0;
+}
+
+.collaboration-group-people-editor.is-inline
+  .collaboration-group-person-actions,
+.collaboration-group-people-editor.is-inline .collaboration-group-leader-badge {
+  grid-column: 3;
+  grid-row: 1;
+}
+
+@container (max-width: 640px) {
+  .collaboration-group-card,
+  .collaboration-group-card.compact {
+    grid-template-columns: minmax(0, 1fr) auto;
+  }
+  .collaboration-group-card-header {
+    grid-column: 1;
+    grid-row: 1;
+  }
+  .collaboration-group-card .collaboration-resource-actions {
+    grid-column: 2;
+    grid-row: 1;
+    white-space: nowrap;
+  }
+  .collaboration-group-card-summary {
+    grid-column: 1 / -1;
+    grid-row: 2;
+  }
+}
+
+@media (max-width: 767px) {
+  .collaboration-group-card .collaboration-resource-actions button,
+  .collaboration-group-save-actions button,
+  .collaboration-group-people-editor.is-inline button {
+    min-height: 44px;
+    min-width: 44px;
+  }
+  .collaboration-group-people-editor.is-inline
+    .collaboration-group-roster-item {
+    grid-template-columns: minmax(0, 1fr) auto;
+  }
+  .collaboration-group-people-editor.is-inline
+    .collaboration-group-person-actions,
+  .collaboration-group-people-editor.is-inline
+    .collaboration-group-leader-badge {
+    grid-column: 2;
+  }
+  .collaboration-group-people-editor.is-inline
+    .collaboration-group-person-responsibility {
+    grid-column: 1 / -1;
+    grid-row: 2;
+  }
+  .collaboration-group-save-actions {
+    padding-inline: 0;
+  }
+}
+
+@media (max-width: 767px) {
+  .collaboration-project-settings
+    input:not([type="checkbox"]):not([type="radio"]),
+  .collaboration-project-settings select,
+  .collaboration-project-settings
+    button:not([role="switch"]):not([role="checkbox"]) {
+    min-height: 44px;
+  }
+  .collaboration-group-people-editor:is(.is-compact, .is-inline)
+    .collaboration-group-people-action {
+    min-height: 44px;
+    min-width: 44px;
+  }
 }
