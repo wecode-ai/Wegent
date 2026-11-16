@@ -1386,7 +1386,11 @@ async function main() {
     appBundlePath = desktopApp.appBundlePath
     const resolvedAppCodexBinary = desktopApp.codexBinaryPath ?? codexBinary
     if (!RUNS_PLUGIN_E2E) {
-      const usesModelRoutingSubscription = DESKTOP_SEGMENT === 'model-routing' || MODEL_SWITCH_ONLY
+      const usesModelRoutingSubscription =
+        !CLOUD_ONLY &&
+        !CLOUD_FEATURES_ONLY &&
+        !CLOUD_VISION_ONLY &&
+        (DESKTOP_SEGMENT === 'model-routing' || MODEL_SWITCH_ONLY)
       const modelRoutingConfigToml = usesModelRoutingSubscription
         ? `openai_base_url = "${control.url}/backend-api/codex"\nchatgpt_base_url = "${control.url}/backend-api/"`
         : ''
