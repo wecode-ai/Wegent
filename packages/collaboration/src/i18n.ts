@@ -649,6 +649,10 @@ const sharedMessages: Record<
     "todo.close_issue_detail": "关闭任务详情",
     "todo.manual_trigger": "手动触发",
     "todo.scheduled_trigger": "定时触发",
+    "todo.schedule_weekdays": "周一至周五",
+    "todo.automation_workday_only": "仅中国大陆法定工作日执行",
+    "todo.automation_workday_only_hint":
+      "按北京时间日期跳过法定休息日，包含补班周末。选择“每天”可覆盖全部补班日；其他重复规则仍限制执行日期。",
     "todo.unassigned": "未指派",
     "todo.issue_title": "任务标题",
     "todo.issue_title_placeholder": "目标或事项标题",
@@ -1240,6 +1244,11 @@ const sharedMessages: Record<
     "todo.close_issue_detail": "Close issue details",
     "todo.manual_trigger": "Manual trigger",
     "todo.scheduled_trigger": "Scheduled trigger",
+    "todo.schedule_weekdays": "Monday–Friday",
+    "todo.automation_workday_only":
+      "Run only on mainland China statutory workdays",
+    "todo.automation_workday_only_hint":
+      "Uses Beijing dates, excludes statutory days off and includes make-up working weekends. Choose Daily to include every make-up workday; other recurrence rules still limit dates.",
     "todo.unassigned": "Unassigned",
     "todo.issue_title": "Issue title",
     "todo.issue_title_placeholder": "Goal or issue title",

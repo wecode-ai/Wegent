@@ -45,11 +45,15 @@ In a separate window, right-click a tab and choose **Move to main window** to re
 
 The Task page and auxiliary product pages such as Plugins and Cloud Work share the same full-bleed desktop content container below the title bar. Switching pages within a tab therefore keeps the left sidebar's position and chrome stable instead of shifting with the page type. Pages may still render their own internal chrome inside this container.
 
+<a id="board-automations"></a>
+
 ## Configure board automations
 
-Under **Automation** in a project space, choose a scheduled trigger and select daily, weekdays, weekly, or **Hourly**. Hourly schedules support minute 0–59 and use the configured timezone.
+Open **top + → Collaboration → project → Project settings → Automatic processing**, create or edit a rule and select **Scheduled**. Choose Daily, Monday–Friday or Weekly, or enter a custom Cron expression under advanced settings. The entry depends on project capabilities and management permissions; changes apply after saving.
 
-Scheduled automations have a **Run** button on both their list card and detail view, including when their schedule is paused. Save configuration changes before running. The button is disabled while a run is starting to prevent duplicate submissions and becomes available again after a failed start. View results in run history.
+Scheduled rules offer **Run only on mainland China statutory workdays**. This filter defaults to off and uses Beijing dates to exclude statutory days off and include make-up working weekends. Choose Daily to cover all make-up workdays; other Cron date constraints still apply. Existing Monday–Friday rules retain their meaning. Summaries and the editor preserve the setting for both local and cloud projects. Event triggers do not use this filter.
+
+Click **Save** after editing, then check the trigger and workday filter summary in the rule list. Disable a rule to suspend future automatic triggers. Reopening the editor restores the saved filter. Saving a rule does not prove completion; check Issue activity and execution records for actual results.
 
 ## Manage issues and tasks in workspaces
 

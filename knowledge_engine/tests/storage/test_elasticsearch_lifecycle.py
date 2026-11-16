@@ -38,7 +38,10 @@ def es_server():
 
         def do_POST(self):
             self.rfile.read(int(self.headers.get("Content-Length", 0)))
-            self.respond({"hits": {"total": {"value": 0}, "hits": []}})
+            if "_delete_by_query" in self.path:
+                self.respond({"deleted": 0, "timed_out": False, "failures": []})
+            else:
+                self.respond({"hits": {"total": {"value": 0}, "hits": []}})
 
         def respond(self, payload):
             body = json.dumps(payload).encode()
@@ -158,7 +161,17 @@ def exercise_operation(
                     MockEmbedding(embed_dim=3),
                 )
             elif operation == "delete":
-                monkeypatch.setattr(backend, "delete_parent_nodes", lambda *a, **kw: 0)
+                original_client = backend_module.Elasticsearch
+
+                def deletion_client(*args, **kwargs):
+                    client = original_client(*args, **kwargs)
+                    if fail:
+                        monkeypatch.setattr(
+                            client, "delete_by_query", partial(raise_failure, failure)
+                        )
+                    return client
+
+                monkeypatch.setattr(backend_module, "Elasticsearch", deletion_client)
                 call = lambda: backend.delete_document("kb", "doc")
             else:
                 call = lambda: backend.get_document("kb", "doc")
@@ -181,7 +194,7 @@ def exercise_operation(
 
 @pytest.mark.parametrize("operation", ["retrieve", "index", "delete", "get"])
 @pytest.mark.parametrize("fail", [False, True])
-def test_vector_store_transports_closed(
+def test_operation_transports_closed(
     es_server, tracked_clients, monkeypatch, operation, fail
 ):
     exercise_operation(es_server, tracked_clients, operation, fail, monkeypatch)

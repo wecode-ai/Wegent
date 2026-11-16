@@ -45,8 +45,9 @@ use crate::state::AppState;
 
 use super::dispatch::{self, ExecutionRequest};
 
-pub(crate) type DispatchAcceptance =
-    std::sync::Mutex<Option<tokio::sync::oneshot::Sender<Result<(), String>>>>;
+#[path = "sse_acceptance.rs"]
+mod acceptance;
+pub(crate) use acceptance::DispatchAcceptance;
 
 /// The dependencies one chat-shell SSE consumer needs.
 ///
@@ -101,70 +102,13 @@ impl<'a> ConsumerContext<'a, brz_mysql::MysqlService, brz_redis::RedisService> {
     }
 }
 
-/// `_SSE_CANCEL_POLL_INTERVAL_SECONDS`.
-const CANCEL_POLL_INTERVAL: Duration = Duration::from_secs(1);
-/// The chat-shell per-read timeout (`httpx`'s 300-second default).
-///
-/// This is an inactivity window, not a total request deadline. A streaming
-/// response may legitimately run longer than this as long as chunks keep
-/// arriving.
-const STREAM_TIMEOUT: Duration = Duration::from_secs(300);
-/// `_SSE_TERMINAL_DRAIN_TIMEOUT_SECONDS`: the bounded tail read after a
-/// delivered terminal event.
-const TERMINAL_DRAIN_TIMEOUT: Duration = Duration::from_secs(1);
-/// The OpenAI SDK appends `/responses` to its `.../v1` base URL.
-const RESPONSES_PATH: &str = "/v1/responses";
-
-/// Events that end the read (`ResponsesAPIStreamEvents` terminal values).
-const TERMINAL_EVENT_TYPES: [&str; 3] = ["response.completed", "error", "response.incomplete"];
-
-/// The collected result of a synchronous chat-shell dispatch.
-#[derive(Debug)]
-pub(crate) struct Collected {
-    /// `QueueBasedEmitter.collect`'s accumulated `chunk` content.
-    pub content: String,
-}
-
-/// One failed dispatch the caller renders as
-/// `500 {"detail": "LLM request failed: <message>"}`.
-struct Failure {
-    message: String,
-    /// The terminal status was already persisted by the failure branch.
-    persist: bool,
-    error_code: Option<&'static str>,
-}
-
-impl Failure {
-    /// A failure the dispatcher's `except` branch persists as FAILED.
-    fn persisted(message: String) -> Self {
-        Self {
-            message,
-            persist: true,
-            error_code: None,
-        }
-    }
-
-    fn terminal_persistence(message: &str) -> Self {
-        Self {
-            message: message.into(),
-            persist: false,
-            error_code: None,
-        }
-    }
-
-    /// A transport failure the dispatcher's `except` branch persists as
-    /// FAILED with the Source's classified error code
-    /// (`ExecutionDispatcher`'s `classify_error` returns `network_error` for
-    /// a connection failure, which `collect_completed_result` writes into
-    /// `result.error_type`).
-    fn network(message: String) -> Self {
-        Self {
-            message,
-            persist: true,
-            error_code: Some("network_error"),
-        }
-    }
-}
+#[path = "sse_protocol.rs"]
+mod protocol;
+use protocol::{
+    CANCEL_POLL_INTERVAL, Failure, RESPONSES_PATH, STREAM_TIMEOUT, TERMINAL_DRAIN_TIMEOUT,
+    TERMINAL_EVENT_TYPES,
+};
+pub(crate) use protocol::{Collected, SseFrames};
 
 /// Consume one chat-shell event stream for the synchronous create branch.
 ///
@@ -226,12 +170,11 @@ pub(crate) async fn collect<M: Mysql, R: Redis + Clone>(
             Ok(collected)
         }
         Err(failure) => {
-            if let Some(sender) = ctx
+            if ctx
                 .acceptance
                 .as_ref()
-                .and_then(|value| value.lock().expect("dispatch acceptance lock").take())
+                .is_some_and(|value| value.resolve(Err(failure.message.clone())))
             {
-                let _ = sender.send(Err(failure.message.clone()));
                 return Err(failure.message);
             }
             // An automatic handoff can replay this stream after transport loss.
@@ -511,13 +454,6 @@ async fn open_and_consume<M: Mysql, R: Redis>(
             let Some(event_type) = event.get("type").and_then(Value::as_str) else {
                 continue;
             };
-            if let Some(sender) = ctx
-                .acceptance
-                .as_ref()
-                .and_then(|value| value.lock().expect("dispatch acceptance lock").take())
-            {
-                let _ = sender.send(Ok(()));
-            }
             let parsed = if image_stream {
                 Some(parse_image_event(&event, request, &ctx.start_data)?)
             } else {
@@ -532,6 +468,14 @@ async fn open_and_consume<M: Mysql, R: Redis>(
                     .map_err(|error| Failure::persisted(error.0))?
             };
             if let Some(mut parsed) = parsed {
+                if let Some(acceptance) = ctx.acceptance.as_ref() {
+                    acceptance
+                        .accept(ctx.redis.ok_or_else(|| {
+                            Failure::terminal_persistence("Pipeline Redis is unavailable")
+                        })?)
+                        .await
+                        .map_err(|error| Failure::terminal_persistence(&error))?;
+                }
                 if image_stream && let Some(redis) = ctx.redis {
                     persist_image_blocks(redis, &parsed).await;
                 }
@@ -904,63 +848,8 @@ fn failure_result(failure: &Failure) -> Option<Value> {
         .map(|code| serde_json::json!({ "error_type": code }))
 }
 
-/// Incremental `data:` frame reader for the chat-shell event stream.
-#[derive(Default)]
-pub(super) struct SseFrames {
-    buffer: Vec<u8>,
-}
-
-impl SseFrames {
-    /// Append a transport chunk and return every complete event JSON value.
-    pub(super) fn push(&mut self, chunk: &[u8]) -> Vec<Value> {
-        self.buffer.extend_from_slice(chunk);
-        let mut events = Vec::new();
-        while let Some((end, delimiter)) = next_frame(&self.buffer) {
-            let frame: Vec<u8> = self.buffer.drain(..end + delimiter).collect();
-            if let Some(event) = parse_frame(&frame[..end]) {
-                events.push(event);
-            }
-        }
-        events
-    }
-}
-
-/// Locate the end of the next frame and its delimiter length.
-fn next_frame(buffer: &[u8]) -> Option<(usize, usize)> {
-    let mut index = 0;
-    while index < buffer.len() {
-        if buffer[index] == b'\n' {
-            if buffer.get(index + 1) == Some(&b'\n') {
-                return Some((index, 2));
-            }
-            if buffer.get(index + 1) == Some(&b'\r') && buffer.get(index + 2) == Some(&b'\n') {
-                return Some((index, 3));
-            }
-        }
-        index += 1;
-    }
-    None
-}
-
-/// Join one frame's `data:` lines and decode them.
-fn parse_frame(frame: &[u8]) -> Option<Value> {
-    let text = std::str::from_utf8(frame).ok()?;
-    let mut data = String::new();
-    for line in text.split('\n') {
-        let line = line.strip_suffix('\r').unwrap_or(line);
-        let Some(rest) = line.strip_prefix("data:") else {
-            continue;
-        };
-        if !data.is_empty() {
-            data.push('\n');
-        }
-        data.push_str(rest.strip_prefix(' ').unwrap_or(rest));
-    }
-    if data.is_empty() || data == "[DONE]" {
-        return None;
-    }
-    serde_json::from_str(&data).ok()
-}
+#[cfg(test)]
+use protocol::parse_frame;
 
 #[cfg(test)]
 mod tests {
