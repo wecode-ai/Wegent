@@ -1,25 +1,34 @@
+import { showErrorAlert } from '@/services/errorAlerts'
 import Ionicons from '@expo/vector-icons/Ionicons'
 import * as DocumentPicker from 'expo-document-picker'
 import type { GlassColorScheme } from 'expo-glass-effect'
 import * as ImagePicker from 'expo-image-picker'
 import { useEffect, useRef, useState, type ReactNode } from 'react'
-import { Alert, Image, Platform, Pressable, ScrollView, StyleSheet, View } from 'react-native'
+import { Image, Platform, Pressable, ScrollView, StyleSheet, TextInput, View } from 'react-native'
 import { ActivityIndicator, Text, useTheme } from 'react-native-paper'
 
 import { composerLogoUrl, composerMessage } from '@/domain/composerApps'
 import { chatComposerPresentation } from '@/domain/chatComposerPresentation'
-import type { RuntimeAttachment, RuntimeComposerApp, RuntimeUploadAsset } from '@/types/runtime'
+import type {
+  Attachment,
+  RuntimeAttachment,
+  RuntimeComposerApp,
+  RuntimeUploadAsset,
+} from '@/types/runtime'
 import { ComposerContextMenu, type ComposerMenuAnchor } from './ComposerContextMenu'
-import { KeyboardSafeTextInput, type KeyboardSafeTextInputHandle } from './KeyboardSafeInput'
 import { LiquidGlassGroup, LiquidGlassSurface } from './LiquidGlass'
+import { useMobileFilePreview } from './files/FilePreviewContext'
 
 export interface ComposerSendOptions {
   attachmentIds: number[]
+  attachments: Attachment[]
   pursueGoal: boolean
 }
 
 interface ChatComposerProps {
+  active: boolean
   focusRequest?: number
+  onFocusRequestHandled: (request: number) => void
   disabled: boolean
   emptyContextPlaceholder?: string
   modelLabel: string
@@ -48,7 +57,7 @@ interface ChatComposerTestIDs {
   stop: string
 }
 
-interface ComposerAttachment extends RuntimeAttachment {
+interface ComposerAttachment extends Attachment {
   previewUri?: string
 }
 
@@ -69,7 +78,9 @@ const compactInputVerticalInset = (COMPACT_COMPOSER_HEIGHT - composerLineHeight)
 const compactTextOpticalOffset = Platform.OS === 'ios' ? 2 : 0
 
 export function ChatComposer({
+  active,
   focusRequest = 0,
+  onFocusRequestHandled,
   disabled,
   emptyContextPlaceholder = '跟进',
   modelLabel,
@@ -98,20 +109,31 @@ export function ChatComposer({
   const [menuVisible, setMenuVisible] = useState(false)
   const [menuAnchor, setMenuAnchor] = useState(emptyMenuAnchor)
   const wrapperRef = useRef<View>(null)
-  const inputRef = useRef<KeyboardSafeTextInputHandle>(null)
+  const inputRef = useRef<TextInput>(null)
   const consumedFocusRequest = useRef(0)
   useEffect(() => {
-    if (disabled || focusRequest <= consumedFocusRequest.current || !inputRef.current) return
-    inputRef.current.focus()
+    if (!active) {
+      inputRef.current?.blur()
+      setFocused(false)
+      setMenuVisible(false)
+    }
+  }, [active])
+  useEffect(() => {
+    if (focusRequest <= consumedFocusRequest.current) return
     consumedFocusRequest.current = focusRequest
-  }, [disabled, focusRequest])
+    // Navigation owns pending requests. Once delivered, an unavailable input must
+    // expire the request instead of replaying it after a modal or send completes.
+    onFocusRequestHandled(focusRequest)
+    if (active && !disabled) inputRef.current?.focus()
+  }, [active, disabled, focusRequest, onFocusRequestHandled])
   const theme = useTheme()
+  const filePreview = useMobileFilePreview()
   const outgoingMessage = composerMessage(message, selectedApps)
   const canSend = Boolean(outgoingMessage) && !disabled && !running && !sendDisabled && !uploading
   const hasStructuredSelection =
     planModeActive || goalDraftActive || attachments.length > 0 || selectedApps.length > 0
   const hasExpandedContext = hasStructuredSelection || uploading
-  const expanded = chatComposerPresentation(focused, hasExpandedContext) === 'expanded'
+  const expanded = chatComposerPresentation(active && focused, hasExpandedContext) === 'expanded'
   const glassColorScheme: GlassColorScheme = theme.dark ? 'dark' : 'light'
   const resolvedTestIDs = { ...defaultTestIDs, ...testIDs }
   const selectedMode = planModeActive
@@ -142,6 +164,7 @@ export function ChatComposer({
     if (!value || !canSend) return
     const sent = await onSend(value, {
       attachmentIds: attachments.map(attachment => attachment.id),
+      attachments: attachments.map(({ previewUri: _previewUri, ...attachment }) => attachment),
       pursueGoal: goalDraftActive,
     })
     if (!sent) return
@@ -164,16 +187,25 @@ export function ChatComposer({
     try {
       const uploaded = await Promise.all(assets.map(onUploadAttachment))
       const composerAttachments = uploaded.map<ComposerAttachment>((attachment, index) => ({
-        ...attachment,
+        id: attachment.id,
         filename: assets[index]?.name || attachment.filename,
-        ...(assets[index]?.mimeType.startsWith('image/') ? { previewUri: assets[index]?.uri } : {}),
+        file_size: attachment.fileSize,
+        mime_type: attachment.mimeType,
+        status: 'ready',
+        file_extension: /\.[^.]+$/.exec(assets[index]?.name || attachment.filename)?.[0] ?? '',
+        created_at: new Date().toISOString(),
+        ...(attachment.localPath ? { local_path: attachment.localPath } : {}),
+        ...(attachment.workspaceFile ? { workspace_file: attachment.workspaceFile } : {}),
+        ...(assets[index]?.mimeType.startsWith('image/')
+          ? { previewUri: assets[index]?.uri, local_preview_url: assets[index]?.uri }
+          : {}),
       }))
       setAttachments(current => [
         ...current,
         ...composerAttachments.filter(item => !current.some(existing => existing.id === item.id)),
       ])
     } catch (cause) {
-      Alert.alert('无法添加附件', cause instanceof Error ? cause.message : String(cause))
+      showErrorAlert(cause, { title: '无法添加附件' })
     } finally {
       setUploading(false)
     }
@@ -199,7 +231,7 @@ export function ChatComposer({
   const takePhoto = async () => {
     const permission = await ImagePicker.requestCameraPermissionsAsync()
     if (!permission.granted) {
-      Alert.alert('无法打开相机', '请在系统设置中允许 Wegent 使用相机。')
+      showErrorAlert('请在系统设置中允许 Wegent 使用相机。', { title: '无法打开相机' })
       return
     }
     const result = await ImagePicker.launchCameraAsync({
@@ -331,27 +363,37 @@ export function ChatComposer({
             <ScrollView
               contentContainerStyle={styles.attachmentStrip}
               horizontal
+              keyboardShouldPersistTaps="handled"
               showsHorizontalScrollIndicator={false}
             >
               {attachments.map(attachment => (
                 <View key={attachment.id} style={styles.attachmentChip}>
-                  {attachment.previewUri ? (
-                    <Image
-                      source={{ uri: attachment.previewUri }}
-                      style={styles.attachmentPreview}
-                    />
-                  ) : (
-                    <View style={styles.fileIcon}>
-                      <Ionicons
-                        color={theme.colors.onSurfaceVariant}
-                        name="document-outline"
-                        size={17}
+                  <Pressable
+                    accessibilityRole="button"
+                    accessibilityLabel={`预览 ${attachment.filename}`}
+                    disabled={!filePreview}
+                    onPress={() => filePreview?.openAttachment(attachment)}
+                    style={styles.attachmentOpen}
+                    testID={`composer-attachment-preview-${attachment.id}`}
+                  >
+                    {attachment.previewUri ? (
+                      <Image
+                        source={{ uri: attachment.previewUri }}
+                        style={styles.attachmentPreview}
                       />
-                    </View>
-                  )}
-                  <Text numberOfLines={1} style={styles.attachmentName} variant="labelMedium">
-                    {attachment.filename}
-                  </Text>
+                    ) : (
+                      <View style={styles.fileIcon}>
+                        <Ionicons
+                          color={theme.colors.onSurfaceVariant}
+                          name="document-outline"
+                          size={17}
+                        />
+                      </View>
+                    )}
+                    <Text numberOfLines={1} style={styles.attachmentName} variant="labelMedium">
+                      {attachment.filename}
+                    </Text>
+                  </Pressable>
                   <Pressable
                     accessibilityLabel={`移除 ${attachment.filename}`}
                     hitSlop={6}
@@ -414,7 +456,8 @@ export function ChatComposer({
             style={[styles.inputRow, expanded ? styles.expandedInputRow : styles.compactInputRow]}
           >
             {expanded ? null : attachmentButton}
-            <KeyboardSafeTextInput
+            <TextInput
+              nativeID="chat-input"
               accessibilityLabel="消息"
               editable={!disabled}
               multiline
@@ -483,8 +526,7 @@ export function ChatComposer({
         onSetGoal={() => {
           if (planModeActive) onClearPlanMode()
           setGoalDraftActive(true)
-          setFocused(true)
-          requestAnimationFrame(() => inputRef.current?.focus())
+          if (active && !disabled) inputRef.current?.focus()
         }}
         onSetPlanMode={() => {
           setGoalDraftActive(false)
@@ -492,7 +534,7 @@ export function ChatComposer({
         }}
         onTakePhoto={() => void takePhoto()}
         planModeActive={planModeActive}
-        visible={menuVisible}
+        visible={active && menuVisible}
       />
     </View>
   )
@@ -612,6 +654,13 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(128,128,128,0.16)',
   },
   attachmentPreview: { width: 30, height: 30, borderRadius: 9 },
+  attachmentOpen: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    minWidth: 0,
+    flexShrink: 1,
+  },
   fileIcon: { width: 30, alignItems: 'center', justifyContent: 'center' },
   attachmentName: { minWidth: 0, flexShrink: 1 },
   selectedApps: { paddingHorizontal: 12, paddingTop: 8 },

@@ -120,6 +120,7 @@ pub struct AppState {
     /// configured cloud store projects cached Runtime features registers its
     /// own implementation before route construction.
     pub cloud_runtime_features: Arc<dyn crate::devices::CloudRuntimeFeatures>,
+    pub cloud_device_destroyer: Option<Arc<dyn crate::cloud_device_deletion::CloudDeviceDestroyer>>,
     /// Whether the Device store allows only one record per owner and App name.
     pub unique_app_device_names: bool,
     /// `executor_version_service`: the cached executor version every device

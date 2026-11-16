@@ -658,10 +658,9 @@ pub(crate) async fn finalize_executor_failure<M: Mysql, R: Redis>(
 
 /// Run the real chat-shell SSE consumer for one admitted job.
 ///
-/// `sse_sync::collect` owns the Source lifecycle: it clears
-/// `chat:cancel:{subtask}` before sending the request (the early DEL), polls
-/// the key while the stream runs, persists each event, and deletes the key in
-/// its finally (the late, strategy-ending DEL). A 500, a mid-stream error and a
+/// `sse_sync::collect` registers without erasing admitted cancel intents, polls
+/// the flag while the stream runs, persists each event, and atomically clears
+/// the intent and flag in its finally. A 500, a mid-stream error and a
 /// stream without a terminal frame all surface as an error here and are logged
 /// with the job identity; they are never reported as completion.
 async fn run_chat_shell<M, R>(
@@ -709,9 +708,16 @@ where
             &key,
             || "Pipeline execution is already owned or Redis is unavailable".to_owned(),
             async {
+                let (_, subtask_table) = crate::internal_callback::completion::resolve_tables(
+                    consumer.app,
+                    consumer.tables,
+                    job.task_id,
+                )
+                .await
+                .map_err(|error| error.to_string())?;
                 match crate::internal_callback::completion::read_terminal_result(
                     consumer.mysql,
-                    consumer.tables,
+                    &subtask_table,
                     job.task_id,
                     job.subtask_id,
                 )

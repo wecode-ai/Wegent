@@ -129,6 +129,7 @@ export function taskAddress(
     runtime: task.runtime,
     workspacePath: task.workspacePath || workspace.workspacePath,
     workspaceKind: task.workspaceKind ?? workspace.workspaceKind,
+    worktreeId: task.worktreeId ?? workspace.worktreeId,
   }
 }
 

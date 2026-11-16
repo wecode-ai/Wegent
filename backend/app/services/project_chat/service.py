@@ -1319,6 +1319,12 @@ class ProjectChatService:
         accepted_terminal: bool = False,
     ) -> tuple[ProjectChatMessageView, str] | None:
         from app.services.project_chat.execution_snapshot import runtime_event_sequence
+        from app.services.runtime_event_context import (
+            runtime_event_is_private_discussion,
+        )
+
+        if runtime_event_is_private_discussion(payload):
+            return None
 
         sequence = runtime_event_sequence(payload)
         identities = [device_id]
@@ -2600,7 +2606,7 @@ class ProjectChatService:
         from app.services.collaboration_permissions import (
             collaboration_permission_service,
         )
-        from app.services.workspaces import workspace_service
+        from app.services.workspaces.service import workspace_service
 
         if share_with_workspace:
             workspace_service.ensure_accessible_agent_authorized(

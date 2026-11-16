@@ -4,6 +4,13 @@ sidebar_position: 18
 
 # Stopped preparation and bridge releases
 
+A bridge source declares `releasePurpose: "bridge"` in `upgrade-policy.json`. It verifies
+and promotes only stable, preserving the existing beta channel. Ordinary stable releases
+still advance both channels. Preparation and evidence aggregation reject a bridge that
+already requires stopped migration. Published 0.6.8-beta.5 is a beta bridge; stable catalogs
+cannot use it as an intermediate. Keeping channels separate requires an independently
+delivered and verified stable bridge before publishing the new target.
+
 Live environment prewarming must not rewrite session data. After the old runtime stops,
 the snapshot completes and the existing `ReleaseActivation` is recorded, the bridge bootstrap
 runs the target's stopped preparation before starting the independent health supervisor.

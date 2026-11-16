@@ -24,6 +24,7 @@ Wework is a desktop workbench for collaborating with AI. Open a local project an
 - [Built-in browser](./browser.md)
 - [Devices and cloud work](./devices.md)
 - [Wework Mobile](./mobile.md): mobile home screen, device filters, and remote conversations
+- [Mobile file previews](./mobile-file-preview.md): cloud files, attachments, changes, search, and system sharing
 - [Plugins and Skills](./plugins-and-skills.md)
 - [Settings and data](./settings.md)
 - [Troubleshooting](./troubleshooting.md)

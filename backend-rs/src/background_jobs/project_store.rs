@@ -186,8 +186,7 @@ async fn insert_with_conflict_clause(
     let columns: Vec<Column> = tx.fetch_all(
         "SELECT CAST(COLUMN_NAME AS CHAR) AS column_name, CAST(IS_NULLABLE AS CHAR) AS is_nullable, CAST(DATA_TYPE AS CHAR) AS data_type FROM information_schema.COLUMNS WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='loop_items' AND GENERATION_EXPRESSION='' ORDER BY ORDINAL_POSITION", ()
     ).await?;
-    let now = Utc::now()
-        .naive_utc()
+    let now = crate::socketio::project_chat_messages::database_timestamp(Utc::now().naive_utc())
         .format("%Y-%m-%d %H:%M:%S%.f")
         .to_string();
     let mut row = BTreeMap::from([

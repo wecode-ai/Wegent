@@ -71,7 +71,7 @@ describe('device-owned model catalogs', () => {
       void state.loadModels()
       void state.loadModels()
     })
-    expect(load).toHaveBeenCalledExactlyOnceWith(11)
+    expect(load).toHaveBeenCalledExactlyOnceWith(11, 'app-record-11')
     expect(state.modelsLoading).toBe(true)
     await act(() => {
       pending.resolve({ models: [native, { ...native, provider: 'other', is_default: false }] })
@@ -143,6 +143,72 @@ describe('device-owned model catalogs', () => {
     await act(() => state.loadModels(true))
     expect(state.modelsError).toBeNull()
     expect(state.selectedModel?.name).toBe(native.model_id)
+  })
+
+  it('invalidates old Backend catalogs, including responses that finish after a same-host account switch', async () => {
+    const pending = deferred<{ models: RunnerModel[] }>()
+    const load = vi.fn().mockReturnValueOnce(pending.promise).mockResolvedValue({ models: [] })
+    const api = { listNativeModels: load } as unknown as RuntimeApi
+    function Harness({ session = 'account-a' }) {
+      state = useDeviceModels(api, device(11), [], session)
+      return null
+    }
+    await act(() => {
+      renderer = create(<Harness />)
+    })
+    await act(() => {
+      void state.loadModels()
+    })
+    await act(() => renderer.update(<Harness session="account-b" />))
+    await act(() => pending.resolve({ models: [native] }))
+    expect(state.models).toEqual([])
+    await act(() => state.loadModels())
+    expect(load).toHaveBeenCalledTimes(2)
+  })
+
+  it('refreshes the phone catalog directly while a cloud device is selected and preserves it across Backend login', async () => {
+    const load = vi.fn().mockResolvedValue({ models: [native] })
+    const api = { listNativeModels: load } as unknown as RuntimeApi
+    const phone: DeviceInfo = {
+      ...device(-1),
+      device_type: 'local',
+      device_id: 'mobile-local:phone:stable',
+    }
+    function Harness({ session = 'account-a', local = false }) {
+      state = useDeviceModels(api, local ? phone : device(11), [], session)
+      return null
+    }
+    await act(() => {
+      renderer = create(<Harness />)
+    })
+    await act(() => state.loadDeviceModels(phone, true))
+    expect(load).toHaveBeenCalledExactlyOnceWith(-1, phone.device_id)
+    expect(state.models).toEqual([])
+    await act(() => renderer.update(<Harness session="account-b" local />))
+    expect(state.selectedModel?.name).toBe(native.model_id)
+    await act(() => state.loadModels())
+    expect(load).toHaveBeenCalledOnce()
+  })
+
+  it('performs a requested forced refresh after a pending catalog read finishes', async () => {
+    const pending = deferred<{ models: RunnerModel[] }>()
+    const { Harness, load } = setup(
+      vi.fn().mockReturnValueOnce(pending.promise).mockResolvedValue({ models: [] })
+    )
+    await act(() => {
+      renderer = create(<Harness />)
+    })
+    let forced!: Promise<void>
+    await act(() => {
+      void state.loadModels()
+      forced = state.loadModels(true)
+    })
+    await act(async () => {
+      pending.resolve({ models: [native] })
+      await forced
+    })
+    expect(load).toHaveBeenCalledTimes(2)
+    expect(state.models).toEqual([cloud])
   })
 
   it('keeps same-name cloud owners distinct and retains a native selection through background cloud refresh', async () => {

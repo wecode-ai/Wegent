@@ -1743,6 +1743,7 @@ async def _create_streaming_response_unified(
     "/{response_id}/cancel", response_model=WeworkResponseObject | ResponseObject
 )
 @limiter.limit(settings.RATE_LIMIT_CANCEL_RESPONSE)
+@trace_async(span_name="openapi.cancel_response", tracer_name="backend.openapi")
 async def cancel_response(
     request: Request,
     response_id: str,
@@ -1860,34 +1861,44 @@ async def cancel_response(
             ):
                 db.rollback()
             else:
-                task_crd = Task.model_validate(task_kind.json)
-                # Update subtask status to COMPLETED with partial content
-                subtask_store.update_fields(
-                    db,
-                    subtask=running_subtask,
-                    status=SubtaskStatus.COMPLETED,
-                    progress=100,
-                    completed_at=datetime.now(),
-                    result={"value": partial_content or ""},
-                )
+                coordinator = session_manager.response_cancel
+                intent = coordinator.prepare(running_subtask_id)
+                try:
+                    task_crd = Task.model_validate(task_kind.json)
+                    # Update subtask status to COMPLETED with partial content
+                    subtask_store.update_fields(
+                        db,
+                        subtask=running_subtask,
+                        status=SubtaskStatus.COMPLETED,
+                        progress=100,
+                        completed_at=datetime.now(),
+                        result={"value": partial_content or ""},
+                    )
 
-                # Update task status to COMPLETED
-                if task_crd.status:
-                    task_crd.status.status = "COMPLETED"
-                    task_crd.status.errorMessage = ""
-                    task_crd.status.updatedAt = datetime.now()
-                    task_crd.status.completedAt = datetime.now()
-                    task_crd.status.result = {"value": partial_content or ""}
+                    # Update task status to COMPLETED
+                    if task_crd.status:
+                        task_crd.status.status = "COMPLETED"
+                        task_crd.status.errorMessage = ""
+                        task_crd.status.updatedAt = datetime.now()
+                        task_crd.status.completedAt = datetime.now()
+                        task_crd.status.result = {"value": partial_content or ""}
 
-                from app.services.chat.storage.db import settle_pipeline_handoff
+                    from app.services.chat.storage.db import settle_pipeline_handoff
 
-                document = task_crd.model_dump(mode="json")
-                settle_pipeline_handoff(document, running_subtask_id)
-                task_store.update_json(db, task=task_kind, payload=document)
+                    document = task_crd.model_dump(mode="json")
+                    settle_pipeline_handoff(document, running_subtask_id)
+                    task_store.update_json(db, task=task_kind, payload=document)
 
-                db.commit()
-                # The SSE owner may finish as soon as it sees the flag.
-                await session_manager.cancel_stream(running_subtask_id)
+                    db.commit()
+                except BaseException:
+                    try:
+                        db.rollback()
+                    finally:
+                        if intent is not None:
+                            await coordinator.abort(running_subtask_id, intent)
+                    raise
+                # Cleanup can already have observed this committed winner.
+                await session_manager.finish_response_cancel(running_subtask_id, intent)
                 db.refresh(task_kind)
                 db.refresh(running_subtask)
 

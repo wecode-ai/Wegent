@@ -66,6 +66,31 @@ test('HTTP reconciliation runs without a cloud device identity', async () => {
   expect(initial.onError).not.toHaveBeenCalled()
 })
 
+test.each(['available', 'busy', 'localSync'] as const)(
+  'keeps the result of an acquired reconciliation when %s changes in the same scope',
+  async field => {
+    const initial = { ...options(), request: 1, localSync: true }
+    let reject!: (error: Error) => void
+    vi.mocked(reconcilePluginRefresh).mockImplementation(
+      () =>
+        new Promise((_, fail) => {
+          reject = fail
+        })
+    )
+    const { rerender, result } = renderHook(usePluginRefreshReconciliation, {
+      initialProps: initial,
+    })
+    await waitFor(() => expect(reconcilePluginRefresh).toHaveBeenCalledOnce())
+    rerender({ ...initial, [field]: !initial[field] })
+    const error = new Error('Plugin reconciliation failed: PLUGIN_RUNTIME_METADATA_FAILED')
+    await act(async () => reject(error))
+    expect(initial.onError).toHaveBeenCalledExactlyOnceWith(error)
+    expect(initial.onComplete).not.toHaveBeenCalled()
+    expect(reconcilePluginRefresh).toHaveBeenCalledOnce()
+    expect(result.current.active).toBe(false)
+  }
+)
+
 test('does not revive an old reconciliation after switching accounts and back', async () => {
   const initial = { ...options(), request: 1 }
   let finish!: () => void
@@ -88,6 +113,29 @@ test('does not revive an old reconciliation after switching accounts and back', 
   expect(initial.onComplete).not.toHaveBeenCalled()
   expect(initial.onError).not.toHaveBeenCalled()
   expect(reconcilePluginRefresh).toHaveBeenCalledOnce()
+})
+
+test('scope cancellation survives an earlier admission-gate change', async () => {
+  const initial = { ...options(), request: 1 }
+  let finish!: () => void
+  let captured!: Parameters<typeof reconcilePluginRefresh>[0]
+  vi.mocked(reconcilePluginRefresh).mockImplementation(
+    options =>
+      new Promise(resolve => {
+        captured = options
+        finish = resolve
+      })
+  )
+  const { rerender, result } = renderHook(usePluginRefreshReconciliation, { initialProps: initial })
+  await waitFor(() => expect(reconcilePluginRefresh).toHaveBeenCalledOnce())
+  rerender({ ...initial, busy: true })
+  rerender({ ...initial, accountKey: 'other-account', request: 0 })
+  rerender(initial)
+  expect(captured.isCurrent()).toBe(false)
+  expect(result.current.active).toBe(false)
+  await act(async () => finish())
+  expect(initial.onComplete).not.toHaveBeenCalled()
+  expect(initial.onError).not.toHaveBeenCalled()
 })
 
 test('clears queued refresh activity when the shared device lease times out', async () => {
@@ -231,7 +279,7 @@ test('a new explicit refresh can recover after the native waiting window expires
   }
 })
 
-test('resumes a native check after a foreground mutation without reviving its old completion', async () => {
+test('keeps a completed native check across foreground admission changes', async () => {
   const initial = { ...options(), request: 1, localSync: true }
   let finish!: () => void
   vi.mocked(reconcilePluginRefresh).mockImplementationOnce(
@@ -241,15 +289,15 @@ test('resumes a native check after a foreground mutation without reviving its ol
   await waitFor(() => expect(reconcilePluginRefresh).toHaveBeenCalledOnce())
   view.rerender({ ...initial, busy: true })
   await act(async () => finish())
-  expect(initial.onComplete).not.toHaveBeenCalled()
+  expect(initial.onComplete).toHaveBeenCalledOnce()
   view.rerender(initial)
   await waitFor(() => expect(initial.onComplete).toHaveBeenCalledOnce())
-  expect(reconcilePluginRefresh).toHaveBeenCalledTimes(2)
+  expect(reconcilePluginRefresh).toHaveBeenCalledOnce()
   expect(initial.onError).not.toHaveBeenCalled()
 })
 
 test.each(['account', 'device', 'request', 'busy', 'offline'])(
-  'fences an old native check during the commit that changes %s',
+  'updates native request ownership during the commit that changes %s',
   async change => {
     const initial = { ...options(), request: 1, localSync: true }
     let captured!: Parameters<typeof reconcilePluginRefresh>[0]
@@ -281,9 +329,57 @@ test.each(['account', 'device', 'request', 'busy', 'offline'])(
       ...(change === 'busy' ? { busy: true } : {}),
       ...(change === 'offline' ? { available: false } : {}),
     })
-    expect(observed).toBe(false)
+    const keepsOwnership = change === 'busy' || change === 'offline'
+    expect(observed).toBe(keepsOwnership)
     await act(async () => finish())
-    expect(initial.onComplete).not.toHaveBeenCalled()
+    expect(initial.onComplete).toHaveBeenCalledTimes(keepsOwnership ? 1 : 0)
     view.unmount()
   }
 )
+
+test('does not revive a queued request after switching accounts and back', async () => {
+  vi.useFakeTimers()
+  const release = beginPluginDeviceSync('device')!
+  const initial = { ...options(), request: 1 }
+  const view = renderHook(usePluginRefreshReconciliation, { initialProps: initial })
+  try {
+    expect(reconcilePluginRefresh).not.toHaveBeenCalled()
+    view.rerender({ ...initial, accountKey: 'other-account', request: 0 })
+    view.rerender(initial)
+    release()
+    await act(async () => vi.advanceTimersByTimeAsync(1000))
+    expect(reconcilePluginRefresh).not.toHaveBeenCalled()
+    expect(view.result.current.active).toBe(false)
+    view.rerender({ ...initial, request: 2 })
+    await act(async () => {})
+    expect(reconcilePluginRefresh).toHaveBeenCalledOnce()
+    expect(initial.onComplete).toHaveBeenCalledOnce()
+  } finally {
+    view.unmount()
+    release()
+    vi.useRealTimers()
+  }
+})
+
+test('keeps one native deferral owner across admission changes', async () => {
+  vi.useFakeTimers()
+  const initial = { ...options(), request: 1, localSync: true }
+  const busy = Object.assign(new Error('busy'), { code: 'plugin_local_sync_busy' })
+  vi.mocked(reconcilePluginRefresh).mockRejectedValueOnce(busy).mockResolvedValue(undefined)
+  const view = renderHook(usePluginRefreshReconciliation, { initialProps: initial })
+  try {
+    await act(async () => {})
+    expect(view.result.current.waitingOnNative).toBe(true)
+    view.rerender({ ...initial, busy: true })
+    view.rerender(initial)
+    expect(reconcilePluginRefresh).toHaveBeenCalledOnce()
+    await act(async () => vi.advanceTimersByTimeAsync(500))
+    expect(reconcilePluginRefresh).toHaveBeenCalledTimes(2)
+    expect(initial.onComplete).toHaveBeenCalledOnce()
+    expect(initial.onError).not.toHaveBeenCalled()
+    expect(view.result.current.active).toBe(false)
+  } finally {
+    view.unmount()
+    vi.useRealTimers()
+  }
+})

@@ -30,7 +30,15 @@ export function usePluginRefreshReconciliation(options: {
   onError: (error: unknown) => void
 }) {
   const latest = useRef(options)
+  const scopeEpoch = useRef(0)
   useLayoutEffect(() => {
+    const previous = latest.current
+    if (
+      previous.accountKey !== options.accountKey ||
+      previous.deviceId !== options.deviceId ||
+      previous.request !== options.request
+    )
+      scopeEpoch.current += 1
     latest.current = options
   })
   const handled = useRef(0)
@@ -40,6 +48,7 @@ export function usePluginRefreshReconciliation(options: {
     accountKey: string
     deviceId: string
     startedAt: number
+    epoch: number
   } | null>(null)
   const [stage, setStage] = useState<PluginReconciliationStage>('waiting')
   const [nativeDeferred, setNativeDeferred] = useState(false)
@@ -63,11 +72,15 @@ export function usePluginRefreshReconciliation(options: {
     lastRequest.current = options.request
       ? { request: options.request, accountKey: options.accountKey, deviceId: options.deviceId }
       : null
-    if (!options.request || handled.current === options.request) return
+    if (!options.request || handled.current === options.request) {
+      setActive(current => (current && current.epoch !== scopeEpoch.current ? null : current))
+      return
+    }
     const owner = {
       accountKey: options.accountKey,
       deviceId: options.deviceId,
       startedAt: Date.now(),
+      epoch: scopeEpoch.current,
     }
     const clearActive = () => {
       if (mounted.current) setActive(current => (current === owner ? null : current))
@@ -86,6 +99,7 @@ export function usePluginRefreshReconciliation(options: {
     const { accountKey, deviceId, request } = options
     let timer: ReturnType<typeof setTimeout> | undefined
     let cancelled = false
+    let acquired = false
     const deadline = Date.now() + 30_000
     const startedAt = Date.now()
     let waiting = false
@@ -94,15 +108,13 @@ export function usePluginRefreshReconciliation(options: {
     const isCurrent = () =>
       !cancelled &&
       mounted.current &&
-      latest.current.available &&
-      !latest.current.busy &&
+      scopeEpoch.current === owner.epoch &&
       latest.current.accountKey === accountKey &&
       latest.current.deviceId === deviceId &&
       latest.current.request === request
     const start = () => {
       if (cancelled || !isCurrent()) return
       if (deferredError && Date.now() >= deadline) {
-        handled.current = request
         latest.current.onError(deferredError)
         clearActive()
         return
@@ -127,6 +139,8 @@ export function usePluginRefreshReconciliation(options: {
         timer = setTimeout(start, 250)
         return
       }
+      handled.current = request
+      acquired = true
       logPluginRefreshPhase('reconcile-start', { request, elapsedMs: Date.now() - startedAt })
       const current = latest.current
       let deferred = false
@@ -142,10 +156,7 @@ export function usePluginRefreshReconciliation(options: {
         },
       })
         .then(() => {
-          if (isCurrent()) {
-            handled.current = request
-            latest.current.onComplete()
-          }
+          if (isCurrent()) latest.current.onComplete()
         })
         .catch(error => {
           if (!isCurrent()) return
@@ -161,7 +172,6 @@ export function usePluginRefreshReconciliation(options: {
               elapsedMs: Date.now() - startedAt,
             })
           } else {
-            handled.current = request
             latest.current.onError(error)
           }
         })
@@ -176,6 +186,19 @@ export function usePluginRefreshReconciliation(options: {
     }
     start()
     return () => {
+      // Availability and busy flags gate admission. Once acquired, the request
+      // still owns its result until its account, device or request changes.
+      if (
+        acquired &&
+        mounted.current &&
+        scopeEpoch.current === owner.epoch &&
+        latest.current.accountKey === accountKey &&
+        latest.current.deviceId === deviceId &&
+        latest.current.request === request
+      ) {
+        logPluginRefreshPhase('reconcile-gates-changed', { request, current: true })
+        return
+      }
       cancelled = true
       if (timer) clearTimeout(timer)
       clearActive()

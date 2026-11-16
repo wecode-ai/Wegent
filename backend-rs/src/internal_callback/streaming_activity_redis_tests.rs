@@ -56,12 +56,62 @@ async fn with_fixture(run: impl AsyncFnOnce(&Fixture)) {
     let outcome = std::panic::AssertUnwindSafe(run(&fixture))
         .catch_unwind()
         .await;
+    crate::responses::stream_state::unregister_stream(Some(&fixture.redis), fixture.subtask_id)
+        .await;
     session::cleanup_streaming_state(&fixture.redis, fixture.subtask_id, Some(fixture.task_id))
         .await
         .expect("remove fixture keys");
     if let Err(panic) = outcome {
         std::panic::resume_unwind(panic);
     }
+}
+
+#[tokio::test]
+#[ignore = "requires explicit disposable WEGENT_TEST_REDIS_ADDRESS; CI runs this group"]
+async fn response_cancel_registration_preserves_intent_until_atomic_owner_cleanup() {
+    with_fixture(async |fixture| {
+        use crate::responses::stream_state::{register_stream, unregister_stream};
+        let flag = format!("chat:cancel:{}", fixture.subtask_id);
+        let intent = format!("chat:cancel-intent:{}", fixture.subtask_id);
+
+        fixture.redis.set(&flag, "true").await.expect("old flag");
+        register_stream(Some(&fixture.redis), fixture.subtask_id).await;
+        let cleared: Option<String> = fixture.redis.get(&flag).await.expect("old flag read");
+        assert!(
+            cleared.is_none(),
+            "registration clears a flag without an intent"
+        );
+
+        fixture
+            .redis
+            .set(&intent, "pending-token")
+            .await
+            .expect("admitted intent");
+        register_stream(Some(&fixture.redis), fixture.subtask_id).await;
+        fixture
+            .redis
+            .set(&flag, "true")
+            .await
+            .expect("committed notification");
+        // Both the outer response and inner dispatch may register after COMMIT.
+        register_stream(Some(&fixture.redis), fixture.subtask_id).await;
+        register_stream(Some(&fixture.redis), fixture.subtask_id).await;
+        let preserved: Option<String> = fixture.redis.get(&flag).await.expect("flag read");
+        assert_eq!(preserved.as_deref(), Some("true"));
+        let preserved_intent: Option<String> =
+            fixture.redis.get(&intent).await.expect("intent read");
+        assert_eq!(preserved_intent.as_deref(), Some("pending-token"));
+
+        unregister_stream(Some(&fixture.redis), fixture.subtask_id).await;
+        let closed: Vec<Option<String>> = fixture
+            .redis
+            .mget([&flag, &intent])
+            .await
+            .expect("closed keys");
+        assert_eq!(closed, [None, None]);
+        unregister_stream(Some(&fixture.redis), fixture.subtask_id).await;
+    })
+    .await;
 }
 
 // Only inject a failed START command or a new START immediately after GET.

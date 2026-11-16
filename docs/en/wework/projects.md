@@ -427,9 +427,21 @@ Opening a conversation does not enable background project coordination. For work
 
 ## Issue details and execution tasks
 
+In Issue activity, click an attachment link or embedded image to preview it and download the original. Images, Markdown documents and other files share resource resolution and authenticated reads for the current Issue. An attachment ID identifies a file directly; local and relative paths match the link label and full basename exactly. Only a unique match opens. Execution paths are never read as files on the viewer's device.
+
+<a id="issue-resource-preview"></a>
+
+### Attachment and document previews
+
+Open **Collaboration → project board → Issue → a file link or image in activity**. Markdown attachments render as documents, with embedded images and file links resolved from the same Issue's uploaded attachments. Ordinary web links still open the webpage. Text, code and HTML attachments display source; download other formats to obtain the original file.
+
+Image or file loading failures show an error and **Retry**, retaining the current Issue and preview location. Correct missing or ambiguous attachments, or use an explicit attachment link, then retry. Switching Issues resolves resources again instead of displaying a same-named file from the previous Issue.
+
 Opening an issue from a project-space board shows its attachments directly in the detail panel, with actions to download, remove, or upload more files. The attachment section uses the same dividers and spacing as the other detail fields, and the complete row containing the file name and size downloads the file. A download shows progress; if it fails, the attachment remains available, an error is shown, and the row can be selected again to retry. The detail view keeps each file name and size visible instead of showing only an attachment count, so the context can be checked before execution starts.
 
 Selecting **New task** in the issue detail opens the task conversation sidebar on the right. Describe the work in the composer and send it to create and link the execution task. Wework keeps this input step even when the issue is already **Pending** and never starts an empty task directly.
+
+For substantial assigned work, collaboration Agents delegate execution to native subagents by default while the primary Agent coordinates, verifies and replies concisely. No extra delegation request is needed. Normally only a brief acknowledgment and the final result are published; routine tool, wait and worker progress stays internal, while material blockers, questions and approvals remain visible. Simple questions are answered directly. Subagents retain the original task's context and permission limits without creating extra Issue execution tasks. Explicit single-agent mode still disables subagents.
 
 Comments in the issue activity have two different execution semantics:
 
@@ -438,7 +450,7 @@ Comments in the issue activity have two different execution semantics:
 
 The **Execution tasks** section lists these independent tasks separately. An increased task count normally means that a new top-level comment was sent; a thread reply adds another turn to the original task instead.
 
-For ordinary linked tasks, the Executor writes the issue's execution status from the runtime lifecycle. The board and the issue summary above the task composer do not write status independently. When the same task starts another turn or reaches a terminal state, they use the lifecycle transition as an invalidation signal and read the issue again, so an already-open board moves the issue between columns such as **In progress** and **Pending review** without a manual reload. For collaboration groups, the manager agent evaluates member outcomes and changes the issue status.
+For ordinary tasks linked to local issues, the Executor writes the issue status from the runtime lifecycle. The board and the issue summary above the task composer use lifecycle transitions to refresh the issue. An ordinary private task linked to a cloud issue marks it **In progress** after task creation is accepted. For collaboration groups, the manager agent evaluates member outcomes and changes the issue status; member task creation callbacks do not overwrite the manager's decision.
 
 Use the UI's archive action for an unneeded Issue from its board card, table row or details' More information entry. Review subtasks and linked runs first; failure to stop a run means that merely submitting the request is not successful archival. Restore from the project's Archived list. Archival is not permanent deletion.
 

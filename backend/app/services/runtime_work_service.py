@@ -872,6 +872,8 @@ async def _dispatch_runtime_send(
     Request-user-input responses use a dedicated executor channel and do not
     spawn a new turn, so they intentionally omit ``executionRequest``.
     """
+    if request.conversation_context is not None:
+        payload["conversationContext"] = request.conversation_context
     if request.request_user_input_response is None:
         address = await resolve_continuation_address(
             db=db,
@@ -942,6 +944,8 @@ async def send_runtime_guidance(
         payload["attachments"] = attachments
     if request.client_guidance_id:
         payload["clientGuidanceId"] = request.client_guidance_id
+    if request.conversation_context is not None:
+        payload["conversationContext"] = request.conversation_context
     if request.additional_context:
         payload["additionalContext"] = request.additional_context
     try:

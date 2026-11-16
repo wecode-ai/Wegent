@@ -29,6 +29,8 @@ mod text_value;
 #[path = "tests.rs"]
 mod tests;
 
+use std::borrow::Cow;
+
 use brz_mysql::{Mysql, MysqlResult, MysqlTransaction};
 use brz_redis::Redis;
 use serde_json::Value;
@@ -71,8 +73,24 @@ pub(crate) async fn complete_executor_failure<M: Mysql, R: Redis>(
         .unwrap_or_else(|| Value::Object(collect::failure_details(message, code))),
         None => Value::Object(collect::failure_details(message, code)),
     };
+    let (task_table, subtask_table) = resolve_tables(
+        ctx.and_then(|ctx| ctx.app),
+        ctx.map_or(tables, |ctx| ctx.tables),
+        task_id,
+    )
+    .await
+    .inspect_err(|error| {
+        tracing::warn!(%error, task_id, subtask_id, "executor failure table read failed");
+    })
+    .ok()?;
     let (row, metrics_message) = persist::persist_executor_failure(
-        mysql, tables, task_id, subtask_id, &result, message,
+        mysql,
+        &task_table,
+        &subtask_table,
+        task_id,
+        subtask_id,
+        &result,
+        message,
     )
     .await
     .inspect_err(
@@ -110,6 +128,24 @@ pub(crate) struct Completion<'a, M: Mysql, R: Redis> {
     pub(crate) executor_manager: &'a ExecutorManager,
 }
 
+/// Resolve the physical tables together before opening a writer transaction.
+pub(crate) async fn resolve_tables(
+    app: Option<&crate::AppState>,
+    templates: Tables,
+    task_id: i64,
+) -> MysqlResult<(Cow<'static, str>, Cow<'static, str>)> {
+    match app {
+        Some(app) => {
+            let tables = app.task_store.message_edit_tables(task_id).await?;
+            Ok((Cow::Owned(tables.tasks), Cow::Owned(tables.subtasks)))
+        }
+        None => Ok((
+            Cow::Borrowed(templates.tasks),
+            Cow::Borrowed(templates.subtasks),
+        )),
+    }
+}
+
 /// One `TaskCompletedEvent` (`app/core/events.py`).
 ///
 /// The handlers this callback reaches consume the task identity, the owner and
@@ -129,10 +165,10 @@ pub(crate) struct TaskCompletedEvent<'a> {
 /// event is emitted so the Socket.IO status frame can address `user:{id}`.
 pub(crate) async fn task_status_user_id<M: Mysql>(
     mysql: &M,
-    tables: Tables,
+    task_table: &str,
     task_id: i64,
 ) -> Option<i64> {
-    let sql = sql::active_task_statement_single_state(tables.tasks);
+    let sql = sql::active_task_statement_single_state(task_table);
     let row: brz_mysql::MysqlRow = mysql
         .route(crate::task_routing::ByTaskId(task_id as u64))
         .fetch_optional(sql, (task_id,))
@@ -153,7 +189,7 @@ pub(crate) struct StoredTerminal {
 /// Read the winning terminal result on the writer after a competing commit.
 pub(crate) async fn read_terminal_result<M: Mysql>(
     mysql: &M,
-    tables: Tables,
+    subtask_table: &str,
     task_id: i64,
     subtask_id: i64,
 ) -> MysqlResult<Option<StoredTerminal>> {
@@ -161,7 +197,7 @@ pub(crate) async fn read_terminal_result<M: Mysql>(
     mysql.with_transaction(async |tx| {
         let row: Option<(String, Option<brz_mysql::Json<Value>>, Option<String>)> = tx
             .fetch_optional(
-                format!("SELECT status, result, error_message FROM {} WHERE id = ? AND task_id = ? AND status IN ('COMPLETED','FAILED','CANCELLED')", tables.subtasks),
+                format!("SELECT status, result, error_message FROM {subtask_table} WHERE id = ? AND task_id = ? AND status IN ('COMPLETED','FAILED','CANCELLED')"),
                 (subtask_id, task_id),
             )
             .await?;
@@ -203,7 +239,8 @@ pub(crate) async fn complete_with_delivery<M: Mysql, R: Redis>(
     delivery: Delivery,
     source: Option<&Value>,
 ) -> MysqlResult<Option<TerminalCompletion>> {
-    let user_id = task_status_user_id(ctx.mysql, ctx.tables, event.task_id).await;
+    let (task_table, _) = resolve_tables(ctx.app, ctx.tables, event.task_id).await?;
+    let user_id = task_status_user_id(ctx.mysql, &task_table, event.task_id).await;
     let result = finish_terminal_event(
         ctx,
         event.task_id,
@@ -277,7 +314,8 @@ pub(crate) async fn complete_terminal<M: Mysql, R: Redis>(
     // active state, read before the event is emitted so the Socket.IO status
     // frame can address `user:{id}`. The source reads it before the emit step;
     // that step is Redis-only here, so the read keeps its wire position.
-    let user_id = task_status_user_id(ctx.mysql, ctx.tables, task_id).await;
+    let (task_table, _) = resolve_tables(ctx.app, ctx.tables, task_id).await?;
+    let user_id = task_status_user_id(ctx.mysql, &task_table, task_id).await;
     let completion = complete_terminal_event(
         ctx,
         task_id,

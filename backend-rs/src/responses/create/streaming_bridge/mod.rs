@@ -18,6 +18,7 @@
 //! [`StatusUpdatingEmitter`] the callback path uses, and queues the SSE frames
 //! for that step.
 mod events;
+mod terminal_result;
 mod tools;
 
 use std::collections::{HashMap, VecDeque};
@@ -37,6 +38,7 @@ use crate::internal_callback::emitter::StatusUpdatingEmitter;
 use crate::internal_callback::event::ExecutionEvent;
 use crate::internal_callback::is_cancelled;
 use crate::internal_callback::parser;
+use crate::responses::stream_state::{register_stream, unregister_stream};
 use crate::state::AppState;
 
 use super::dispatch::{self, ExecutionRequest};
@@ -151,7 +153,7 @@ struct Bridge {
     tool_states: HashMap<String, ToolState>,
     registered: bool,
     /// `_dispatch_chat_shell_sse`'s `finally: unregister_stream` already ran
-    /// its single `DEL chat:cancel` for this stream.
+    /// its atomic intent/flag cleanup for this stream.
     inner_unregistered: bool,
     terminal: bool,
     finished: bool,
@@ -352,18 +354,12 @@ impl Bridge {
             Mode::ChatShell => {
                 // `raw_chat_stream` registers the stream before creating the
                 // dispatch task, and `_dispatch_chat_shell_sse` registers it
-                // again for its own reader; both clear the same cancellation
-                // flag.
+                // again for its own reader; both preserve a committing cancel.
                 if let Some(redis) = &self.redis {
-                    let _ = redis.del(self.cancel_key.as_str()).await;
-                    let _ = redis.del(self.cancel_key.as_str()).await;
-                    // Two cancellation reads precede the START write.
-                    // `raw_chat_stream` checks before handling the first event,
-                    // and `_wait_for_sse_cancellation` starts its poll loop
-                    // with another immediate `is_cancelled` read. Both reads
-                    // consume the recorded `GET chat:cancel:{subtask}`
-                    // commands, and the second one is the lane barrier ahead
-                    // of the persisted `chat:task_streaming` SET.
+                    register_stream(Some(redis), self.subtask_id).await;
+                    register_stream(Some(redis), self.subtask_id).await;
+                    // The outer consumer and inner poller each read cancellation
+                    // before START; keep that ordering after registration.
                     let _ = is_cancelled(redis, self.cancel_key.as_str()).await;
                     let _ = is_cancelled(redis, self.cancel_key.as_str()).await;
                 }
@@ -373,13 +369,8 @@ impl Bridge {
                 self.poll.tick().await;
             }
             Mode::Callback { .. } => {
-                // `session_manager.register_stream` (`session.py:267-291`):
-                // one `DEL chat:cancel:{subtask}` clears a retry's flag. The
-                // source creates only a local event here, so no Redis read
-                // precedes the subscription.
-                if let Some(redis) = &self.redis {
-                    let _ = redis.del(self.cancel_key.as_str()).await;
-                }
+                // Callback registration has the same atomic intent guard.
+                register_stream(self.redis.as_ref(), self.subtask_id).await;
             }
         }
         self.registered = true;
@@ -629,48 +620,6 @@ impl Bridge {
         self.terminal = true;
     }
 
-    async fn finish_committed_winner(&mut self) {
-        match completion::read_terminal_result(
-            &self.mysql,
-            self.tables,
-            self.task_id,
-            self.subtask_id,
-        )
-        .await
-        {
-            Ok(Some(completion::StoredTerminal {
-                status,
-                result,
-                error,
-            })) => {
-                self.dispatch_exit_unregister().await;
-                self.cleanup().await;
-                self.state
-                    .use_committed_result(&mut self.queue, result.as_ref());
-                self.state.finish(
-                    &mut self.queue,
-                    if status == "FAILED" {
-                        "failed"
-                    } else {
-                        "completed"
-                    },
-                    error
-                        .filter(|_| status == "FAILED")
-                        .map(|message| json!({"code": "stream_error", "message": message})),
-                );
-                self.finished = true;
-            }
-            Ok(None) => {
-                self.finish_persistence_error("The execution was already settled")
-                    .await
-            }
-            Err(_) => {
-                self.finish_persistence_error("Could not read the committed execution result")
-                    .await
-            }
-        }
-    }
-
     async fn drain_and_finish(&mut self) {
         if let Some(response) = self.response.as_mut() {
             drain_terminal_stream(response).await;
@@ -805,18 +754,6 @@ impl Bridge {
         self.finished = true;
     }
 
-    async fn finish_persistence_error(&mut self, message: &str) {
-        self.dispatch_exit_unregister().await;
-        // Keep the streamed result available after a database failure.
-        self.registered = false;
-        self.state.finish(
-            &mut self.queue,
-            "failed",
-            Some(json!({"code": "stream_error", "message": message})),
-        );
-        self.finished = true;
-    }
-
     async fn complete(
         &mut self,
         status: &str,
@@ -872,22 +809,15 @@ impl Bridge {
 
     /// `_dispatch_chat_shell_sse`'s `finally: session_manager.unregister_stream`.
     ///
-    /// The chat-shell dispatch task clears its cancellation flag once, when
-    /// the upstream read ends. A transport failure exits the dispatch before
-    /// the dispatcher persists the error, so this DEL precedes the FAILED
-    /// completion; a delivered terminal event is persisted inside the emitter
-    /// first, so there this DEL follows the completion. The final response
-    /// cleanup (`raw_chat_stream`'s `finally`) runs its own DEL afterwards;
-    /// both stages execute exactly once. `Mode::Callback` has no dispatch task
-    /// in this process, so the producer owns its registration.
+    /// Transport errors unregister before FAILED persistence; delivered terminal
+    /// events unregister afterwards. Outer cleanup unregisters once more.
+    /// Callback mode has no dispatch task in this process.
     async fn dispatch_exit_unregister(&mut self) {
         if self.inner_unregistered || self.callback_mode() || !self.registered {
             return;
         }
         self.inner_unregistered = true;
-        if let Some(redis) = &self.redis {
-            let _ = redis.del(self.cancel_key.as_str()).await;
-        }
+        unregister_stream(self.redis.as_ref(), self.subtask_id).await;
     }
 
     async fn cleanup(&mut self) {
@@ -901,10 +831,10 @@ impl Bridge {
         }
         if let Some(redis) = &self.redis {
             // `raw_chat_stream`'s `finally`: one `unregister_stream`
-            // (`DEL chat:cancel:{subtask}`), then `delete_streaming_content`
+            // (atomic intent + flag DEL), then `delete_streaming_content`
             // (`DEL chat:streaming:{subtask}`). A chat-shell stream's dispatch
             // task ran its own unregister in `dispatch_exit_unregister`.
-            let _ = redis.del(self.cancel_key.as_str()).await;
+            unregister_stream(Some(redis), self.subtask_id).await;
             let _ = redis
                 .del(format!("chat:streaming:{}", self.subtask_id))
                 .await;

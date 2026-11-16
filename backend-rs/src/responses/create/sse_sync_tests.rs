@@ -13,11 +13,8 @@
 // infer production ownership for the local test servers spawned below.
 #![cfg(test)]
 
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use brz_redis::{EncodeRedisArg, EncodeRedisArgs, FromRedisBulk, RedisResult, SetOptions};
 use serde_json::json;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
@@ -55,225 +52,7 @@ fn executor_manager() -> ExecutorManager {
     ExecutorManager::new("http://127.0.0.1:1").expect("client")
 }
 
-/// One-shot gate for the cancellation GET: `started` fires once the read is
-/// admitted, and the read does not return until `release` fires.
-#[derive(Default)]
-struct CancelGate {
-    started: Option<tokio::sync::oneshot::Sender<()>>,
-    release: Option<tokio::sync::oneshot::Receiver<()>>,
-}
-
-/// Records every Redis command the consumer issues and serves the
-/// cross-worker cancel flag once a test arms it.
-#[derive(Clone, Default)]
-struct RecordingRedis {
-    calls: Arc<Mutex<Vec<String>>>,
-    cancelled: Arc<AtomicBool>,
-    cancel_gate: Arc<Mutex<Option<CancelGate>>>,
-}
-
-impl RecordingRedis {
-    fn key<K: EncodeRedisArg>(key: &K) -> String {
-        key.as_encoded_bytes()
-            .map(|bytes| String::from_utf8_lossy(bytes).into_owned())
-            .unwrap_or_default()
-    }
-
-    fn record(&self, call: String) {
-        self.calls.lock().unwrap().push(call);
-    }
-
-    fn calls(&self) -> Vec<String> {
-        self.calls.lock().unwrap().clone()
-    }
-
-    fn count(&self, prefix: &str) -> usize {
-        self.calls()
-            .iter()
-            .filter(|call| call.starts_with(prefix))
-            .count()
-    }
-
-    fn cancel_get_after(&self, marker: &str) -> bool {
-        let calls = self.calls();
-        let Some(index) = calls.iter().position(|call| call == marker) else {
-            return false;
-        };
-        calls[index + 1..]
-            .iter()
-            .any(|call| call.starts_with("GET chat:cancel:"))
-    }
-
-    fn mark_cancelled(&self) {
-        self.cancelled.store(true, Ordering::SeqCst);
-    }
-
-    /// Hold the next cancellation GET: `started` resolves when it is admitted,
-    /// and the read returns only after `release` fires. A completion records
-    /// `GET-END`, so a test can prove the read finished before a later `DEL`.
-    fn arm_cancel_gate(
-        &self,
-    ) -> (
-        tokio::sync::oneshot::Receiver<()>,
-        tokio::sync::oneshot::Sender<()>,
-    ) {
-        let (started, started_rx) = tokio::sync::oneshot::channel();
-        let (release_tx, release) = tokio::sync::oneshot::channel();
-        *self.cancel_gate.lock().unwrap() = Some(CancelGate {
-            started: Some(started),
-            release: Some(release),
-        });
-        (started_rx, release_tx)
-    }
-}
-
-impl brz_redis::Redis for RecordingRedis {
-    async fn get<K, R>(&self, key: K) -> RedisResult<Option<R>>
-    where
-        K: EncodeRedisArg + Send,
-        R: FromRedisBulk + Send,
-    {
-        let name = Self::key(&key);
-        self.record(format!("GET {name}"));
-        if name == format!("chat:cancel:{SUBTASK_ID}") {
-            // Drop the `MutexGuard` before any await so the `Redis::get`
-            // future stays `Send`.
-            let gate = { self.cancel_gate.lock().unwrap().take() };
-            if let Some(mut gate) = gate {
-                if let Some(started) = gate.started.take() {
-                    let _ = started.send(());
-                }
-                if let Some(release) = gate.release.take() {
-                    let _ = release.await;
-                }
-                self.record(format!("GET-END {name}"));
-            }
-            if self.cancelled.load(Ordering::SeqCst) {
-                return R::from_redis_bulk(bytes::Bytes::from_static(b"true")).map(Some);
-            }
-        }
-        Ok(None)
-    }
-
-    async fn set<K, V>(&self, key: K, _: V) -> RedisResult<()>
-    where
-        K: EncodeRedisArg + Send,
-        V: EncodeRedisArg + Send,
-    {
-        self.record(format!("SET {}", Self::key(&key)));
-        Ok(())
-    }
-
-    async fn set_with<K, V>(&self, key: K, _: V, _: SetOptions) -> RedisResult<bool>
-    where
-        K: EncodeRedisArg + Send,
-        V: EncodeRedisArg + Send,
-    {
-        self.record(format!("SET {}", Self::key(&key)));
-        Ok(true)
-    }
-
-    async fn append<K, V>(&self, key: K, _: V) -> RedisResult<i64>
-    where
-        K: EncodeRedisArg + Send,
-        V: EncodeRedisArg + Send,
-    {
-        self.record(format!("APPEND {}", Self::key(&key)));
-        Ok(0)
-    }
-
-    async fn expire<K>(&self, key: K, _: u64) -> RedisResult<bool>
-    where
-        K: EncodeRedisArg + Send,
-    {
-        self.record(format!("EXPIRE {}", Self::key(&key)));
-        Ok(true)
-    }
-
-    async fn del<K>(&self, key: K) -> RedisResult<i64>
-    where
-        K: EncodeRedisArg + Send,
-    {
-        self.record(format!("DEL {}", Self::key(&key)));
-        Ok(1)
-    }
-
-    async fn del_many<K>(&self, _: K) -> RedisResult<i64>
-    where
-        K: EncodeRedisArgs + Send,
-    {
-        self.record("DEL keys".to_string());
-        Ok(1)
-    }
-
-    async fn mget<K, R>(&self, _: K) -> RedisResult<Vec<Option<R>>>
-    where
-        K: EncodeRedisArgs + Send,
-        R: FromRedisBulk + Send,
-    {
-        self.record("MGET".to_string());
-        Ok(Vec::new())
-    }
-
-    async fn lset<K, V>(&self, key: K, _: i64, _: V) -> RedisResult<()>
-    where
-        K: EncodeRedisArg + Send,
-        V: EncodeRedisArg + Send,
-    {
-        self.record(format!("LSET {}", Self::key(&key)));
-        Ok(())
-    }
-
-    async fn publish<C, M>(&self, channel: C, message: M) -> RedisResult<i64>
-    where
-        C: EncodeRedisArg + Send,
-        M: EncodeRedisArg + Send,
-    {
-        let payload = message
-            .as_encoded_bytes()
-            .map(|bytes| String::from_utf8_lossy(bytes).into_owned())
-            .unwrap_or_default();
-        self.record(format!("PUBLISH {} {payload}", Self::key(&channel)));
-        Ok(1)
-    }
-
-    async fn rpush<K, V>(&self, key: K, _: V) -> RedisResult<i64>
-    where
-        K: EncodeRedisArg + Send,
-        V: EncodeRedisArgs + Send,
-    {
-        self.record(format!("RPUSH {}", Self::key(&key)));
-        Ok(1)
-    }
-
-    async fn pfcount<K>(&self, _: K) -> RedisResult<i64>
-    where
-        K: EncodeRedisArgs + Send,
-    {
-        Ok(0)
-    }
-
-    async fn hget<K, F, R>(&self, _: K, _: F) -> RedisResult<Option<R>>
-    where
-        K: EncodeRedisArg + Send,
-        F: EncodeRedisArg + Send,
-        R: FromRedisBulk + Send,
-    {
-        Ok(None)
-    }
-
-    async fn hmget<K, F, R>(&self, _: K, _: F) -> RedisResult<brz_redis::RedisValues<R>>
-    where
-        K: EncodeRedisArg + Send,
-        F: EncodeRedisArgs + Send,
-        R: FromRedisBulk + Send,
-    {
-        Err(brz_redis::RedisError::new(
-            brz_redis::ErrorKind::ClientError,
-            "stub does not serve HMGET",
-        ))
-    }
-}
+use crate::responses::test_redis::RecordingRedis;
 
 /// One local chat-shell server that never writes response headers: the client
 /// stays in its header wait until it drops the request future.
@@ -398,10 +177,11 @@ async fn an_already_set_cancel_resolves_on_the_initial_get() {
         "the immediate GET resolves the flag without a later poll: {:?}",
         redis.calls()
     );
+    assert_eq!(redis.count("EVAL chat:cancel:"), 1, "{:?}", redis.calls());
     assert_eq!(
-        redis.count("DEL chat:cancel:"),
-        2,
-        "register and unregister still delete the key: {:?}",
+        redis.count("DEL-MANY chat:cancel:"),
+        1,
+        "unregister atomically removes the intent and flag: {:?}",
         redis.calls()
     );
 }
@@ -447,14 +227,14 @@ async fn image_cancellation_releases_the_key_before_the_subtask_can_be_retried()
         .unwrap();
     let cleanup = calls
         .iter()
-        .position(|call| call.starts_with("DEL chat:cancel:"))
+        .position(|call| call.starts_with("DEL-MANY chat:cancel:"))
         .unwrap();
     let published = calls
         .iter()
         .position(|call| call.starts_with("PUBLISH ") && call.contains("chat:cancelled"))
         .unwrap();
     assert!(check < cleanup && cleanup < published, "{calls:?}");
-    assert_eq!(redis.count("DEL chat:cancel:"), 1, "{calls:?}");
+    assert_eq!(redis.count("DEL-MANY chat:cancel:"), 1, "{calls:?}");
 }
 
 /// The client's read timeout bounds inactivity, not total stream lifetime.
@@ -522,10 +302,11 @@ async fn cancel_is_observed_while_the_header_wait_is_outstanding() {
         "the initial GET plus the poll that observes the armed flag: {:?}",
         redis.calls()
     );
+    assert_eq!(redis.count("EVAL chat:cancel:"), 1, "{:?}", redis.calls());
     assert_eq!(
-        redis.count("DEL chat:cancel:"),
-        2,
-        "register and unregister still delete the key: {:?}",
+        redis.count("DEL-MANY chat:cancel:"),
+        1,
+        "unregister atomically removes the intent and flag: {:?}",
         redis.calls()
     );
 }
@@ -592,10 +373,11 @@ async fn cancel_is_observed_during_a_slow_persistence_step() {
         "the initial GET plus a later poll during the blocked persistence: {:?}",
         redis.calls()
     );
+    assert_eq!(redis.count("EVAL chat:cancel:"), 1, "{:?}", redis.calls());
     assert_eq!(
-        redis.count("DEL chat:cancel:"),
-        2,
-        "register and unregister still delete the key: {:?}",
+        redis.count("DEL-MANY chat:cancel:"),
+        1,
+        "unregister atomically removes the intent and flag: {:?}",
         redis.calls()
     );
 }
@@ -821,12 +603,12 @@ async fn unregister_del_waits_for_an_admitted_cancel_get() {
         _ = collect_fut.as_mut() => panic!("collect finished before the terminal path ran"),
     }
 
-    // The admitted GET is still outstanding, so the unregister DEL is blocked;
-    // only `register_stream`'s clear has run.
+    // The admitted GET is outstanding: registration ran, atomic cleanup did not.
+    assert_eq!(redis.count("EVAL chat:cancel:"), 1);
     assert_eq!(
-        redis.count("DEL chat:cancel:"),
-        1,
-        "unregister DEL must wait for the in-flight GET: {:?}",
+        redis.count("DEL-MANY chat:cancel:"),
+        0,
+        "atomic unregister must wait for the in-flight GET: {:?}",
         redis.calls()
     );
 
@@ -837,7 +619,7 @@ async fn unregister_del_waits_for_an_admitted_cancel_get() {
     let calls = redis.calls();
     let unregister = calls
         .iter()
-        .rposition(|call| call.starts_with("DEL chat:cancel:"))
+        .rposition(|call| call.starts_with("DEL-MANY chat:cancel:"))
         .expect("unregister DEL ran");
     let get_end = calls
         .iter()

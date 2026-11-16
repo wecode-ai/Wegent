@@ -262,6 +262,7 @@ export function createWorkbenchHomeMigrationScenario({
     assert.equal(await realpath(fixture.legacyDatabase), database)
     const db = new DatabaseSync(database, { readOnly: true })
     try {
+      // The executor still writes this live database while migration is inspected.
       db.exec('PRAGMA busy_timeout = 10000')
       assert.equal(db.prepare('SELECT value FROM migration_probe').get().value, 'before-upgrade')
       assert.equal(db.prepare('PRAGMA quick_check').get().quick_check, 'ok')

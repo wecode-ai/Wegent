@@ -23,6 +23,10 @@ while IFS= read -r line; do
     printf '}\n'
     continue
   fi
+  notification_file="$directory/$method.notifications.jsonl"
+  if [ -f "$notification_file" ]; then
+    cat "$notification_file"
+  fi
   printf '{"id":%s,"result":' "$id"
   cat "$directory/$method.json"
   printf '}\n'

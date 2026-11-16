@@ -119,8 +119,12 @@ jest.mock('@/features/settings/components/McpConfigSection', () => {
   return MockMcpConfigSection
 })
 jest.mock('@/features/settings/components/skills/SkillManagementModal', () => {
-  function MockSkillManagementModal() {
-    return null
+  function MockSkillManagementModal({ onSkillsChange }: { onSkillsChange: () => void }) {
+    return (
+      <button data-testid="refresh-skills" onClick={onSkillsChange}>
+        Refresh skills
+      </button>
+    )
   }
 
   return MockSkillManagementModal
@@ -159,13 +163,21 @@ jest.mock('@/components/ui/select', () => ({
   Select: ({
     children,
     disabled,
+    onValueChange,
   }: {
     value?: string
     onValueChange?: (value: string) => void
     children: ReactNode
     disabled?: boolean
   }) => (
-    <div data-testid="mock-select" data-disabled={disabled ? 'true' : 'false'}>
+    <div
+      data-testid="mock-select"
+      data-disabled={disabled ? 'true' : 'false'}
+      onClick={event => {
+        const value = (event.target as HTMLElement).getAttribute('data-value')
+        if (!disabled && value) onValueChange?.(value)
+      }}
+    >
       {children}
     </div>
   ),
@@ -173,7 +185,9 @@ jest.mock('@/components/ui/select', () => ({
   SelectValue: ({ placeholder }: { placeholder?: string }) => <span>{placeholder}</span>,
   SelectContent: ({ children }: { children: ReactNode }) => <>{children}</>,
   SelectItem: ({ value, children }: { value: string; children: ReactNode }) => (
-    <div data-testid={`mock-select-item-${value}`}>{children}</div>
+    <div data-testid={`mock-select-item-${value}`} data-value={value}>
+      {children}
+    </div>
   ),
 }))
 
@@ -198,6 +212,7 @@ jest.mock('@/components/ui/switch', () => ({
 }))
 
 const mockedUpdateBot = botApis.updateBot as jest.Mock
+const mockedCreateBot = botApis.createBot as jest.Mock
 const mockedKnowledgeBaseGrouped = knowledgeBaseApi.getAllGrouped as jest.Mock
 const mockedGetUnifiedModels = modelApis.getUnifiedModels as jest.Mock
 const mockedGetUnifiedShells = shellApis.getUnifiedShells as jest.Mock
@@ -214,6 +229,7 @@ async function renderBotEdit(
     groupName?: string
     modelCategoryType?: 'llm' | 'image' | 'video'
     allowGenerationPrimaryModel?: boolean
+    mode?: 'edit' | 'clone' | 'new'
   } = {}
 ) {
   const bot = {
@@ -245,8 +261,8 @@ async function renderBotEdit(
       <BotEdit
         bots={[bot]}
         setBots={setBots}
-        editingBotId={7}
-        cloningBot={null}
+        editingBotId={!props.mode || props.mode === 'edit' ? 7 : 0}
+        cloningBot={props.mode === 'clone' ? bot : null}
         onClose={onClose}
         toast={toast}
         scope={props.scope || 'personal'}
@@ -263,6 +279,8 @@ async function renderBotEdit(
 describe('BotEdit default knowledge bases', () => {
   beforeEach(() => {
     mockedUpdateBot.mockReset()
+    mockedCreateBot.mockReset()
+    mockedCreateBot.mockResolvedValue({ id: 8 })
     mockedKnowledgeBaseGrouped.mockReset()
     mockedGetUnifiedModels.mockReset()
     mockedGetUnifiedShells.mockReset()
@@ -555,6 +573,45 @@ describe('BotEdit default knowledge bases', () => {
     expect(screen.getByText('Check skills to preload them.')).toBeInTheDocument()
   })
 
+  test('keeps skill choices and selected bindings through pending and failed refreshes', async () => {
+    const skill = {
+      id: 5,
+      name: 'repo-reader',
+      namespace: 'default',
+      description: 'Read repository',
+      displayName: 'Repo Reader',
+      visible: true,
+      is_active: true,
+      is_public: false,
+      user_id: 7,
+    }
+    mockedFetchUnifiedSkillsList.mockResolvedValueOnce([skill])
+    await renderBotEdit({
+      skills: ['repo-reader'],
+      skill_refs: {
+        'repo-reader': { skill_id: 5, namespace: 'default', is_public: false },
+      },
+    })
+    expect(await screen.findByTestId('rich-skill-selector')).toBeInTheDocument()
+    let rejectRefresh!: (error: Error) => void
+    mockedFetchUnifiedSkillsList.mockImplementationOnce(
+      () =>
+        new Promise((_, reject) => {
+          rejectRefresh = reject
+        })
+    )
+    fireEvent.click(screen.getByTestId('refresh-skills'))
+    expect(screen.getByTestId('rich-skill-selector')).toBeInTheDocument()
+    expect(screen.getByTitle('Preload Skills')).toBeInTheDocument()
+    await act(async () => rejectRefresh(new Error('unavailable')))
+    expect(await screen.findByTestId('bot-skills-retry')).toBeInTheDocument()
+    expect(screen.getByTestId('rich-skill-selector')).toBeInTheDocument()
+    expect(screen.getByTitle('Preload Skills')).toBeInTheDocument()
+    mockedFetchUnifiedSkillsList.mockResolvedValueOnce([skill])
+    fireEvent.click(screen.getByTestId('bot-skills-retry'))
+    await waitFor(() => expect(screen.queryByTestId('bot-skills-retry')).not.toBeInTheDocument())
+  })
+
   test('shows hidden public skills as selectable when editing public bots', async () => {
     mockedFetchPublicSkillsList.mockResolvedValue([
       {
@@ -747,6 +804,53 @@ describe('BotEdit default knowledge bases', () => {
     expect(screen.getByText('Ops guides')).toBeInTheDocument()
     expect(screen.getByText('Company-wide security guidance')).toBeInTheDocument()
     expect(screen.queryByText('Growth experiments')).not.toBeInTheDocument()
+  })
+
+  test.each([
+    { source: 'source-group', scope: 'personal' as const, target: 'default' },
+    { source: 'default', scope: 'group' as const, target: 'target-group' },
+    { source: 'source-group', scope: 'group' as const, target: 'target-group' },
+  ])(
+    'uses creation target $target when cloning from $source',
+    async ({ source, scope, target }) => {
+      await renderBotEdit(
+        { namespace: source },
+        { mode: 'clone', scope, groupName: scope === 'group' ? target : undefined }
+      )
+
+      await waitFor(() => {
+        expect(mockedFetchUnifiedSkillsList).toHaveBeenLastCalledWith({
+          binding: { namespace: target },
+        })
+      })
+      fireEvent.click(screen.getByTestId('save-button'))
+      await waitFor(() => {
+        expect(mockedCreateBot).toHaveBeenCalledWith(
+          expect.objectContaining({ namespace: scope === 'group' ? target : undefined })
+        )
+      })
+      expect(mockedUpdateBot).not.toHaveBeenCalled()
+    }
+  )
+
+  test('keeps the existing Bot target when editing from another browsing scope', async () => {
+    await renderBotEdit({ namespace: 'existing-group' }, { scope: 'personal' })
+    await waitFor(() => {
+      expect(mockedFetchUnifiedSkillsList).toHaveBeenLastCalledWith({
+        binding: { botId: 7, namespace: 'existing-group' },
+      })
+    })
+  })
+
+  test('uses creation scope without a source Bot', async () => {
+    await renderBotEdit({}, { mode: 'new', scope: 'group', groupName: 'target-group' })
+    expect(mockedFetchUnifiedSkillsList).not.toHaveBeenCalled()
+    fireEvent.click(await screen.findByTestId('mock-select-item-ClaudeCode'))
+    await waitFor(() => {
+      expect(mockedFetchUnifiedSkillsList).toHaveBeenLastCalledWith({
+        binding: { namespace: 'target-group' },
+      })
+    })
   })
 
   test('renders popover-based selector with grouped metadata', async () => {

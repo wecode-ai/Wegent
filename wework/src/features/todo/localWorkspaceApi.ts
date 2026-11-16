@@ -38,6 +38,7 @@ import {
 } from '@/features/collaboration/defaultLocalAgent'
 import { sha256Hex } from '@/api/fileHash'
 import { loadWorkspaceCatalog } from './localWorkspaceCatalog'
+import { createProjectChatComments } from '@/features/collaboration/projectChatComments'
 export const LOCAL_WORKSPACE_ID = 'wework-local-workspace'
 
 function assertValidCollaborationGroup(
@@ -727,41 +728,7 @@ export function createLocalWorkspaceApi(
       },
     },
     comments: projectChatClient
-      ? {
-          async list(issueId) {
-            const { snapshot, unsubscribe } = await projectChatClient.subscribe(
-              await issueProjectId(issueId),
-              issueId,
-              0,
-              () => undefined
-            )
-            unsubscribe()
-            return snapshot.messages.map(message => ({
-              id: message.messageId,
-              body: message.content,
-              author: message.sender.name,
-              web_url: null,
-              created_at: message.createdAt,
-              updated_at: message.updatedAt,
-            }))
-          },
-          async create(issueId, body) {
-            const message = await projectChatClient.send({
-              projectId: await issueProjectId(issueId),
-              taskId: issueId,
-              clientMessageId: crypto.randomUUID(),
-              text: body,
-            })
-            return {
-              id: message.messageId,
-              body: message.content,
-              author: message.sender.name,
-              web_url: null,
-              created_at: message.createdAt,
-              updated_at: message.updatedAt,
-            }
-          },
-        }
+      ? createProjectChatComments(projectChatClient, issueProjectId)
       : {
           list: async () => [],
           create: unavailable,

@@ -220,6 +220,15 @@ export function runtimeQueuedMessageRequest(
   const modelOptions = message.modelOptions ?? context.modelOptions;
   return {
     ...context,
+    // Public (undefined) is also captured intent, never inherited from a later pane.
+    conversationContext: message.conversationContext,
+    ...(message.origin ? { origin: message.origin } : {}),
+    ...(message.cloudProjectId
+      ? { cloudProjectId: message.cloudProjectId }
+      : {}),
+    ...(message.additionalContext
+      ? { additionalContext: message.additionalContext }
+      : {}),
     message: message.content,
     clientUserMessageId: message.id,
     ...(message.modelId

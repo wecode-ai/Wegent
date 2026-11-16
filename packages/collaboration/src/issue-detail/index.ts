@@ -10,6 +10,7 @@ export * from "./IssueDetailControls";
 export * from "./IssueDetailDraft";
 export * from "./IssueHistoryLists";
 export * from "./attachmentMarkdown";
+export { useIssueProjectChat } from "./useIssueProjectChat";
 export * from "./createSharedIssueDetailPort";
 export { persistIssueDetailFields } from "./persistIssueDetailFields";
 export * from "./dateTime";
@@ -23,6 +24,7 @@ export * from "./IssueActivityThread";
 
 export * from "./IssueInlineCommentComposer";
 export * from "./IssueActivityMarkdown";
+export { IssueMarkdownProvider } from './IssueMarkdownProvider';
 
 export * from "./IssueThreadReplyComposer";
 export * from "./IssueChatMessage";

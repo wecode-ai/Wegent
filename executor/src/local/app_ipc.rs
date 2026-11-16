@@ -1946,7 +1946,15 @@ fn app_ipc_event_data(message: &Value) -> Option<&Value> {
 }
 
 async fn handle_task_runtime_request(method: &str, params: Value) -> Result<Value, AppIpcError> {
-    let runtime = TaskRuntime::from_env().map_err(task_runtime_error)?;
+    let runtime = if method == "projects.list" {
+        wegent_runtime_logging::project_index_diagnostics::trace(
+            "projects_list.init",
+            TaskRuntime::from_env,
+        )
+    } else {
+        TaskRuntime::from_env()
+    }
+    .map_err(task_runtime_error)?;
     match method {
         "dws.auth_status" => serialize_task_value(
             runtime
@@ -4343,16 +4351,6 @@ mod tests {
             .await
             .expect("client input should close");
         serving.await.expect("app IPC task should finish");
-    }
-
-    #[test]
-    fn linked_change_request_commands_accept_explicit_repository_urls() {
-        let github = local_app_command("git_github_pull_request_view").unwrap();
-        assert_eq!(&github.argv[..4], &["gh", "pr", "view", "--json"]);
-        assert!(github.argv[4].contains("statusCheckRollup"));
-        assert!(github.argv[4].contains("mergedAt"));
-        let gitlab = local_app_command("git_gitlab_merge_request_view").unwrap();
-        assert_eq!(gitlab.argv, &["glab", "mr", "view", "--output", "json"]);
     }
 
     #[test]

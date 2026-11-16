@@ -428,11 +428,13 @@ impl RuntimeWorkRpcHandler {
                     handler.finish_local_task(&local_task_id, execution_id, None, "done");
                     handler.finish_automation_run(
                         &local_task_id,
+                        &request,
                         AutomationRunStatus::Succeeded,
                         None,
                     );
                     handler.finish_queue_run(
                         &local_task_id,
+                        &request,
                         AutomationRunStatus::Succeeded,
                         None,
                         Some(result_content),
@@ -458,11 +460,13 @@ impl RuntimeWorkRpcHandler {
                     handler.finish_local_task(&local_task_id, execution_id, None, "done");
                     handler.finish_automation_run(
                         &local_task_id,
+                        &request,
                         AutomationRunStatus::NeedsAttention,
                         Some(stop_reason.clone()),
                     );
                     handler.finish_queue_run(
                         &local_task_id,
+                        &request,
                         AutomationRunStatus::NeedsAttention,
                         Some(stop_reason),
                         Some(String::new()),
@@ -482,11 +486,13 @@ impl RuntimeWorkRpcHandler {
                     handler.finish_local_task(&local_task_id, execution_id, None, "failed");
                     handler.finish_automation_run(
                         &local_task_id,
+                        &request,
                         AutomationRunStatus::Failed,
                         Some(message.clone()),
                     );
                     handler.finish_queue_run(
                         &local_task_id,
+                        &request,
                         AutomationRunStatus::Failed,
                         Some(message),
                         None,
@@ -505,11 +511,13 @@ impl RuntimeWorkRpcHandler {
                     if handler.settle_cancelled_local_task_execution(&local_task_id, execution_id) {
                         handler.finish_automation_run(
                             &local_task_id,
+                            &request,
                             AutomationRunStatus::Cancelled,
                             Some(message.clone()),
                         );
                         handler.finish_queue_run(
                             &local_task_id,
+                            &request,
                             AutomationRunStatus::Cancelled,
                             Some(message.clone()),
                             None,
@@ -559,6 +567,10 @@ impl RuntimeWorkRpcHandler {
                 "eventSeq": next_runtime_event_sequence(),
             },
         });
+        super::super::events::apply_runtime_event_conversation_context(
+            &mut payload["payload"],
+            request,
+        );
         if let Some(client_user_message_id) = request
             .extra
             .get("client_user_message_id")

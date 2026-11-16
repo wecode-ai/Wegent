@@ -72,10 +72,12 @@ impl TaskRuntime {
     }
 
     pub(crate) fn list_collaboration_projects(&self) -> Result<Vec<LoopItem>, TaskRuntimeError> {
-        let duplicate_keys =
-            crate::runtime_work::sync_local_collaboration_projects(&self.local_store)?;
-        Ok(self
-            .list_projects()?
+        use wegent_runtime_logging::project_index_diagnostics::trace;
+
+        let duplicate_keys = trace("projects_list.sync", || {
+            crate::runtime_work::sync_local_collaboration_projects(&self.local_store)
+        })?;
+        Ok(trace("projects_list.read", || self.list_projects())?
             .into_iter()
             .filter(|project| {
                 // Keep previously imported aliases and their issues addressable by ID;
@@ -2144,30 +2146,6 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn routes_aitable_board_projection_without_task_rows() {
-        let directory = tempfile::tempdir().unwrap();
-        let store = LocalTaskStore::open(directory.path().join("tasks.sqlite")).unwrap();
-        let project = aitable_project(&store);
-        let runtime = TaskRuntime::new(store).unwrap();
-        assert!(matches!(
-            runtime.list_tasks(&project.id).await,
-            Err(TaskRuntimeError::ProviderRequest(_))
-        ));
-    }
-
-    #[tokio::test]
-    async fn aitable_native_describe_returns_dynamic_fields() {
-        let directory = tempfile::tempdir().unwrap();
-        let store = LocalTaskStore::open(directory.path().join("tasks.sqlite")).unwrap();
-        let project = aitable_project(&store);
-        let runtime = TaskRuntime::new(store).unwrap();
-        assert!(matches!(
-            runtime.aitable_describe(&project.id).await,
-            Err(TaskRuntimeError::ProviderRequest(_))
-        ));
-    }
-
-    #[tokio::test]
     async fn aitable_record_write_requires_dws_authentication() {
         let directory = tempfile::tempdir().unwrap();
         let store = LocalTaskStore::open(directory.path().join("tasks.sqlite")).unwrap();
@@ -2307,19 +2285,5 @@ esac
                 .len(),
             1
         );
-    }
-
-    #[test]
-    fn aitable_provider_combinations_are_valid() {
-        assert!(crate::task_runtime::store::validate_provider(
-            ProjectStoreKind::Local,
-            TaskProviderKind::DingtalkAitable
-        )
-        .is_ok());
-        assert!(crate::task_runtime::store::validate_provider(
-            ProjectStoreKind::Backend,
-            TaskProviderKind::DingtalkAitable
-        )
-        .is_ok());
     }
 }

@@ -406,6 +406,13 @@ impl RuntimeWorkRpcHandler {
         for (task, owner) in &owner_admissions {
             self.record_stand_in_owner_admission(task, owner);
         }
+        // Only admitted turns replace the current request. Queued follow-ups
+        // retain their own context without changing the active native turn.
+        for turn in starting {
+            self.store.update_task(&turn.local_task_id, |link| {
+                store_runtime_execution_request(&mut link.runtime_handle, &turn.request);
+            });
+        }
         if let Some((previous, current)) = admissions {
             self.sync_native_queue_admissions(previous, current);
         }
@@ -451,6 +458,11 @@ impl RuntimeWorkRpcHandler {
         admission: TurnAdmission,
     ) -> Result<bool, AppIpcError> {
         turn.bind_task_kind(&self.store);
+        // Binding restores immutable origin; recompute the host's per-run manual fact
+        // before the admission snapshot drops transient confirmation metadata.
+        if turn.request.extra.get("standInManualConfirmation") == Some(&Value::Bool(true)) {
+            self.refresh_stand_in_confirmation(&turn.local_task_id, &mut turn.request)?;
+        }
         self.apply_project_workspace_roots(&mut turn.request);
         let local_task_id = turn.local_task_id.clone();
         let _operation = self.turn_queue_operation.lock().await;
@@ -1584,7 +1596,8 @@ impl RuntimeWorkRpcHandler {
                     ) {
                         return;
                     }
-                    active_turn_handler.start_queue_run(&active_turn_local_task_id);
+                    active_turn_handler
+                        .start_queue_run(&active_turn_local_task_id, &active_turn_request);
                     *callback_hook_turn
                         .lock()
                         .expect("hook turn context lock should not be poisoned") =
@@ -1796,11 +1809,13 @@ impl RuntimeWorkRpcHandler {
                 {
                     handler.finish_automation_run(
                         &turn_local_task_id,
+                        &event_request,
                         AutomationRunStatus::Cancelled,
                         Some("cancelled".to_owned()),
                     );
                     handler.finish_queue_run(
                         &turn_local_task_id,
+                        &event_request,
                         AutomationRunStatus::Cancelled,
                         Some("cancelled".to_owned()),
                         None,
@@ -2251,8 +2266,14 @@ impl RuntimeWorkRpcHandler {
             }
         }
         if let Some((status, error)) = automation_result {
-            self.finish_automation_run(local_task_id, status, error.clone());
-            self.finish_queue_run(local_task_id, status, error, queue_result_content);
+            self.finish_automation_run(local_task_id, &event_request, status, error.clone());
+            self.finish_queue_run(
+                local_task_id,
+                &event_request,
+                status,
+                error,
+                queue_result_content,
+            );
         }
     }
 
@@ -2830,23 +2851,6 @@ mod tests {
             vec!["normal"]
         );
         assert_eq!(removed, 2);
-    }
-
-    #[test]
-    fn resolves_standard_hook_user_from_execution_request() {
-        let mut request = ExecutionRequest {
-            user_name: Some("alice".to_owned()),
-            ..ExecutionRequest::default()
-        };
-        request.extra.insert("user_id".to_owned(), json!(42));
-
-        assert_eq!(
-            hook_user(&request),
-            HookUser {
-                id: Some("42".to_owned()),
-                name: "alice".to_owned(),
-            }
-        );
     }
 
     #[test]

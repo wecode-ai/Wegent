@@ -77,12 +77,12 @@ from app.schemas.project_incoming_hook import (
     ChangeRequestBindingInput,
     ChangeRequestBindingView,
 )
-from app.services.cloud_projects import cloud_project_service
 from app.services.cloud_projects.access import (
     IssueAction,
     require_cloud_project_role,
     require_issue_action,
 )
+from app.services.cloud_projects.service import cloud_project_service
 from app.services.delivery import delivery_service
 from app.services.issue_assignments import issue_assignment_service
 from app.services.loop_item_events import publish_loop_item_changed

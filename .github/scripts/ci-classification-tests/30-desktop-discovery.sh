@@ -37,11 +37,27 @@ wework_desktop_other_e2e_matrix={"include":[]}' \
 assert_desktop_case "Issue navigation source changes retain existing coverage and select notification reads" \
   'wework_desktop_e2e=true
 wework_desktop_core_e2e=true
-wework_desktop_core_e2e_matrix={"include":[{"id":"core-1","name":"Core / shard 1","segments":"notification-tab-navigation"},{"id":"core-2","name":"Core / shard 2","segments":"project-assignment-notification,human-interactions"},{"id":"core-3","name":"Core / shard 3","segments":"stand-in-notifications,human-interactions-browser,human-interactions-hidden"},{"id":"core-5","name":"Core / shard 5","segments":"human-interactions-issue"},{"id":"core-8","name":"Core / shard 8","segments":"collaboration-issue-comment-notification,stand-in-cloud,stand-in-assignment-notifications"}]}
+wework_desktop_core_e2e_matrix={"include":[{"id":"core-1","name":"Core / shard 1","segments":"notification-tab-navigation"},{"id":"core-2","name":"Core / shard 2","segments":"project-assignment-notification,human-interactions"},{"id":"core-3","name":"Core / shard 3","segments":"stand-in-notifications,human-interactions-browser,human-interactions-hidden"},{"id":"core-5","name":"Core / shard 5","segments":"human-interactions-issue"},{"id":"core-8","name":"Core / shard 8","segments":"collaboration-issue-comment-notification,stand-in-cloud,stand-in-assignment-notifications,collaboration-exp"}]}
 wework_desktop_other_e2e=false
 wework_desktop_other_e2e_matrix={"include":[]}' \
   "wework/src/features/notifications/WeworkSchemeBridge.tsx" \
   "wework/src/features/notifications/scheme.ts"
+
+for collaboration_exp_path in \
+  wework/e2e/desktop/catalog/collaboration-exp.json \
+  wework/e2e/desktop/scenarios/collaboration-exp.scenario.mjs \
+  wework/e2e/desktop/modules/collaboration-exp-rhythm.mjs \
+  wework/e2e/desktop/modules/collaboration-exp-state-motion.mjs \
+  wework/src/features/collaboration-exp/CollaborationExpApp.tsx \
+  wework/src/features/collaboration-exp/private/PrivateDiscussionPane.tsx; do
+  assert_desktop_case "collaboration experience changes select its Core checkpoint: $collaboration_exp_path" \
+    'wework_desktop_e2e=true
+wework_desktop_core_e2e=true
+wework_desktop_core_e2e_matrix={"include":[{"id":"core-8","name":"Core / shard 8","segments":"collaboration-exp"}]}
+wework_desktop_other_e2e=false
+wework_desktop_other_e2e_matrix={"include":[]}' \
+    "$collaboration_exp_path"
+done
 
 assert_desktop_case "Issue read API changes retain board coverage and select notification reads" \
   'wework_desktop_e2e=true
@@ -306,15 +322,6 @@ wework_desktop_other_e2e=false
 wework_desktop_other_e2e_matrix={"include":[]}' \
   "wework/scripts/plugin-resilience-checkpoints.test.mjs"
 
-assert_desktop_case "long plugin list selects its independent cloud checkpoint" \
-  'wework_desktop_e2e=true
-wework_desktop_core_e2e=false
-wework_desktop_core_e2e_matrix={"include":[]}
-wework_desktop_cloud_e2e=true
-wework_desktop_cloud_e2e_matrix={"include":[{"id":"cloud-7","name":"Cloud / shard 7","segments":"plugin-composer-long-list"}]}
-wework_desktop_other_e2e=false
-wework_desktop_other_e2e_matrix={"include":[]}' \
-  "wework/e2e/desktop/scenarios/plugin-composer-long-list.scenario.mjs"
 
 for plugin_sync_checkpoint in \
   plugin-runtime-route-refresh \
@@ -405,7 +412,7 @@ assert_desktop_case "shared plugin regression fixture selects both checkpoints" 
 wework_desktop_core_e2e=false
 wework_desktop_core_e2e_matrix={"include":[]}
 wework_desktop_cloud_e2e=true
-wework_desktop_cloud_e2e_matrix={"include":[{"id":"cloud-1","name":"Cloud / shard 1","segments":"plugin-uninstall-restart-recovery,plugin-uninstall-lost-response"},{"id":"cloud-2","name":"Cloud / shard 2","segments":"plugin-toggle-persistence"},{"id":"cloud-3","name":"Cloud / shard 3","segments":"plugin-write-coordination,plugin-account-auth-coordination"},{"id":"cloud-4","name":"Cloud / shard 4","segments":"plugin-uninstall-unknown-result,plugin-registration-coordination"},{"id":"cloud-5","name":"Cloud / shard 5","segments":"plugin-uninstall-reinstall-race"},{"id":"cloud-7","name":"Cloud / shard 7","segments":"plugin-composer-long-list,plugin-collaboration-composer-isolation,plugin-runtime-route-refresh,plugin-background-sync-isolation,plugin-periodic-reconcile"}]}
+wework_desktop_cloud_e2e_matrix={"include":[{"id":"cloud-1","name":"Cloud / shard 1","segments":"plugin-uninstall-restart-recovery,plugin-uninstall-lost-response"},{"id":"cloud-2","name":"Cloud / shard 2","segments":"plugin-toggle-persistence"},{"id":"cloud-3","name":"Cloud / shard 3","segments":"plugin-write-coordination,plugin-account-auth-coordination"},{"id":"cloud-4","name":"Cloud / shard 4","segments":"plugin-uninstall-unknown-result,plugin-registration-coordination"},{"id":"cloud-5","name":"Cloud / shard 5","segments":"plugin-uninstall-reinstall-race"},{"id":"cloud-7","name":"Cloud / shard 7","segments":"plugin-collaboration-composer-isolation,plugin-runtime-route-refresh,plugin-background-sync-isolation,plugin-periodic-reconcile"}]}
 wework_desktop_other_e2e=false
 wework_desktop_other_e2e_matrix={"include":[]}' \
   "wework/e2e/desktop/modules/plugin-regression-fixture.mjs"

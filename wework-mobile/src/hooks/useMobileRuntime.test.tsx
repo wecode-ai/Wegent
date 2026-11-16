@@ -6,7 +6,7 @@ import { createWorkbenchDeviceResolver } from '../../../packages/chat-core/src/r
 import type { MobileRuntimeState } from './useMobileRuntime'
 import { useMobileRuntime } from './useMobileRuntime'
 import type { RuntimeSessionConfig } from '@/services/backendConfig'
-import type { DeviceInfo, RuntimeWorkListResponse } from '@/types/runtime'
+import type { Attachment, DeviceInfo, RuntimeWorkListResponse } from '@/types/runtime'
 ;(globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true
 
 const mocks = vi.hoisted(() => ({
@@ -29,11 +29,21 @@ const mocks = vi.hoisted(() => ({
   sendMessage: vi.fn(),
   cachedDevices: [] as DeviceInfo[],
   streamInventory: vi.fn(),
+  appListeners: new Set<(state: string) => void>(),
 }))
 const emptyWork = { projects: [], chats: [], totalTasks: 0 }
 vi.mock('expo-crypto', () => ({ randomUUID: () => 'user-message-id' }))
+vi.mock('@/services/phoneLocalProfile', () => ({
+  PHONE_LOCAL_USER: { id: 0, user_name: 'local', email: 'local@wework.local' },
+}))
 vi.mock('react-native', () => ({
-  AppState: { currentState: 'active', addEventListener: () => ({ remove: vi.fn() }) },
+  AppState: {
+    currentState: 'active',
+    addEventListener: (_: string, listener: (state: string) => void) => {
+      mocks.appListeners.add(listener)
+      return { remove: () => mocks.appListeners.delete(listener) }
+    },
+  },
 }))
 vi.mock('@/services/runtimePermissionPreference', () => ({
   DEFAULT_RUNTIME_PERMISSION_MODE: 'full-access',
@@ -56,6 +66,7 @@ vi.mock('@/services/runtimeCache', () => ({
 }))
 vi.mock('@/services/runtimeApi', () => ({
   RuntimeApi: class {
+    updateBackend() {}
     clearPluginCatalogs() {}
     listDevices = mocks.devices
     listModels = mocks.models
@@ -73,7 +84,9 @@ vi.mock('@/services/runtimeStream', () => ({
       mocks.streamCreated()
       mocks.streamInventory(getDevices)
     }
-    updateAccessToken = mocks.updateAccessToken
+    updateBackend(config: RuntimeSessionConfig | null) {
+      mocks.updateAccessToken(config?.accessToken ?? '')
+    }
     listWork = mocks.listWork
     getTranscript = mocks.transcript
     async subscribe(scope: unknown, listener: unknown) {
@@ -144,6 +157,7 @@ describe('creating a conversation on the only computer', () => {
 
   beforeEach(() => {
     mocks.cachedDevices = []
+    mocks.appListeners.clear()
     mocks.order.length = 0
     mocks.devices.mockReset().mockResolvedValue({ items: [computer] })
     mocks.models
@@ -190,6 +204,149 @@ describe('creating a conversation on the only computer', () => {
     await act(() => state.startNewConversation())
   }
 
+  it.each(['new', 'existing'] as const)(
+    'keeps complete %s message attachments through sending, confirmation and transcript reload',
+    async kind => {
+      const attachment: Attachment = {
+        id: 42,
+        filename: 'report.pdf',
+        file_size: 150,
+        mime_type: 'application/pdf',
+        status: 'ready',
+        file_extension: 'pdf',
+        created_at: '2026-11-14T10:00:00Z',
+        workspace_file: {
+          device_id: 'storage-device',
+          workspace_path: '/project',
+          path: 'report.pdf',
+        },
+        ui_group_id: 'files',
+        ui_group_role: 'primary',
+      }
+      mocks.listWork.mockResolvedValue(workFor('app-record-11'))
+      await mount()
+      if (kind === 'existing') await act(() => state.openConversation(state.conversations[0]!))
+      const response = deferred<{ accepted: boolean; taskId: string; workspacePath: string }>()
+      const operation = kind === 'new' ? mocks.create : mocks.sendMessage
+      operation.mockReturnValue(response.promise)
+      let send!: Promise<boolean>
+      await act(() => {
+        send = state.send('Inspect', { attachmentIds: [42], attachments: [attachment] })
+      })
+      expect(state.messages[0]).toMatchObject({ attachments: [attachment], pendingDelivery: true })
+      const currentAddress = state.currentAddress!
+      await act(async () => {
+        response.resolve({ accepted: true, taskId: currentAddress.taskId, workspacePath: '/work' })
+        expect(await send).toBe(true)
+      })
+      expect(state.messages[0]).toMatchObject({ attachments: [attachment], pendingDelivery: false })
+      if (kind === 'new') {
+        expect(mocks.create.mock.calls[0]![0].attachmentIds).toEqual([42])
+        expect(mocks.create.mock.calls[0]![0]).not.toHaveProperty('attachments')
+      } else {
+        expect(mocks.sendMessage.mock.calls[0]).toHaveLength(5)
+        expect(mocks.sendMessage.mock.calls[0]![4]).toEqual([42])
+      }
+      mocks.transcript.mockResolvedValue({
+        taskId: currentAddress.taskId,
+        workspacePath: '/work',
+        runtime: 'codex',
+        messages: [
+          {
+            id: 'provider-user',
+            clientUserMessageId: 'user-message-id',
+            role: 'user',
+            content: 'Inspect',
+          },
+        ],
+      })
+      await act(() =>
+        state.openConversation({
+          address: currentAddress,
+          sourceWorkspacePath: '/work',
+          title: 'Inspect',
+          deviceName: 'Computer',
+          projectName: null,
+          updatedAt: 10,
+          running: false,
+        })
+      )
+      expect(state.messages).toHaveLength(1)
+      expect(state.messages[0].attachments).toEqual([attachment])
+    }
+  )
+
+  it('returns the same API instance and resolves the storage device and final worktree after work refresh', async () => {
+    const work = workFor('app-record-11')
+    const workspace = {
+      ...work.chats[0],
+      workspaceSource: 'remote',
+      remoteHostId: 'storage-device',
+      workspaceKind: 'worktree',
+      worktreeId: 'task',
+      workspacePath: '/worktree',
+      tasks: [{ ...work.chats[0].tasks[0], status: 'queued' }],
+    }
+    mocks.listWork.mockResolvedValue({ ...work, chats: [workspace] })
+    await mount()
+    const api = state.api
+    await act(() => state.openConversation(state.conversations[0]!))
+    expect(state.fileTarget).toBeNull()
+    mocks.listWork.mockResolvedValue({
+      ...work,
+      chats: [
+        {
+          ...workspace,
+          tasks: [{ ...workspace.tasks[0], status: 'running' }],
+        },
+      ],
+    })
+    await act(() => state.refresh())
+    expect(state.api).toBe(api)
+    expect(state.fileTarget).toEqual({
+      deviceId: 'storage-device',
+      path: '/worktree',
+      taskId: 'task',
+      workspaceSource: 'remote',
+    })
+  })
+
+  it('never exposes the project source while a newly requested worktree is provisional or queued', async () => {
+    const work = workFor('app-record-11')
+    mocks.listWork.mockResolvedValue(work)
+    await mount()
+    await act(() => state.startNewConversation(work.chats[0]))
+    expect(state.fileTarget?.path).toBe('/work')
+    const response = deferred<{
+      accepted: boolean
+      taskId: string
+      workspacePath: string
+      status: string
+    }>()
+    mocks.create.mockReturnValue(response.promise)
+    let send!: Promise<boolean>
+    await act(() => {
+      send = state.send('Inspect', { worktreeBranch: 'feature/preview' })
+    })
+    expect(state.fileTarget).toBeNull()
+    const taskId = state.currentAddress!.taskId
+    await act(async () => {
+      response.resolve({ accepted: true, taskId, workspacePath: '/work', status: 'queued' })
+      expect(await send).toBe(true)
+    })
+    expect(state.fileTarget).toBeNull()
+    const ready = {
+      ...work.chats[0],
+      workspaceKind: 'worktree',
+      worktreeId: taskId,
+      workspacePath: '/final-worktree',
+      tasks: [{ ...work.chats[0].tasks[0], taskId, status: 'running' }],
+    }
+    mocks.listWork.mockResolvedValue({ ...work, chats: [ready] })
+    await act(() => state.refresh())
+    expect(state.fileTarget).toEqual({ deviceId: 'app-record-11', path: '/final-worktree', taskId })
+  })
+
   it('starts model loading before the device request finishes', async () => {
     const devices = deferred<{ items: DeviceInfo[] }>()
     mocks.devices.mockReturnValue(devices.promise)
@@ -228,7 +385,7 @@ describe('creating a conversation on the only computer', () => {
       await mount()
       if (kind === 'existing') await act(() => state.openConversation(state.conversations[0]!))
       await act(() => state.loadModels())
-      expect(mocks.nativeModels).toHaveBeenCalledExactlyOnceWith(11)
+      expect(mocks.nativeModels).toHaveBeenCalledExactlyOnceWith(11, 'app-record-11')
       await act(() => state.selectModel(state.models[0], { reasoning: 'ultra' }))
       await act(async () => {
         expect(await state.send('本机模型验证')).toBe(true)
@@ -319,19 +476,79 @@ describe('creating a conversation on the only computer', () => {
     await act(() => write.resolve())
   })
 
-  it('recovers an initial expired-token failure after authentication is refreshed', async () => {
+  it('keeps connection failures quiet and waits for manual refresh after token renewal', async () => {
     mocks.devices.mockRejectedValueOnce(new Error('Expired token'))
     mocks.models.mockRejectedValueOnce(new Error('Expired token'))
     await act(() => {
       renderer = create(<Harness />)
     })
-    expect(state.error).toBe('Expired token')
+    expect(state.error).toBeNull()
+    expect(state.connectionError).toBe('Expired token')
     await act(() => renderer.update(<Harness session={{ ...config, accessToken: 'fresh' }} />))
+    expect(mocks.devices).toHaveBeenCalledOnce()
+    expect(mocks.models).toHaveBeenCalledOnce()
+    await act(() => state.refresh())
     expect(state.selectedDeviceId).toBe('app-record-11')
     expect(state.selectedModel?.name).toBe('public-model')
+    expect(state.connectionError).toBeNull()
     expect(mocks.devices).toHaveBeenCalledTimes(2)
-    expect(mocks.models).toHaveBeenCalledTimes(2)
     expect(mocks.streamCreated).toHaveBeenCalledOnce()
+  })
+
+  it('does not reload list snapshots for foreground transitions, realtime events or reconnects', async () => {
+    mocks.listWork.mockResolvedValue(workFor('app-record-11'))
+    await mount()
+    const before = mocks.listWork.mock.calls.length
+    const conversations = state.conversations
+    const [event, reconnect] = mocks.lifecycleSubscribe.mock.lastCall!
+    await act(() => {
+      for (const name of [
+        'response.created',
+        'response.output_text.delta',
+        'runtime.task.title.updated',
+        'response.completed',
+      ])
+        event({ deviceId: 'app-record-11', taskId: 'new-task' }, { name, payload: {} })
+      reconnect()
+      for (const listener of mocks.appListeners) {
+        listener('background')
+        listener('active')
+      }
+    })
+    expect(mocks.listWork).toHaveBeenCalledTimes(before)
+    expect(state.conversations.map(item => item.title)).toEqual(
+      conversations.map(item => item.title)
+    )
+    await act(() => state.refresh())
+    expect(mocks.listWork).toHaveBeenCalledTimes(before + 1)
+  })
+
+  it('retains the list and connection badge during a pending manual retry, then clears on recovery', async () => {
+    mocks.listWork.mockResolvedValue(workFor('app-record-11'))
+    await mount()
+    mocks.listWork.mockRejectedValueOnce(new Error('Peer unavailable'))
+    await act(() => state.refresh())
+    expect(state.error).toBeNull()
+    expect(state.connectionError).toBe('Peer unavailable')
+    const snapshot = state.work
+    const pending = deferred<RuntimeWorkListResponse>()
+    mocks.listWork.mockReturnValueOnce(pending.promise)
+    let retry!: Promise<void>
+    await act(() => {
+      retry = state.refresh()
+    })
+    expect(state.refreshing).toBe(true)
+    expect(state.work).toBe(snapshot)
+    expect(state.connectionError).toBe('Peer unavailable')
+    const before = mocks.devices.mock.calls.length
+    await act(() => state.refresh())
+    expect(mocks.devices).toHaveBeenCalledTimes(before)
+    await act(async () => {
+      pending.resolve(workFor('app-record-11'))
+      await retry
+    })
+    expect(state.connectionError).toBeNull()
+    expect(state.refreshing).toBe(false)
   })
 
   it('shares one causal observation when reads overlap a newer running event', async () => {
@@ -387,7 +604,8 @@ describe('creating a conversation on the only computer', () => {
     mocks.subscribeReady.mockRejectedValueOnce(new Error('Realtime unavailable'))
     await act(() => state.openConversation(state.conversations[0]!))
     expect(state.conversationLoading).toBe(false)
-    expect(state.error).toBe('Realtime unavailable')
+    expect(state.error).toBeNull()
+    expect(state.connectionError).toBe('Realtime unavailable')
     expect(mocks.transcript).not.toHaveBeenCalled()
     await act(() => state.openConversation(state.conversations[0]!))
     expect(state.error).toBeNull()
@@ -470,7 +688,8 @@ describe('creating a conversation on the only computer', () => {
       slow.reject(new Error('peer offline'))
     })
     expect(state.conversations).toHaveLength(1)
-    expect(state.error).toBe('peer offline')
+    expect(state.error).toBeNull()
+    expect(state.connectionError).toBe('peer offline')
   })
 
   it('creates on the record-scoped computer using the existing standalone task intent', async () => {
@@ -550,7 +769,8 @@ describe('creating a conversation on the only computer', () => {
     })
     expect(mocks.create).toHaveBeenCalledOnce()
     expect(state.currentAddress?.taskId).toBe('canonical')
-    expect(state.error).toBe('Realtime unavailable')
+    expect(state.error).toBeNull()
+    expect(state.connectionError).toBe('Realtime unavailable')
     expect(state.messages[0]?.content).toBe('你好')
     expect(state.messages.every(message => message.status !== 'failed')).toBe(true)
   })

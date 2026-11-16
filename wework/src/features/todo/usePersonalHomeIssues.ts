@@ -209,6 +209,7 @@ export function usePersonalHomeIssues(
     )
   }
   return {
+    sourceSnapshots: current,
     revision,
     items: current.flatMap(snapshot => snapshot.items),
     loading: current.some(snapshot => snapshot.loading),

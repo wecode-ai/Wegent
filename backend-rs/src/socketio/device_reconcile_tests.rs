@@ -55,6 +55,91 @@ fn row(status: &str, observed: &str, reason: Option<&str>) -> ExecutionRow {
 }
 
 #[test]
+fn reconciliation_excludes_dispatch_envelopes_but_keeps_real_conversations() {
+    let conversation = row("claimed", "accepted", None);
+    let mut executions = vec![conversation];
+    for payload in [
+        r#"{"runtime_selection":{"executor_kind":"collaboration_group_dispatch"}}"#,
+        r#"{"executor_kind":"collaboration_group_dispatch"}"#,
+    ] {
+        let mut dispatch = row("claimed", "accepted", None);
+        dispatch.id = 99;
+        dispatch.runtime_task_id = Some("codex-queue-99".into());
+        dispatch.execution_payload = Some(payload.into());
+        executions.push(dispatch);
+    }
+    assert!(reconcile_execution_refs(&executions[1..]).is_empty());
+    assert_eq!(
+        reconcile_execution_refs(&executions),
+        vec![(7, "codex-queue-7".into())]
+    );
+}
+
+#[tokio::test]
+async fn reconciliation_reads_past_a_full_page_of_dispatch_envelopes() {
+    let envelopes = (1..=RECONCILE_LIMIT)
+        .map(|id| {
+            let mut dispatch = row("claimed", "accepted", None);
+            dispatch.id = id as i64;
+            dispatch.execution_payload = Some(
+                r#"{"runtime_selection":{"executor_kind":"collaboration_group_dispatch"}}"#.into(),
+            );
+            dispatch
+        })
+        .collect();
+    let mut conversation = row("claimed", "accepted", None);
+    conversation.id = RECONCILE_LIMIT as i64 + 1;
+    let mut pages = [(0, envelopes), (RECONCILE_LIMIT as i64, vec![conversation])].into_iter();
+
+    let references = load_reconciliation_refs(|after_id| {
+        let (expected_cursor, page) = pages.next().expect("no extra page may be fetched");
+        assert_eq!(after_id, expected_cursor);
+        std::future::ready(Ok(page))
+    })
+    .await
+    .unwrap();
+
+    assert_eq!(
+        references,
+        vec![(RECONCILE_LIMIT as i64 + 1, "codex-queue-7".into())]
+    );
+    assert!(pages.next().is_none());
+}
+
+#[tokio::test]
+async fn reconciliation_limits_native_conversations_after_filtering_envelopes() {
+    let mut first_page: Vec<_> = (1..=RECONCILE_LIMIT)
+        .map(|id| {
+            let mut execution = row("claimed", "accepted", None);
+            execution.id = id as i64;
+            execution
+        })
+        .collect();
+    first_page[0].execution_payload =
+        Some(r#"{"executor_kind":"collaboration_group_dispatch"}"#.into());
+    let next_page = (RECONCILE_LIMIT + 1..=RECONCILE_LIMIT * 2)
+        .map(|id| {
+            let mut execution = row("claimed", "accepted", None);
+            execution.id = id as i64;
+            execution
+        })
+        .collect();
+    let mut pages = [(0, first_page), (RECONCILE_LIMIT as i64, next_page)].into_iter();
+
+    let references = load_reconciliation_refs(|after_id| {
+        let (expected_cursor, page) = pages.next().expect("native work must stay bounded");
+        assert_eq!(after_id, expected_cursor);
+        std::future::ready(Ok(page))
+    })
+    .await
+    .unwrap();
+
+    assert_eq!(references.len(), RECONCILE_LIMIT);
+    assert_eq!(references.first().unwrap().0, 2);
+    assert_eq!(references.last().unwrap().0, RECONCILE_LIMIT as i64 + 1);
+}
+
+#[test]
 fn capacity_statuses_match_the_source_set() {
     for status in ["running", "claimed", "cancel_requested"] {
         assert!(is_capacity_status(Some(status)), "{status}");

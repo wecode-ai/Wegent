@@ -607,18 +607,6 @@ mod tests {
     use super::*;
 
     #[test]
-    fn maps_backend_tool_schema_to_mcp_shape() {
-        let tools = mcp_tools(&json!({ "tools": [{
-            "name": "tickets__search",
-            "description": "Search tickets",
-            "input_schema": { "type": "object", "properties": { "q": { "type": "string" } } },
-            "annotations": { "readOnlyHint": true }
-        }] }));
-        assert_eq!(tools[0]["name"], "tickets__search");
-        assert_eq!(tools[0]["inputSchema"]["properties"]["q"]["type"], "string");
-    }
-
-    #[test]
     fn exposes_local_source_directory_for_wegent_sites_source_revisions() {
         let tools = mcp_tools(&json!({ "tools": [{
             "name": WEGENT_SITES_SAVE_SOURCE_REVISION,

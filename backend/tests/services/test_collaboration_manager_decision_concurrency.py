@@ -38,7 +38,7 @@ def manager_dispatch(
     project = _make_project(test_db, test_user)
     group, manager, _ = _collaboration_group(test_db, project, test_user)
     with patch(
-        "app.services.workspaces.workspace_service.list_project_collaboration_groups",
+        "app.services.workspaces.service.workspace_service.list_project_collaboration_groups",
         return_value=[group],
     ):
         issue = loop_item_service.create(

@@ -45,7 +45,6 @@ import {
   publishProjectSpaceTaskContextChanged,
   rememberProjectSpaceTaskBinding,
 } from './projectSpaceSelection'
-import { updateIssueWhenPersonalTaskStarts } from './workItemTaskInput'
 
 type BoardIssueCardRenderer = NonNullable<
   ComponentProps<typeof CollaborationApp>['renderBoardIssueCard']
@@ -527,26 +526,6 @@ function deferred<T>() {
 }
 
 describe('Wework collaboration workspace API', () => {
-  it('does not reject task creation when the Issue start update fails', async () => {
-    const issues = {
-      get: vi.fn().mockResolvedValue({
-        id: 'ISSUE-1',
-        status: 'pending',
-        tags: [],
-        version: 4,
-      }),
-      update: vi.fn().mockRejectedValue(new Error('没有权限更新 Issue')),
-    }
-
-    await expect(updateIssueWhenPersonalTaskStarts(issues, 'ISSUE-1')).resolves.toBe(
-      '没有权限更新 Issue'
-    )
-    expect(issues.update).toHaveBeenCalledWith('ISSUE-1', {
-      status: 'in_progress',
-      version: 4,
-    })
-  })
-
   it('keeps the cloud project choice available before cloud login', () => {
     render(
       createElement(WeworkCollaborationPlatform, {

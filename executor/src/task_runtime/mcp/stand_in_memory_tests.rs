@@ -472,6 +472,18 @@ fn source_bound_work_catalog_keeps_read_source_without_identity_configuration_to
     assert!(catalog
         .iter()
         .any(|tool| tool["name"] == "list_connection_providers"));
+    let create = catalog
+        .iter()
+        .find(|tool| tool["name"] == "create_task")
+        .unwrap();
+    assert_eq!(
+        create["inputSchema"]["required"],
+        json!(["requestId", "messageId", "title", "message"])
+    );
+    assert!(create["inputSchema"]["properties"]
+        .get("readSources")
+        .is_none());
+    assert_eq!(create["inputSchema"]["additionalProperties"], false);
     let reply = catalog.iter().find(|tool| tool["name"] == "reply").unwrap();
     assert_eq!(reply["title"], "Wework: Reply to source");
     assert_eq!(
@@ -487,7 +499,7 @@ fn source_bound_work_catalog_keeps_read_source_without_identity_configuration_to
     assert!(reply["description"]
         .as_str()
         .unwrap()
-        .contains("Writing @Name in text alone"));
+        .contains("Follow current scoped provider assistance"));
     assert!(catalog.iter().all(|tool| !matches!(
         tool["name"].as_str(),
         Some(
@@ -495,7 +507,7 @@ fn source_bound_work_catalog_keeps_read_source_without_identity_configuration_to
                 | "propose_profile"
                 | "connect_source"
                 | "search_connections"
-                | "create_task"
+                | "continue_task"
         )
     )));
 }

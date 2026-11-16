@@ -1301,7 +1301,7 @@ class SqlAlchemySubtaskStore:
         db: Session,
         *,
         subtask: Subtask,
-        from_status: SubtaskStatus,
+        from_status: SubtaskStatus | tuple[SubtaskStatus, ...],
         **fields: Any,
     ) -> bool:
         """Update fields only while the subtask still has ``from_status``.
@@ -1314,9 +1314,10 @@ class SqlAlchemySubtaskStore:
             getattr(Subtask, field): value for field, value in fields.items()
         }
         values[Subtask.updated_at] = datetime.now()
+        statuses = from_status if isinstance(from_status, tuple) else (from_status,)
         updated = (
             db.query(Subtask)
-            .filter(Subtask.id == subtask.id, Subtask.status == from_status)
+            .filter(Subtask.id == subtask.id, Subtask.status.in_(statuses))
             .update(values, synchronize_session=False)
         )
         return updated == 1
