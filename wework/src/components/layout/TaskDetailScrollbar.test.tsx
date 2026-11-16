@@ -216,3 +216,18 @@ test('synchronizes keyboard scrolling, thumb position, and content resizing', ()
   expect(thumb.style.height).toBe('78.8px')
   expect(track).toHaveAttribute('aria-valuemax', '1600')
 })
+
+test('keeps the observed track in layout while overflow disappears and returns', () => {
+  const { track } = renderConversation()
+  expect(track.style.visibility).toBe('visible')
+  contentHeight = 300
+  act(() => resizes.forEach(callback => callback()))
+  expect(track).not.toBeVisible()
+  expect(track.style.display).toBe('')
+  expect(track.style.visibility).toBe('hidden')
+  contentHeight = 2000
+  act(() => resizes.forEach(callback => callback()))
+  expect(track).toBeVisible()
+  expect(track.style.display).toBe('')
+  expect(track).toHaveAttribute('aria-valuemax', '1600')
+})
