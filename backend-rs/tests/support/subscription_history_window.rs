@@ -18,6 +18,13 @@ pub(super) async fn assert_store_windows(
     table: &str,
     user_id: i32,
 ) {
+    mysql
+        .execute(
+            format!("ALTER TABLE {table} ADD INDEX idx_task_message (task_id, message_id)"),
+            (),
+        )
+        .await
+        .unwrap();
     // SQL collation must not turn nonempty whitespace into an empty cache entry.
     mysql
         .execute(
@@ -69,13 +76,6 @@ pub(super) async fn assert_store_windows(
                 "ALTER TABLE {table} MODIFY id BIGINT NOT NULL AUTO_INCREMENT, \
                  MODIFY executor_deleted_at TINYINT NULL DEFAULT 0"
             ),
-            (),
-        )
-        .await
-        .unwrap();
-    mysql
-        .execute(
-            format!("ALTER TABLE {table} ADD INDEX idx_task_message (task_id, message_id)"),
             (),
         )
         .await
