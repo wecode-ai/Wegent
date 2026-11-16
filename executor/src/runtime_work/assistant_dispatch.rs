@@ -3,6 +3,9 @@ use crate::task_runtime::{personal_stand_in::stand_in_identities, LocalTaskStore
 use serde_json::{json, Value};
 
 pub(super) fn declaration(device: &str) -> Value {
+    if device.trim().is_empty() {
+        return json!({"version":1,"roles":[]});
+    }
     let settings = LocalTaskStore::from_env_if_exists()
         .and_then(|store| {
             store
