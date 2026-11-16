@@ -128,7 +128,8 @@ export function IssueCommentComposer({
   return (
     <form
       {...attributes}
-      className={`task-detail-new-comment${workflow ? " task-detail-workflow-comment" : ""}`}
+      className="task-detail-new-comment"
+      data-workflow={workflow || undefined}
       onSubmit={(event) => {
         event.preventDefault();
         if (canSend) onSubmit();
