@@ -19,6 +19,7 @@ mod auth;
 pub(super) use auth::acquire_named_home;
 pub(super) use auth::acquire_shared_auth;
 pub(crate) use auth::prepare_provider_migration;
+pub(crate) use auth::provider_state_is_current;
 
 #[cfg(test)]
 #[path = "home_auth_tests.rs"]

@@ -17,6 +17,7 @@ logger = logging.getLogger(__name__)
 
 from llama_index.core.schema import BaseNode
 
+from knowledge_engine.storage.index_strategy import validate_index_strategy
 from shared.knowledge_contracts import RetrievalScope
 
 if TYPE_CHECKING:
@@ -156,24 +157,6 @@ class BaseStorageBackend(ABC):
             prepared_nodes.append(node.model_copy(update={"text": embedding_text}))
         return prepared_nodes
 
-    def _validate_prefix(self, mode: str) -> str:
-        """
-        Validate and return prefix for index naming.
-
-        Args:
-            mode: Index strategy mode
-
-        Returns:
-            Validated prefix string
-
-        Raises:
-            ValueError: If prefix is empty or None
-        """
-        prefix = self.index_strategy.get("prefix", "wegent")
-        if not prefix:
-            raise ValueError(f"prefix cannot be empty for '{mode}' index strategy mode")
-        return prefix
-
     def _validate_knowledge_id(self, knowledge_id: str, mode: str) -> None:
         """
         Validate knowledge_id is not None or empty.
@@ -209,6 +192,7 @@ class BaseStorageBackend(ABC):
         Returns:
             Index/collection name
         """
+        validate_index_strategy(self.index_strategy)
         mode = self.index_strategy.get("mode", "per_dataset")
 
         # Debug logging for index strategy
@@ -218,21 +202,14 @@ class BaseStorageBackend(ABC):
         )
 
         if mode == "fixed":
-            fixed_name = self.index_strategy.get("fixedName")
-            if not fixed_name:
-                raise ValueError(
-                    "fixedName is required for 'fixed' index strategy mode"
-                )
-            return fixed_name
+            return self.index_strategy["fixedName"]
         elif mode == "rolling":
             # Validate knowledge_id and prefix
             self._validate_knowledge_id(knowledge_id, mode)
-            prefix = self._validate_prefix(mode)
+            prefix = self.index_strategy.get("prefix", "wegent")
 
             # Validate rollingStep (number of knowledge_ids per index bucket)
             step = self.index_strategy.get("rollingStep", 10)
-            if not isinstance(step, int) or step <= 0:
-                raise ValueError(f"rollingStep must be a positive integer, got: {step}")
 
             # Convert knowledge_id to integer for bucket calculation
             # knowledge_id is expected to be a numeric string (e.g., "1", "2", "123")
@@ -260,7 +237,7 @@ class BaseStorageBackend(ABC):
         elif mode == "per_dataset":
             # Validate knowledge_id and prefix
             self._validate_knowledge_id(knowledge_id, mode)
-            prefix = self._validate_prefix(mode)
+            prefix = self.index_strategy.get("prefix", "wegent")
             return f"{prefix}_kb_{knowledge_id}"
         elif mode == "per_user":
             # Per-user index strategy: separate index for each user
@@ -269,7 +246,7 @@ class BaseStorageBackend(ABC):
                 raise ValueError(
                     "user_id is required for 'per_user' index strategy mode"
                 )
-            prefix = self._validate_prefix(mode)
+            prefix = self.index_strategy.get("prefix", "wegent")
             return f"{prefix}_user_{user_id}"
         else:
             raise ValueError(f"Unknown index strategy mode: {mode}")

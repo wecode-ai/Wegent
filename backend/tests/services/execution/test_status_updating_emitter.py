@@ -486,7 +486,7 @@ async def test_direct_block_updates_are_persisted_before_done():
         "tool_output": "The file has been updated successfully.",
     }
 
-    mock_session_manager.get_blocks.return_value = [pending_block]
+    mock_session_manager.get_block.return_value = pending_block
 
     block_created = ExecutionEvent(
         type=EventType.BLOCK_CREATED.value,
@@ -521,6 +521,8 @@ async def test_direct_block_updates_are_persisted_before_done():
         await emitter.emit(block_updated)
         await emitter.emit(done)
 
+    mock_session_manager.get_block.assert_awaited_once_with(202, "call_write_1")
+    mock_session_manager.get_blocks.assert_not_awaited()
     mock_session_manager.add_block.assert_has_awaits(
         [
             call(202, pending_block),

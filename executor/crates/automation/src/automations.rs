@@ -10,7 +10,7 @@ use std::{
     sync::{Arc, Mutex, OnceLock, Weak},
 };
 
-use chrono::{DateTime, Duration, Utc};
+use chrono::{DateTime, Datelike, Duration, Utc};
 use chrono_tz::Tz;
 use cron::Schedule as CronSchedule;
 use serde::{Deserialize, Serialize};
@@ -80,15 +80,24 @@ pub struct Automation {
     pub updated_at: DateTime<Utc>,
 }
 
-#[derive(Clone, Debug, Deserialize, Serialize)]
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum AutomationSchedule {
-    Cron { expression: String },
-    Interval { value: i64, unit: IntervalUnit },
-    OneTime { execute_at: DateTime<Utc> },
+    Cron {
+        expression: String,
+        #[serde(default, rename = "workdayOnly", skip_serializing_if = "is_false")]
+        workday_only: bool,
+    },
+    Interval {
+        value: i64,
+        unit: IntervalUnit,
+    },
+    OneTime {
+        execute_at: DateTime<Utc>,
+    },
 }
 
-#[derive(Clone, Copy, Debug, Deserialize, Serialize)]
+#[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum IntervalUnit {
     Minutes,
@@ -216,10 +225,11 @@ impl AutomationStore {
         automation.version = 1;
         automation.created_at = now;
         automation.updated_at = now;
-        automation.next_run_at = automation
-            .enabled
-            .then(|| initial_next_run(&automation.schedule, &automation.timezone, now))
-            .flatten();
+        automation.next_run_at = if automation.enabled {
+            initial_next_run_checked(&automation.schedule, &automation.timezone, now)?
+        } else {
+            None
+        };
         let mut state = self.lock_state()?;
         if state.automations.contains_key(&automation.id) {
             return Err("automation already exists".to_owned());
@@ -253,12 +263,21 @@ impl AutomationStore {
         next.version += 1;
         next.created_at = existing.created_at;
         next.updated_at = now;
-        next.next_run_at = next
-            .enabled
-            .then(|| initial_next_run(&next.schedule, &next.timezone, now))
-            .flatten();
+        next.next_run_at = if !next.enabled {
+            None
+        } else if next.enabled == existing.enabled
+            && next.schedule == existing.schedule
+            && next.timezone == existing.timezone
+        {
+            existing.next_run_at
+        } else {
+            initial_next_run_checked(&next.schedule, &next.timezone, now)?
+        };
         state.automations.insert(next.id.clone(), next.clone());
-        self.write_state(&state)?;
+        if let Err(error) = self.write_state(&state) {
+            state.automations.insert(existing.id.clone(), existing);
+            return Err(error);
+        }
         Ok(next)
     }
 
@@ -317,7 +336,24 @@ impl AutomationStore {
             }
             let active = active_count > 0;
             let missed = scheduled_for + Duration::minutes(1) < now;
-            let status = if (active && !automation.task_request["standInCalendar"].is_object())
+            let next = next_run_after_checked(&automation.schedule, &automation.timezone, now);
+            let dispatch_error = scheduled_dispatch_allowed(&automation.schedule, now)
+                .and_then(|allowed| {
+                    allowed
+                        .then_some(())
+                        .ok_or_else(|| "scheduled execution skipped on a China non-workday".into())
+                })
+                .err()
+                .or_else(|| next.as_ref().err().cloned());
+            if next.is_err()
+                && automation
+                    .last_run_at
+                    .is_some_and(|last| last.date_naive() == now.date_naive())
+            {
+                continue;
+            }
+            let status = if dispatch_error.is_some()
+                || (active && !automation.task_request["standInCalendar"].is_object())
                 || (missed
                     && !automation.task_request["standInOwner"].is_object()
                     && !matches!(automation.schedule, AutomationSchedule::OneTime { .. }))
@@ -335,7 +371,9 @@ impl AutomationStore {
                 trigger: "scheduled".to_owned(),
                 status,
                 task_id: None,
-                error: if status == AutomationRunStatus::Skipped && active {
+                error: if dispatch_error.is_some() {
+                    dispatch_error
+                } else if status == AutomationRunStatus::Skipped && active {
                     Some("previous automation run is still active".to_owned())
                 } else if status == AutomationRunStatus::Skipped {
                     Some("scheduled time was missed while Wework was not running".to_owned())
@@ -353,7 +391,10 @@ impl AutomationStore {
                 updated.enabled = false;
                 updated.next_run_at = None;
             } else {
-                updated.next_run_at = next_run_after(&updated.schedule, &updated.timezone, now);
+                // Retain the due timestamp on error so an updated calendar can resume this item.
+                if let Ok(next) = next {
+                    updated.next_run_at = next;
+                }
             }
             state.automations.insert(automation_id, updated.clone());
             state.runs.push(run.clone());
@@ -424,6 +465,30 @@ impl AutomationStore {
             run.status = AutomationRunStatus::Failed;
             run.error = Some(error);
         })
+    }
+
+    pub fn allow_dispatch(
+        &self,
+        automation: &Automation,
+        run: &AutomationRun,
+        now: DateTime<Utc>,
+    ) -> Result<bool, String> {
+        if run.trigger == "manual" {
+            return Ok(true);
+        }
+        match scheduled_dispatch_allowed(&automation.schedule, now) {
+            Ok(true) => Ok(true),
+            result => {
+                let error = result
+                    .err()
+                    .unwrap_or_else(|| "scheduled execution skipped on a China non-workday".into());
+                self.update_run(&run.id, |run| {
+                    run.status = AutomationRunStatus::Skipped;
+                    run.error = Some(error);
+                })?;
+                Ok(false)
+            }
+        }
     }
 
     pub fn mark_needs_attention(&self, run_id: &str, error: String) -> Result<(), String> {
@@ -544,9 +609,19 @@ fn initial_next_run(
     timezone: &str,
     now: DateTime<Utc>,
 ) -> Option<DateTime<Utc>> {
+    initial_next_run_checked(schedule, timezone, now)
+        .ok()
+        .flatten()
+}
+
+fn initial_next_run_checked(
+    schedule: &AutomationSchedule,
+    timezone: &str,
+    now: DateTime<Utc>,
+) -> Result<Option<DateTime<Utc>>, String> {
     match schedule {
-        AutomationSchedule::OneTime { execute_at } => Some((*execute_at).max(now)),
-        _ => next_run_after(schedule, timezone, now),
+        AutomationSchedule::OneTime { execute_at } => Ok(Some((*execute_at).max(now))),
+        _ => next_run_after_checked(schedule, timezone, now),
     }
 }
 
@@ -555,25 +630,79 @@ pub fn next_run_after(
     timezone: &str,
     after: DateTime<Utc>,
 ) -> Option<DateTime<Utc>> {
+    next_run_after_checked(schedule, timezone, after)
+        .ok()
+        .flatten()
+}
+
+/// China workdays always follow the civil date in Asia/Shanghai, independently of cron's timezone.
+pub fn scheduled_dispatch_allowed(
+    schedule: &AutomationSchedule,
+    at: DateTime<Utc>,
+) -> Result<bool, String> {
+    if !matches!(
+        schedule,
+        AutomationSchedule::Cron {
+            workday_only: true,
+            ..
+        }
+    ) {
+        return Ok(true);
+    }
+    let china = at.with_timezone(&chrono_tz::Asia::Shanghai);
+    wegent_protocol::workday_calendar::is_china_workday(
+        &china.format("%Y-%m-%d").to_string(),
+        china.weekday().num_days_from_monday(),
+    )
+}
+
+pub fn next_run_after_checked(
+    schedule: &AutomationSchedule,
+    timezone: &str,
+    after: DateTime<Utc>,
+) -> Result<Option<DateTime<Utc>>, String> {
     match schedule {
-        AutomationSchedule::OneTime { execute_at } => (*execute_at > after).then_some(*execute_at),
+        AutomationSchedule::OneTime { execute_at } => {
+            Ok((*execute_at > after).then_some(*execute_at))
+        }
         AutomationSchedule::Interval { value, unit } => {
             let duration = match unit {
                 IntervalUnit::Minutes => Duration::minutes(*value),
                 IntervalUnit::Hours => Duration::hours(*value),
                 IntervalUnit::Days => Duration::days(*value),
             };
-            (duration > Duration::zero()).then_some(after + duration)
+            Ok((duration > Duration::zero()).then_some(after + duration))
         }
-        AutomationSchedule::Cron { expression } => {
-            let timezone = timezone.parse::<Tz>().ok()?;
-            let expression = normalize_cron_expression(expression)?;
-            let schedule = CronSchedule::from_str(&expression).ok()?;
+        AutomationSchedule::Cron { expression, .. } => {
+            let timezone = timezone
+                .parse::<Tz>()
+                .map_err(|_| "invalid IANA timezone".to_owned())?;
+            let expression =
+                normalize_cron_expression(expression).ok_or("invalid cron expression")?;
+            let cron = CronSchedule::from_str(&expression).map_err(|error| error.to_string())?;
             let local_after = after.with_timezone(&timezone);
-            schedule
-                .after(&local_after)
-                .next()
-                .map(|value| value.with_timezone(&Utc))
+            let mut cursor = local_after;
+            loop {
+                let Some(value) = cron.after(&cursor).next() else {
+                    return Ok(None);
+                };
+                if scheduled_dispatch_allowed(schedule, value.with_timezone(&Utc))? {
+                    return Ok(Some(value.with_timezone(&Utc)));
+                }
+                // Skip the rest of a rejected China date, even for per-second cron rules.
+                let china = value.with_timezone(&chrono_tz::Asia::Shanghai);
+                cursor = (china
+                    .date_naive()
+                    .succ_opt()
+                    .ok_or("calendar date overflow")?
+                    .and_hms_opt(0, 0, 0)
+                    .unwrap()
+                    .and_local_timezone(chrono_tz::Asia::Shanghai)
+                    .single()
+                    .ok_or("invalid China date")?
+                    - Duration::seconds(1))
+                .with_timezone(&timezone);
+            }
         }
     }
 }
@@ -670,7 +799,7 @@ fn validate_automation(automation: &Automation) -> Result<(), String> {
         .parse::<Tz>()
         .map_err(|_| "invalid IANA timezone".to_owned())?;
     match &automation.schedule {
-        AutomationSchedule::Cron { expression } => {
+        AutomationSchedule::Cron { expression, .. } => {
             let expression = normalize_cron_expression(expression)
                 .ok_or_else(|| "cron expression must contain 5, 6, or 7 fields".to_owned())?;
             CronSchedule::from_str(&expression)
@@ -750,6 +879,10 @@ fn default_timezone() -> String {
 
 fn default_true() -> bool {
     true
+}
+
+fn is_false(value: &bool) -> bool {
+    !value
 }
 
 #[cfg(test)]

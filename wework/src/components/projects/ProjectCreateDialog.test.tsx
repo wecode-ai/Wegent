@@ -3,6 +3,7 @@ import type { DeviceInfo, DeviceWorkspaceResponse } from '@/types/api'
 import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, test, vi } from 'vitest'
+import { WorkbenchCloudDeviceRestarts } from '@/features/cloud-devices/WorkbenchCloudDeviceRestarts'
 import { ProjectCreateDialog } from './ProjectCreateDialog'
 
 const pickerMocks = vi.hoisted(() => ({
@@ -89,6 +90,40 @@ describe('ProjectCreateDialog', () => {
     await userEvent.click(settingsLink)
 
     expect(onOpenCloudDeviceSettings).toHaveBeenCalledTimes(1)
+  })
+
+  test('suspends the project dialog during cloud restart confirmation and restores its draft', async () => {
+    const cloud = { ...devices[0], executor_version: '1.8.4' }
+    const onClose = vi.fn()
+    const onUpgradeDevice = vi.fn()
+    render(
+      <WorkbenchCloudDeviceRestarts devices={[cloud]} refreshDevices={vi.fn()}>
+        <ProjectCreateDialog
+          open
+          mode="scratch"
+          project={{ id: 7, name: 'Project', tasks: [] }}
+          devices={[cloud]}
+          onClose={onClose}
+          onCreateProject={vi.fn()}
+          onGetDeviceHomeDirectory={vi.fn()}
+          onGetProjectWorkspaceRoot={vi.fn()}
+          onListDeviceDirectories={vi.fn()}
+          onCreateDeviceDirectory={vi.fn()}
+          onUpgradeDevice={onUpgradeDevice}
+        />
+      </WorkbenchCloudDeviceRestarts>
+    )
+
+    await userEvent.type(screen.getByTestId('project-name-input'), ' draft')
+    await userEvent.click(screen.getByTestId('restart-project-device-cloud-device'))
+    expect(screen.getByTestId('confirm-restart-device-dialog')).toBeVisible()
+    expect(screen.queryByTestId('project-create-dialog')).not.toBeInTheDocument()
+    await userEvent.keyboard('{Escape}')
+
+    expect(screen.getByTestId('project-create-dialog')).toBeVisible()
+    expect(screen.getByTestId('project-name-input')).toHaveValue('Project draft')
+    expect(onClose).not.toHaveBeenCalled()
+    expect(onUpgradeDevice).not.toHaveBeenCalled()
   })
 
   test('create flow shows all device tabs and starts on the preferred device', () => {

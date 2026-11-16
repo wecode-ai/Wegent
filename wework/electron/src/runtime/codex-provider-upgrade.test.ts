@@ -69,6 +69,25 @@ test('uses the selected executor offline entry without inheriting account or tas
   await expect(migrateCodexProviderState(options)).resolves.toBeUndefined()
 })
 
+test('requests read-only admission only for shared development startup', async () => {
+  const { command, options } = await fixture()
+  await writeFile(
+    command,
+    `
+    const request = JSON.parse(process.argv[3])
+    if (request.admit_current !== true) process.exit(2)
+    process.stdout.write(JSON.stringify({codex_provider_migration:1,complete:true}))
+    `
+  )
+  await expect(
+    migrateCodexProviderState({
+      ...options,
+      environment: { ...options.environment, WEWORK_DEVELOPMENT_ISOLATED: '1' },
+    })
+  ).resolves.toBeUndefined()
+  await expect(migrateCodexProviderState(options)).rejects.toThrow('journal will resume')
+})
+
 test('rejects legacy and incomplete responses without exposing child diagnostics', async () => {
   const { command, options } = await fixture()
   for (const response of [

@@ -800,6 +800,9 @@ export const MessageList = memo(function MessageList({
             </article>
           )
         const nextMessage = visibleMessages[index + 1]
+        const isHistoricalTurn = Boolean(
+          message.turnId && latestNativeTurnId && message.turnId !== latestNativeTurnId
+        )
         const article = (
           <article
             className={cn(
@@ -822,10 +825,13 @@ export const MessageList = memo(function MessageList({
                   : undefined
               }
               forceExpanded={searchMessageId === message.id}
-              isActiveTurn={isWaitingForAssistant && index === visibleMessages.length - 1}
-              isHistoricalTurn={Boolean(
-                message.turnId && latestNativeTurnId && message.turnId !== latestNativeTurnId
-              )}
+              // Waiting for the next assistant must not keep a completed turn's process open.
+              isActiveTurn={
+                message.role === 'assistant' &&
+                message.status === 'streaming' &&
+                !isHistoricalTurn
+              }
+              isHistoricalTurn={isHistoricalTurn}
               userMessageServices={userMessageServices}
               renderVisualization={renderVisualization}
               assistantMessageStyle={assistantMessageStyle}

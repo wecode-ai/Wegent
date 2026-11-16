@@ -9,6 +9,32 @@ const CONTENT = '[data-workspace-tab-content][aria-hidden="false"]'
 const selector = id => `[data-testid="${id}"]`
 const projectName = `project-people-${process.pid}`
 
+async function assertCollaboratorMenuGeometry(control) {
+  const menuSelector = selector('collaboration-project-create-collaborator-menu')
+  await control.command('waitFor', menuSelector, { visible: true, stableMs: 200 })
+  const [menu] = JSON.parse(await control.command('getElementMetrics', menuSelector))
+  const [trigger] = JSON.parse(
+    await control.command(
+      'getElementMetrics',
+      selector('collaboration-project-create-add-collaborator')
+    )
+  )
+  assert.ok(
+    menu.top >= 7 && menu.bottom <= menu.viewportHeight - 7,
+    'The collaborator picker must remain inside the viewport near the dialog footer'
+  )
+  assert.ok(
+    menu.left >= 7 && menu.right <= menu.viewportWidth - 7,
+    'The collaborator picker must fit narrow viewports'
+  )
+  const side = await control.command('getAttribute', menuSelector, { value: 'data-side' })
+  const gap = side === 'top' ? trigger.top - menu.bottom : menu.top - trigger.bottom
+  assert.ok(
+    gap >= 5 && gap <= 7,
+    'The collaborator picker must stay anchored when opening above or below its trigger'
+  )
+}
+
 export function createDesktopScenario({ workbenchReadyTimeoutMs }) {
   let cloud, workspace, participant
   async function request(path, method = 'GET', body) {
@@ -54,11 +80,13 @@ export function createDesktopScenario({ workbenchReadyTimeoutMs }) {
         value: projectName,
       })
       await control.command('click', selector('collaboration-project-create-add-collaborator'))
+      await assertCollaboratorMenuGeometry(control)
       await control.command('fill', selector('collaboration-project-create-people-search'), {
         value: participant.user_name,
       })
       const result = selector(`collaboration-project-create-member-${participant.id}`)
       await control.command('waitFor', result)
+      await assertCollaboratorMenuGeometry(control)
       await control.command('click', result)
       await control.command(
         'waitFor',

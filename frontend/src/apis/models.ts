@@ -274,6 +274,7 @@ export type ModelTypeEnum = 'public' | 'user' | 'group' | 'runtime'
 
 export interface UnifiedModel {
   name: string
+  id?: number | null
   type: ModelTypeEnum // identifies model source
   displayName?: string | null
   provider?: string | null // 'openai' | 'claude'

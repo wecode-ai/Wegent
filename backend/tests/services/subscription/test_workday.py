@@ -14,13 +14,13 @@ from fastapi import HTTPException
 from app.schemas.subscription import CronTriggerConfig, SubscriptionTriggerType
 from app.services.subscription import helpers
 from app.services.subscription.service import SubscriptionService
-from app.services.subscription.workday import WorkdayCalendarError, is_china_workday
 from app.tasks.subscription_tasks import (
     _cancel_non_workday_execution,
     _dispatch_due_subscription,
     execute_subscription_task,
     execute_subscription_task_sync,
 )
+from shared.utils.workday import WorkdayCalendarError, is_china_workday
 
 
 def freeze_now(monkeypatch, value):
@@ -197,9 +197,7 @@ def test_unsupported_calendar_keeps_schedule_retryable_after_calendar_update(
         assert subscription.json == stored
         advance.assert_not_called()
         service.create_execution.assert_not_called()
-        monkeypatch.setattr(
-            "app.services.subscription.workday.is_workday", lambda date: True
-        )
+        monkeypatch.setattr("shared.utils.workday.is_workday", lambda date: True)
         assert _dispatch_due_subscription(
             db=db,
             subscription=subscription,

@@ -161,7 +161,12 @@ pub(super) fn stand_in_mcp_approval_overrides(
         .get("origin")
         .is_some_and(|origin| origin["type"] == "stand_in_identity")
     {
-        for tool in ["schedule_task", "cancel_schedule", "configure_git_webhook"] {
+        for tool in [
+            "schedule_task",
+            "update_schedule",
+            "cancel_schedule",
+            "configure_git_webhook",
+        ] {
             result.push(format!(
                 "mcp_servers.wework_stand_in.tools.{tool}.approval_mode=\"writes\""
             ));
@@ -182,6 +187,20 @@ pub(super) fn stand_in_mcp_approval_overrides(
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn schedule_updates_require_native_mutation_review_in_owner_chat() {
+        let root = tempfile::tempdir().unwrap();
+        let request =
+            serde_json::from_value(json!({"origin":{"type":"stand_in_identity"}})).unwrap();
+        let overrides =
+            stand_in_mcp_approval_overrides(&request, root.path(), &[], &Map::new()).unwrap();
+        for name in ["schedule_task", "update_schedule", "cancel_schedule"] {
+            assert!(overrides.contains(&format!(
+                "mcp_servers.wework_stand_in.tools.{name}.approval_mode=\"writes\""
+            )));
+        }
+    }
 
     #[test]
     fn native_provider_paths_do_not_change_mcp_approval_enforcement() {

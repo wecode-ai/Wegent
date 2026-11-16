@@ -43,7 +43,12 @@ async function fixture(t) {
     retainsLiveProfile: true,
   }
   const prepareLegacyCopy = async () => {
-    await cp(join(root, 'installed'), join(slot, 'host/installed'), { recursive: true })
+    process.noAsar = true
+    try {
+      await cp(join(root, 'installed'), join(slot, 'host/installed'), { recursive: true })
+    } finally {
+      process.noAsar = false
+    }
     baseline.executable = join(
       slot,
       'host/installed',

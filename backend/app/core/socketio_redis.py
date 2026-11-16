@@ -8,6 +8,7 @@ import asyncio
 import logging
 from typing import Any
 
+from anyio import fail_after
 from socketio import AsyncRedisManager
 
 from shared.telemetry.decorators import trace_async
@@ -94,9 +95,10 @@ class ObservedRedisManager(AsyncRedisManager):
         """Update readiness from one bounded round trip."""
         was_ready = self.ack_ready
         try:
-            await asyncio.wait_for(
-                self._probe_ack_round_trip(), timeout=ACK_PROBE_TIMEOUT_SECONDS
-            )
+            # Keep this task's cancellation independent from ACK completion on
+            # Python 3.10/3.11, where wait_for can absorb the cancellation.
+            with fail_after(ACK_PROBE_TIMEOUT_SECONDS):
+                await self._probe_ack_round_trip()
         except Exception as error:
             self._probe_failures += 1
             if was_ready and not self.ack_ready:

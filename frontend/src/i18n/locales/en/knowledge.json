@@ -1097,6 +1097,23 @@
         "inherited": "Inherited",
         "direct": "Direct grant"
       }
+    },
+    "deletion": {
+      "continue": "Continue deleting",
+      "externalWarning": "External index cleanup failed. Continuing removes the content from Wegent, but external index data may remain. New searches and document reads will exclude it; operations already in progress may finish.",
+      "residualWarning": "Content deleted from Wegent. External index cleanup is unconfirmed; residual data may remain.",
+      "failed": "Deletion failed",
+      "serviceAuthFailed": "Index cleanup service authentication failed. Check the service configuration and retry.",
+      "batchTitle": "Batch deletion results",
+      "batchSummary": "Content deleted: {{deleted}}; external cleanup unconfirmed: {{unconfirmed}}; not deleted: {{failed}}.",
+      "batchContinueWarning": "Continue only for these {{count}} documents with external engine failures. Other failed items will remain. External index data may remain.",
+      "batchRequestFailed": "The request outcome is unconfirmed. Continuing is unavailable. Refresh the list to verify.",
+      "batchNotFound": "Document missing or inaccessible",
+      "batchRejected": "Deletion is not allowed by permissions or content rules",
+      "batchCleanupFailed": "Index cleanup service failed; continuing is unavailable",
+      "batchFailed": "Deletion did not complete. Check and retry.",
+      "batchResidual": "Content deleted; external cleanup unconfirmed",
+      "batchExternalFailure": "External cleanup failed; confirmation is available"
     }
   },
   "add_repository": "Add Repository",

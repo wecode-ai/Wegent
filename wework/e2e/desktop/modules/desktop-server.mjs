@@ -488,6 +488,7 @@ const HELD_RESPONSE_SCENARIOS = new Set([
   'worktree_restart_hold',
   'worktree_status_hold',
   'attachment_submit_cleanup',
+  'cloud_device_restart_busy',
 ])
 
 class DesktopE2EServer {

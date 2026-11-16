@@ -54,7 +54,11 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
       )
       const editTag = async (id, tag) => {
         await control.command('click', scoped(`cloud-todo-card-${id}`))
-        await control.command('click', scoped('cloud-todo-more-properties'))
+        await control.command('waitFor', scoped('cloud-todo-detail-description-empty'), {
+          visible: true,
+          text: '添加描述，说明背景、目标或处理要求…',
+        })
+        await control.command('waitFor', scoped('issue-primary-metadata'), { visible: true })
         await control.command('fill', portal('cloud-todo-detail-tag-input'), { value: tag })
         await control.command('press', portal('cloud-todo-detail-tag-input'), { key: 'Enter' })
         await waitForValue(
@@ -63,7 +67,7 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
           'Tag must persist without pressing Save',
           uiTimeoutMs
         )
-        await control.command('press', portal('cloud-todo-detail-tag-input'), { key: 'Escape' })
+        await control.command('pointerClick', scoped('cloud-todo-detail-title'))
         await control.command('click', scoped('cloud-todo-detail-close'))
       }
       await editTag(first, 'bug')
@@ -104,6 +108,9 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
         uiTimeoutMs
       )
       await control.command('click', scoped('cloud-todo-detail-description'))
+      await control.command('waitFor', scoped('cloud-todo-detail-description-empty'), {
+        visible: false,
+      })
       await control.command('fill', scoped('cloud-todo-detail-description'), {
         value: 'Description requires an explicit save',
       })
