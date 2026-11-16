@@ -5,6 +5,7 @@ import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import { ProjectCreateDialog } from './ProjectCreateDialog'
 import { projectCreateLabels } from './labels'
 import type { CollaborationProject } from '../types'
+import type { ProjectCreateResourceSetup } from './types'
 
 let root: Root
 let container: HTMLDivElement
@@ -19,6 +20,7 @@ beforeEach(() => {
 afterEach(async () => {
   await act(async () => root.unmount())
   container.remove()
+  vi.unstubAllGlobals()
 })
 
 const get = <T extends HTMLElement>(id: string) =>
@@ -26,6 +28,74 @@ const get = <T extends HTMLElement>(id: string) =>
 const click = async (id: string) => {
   await act(async () => get(id).click())
 }
+
+it('returns from group configuration without closing creation or losing its participants', async () => {
+  vi.stubGlobal(
+    'ResizeObserver',
+    class {
+      observe() {}
+      unobserve() {}
+      disconnect() {}
+    }
+  )
+  const onClose = vi.fn()
+  const agents: ProjectCreateResourceSetup['agents'] = ['one', 'two'].map(id => ({
+    id,
+    name: id,
+    owner_type: 'user',
+    owner_id: '1',
+    owner_name: 'Me',
+    status: 'available',
+  }))
+  await act(async () =>
+    root.render(
+      <ProjectCreateDialog
+        targets={[{ location: 'cloud', create: vi.fn() }]}
+        defaultLocation="cloud"
+        labels={projectCreateLabels['zh-CN']}
+        allowDingTalkAITable={false}
+        onClose={onClose}
+        onCreated={vi.fn()}
+        resourceSetup={{
+          location: 'cloud',
+          currentUser: { id: 1, name: 'Me' },
+          members: [],
+          agents,
+          groups: [],
+          configure: vi.fn(),
+          generateCollaborationGroupDraft: vi.fn(),
+        }}
+      />
+    )
+  )
+  for (const agent of agents) {
+    await click('collaboration-project-create-add-collaborator')
+    await click('collaboration-project-create-collaborator-tab-agents')
+    await click(`collaboration-project-create-agent-${agent.id}`)
+  }
+  const opener = get('collaboration-project-create-organize-group')
+  opener.focus()
+  await click('collaboration-project-create-organize-group')
+  const configuration = get('collaboration-project-create-model-picker')
+  expect(configuration.contains(document.activeElement), document.activeElement?.outerHTML).toBe(
+    true
+  )
+  expect(document.querySelectorAll('[role="dialog"][aria-modal="true"]')).toHaveLength(1)
+  expect(get('cloud-project-name').closest('form')?.hidden).toBe(true)
+  await act(async () =>
+    document.activeElement!.dispatchEvent(
+      new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true })
+    )
+  )
+  expect(onClose).not.toHaveBeenCalled()
+  expect(
+    document.querySelector('[data-testid="collaboration-project-create-model-picker"]')
+  ).toBeNull()
+  expect(get('cloud-project-name').closest('form')?.hidden).toBe(false)
+  expect(document.activeElement).toBe(opener)
+  expect(document.querySelector('button[aria-label="取消 one"]')).toBeTruthy()
+  expect(document.querySelector('button[aria-label="取消 two"]')).toBeTruthy()
+})
 
 it('contains keyboard focus, respects a child dialog and restores the opener on Escape', async () => {
   const opener = document.createElement('button')

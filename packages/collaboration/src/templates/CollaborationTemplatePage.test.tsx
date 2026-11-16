@@ -393,3 +393,123 @@ it('uses a private template update advertised by account metadata instead of an 
   expect(onUse).toHaveBeenCalledWith(expect.objectContaining({ document: updated.document }))
   expect(backend.install).not.toHaveBeenCalled()
 })
+
+it('cancels embedded import in place without writing and restores its trigger', async () => {
+  const backend = remote()
+  const write = vi.fn(async () => undefined)
+  const store = new CollaborationTemplateStore({
+    scope: 'backend:7',
+    ownerId: 7,
+    remote: backend,
+    persistence: { read: async () => [], write },
+  })
+  const onDetailChange = vi.fn()
+  await act(async () =>
+    root.render(
+      <CollaborationTemplatePage
+        store={store}
+        locale="en"
+        embedded
+        onDetailChange={onDetailChange}
+      />
+    )
+  )
+  const trigger = container.querySelector<HTMLButtonElement>(
+    '[data-testid="template-import-open"]'
+  )!
+  trigger.focus()
+  await click('template-import-open')
+  expect(container.querySelectorAll('dialog')).toHaveLength(0)
+  expect(container.querySelector('[data-testid="template-import-file"]')).not.toBeNull()
+  expect(onDetailChange.mock.lastCall?.[0].title).toBe('Import collaboration template')
+  await click('template-import-cancel')
+  expect(container.querySelector('[data-testid="template-import-file"]')).toBeNull()
+  expect(document.activeElement).toBe(trigger)
+  expect(backend.save).not.toHaveBeenCalled()
+  expect(write).not.toHaveBeenCalled()
+  expect(onDetailChange.mock.lastCall?.[0]).toBeNull()
+})
+
+it('cancels embedded deletion in place without deleting and restores its trigger', async () => {
+  const backend = remote()
+  const record = structuredClone(builtinCollaborationTemplates()[0])
+  record.id = 42
+  record.ownerId = 7
+  record.source = 'personal'
+  record.document.metadata = { name: 'owned-template', namespace: 'default' }
+  const write = vi.fn(async () => undefined)
+  const store = new CollaborationTemplateStore({
+    scope: 'backend:7',
+    ownerId: 7,
+    remote: backend,
+    persistence: { read: async () => [record], write },
+  })
+  const onDetailChange = vi.fn()
+  await act(async () =>
+    root.render(
+      <CollaborationTemplatePage
+        store={store}
+        locale="en"
+        embedded
+        onDetailChange={onDetailChange}
+      />
+    )
+  )
+  await click('template-tab-mine')
+  const trigger = container.querySelector<HTMLButtonElement>(
+    '[data-testid="template-delete-owned-template"]'
+  )!
+  trigger.focus()
+  await click('template-delete-owned-template')
+  expect(container.querySelectorAll('dialog')).toHaveLength(0)
+  expect(onDetailChange.mock.lastCall?.[0].title).toBe('Delete template')
+  expect(container.querySelector('[data-testid="template-delete-confirm"]')).not.toBeNull()
+  await click('template-delete-cancel')
+  expect(container.querySelector('[data-testid="template-delete-confirm"]')).toBeNull()
+  expect(document.activeElement).toBe(trigger)
+  expect(backend.delete).not.toHaveBeenCalled()
+  expect(write).not.toHaveBeenCalled()
+  expect(onDetailChange.mock.lastCall?.[0]).toBeNull()
+})
+
+it('keeps embedded deletion open while its write is in progress', async () => {
+  const backend = remote()
+  let finish!: () => void
+  vi.mocked(backend.delete).mockImplementation(
+    () =>
+      new Promise<void>(resolve => {
+        finish = resolve
+      })
+  )
+  const record = structuredClone(builtinCollaborationTemplates()[0])
+  record.id = 42
+  record.ownerId = 7
+  record.source = 'personal'
+  record.document.metadata = { name: 'owned-template', namespace: 'default' }
+  const store = new CollaborationTemplateStore({
+    scope: 'backend:7',
+    ownerId: 7,
+    remote: backend,
+    persistence: { read: async () => [record], write: async () => {} },
+  })
+  const onDetailChange = vi.fn()
+  await act(async () =>
+    root.render(
+      <CollaborationTemplatePage
+        store={store}
+        locale="en"
+        embedded
+        onDetailChange={onDetailChange}
+      />
+    )
+  )
+  await click('template-tab-mine')
+  await click('template-delete-owned-template')
+  await click('template-delete-confirm')
+  await act(async () => onDetailChange.mock.lastCall![0].onBack())
+  expect(container.querySelector('[data-testid="template-delete-confirm"]')).not.toBeNull()
+  expect(container.querySelectorAll('dialog')).toHaveLength(0)
+  await act(async () => finish())
+  expect(container.querySelector('[data-testid="template-delete-confirm"]')).toBeNull()
+  expect(document.activeElement).toBe(container.querySelector('[data-testid="template-search"]'))
+})

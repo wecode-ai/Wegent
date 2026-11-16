@@ -17,7 +17,8 @@ function isFocusable(element: HTMLElement) {
 export function useDialogKeyboard<T extends HTMLElement>(
   onClose: () => void,
   open = true,
-  initialFocus?: string
+  initialFocus?: string,
+  trapFocus = true
 ) {
   const ref = useRef<T>(null)
   useEscapeKey(onClose, open, ref)
@@ -60,7 +61,7 @@ export function useDialogKeyboard<T extends HTMLElement>(
         first.focus()
       }
     }
-    dialog.addEventListener('keydown', handleTab)
+    if (trapFocus) dialog.addEventListener('keydown', handleTab)
     return () => {
       dialog.removeEventListener('keydown', handleTab)
       if (
@@ -70,7 +71,7 @@ export function useDialogKeyboard<T extends HTMLElement>(
       )
         previousFocus.focus()
     }
-  }, [open, initialFocus])
+  }, [open, initialFocus, trapFocus])
 
   return ref
 }

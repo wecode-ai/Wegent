@@ -4,6 +4,10 @@
   font-size: var(--text-base);
 }
 
+.collaboration-template-page.is-embedded {
+  padding: 0;
+}
+
 .collaboration-template-page-heading,
 .collaboration-template-toolbar,
 .collaboration-template-actions,
@@ -113,7 +117,7 @@
 
 .collaboration-template-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 260px), 1fr));
   gap: 16px;
 }
 .collaboration-template-card {

@@ -262,6 +262,7 @@ export interface ProjectCreateLabels {
   generatingWorkflow: string;
   groupSettingsHint: string;
   cancel: string;
+  backToProject: string;
   create: string;
   creating: string;
   unavailableLocation: string;

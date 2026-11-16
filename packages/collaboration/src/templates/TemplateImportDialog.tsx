@@ -7,7 +7,7 @@ import { importTemplate } from './document'
 import { templateMessages } from './messages'
 import type { CollaborationTemplate } from './types'
 import type { CollaborationTemplateStore } from './store'
-import { TemplateDialog } from './TemplateDialog'
+import { TemplatePanel } from './TemplatePanel'
 import { TemplatePreview } from './TemplatePreview'
 
 export function TemplateImportDialog({
@@ -15,10 +15,14 @@ export function TemplateImportDialog({
   locale,
   onClose,
   onSaved,
+  embedded = false,
+  onBusyChange,
 }: {
   store: CollaborationTemplateStore
   locale: CollaborationLocale
   onClose(): void
+  embedded?: boolean
+  onBusyChange?(busy: boolean): void
   onSaved(document: CollaborationTemplate): void
 }) {
   const m = templateMessages[locale]
@@ -27,7 +31,8 @@ export function TemplateImportDialog({
   const [busy, setBusy] = useState(false)
   const readVersion = useRef(0)
   return (
-    <TemplateDialog
+    <TemplatePanel
+      embedded={embedded}
       title={m.importTitle}
       description={m.importHint}
       closeLabel={m.close}
@@ -51,6 +56,7 @@ export function TemplateImportDialog({
             onClick={async () => {
               if (!document) return
               setBusy(true)
+              onBusyChange?.(true)
               try {
                 await store.save(document, store.library.ownerId)
                 onSaved(document)
@@ -58,6 +64,7 @@ export function TemplateImportDialog({
                 setError(m.failed)
               } finally {
                 setBusy(false)
+                onBusyChange?.(false)
               }
             }}
           >
@@ -104,6 +111,6 @@ export function TemplateImportDialog({
         </p>
       )}
       {document && <TemplatePreview document={document} locale={locale} />}
-    </TemplateDialog>
+    </TemplatePanel>
   )
 }

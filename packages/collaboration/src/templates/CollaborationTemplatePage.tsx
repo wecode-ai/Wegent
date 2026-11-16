@@ -13,7 +13,7 @@ import {
 import type { CollaborationTemplateStore } from './store'
 import { useTemplateRecords } from './context'
 import { templateMessages } from './messages'
-import { TemplateDialog } from './TemplateDialog'
+import { TemplatePanel } from './TemplatePanel'
 import { TemplateImportDialog } from './TemplateImportDialog'
 import { TemplatePreview } from './TemplatePreview'
 
@@ -40,11 +40,15 @@ function ScopedCollaborationTemplatePage({
   locale,
   mode = 'desktop',
   onUse,
+  embedded = false,
+  onDetailChange,
 }: {
   store: CollaborationTemplateStore
   locale: CollaborationLocale
   mode?: 'desktop' | 'marketplace'
   onUse?(record: TemplateRecord): void
+  embedded?: boolean
+  onDetailChange?(detail: { title: string; onBack(): void } | null): void
 }) {
   const m = templateMessages[locale]
   const local = useTemplateRecords(store)
@@ -61,7 +65,47 @@ function ScopedCollaborationTemplatePage({
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [importOpen, setImportOpen] = useState(false)
+  const [importBusy, setImportBusy] = useState(false)
+  const pageRef = useRef<HTMLElement>(null)
+  const returnTrigger = useRef<HTMLElement | null>(null)
   const [deleting, setDeleting] = useState<Card | null>(null)
+  const detailChanged = useRef(onDetailChange)
+  useEffect(() => {
+    detailChanged.current = onDetailChange
+  }, [onDetailChange])
+  useEffect(() => {
+    if (!embedded) return
+    const panel = importOpen
+      ? {
+          title: m.importTitle,
+          onBack: () => {
+            if (!importBusy) setImportOpen(false)
+          },
+        }
+      : deleting
+        ? {
+            title: m.delete,
+            onBack: () => {
+              if (!busy) setDeleting(null)
+            },
+          }
+        : selected
+          ? {
+              title: selected.document.spec.displayName,
+              onBack: () => {
+                if (!busy) setSelected(null)
+              },
+            }
+          : null
+    detailChanged.current?.(panel)
+    if (!panel && returnTrigger.current) {
+      const trigger = returnTrigger.current.isConnected
+        ? returnTrigger.current
+        : pageRef.current?.querySelector<HTMLInputElement>('[data-testid="template-search"]')
+      trigger?.focus()
+      returnTrigger.current = null
+    }
+  }, [embedded, selected, deleting, importOpen, busy, importBusy, m.importTitle, m.delete])
   const generation = useRef(0)
   const refresh = useCallback(async () => {
     const remote = store.library.remote
@@ -185,188 +229,205 @@ function ScopedCollaborationTemplatePage({
   }
 
   return (
-    <section className="collaboration-template-page" data-testid="collaboration-template-page">
-      <header className="collaboration-template-page-heading">
-        <div>
-          <h2>{m.title}</h2>
-          <p>{m.description}</p>
-        </div>
-        <div className="collaboration-template-actions">
-          <button
-            type="button"
-            data-testid="template-refresh"
-            aria-label={m.refresh}
-            disabled={remoteLoading}
-            onClick={() => void refresh()}
-          >
-            <RefreshCw aria-hidden="true" />
-          </button>
-          <button
-            type="button"
-            data-testid="template-import-open"
-            onClick={() => setImportOpen(true)}
-          >
-            {m.import}
-          </button>
-        </div>
-      </header>
-      {!store.library.remote && <p className="collaboration-template-notice">{m.offline}</p>}
-      <div className="collaboration-template-toolbar">
-        <div role="group" aria-label={m.title}>
-          {(['discover', 'available', 'mine'] as const).map(value => (
+    <section
+      ref={pageRef}
+      className={`collaboration-template-page${embedded ? ' is-embedded' : ''}`}
+      data-testid="collaboration-template-page"
+    >
+      <div
+        hidden={embedded && Boolean(selected || deleting || importOpen)}
+        style={{ display: embedded && (selected || deleting || importOpen) ? 'none' : 'contents' }}
+      >
+        <header className="collaboration-template-page-heading">
+          <div>
+            {!embedded && <h2>{m.title}</h2>}
+            <p>{m.description}</p>
+          </div>
+          <div className="collaboration-template-actions">
             <button
               type="button"
-              key={value}
-              data-testid={`template-tab-${value}`}
-              aria-pressed={tab === value}
-              onClick={() => setTab(value)}
+              data-testid="template-refresh"
+              aria-label={m.refresh}
+              disabled={remoteLoading}
+              onClick={() => void refresh()}
             >
-              {value === 'available' && mode === 'marketplace' ? m.capabilities : m[value]}
+              <RefreshCw aria-hidden="true" />
             </button>
-          ))}
-        </div>
-        <input
-          aria-label={m.search}
-          placeholder={m.search}
-          data-testid="template-search"
-          value={search}
-          onChange={event => setSearch(event.target.value)}
-        />
-      </div>
-      {(remoteError || local.error) && (
-        <p role="alert">
-          {m.failed}{' '}
-          <button
-            type="button"
-            data-testid="template-retry"
-            onClick={() => {
-              void store.load().catch(() => undefined)
-              void refresh()
-            }}
-          >
-            {m.retry}
-          </button>
-        </p>
-      )}
-      {error && (
-        <p role="alert" className="collaboration-template-error">
-          {error}
-        </p>
-      )}
-      {local.records.some(record => record.pendingSync) && (
-        <div className="collaboration-template-notice">
-          <span>{m.pending}</span>
-          <button
-            type="button"
-            data-testid="template-sync"
-            disabled={!store.library.remote || local.syncing}
-            onClick={() =>
-              void store
-                .synchronize()
-                .then(refresh)
-                .catch(() => setError(m.failed))
-            }
-          >
-            {m.sync}
-          </button>
-        </div>
-      )}
-      <div className="collaboration-template-grid">
-        {visible.map(card => (
-          <article
-            key={card.key}
-            className="collaboration-template-card"
-            data-testid={`template-card-${card.record?.document.metadata.name ?? card.id}`}
-          >
-            <div className="collaboration-template-card-header">
-              <Layers3 aria-hidden="true" />
-              <span>
-                {card.record?.pendingSync
-                  ? m.pending
-                  : card.record?.source === 'builtin'
-                    ? m.builtin
-                    : card.record?.source === 'personal'
-                      ? m.personal
-                      : card.record
-                        ? m.downloaded
-                        : card.installed
-                          ? m.accountAvailable
-                          : ''}
-              </span>
-            </div>
-            <h3>{card.name}</h3>
-            <p>{card.description}</p>
-            <footer>
-              <span>
-                {m.version} {card.version}
-              </span>
-              {card.ownerId === store.library.ownerId &&
-                card.namespace === 'default' &&
-                (!card.record || card.record.source === 'personal') && (
-                  <button
-                    type="button"
-                    className="collaboration-danger-button"
-                    data-testid={`template-delete-${card.record?.document.metadata.name ?? card.id}`}
-                    disabled={busy || local.syncing}
-                    onClick={() => {
-                      setError(null)
-                      setDeleting(card)
-                    }}
-                  >
-                    {m.delete}
-                  </button>
-                )}
+            <button
+              type="button"
+              data-testid="template-import-open"
+              onClick={event => {
+                returnTrigger.current = event.currentTarget
+                setImportOpen(true)
+              }}
+            >
+              {m.import}
+            </button>
+          </div>
+        </header>
+        {!store.library.remote && <p className="collaboration-template-notice">{m.offline}</p>}
+        <div className="collaboration-template-toolbar">
+          <div role="group" aria-label={m.title}>
+            {(['discover', 'available', 'mine'] as const).map(value => (
               <button
                 type="button"
-                data-testid={`template-details-${card.record?.document.metadata.name ?? card.id}`}
-                disabled={busy}
-                onClick={() => void choose(card)}
+                key={value}
+                data-testid={`template-tab-${value}`}
+                aria-pressed={tab === value}
+                onClick={() => setTab(value)}
               >
-                {m.details}
+                {value === 'available' && mode === 'marketplace' ? m.capabilities : m[value]}
               </button>
-            </footer>
-            {card.record?.syncError && (
-              <p role="alert" className="collaboration-template-error">
-                {m.syncConflict}
-              </p>
-            )}
-          </article>
-        ))}
-      </div>
-      {!visible.length && !remoteLoading && !local.loading && (
-        <p className="collaboration-template-empty">{m.noResults}</p>
-      )}
-      {tab === 'discover' && nextCursor && (
-        <button
-          type="button"
-          data-testid="template-load-more"
-          disabled={remoteLoading}
-          onClick={async () => {
-            const remote = store.library.remote
-            if (!remote) return
-            const version = generation.current
-            setRemoteLoading(true)
-            try {
-              const result = await remote.discover({
-                keyword: search,
-                cursor: nextCursor,
-              })
-              if (version === generation.current) {
-                setListings(previous => [...previous, ...result.items])
-                setNextCursor(result.hasMore ? result.nextCursor : null)
+            ))}
+          </div>
+          <input
+            aria-label={m.search}
+            placeholder={m.search}
+            data-testid="template-search"
+            value={search}
+            onChange={event => setSearch(event.target.value)}
+          />
+        </div>
+        {(remoteError || local.error) && (
+          <p role="alert">
+            {m.failed}{' '}
+            <button
+              type="button"
+              data-testid="template-retry"
+              onClick={() => {
+                void store.load().catch(() => undefined)
+                void refresh()
+              }}
+            >
+              {m.retry}
+            </button>
+          </p>
+        )}
+        {error && (
+          <p role="alert" className="collaboration-template-error">
+            {error}
+          </p>
+        )}
+        {local.records.some(record => record.pendingSync) && (
+          <div className="collaboration-template-notice">
+            <span>{m.pending}</span>
+            <button
+              type="button"
+              data-testid="template-sync"
+              disabled={!store.library.remote || local.syncing}
+              onClick={() =>
+                void store
+                  .synchronize()
+                  .then(refresh)
+                  .catch(() => setError(m.failed))
               }
-            } catch {
-              if (version === generation.current) setRemoteError(m.failed)
-            } finally {
-              if (version === generation.current) setRemoteLoading(false)
-            }
-          }}
-        >
-          {m.more}
-        </button>
-      )}
+            >
+              {m.sync}
+            </button>
+          </div>
+        )}
+        <div className="collaboration-template-grid">
+          {visible.map(card => (
+            <article
+              key={card.key}
+              className="collaboration-template-card"
+              data-testid={`template-card-${card.record?.document.metadata.name ?? card.id}`}
+            >
+              <div className="collaboration-template-card-header">
+                <Layers3 aria-hidden="true" />
+                <span>
+                  {card.record?.pendingSync
+                    ? m.pending
+                    : card.record?.source === 'builtin'
+                      ? m.builtin
+                      : card.record?.source === 'personal'
+                        ? m.personal
+                        : card.record
+                          ? m.downloaded
+                          : card.installed
+                            ? m.accountAvailable
+                            : ''}
+                </span>
+              </div>
+              <h3>{card.name}</h3>
+              <p>{card.description}</p>
+              <footer>
+                <span>
+                  {m.version} {card.version}
+                </span>
+                {card.ownerId === store.library.ownerId &&
+                  card.namespace === 'default' &&
+                  (!card.record || card.record.source === 'personal') && (
+                    <button
+                      type="button"
+                      className="collaboration-danger-button"
+                      data-testid={`template-delete-${card.record?.document.metadata.name ?? card.id}`}
+                      disabled={busy || local.syncing}
+                      onClick={event => {
+                        returnTrigger.current = event.currentTarget
+                        setError(null)
+                        setDeleting(card)
+                      }}
+                    >
+                      {m.delete}
+                    </button>
+                  )}
+                <button
+                  type="button"
+                  data-testid={`template-details-${card.record?.document.metadata.name ?? card.id}`}
+                  disabled={busy}
+                  onClick={event => {
+                    returnTrigger.current = event.currentTarget
+                    void choose(card)
+                  }}
+                >
+                  {m.details}
+                </button>
+              </footer>
+              {card.record?.syncError && (
+                <p role="alert" className="collaboration-template-error">
+                  {m.syncConflict}
+                </p>
+              )}
+            </article>
+          ))}
+        </div>
+        {!visible.length && !remoteLoading && !local.loading && (
+          <p className="collaboration-template-empty">{m.noResults}</p>
+        )}
+        {tab === 'discover' && nextCursor && (
+          <button
+            type="button"
+            data-testid="template-load-more"
+            disabled={remoteLoading}
+            onClick={async () => {
+              const remote = store.library.remote
+              if (!remote) return
+              const version = generation.current
+              setRemoteLoading(true)
+              try {
+                const result = await remote.discover({
+                  keyword: search,
+                  cursor: nextCursor,
+                })
+                if (version === generation.current) {
+                  setListings(previous => [...previous, ...result.items])
+                  setNextCursor(result.hasMore ? result.nextCursor : null)
+                }
+              } catch {
+                if (version === generation.current) setRemoteError(m.failed)
+              } finally {
+                if (version === generation.current) setRemoteLoading(false)
+              }
+            }}
+          >
+            {m.more}
+          </button>
+        )}
+      </div>
       {selected && (
-        <TemplateDialog
+        <TemplatePanel
+          embedded={embedded}
           title={selected.document.spec.displayName}
           closeLabel={m.close}
           onClose={() => setSelected(null)}
@@ -456,10 +517,11 @@ function ScopedCollaborationTemplatePage({
               {error}
             </p>
           )}
-        </TemplateDialog>
+        </TemplatePanel>
       )}
       {deleting && (
-        <TemplateDialog
+        <TemplatePanel
+          embedded={embedded}
           title={m.delete}
           closeLabel={m.close}
           onClose={() => setDeleting(null)}
@@ -511,10 +573,12 @@ function ScopedCollaborationTemplatePage({
           <p>{m.deleteHint.replace('{name}', deleting.name)}</p>
           {deleting.id !== null && !store.library.remote && <p>{m.deleteConnectionRequired}</p>}
           {error && <p role="alert">{error}</p>}
-        </TemplateDialog>
+        </TemplatePanel>
       )}
       {importOpen && (
         <TemplateImportDialog
+          embedded={embedded}
+          onBusyChange={setImportBusy}
           store={store}
           locale={locale}
           onClose={() => setImportOpen(false)}

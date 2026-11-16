@@ -1,8 +1,12 @@
 import assert from 'node:assert/strict'
-import { openDirectProjectCreation, revealCollaborationSidebarElement } from './workspace-flows.mjs'
+import {
+  openDirectProjectCreation,
+  reloadMainWindow,
+  revealCollaborationSidebarElement,
+} from './workspace-flows.mjs'
 import { openProjectBoard } from './collaboration-board-personal-view.mjs'
 import { waitForValue } from './workspace-agent-setup.mjs'
-import { DEFAULT_STEP_TIMEOUT_MS } from './shared.mjs'
+import { CLOUD_PUBLIC_MODEL_NAME, DEFAULT_STEP_TIMEOUT_MS } from './shared.mjs'
 
 const testId = value => `[data-testid="${value}"]`
 const DIALOG = testId('collaboration-project-create-dialog')
@@ -49,6 +53,177 @@ async function verifyProjectCreateFocusRestoration(control, scoped) {
   await control.command('nativePress', opener, { key: 'Enter' })
   await control.command('waitFor', DIALOG, { visible: true })
   await control.command('fill', nameInput, { value: draftName })
+}
+
+async function verifyTemplateRoleValidation(control, scoped) {
+  const draftName = await control.command(
+    'getValue',
+    scoped(testId('collaboration-project-name-input'))
+  )
+  await control.command('click', scoped(testId('project-create-choose-template')))
+  await control.command('clickWhenEnabled', testId('template-details-product-lifecycle'))
+  await control.command('clickWhenEnabled', testId('template-use'))
+  const configuration = scoped(testId('project-create-template-configuration'))
+  const apply = `${configuration} ${testId('project-create-template-configuration-apply')}`
+  await control.command('waitFor', configuration, { visible: true })
+  await control.command('click', scoped(testId('template-customize-main')))
+  const role = scoped(testId('template-role-main-role-0'))
+  await control.command('waitFor', role, { visible: true })
+  const previousBinding = await control.command('getValue', role)
+  assert.ok(previousBinding, 'The built-in template must begin with its real default role binding')
+  await control.command('select', role, { value: '' })
+  await control.command('waitFor', `${role}[aria-invalid="true"]`, { visible: true })
+  const describedBy = await control.command('getAttribute', role, { value: 'aria-describedby' })
+  assert.ok(describedBy, 'An unbound template role must reference its validation guidance')
+  await control.command('waitFor', `${DIALOG} [id=${JSON.stringify(describedBy)}]`, {
+    text: '还有角色未安排成员，请补充。',
+  })
+  await control.command('waitFor', `${apply}:disabled`, { visible: true })
+  await control.command('select', role, { value: previousBinding })
+  await control.command('waitFor', `${role}[aria-invalid="true"]`, { visible: false })
+  await control.command('waitFor', `${DIALOG} [id=${JSON.stringify(describedBy)}]`, {
+    visible: false,
+  })
+  await control.command('clickWhenEnabled', apply)
+  await control.command('waitFor', configuration, { visible: false })
+  await control.command(
+    'waitFor',
+    scoped(`${testId('collaboration-project-create-confirm')}:not(:disabled)`),
+    { visible: true }
+  )
+  assert.equal(
+    await control.command('getValue', scoped(testId('collaboration-project-name-input'))),
+    draftName
+  )
+  await control.command('click', scoped(testId('project-create-clear-template')))
+  await control.command('waitFor', role, { visible: false })
+}
+
+async function withProjectCreationAgents(request, workspace, verify) {
+  const cleanups = []
+  try {
+    const bot = await request('/api/bots', {
+      method: 'POST',
+      body: JSON.stringify({
+        name: `project-create-keyboard-bot-${process.pid}`,
+        namespace: 'default',
+        shell_name: 'Codex',
+        agent_config: { bind_model: CLOUD_PUBLIC_MODEL_NAME, bind_model_type: 'public' },
+      }),
+    })
+    cleanups.push(() => request(`/api/bots/${bot.id}`, { method: 'DELETE' }))
+    const resources = []
+    for (const suffix of ['coordinator', 'worker']) {
+      const team = await request('/api/teams', {
+        method: 'POST',
+        body: JSON.stringify({
+          name: `project-create-${suffix}-${process.pid}`,
+          namespace: 'default',
+          bots: [{ bot_id: bot.id, role: 'worker', bot_prompt: '' }],
+          bind_mode: ['task'],
+          requires_workspace: false,
+          is_active: true,
+        }),
+      })
+      cleanups.push(() =>
+        request(`/api/teams/${team.id}?force=true&confirm_name=${encodeURIComponent(team.name)}`, {
+          method: 'DELETE',
+        })
+      )
+      resources.push(
+        await request(`/api/v1/workspaces/${workspace.id}/agents`, {
+          method: 'POST',
+          body: JSON.stringify({ team_id: team.id }),
+        })
+      )
+      cleanups.push(() =>
+        request(`/api/v1/workspaces/${workspace.id}/agents/${team.id}`, { method: 'DELETE' })
+      )
+    }
+    await verify(resources)
+  } finally {
+    const failures = []
+    for (const cleanup of cleanups.reverse()) {
+      try {
+        await cleanup()
+      } catch (error) {
+        failures.push(error)
+      }
+    }
+    if (failures.length)
+      throw new AggregateError(failures, 'Project creation agents cleanup failed')
+  }
+}
+
+async function verifyGroupConfigurationDraft(control, scoped, workspace, agents) {
+  // API-created fixtures must replace the workspace's previously cached empty catalog.
+  await reloadMainWindow(control, 'The group configuration fixtures did not reconnect after reload')
+  await control.command('waitFor', '[data-testid="workspace-tab-select-fixed-board"]', {
+    visible: true,
+  })
+  await control.command('click', '[data-testid="workspace-tab-select-fixed-board"]')
+  const home = scoped(testId(`collaboration-workspace-home-${workspace.id}`))
+  await revealCollaborationSidebarElement(control, home)
+  await control.command('click', home)
+  await openDirectProjectCreation(control, scoped('').trim())
+  const nameInput = scoped(testId('collaboration-project-name-input'))
+  const draftName = `Group configuration draft ${process.pid}`
+  await control.command('fill', nameInput, { value: draftName })
+  for (const agent of agents) {
+    await control.command('click', scoped(testId('collaboration-project-create-add-collaborator')))
+    await control.command('click', testId('collaboration-project-create-collaborator-tab-agents'))
+    await control.command(
+      'clickWhenEnabled',
+      testId(`collaboration-project-create-agent-${agent.team_id}`)
+    )
+    await control.command('waitFor', MENU, { visible: false })
+  }
+  const opener = scoped(testId('collaboration-project-create-organize-group'))
+  const configuration = scoped(testId('collaboration-project-create-model-picker'))
+  const back = `${configuration} ${testId('collaboration-project-create-configuration-back')}`
+  const assertDraftRetained = async () => {
+    await control.command('waitFor', configuration, { visible: false })
+    await control.command('waitFor', DIALOG, { visible: true })
+    assert.equal(await control.command('getValue', nameInput), draftName)
+    const tokens = scoped('.collaboration-project-create-collaborator-tokens')
+    for (const agent of agents) await control.command('waitFor', tokens, { text: agent.name })
+    assert.equal(
+      await control.command('getActiveElementTestId', 'body'),
+      'collaboration-project-create-organize-group'
+    )
+  }
+  await control.command('nativePress', opener, { key: 'Enter' })
+  await control.command('waitFor', configuration, { visible: true })
+  const firstFocusedId = await control.command('getActiveElementTestId', 'body')
+  assert.ok(firstFocusedId, 'Group configuration must focus an interactive control')
+  const firstControl = `${configuration} ${testId(firstFocusedId)}`
+  assert.equal(
+    Number(await control.command('getElementCount', firstControl)),
+    1,
+    'Opening group configuration left focus outside its controls'
+  )
+  await control.command('nativePress', back, { key: 'Tab' })
+  assert.equal(
+    await control.command('getActiveElementTestId', 'body'),
+    'collaboration-project-create-close',
+    'Tab must wrap to the shared dialog header from group configuration'
+  )
+  await control.command('nativePress', scoped(testId('collaboration-project-create-close')), {
+    key: 'Shift+Tab',
+  })
+  assert.equal(
+    await control.command('getActiveElementTestId', 'body'),
+    'collaboration-project-create-configuration-back',
+    'Shift+Tab must wrap from the shared dialog header to group configuration'
+  )
+  await control.command('nativePress', back, { key: 'Escape' })
+  await assertDraftRetained()
+  await control.command('nativePress', opener, { key: 'Enter' })
+  await control.command('waitFor', configuration, { visible: true })
+  await control.command('click', back)
+  await assertDraftRetained()
+  await control.command('nativePress', nameInput, { key: 'Escape' })
+  await control.command('waitFor', DIALOG, { visible: false })
 }
 
 export async function verifyProjectCreateDialogUi(control, scoped) {
@@ -101,18 +276,31 @@ export async function verifyProjectCreateDialogUi(control, scoped) {
       'Shift+Tab escaped the project creation dialog instead of wrapping to its last control'
     )
 
-    await control.command('click', scoped(testId('project-create-choose-template')))
-    const templateDialog = `${DIALOG} dialog${testId('collaboration-template-dialog')}[open]`
-    await control.command('waitFor', templateDialog, { visible: true })
+    await control.command('nativePress', scoped(testId('project-create-choose-template')), {
+      key: 'Enter',
+    })
+    const templateCatalog = `${DIALOG} ${testId('project-create-template-catalog')}`
+    await control.command('waitFor', templateCatalog, { visible: true })
+    assert.equal(
+      Number(
+        await control.command(
+          'getElementCount',
+          `${DIALOG} [role="dialog"], ${DIALOG} dialog[open]`
+        )
+      ),
+      0,
+      'Template configuration must reuse the parent dialog'
+    )
     await control.command(
       'nativePress',
-      `${templateDialog} ${testId('collaboration-template-close')}`,
+      `${templateCatalog} ${testId('collaboration-project-create-configuration-back')}`,
       {
         key: 'Escape',
       }
     )
-    await control.command('waitFor', templateDialog, { visible: false })
+    await control.command('waitFor', templateCatalog, { visible: false })
     await control.command('waitFor', DIALOG, { visible: true })
+    await verifyTemplateRoleValidation(control, scoped)
 
     for (const visibility of ['public', 'private']) {
       const selected = scoped(testId(`cloud-project-visibility-${visibility}`))
@@ -194,6 +382,9 @@ export async function verifyPrivateProjectCreation({
   workspace,
   project,
 }) {
+  await withProjectCreationAgents(request, workspace, agents =>
+    verifyGroupConfigurationDraft(control, scoped, workspace, agents)
+  )
   const workspaceHome = scoped(testId(`collaboration-workspace-home-${workspace.id}`))
   await revealCollaborationSidebarElement(control, workspaceHome)
   await control.command('click', workspaceHome)

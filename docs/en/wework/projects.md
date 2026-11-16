@@ -27,6 +27,8 @@ For remote projects, **Choose a group** initially selects **Personal group**, or
 
 When creating a cloud project, open **Project collaborators → Add collaborators** to select group members, or enter a name or email in **Search people, Agents or groups** to find other existing users. Selected people appear in the collaborator list and can be removed before creation. Clicking **Create project** adds them with the Developer role in the project without adding them to its group. Search failures display an error; change the query to retry.
 
+Start with the project name, then confirm its group, visibility and collaborators. Template discovery, member configuration and Team responsibilities use views within the same creation window. **Back to project** or Escape returns to the previous configuration level while preserving the project draft. After selecting a template, the main form shows a template and role-count summary; use **Configure members** to adjust roles. Missing members are identified beside their fields. Complete and confirm the configuration before creating the project.
+
 Select a group name to open its home and review cross-project operations and items needing attention. When the content exceeds the window height, scroll down in the main content area on the right to reach the remaining projects and items.
 
 Global catalogs, group settings, and project settings remain separate levels. Code directories are separate resources, and project AI team settings do not replace group membership management.

@@ -122,6 +122,7 @@ export const projectCreateLabels: Record<
     generatingWorkflow: "正在形成执行流程…",
     groupSettingsHint: "保存后仍可在项目设置中更新成员职责和分配原则。",
     cancel: "取消",
+    backToProject: "返回项目",
     create: "创建项目",
     creating: "正在创建…",
     unavailableLocation: "所选项目位置当前不可用",
@@ -259,6 +260,7 @@ export const projectCreateLabels: Record<
     groupSettingsHint:
       "You can update responsibilities and allocation principles later in project settings.",
     cancel: "Cancel",
+    backToProject: "Back to project",
     create: "Create project",
     creating: "Creating…",
     unavailableLocation: "The selected project location is unavailable",

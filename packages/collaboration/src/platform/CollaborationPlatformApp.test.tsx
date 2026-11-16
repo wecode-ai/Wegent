@@ -3135,14 +3135,17 @@ describe("CollaborationPlatformApp real component flow", () => {
       container.querySelector(
         '[data-testid="collaboration-project-create-model-picker"]',
       ),
-    ).toBeNull();
+    ).toBe(portalByTestId("collaboration-project-create-model-picker"));
     expect(
-      portalByTestId("collaboration-project-create-model-picker").textContent,
-    ).toContain("组织协作小组");
+      portalByTestId("collaboration-project-create-model-picker")
+        .closest('[role="dialog"]')
+        ?.querySelector("h2")?.textContent,
+    ).toBe("组织协作小组");
     expect(
-      portalByTestId(
-        "collaboration-project-create-model-picker",
-      ).parentElement?.classList.contains("z-system"),
+      document.querySelectorAll('[role="dialog"][aria-modal="true"]'),
+    ).toHaveLength(1);
+    expect(
+      byTestId("collaboration-project-name-input").closest("form")?.hidden,
     ).toBe(true);
     expect(
       portalByTestId(
@@ -7189,9 +7192,7 @@ describe("CollaborationPlatformApp real component flow", () => {
       portalByTestId("collaboration-project-create-group-roster").textContent,
     ).toContain(agent.name);
     await click(
-      portalByTestId(
-        "collaboration-project-create-model-picker",
-      ).querySelector<HTMLButtonElement>('[aria-label="取消"]')!,
+      portalByTestId("collaboration-project-create-configuration-back"),
     );
     expect(
       document.body.querySelector(
