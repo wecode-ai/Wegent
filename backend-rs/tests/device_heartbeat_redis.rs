@@ -178,19 +178,19 @@ async fn assert_heartbeats(
 }
 
 async fn declaration_object(mysql: &MysqlService, device_id: &str) -> Value {
-    let (kind, document): (String, brz_mysql::Json<Value>) = mysql
+    let (document,): (brz_mysql::Json<Value>,) = mysql
         .fetch_one(
-            "SELECT JSON_TYPE(JSON_EXTRACT(json,'$.spec.personalAssistantDispatch')), \
-             JSON_EXTRACT(json,'$.spec.personalAssistantDispatch') FROM kinds \
+            "SELECT json FROM kinds \
              WHERE user_id=? AND name=? AND namespace='default' AND kind='Device' AND is_active=true",
             (USER_ID, device_id),
         )
         .await
         .unwrap();
-    assert_eq!(kind, "OBJECT");
-    assert_eq!(document.0["version"], 1);
-    assert!(document.0["roles"].is_array());
-    document.0
+    let declaration = &document.0["spec"]["personalAssistantDispatch"];
+    assert!(declaration.is_object());
+    assert_eq!(declaration["version"], 1);
+    assert!(declaration["roles"].is_array());
+    declaration.clone()
 }
 
 async fn seed_closed_personal_assignment(mysql: &MysqlService) {
@@ -236,15 +236,15 @@ async fn assert_personal_dispatch_json(client: &PollClient, mysql: &MysqlService
         let stored = declaration_object(mysql, device_id).await;
         assert_eq!(stored["roles"][0]["id"], "@primary");
         assert_eq!(stored["roles"][0]["userId"], USER_ID);
-        let (kind, metadata): (String, brz_mysql::Json<Value>) = mysql
+        let (metadata,): (brz_mysql::Json<Value>,) = mysql
             .fetch_one(
-                "SELECT JSON_TYPE(JSON_EXTRACT(metadata,'$.human_assistant_dispatch')),metadata \
+                "SELECT metadata \
              FROM loop_items WHERE id='heartbeat-personal-assignment' AND resource_type='comment'",
                 (),
             )
             .await
             .unwrap();
-        assert_eq!(kind, "OBJECT");
+        assert!(metadata.0["human_assistant_dispatch"].is_object());
         assert_eq!(
             metadata.0["human_assistant_dispatch"]["dispatchState"],
             "cancelled"
