@@ -97,6 +97,7 @@ def _prepare_one(
         execution_device_id=request.get("execution_device_id"),
         priority=None,
         automation_context=context,
+        session_environment_id=continuation["environment_id"] if continuation else None,
     )
     row.executor_owner_user_id = plan["owner_user_id"]
     row.team_id = plan["team_id"]

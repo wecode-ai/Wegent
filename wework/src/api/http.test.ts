@@ -59,6 +59,82 @@ describe('createHttpClient', () => {
     }
   })
 
+  test('replays failed-assignment recovery only after the user confirms the selection', async () => {
+    const choose = vi.fn(async () => ({}))
+    const unregister = registerRunnerSelectionHandler(choose)
+    fetchMock
+      .mockResolvedValueOnce({
+        ok: false,
+        status: 422,
+        text: async () =>
+          JSON.stringify({
+            detail: {
+              error_code: 'ISSUE_RUNNER_CONFLICT',
+              message: 'Bound runner differs',
+              runner_selection_request: {
+                runtime: 'codex',
+                execution_policy: { mode: 'fixed', environment_id: '2' },
+                model_policy: { mode: 'user_select' },
+                environments: [],
+                cloud_models: [],
+                cloud_only: false,
+                recovery_from_environment_id: '1',
+              },
+            },
+          }),
+      })
+      .mockResolvedValueOnce({ ok: true, status: 200, json: async () => ({ version: 2 }) })
+    try {
+      await createHttpClient({ baseUrl: 'https://cloud.example/api' }).post('/assignments', {
+        version: 1,
+      })
+      expect(choose).toHaveBeenCalledOnce()
+      expect(JSON.parse(fetchMock.mock.calls[0][1].body)).toEqual({ version: 1 })
+      expect(JSON.parse(fetchMock.mock.calls[1][1].body)).toEqual({
+        version: 1,
+        runner_selection: { recovery_from_environment_id: '1' },
+      })
+    } finally {
+      unregister()
+    }
+  })
+
+  test('cancelling recovery keeps the original routing rejection and never replays', async () => {
+    const unregister = registerRunnerSelectionHandler(async () => {
+      throw new Error('Cancelled')
+    })
+    fetchMock.mockResolvedValueOnce({
+      ok: false,
+      status: 422,
+      text: async () =>
+        JSON.stringify({
+          detail: {
+            error_code: 'ISSUE_RUNNER_CONFLICT',
+            message: 'Bound runner differs',
+            runner_selection_request: {
+              runtime: 'codex',
+              execution_policy: { mode: 'fixed', environment_id: '2' },
+              model_policy: { mode: 'user_select' },
+              environments: [],
+              cloud_models: [],
+              cloud_only: false,
+              recovery_from_environment_id: '1',
+            },
+          },
+        }),
+    })
+    try {
+      await expect(
+        createHttpClient({ baseUrl: 'https://cloud.example/api' }).post('/assignments', {
+          version: 1,
+        })
+      ).rejects.toMatchObject({ detail: { error_code: 'ISSUE_RUNNER_CONFLICT' } })
+      expect(fetchMock).toHaveBeenCalledOnce()
+    } finally {
+      unregister()
+    }
+  })
+
   test('cancels account-owned requests through the client lifetime signal', async () => {
     const controller = new AbortController()
     fetchMock.mockImplementation(

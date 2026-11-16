@@ -60,15 +60,22 @@ async function publish(
   // physical address so the completed tree outlives that caller's alias.
   const parent = await realpath(dirname(target))
   const content = await mkdtemp(toNamespacedPath(join(parent, '.content-')))
-  let published = false
   try {
     await populate(content)
     await rm(target, { recursive: true, force: true })
     // Publish a completed tree without renaming files that Windows may have open.
     await symlink(content, target, process.platform === 'win32' ? 'junction' : 'dir')
-    published = true
     return target
-  } finally {
-    if (!published) await rm(content, { recursive: true, force: true })
+  } catch (error) {
+    const failure = await rm(content, { recursive: true, force: true }).then(
+      () => error,
+      cleanupError =>
+        new AggregateError(
+          [error, cleanupError],
+          error instanceof Error ? error.message : String(error),
+          { cause: error }
+        )
+    )
+    throw failure
   }
 }

@@ -15,6 +15,7 @@ export interface RunnerSelectionRequest {
   cloud_models: UnifiedModel[]
   cloud_only: boolean
   automatic?: boolean
+  recovery_from_environment_id?: string
 }
 
 type SelectionHandler = (request: RunnerSelectionRequest) => Promise<RunnerSelection>
@@ -30,7 +31,12 @@ export function requestRunnerSelection(request: RunnerSelectionRequest): Promise
     return Promise.reject(
       new Error('RUNNER_SELECTION_REQUIRED: choose an execution environment and model')
     )
-  return handler(request)
+  return handler(request).then(selection => ({
+    ...selection,
+    ...(request.recovery_from_environment_id
+      ? { recovery_from_environment_id: request.recovery_from_environment_id }
+      : {}),
+  }))
 }
 
 export function runnerSelectionRequest(error: unknown): RunnerSelectionRequest | undefined {

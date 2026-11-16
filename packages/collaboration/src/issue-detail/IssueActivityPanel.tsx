@@ -46,6 +46,7 @@ import { issueActivityEntries } from './issueActivityEntries'
 import { activityDisplayBody } from './activityDisplayBody'
 
 export function IssueActivityPanel({
+  commentActions,
   commentAssignment,
   api,
   issue,
@@ -67,6 +68,7 @@ export function IssueActivityPanel({
   taskBindings = [],
   onOpenTaskConversation,
 }: {
+  commentActions?: import('./issueCommentActions').CommentIssueActions
   commentAssignment?: import('./useCommentAssignment').CommentAssignment
   api: Pick<SharedWorkspaceApi, 'assignments' | 'comments' | 'activity'> &
     Partial<Pick<SharedWorkspaceApi, 'attachments' | 'runtime' | 'taskBindings' | 'issues'>>
@@ -146,7 +148,7 @@ export function IssueActivityPanel({
     [api.activity, assignments, comments, executions]
   )
   const content = (
-    <IssueMarkdownProvider attachments={api.attachments}>
+    <IssueMarkdownProvider attachments={api.attachments} issueId={issue.id} projectId={issue.cloud_project_id}>
       <IssueActivityFeed
         testId="collaboration-issue-activity"
         listTestId="collaboration-comments"
@@ -188,6 +190,7 @@ export function IssueActivityPanel({
           api.issues &&
           project ? (
             <BrowserIssueCommentComposer
+              issueActions={commentActions}
               assignment={commentAssignment}
               key={issue.id}
               api={{
@@ -215,6 +218,7 @@ export function IssueActivityPanel({
             />
           ) : (
             <IssueWebCommentComposer
+              issueActions={commentActions}
               assignment={commentAssignment}
               key={issue.id}
               issueId={issue.id}

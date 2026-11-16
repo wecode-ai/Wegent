@@ -834,7 +834,8 @@
       "no_runtime_project": "不关联 Wework 项目",
       "empty_existing": "这个会话还没有消息。",
       "empty_new": "开始一个关于“{{name}}”的新会话。",
-      "placeholder": "告诉 AI 你想在这个项目空间中完成什么"
+      "placeholder": "查一下事项，或描述要创建、更新的 Issue",
+      "capabilities": "当前项目：{{name}}。可查询、创建和更新 Issue。试试“查一下事项”；查询个人任务请说“查个人任务”。"
     },
     "start_from_scratch": "新建空白项目",
     "using_existing_folder": "使用现有目录",
@@ -4356,6 +4357,7 @@
     "runner_registration_hint": "在已有服务器上运行 Executor，设置 WEGENT_BACKEND_URL，以及以下设备 ID 和独立凭证。凭证只在本次显示，请保存到服务器的环境配置中。模型账号在该环境中配置。",
     "runner_registration_revoke": "从分组移除此公共环境会撤销凭证，后续执行将停止领取。",
     "runner_selection_title": "选择本次执行环境和模型",
+    "runner_selection_recovery": "分配失败后，可确认新的执行环境。仅在没有运行中任务时切换，历史会话和文件保留在原设备。",
     "runner_selection_confirm": "确认执行配置",
     "runner_selection_cancelled": "已取消执行配置选择",
     "runner_status_unknown": "状态待确认",

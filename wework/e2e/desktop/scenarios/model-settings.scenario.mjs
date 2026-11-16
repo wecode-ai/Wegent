@@ -12,7 +12,7 @@ export function createDesktopScenario({ captureScreenshot }) {
         visible: false,
       })
       await control.command('navigate', 'body', { value: '/settings/personal/models' })
-      await control.command('waitFor', selector('provider-add'), { text: '添加模型' })
+      await control.command('waitFor', selector('provider-add'), { text: '添加服务商' })
       const page = JSON.parse(await control.command('snapshot', selector('model-settings-page')))
       assert.ok(page.text.includes('自定义模型'))
       assert.ok(!page.text.includes('Provider'))
@@ -24,20 +24,8 @@ export function createDesktopScenario({ captureScreenshot }) {
       await control.command('click', selector('provider-add'))
       await control.command('waitFor', selector('provider-editor'))
       await control.command('select', selector('provider-preset'), { value: 'deepseek' })
-      assert.equal(
-        Number(await control.command('getElementCount', selector('provider-base-url'))),
-        0
-      )
-      assert.equal(
-        Number(await control.command('getElementCount', selector('provider-protocol'))),
-        0
-      )
-      assert.equal(
-        Number(
-          await control.command('getElementCount', `${selector('provider-discover')}:disabled`)
-        ),
-        1
-      )
+      await control.command('waitFor', selector('provider-api-key'))
+      await control.command('fill', selector('provider-name'), { value: 'DeepSeek work account' })
       await captureScreenshot(control, 'model-settings-02-deepseek-key-only.png', 'body')
 
       await control.command('select', selector('provider-preset'), { value: 'custom' })
@@ -45,6 +33,8 @@ export function createDesktopScenario({ captureScreenshot }) {
       await control.command('fill', selector('provider-base-url'), {
         value: 'https://model-settings.example/v1',
       })
+      await control.command('click', selector('provider-editor-next'))
+      await control.command('waitFor', selector('provider-model-search'))
       await control.command('click', selector('provider-model-add'))
       const editor = JSON.parse(await control.command('snapshot', selector('provider-editor')))
       const modelInput = editor.testIds.find(id => id.startsWith('provider-model-id-'))
@@ -71,6 +61,10 @@ export function createDesktopScenario({ captureScreenshot }) {
         await control.command('getValue', selector('local-model-context-window-input')),
         '128000'
       )
+      await control.command('fill', selector('provider-model-search'), {
+        value: 'settings-verification',
+      })
+      await control.command('waitFor', selector(`provider-model-test-${modelId}`))
       await control.command('click', selector('provider-editor-cancel'))
       await control.command('click', `${row} [data-testid^="provider-delete-"]`)
       await control.command('waitFor', selector('provider-action-confirm'))
@@ -81,6 +75,28 @@ export function createDesktopScenario({ captureScreenshot }) {
         Number(await control.command('getElementCount', selector(`provider-model-${modelId}`))),
         0
       )
+
+      await control.command('click', selector('provider-add'))
+      await control.command('select', selector('provider-preset'), { value: 'custom' })
+      await control.command('fill', selector('provider-name'), {
+        value: 'Connection without models',
+      })
+      await control.command('fill', selector('provider-base-url'), {
+        value: 'https://empty-model-settings.example/v1',
+      })
+      const emptyProviderId = await control.command('getAttribute', selector('provider-editor'), {
+        value: 'data-provider-id',
+      })
+      assert.ok(emptyProviderId)
+      await control.command('click', selector('provider-editor-save'))
+      await control.command('waitFor', selector('provider-editor'), { visible: false })
+      const emptyProvider = selector(`provider-row-${emptyProviderId}`)
+      await control.command('click', `${emptyProvider} [data-testid^="provider-edit-"]`)
+      await control.command('waitFor', selector('provider-model-search'))
+      await control.command('click', selector('provider-editor-cancel'))
+      await control.command('click', `${emptyProvider} [data-testid^="provider-delete-"]`)
+      await control.command('click', selector('provider-action-confirm'))
+      await control.command('waitFor', emptyProvider, { visible: false })
 
       await control.command('navigate', 'body', { value: '/settings/general' })
       await control.command('waitFor', selector('reply-prediction-settings'))

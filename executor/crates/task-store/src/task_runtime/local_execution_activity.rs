@@ -10,6 +10,7 @@ pub(super) fn create_local_execution(
     priority: &str,
     mut payload: Value,
 ) -> Result<i64, TaskRuntimeError> {
+    super::runner_recovery::validate_on(connection, item_id, &payload)?;
     let metadata = &agent.metadata;
     if metadata
         .get("routing_configuration_required")
@@ -481,6 +482,12 @@ pub(super) fn comment_execution_payload(
         payload = execution.execution_payload.ok_or_else(|| {
             TaskRuntimeError::Invalid("The thread execution configuration is unavailable".into())
         })?;
+        if let Some(device) = execution
+            .runtime_device_id
+            .filter(|device| !device.is_empty())
+        {
+            payload["resumeEnvironmentId"] = json!(device);
+        }
         task_id
     } else {
         // Pre-queue comments persist their session through a TaskBinding.
@@ -505,6 +512,7 @@ pub(super) fn comment_execution_payload(
         payload["resumeEnvironmentId"] = json!(device);
         task.to_owned()
     };
+    super::runner_recovery::clear_request(&mut payload);
     payload["message"] = json!(trigger.content);
     payload["continueTaskId"] = json!(task_id);
     payload["runtimeAction"] = json!("send");

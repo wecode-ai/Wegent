@@ -1333,7 +1333,12 @@ describe('shared IssueDetail', () => {
     fireEvent.click(trigger)
 
     try {
-      await waitFor(() => expect(api.attachments.read).toHaveBeenCalledWith('attachment-1'))
+      await waitFor(() =>
+        expect(api.attachments.read).toHaveBeenCalledWith('attachment-1', {
+          projectId: project.id,
+          issueId: issue.id,
+        })
+      )
       expect(await screen.findByTestId('browser-attachment-preview-dialog')).toBeInTheDocument()
       expect(api.attachments.access).not.toHaveBeenCalled()
       expect(open).not.toHaveBeenCalled()

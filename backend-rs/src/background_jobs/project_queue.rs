@@ -146,6 +146,17 @@ pub(crate) async fn enqueue_intent_on(
     scope: &str,
     input: &Admission,
 ) -> MysqlResult<Execution> {
+    let valid =
+        super::runner_recovery::revalidate_on(&mut &mut *tx, issue, &input.runtime_selection, 0)
+            .await
+            .map_err(|error| brz_mysql::MysqlError::InvalidQuery {
+                reason: error.to_string(),
+            })?;
+    if !valid {
+        return Err(brz_mysql::MysqlError::InvalidQuery {
+            reason: "ISSUE_RUNNER_CONFLICT: recovery binding or execution occupancy changed before admission".into(),
+        });
+    }
     let status = if input.waiting_runtime {
         "waiting_runtime"
     } else if input.requires_approval {

@@ -231,7 +231,7 @@ fn execution_runtime_selection(row: &ExecutionRow) -> Value {
 }
 
 /// `LoopItemExecution.executor_type`.
-fn execution_executor_type(row: &ExecutionRow) -> &'static str {
+pub(super) fn execution_executor_type(row: &ExecutionRow) -> &'static str {
     let selection = execution_runtime_selection(row);
     if let Some(configured) = selection.get("executor_kind").and_then(Value::as_str)
         && matches!(configured, "generic_robot" | "collaboration_group_dispatch")
@@ -982,6 +982,8 @@ use execution_lookup::{
     execution_args, execution_matches_runtime_task, execution_statement, runtime_task_ids,
 };
 mod human_reply;
+#[cfg(test)]
+pub(super) use activity::verify_restored_activity_timestamp;
 #[cfg(test)]
 pub(crate) use human_reply::verify_late_human_reply_projection;
 pub(super) mod lifecycle;

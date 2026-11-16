@@ -107,6 +107,7 @@ import { IssueChangeRequestBadges } from '@/features/change-requests/IssueChange
 import type { CloudProjectMember } from '@/api/deliveries'
 
 interface TaskActivityViewProps {
+  commentActions?: import('@wegent/collaboration').CommentIssueActions
   assignmentReceipts?: IssueAssignmentReceiptState | null
   commentAssignment?: import('@wegent/collaboration').CommentAssignment
   client?: ProjectChatClient
@@ -235,6 +236,7 @@ function isVersionConflict(cause: unknown): boolean {
 }
 
 export function TaskActivityView({
+  commentActions,
   assignmentReceipts,
   commentAssignment,
   client,
@@ -1352,6 +1354,7 @@ export function TaskActivityView({
                 </div>
               ) : null}
               <TaskCommentComposer
+                issueActions={!replyTarget ? commentActions : undefined}
                 assignment={!replyTarget ? commentAssignment : undefined}
                 predictionAddress={
                   replyTarget && !replyHumanDispatch
@@ -1392,6 +1395,7 @@ export function TaskActivityView({
             <>
               {linear || client?.executeTaskComment ? (
                 <TaskCommentComposer
+                  issueActions={commentActions}
                   assignment={commentAssignment}
                   key={task.id}
                   value={newCommentDraft}

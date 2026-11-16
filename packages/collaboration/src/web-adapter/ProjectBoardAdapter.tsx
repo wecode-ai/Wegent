@@ -142,7 +142,10 @@ interface ProjectBoardAdapterProps {
     config: ProjectBoardViews,
     settings?: import("../project-board/projectBoardViews").BoardViewSaveSettings,
   ): Promise<void>;
-  onOpen(issue: CollaborationIssue): void;
+  onOpen(
+    issue: CollaborationIssue,
+    board?: import("../issue-detail/issueCommentActions").IssueCommentBoardContext,
+  ): void;
   onOpenChildren?(issue: CollaborationIssue): void;
   onCurrentParentIdChange?(parentId: string | null): void;
   onDeleteIssue?(issue: CollaborationIssue): void;
@@ -767,7 +770,13 @@ export function ProjectBoardAdapter({
             archiveLabel: translate("todo.archive_issue", "归档任务"),
             articleTestId: collaborationTestIds.issue(issue.id),
             dragEnabled: canEditCollaborationIssue(issue),
-            onOpen: () => onOpen(issue),
+            onOpen: () =>
+              onOpen(issue, {
+                columns: controller.columns,
+                groupBy: controller.state.groupBy,
+                name: savedViews.view?.name ?? project.name,
+                sourceColumnKey: column.key,
+              }),
           };
           const progress = childrenProgress.get(issue.id);
           const childrenAction =
@@ -794,7 +803,7 @@ export function ProjectBoardAdapter({
               display: issueDisplay,
               focused,
               issue,
-              onOpen: () => onOpen(issue),
+              onOpen: cardProps.onOpen,
               onDelete: cardProps.onArchive,
               previewDisabled,
               taskBindings: taskBindings.filter(

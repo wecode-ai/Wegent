@@ -1,4 +1,5 @@
 import { FileReferenceIcon } from '../composer/FileReferenceIcon'
+import { MarkdownLinkScope } from './markdownLinkScope'
 import {
   Fragment,
   createContext,
@@ -91,7 +92,7 @@ export interface AssistantMarkdownProps {
   preserveLineBreaks?: boolean
   variant?: 'default' | 'document' | 'process' | 'user'
   sourceLineAnchors?: boolean
-  renderLink?: (href: string, text: string) => ReactNode
+  renderLink?: (href: string, text: string, children?: ReactNode) => ReactNode
   onOpenFile?: (path: string, options?: MarkdownFileOpenOptions) => void
   renderVisualization?: (part: { file: string; mode?: 'wide'; title?: string }) => ReactNode
 }
@@ -376,7 +377,7 @@ export const AssistantMarkdown = memo(function AssistantMarkdown({
           )
         }
         const text = reactNodeToText(children)
-        const customLink = href ? renderLink?.(href, text) : undefined
+        const customLink = href ? renderLink?.(href, text, children) : undefined
         if (customLink !== undefined) return customLink
         const isComposerLink =
           href &&
@@ -664,6 +665,9 @@ function AssistantMarkdownLink({
   children?: ReactNode
 }) {
   const { openExternalUrl, navigateTo, translate } = useMarkdownServices()
+  const linkContent = (
+    <MarkdownLinkScope.Provider value={true}>{children}</MarkdownLinkScope.Provider>
+  )
   const target: MarkdownLinkTarget = citation ?? classifyMarkdownLink(href)
   const icon =
     target.kind === 'file' ? (
@@ -732,7 +736,7 @@ function AssistantMarkdownLink({
             className="min-w-0 whitespace-normal [overflow-wrap:anywhere]"
             data-testid="assistant-markdown-link-label"
           >
-            {children}
+            {linkContent}
           </span>
           {lineLabel ? (
             <span className="shrink-0" data-testid="assistant-markdown-link-line">
@@ -754,7 +758,7 @@ function AssistantMarkdownLink({
         onClick={() => navigateTo?.(target.path)}
       >
         {icon}
-        <span className="min-w-0 whitespace-normal [overflow-wrap:anywhere]">{children}</span>
+        <span className="min-w-0 whitespace-normal [overflow-wrap:anywhere]">{linkContent}</span>
       </button>
     )
   }
@@ -782,7 +786,7 @@ function AssistantMarkdownLink({
         className="min-w-0 whitespace-normal [overflow-wrap:anywhere]"
         data-testid="assistant-markdown-link-label"
       >
-        {children}
+        {linkContent}
       </span>
     </a>
   )
