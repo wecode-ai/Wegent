@@ -11,7 +11,7 @@ from knowledge_engine.embedding.errors import (
     CollectionDimensionMismatchError,
     EmbeddingDimensionMismatchError,
 )
-from knowledge_engine.storage.milvus_batching import MilvusRowTooLargeError
+from knowledge_engine.storage.errors import MilvusRowTooLargeError
 from knowledge_runtime.main import (
     embedding_dimension_mismatch_handler,
     value_error_handler,

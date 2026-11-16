@@ -379,6 +379,25 @@ pub(crate) async fn dispatch_failed<M: Mysql, R: Redis>(
     run_id: &str,
     error: &str,
 ) -> Result<()> {
+    finish_dispatch(mysql, redis, run_id, "failed", error).await
+}
+
+pub(crate) async fn dispatch_skipped<M: Mysql, R: Redis>(
+    mysql: &M,
+    redis: &R,
+    run_id: &str,
+    note: &str,
+) -> Result<()> {
+    finish_dispatch(mysql, redis, run_id, "skipped", note).await
+}
+
+async fn finish_dispatch<M: Mysql, R: Redis>(
+    mysql: &M,
+    redis: &R,
+    run_id: &str,
+    status: &str,
+    error: &str,
+) -> Result<()> {
     let changed=mysql.with_transaction(async |tx| {
         let Some(run)=super::store::locked(tx,"automation_run",run_id).await? else{return Ok(None)};
         if TERMINAL.contains(&run.status.as_str()){return Ok(None)}
@@ -386,17 +405,19 @@ pub(crate) async fn dispatch_failed<M: Mysql, R: Redis>(
         let message:Option<Message>=if message_id.is_empty(){None}else{tx.fetch_optional("SELECT * FROM project_chat_messages WHERE message_id=? FOR UPDATE",(message_id,)).await?};
         let mut message=message;
         if let Some(message)=message.as_mut(){
-            message.status="failed".into();message.message_type="text".into();message.content=if error.is_empty(){"AI 托管任务派发失败。".into()}else{error.into()};message.updated_at=database_timestamp(Utc::now().naive_utc());
-            let mut metadata=message.metadata.0.as_object().cloned().unwrap_or_default();metadata.insert("run_status".into(),json!("failed"));metadata.insert("error".into(),json!(message.content));message.metadata=Json(Value::Object(metadata));
-            tx.execute("UPDATE project_chat_messages SET status='failed',message_type='text',content=?,metadata=?,updated_at=? WHERE id=?",(message.content.as_str(),Json(message.metadata.0.clone()),message.updated_at,message.id)).await?;
+            message.status=status.into();message.message_type="text".into();message.content=if error.is_empty(){"AI 托管任务派发失败。".into()}else{error.into()};message.updated_at=database_timestamp(Utc::now().naive_utc());
+            let mut metadata=message.metadata.0.as_object().cloned().unwrap_or_default();metadata.insert("run_status".into(),json!(status));
+            if status=="failed"{metadata.insert("error".into(),json!(message.content));}else{metadata.remove("error");}
+            message.metadata=Json(Value::Object(metadata));
+            tx.execute("UPDATE project_chat_messages SET status=?,message_type='text',content=?,metadata=?,updated_at=? WHERE id=?",(status,message.content.as_str(),Json(message.metadata.0.clone()),message.updated_at,message.id)).await?;
         }
-        tx.execute("UPDATE loop_items SET status='failed',description=?,version=version+1,updated_at=UTC_TIMESTAMP(6) WHERE id=?",(error.chars().take(2000).collect::<String>(),run_id)).await?;
+        tx.execute("UPDATE loop_items SET status=?,description=?,completed_at=?,version=version+1,updated_at=UTC_TIMESTAMP(6) WHERE id=?",(status,error.chars().take(2000).collect::<String>(),Utc::now().naive_utc(),run_id)).await?;
         Ok(message)
     }).await?;
     if let Some(message) = changed
         && let Err(error) = publish(redis, &message).await
     {
-        tracing::error!(%error,"project failed activity push failed after commit");
+        tracing::error!(%error,"project dispatch activity push failed after commit");
     }
     Ok(())
 }

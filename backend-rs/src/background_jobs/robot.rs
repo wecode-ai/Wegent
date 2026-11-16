@@ -22,6 +22,7 @@ pub(crate) use activity::{
     finish as finish_runtime_activity, project_runtime_completion, start_runtime_activity,
 };
 pub(crate) use state::fail_preparation;
+pub(crate) use state::{cancel, defer_workday};
 
 use super::{BackgroundJobRegistry, JobContext, with_lock_watchdog};
 use crate::AppState;

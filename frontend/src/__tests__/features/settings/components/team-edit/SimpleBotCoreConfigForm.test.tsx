@@ -80,7 +80,13 @@ jest.mock('@/features/settings/components/knowledge/KnowledgeBaseMultiSelector',
 }))
 
 const models: UnifiedModel[] = [
-  { name: 'gpt-4.1', type: 'public', displayName: 'GPT 4.1', namespace: 'default' },
+  {
+    id: 77,
+    name: 'gpt-4.1',
+    type: 'public',
+    displayName: 'GPT 4.1',
+    namespace: 'default',
+  },
 ]
 
 const skills: UnifiedSkill[] = [
@@ -132,6 +138,7 @@ describe('SimpleBotCoreConfigForm', () => {
 
     fireEvent.click(screen.getByTestId('simple-model-select'))
     expect(onModelChange).toHaveBeenCalledWith({
+      id: 77,
       name: 'gpt-4.1',
       type: 'public',
       namespace: 'default',

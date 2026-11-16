@@ -191,6 +191,11 @@ classify_path() {
         changed[backend_rs]=true
         changed[wework_e2e]=true
       fi
+      if [[ "$path" == shared/assets/calendars/* ]]; then
+        changed[backend_rs]=true
+        changed[executor]=true
+        changed[wework_e2e]=true
+      fi
       changed[backend]=true
       changed[executor_manager]=true
       changed[shared]=true

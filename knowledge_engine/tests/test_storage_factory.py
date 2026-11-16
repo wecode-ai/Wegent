@@ -87,3 +87,30 @@ def test_create_storage_backend_from_runtime_config_requires_url() -> None:
                 },
             )
         )
+
+
+@pytest.mark.parametrize(
+    "storage_type,url",
+    [
+        ("qdrant", "localhost:6333"),
+        ("elasticsearch", "https://localhost:9200/prefix"),
+        ("milvus", "grpc://localhost:19530/db"),
+        ("milvus", "unix:///tmp/milvus.sock"),
+        ("milvus", "local-fixture.db"),
+    ],
+)
+def test_runtime_factory_keeps_existing_supported_targets(
+    monkeypatch: pytest.MonkeyPatch, storage_type: str, url: str
+) -> None:
+    class FakeBackend:
+        def __init__(self, config: dict) -> None:
+            self.config = config
+
+    monkeypatch.setattr(factory, "_load_backend_class", lambda actual_type: FakeBackend)
+    backend = factory.create_storage_backend_from_runtime_config(
+        RuntimeRetrieverConfig(
+            name="test", storage_config={"type": storage_type, "url": url}
+        )
+    )
+
+    assert backend.config["url"] == url

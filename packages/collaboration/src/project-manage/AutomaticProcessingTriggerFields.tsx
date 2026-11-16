@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { CalendarClock, ChevronDown } from 'lucide-react'
+import { WorkdayOnlyField } from './WorkdayOnlyField'
 
 import type { AutomationEventType } from '../automation/types'
 import type { CollaborationTranslate } from '../i18n'
@@ -202,7 +203,10 @@ export function AutomaticProcessingTriggerFields({
                   >
                     <option value="daily">{translate('todo.schedule_daily', '每天')}</option>
                     <option value="weekdays">
-                      {translate('todo.schedule_weekdays', '每个工作日')}
+                      {translate(
+                        'todo.schedule_weekdays',
+                        locale === 'zh-CN' ? '周一至周五' : 'Monday–Friday'
+                      )}
                     </option>
                     <option value="weekly">{translate('todo.schedule_weekly', '每周')}</option>
                     {schedule.frequency === 'custom' ? (
@@ -263,10 +267,28 @@ export function AutomaticProcessingTriggerFields({
                 </label>
               ) : null}
 
+              <WorkdayOnlyField
+                checked={draft.workdayOnly}
+                onChange={workdayOnly => updateDraft({ workdayOnly })}
+                label={translate(
+                  'todo.automation_workday_only',
+                  locale === 'zh-CN'
+                    ? '仅中国大陆法定工作日执行'
+                    : 'Run only on mainland China statutory workdays'
+                )}
+                description={translate(
+                  'todo.automation_workday_only_hint',
+                  locale === 'zh-CN'
+                    ? '按北京时间日期跳过法定休息日，包含补班周末。选择“每天”可覆盖全部补班日；其他重复规则仍限制执行日期。'
+                    : 'Uses Beijing dates, excludes statutory days off and includes make-up working weekends. Choose Daily to include every make-up workday; other recurrence rules still limit dates.'
+                )}
+                testId="automatic-processing-workday-only"
+              />
+
               <div className="flex items-center gap-2 rounded-lg bg-muted/50 px-3 py-2.5 text-sm text-text-secondary">
                 <CalendarClock aria-hidden="true" className="h-4 w-4 shrink-0" />
-                <span>{scheduleLabel(draft.cronExpression, locale)}</span>
-                <span className="ml-auto text-xs text-text-muted">Asia/Shanghai</span>
+                <span>{scheduleLabel(draft.cronExpression, locale, draft.workdayOnly)}</span>
+                <span className="ml-auto text-xs text-text-muted">{draft.timezone}</span>
               </div>
 
               <details
