@@ -1,4 +1,5 @@
 import { useCommentChildIssue } from "./issue-detail/useCommentChildIssue";
+import { composerMarkdownText } from "./composer/composerMarkdownParser";
 import { MilestonePicker } from "./milestones/MilestonePicker";
 import { IssueDeliveryContent } from "./issue-detail/IssueDeliveryContent";
 import { IssueDeliveryEditor } from "./issue-detail/IssueDeliveryEditor";
@@ -1057,6 +1058,16 @@ export function TodoEditor(props: TodoEditorProps) {
   }, [item?.id, canPinPersonalTaskAction]);
   const titleRef = useRef<HTMLTextAreaElement>(null);
   const descriptionCollapseRef = useRef<HTMLDivElement>(null);
+  const descriptionId = useId();
+  const repeatedDescriptionHeading = useMemo(() => {
+    if (!workspacePanel || editingContent) return false;
+    const heading = composerMarkdownText(description, { firstLine: true });
+    return (
+      heading === title.trim() && composerMarkdownText(description) !== heading
+    );
+  }, [description, editingContent, title, workspacePanel]);
+  const descriptionCanExpand =
+    descriptionOverflowing || repeatedDescriptionHeading;
   const propertiesTriggerRef = useRef<HTMLButtonElement>(null);
   const [propertiesExpanded, setPropertiesExpanded] = useState(false);
   const propertiesId = useId();
@@ -3435,7 +3446,11 @@ export function TodoEditor(props: TodoEditorProps) {
                   )}
                 >
                   <div
+                    id={descriptionId}
                     ref={workspacePanel ? descriptionCollapseRef : undefined}
+                    data-repeated-heading={
+                      repeatedDescriptionHeading || undefined
+                    }
                     data-overflowing={descriptionOverflowing ? "true" : "false"}
                     className={cn(
                       twoColumn && "task-detail-desc",
@@ -3503,14 +3518,17 @@ export function TodoEditor(props: TodoEditorProps) {
                   </div>
                   {!readFirst ||
                   editingContent ||
-                  descriptionOverflowing ||
+                  descriptionCanExpand ||
                   descriptionExpanded ? (
                     <div className="task-detail-desc-footer">
                       {twoColumn &&
                       !editingContent &&
-                      (descriptionOverflowing || descriptionExpanded) ? (
+                      (descriptionCanExpand || descriptionExpanded) ? (
                         <button
                           type="button"
+                          data-testid="cloud-todo-detail-description-toggle"
+                          aria-expanded={descriptionExpanded}
+                          aria-controls={descriptionId}
                           onClick={() =>
                             setDescriptionExpanded((current) => !current)
                           }

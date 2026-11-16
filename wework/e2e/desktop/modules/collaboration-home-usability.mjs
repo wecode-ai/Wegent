@@ -139,6 +139,23 @@ async function verifyProjectDialogKeyboard(control, home, timeoutMs) {
   await control.command('click', trigger)
   await control.command('click', '[data-testid="collaboration-workspace-project-create-blank"]')
   await control.command('waitFor', dialog, { visible: true })
+  await resizeHome(control, dialog, 390, 900, timeoutMs)
+  for (const testId of [
+    'collaboration-project-create-close',
+    'collaboration-project-name-input',
+    'project-create-choose-template',
+    'collaboration-project-create-add-collaborator',
+    'collaboration-project-create-advanced',
+    'collaboration-project-create-cancel',
+  ]) {
+    const [target] = JSON.parse(
+      await control.command('getElementMetrics', `${dialog} [data-testid="${testId}"]`)
+    )
+    assert.ok(
+      target.width >= 44 && target.height >= 44,
+      `${testId} must provide a mobile touch target`
+    )
+  }
   assert.ok(
     (await control.command('getAttribute', dialog, { value: 'aria-label' }))?.trim(),
     'The project modal must expose its visible title as an accessible name'
@@ -187,6 +204,7 @@ async function verifyProjectDialogKeyboard(control, home, timeoutMs) {
     'Escape must close the project dialog and restore its creation-menu opener',
     timeoutMs
   )
+  await resizeHome(control, 'body', 1440, 900, timeoutMs)
   await control.command('click', '[data-testid="collaboration-primary-home"]')
   await control.command('waitFor', home, { visible: true })
   if (participating === 'true') {
@@ -256,6 +274,7 @@ export async function verifyCollaborationHomeUsability(
     await waitForNarrowIssue(control, home, timeoutMs)
     await control.command('click', `${home} [data-testid="personal-home-back-to-issues"]`)
 
+    await resizeHome(control, home, 390, 900, timeoutMs)
     const record = `${home} [data-testid="collaboration-home-issue-content"]`
     const savedRecord = await control.command('getValue', record)
     const narrowIssue = 'Narrow creation reveals the resulting Issue'
@@ -272,6 +291,37 @@ export async function verifyCollaborationHomeUsability(
       'The Issue title must use its first semantic Markdown line, preserving the body separately'
     )
     await waitForNarrowIssue(control, home, timeoutMs)
+    const description = `${home} .task-detail-workspace-description`
+    const [preview, paragraph] = JSON.parse(
+      await control.command(
+        'getElementMetrics',
+        `${description} .bn-editor, ${description} .bn-editor [data-content-type="paragraph"] .bn-inline-content`
+      )
+    )
+    const lineHeight = Number.parseFloat(
+      await control.command(
+        'getComputedStyleValue',
+        `${description} .bn-editor [data-content-type="paragraph"] .bn-inline-content`,
+        { value: 'line-height' }
+      )
+    )
+    assert.ok(
+      paragraph.top >= preview.top && paragraph.top + lineHeight <= preview.bottom + 1,
+      'The collapsed Markdown description must show a complete line of useful body text'
+    )
+    const toggle = `${home} [data-testid="cloud-todo-detail-description-toggle"]`
+    await control.command('waitFor', `${toggle}[aria-expanded="false"]`)
+    const controlled = await control.command('getAttribute', toggle, { value: 'aria-controls' })
+    assert.ok(controlled, 'The description disclosure must identify the controlled content')
+    await control.command('click', toggle)
+    await control.command('waitFor', `${toggle}[aria-expanded="true"]`)
+    const [heading] = JSON.parse(await control.command('getElementMetrics', `${description} h1`))
+    assert.ok(
+      heading.width > 0 && heading.height > 0,
+      'Expanding must reveal the original Markdown heading'
+    )
+    await control.command('click', toggle)
+    await control.command('waitFor', `${toggle}[aria-expanded="false"]`)
     await control.command('click', `${home} [data-testid="personal-home-back-to-issues"]`)
     await control.command('fill', record, { value: savedRecord })
 

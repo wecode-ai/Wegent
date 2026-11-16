@@ -1701,6 +1701,19 @@
 }
 
 @media (max-width: 767px) {
+  .collaboration-project-create-dialog button,
+  .collaboration-project-create-dialog summary,
+  .collaboration-project-create-dialog input:not([type='checkbox']):not([type='radio']),
+  .collaboration-project-create-dialog select {
+    min-width: 44px;
+    min-height: 44px;
+  }
+
+  .collaboration-project-create-header button {
+    width: 44px;
+    height: 44px;
+  }
+
   .collaboration-project-collaborator-search,
   .collaboration-project-collaborator-picker button {
     min-height: 44px;

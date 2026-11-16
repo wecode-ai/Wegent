@@ -48,8 +48,8 @@ const project = {
   access_role: 'Owner',
 } as CloudProject
 
-function setup(assignmentError?: Error) {
-  let persisted = initial
+function setup(assignmentError?: Error, initialItem = initial, presentation?: 'workspace-panel') {
+  let persisted = initialItem
   const updateLoopItem = vi.fn(async (_id: string, values: Partial<CloudLoopItem>) => {
     persisted = { ...persisted, ...values, version: persisted.version + 1 }
     return persisted
@@ -73,10 +73,12 @@ function setup(assignmentError?: Error) {
     updateLoopItem,
   }
   function Editor() {
-    const [item, setItem] = useState(initial)
+    const [item, setItem] = useState(initialItem)
     return (
       <TodoEditor
         mode="edit"
+        presentation={presentation}
+        readFirst={presentation === 'workspace-panel'}
         item={item}
         project={project}
         allItems={[item]}
@@ -91,6 +93,23 @@ function setup(assignmentError?: Error) {
 }
 
 describe('immediate Issue properties', () => {
+  it('lets readers expand a short Markdown body without changing its saved content', async () => {
+    const description = '# Review feedback\n\nKeep the interview context.'
+    const { updateLoopItem } = setup(
+      undefined,
+      { ...initial, title: 'Review feedback', description },
+      'workspace-panel'
+    )
+    const toggle = await screen.findByTestId('cloud-todo-detail-description-toggle')
+    expect(toggle).toHaveAttribute('aria-expanded', 'false')
+    const target = document.getElementById(toggle.getAttribute('aria-controls')!)
+    expect(target).toHaveAttribute('data-repeated-heading', 'true')
+    fireEvent.click(toggle)
+    expect(toggle).toHaveAttribute('aria-expanded', 'true')
+    expect(screen.getByTestId('test-description')).toHaveValue(description)
+    expect(updateLoopItem).not.toHaveBeenCalled()
+  })
+
   it('saves title and priority independently while description requires explicit save', async () => {
     const user = userEvent.setup()
     const { updateLoopItem, read } = setup()

@@ -1216,6 +1216,25 @@
   color: rgb(var(--color-text-secondary));
 }
 
+.task-detail-workspace-description
+  .task-detail-desc.is-collapsed
+  .bn-editor
+  [data-content-type="heading"]
+  .bn-inline-content {
+  margin-block: 0;
+  font-size: inherit;
+  line-height: inherit;
+  font-weight: 500;
+}
+
+.task-detail-workspace-description
+  .task-detail-desc.is-collapsed[data-repeated-heading="true"]
+  .bn-editor
+  > .bn-block-group
+  > .bn-block-outer:first-child:has([data-content-type="heading"]) {
+  display: none;
+}
+
 .task-detail-workspace-description .task-detail-desc.is-collapsed textarea {
   color: rgb(var(--color-text-secondary));
   min-height: calc(var(--task-detail-body-font-size) * 1.75);
