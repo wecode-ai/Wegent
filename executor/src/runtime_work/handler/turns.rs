@@ -2296,6 +2296,7 @@ impl RuntimeWorkRpcHandler {
             "completedAt": timestamp,
         });
         self.store.update_task(local_task_id, |link| {
+            record_runtime_start_failure(link, &AppIpcError::new("runtime_start_failed", error));
             if link.thread_id.is_some() {
                 return;
             }

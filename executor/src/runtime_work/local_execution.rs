@@ -28,7 +28,13 @@ impl PersistedLocalExecution {
                 status: task.status.clone(),
                 turn_status: task.turn_status.clone(),
                 completed_at: task.completed_at,
-                turn_id: Some(task.runtime_handle["lastTurnId"].as_str()?.to_owned()),
+                turn_id: match task.runtime_handle["lastTurnId"].as_str() {
+                    Some(id) => Some(id.to_owned()),
+                    None if task.status == "failed" && is_failed_start(task, task.completed_at) => {
+                        None
+                    }
+                    None => return None,
+                },
             });
         }
         if task.runtime != "claude_code" {
@@ -81,14 +87,26 @@ impl PersistedLocalExecution {
                 || task.running
                 || task.execution_state.is_some()
                 || self.turn_id.as_deref() != task.runtime_handle["lastTurnId"].as_str()
-                || self.turn_id.is_none()
+                || (self.turn_id.is_none()
+                    && (self.status != "failed" || !is_failed_start(task, self.completed_at)))
             {
                 return;
             }
             task.status = self.status;
             task.turn_status = self.turn_status;
             task.completed_at = self.completed_at;
-            task.thread_status = "idle".into();
+            task.thread_status = if self.turn_id.is_none() && task.thread_id.is_none() {
+                "failed"
+            } else {
+                "idle"
+            }
+            .into();
+            if task.runtime_handle["startupFailure"]["failedAt"].as_i64() == self.completed_at {
+                task.runtime_handle["lastError"] =
+                    task.runtime_handle["startupFailure"]["message"].clone();
+                task.runtime_handle["lastErrorCode"] =
+                    task.runtime_handle["startupFailure"]["code"].clone();
+            }
             return;
         }
         if task.runtime != "claude_code" {
@@ -108,4 +126,10 @@ impl PersistedLocalExecution {
         };
         task.completed_at = self.completed_at;
     }
+}
+
+fn is_failed_start(task: &RuntimeTaskLink, completed_at: Option<i64>) -> bool {
+    task.runtime_handle["lastTurnId"].is_null()
+        && task.runtime_handle["startupFailure"]["failedAt"].as_i64() == completed_at
+        && completed_at.is_some()
 }

@@ -156,6 +156,7 @@ mod thread_action;
 mod thread_resume;
 
 use debug_stdout::CodexStdout;
+pub(crate) use diagnostics::redact_diagnostic_text;
 use diagnostics::{json_scalar_field, json_string_field};
 #[cfg(test)]
 use home::prepare_wework_codex_home;
