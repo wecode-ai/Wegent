@@ -122,6 +122,16 @@ wework_desktop_other_e2e_matrix={"include":[]}' \
   "wework/src/features/cloud-devices/useDeviceOfflineLifecycleAction.ts" \
   "wework/e2e/desktop/modules/cloud-device-lifecycle-flow.mjs"
 
+assert_desktop_case "cloud device lifecycle sandbox process adapter selects restart coverage" \
+  'wework_desktop_e2e=true
+wework_desktop_core_e2e=false
+wework_desktop_core_e2e_matrix={"include":[]}
+wework_desktop_cloud_e2e=true
+wework_desktop_cloud_e2e_matrix={"include":[{"id":"cloud-3","name":"Cloud / shard 3","segments":"cloud-device-lifecycle"}]}
+wework_desktop_other_e2e=false
+wework_desktop_other_e2e_matrix={"include":[]}' \
+  "wework/e2e/desktop/support/cloud-restart-backend.py"
+
 assert_desktop_case "worktree UI changes select local launch and cloud lifecycle coverage" \
   'wework_desktop_e2e=true
 wework_desktop_core_e2e=true

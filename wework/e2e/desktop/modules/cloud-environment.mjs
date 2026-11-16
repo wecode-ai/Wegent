@@ -51,7 +51,7 @@ const BACKEND_PORT_CONFLICT_PATTERN = /Address already in use|AddrInUse/
 const REDIS_START_ATTEMPTS = 5
 const REDIS_READY_PATTERN = /Ready to accept connections/
 const REDIS_PORT_CONFLICT_PATTERN = /Address already in use|Failed listening on port/
-const MANAGED_CLOUD_SANDBOX_ID = 'wework-e2e-managed-cloud-sandbox'
+export const MANAGED_CLOUD_SANDBOX_ID = 'wework-e2e-managed-cloud-sandbox'
 const MYSQL_READY_TIMEOUT_MS = 60_000
 const MYSQL_HELPER = join(repoDir, 'wework', 'e2e', 'desktop', 'support', 'mysql-helper.py')
 
@@ -277,7 +277,8 @@ async function startRedisServer(
 }
 
 class LocalNevisSandboxService {
-  constructor() {
+  constructor(onRestart) {
+    this.onRestart = onRestart
     this.restartRequests = []
   }
 
@@ -307,17 +308,23 @@ class LocalNevisSandboxService {
 
   async handle(request, response) {
     const url = new URL(request.url ?? '/', this.endpoint)
-    const restartMatch = url.pathname.match(
-      /^\/apis\/sandboxes\/v1\/managers\/([^/]+)\/sandboxes\/([^/]+)\/restart$/
+    const nevisRestart = url.pathname.match(
+      /^\/apis\/sandboxes\/v1\/managers\/[^/]+\/sandboxes\/([^/]+)\/restart$/
     )
-    if (request.method === 'POST' && restartMatch) {
+    const publicRestart = url.pathname.match(/^\/e2e\/sandboxes\/([^/]+)\/restart$/)
+    const match = nevisRestart ?? publicRestart
+    if (request.method === 'POST' && match) {
       request.resume()
-      const restartRequest = {
-        managerId: decodeURIComponent(restartMatch[1]),
-        sandboxId: decodeURIComponent(restartMatch[2]),
+      const sandboxId = decodeURIComponent(match[1])
+      if (this.onRestart) {
+        this.onRestart(sandboxId)
+      } else if (publicRestart) {
+        response.writeHead(404)
+        response.end()
+        return
       }
-      this.restartRequests.push(restartRequest)
-      this.sendJson(response, { id: restartRequest.sandboxId, status: 'restarting' })
+      this.restartRequests.push(sandboxId)
+      this.sendJson(response, { id: sandboxId, status: 'restarting' })
       return
     }
     if (request.method === 'POST' && url.pathname.endsWith('/metrics/raw_query')) {
@@ -327,17 +334,6 @@ class LocalNevisSandboxService {
     }
     response.writeHead(404)
     response.end()
-  }
-
-  async waitForRestartRequest(afterCount) {
-    const startedAt = Date.now()
-    while (Date.now() - startedAt < DEFAULT_STEP_TIMEOUT_MS) {
-      if (this.restartRequests.length > afterCount) {
-        return this.restartRequests[afterCount]
-      }
-      await new Promise(resolvePromise => setTimeout(resolvePromise, 50))
-    }
-    throw new Error('The local Nevis service did not receive a restart request')
   }
 
   async stop() {
@@ -365,6 +361,9 @@ class RealCloudEnvironment {
     this.codexBinary = codexBinary
     this.initialExecutorLatestVersion = initialExecutorLatestVersion
     this.managedCloudIdentity = managedCloudIdentity
+    this.cloudLifecycle = SELECTED_DESKTOP_SEGMENT === 'cloud-device-lifecycle'
+    this.usePublicSandboxController =
+      this.cloudLifecycle && !remoteDeviceE2EExtension.supportsStatusRecovery
     this.modelServerUrl = modelServerUrl
     this.scenarioConfigToml = scenarioConfigToml
     this.workspacePath = workspacePath
@@ -402,7 +401,9 @@ class RealCloudEnvironment {
     this.remoteDockerExecutorRuntimeLogPath = join(resultDir, 'remote-docker-executor-runtime.log')
     this.pluginObjectStorage = new LocalPluginObjectStorage()
     await this.pluginObjectStorage.start()
-    this.nevisSandboxService = new LocalNevisSandboxService()
+    this.nevisSandboxService = new LocalNevisSandboxService(
+      this.cloudLifecycle ? sandboxId => this.acceptSandboxRestart(sandboxId) : null
+    )
     await this.nevisSandboxService.start()
 
     const redisServer = await this.observePreparation('redis-start', () =>
@@ -454,6 +455,9 @@ class RealCloudEnvironment {
       ATTACHMENT_S3_ACCESS_KEY: 'desktop-e2e-access-key',
       ATTACHMENT_S3_SECRET_KEY: 'desktop-e2e-secret-key',
       ATTACHMENT_S3_USE_SSL: 'false',
+      ...(this.usePublicSandboxController
+        ? { WEWORK_E2E_SANDBOX_CONTROL_URL: this.nevisSandboxService.endpoint }
+        : {}),
       NEVIS_BASE_URL: this.nevisSandboxService.endpoint,
       NEVIS_MANAGER_ID: 'wework-e2e-manager',
       NEVIS_IMAGE_ID: 'wework-e2e-image',
@@ -534,7 +538,9 @@ class RealCloudEnvironment {
         '-u',
         '-m',
         'uvicorn',
-        'app.main:app',
+        ...(this.usePublicSandboxController
+          ? ['--app-dir', join(weworkDir, 'e2e', 'desktop', 'support'), 'cloud-restart-backend:app']
+          : ['app.main:app']),
         '--host',
         '127.0.0.1',
         '--port',
@@ -869,8 +875,10 @@ class RealCloudEnvironment {
     })
     this.remoteDockerExecutorEnv = this.executorEnv({
       deviceId: REMOTE_DOCKER_DEVICE_ID,
-      deviceName: 'Wework E2E Remote Docker Device',
-      deviceType: 'remote',
+      deviceName: this.cloudLifecycle
+        ? 'Wework E2E Cloud Sandbox Sibling'
+        : 'Wework E2E Remote Docker Device',
+      deviceType: this.cloudLifecycle ? 'cloud' : 'remote',
       home: remoteDockerHome,
       codexHome: this.remoteDockerCodexHome,
       logFile: 'remote-docker-executor-runtime.log',
@@ -893,24 +901,23 @@ class RealCloudEnvironment {
   }
 
   async configureManagedCloudIdentity() {
+    const owner = await fetchJson(`${this.backendUrl}/api/users/me`, {
+      headers: { Authorization: `Bearer ${this.authToken}` },
+    })
+    const siblingId = this.cloudLifecycle ? REMOTE_DOCKER_DEVICE_ID : CLOUD_DEVICE_ID
     await this.executeDatabase(
       `UPDATE kinds
        SET json = JSON_SET(
          json,
-         '$.spec.cloudConfig', JSON_OBJECT(
-           'sandboxId', %s,
-           'deviceId', %s
-         )
+         '$.spec.cloudConfig', JSON_OBJECT('sandboxId', %s, 'deviceId', name)
        )
-       WHERE kind = 'Device' AND name = %s`,
-      [MANAGED_CLOUD_SANDBOX_ID, CLOUD_DEVICE_ID, CLOUD_DEVICE_ID]
+       WHERE kind = 'Device' AND namespace = 'default' AND user_id = %s
+         AND name IN (%s, %s)`,
+      [MANAGED_CLOUD_SANDBOX_ID, owner.id, CLOUD_DEVICE_ID, siblingId]
     )
 
     const configured = await this.device(CLOUD_DEVICE_ID)
     if (configured?.cloud_config?.sandboxId !== MANAGED_CLOUD_SANDBOX_ID) {
-      const user = await fetchJson(`${this.backendUrl}/api/users/me`, {
-        headers: { Authorization: `Bearer ${this.authToken}` },
-      })
       const stored = await this.queryDatabase(
         `SELECT id, name, JSON_EXTRACT(json, '$.spec.cloudConfig') AS cloud_config,
                 JSON_EXTRACT(json, '$.spec.deviceType') AS device_type,
@@ -918,7 +925,7 @@ class RealCloudEnvironment {
                 JSON_TYPE(JSON_EXTRACT(json, '$.spec.isDefault')) AS is_default_type
          FROM kinds WHERE kind = 'Device' AND namespace = 'default'
          AND user_id = %s AND name = %s`,
-        [user.id, CLOUD_DEVICE_ID]
+        [owner.id, CLOUD_DEVICE_ID]
       )
       console.error(
         '[managed-cloud-identity]',
@@ -1364,13 +1371,14 @@ class RealCloudEnvironment {
     )
   }
 
-  async restartCloudExecutor() {
+  async restartCloudExecutor({ beforeSpawn } = {}) {
     assert.ok(this.remoteExecutorEnv, 'The cloud Executor environment is not initialized')
     const previousDevice = await this.device(CLOUD_DEVICE_ID)
     const previousInstanceId = previousDevice?.runtime_instance_id
     const previousLog = await readFile(this.remoteExecutorLogPath, 'utf8').catch(() => '')
     await stopProcessGroup(this.remoteExecutor)
     await this.waitForDeviceStatus(CLOUD_DEVICE_ID, 'offline', this.remoteExecutorLogPath)
+    await beforeSpawn?.()
     this.remoteExecutor = await this.spawnExecutor(
       this.remoteExecutorEnv,
       this.remoteExecutorLogPath
@@ -1392,13 +1400,56 @@ class RealCloudEnvironment {
     }
   }
 
-  nevisRestartRequestCount() {
-    return this.nevisSandboxService?.restartRequests.length ?? 0
+  armSandboxRestart() {
+    const start = Promise.withResolvers()
+    const proceed = Promise.withResolvers()
+    const accepted = Promise.withResolvers()
+    const pending = {
+      start,
+      proceed,
+      accepted,
+      complete: null,
+    }
+    this.pendingSandboxRestart = pending
+    return {
+      accepted: accepted.promise,
+      allowShutdown: start.resolve,
+      allowStartup: proceed.resolve,
+      async finish() {
+        start.resolve()
+        proceed.resolve()
+        return pending.complete
+      },
+    }
   }
 
-  async waitForNevisRestartRequest(afterCount) {
-    assert.ok(this.nevisSandboxService, 'The local Nevis service is not running')
-    return this.nevisSandboxService.waitForRestartRequest(afterCount)
+  acceptSandboxRestart(sandboxId) {
+    assert.equal(sandboxId, MANAGED_CLOUD_SANDBOX_ID, 'The request did not target the sandbox')
+    const pending = this.pendingSandboxRestart
+    assert.ok(pending && !pending.complete, 'Unexpected or duplicate sandbox restart request')
+    pending.complete = this.cycleSandboxExecutors(pending)
+    // The flow awaits the process transition after observing the UI.
+    void pending.complete.catch(() => {})
+    pending.accepted.resolve(sandboxId)
+  }
+
+  async cycleSandboxExecutors({ start, proceed }) {
+    await start.promise
+    const [primary, sibling] = await Promise.all([
+      this.restartCloudExecutor({
+        beforeSpawn: () => proceed.promise,
+      }),
+      (async () => {
+        await this.stopRemoteDockerExecutorAndWaitOffline()
+        await proceed.promise
+        return this.resumeRemoteDockerExecutor()
+      })(),
+    ])
+    return { primary, sibling }
+  }
+
+  sandboxRestartRequestCount() {
+    return this.nevisSandboxService.restartRequests.length
   }
 
   async startGeneratedRemoteDevice({

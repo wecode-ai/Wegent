@@ -19,6 +19,7 @@ from app.models.kind import Kind
 from app.schemas.device import DeviceType
 from app.services.device import cloud_device_restart
 from app.services.device.local_provider import LocalDeviceProvider
+from app.services.device.runtime_rpc_service import RuntimeRpcError
 
 
 def _build_client(db):
@@ -156,7 +157,33 @@ def test_cloud_upgrade_checks_sandbox_tasks_and_uses_restart(
         assert "running tasks" in blocked_runtime_work.json()["detail"]
         restart.assert_not_awaited()
 
+        # The native scheduler does not include its active work in heartbeat IDs.
+        get_online.return_value = {
+            busy_key: {
+                "runtime_features": {"runtimeTaskCreate": {"schemaVersions": [1]}}
+            }
+        }
+        capacity = AsyncMock(return_value={"active": 1})
+        monkeypatch.setattr(cloud_device_restart.runtime_rpc_service, "call", capacity)
+        assert client.post(path, json=payload).status_code == 400
+        capacity.assert_awaited_once_with(
+            user_id=7,
+            device_id="openclaw-runtime" if with_sandbox else "claude",
+            method="runtime.capacity.get",
+            payload={},
+            timeout_seconds=5,
+        )
+        restart.assert_not_awaited()
+
+        capacity.reset_mock()
+        capacity.side_effect = RuntimeRpcError("executor stopped responding")
+        assert client.post(path, json=payload).status_code == 503
+        restart.assert_not_awaited()
+        capacity.reset_mock()
+
         forced = client.post(path, json={**payload, "force_stop_tasks": True})
+        capacity.assert_not_awaited()
+
         assert forced.status_code == 200
         assert forced.json() == {"success": True, "message": "Restart requested"}
         restart.assert_awaited_once_with(test_db, 7, "claude")
@@ -165,7 +192,8 @@ def test_cloud_upgrade_checks_sandbox_tasks_and_uses_restart(
         assert missing.status_code == 404
         assert restart.await_count == 1
 
-        get_online.return_value = {}
+        capacity.side_effect = None
+        capacity.return_value = {"active": 0}
         idle = client.post(path, json=payload)
         assert idle.status_code == 200
         assert idle.json() == forced.json()

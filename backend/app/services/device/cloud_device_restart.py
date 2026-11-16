@@ -4,6 +4,7 @@
 
 """Deployment-specific cloud device restart."""
 
+import asyncio
 from dataclasses import dataclass
 from typing import Awaitable, Callable, Optional
 
@@ -18,6 +19,7 @@ from app.services.device.local_provider import (
     LocalDeviceProvider,
     runtime_capacity_slot_values,
 )
+from app.services.device.runtime_rpc_service import RuntimeRpcError, runtime_rpc_service
 
 
 @dataclass(frozen=True)
@@ -61,6 +63,53 @@ async def restart_cloud_device(
     return await _restart_handler(db, user_id, device_id)
 
 
+async def _has_active_runtime_work(user_id: int, device_id: str) -> bool:
+    """Read native work from the runtime scheduler, outside the heartbeat cache."""
+    try:
+        result = await runtime_rpc_service.call(
+            user_id=user_id,
+            device_id=device_id,
+            method="runtime.capacity.get",
+            payload={},
+            timeout_seconds=5,
+        )
+    except RuntimeRpcError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Could not check cloud device running tasks",
+        ) from exc
+    active = result.get("active") if isinstance(result, dict) else None
+    if type(active) is not int or active < 0:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Could not check cloud device running tasks",
+        )
+    return active > 0
+
+
+async def _cloud_devices_have_running_tasks(user_id: int, devices: list[Kind]) -> bool:
+    routes = {
+        LocalDeviceProvider.generate_online_key(user_id, route): route
+        for route in {device_connection_route_id(device) for device in devices}
+    }
+    online = await cache_manager.mget_or_raise(sorted(routes))
+    if any(
+        info and (info.get("running_task_ids") or runtime_capacity_slot_values(info)[0])
+        for info in online.values()
+    ):
+        return True
+    native_routes = [
+        routes[key]
+        for key, info in online.items()
+        if info and (info.get("runtime_features") or {}).get("runtimeTaskCreate")
+    ]
+    return any(
+        await asyncio.gather(
+            *(_has_active_runtime_work(user_id, route) for route in native_routes)
+        )
+    )
+
+
 async def restart_cloud_device_for_upgrade(
     db: Session, device: Kind, force_stop_tasks: bool
 ) -> CloudDeviceRestartResult:
@@ -83,18 +132,7 @@ async def restart_cloud_device_for_upgrade(
                 )
                 .all()
             )
-        keys = {
-            LocalDeviceProvider.generate_online_key(
-                device.user_id, device_connection_route_id(sibling)
-            )
-            for sibling in devices
-        }
-        online = await cache_manager.mget_or_raise(sorted(keys))
-        if any(
-            info
-            and (info.get("running_task_ids") or runtime_capacity_slot_values(info)[0])
-            for info in online.values()
-        ):
+        if await _cloud_devices_have_running_tasks(device.user_id, devices):
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="Cloud device has running tasks. Use force_stop_tasks=true to proceed.",
