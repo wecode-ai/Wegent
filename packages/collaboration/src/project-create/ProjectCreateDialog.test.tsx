@@ -108,6 +108,7 @@ it('closes the group-model dialog with Escape while preserving the project draft
   expect(get('collaboration-project-create-model-picker')).toBeNull()
   expect(get('collaboration-project-create-dialog')).not.toBeNull()
   expect((get('cloud-project-name') as HTMLInputElement).value).toBe('Keep this project')
+  expect(document.activeElement).toBe(get('collaboration-project-create-add-collaborator'))
 })
 
 it('names the project dialog, contains Tab, and restores its stable menu opener after Escape', async () => {
