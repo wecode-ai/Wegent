@@ -571,13 +571,15 @@ export async function verifyIssueDetailReading(control, { captureScreenshot, uiT
     value: 'data-testid',
   })
   const issueId = activityId.replace('cloud-task-activity-', '')
-  await control.command('click', '[data-testid="settings-button"]')
+  await control.command('click', scope('[data-testid="settings-button"]'))
   await control.command('click', '[data-testid="settings-menu-button"]')
-  await control.command('waitFor', '[data-testid="settings-back-button"]', { visible: true })
-  await control.command('click', '[data-testid="settings-back-button"]')
+  await control.command('waitFor', scope('[data-testid="settings-back-button"]'), { visible: true })
+  await control.command('click', scope('[data-testid="settings-back-button"]'))
   const details = JSON.parse(await control.command('getElementMetrics', detail))
   if (!details.some(row => row.visibleIntersection)) {
-    await control.command('click', scope(`[data-testid="cloud-todo-card-${issueId}"]`))
+    const card = scope(`[data-testid="cloud-todo-card-${issueId}"]`)
+    await control.command('waitFor', card, { visible: true })
+    await control.command('click', card)
   }
   await control.command('waitFor', composer, { text: routeDraft, visible: true })
   await control.command('waitFor', replyComposer, { text: '继续此讨论', visible: true })
