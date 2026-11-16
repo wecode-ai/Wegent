@@ -12,7 +12,9 @@ export async function verifyIssueQuestionReflow(
   const composer = `${contentScope} .task-detail-comment-bar`
   const metrics = async () =>
     JSON.parse(
-      await control.command('getElementMetrics', [viewport, question, composer].join(', '))
+      await control.command('getElementMetrics', [viewport, question, composer].join(', '), {
+        value: 'includeText',
+      })
     )
   async function saveDescription(value) {
     await control.command('scrollIntoViewAsUser', scope('issue-description-edit'))
@@ -42,6 +44,10 @@ export async function verifyIssueQuestionReflow(
     const beforeViewport = before.find(row => row.testId === 'cloud-todo-detail-scroll')
     const beforeQuestion = before.find(row => row.testId?.startsWith('issue-human-request-'))
     assert.ok(
+      beforeViewport && beforeQuestion,
+      `Missing identified question geometry: ${JSON.stringify(before)}`
+    )
+    assert.ok(
       beforeQuestion.bottom > beforeViewport.top && beforeQuestion.top < beforeViewport.bottom,
       `The pending question must initially intersect the reading viewport: ${JSON.stringify(before)}`
     )
@@ -51,6 +57,10 @@ export async function verifyIssueQuestionReflow(
     const after = await metrics()
     const afterViewport = after.find(row => row.testId === 'cloud-todo-detail-scroll')
     const afterQuestion = after.find(row => row.testId?.startsWith('issue-human-request-'))
+    assert.ok(
+      afterViewport && afterQuestion,
+      `Missing identified question geometry: ${JSON.stringify(after)}`
+    )
     assert.ok(
       afterQuestion.top >= afterViewport.bottom,
       `Description expansion must move the question below the viewport: ${JSON.stringify(after)}`

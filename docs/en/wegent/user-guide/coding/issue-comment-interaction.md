@@ -20,7 +20,7 @@ Titles and properties save immediately; description edits use Save. A shared hea
 Replies to ordinary human discussions say they continue the discussion. Only discussions with execution records promise execution continuation; stand-in conversations and human work assignments retain their own reply explanations.
 Comment editors expose accessible names. Property labels, input hints, and timestamps use the readable secondary text color.
 The scroll viewport reserves the composer's measured footprint so keyboard focus and automatic positioning remain visible. Description Save and Cancel wait for an in-flight write; cancelling a failed edit also discards that description's retry operation.
-While a pending human question is visible in the reading viewport, the comment composer follows document flow so the question and submission controls remain readable. After scrolling past the question, the composer resumes sticking to the bottom. Retries apply only to the latest submission for that field and cannot restore values superseded by later edits.
+While a pending human question is visible in the reading viewport, the comment composer follows document flow so the question and submission controls remain readable. After scrolling past the question, the composer resumes sticking when space permits. When the composer plus bottom inset exceeds half the reading viewport, it also follows document flow: readers can scroll up through the full discussion and return to editing. Reducing its content or enlarging the window restores sticky positioning. Retries apply only to the latest submission for that field and cannot restore values superseded by later edits.
 
 Opening an Issue from the Collaboration board shows creation, status changes, and comments in time order in the right detail drawer. An execution belongs to the comment that started it: the comment shows its run status, and its task entry opens the linked transcript, workspace, Terminal, and files. The execution page is read-only and does not expose a second reply composer. Return to the source Issue and reply in the corresponding discussion to add instructions.
 
@@ -38,36 +38,33 @@ For AI managed workflows, the manager writes an execution prompt for each child 
 - `G = max(16px, safe-area-inset-bottom)`: pinned bottom inset.
 - `N`: the composer's normal-flow bottom in viewport coordinates.
 - `H`: a pending human question intersects the reading viewport.
-- `B`: its actual bottom. While activity is visible and the composer fits, `B = N` when `H` is true; otherwise `B = min(N, V-G)` on every frame, within `1px`.
+- `E`: sticky positioning is eligible when `H` is false and composer height plus `G` is at most half the reading viewport height.
+- `B`: its actual bottom. Use normal flow (`B = N`) when `E` is false; otherwise `B = min(N, V-G)` on every frame, within `1px`.
 - Its horizontal edges match the content column within `1px`; state changes must not change width.
 - Keep one DOM instance to preserve focus, drafts, attachments and IME composition.
 
 ```mermaid
 stateDiagram-v2
-  [*] --> Pinned: Long content, N greater than V-G
-  [*] --> InFlow: Short content, N at or below V-G
-  Pinned --> InFlow: Scroll down until N reaches V-G
-  InFlow --> Pinned: Scroll up until N exceeds V-G
-  Pinned --> Pinned: Height or viewport changes
-  InFlow --> InFlow: Content changes without crossing the boundary
-  Pinned --> QuestionVisible: A pending question enters the viewport
-  InFlow --> QuestionVisible: A pending question enters the viewport
-  QuestionVisible --> Pinned: Question leaves and N exceeds V-G
-  QuestionVisible --> InFlow: Question leaves and N is at or below V-G
+  [*] --> Pinned: E is true and N exceeds V-G
+  [*] --> InFlow: E is false or N is at or below V-G
+  Pinned --> InFlow: E becomes false or N reaches V-G
+  InFlow --> Pinned: E is true and N exceeds V-G
+  Pinned --> Pinned: Height changes while E remains true
+  InFlow --> InFlow: Continue reading and editing in normal flow
 ```
 
 ## Frame-by-frame behavior
 
 | Situation                              | Required behavior                                                                  | Prohibited behavior                                         |
 | -------------------------------------- | ---------------------------------------------------------------------------------- | ----------------------------------------------------------- |
-| Enter activity                         | Pin for long content; remain after short content without excessive whitespace      | Flash in the middle before snapping down                    |
+| Enter activity                         | Pin eligible long content; otherwise remain after content without excessive whitespace      | Flash in the middle before snapping down                    |
 | Scroll the middle                      | Keep `B = V-G` when `H` is false; only content moves                                | Body text visible below the pinned composer                 |
 | A pending question is visible          | Use normal flow (`B = N`) and release sticky scroll clearance                       | A pinned composer covering question or submission controls |
 | Approach the end                       | Transition continuously when `N = V-G`                                             | Position animation, jitter or duplicate inputs              |
 | Reach the end                          | Use normal flow; at least `12px` after the final event and `32px` page-end spacing | Permanent occlusion or duplicate spacer height              |
 | Reverse scrolling                      | Retrace the same geometry without resetting draft, focus or scroll                 | Force scrolling to the bottom                               |
 | Enter more lines                       | Grow upward from two lines; cap the text area at `240px`, then scroll internally   | Native resize handle or downward growth                     |
-| Expand attachments, settings or errors | Grow upward; constrain height in short panels and keep controls reachable          | Controls outside the panel or clipped popovers              |
+| Expand attachments, settings or errors | Use normal flow above half the viewport; restore sticky positioning when smaller, retaining draft and focus          | Controls outside the panel or clipped popovers              |
 | Receive content or load images         | Reflow under the same formula; preserve the reader's position in the middle        | Timers or repeated scrollTo calls to conceal layout defects |
 | Resize panel or change safe area       | Recompute layout against actual `V` and `G` on the next frame                      | Cached window dimensions or screen coordinates              |
 
@@ -96,7 +93,7 @@ If collapsing moves the activity above the panel, bring its top into view instea
 
 Use short and multi-screen Markdown threads, code blocks, a final run event, attachments and send errors.
 Check desktop and narrow panels at entry, mid-scroll, `1px` on both sides of the transition, the end and reverse scrolling.
-Include multiline input, expanded settings and viewport resizing. Record `H`, scrollTop, scroll-container rect, composer rect and normal-flow bottom per frame; assert the applicable formula and retain middle/end screenshots. Move a pending question into and out of the viewport, including through preceding-content expansion, and verify normal flow and sticky clearance switch with its visibility.
+Include multiline input, expanded settings and viewport resizing. Record `H`, scrollTop, scroll-container rect, composer rect and normal-flow bottom per frame; assert the applicable formula and retain middle/end screenshots. Move a pending question into and out of the viewport, including through preceding-content expansion, and verify normal flow and sticky clearance switch with its visibility. Also combine a long reply and an attachment at 720×450: scroll up to read the entire discussion, return to editing without losing the draft, then remove the attachment and verify sticky positioning returns.
 Append content while reading the middle and verify no forced bottom jump. The final event must be fully readable at the end.
 
 An isolated CSS check proves only layout mechanics. Unit tests, type checks and still images do not replace real Electron scroll acceptance.

@@ -61,6 +61,7 @@ async function verifyConstrainedDiscussion(control, captureScreenshot, replySele
     })
   )
   try {
+    await verifyNarrowProperties(control)
     await control.command(
       'scrollIntoViewAsUser',
       scope('[data-testid="cloud-todo-detail-tag-input"]')
@@ -172,11 +173,16 @@ async function verifyConstrainedDiscussion(control, captureScreenshot, replySele
         [
           scope('[data-testid="cloud-todo-detail-scroll"]'),
           scope('[data-testid="task-comment-form"]'),
-        ].join(', ')
+        ].join(', '),
+        { value: 'includeText' }
       )
     )
     const draftViewport = draftMetrics.find(row => row.testId === 'cloud-todo-detail-scroll')
     const draftForm = draftMetrics.find(row => row.testId === 'task-comment-form')
+    assert.ok(
+      draftViewport && draftForm,
+      `Missing identified draft geometry: ${JSON.stringify(draftMetrics)}`
+    )
     assert.ok(
       draftViewport.height - draftForm.height - 16 >= draftViewport.height / 2,
       `Long drafts must preserve the reading budget: ${JSON.stringify(draftMetrics)}`
@@ -236,6 +242,88 @@ async function verifyTouchTargets(control, selector) {
       target.width >= 44 && target.height >= 44,
       `Mobile targets must be at least 44px: ${JSON.stringify(target)}`
     )
+  }
+}
+
+async function verifyNarrowProperties(control) {
+  const more = scope('[data-testid="cloud-todo-more-properties"]')
+  const priority = scope('[data-testid="cloud-todo-detail-priority"]')
+  await control.command('scrollIntoViewAsUser', more)
+  await control.command('click', more)
+  await control.command('scrollIntoViewAsUser', priority)
+  await control.command('waitFor', `${priority}:enabled`, { visible: true })
+  await verifyTouchTargets(control, priority)
+  await control.command('scrollIntoViewAsUser', more)
+  await control.command('click', more)
+  const add = scope('[data-testid="cloud-todo-add-collaborator"]')
+  await control.command('scrollIntoViewAsUser', add)
+  await control.command('click', add)
+  const select = scope('[data-testid="cloud-todo-collaborator-select"]')
+  const confirm = scope('[data-testid="cloud-todo-confirm-collaborator"]')
+  await control.command('waitFor', `${select}:has(option:not([value=""]))`, { visible: true })
+  await verifyTouchTargets(control, `${select}, ${confirm}`)
+  assert.equal(
+    await control.command('getAttribute', select, { value: 'aria-label' }),
+    '选择项目空间成员'
+  )
+  const member = await control.command('getAttribute', `${select} option:not([value=""])`, {
+    value: 'value',
+  })
+  assert.notEqual(member, null, 'The fixture must offer its current member')
+  await control.command('select', select, { value: member })
+  assert.equal(await control.command('getValue', select), member)
+  await control.command('clickWhenEnabled', confirm)
+  const participant = scope(
+    '[data-testid="cloud-todo-collaborators"] > button:not([data-testid="cloud-todo-add-collaborator"])'
+  )
+  await control.command('waitFor', participant, { visible: true })
+  await verifyTouchTargets(control, participant)
+  await control.command('click', participant)
+  await control.command('waitFor', participant, { visible: false })
+}
+
+async function verifyTallReplyReading(
+  control,
+  { attachment, composer, replySelector, captureScreenshot }
+) {
+  const previousSize = await control.command('setMainWindowSize', 'body', {
+    value: JSON.stringify({ width: 720, height: 450 }),
+  })
+  const footer = scope('.task-detail-comment-bar')
+  const draft = Array.from({ length: 8 }, (_, index) => `保留长回复草稿 ${index + 1}`).join('\n')
+  try {
+    await control.command('fill', composer, { value: draft })
+    await control.command('waitFor', `${footer}[data-oversized="true"]`)
+    assert.equal(
+      await control.command('getComputedStyleValue', footer, { value: 'position' }),
+      'static'
+    )
+    const card = replySelector.replace(
+      'cloud-task-activity-reply-toggle-',
+      'cloud-task-activity-card-'
+    )
+    await control.command('scrollIntoViewAsUser', card)
+    const [discussion] = JSON.parse(await control.command('getElementMetrics', card))
+    assert.ok(
+      discussion.hitTestVisible && discussion.visibleIntersection?.height >= discussion.height - 1,
+      `An oversized composer must allow the original discussion to be fully read: ${JSON.stringify(discussion)}`
+    )
+    await captureScreenshot(control, 'issue-detail-reading-06-tall-reply-discussion.png')
+    await control.command('scrollIntoViewAsUser', footer)
+    await verifyComposerVisible(control)
+    await control.command('waitFor', composer, { text: draft, visible: true })
+    await captureScreenshot(control, 'issue-detail-reading-07-tall-reply-controls.png')
+    await control.command('click', `${attachment} [data-testid="remove-attachment-button"]`)
+    await control.command('waitFor', attachment, { visible: false })
+    await control.command('waitFor', `${footer}[data-oversized="false"]`)
+    assert.equal(
+      await control.command('getComputedStyleValue', footer, { value: 'position' }),
+      'sticky'
+    )
+    await control.command('waitFor', composer, { text: draft })
+    await verifyComposerVisible(control)
+  } finally {
+    await control.command('setMainWindowSize', 'body', { value: previousSize })
   }
 }
 
@@ -421,8 +509,7 @@ export async function verifyIssueDetailReading(control, { captureScreenshot, uiT
   assert.ok((await control.command('getText', replyComposer)).includes(body))
   await captureScreenshot(control, 'issue-detail-reading-04-restored-reply-draft.png')
   await verifyStagedPreview(control, attachment, filename, captureScreenshot)
-  await control.command('click', `${attachment} [data-testid="remove-attachment-button"]`)
-  await control.command('waitFor', attachment, { visible: false })
+  await verifyTallReplyReading(control, { attachment, composer, replySelector, captureScreenshot })
   await control.command('fill', composer, { value: '' })
   await control.command('click', scope('[data-testid="issue-reply-cancel"]'))
   const [beforeExpansion] = JSON.parse(await control.command('getElementMetrics', detail))

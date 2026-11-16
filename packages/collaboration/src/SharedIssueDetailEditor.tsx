@@ -58,6 +58,7 @@ import {
 } from "lucide-react";
 import {
   IssueDetailAttachments,
+  IssueDetailCollaboratorPicker,
   IssueDetailPrioritySelect,
   IssueDetailSearchableSelect,
   IssueDetailStatusSelect,
@@ -1867,7 +1868,12 @@ export function TodoEditor(props: TodoEditorProps) {
   }
 
   async function addCollaborator() {
-    if (!editable || !editItemId || !selectedCollaboratorId || collaboratorBusy)
+    if (
+      !editable ||
+      !editItemId ||
+      selectedCollaboratorId === null ||
+      collaboratorBusy
+    )
       return;
     setCollaboratorBusy(true);
     setCollaboratorError(null);
@@ -2648,6 +2654,15 @@ export function TodoEditor(props: TodoEditorProps) {
       ))}
     </div>
   );
+  const collaboratorPickerProps = {
+    value: selectedCollaboratorId,
+    members: availableCollaborators,
+    onChange: setSelectedCollaboratorId,
+    onAdd: () => void addCollaborator(),
+    busy: collaboratorBusy,
+    label: t("todo.select_project_member", "选择项目空间成员"),
+    addLabel: t("common.add", "添加"),
+  };
   const railProps = (
     <>
       <RailProp
@@ -2709,34 +2724,11 @@ export function TodoEditor(props: TodoEditorProps) {
         {resourceParticipants}
       </RailProp>
       {editable && addingCollaborator ? (
-        <div className="col-span-full flex items-center gap-2 px-2 pb-1">
-          <select
-            data-testid="cloud-todo-collaborator-select"
-            value={selectedCollaboratorId ?? ""}
-            onChange={(event) =>
-              setSelectedCollaboratorId(Number(event.target.value) || null)
-            }
-            className="h-8 min-w-0 flex-1 rounded-lg border border-border bg-background px-2 text-sm outline-none focus:border-text-muted"
-          >
-            <option value="">
-              {t("todo.select_project_member", "选择项目空间成员")}
-            </option>
-            {availableCollaborators.map((member) => (
-              <option key={member.user_id} value={member.user_id}>
-                {member.user_name}
-              </option>
-            ))}
-          </select>
-          <button
-            type="button"
-            data-testid="cloud-todo-confirm-collaborator"
-            disabled={!selectedCollaboratorId || collaboratorBusy}
-            onClick={() => void addCollaborator()}
-            className="h-8 shrink-0 rounded-lg bg-text-primary px-3 text-sm font-medium text-background transition hover:opacity-90 disabled:opacity-40"
-          >
-            {t("common.add", "添加")}
-          </button>
-        </div>
+        <IssueDetailCollaboratorPicker
+          {...collaboratorPickerProps}
+          compact
+          className="col-span-full px-2 pb-1"
+        />
       ) : null}
       {collaboratorError ? (
         <p className="col-span-full px-2 text-xs text-destructive">
@@ -3976,44 +3968,10 @@ export function TodoEditor(props: TodoEditorProps) {
                         ) : null}
                       </div>
                       {addingCollaborator && (
-                        <div className="mt-2 flex items-center gap-2">
-                          <select
-                            data-testid="cloud-todo-collaborator-select"
-                            value={selectedCollaboratorId ?? ""}
-                            onChange={(event) =>
-                              setSelectedCollaboratorId(
-                                Number(event.target.value) || null,
-                              )
-                            }
-                            className="h-9 min-w-0 flex-1 rounded-lg border border-border bg-background px-3 text-sm outline-none focus:border-text-muted"
-                          >
-                            <option value="">
-                              {t(
-                                "todo.select_project_member",
-                                "选择项目空间成员",
-                              )}
-                            </option>
-                            {availableCollaborators.map((member) => (
-                              <option
-                                key={member.user_id}
-                                value={member.user_id}
-                              >
-                                {member.user_name}
-                              </option>
-                            ))}
-                          </select>
-                          <button
-                            type="button"
-                            data-testid="cloud-todo-confirm-collaborator"
-                            disabled={
-                              !selectedCollaboratorId || collaboratorBusy
-                            }
-                            onClick={() => void addCollaborator()}
-                            className="h-9 shrink-0 rounded-lg bg-text-primary px-3.5 text-sm font-medium text-background transition hover:opacity-90 disabled:opacity-40"
-                          >
-                            {t("common.add", "添加")}
-                          </button>
-                        </div>
+                        <IssueDetailCollaboratorPicker
+                          {...collaboratorPickerProps}
+                          className="mt-2"
+                        />
                       )}
                       {resourceParticipants}
                       {collaborators.length === 0 ? (

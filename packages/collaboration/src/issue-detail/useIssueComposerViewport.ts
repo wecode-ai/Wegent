@@ -19,13 +19,16 @@ export function useIssueComposerViewport(enabled: boolean) {
       const questionVisible = questions.some(
         (question) => question.bounds.bottom > bounds.top && question.bounds.top < bounds.bottom,
       )
+      const before = window.getComputedStyle(composer)
+      const wasSticky = before.position === 'sticky'
+      const bottom = Number.parseFloat(before.bottom) || 0
+      const footprint = Math.ceil(composer.getBoundingClientRect().height + bottom)
+      const wasOversized = composer.dataset.oversized === 'true'
+      const oversized = footprint > bounds.height / 2
       composer.dataset.humanRequestVisible = String(questionVisible)
+      composer.dataset.oversized = String(oversized)
       const style = window.getComputedStyle(composer)
-      const bottom = Number.parseFloat(style.bottom) || 0
-      const inset =
-        style.position === 'sticky'
-          ? Math.ceil(composer.getBoundingClientRect().height + bottom)
-          : 0
+      const inset = style.position === 'sticky' ? footprint : 0
       viewport.style.scrollPaddingBottom = inset ? `${inset}px` : previous
       for (const question of questions) {
         if (!margins.has(question.element)) {
@@ -46,6 +49,11 @@ export function useIssueComposerViewport(enabled: boolean) {
         restoreMargin(element, original)
         observer.unobserve(element)
         margins.delete(element)
+      }
+      if (oversized && !wasOversized && wasSticky) {
+        const focused = document.activeElement
+        if (focused instanceof HTMLElement && composer.contains(focused))
+          focused.scrollIntoView({ block: 'nearest', inline: 'nearest' })
       }
     }
     const observer = new ResizeObserver(update)
@@ -74,6 +82,7 @@ export function useIssueComposerViewport(enabled: boolean) {
       viewport.removeEventListener('scroll', update)
       window.removeEventListener('resize', update)
       delete composer.dataset.humanRequestVisible
+      delete composer.dataset.oversized
       viewport.style.scrollPaddingBottom = previous
       for (const [element, original] of margins) restoreMargin(element, original)
     }

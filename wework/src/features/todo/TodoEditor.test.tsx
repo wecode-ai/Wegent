@@ -47,6 +47,39 @@ const baseItem = {
 const project = { id: '11', name: 'Wework' } as unknown as CloudProject
 
 describe('TodoEditor external item sync', () => {
+  it.each([false, true])(
+    'accepts the local zero-id participant (workspace panel: %s)',
+    async workspacePanel => {
+      const add = vi.fn(async () => ({ id: 1, user_id: 0, user_name: 'Local owner' }))
+      const memberApi = {
+        ...(api as object),
+        listCloudProjectMembers: vi.fn(async () => [
+          { id: 1, user_id: 0, user_name: 'Local owner', role: 'Owner' },
+        ]),
+        addLoopItemCollaborator: add,
+      }
+      render(
+        <TodoEditor
+          mode="edit"
+          item={baseItem}
+          project={project}
+          allItems={[baseItem]}
+          {...(workspacePanel ? { presentation: 'workspace-panel' as const, readFirst: true } : {})}
+          onUpdated={vi.fn()}
+          onClose={vi.fn()}
+          api={memberApi as never}
+        />
+      )
+      await userEvent.click(screen.getByTestId('cloud-todo-add-collaborator'))
+      const select = await screen.findByTestId('cloud-todo-collaborator-select')
+      await screen.findByRole('option', { name: 'Local owner' })
+      await userEvent.selectOptions(select, '0')
+      expect(screen.getByTestId('cloud-todo-confirm-collaborator')).toBeEnabled()
+      expect(select).toHaveAccessibleName('选择项目空间成员')
+      await userEvent.click(screen.getByTestId('cloud-todo-confirm-collaborator'))
+      await waitFor(() => expect(add).toHaveBeenCalledWith('WEG-1', 0))
+    }
+  )
   it('shows the persisted none priority without relabelling it as medium', () => {
     const item = { ...baseItem, priority: 'none' as const }
     render(

@@ -790,6 +790,8 @@
   .task-detail-property,
   .task-detail-primary-metadata .task-detail-rail-prop,
   .task-detail-expanded-properties .task-detail-rail-prop,
+  .task-detail-primary-metadata .task-detail-rail-value-content,
+  .task-detail-expanded-properties .task-detail-rail-value-content,
   .task-detail-primary-metadata .task-detail-tag-editor input {
     min-height: 44px;
   }
@@ -3060,7 +3062,8 @@
   margin: 0;
 }
 
-.task-detail-comment-bar[data-human-request-visible="true"] {
+.task-detail-comment-bar[data-human-request-visible="true"],
+.task-detail-comment-bar[data-oversized="true"] {
   position: static;
 }
 

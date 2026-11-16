@@ -7,6 +7,70 @@ afterEach(() => {
   vi.unstubAllGlobals()
 })
 
+it('releases an oversized composer for reading and restores sticking when it fits', () => {
+  let resize!: ResizeObserverCallback
+  vi.stubGlobal(
+    'ResizeObserver',
+    class {
+      constructor(callback: ResizeObserverCallback) {
+        resize = callback
+      }
+      observe = vi.fn()
+      unobserve = vi.fn()
+      disconnect = vi.fn()
+    }
+  )
+  let height = 159
+  let viewportHeight = 358
+  vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(function (
+    this: HTMLElement
+  ) {
+    const measured = this.dataset.testid === 'viewport' ? viewportHeight : height
+    return { top: 0, bottom: measured, height: measured } as DOMRect
+  })
+  const computed = window.getComputedStyle.bind(window)
+  vi.spyOn(window, 'getComputedStyle').mockImplementation(element =>
+    element.tagName === 'FOOTER'
+      ? ({
+          position: (element as HTMLElement).dataset.oversized === 'true' ? 'static' : 'sticky',
+          bottom: '16px',
+        } as CSSStyleDeclaration)
+      : computed(element)
+  )
+  function Fixture() {
+    const ref = useIssueComposerViewport(true)
+    return (
+      <div data-testid="viewport" style={{ overflowY: 'auto', scrollPaddingBottom: 12 }}>
+        <footer ref={ref}>
+          <input aria-label="Reply" defaultValue="Unsent reply" />
+        </footer>
+      </div>
+    )
+  }
+  render(<Fixture />)
+  const viewport = screen.getByTestId('viewport')
+  const input = screen.getByRole('textbox', { name: 'Reply' })
+  const revealFocus = vi.fn()
+  Object.defineProperty(input, 'scrollIntoView', { value: revealFocus })
+  input.focus()
+  expect(viewport.style.scrollPaddingBottom).toBe('175px')
+  height = 309
+  act(() => resize([], {} as ResizeObserver))
+  expect(viewport.style.scrollPaddingBottom).toBe('12px')
+  expect(revealFocus).toHaveBeenCalledOnce()
+  fireEvent.scroll(viewport)
+  expect(revealFocus).toHaveBeenCalledOnce()
+  expect(screen.getByRole('textbox', { name: 'Reply' })).toBe(input)
+  expect(input).toHaveValue('Unsent reply')
+  expect(input).toHaveFocus()
+  viewportHeight = 700
+  fireEvent(window, new Event('resize'))
+  expect(viewport.style.scrollPaddingBottom).toBe('325px')
+  height = 159
+  act(() => resize([], {} as ResizeObserver))
+  expect(viewport.style.scrollPaddingBottom).toBe('175px')
+})
+
 it('refreshes a question moved by preceding content without resizing the viewport or question', () => {
   const observed = new Set<Element>()
   let resize!: ResizeObserverCallback
@@ -27,14 +91,17 @@ it('refreshes a question moved by preceding content without resizing the viewpor
   ) {
     if (this.classList.contains('task-detail-human-request'))
       return { top: questionTop, bottom: questionTop + 100, height: 100 } as DOMRect
-    return { top: 0, bottom: 440, height: 94 } as DOMRect
+    return { top: 0, bottom: 440, height: this.dataset.testid === 'viewport' ? 440 : 94 } as DOMRect
   })
   const computed = window.getComputedStyle.bind(window)
   vi.spyOn(window, 'getComputedStyle').mockImplementation(element =>
     element.tagName === 'FOOTER'
       ? ({
           position:
-            (element as HTMLElement).dataset.humanRequestVisible === 'true' ? 'static' : 'sticky',
+            (element as HTMLElement).dataset.humanRequestVisible === 'true' ||
+            (element as HTMLElement).dataset.oversized === 'true'
+              ? 'static'
+              : 'sticky',
           bottom: '16px',
         } as CSSStyleDeclaration)
       : computed(element)
@@ -78,9 +145,15 @@ it('reserves the current composer footprint for browser scrolling and restores t
     }
   )
   let height = 94
-  vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(
-    () => ({ height }) as DOMRect
-  )
+  vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(function (
+    this: HTMLElement
+  ) {
+    return {
+      top: 0,
+      bottom: this.dataset.testid === 'viewport' ? 500 : height,
+      height: this.dataset.testid === 'viewport' ? 500 : height,
+    } as DOMRect
+  })
   function Composer({ enabled }: { enabled: boolean }) {
     const ref = useIssueComposerViewport(enabled)
     return <footer ref={ref} style={{ position: 'sticky', bottom: 16 }} />
@@ -117,13 +190,20 @@ it('releases the inset while an inline human question owns the reading surface',
   ) {
     if (this.classList.contains('task-detail-human-requests'))
       return { top: questionBottom - 100, bottom: questionBottom, height: 100 } as DOMRect
-    return { top: 0, bottom: viewportBottom, height: 94 } as DOMRect
+    return {
+      top: 0,
+      bottom: viewportBottom,
+      height: this.dataset.testid === 'viewport' ? viewportBottom : 94,
+    } as DOMRect
   })
   const computed = window.getComputedStyle.bind(window)
   vi.spyOn(window, 'getComputedStyle').mockImplementation(element => {
     if (element instanceof HTMLElement && element.tagName === 'FOOTER')
       return {
-        position: element.dataset.humanRequestVisible === 'true' ? 'static' : 'sticky',
+        position:
+          element.dataset.humanRequestVisible === 'true' || element.dataset.oversized === 'true'
+            ? 'static'
+            : 'sticky',
         bottom: '16px',
       } as CSSStyleDeclaration
     return computed(element)
@@ -158,7 +238,8 @@ it('releases the inset while an inline human question owns the reading surface',
   expect(question.style.scrollMarginBottom).toBe('8px')
   viewportBottom = 50
   fireEvent(window, new Event('resize'))
-  expect(viewport.style.scrollPaddingBottom).toBe('110px')
+  expect(viewport.style.scrollPaddingBottom).toBe('12px')
+  expect(question.style.scrollMarginBottom).toBe('8px')
   viewportBottom = 440
   fireEvent(window, new Event('resize'))
   expect(viewport.style.scrollPaddingBottom).toBe('12px')

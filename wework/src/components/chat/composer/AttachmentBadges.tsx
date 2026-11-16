@@ -92,7 +92,7 @@ export function AttachmentBadges({
       return
     }
     try {
-      if (!openPreview) throw new Error('Attachment preview panel is unavailable')
+      if (!openPreview) throw new Error(t('todo.file_preview_failed', '预览失败'))
       openPreview(attachment)
     } catch (error) {
       setOpenError({
