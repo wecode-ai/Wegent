@@ -2,6 +2,8 @@
 sidebar_position: 36
 ---
 
+MCP App message capability changes update current admission without remounting the same task's conversation subtree. After confirmation, sending still revalidates the current task address and message capability; read-only views, task changes and unmounts reject pending sends. `conversationMessagePermission.test.tsx` covers retained UI state and permission revocation. CP01–CP20 remain unchanged.
+
 # Collaboration permission architecture and invariants
 
 Manual source starts use the host snapshot's existing `origin.manual` and exact `standInSourceBindings`. Transient confirmation flags confer no durable authorization, and later arrivals cannot reuse the grant. Disabling automation does not block authorized manual workers or their completion reports. Queue admission revalidates the original message grant, source, identity and configuration version while retaining native confirmation. Automatic workers still require enabled role and source policies; revoking the binding blocks both workers and reports. Native manual-start, snapshot and source-task admission regressions protect these boundaries. CP01–CP20 remain unchanged.

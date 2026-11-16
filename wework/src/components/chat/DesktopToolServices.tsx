@@ -104,7 +104,7 @@ export function DesktopToolServices({
   }, [mcpApp])
   const content = mcpApp ? (
     <McpAppsProvider
-      key={`${mcpApp.address.deviceId}:${mcpApp.address.taskId}:${Boolean(sendMessage)}`}
+      key={`${mcpApp.address.deviceId}:${mcpApp.address.taskId}`}
       address={mcpApp.address}
       api={mcpApp.api}
       onMessage={
