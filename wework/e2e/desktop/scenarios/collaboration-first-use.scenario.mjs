@@ -160,7 +160,9 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
       await verifyPersonalHomeStartWork(control, {
         scoped,
         project: localProject,
-        viewerId: Number(ownerTarget.slice('user:'.length)),
+        // Local project work is owned by the native participant, independently
+        // of the authenticated Backend account and selectable cloud members.
+        viewerId: 0,
       })
       await capture(control, 'collaboration-first-use-07-home-workflow.png')
       await control.command('click', scoped(`[data-testid="personal-home-issue-${issueId}"]`))

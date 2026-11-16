@@ -436,7 +436,10 @@ export function createDesktopScenario({
         'Restored device did not continue and upload the next native delta'
       )
       assert.equal(activeTranscript().turns[2].payload.assistantMessage, RESTORED_COMPLETION)
-      assert.equal(activeTranscript().archives[2].format, 'codex-snapshot.v1.tgz.aes256gcm')
+      assert.equal(
+        activeTranscript().archives.find(archive => archive.toSequence === 3)?.format,
+        'codex-snapshot.v1.tgz.aes256gcm'
+      )
       const restoredRequest = modelRequests.find(request =>
         JSON.stringify(request).includes(RESTORED_PROMPT)
       )
