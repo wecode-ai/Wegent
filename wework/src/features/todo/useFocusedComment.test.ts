@@ -265,3 +265,21 @@ it('finishes initial positioning when the sticky composer appears after cancella
   expect(comment.getBoundingClientRect().bottom).toBeLessThanOrEqual(220)
   expect(result.current).toBe('comment-1')
 })
+
+it('recovers from ignored cancellation after the reading viewport resizes', async () => {
+  const resize = observeResizes()
+  const { viewport, geometry, comment, result } = setup()
+  geometry.height = 0
+  await nextFrame()
+  viewport.dispatchEvent(new WheelEvent('wheel'))
+  geometry.height = 100
+  geometry.offset += 200
+  const composer = document.createElement('div')
+  composer.className = 'task-detail-comment-bar'
+  composer.getBoundingClientRect = () => new DOMRect(0, 220, 600, 280)
+  viewport.append(composer)
+  await resize(viewport)
+  expect(comment.getBoundingClientRect().top).toBeGreaterThanOrEqual(100)
+  expect(comment.getBoundingClientRect().bottom).toBeLessThanOrEqual(220)
+  expect(result.current).toBe('comment-1')
+})
