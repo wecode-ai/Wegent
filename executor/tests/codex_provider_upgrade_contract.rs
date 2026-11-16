@@ -38,15 +38,15 @@ fn seed(home: &Path) -> (std::path::PathBuf, String) {
 }
 
 fn invoke(root: &Path, stopped: bool) -> Output {
-    command(root, stopped, false).output().unwrap()
+    command(root, stopped, false, false).output().unwrap()
 }
 
-fn command(root: &Path, stopped: bool, wait_for_writers: bool) -> Command {
+fn command(root: &Path, stopped: bool, wait_for_writers: bool, admit_current: bool) -> Command {
     let mut command = Command::new(env!("CARGO_BIN_EXE_wegent-executor"));
     command.arg("--workbench-codex-providers-migrate").arg(
         json!({
             "codex_home":root.join("codex"),"agents_root":root.join("agents"),
-            "wait_for_writers":wait_for_writers
+            "wait_for_writers":wait_for_writers,"admit_current":admit_current
         })
         .to_string(),
     );
@@ -104,7 +104,7 @@ fn stopped_wait_entry_resumes_after_native_writer_releases_coordination_and_unli
     writer.lock_exclusive().unwrap();
     let before = fs::read(&path).unwrap();
     let mut preparation = OwnedPreparation(
-        command(root.path(), true, true)
+        command(root.path(), true, true, false)
             .env("WEGENT_EXECUTOR_DISABLE_FILE_LOG", "1")
             .stdout(std::process::Stdio::piped())
             .stderr(std::process::Stdio::piped())
@@ -259,4 +259,134 @@ fn a_live_named_home_writer_keeps_history_intact_and_release_allows_the_same_upg
     let metadata: Value =
         serde_json::from_str(fs::read_to_string(path).unwrap().lines().next().unwrap()).unwrap();
     assert_eq!(metadata["payload"]["model_provider"], "~");
+}
+
+#[test]
+fn shared_development_startups_admit_current_history_while_existing_writers_keep_their_leases() {
+    let root = tempfile::tempdir().unwrap();
+    for home in [root.path().join("codex"), root.path().join("agents/u/p/a")] {
+        let (path, _) = seed(&home);
+        assert!(invoke(root.path(), true).status.success());
+        let history = fs::read(&path).unwrap();
+        let journal_path = home.join(".wework-provider-migration.json");
+        let journal = fs::read(&journal_path).unwrap();
+        let db_path = home.join("state_5.sqlite");
+        let database = fs::read(&db_path).unwrap();
+        let processes = fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .open(home.join(".wework-auth-processes.lock"))
+            .unwrap();
+        FileExt::lock_shared(&processes).unwrap();
+        let execution = fs::File::create(home.join(".execution.lock")).unwrap();
+        execution.lock_exclusive().unwrap();
+        let writer = fs::File::create(home.join(format!("thread-writer-locks/{ID}.lock"))).unwrap();
+        writer.lock_exclusive().unwrap();
+        let first = command(root.path(), true, false, true).spawn().unwrap();
+        let second = command(root.path(), true, false, true).spawn().unwrap();
+        for child in [first, second] {
+            assert!(child.wait_with_output().unwrap().status.success());
+        }
+        assert_eq!(fs::read(&path).unwrap(), history);
+        assert_eq!(fs::read(&journal_path).unwrap(), journal);
+        assert_eq!(fs::read(&db_path).unwrap(), database);
+        assert!(!invoke(root.path(), true).status.success());
+        // Read-only admission neither releases nor replaces any existing lease.
+        let other = fs::File::open(home.join(".execution.lock")).unwrap();
+        assert!(other.try_lock_exclusive().is_err());
+        assert!(writer.try_lock_exclusive().is_ok());
+    }
+}
+
+#[test]
+fn simultaneous_development_preparations_serialize_the_first_real_migration() {
+    let root = tempfile::tempdir().unwrap();
+    let (path, tail) = seed(&root.path().join("codex"));
+    let first = command(root.path(), true, false, true).spawn().unwrap();
+    let second = command(root.path(), true, false, true).spawn().unwrap();
+    for child in [first, second] {
+        assert!(child.wait_with_output().unwrap().status.success());
+    }
+    let content = fs::read_to_string(path).unwrap();
+    assert_eq!(content.split_once('\n').unwrap().1, tail);
+    assert_eq!(
+        serde_json::from_str::<Value>(content.lines().next().unwrap()).unwrap()["payload"]
+            ["model_provider"],
+        "~"
+    );
+}
+
+#[test]
+fn development_admission_refuses_index_drift_and_pending_journals_without_touching_live_history() {
+    for pending_journal in [false, true] {
+        let root = tempfile::tempdir().unwrap();
+        let home = root.path().join("codex");
+        let (path, _) = seed(&home);
+        assert!(invoke(root.path(), true).status.success());
+        let journal_path = home.join(".wework-provider-migration.json");
+        if pending_journal {
+            let mut journal: Value =
+                serde_json::from_slice(&fs::read(&journal_path).unwrap()).unwrap();
+            journal["complete"] = json!(false);
+            fs::write(&journal_path, journal.to_string()).unwrap();
+        } else {
+            Connection::open(home.join("state_5.sqlite"))
+                .unwrap()
+                .execute("UPDATE threads SET model_provider='legacy-api'", [])
+                .unwrap();
+        }
+        let journal = fs::read(&journal_path).unwrap();
+        let history = fs::read(&path).unwrap();
+        let processes = fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .open(home.join(".wework-auth-processes.lock"))
+            .unwrap();
+        FileExt::lock_shared(&processes).unwrap();
+        let result = command(root.path(), true, false, true).output().unwrap();
+        assert!(!result.status.success());
+        assert_eq!(fs::read(&journal_path).unwrap(), journal);
+        assert_eq!(fs::read(&path).unwrap(), history);
+        drop(processes);
+        assert!(command(root.path(), true, false, true)
+            .output()
+            .unwrap()
+            .status
+            .success());
+    }
+}
+
+#[test]
+fn completed_development_journal_does_not_admit_new_legacy_rollouts() {
+    let root = tempfile::tempdir().unwrap();
+    let home = root.path().join("codex");
+    seed(&home);
+    assert!(invoke(root.path(), true).status.success());
+    let id = "00000000-0000-4000-8000-000000000042";
+    let path = home.join(format!("sessions/rollout-{id}.jsonl"));
+    let history = format!(
+        "{}\n",
+        json!({"type":"session_meta","payload":{"id":id,"model_provider":"legacy-api"}})
+    );
+    fs::write(&path, &history).unwrap();
+    let processes = fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .open(home.join(".wework-auth-processes.lock"))
+        .unwrap();
+    FileExt::lock_shared(&processes).unwrap();
+    assert!(!command(root.path(), true, false, true)
+        .output()
+        .unwrap()
+        .status
+        .success());
+    assert_eq!(fs::read_to_string(&path).unwrap(), history);
+    drop(processes);
+    assert!(command(root.path(), true, false, true)
+        .output()
+        .unwrap()
+        .status
+        .success());
+    let migrated: Value = serde_json::from_str(fs::read_to_string(path).unwrap().trim()).unwrap();
+    assert_eq!(migrated["payload"]["model_provider"], "~");
 }

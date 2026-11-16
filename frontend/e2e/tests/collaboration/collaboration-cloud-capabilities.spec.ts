@@ -580,7 +580,7 @@ test.describe('Collaboration cloud capabilities', () => {
       })
       await expect(page.getByText(`issue-${suffix}.txt`, { exact: true })).toBeVisible()
 
-      await page.getByTestId('cloud-todo-more-properties').click()
+      await expect(page.getByTestId('issue-primary-metadata')).toBeVisible()
       await expect(page.getByTestId('cloud-todo-add-collaborator')).toBeVisible()
       await page.getByTestId('cloud-todo-add-collaborator').click()
       await page.getByTestId('cloud-todo-collaborator-select').selectOption(String(member.id))
@@ -596,7 +596,7 @@ test.describe('Collaboration cloud capabilities', () => {
         'Cloud E2E persistent comment'
       )
       await expect(page.getByText(`issue-${suffix}.txt`, { exact: true })).toBeVisible()
-      await page.getByTestId('cloud-todo-more-properties').click()
+      await expect(page.getByTestId('issue-primary-metadata')).toBeVisible()
       await expect(
         page.getByTestId('cloud-todo-collaborators').getByRole('button', {
           name: new RegExp(member.user_name),

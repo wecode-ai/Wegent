@@ -244,6 +244,7 @@ export function TodoEditor(props: TodoEditorProps) {
     renderDescriptionEditor: context => (
       <TaskDescriptionEditor
         value={context.value}
+        placeholder={context.placeholder}
         onChange={context.onChange}
         onPasteFiles={context.onPasteFiles}
         readAttachment={context.readAttachment}

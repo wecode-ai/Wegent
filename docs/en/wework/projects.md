@@ -126,7 +126,7 @@ Open **Milestones** in the project. The Issue-detail selector only associates ex
 | Responsibilities, role and removal | Edit responsibilities/capabilities on the row and blur to save; change role/remove where allowed                            | Inherited membership, effective role and permissions constrain actions; not every member can be removed            |
 | Discuss and assign                 | Issue discussion → Assign to → select member → Send and assign                                                              | Selection alone does not submit; without text the action is Assign; Keep current preserves assignee                |
 | Manual work                        | Update progress/completion using the status selector; communicate explanations and results through comments and attachments | Ordinary properties autosave; discussion assignment submits with Send, not an extra acceptance form                |
-| Archive Issue                      | Details → More information → Archive issue → Confirm archive                                                                | Archival, not permanent deletion; check subtasks/linked runs and do not assume success if stopping execution fails |
+| Archive Issue                      | Details → Actions → Archive issue → Confirm archive                                                                | Archival, not permanent deletion; check subtasks/linked runs and do not assume success if stopping execution fails |
 | Restore Issue                      | Project board → Archived → Restore; Load more for further entries                                                           | Different from archived runtime conversations in global settings; project visibility still applies                 |
 
 ## Individual code-project menu operations
@@ -375,7 +375,13 @@ An Issue matches if it contains any selected tag. The filter preserves lane grou
 and combines with board search and saved-view conditions. Clear the selection to show
 all tags; switching projects or views resets it. Filtering does not change shared views.
 
+<a id="issue-properties"></a>
+
 ## Edit Issue properties
+
+An empty editable Issue shows “Add a description with background, goals, or requirements…”; click the description area to start writing. Read-only Issues show “No description yet”. Hints are never saved as description content.
+
+Issue details show status, assignee, milestone (when supported), date range, tags, and participants below the title. Add or remove tags and participants directly; read-only Issues display existing values with editing disabled. Choose **Show more properties** in the same area to view priority and assignment details, then **Show fewer properties** to collapse them. Tags and participants remain visible. The top-right **Actions** menu provides archival when permitted.
 
 Tags, status, priority, assignee, parent, date range, and milestone save immediately
 for existing Issues. Press Enter or leave the title field to save a title change.
@@ -456,7 +462,7 @@ The **Execution tasks** section lists these independent tasks separately. An inc
 
 For ordinary tasks linked to local issues, the Executor writes the issue status from the runtime lifecycle. The board and the issue summary above the task composer use lifecycle transitions to refresh the issue. An ordinary private task linked to a cloud issue marks it **In progress** after task creation is accepted. For collaboration groups, the manager agent evaluates member outcomes and changes the issue status; member task creation callbacks do not overwrite the manager's decision.
 
-Use the UI's archive action for an unneeded Issue from its board card, table row or details' More information entry. Review subtasks and linked runs first; failure to stop a run means that merely submitting the request is not successful archival. Restore from the project's Archived list. Archival is not permanent deletion.
+Use the UI's archive action for an unneeded Issue from its board card, table row or details' top-right Actions menu. Review subtasks and linked runs first; failure to stop a run means that merely submitting the request is not successful archival. Restore from the project's Archived list. Archival is not permanent deletion.
 
 ## Project-space files
 

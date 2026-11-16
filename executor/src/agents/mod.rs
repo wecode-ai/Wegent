@@ -12,9 +12,9 @@ use wegent_workspace::cargo_cache;
 mod claude_code;
 use wegent_claude_harness::claude_options;
 mod codex;
-pub(crate) use codex::prepare_provider_migration;
 #[cfg(test)]
 pub(crate) use codex::turn_context_for_test;
+pub(crate) use codex::{prepare_provider_migration, provider_state_is_current};
 mod completed_file_changes;
 #[cfg(test)]
 pub(crate) use codex::LaunchEnvironment as CodexLaunchEnvironment;
