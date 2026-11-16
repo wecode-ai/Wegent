@@ -509,12 +509,15 @@ export function ProjectWorkBar({
   return (
     <div
       data-testid="project-work-bar"
-      className={cn('project-work-bar flex min-h-[56px] w-full items-center gap-2 px-6', className)}
+      className={cn(
+        'project-work-bar flex min-h-[56px] w-full min-w-0 flex-wrap items-center gap-2 px-6',
+        className
+      )}
     >
       {showProjectSelector ? (
         <div
           ref={containerRef}
-          className={cn('relative min-w-0', !isMobile && 'max-w-[18rem] shrink')}
+          className={cn('relative min-w-0 max-w-full', !isMobile && 'max-w-[18rem] shrink')}
         >
           {open && isMobile && renderMobileBackdrop(closeMenu)}
           {open && (
@@ -865,7 +868,7 @@ export function ProjectWorkBar({
               ) : (
                 <>
                   <FolderPlus className="h-5 w-5" />
-                  <span className="shrink-0">{projectWorkTriggerLabel}</span>
+                  <span className="min-w-0 truncate">{projectWorkTriggerLabel}</span>
                 </>
               )}
               <ChevronDown className="h-4 w-4" />
@@ -932,7 +935,7 @@ export function ProjectWorkBar({
               aria-label={projectWorkTriggerAriaLabel}
             >
               <FolderPlus className="h-4 w-4" />
-              <span className="shrink-0">{projectWorkTriggerLabel}</span>
+              <span className="min-w-0 truncate">{projectWorkTriggerLabel}</span>
             </button>
           )}
         </div>

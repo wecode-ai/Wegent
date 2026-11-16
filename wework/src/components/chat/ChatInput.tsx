@@ -687,7 +687,7 @@ const ChatInputBody = forwardRef<ChatInputHandle, ChatInputProps>(function ChatI
   if (variant === 'desktop') {
     return (
       <PluginTrialSelectionContext.Provider value={controls.showTrialGuide}>
-        <div className="w-full">
+        <div className="w-full min-w-0">
           <TaskPlanProgress plan={taskPlan} />
           {queuePanel}
           {quotaWaitStatus}

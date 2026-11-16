@@ -731,7 +731,9 @@
 
 .task-detail-primary-metadata .task-detail-rail-key,
 .task-detail-expanded-properties .task-detail-rail-key {
-  width: 3em;
+  width: auto;
+  min-width: 3em;
+  flex-shrink: 0;
   font-size: inherit;
   font-weight: 400;
   line-height: inherit;
@@ -768,6 +770,16 @@
 }
 
 @media (max-width: 767px) {
+  .task-detail-property-collaborators > button {
+    min-width: 44px;
+    min-height: 44px;
+    margin-left: 0;
+  }
+
+  .task-detail-property-collaborators {
+    gap: 4px;
+  }
+
   .task-detail-property,
   .task-detail-primary-metadata .task-detail-rail-prop,
   .task-detail-expanded-properties .task-detail-rail-prop,
@@ -3285,6 +3297,13 @@
 
 .task-detail-workspace-panel .task-detail-thread-actions > button:hover {
   color: rgb(var(--color-text-primary));
+}
+
+@media (max-width: 767px) {
+  .task-detail-workspace-panel .task-detail-thread-actions > button {
+    min-width: 44px;
+    min-height: 44px;
+  }
 }
 
 :where(html:not([data-input-modality="pointer"]))

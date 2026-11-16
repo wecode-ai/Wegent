@@ -81,6 +81,7 @@ export function ProjectChatComposerSurface({
       data-presentation={presentation}
       className={cn(
         styles.surface,
+        'min-w-0',
         presentation === 'configuration'
           ? 'relative w-full rounded-xl border border-border/70 bg-background'
           : presentation === 'document'
