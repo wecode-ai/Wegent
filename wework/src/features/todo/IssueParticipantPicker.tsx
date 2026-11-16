@@ -153,7 +153,7 @@ export function IssueParticipantPicker({
   const statusMessage = error
     ? ''
     : busy
-      ? t('independentIssues.loading')
+      ? t('issue_creation.participants_loading')
       : candidates.length
         ? t('issue_creation.participant_results', { count: candidates.length })
         : t(

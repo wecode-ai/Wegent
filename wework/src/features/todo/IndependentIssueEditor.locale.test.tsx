@@ -1,4 +1,4 @@
-import { act, cleanup, fireEvent, render, screen, within } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { afterEach, expect, it, vi } from 'vitest'
 import { createInstance } from 'i18next'
 import { I18nextProvider } from 'react-i18next'
@@ -7,6 +7,7 @@ import english from '@/i18n/locales/en/common.json'
 import type { PersonalIssuesApi } from '@/api/personalIssues'
 import { IndependentIssueEditor } from './IndependentIssueEditor'
 import { IndependentIssueDialog } from './IndependentIssueDialog'
+import { IssueParticipantPicker } from './IssueParticipantPicker'
 
 afterEach(cleanup)
 
@@ -19,6 +20,32 @@ async function createTestI18n() {
   })
   return i18n
 }
+
+it('announces participant loading in the current language while its directory is pending', async () => {
+  const i18n = await createTestI18n()
+  const searchUsers = vi.fn(() => new Promise(() => {}))
+  render(
+    <I18nextProvider i18n={i18n}>
+      <IssueParticipantPicker
+        api={{ searchUsers } as unknown as PersonalIssuesApi}
+        userId={7}
+        selected={[]}
+        onChange={vi.fn()}
+        disabled={false}
+      />
+    </I18nextProvider>
+  )
+  fireEvent.click(screen.getByTestId('issue-participant-add'))
+  fireEvent.change(screen.getByTestId('independent-issue-search-people'), {
+    target: { value: 'Alice' },
+  })
+  await waitFor(() => expect(searchUsers).toHaveBeenCalledWith('Alice'))
+  const status = screen.getByTestId('issue-participant-results-status')
+  expect(status).toHaveTextContent('正在加载参与者…')
+  await act(() => i18n.changeLanguage('en'))
+  expect(status).toHaveTextContent('Loading participants…')
+  expect(searchUsers).toHaveBeenCalledOnce()
+})
 
 it('updates the current person and assignee labels when an open draft changes language', async () => {
   const i18n = await createTestI18n()

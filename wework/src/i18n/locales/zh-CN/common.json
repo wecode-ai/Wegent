@@ -86,6 +86,7 @@
     "working": "正在处理…"
   },
   "issue_creation": {
+    "participants_loading": "正在加载参与者…",
     "participant_results_one": "{{count}} 个可选结果",
     "participant_results_other": "{{count}} 个可选结果",
     "projects_loading": "正在加载项目…",

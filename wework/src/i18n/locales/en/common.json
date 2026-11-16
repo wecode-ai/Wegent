@@ -86,6 +86,7 @@
     "working": "Working…"
   },
   "issue_creation": {
+    "participants_loading": "Loading participants…",
     "participant_results_one": "{{count}} matching result",
     "participant_results_other": "{{count}} matching results",
     "projects_loading": "Loading projects…",
