@@ -1,3 +1,4 @@
+import { desktopOwnerPrimaryTaskId } from '../modules/desktop-owner-fixture.mjs'
 import assert from 'node:assert/strict'
 import { createDesktopScenario as createSessions } from './stand-in-sessions.scenario.mjs'
 import { requestExecutor } from '../modules/executor-rpc.mjs'
@@ -145,7 +146,7 @@ export function createDesktopScenario(options) {
             timeoutMs: options.modelResponseTimeoutMs,
           }
         )
-        const primary = await rpc('runtime.tasks.get', { taskId: 'stand-in-chat-9001-primary' })
+        const primary = await rpc('runtime.tasks.get', { taskId: desktopOwnerPrimaryTaskId })
         assert.equal(
           primary.task.running,
           true,
@@ -210,7 +211,7 @@ export function createDesktopScenario(options) {
           visible: false,
         })
         await control.command('waitFor', badge, { visible: false })
-        const after = await rpc('runtime.tasks.get', { taskId: 'stand-in-chat-9001-primary' })
+        const after = await rpc('runtime.tasks.get', { taskId: desktopOwnerPrimaryTaskId })
         assert.equal(
           after.task.threadId,
           primary.task.threadId,

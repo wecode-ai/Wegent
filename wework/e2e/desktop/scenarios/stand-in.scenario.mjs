@@ -1,3 +1,4 @@
+import { desktopOwnerId as USER_ID } from '../modules/desktop-owner-fixture.mjs'
 import {
   openStandInActivity,
   openStandInSettings,
@@ -38,7 +39,6 @@ const PROJECT = `分身交互-${process.pid}`
 const MARKER = `STAND_IN_ASSIGNED_${process.pid}`
 const AGENT_PROMPT = `STAND_IN_AGENT_INSTRUCTIONS_${process.pid}`
 // The ordinary desktop fixture authenticates /api/users/me as this account.
-const USER_ID = 9001
 
 async function waitForExecution(control, issueId, timeoutMs, roleIds = ['default']) {
   const deadline = Date.now() + timeoutMs

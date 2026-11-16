@@ -1,3 +1,4 @@
+import { desktopOwnerId as USER } from '../modules/desktop-owner-fixture.mjs'
 import assert from 'node:assert/strict'
 import { openStandInSettings } from '../modules/stand-in-profile-navigation.mjs'
 import { requestExecutor } from '../modules/executor-rpc.mjs'
@@ -19,7 +20,6 @@ import {
   responseCreated,
 } from '../modules/response-protocol.mjs'
 
-const USER = 9001
 const CHAT = '[data-testid="stand-in-conversation"]'
 const RECEIPT = 'MEMORY_TIMER_SOURCE_RECEIVED'
 

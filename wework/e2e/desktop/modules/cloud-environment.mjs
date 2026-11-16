@@ -17,6 +17,7 @@ import {
   CLOUD_MODEL_CASES,
   CLOUD_MULTIMODAL_VISION_CASE,
   CLOUD_PUBLIC_MODEL_NAME,
+  CLOUD_PUBLIC_MODEL_LABEL,
   CLOUD_PUBLIC_MODEL_OPTIONS,
   CLOUD_VISION_SIDECAR_CASE,
   DEFAULT_STEP_TIMEOUT_MS,
@@ -1594,19 +1595,6 @@ class RealCloudEnvironment {
             ? { api_format: 'chat/completions' }
             : {}),
       })),
-      {
-        name: CLOUD_PUBLIC_MODEL_NAME,
-        env: {
-          model: 'openai',
-          model_id: 'desktop-e2e-public-upstream-model',
-          base_url: `${this.modelServerUrl}/v1`,
-          api_key: MODEL_API_KEY,
-        },
-        is_active: true,
-        wework_available: true,
-        protocol: 'openai-responses',
-        api_format: 'responses',
-      },
     ]
     const seeded = await fetchJson(`${this.backendUrl}/api/models/batch`, {
       method: 'POST',
@@ -1615,6 +1603,41 @@ class RealCloudEnvironment {
         'Content-Type': 'application/json',
       },
       body: JSON.stringify(items),
+    })
+    await fetchJson(`${this.backendUrl}/api/admin/public-models`, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${this.authToken}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        name: CLOUD_PUBLIC_MODEL_NAME,
+        namespace: 'default',
+        json: {
+          apiVersion: 'agent.wecode.io/v1',
+          kind: 'Model',
+          metadata: {
+            name: CLOUD_PUBLIC_MODEL_NAME,
+            namespace: 'default',
+            displayName: CLOUD_PUBLIC_MODEL_LABEL,
+          },
+          spec: {
+            modelConfig: {
+              env: {
+                model: 'openai',
+                model_id: 'desktop-e2e-public-upstream-model',
+                base_url: `${this.modelServerUrl}/v1`,
+                api_key: MODEL_API_KEY,
+              },
+              ui: { family: 'gpt', modelLabel: CLOUD_PUBLIC_MODEL_LABEL },
+            },
+            protocol: 'openai-responses',
+            apiFormat: 'responses',
+            modelType: 'llm',
+            isWeworkAvailable: true,
+          },
+        },
+      }),
     })
     const savedModels = [...seeded.created, ...seeded.updated]
     for (const model of CLOUD_MODEL_CASES.filter(candidate => candidate.requestMode)) {

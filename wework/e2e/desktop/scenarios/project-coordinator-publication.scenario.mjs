@@ -1,3 +1,4 @@
+import { desktopOwnerId as USER } from '../modules/desktop-owner-fixture.mjs'
 import assert from 'node:assert/strict'
 import { requestExecutor } from '../modules/executor-rpc.mjs'
 import { createLocalCollaborationProject } from '../modules/workspace-flows.mjs'
@@ -12,7 +13,6 @@ import {
   responseCreated,
 } from '../modules/response-protocol.mjs'
 
-const USER = 9001
 const PROJECT = `项目明确发布-${process.pid}`
 const PRIVATE = 'PRIVATE_COORDINATOR_CONCLUSION_MUST_NOT_BE_SHARED'
 const DRAFT = 'PRIVATE_UNSENT_DRAFT_MUST_REMAIN'
@@ -133,11 +133,9 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, modelRes
         ).includes('OTHER_PROJECT_MUST_NOT_BE_AN_OPTION')
       )
       await captureScreenshot(control, 'publication-03-explicit-publication-entry.png')
-      await control.command(
-        'select',
-        '[data-testid="project-coordinator-publication-target"]',
-        { value: issue.id }
-      )
+      await control.command('select', '[data-testid="project-coordinator-publication-target"]', {
+        value: issue.id,
+      })
       await control.command('fill', '[data-testid="project-coordinator-publication-content"]', {
         value: PUBLIC,
       })

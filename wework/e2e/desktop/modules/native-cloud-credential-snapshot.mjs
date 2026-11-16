@@ -21,6 +21,7 @@ export function nativeCloudCredentialSnapshot(userDataDirectory, id) {
   const active = join(userDataDirectory, 'cloud-credentials.json')
   return {
     async capture() {
+      await mkdir(userDataDirectory, { recursive: true, mode: 0o700 })
       await mkdir(directory, { mode: 0o700 })
       try {
         await rename(active, original)

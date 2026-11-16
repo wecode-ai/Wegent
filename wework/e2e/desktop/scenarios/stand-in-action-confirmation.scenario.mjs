@@ -1,3 +1,4 @@
+import { desktopOwnerId } from '../modules/desktop-owner-fixture.mjs'
 import { openStandInActivity } from '../modules/stand-in-profile-navigation.mjs'
 import assert from 'node:assert/strict'
 import { access } from 'node:fs/promises'
@@ -74,7 +75,7 @@ export function createDesktopScenario({
       const settings = await requestExecutor(
         control,
         'runtime.stand_in.personal.get',
-        { userId: 9001 },
+        { userId: desktopOwnerId },
         uiTimeoutMs
       )
       const catalog = await requestExecutor(control, 'runtime.runner.catalog', {}, uiTimeoutMs)
@@ -83,7 +84,7 @@ export function createDesktopScenario({
       const origin = {
         type: 'connection_work',
         initiatedBy: 'stand_in',
-        userId: 9001,
+        userId: desktopOwnerId,
         standInId: settings.roles[0].id,
         deviceId: settings.executionDeviceId,
         askBeforeAct: true,
@@ -103,7 +104,7 @@ export function createDesktopScenario({
           executionRequest: {
             task_id: TASK,
             subtask_id: `${TASK}-initial`,
-            user_id: 9001,
+            user_id: desktopOwnerId,
             prompt: PROMPT,
             new_session: true,
             bot: [{ shell_type: 'Codex', name: 'Confirmation verification' }],

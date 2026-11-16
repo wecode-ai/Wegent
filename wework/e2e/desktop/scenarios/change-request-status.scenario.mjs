@@ -33,7 +33,7 @@ async function configureGitFixture(workspacePath) {
   )
 }
 
-async function createGitHubCliFixture(homePath) {
+export async function createGitHostingCliFixtures(homePath) {
   const binPath = join(homePath, '.wework-e2e-bin')
   const fixturePath = join(binPath, 'gh.mjs')
   const executablePath = join(binPath, process.platform === 'win32' ? 'gh.cmd' : 'gh')
@@ -118,6 +118,36 @@ if (args.includes('graphql')) {
     await writeFile(executablePath, '#!/bin/sh\nexec node "$(dirname "$0")/gh.mjs" "$@"\n')
     await chmod(executablePath, 0o755)
   }
+  await writeFile(
+    join(binPath, 'glab.mjs'),
+    `import assert from 'node:assert/strict'
+import { mkdirSync, writeFileSync } from 'node:fs'
+import { join } from 'node:path'
+const args = process.argv.slice(2)
+assert.deepEqual(args.slice(0, 2), ['auth', 'login'])
+if (args.includes('--help')) {
+  console.log('--hostname --git-protocol --stdin --insecure-storage')
+} else {
+  assert.equal(args[args.indexOf('--hostname') + 1], 'git.example.test')
+  assert.ok(args.includes('--stdin'))
+  let token = ''
+  for await (const chunk of process.stdin) token += chunk
+  assert.equal(token.trim(), 'synthetic-desktop-e2e-gitlab-token')
+  const directory = process.env.GLAB_CONFIG_DIR
+  assert.ok(directory)
+  mkdirSync(directory, { recursive: true, mode: 0o700 })
+  writeFileSync(join(directory, 'config.yml'), 'hosts:\\n  git.example.test:\\n    token: ' + token.trim() + '\\n', { mode: 0o600 })
+}
+`
+  )
+  const gitLabPath = join(binPath, process.platform === 'win32' ? 'glab.cmd' : 'glab')
+  await writeFile(
+    gitLabPath,
+    process.platform === 'win32'
+      ? '@echo off\r\nnode "%~dp0glab.mjs" %*\r\n'
+      : '#!/bin/sh\nexec node "$(dirname "$0")/glab.mjs" "$@"\n'
+  )
+  if (process.platform !== 'win32') await chmod(gitLabPath, 0o755)
   process.env.PATH = `${binPath}${delimiter}${process.env.PATH ?? ''}`
 }
 
@@ -215,7 +245,7 @@ export async function createDesktopScenario({
   workspacePath,
 }) {
   await configureGitFixture(workspacePath)
-  await createGitHubCliFixture(homePath)
+  await createGitHostingCliFixtures(homePath)
   const queryLogPath = join(homePath, QUERY_LOG_FILE)
   const statePath = join(homePath, STATE_FILE)
   const gitSyncRequests = []

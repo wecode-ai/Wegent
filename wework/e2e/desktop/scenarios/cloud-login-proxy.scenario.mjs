@@ -37,6 +37,9 @@ export async function createDesktopScenario() {
   const electronLaunchArguments = []
   return {
     electronLaunchArguments,
+    async prepareApp({ appEnvironment }) {
+      appEnvironment.WEWORK_E2E_CLOUD_BACKEND_URL = ''
+    },
     async prepareCloud({ backendUrl, authToken }) {
       const password = 'desktop-e2e-cloud-login-password'
       await requestJson(backendUrl, authToken, '/api/admin/users', {

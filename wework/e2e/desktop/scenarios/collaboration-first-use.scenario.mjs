@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import { TransportFaultProxy } from '../modules/transport-fault-proxy.mjs'
 import {
   handlePersonalHomeModel,
   openCollaborationIssueCreation,
@@ -26,10 +27,24 @@ function sidebarScoped(selector) {
 }
 
 export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenchReadyTimeoutMs }) {
+  const appEnvironment = {}
+  let proxy
+  let cloudUnavailable = false
   const capture = (control, name, selector = ACTIVE_WORKBENCH_SELECTOR) =>
     captureScreenshot(control, name, selector)
 
   return {
+    appEnvironment,
+    async prepareCloud({ backendUrl }) {
+      proxy = await new TransportFaultProxy(backendUrl).start()
+      appEnvironment.WEWORK_E2E_CLOUD_BACKEND_URL = proxy.url
+      appEnvironment.WEWORK_BACKEND_URL = `${proxy.url}/api`
+      proxy.rule = entry =>
+        cloudUnavailable && entry.path === '/api/v1/cloud-work-items/my-work' ? 'disconnect' : null
+    },
+    async cleanup() {
+      await proxy?.stop()
+    },
     handleHttp: handlePersonalHomeModel,
     async verify(control) {
       await selectWorkbenchTheme(control, { timeoutMs: uiTimeoutMs })
@@ -135,14 +150,18 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
       )
       const issueId = issueTestId.replace('cloud-todo-card-', '')
       const localProject = { id: projectId, name: PROJECT_NAME }
+      cloudUnavailable = true
       await verifyCollaborationPersonalHome(control, {
         scoped,
         project: localProject,
         issue: { id: issueId, title: ISSUE_NAME },
         cloudAvailable: false,
       })
-      // Native collaboration uses user 0 independently of the signed-in account identity.
-      await verifyPersonalHomeStartWork(control, { scoped, project: localProject, viewerId: 0 })
+      await verifyPersonalHomeStartWork(control, {
+        scoped,
+        project: localProject,
+        viewerId: Number(ownerTarget.slice('user:'.length)),
+      })
       await capture(control, 'collaboration-first-use-07-home-workflow.png')
       await control.command('click', scoped(`[data-testid="personal-home-issue-${issueId}"]`))
       await control.command('waitFor', scoped('[data-testid="personal-home-open-in-project"]'))

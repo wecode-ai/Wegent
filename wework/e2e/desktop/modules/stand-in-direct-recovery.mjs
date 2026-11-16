@@ -1,3 +1,8 @@
+import {
+  desktopOwnerId as USER,
+  desktopOwnerPrimaryTaskId as PRIMARY,
+  desktopOwnerCoordinatorTaskId as COORDINATOR,
+} from './desktop-owner-fixture.mjs'
 import assert from 'node:assert/strict'
 import { execFile } from 'node:child_process'
 import { copyFile, mkdir, writeFile } from 'node:fs/promises'
@@ -27,10 +32,7 @@ import {
   responseCreated,
 } from './response-protocol.mjs'
 
-const USER = 9001
 const PROVIDER = '@wegent/dsh-connection-dingtalk/dingtalk'
-const COORDINATOR = `stand-in-coordinator-${USER}`
-const PRIMARY = `stand-in-chat-${USER}-primary`
 const MARKER = 'DIRECT_RECOVERY'
 const BATCH_RESULT = `${MARKER}_BATCH_DONE`
 

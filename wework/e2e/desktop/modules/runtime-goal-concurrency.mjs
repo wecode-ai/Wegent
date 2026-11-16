@@ -1,3 +1,4 @@
+import { desktopOwnerId } from './desktop-owner-fixture.mjs'
 import assert from 'node:assert/strict'
 import { requestExecutor } from './executor-rpc.mjs'
 import { waitForValue } from './workspace-agent-setup.mjs'
@@ -69,7 +70,7 @@ export function createGoalConcurrencyVerification({ workspacePath, uiTimeoutMs }
           executionRequest: {
             task_id: taskId,
             subtask_id: `${taskId}-${suffix}`,
-            user_id: 9001,
+            user_id: desktopOwnerId,
             prompt,
             // Exercise policy reload while preserving native Goal continuation semantics.
             system_prompt: `Goal concurrency fixture ${suffix}`,

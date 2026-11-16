@@ -1,10 +1,10 @@
+import { desktopOwnerId as USER } from './desktop-owner-fixture.mjs'
 import { openStandInSettings } from './stand-in-profile-navigation.mjs'
 import { openConnectionTypePicker } from './stand-in-flows.mjs'
 import assert from 'node:assert/strict'
 import { requestExecutor } from './executor-rpc.mjs'
 import { createLocalCollaborationProject } from './workspace-flows.mjs'
 
-const USER = 9001
 const CONTENT = '[data-workspace-tab-content][aria-hidden="false"]'
 const CONNECTIONS_OPEN = '[data-testid="stand-in-connections-open"]'
 const ROLE = 'project-connection-names'

@@ -19,6 +19,7 @@ import { verifyMcpElicitationInFullAccess } from './mcp-elicitation-flow.mjs'
 import { MCP_URL_TIMEOUT_MS, MCP_FORM_TIMEOUT_MS } from './mcp-elicitation-evidence.mjs'
 import { verifyPendingTaskAcrossTabs } from './pending-task-tab-flow.mjs'
 import { prepareStandInOnboardingFixture } from './stand-in-onboarding-fixture.mjs'
+import { bindDesktopOwner } from './desktop-owner-fixture.mjs'
 
 import {
   createCheckpointTaskFixture,
@@ -271,6 +272,7 @@ import {
   createPluginMarketplaceFixture,
   createSingleRootLocalProject,
   ensureModelOptionVisible,
+  fetchJson,
   join,
   loadDesktopScenario,
   mkdir,
@@ -1333,6 +1335,11 @@ async function main() {
     })
     const [builtExecutor] = await Promise.all([buildExecutor(), cloudEnvironment.startBackend()])
     executorBinary = builtExecutor
+    bindDesktopOwner(
+      await fetchJson(`${cloudEnvironment.backendUrl}/api/users/me`, {
+        headers: { Authorization: `Bearer ${cloudEnvironment.authToken}` },
+      })
+    )
     if (CLOUD_ONLY && SELECTED_DESKTOP_SEGMENT === 'conversation-state') {
       cloudHistorySearch = createCloudHistorySearchVerification()
       await cloudHistorySearch.prepareCloud(cloudEnvironment)
@@ -1350,11 +1357,14 @@ async function main() {
       await publishSitesCreatorPlugins(cloudEnvironment, resultDir)
     }
     control.cloudEnvironment = cloudEnvironment
-    control.backendFaults = await new BackendFaultGate(
-      cloudEnvironment.backendUrl,
-      BLOCKED_CLOUD_MODEL_PATH,
-      !needsRemoteRuntime && !DESKTOP_SCENARIO_ONLY
-    ).start()
+    const blocksInitialCloudModels = !needsRemoteRuntime && !DESKTOP_SCENARIO_ONLY
+    if (blocksInitialCloudModels) {
+      control.backendFaults = await new BackendFaultGate(
+        cloudEnvironment.backendUrl,
+        BLOCKED_CLOUD_MODEL_PATH,
+        true
+      ).start()
+    }
     desktopScenario?.setExecutorBinary?.(executorBinary)
     const desktopAppPromise = buildDesktopApp(appIdentifier, codexBinary)
     const desktopApp =
@@ -1367,14 +1377,19 @@ async function main() {
           )[0]
         : await desktopAppPromise
     desktopScenario?.setCloudEnvironment?.(cloudEnvironment)
+    const backendProfileUrl = blocksInitialCloudModels
+      ? control.backendFaults.url
+      : cloudEnvironment.backendUrl
     const appBinary = desktopApp.binaryPath
     appBundlePath = desktopApp.appBundlePath
     const resolvedAppCodexBinary = desktopApp.codexBinaryPath ?? codexBinary
     if (!RUNS_PLUGIN_E2E) {
+      const verifiesOfficialProviderSwitch =
+        DESKTOP_SEGMENT === 'model-routing' || MODEL_SWITCH_ONLY
       await writeCodexConfig(
         codexHome,
         desktopScenario?.modelServerUrl ?? control.url,
-        `${desktopScenario?.codexConfigToml ?? ''}\n${
+        `${verifiesOfficialProviderSwitch ? `openai_base_url = ${JSON.stringify(`${control.url}/v1`)}\n` : ''}${desktopScenario?.codexConfigToml ?? ''}\n${
           shouldConfigureToolDetailsMcp() ? toolDetailsMcpConfigToml() : ''
         }\n${
           DESKTOP_SEGMENT === 'permission-modes'
@@ -1384,7 +1399,7 @@ async function main() {
         'openai-responses',
         desktopScenario?.modelProviderConfigToml,
         desktopScenario?.modelProviderAuthToml,
-        desktopScenario?.modelProviderId,
+        verifiesOfficialProviderSwitch ? 'openai' : desktopScenario?.modelProviderId,
         desktopScenario?.modelId
       )
       await writeFile(
@@ -1442,8 +1457,8 @@ async function main() {
       WEWORK_E2E_DISABLE_COMPONENT_UPDATES: '1',
       WEWORK_E2E_DISABLE_PYTHON_BOOTSTRAP: '1',
       WEWORK_APP_CONFIG_DIR: join(homePath, 'app-config'),
-      WEWORK_E2E_CLOUD_BACKEND_URL: control.backendFaults.url,
-      WEWORK_BACKEND_URL: `${control.backendFaults.url}/api`,
+      WEWORK_E2E_CLOUD_BACKEND_URL: backendProfileUrl,
+      WEWORK_BACKEND_URL: `${backendProfileUrl}/api`,
       WEWORK_E2E_CLOUD_TOKEN: cloudEnvironment.authToken,
       WEWORK_E2E_CONTROL_URL: control.controlUrl,
       WEWORK_E2E_ERROR_LOG: errorCollector.path,
@@ -1537,7 +1552,9 @@ async function main() {
       Object.assign(appEnvironment, cleanEnvironment)
     }
     await desktopScenario?.prepareApp?.({ appBinary, appEnvironment, codexHome, control })
-    if (desktopScenario?.requiresNativeCloudAuthorization) {
+    const initialCloudBackend = appEnvironment.WEWORK_E2E_CLOUD_BACKEND_URL?.replace(/\/$/, '')
+    if (initialCloudBackend) appEnvironment.WEWORK_BACKEND_URL = `${initialCloudBackend}/api`
+    if (initialCloudBackend) {
       assert.ok(cloudEnvironment, 'Native desktop login requires the real Backend environment')
       nativeCloudLogin = nativeCloudAuthorizationFixture(
         {
@@ -1800,7 +1817,7 @@ source = ${JSON.stringify(staleBundledMarketplacePath)}`
           DESKTOP_SEGMENT === 'application-menu' ||
           DESKTOP_SEGMENT.startsWith('coordination-'))
       ) {
-        await prepareStandInOnboardingFixture(control, cloudEnvironment, WORKBENCH_READY_TIMEOUT_MS)
+        await prepareStandInOnboardingFixture(control, WORKBENCH_READY_TIMEOUT_MS)
       }
       await desktopScenario.verify(control)
       if (DESKTOP_SEGMENT === 'local-harness') {

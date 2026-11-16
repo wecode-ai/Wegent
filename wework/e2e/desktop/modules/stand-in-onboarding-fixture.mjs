@@ -1,13 +1,9 @@
 import { requestExecutor } from './executor-rpc.mjs'
-import { fetchJson } from './shared.mjs'
+import { getDesktopOwner } from './desktop-owner-fixture.mjs'
 
 /** Existing business checkpoints start after the real, explicitly opted-out onboarding. */
-export async function prepareStandInOnboardingFixture(control, cloud, timeoutMs) {
-  const user = cloud
-    ? await fetchJson(`${cloud.backendUrl}/api/users/me`, {
-        headers: { Authorization: `Bearer ${cloud.authToken}` },
-      })
-    : { id: 9001 }
+export async function prepareStandInOnboardingFixture(control, timeoutMs) {
+  const user = getDesktopOwner()
   await requestExecutor(
     control,
     'runtime.stand_in.onboarding.complete',

@@ -1,3 +1,4 @@
+import { desktopOwnerId } from './desktop-owner-fixture.mjs'
 import assert from 'node:assert/strict'
 import { randomUUID } from 'node:crypto'
 import { requestExecutor } from './executor-rpc.mjs'
@@ -60,7 +61,7 @@ export function createGoalAdmissionRecovery({ workspacePath, uiTimeoutMs }) {
       const execution = {
         task_id: taskId,
         subtask_id: `${taskId}-initial`,
-        user_id: 9001,
+        user_id: desktopOwnerId,
         prompt: MARKER,
         new_session: true,
         bot: [{ shell_type: 'Codex', name: 'Goal admission recovery' }],

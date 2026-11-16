@@ -1,3 +1,4 @@
+import { desktopOwnerId } from './desktop-owner-fixture.mjs'
 import assert from 'node:assert/strict'
 import { requestExecutor } from './executor-rpc.mjs'
 import { openStandInSettings } from './stand-in-profile-navigation.mjs'
@@ -8,7 +9,12 @@ export async function verifyStandInGroupMessageScope(control, uiTimeoutMs) {
   const groupId = 'connection-migration-fixture'
   const selector = `[data-testid="stand-in-dingtalk-message-scope-${groupId}"]`
   const load = () =>
-    requestExecutor(control, 'runtime.stand_in.personal.get', { userId: 9001 }, uiTimeoutMs)
+    requestExecutor(
+      control,
+      'runtime.stand_in.personal.get',
+      { userId: desktopOwnerId },
+      uiTimeoutMs
+    )
   const open = async () => {
     await openStandInSettings(control)
     await control.command('clickWhenEnabled', '[data-testid="stand-in-primary-connections-open"]')

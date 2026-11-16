@@ -1,3 +1,4 @@
+import { desktopOwnerId } from './desktop-owner-fixture.mjs'
 import { openStandInSettings } from './stand-in-profile-navigation.mjs'
 import assert from 'node:assert/strict'
 import { requestExecutor } from './executor-rpc.mjs'
@@ -9,7 +10,12 @@ export async function verifyStandInSessionSettings(control, uiTimeoutMs) {
   const timing = `[data-testid="${id}"]`
   const strategy = `[data-testid="${id}-session-strategy"]`
   const load = () =>
-    requestExecutor(control, 'runtime.stand_in.personal.get', { userId: 9001 }, uiTimeoutMs)
+    requestExecutor(
+      control,
+      'runtime.stand_in.personal.get',
+      { userId: desktopOwnerId },
+      uiTimeoutMs
+    )
   await control.command(
     'waitFor',
     '[data-testid="stand-in-processing-settings-toggle"][aria-expanded="false"]'

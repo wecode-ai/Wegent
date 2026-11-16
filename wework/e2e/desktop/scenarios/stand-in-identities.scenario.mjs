@@ -1,3 +1,4 @@
+import { desktopOwnerId as USER } from '../modules/desktop-owner-fixture.mjs'
 import {
   openStandInSettings,
   openStandInActivity,
@@ -28,7 +29,6 @@ import {
 const ROOT = '[data-testid="stand-in-overview"]'
 const CHAT = `${ROOT} [data-testid="stand-in-conversation"]`
 const INPUT = `${CHAT} [data-testid="chat-message-input"]`
-const USER = 9001
 const ROLE = 'identity-reviewer'
 const PROPOSE = 'IDENTITY_CREATE_REVIEW_ROLE'
 const FOLLOWUP = 'IDENTITY_FOLLOW_UP'

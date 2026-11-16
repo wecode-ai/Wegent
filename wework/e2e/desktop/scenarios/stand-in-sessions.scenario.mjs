@@ -1,3 +1,7 @@
+import {
+  desktopOwnerId as USER,
+  desktopOwnerPrimaryTaskId as TASK,
+} from '../modules/desktop-owner-fixture.mjs'
 import assert from 'node:assert/strict'
 import { setTimeout as poll } from 'node:timers/promises'
 import { requestExecutor } from '../modules/executor-rpc.mjs'
@@ -15,8 +19,6 @@ import {
 import { selectedToolCall } from '../modules/model-tool-calls.mjs'
 import { selectE2EModel } from '../modules/shared.mjs'
 
-const USER = 9001
-const TASK = `stand-in-chat-${USER}-primary`
 const FIRST = 'STAND_IN_SESSION_FIRST_QUESTION'
 const SECOND = 'STAND_IN_SESSION_SECOND_CLEAN_CONTEXT'
 const FOLLOWUP = 'STAND_IN_SESSION_FOLLOWUP'

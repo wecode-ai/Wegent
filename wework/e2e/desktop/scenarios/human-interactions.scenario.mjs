@@ -1,3 +1,4 @@
+import { desktopOwnerId } from '../modules/desktop-owner-fixture.mjs'
 import { selectedToolCall } from '../modules/model-tool-calls.mjs'
 import assert from 'node:assert/strict'
 import { mkdir, rm, writeFile } from 'node:fs/promises'
@@ -208,7 +209,7 @@ export function createDesktopScenario({
             executionRequest: {
               task_id: 'unlisted-review',
               subtask_id: 'unlisted-review-initial',
-              user_id: 9001,
+              user_id: desktopOwnerId,
               prompt: PROMPT,
               new_session: true,
               bot: [{ shell_type: 'Codex', name: 'Unlisted review' }],

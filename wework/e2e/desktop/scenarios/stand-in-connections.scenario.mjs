@@ -1,3 +1,4 @@
+import { desktopOwnerId as USER } from '../modules/desktop-owner-fixture.mjs'
 import {
   openStandInSettings,
   verifyStandInProfileNavigation,
@@ -13,7 +14,6 @@ import { verifyStandInSessionSettings } from '../modules/stand-in-session-settin
 import { verifyStandInGroupMessageScope } from '../modules/stand-in-group-message-scope.mjs'
 
 const DINGTALK = '@wegent/dsh-connection-dingtalk/dingtalk'
-const USER = 9001
 
 export function createDesktopScenario(options) {
   const { uiTimeoutMs, workbenchReadyTimeoutMs } = options

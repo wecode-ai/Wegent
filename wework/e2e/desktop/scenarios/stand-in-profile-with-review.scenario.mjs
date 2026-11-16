@@ -1,3 +1,4 @@
+import { desktopOwnerId as USER } from '../modules/desktop-owner-fixture.mjs'
 import {
   openStandInExamples,
   openStandInSettings,
@@ -22,7 +23,6 @@ import {
   responseCreated,
 } from '../modules/response-protocol.mjs'
 
-const USER = 9001
 const GUIDE = '[data-testid="stand-in-onboarding"]'
 const CLIENT_TIME_ZONE = 'America/New_York'
 

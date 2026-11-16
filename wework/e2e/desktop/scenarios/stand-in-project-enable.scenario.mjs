@@ -1,3 +1,4 @@
+import { desktopOwnerId as USER_ID } from '../modules/desktop-owner-fixture.mjs'
 import assert from 'node:assert/strict'
 import { openStandInActivity } from '../modules/stand-in-profile-navigation.mjs'
 import { requestExecutor } from '../modules/executor-rpc.mjs'
@@ -11,7 +12,6 @@ import { selectCollaborationProjectView } from '../modules/collaboration-project
 const CONTENT = '[data-workspace-tab-content][aria-hidden="false"]'
 const PROJECT = `分身项目启用-${process.pid}`
 const OTHER_PROJECT = `保留分身项目-${process.pid}`
-const USER_ID = 9001
 
 /** A project connection must visibly enable a previously disabled personal stand-in. */
 export function createDesktopScenario({ uiTimeoutMs }) {
