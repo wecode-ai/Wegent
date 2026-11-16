@@ -1,6 +1,6 @@
 import { revealCollaborationSidebarElement } from '../modules/collaboration-sidebar-navigation.mjs'
 import assert from 'node:assert/strict'
-import { readFile, writeFile } from 'node:fs/promises'
+import { readFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { waitForBoardValue } from '../modules/collaboration-board-flows.mjs'
 import {
@@ -38,8 +38,12 @@ export function createDesktopScenario({
   let unavailableTemplateId
   let authorId
   let cloudRequest
+  let deviceEnvironment
   return {
     requiresCloudEnvironment: true,
+    setCloudEnvironment(value) {
+      deviceEnvironment = value
+    },
     async prepareApp({ appEnvironment }) {
       // This isolated fixture deliberately has no Claude model configured.
       appEnvironment.WEGENT_CLAUDE_HOME = join(resultDir, 'unconfigured-claude')
@@ -246,7 +250,7 @@ export function createDesktopScenario({
       await control.command('click', selector('template-use'))
       const copiedName = `模板新项目-${process.pid}`
       await control.command('fill', selector('collaboration-project-name-input'), {
-        value: copiedName,
+        value: `待配置项目-${process.pid}`,
       })
       await control.command('click', selector('project-create-choose-template'))
       await control.command('click', pickerSelector('template-tab-mine'))
@@ -263,55 +267,42 @@ export function createDesktopScenario({
         catalog.models.some(model => model.runtime === 'claude_code' && model.is_default),
         false
       )
-      const before = (await cloudRequest('/api/v1/cloud-projects', 'GET')).items
       await control.command('clickWhenEnabled', selector('collaboration-project-create-confirm'))
-      await control.command('waitFor', `${CONTENT} .collaboration-project-create-error`, {
-        text: '请先为当前执行环境设置默认模型',
+      await control.command('waitFor', selector('cloud-project-header-title'), {
+        text: `待配置项目-${process.pid}`,
+        timeoutMs: workbenchReadyTimeoutMs,
       })
-      const [error] = JSON.parse(
-        await control.command('getElementMetrics', `${CONTENT} .collaboration-project-create-error`)
+      const deferred = (await cloudRequest('/api/v1/cloud-projects', 'GET')).items.find(
+        project => project.name === `待配置项目-${process.pid}`
       )
-      const [footer] = JSON.parse(
-        await control.command(
-          'getElementMetrics',
-          `${CONTENT} .collaboration-project-create-footer`
+      const deferredAgents = await cloudRequest(
+        `/api/v1/cloud-projects/${deferred.id}/chat-agents`,
+        'GET'
+      )
+      assert.equal(deferredAgents.length, definitions.agents.length)
+      assert.ok(
+        deferredAgents.every(
+          agent =>
+            agent.executionPolicy.mode === 'user_select' && agent.modelPolicy.mode === 'user_select'
         )
       )
-      const [dialog] = JSON.parse(
-        await control.command('getElementMetrics', selector('collaboration-project-create-dialog'))
-      )
-      const [confirm] = JSON.parse(
-        await control.command('getElementMetrics', selector('collaboration-project-create-confirm'))
-      )
-      const layout = JSON.stringify({ error, footer, dialog, confirm }, null, 2)
-      await writeFile(join(resultDir, 'template-agents-error-layout.json'), `${layout}\n`)
-      await captureScreenshot(
-        control,
-        'template-agents-05b-model-required-before-creation.png',
-        CONTENT
+      const deferredRules = await cloudRequest(
+        `/api/v1/cloud-projects/${deferred.id}/automations`,
+        'GET'
       )
       assert.ok(
-        error.height > 0 && error.top >= footer.top && error.bottom <= footer.bottom,
-        'The complete error message must stay in the non-scrolling footer'
+        deferredRules.length > 0 && deferredRules.every(rule => !rule.enabled),
+        'Unconfigured template automation must remain disabled until execution is configured'
       )
-      assert.ok(
-        error.scrollHeight <= error.clientHeight + 1 && error.scrollWidth <= error.clientWidth + 1,
-        'The error message must not clip its text'
-      )
-      assert.ok(
-        error.bottom <= confirm.top && confirm.bottom <= dialog.bottom,
-        `The error and create action must be readable together without scrolling: ${layout}`
-      )
-      const after = (await cloudRequest('/api/v1/cloud-projects', 'GET')).items
-      assert.equal(
-        after.length,
-        before.length,
-        'A failed preflight must not persist an empty project'
-      )
-      assert.equal(
-        after.some(project => project.name === copiedName),
-        false
-      )
+      await captureScreenshot(control, 'template-agents-05b-created-without-runtime.png', CONTENT)
+      await revealCollaborationSidebarElement(control, selector('collaboration-primary-templates'))
+      await control.command('click', selector('collaboration-primary-templates'))
+      await control.command('click', selector('template-tab-mine'))
+      await control.command('click', selector(card.replace('template-card-', 'template-details-')))
+      await control.command('click', selector('template-use'))
+      await control.command('fill', selector('collaboration-project-name-input'), {
+        value: copiedName,
+      })
       await control.command('click', selector('project-create-choose-template'))
       await control.command('click', pickerSelector('template-tab-mine'))
       await control.command(
@@ -366,6 +357,45 @@ export function createDesktopScenario({
         assert.equal(recreated.length, 1)
         assert.equal(recreated[0].systemPrompt, definition.systemPrompt)
         assert.notEqual(recreated[0].id, agents.find(agent => agent.name === definition.name).id)
+      }
+      // Configure execution explicitly after the portable definitions are created.
+      const appDevice = await deviceEnvironment.waitForConnectedAppDevice()
+      await deviceEnvironment.waitForRunnerCatalog(appDevice.id)
+      const runtimeCatalog = await cloudRequest(
+        `/api/v1/resources/execution-environments?project_id=${copied.id}`,
+        'GET'
+      )
+      const runtime = runtimeCatalog.find(item => item.id === String(appDevice.id))
+      const nativeModel = runtime?.models.find(
+        model => model.runtime === 'codex' && model.is_default
+      )
+      assert.ok(
+        nativeModel,
+        'The authorized destination device must publish its real default model'
+      )
+      for (const agent of copiedAgents) {
+        await cloudRequest(`/api/v1/cloud-projects/${copied.id}/chat-agents/${agent.id}`, 'PATCH', {
+          version: agent.version,
+          execution_policy: { mode: 'fixed', environment_id: String(appDevice.id) },
+          model_policy: {
+            mode: 'fixed',
+            model: {
+              runtime: nativeModel.runtime,
+              provider: nativeModel.provider,
+              model_id: nativeModel.model_id,
+              source: nativeModel.source,
+            },
+          },
+        })
+      }
+      for (const rule of await cloudRequest(
+        `/api/v1/cloud-projects/${copied.id}/automations`,
+        'GET'
+      )) {
+        await cloudRequest(`/api/v1/cloud-projects/${copied.id}/automations/${rule.id}`, 'PATCH', {
+          version: rule.version,
+          enabled: true,
+        })
       }
       await captureScreenshot(control, 'template-agents-06-reapplied-with-stage-board.png', CONTENT)
       executionActive = true

@@ -143,3 +143,7 @@ mod tests {
         ));
     }
 }
+
+#[cfg(test)]
+#[path = "retention_mysql_tests.rs"]
+mod mysql_tests;

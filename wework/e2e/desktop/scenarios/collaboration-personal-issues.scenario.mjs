@@ -10,6 +10,7 @@ import {
 // Stories: start a private Issue without a project, invite a colleague, revoke access,
 // find work through the three lists, restore/delete, and associate a real project.
 export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenchReadyTimeoutMs }) {
+  let deviceEnvironment
   let cloud,
     participant,
     outsider,
@@ -53,6 +54,9 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
     control.command('waitFor', selector, { timeoutMs: uiTimeoutMs, ...options })
   return {
     requiresCloudEnvironment: true,
+    setCloudEnvironment(value) {
+      deviceEnvironment = value
+    },
     async prepareCloud(environment) {
       cloud = environment
       await request('/api/admin/setup-complete', 'POST')
@@ -395,6 +399,20 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
       await click(control, 'issue-environment-picker-trigger')
       await wait(control, '[data-testid="issue-environment-picker"]')
       await wait(control, '[data-testid="collaboration-project-execution-environment-add"]')
+      const appDevice = await deviceEnvironment.waitForConnectedAppDevice()
+      const poolPath = `/api/v1/cloud-projects/${project.id}/execution-environments`
+      if (!(await request(poolPath)).items.some(row => row.device_id === appDevice.id)) {
+        await click(
+          control,
+          `collaboration-project-execution-environment-candidate-${appDevice.id}`
+        )
+      }
+      await waitForBoardValue(
+        async () => (await request(poolPath)).items.some(row => row.device_id === appDevice.id),
+        true,
+        'Adding a device from the Issue draft must persist its project authorization',
+        uiTimeoutMs
+      )
       await captureScreenshot(control, 'new-issue-project-devices.png')
       await click(control, 'issue-environment-picker-trigger')
       assert.equal(

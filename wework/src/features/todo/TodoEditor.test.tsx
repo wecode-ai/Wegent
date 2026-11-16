@@ -232,7 +232,7 @@ describe('TodoEditor external item sync', () => {
     await user.type(title, 'Keep my title')
     await user.selectOptions(screen.getByTestId('cloud-todo-detail-status'), 'in_progress')
     expect(await screen.findByTestId('cloud-todo-save-error')).toHaveTextContent(
-      '机器人没有符合配置且获项目授权的执行环境'
+      '请到项目设置 → 执行环境添加或授权设备'
     )
     expect(screen.getByTestId('cloud-todo-detail-status')).toHaveValue('inbox')
     expect(title).toHaveValue('Keep my title')

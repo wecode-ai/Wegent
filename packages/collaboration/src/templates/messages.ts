@@ -93,7 +93,7 @@ export const templateMessages = {
     environmentHint: '模型和工具使用当前执行环境的配置。',
     agentModel: '智能体使用的模型',
     chooseModel: '请选择模型',
-    selectedModelHint: '请在下方确认智能体使用的模型，工具沿用当前设备的配置。',
+    selectedModelHint: '运行环境和模型可稍后配置。',
     modelUnavailable: '所选模型已不可用，请刷新模型列表并重新选择。',
     noModels: '暂无可用模型。请在设置中添加模型，然后刷新此列表。',
     modelLoadFailed: '模型列表加载失败，请刷新后重试。',
@@ -215,7 +215,7 @@ export const templateMessages = {
     agentModel: 'Model for Agents',
     chooseModel: 'Choose a model',
     selectedModelHint:
-      'Confirm the Agent models below. Tools follow the current device configuration.',
+      'Execution environments and models can be configured later.',
     modelUnavailable:
       'The selected model is no longer available. Refresh the model list and choose again.',
     noModels: 'No models available. Add a model in Settings, then refresh this list.',
