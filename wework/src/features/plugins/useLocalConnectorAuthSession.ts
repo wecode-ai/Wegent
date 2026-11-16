@@ -43,6 +43,9 @@ export function localConnectorAuthStatusText(
 ): string {
   const { usesBrowser, error, t } = options
   if (error) return error
+  if (status?.status === 'ok' && status.accountSyncStatus === 'failed') {
+    return t('workbench.plugins_local_auth_sync_failed')
+  }
   if (usesBrowser) {
     if (status?.status === 'verifying') {
       return t('workbench.plugins_local_browser_verifying', '正在验证本机登录状态…')
@@ -85,6 +88,10 @@ export function useLocalConnectorAuthSession({
   const [error, setError] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
   const [refreshKey, setRefreshKey] = useState(0)
+  const [localSuccess, setLocalSuccess] = useState<{
+    identity: string
+    result: LocalConnectorAuthResult
+  } | null>(null)
   const onSuccessRef = useRef(onSuccess)
   const tRef = useRef(t)
   const sessionRef = useRef(0)
@@ -102,6 +109,7 @@ export function useLocalConnectorAuthSession({
   const connectorSlug = target.connectorSlug
   const pluginRoot = target.pluginRoot ?? null
   const instance = target.instance ?? undefined
+  const identity = JSON.stringify([pluginKey, connectorSlug, pluginRoot, instance])
   const intervalMs = pollIntervalMs(target.localAuth)
   // Prefer explicit localAuth from install dialogs; chat resume often omits it and
   // the executor resolves the manifest. Infer browser mode from live status too.
@@ -133,6 +141,13 @@ export function useLocalConnectorAuthSession({
     let authSessionId: string | null = null
     let disposed = false
     let authenticated = false
+    const acceptLocalLogin = (result: LocalConnectorAuthResult) => {
+      authenticated = true
+      setLocalSuccess({ identity, result })
+      attempt.succeed()
+      // A source login succeeded; cloud synchronization still needs an explicit retry.
+      if (result.accountSyncStatus !== 'failed') onSuccessRef.current(result)
+    }
     const authTarget: LocalConnectorAuthTarget = {
       instance,
       pluginKey,
@@ -163,9 +178,7 @@ export function useLocalConnectorAuthSession({
         setError(null)
         setStatus(started)
         if (started.status === 'ok') {
-          authenticated = true
-          attempt.succeed()
-          onSuccessRef.current(started)
+          acceptLocalLogin(started)
           return
         }
         const startedAsBrowser = browserMode || isBrowserAuthStatus(started)
@@ -201,9 +214,7 @@ export function useLocalConnectorAuthSession({
               qrPath: next.qrPath ?? previous?.qrPath ?? null,
             }))
             if (next.status === 'ok') {
-              authenticated = true
-              attempt.succeed()
-              onSuccessRef.current(next)
+              acceptLocalLogin(next)
               return
             }
             if (
@@ -275,6 +286,7 @@ export function useLocalConnectorAuthSession({
     pluginKey,
     connectorSlug,
     pluginRoot,
+    identity,
     intervalMs,
     targetUsesBrowser,
     cancelAuthSession,
@@ -306,12 +318,19 @@ export function useLocalConnectorAuthSession({
 
   const canRetry =
     Boolean(error) ||
+    status?.accountSyncStatus === 'failed' ||
     status?.status === 'expired' ||
     status?.status === 'error' ||
     status?.status === 'cancelled'
 
   const statusText = localConnectorAuthStatusText(status, { usesBrowser, error, t })
   const qrSrc = status?.qrImage?.dataUrl || null
+  const localLoginComplete = enabled && localSuccess?.identity === identity
+  const completeLocalLogin = () => {
+    if (!enabled || !localSuccess || localSuccess.identity !== identity) return false
+    onSuccessRef.current(localSuccess.result)
+    return true
+  }
 
   return {
     status,
@@ -321,6 +340,9 @@ export function useLocalConnectorAuthSession({
     statusText,
     qrSrc,
     canRetry,
+    syncFailed: status?.status === 'ok' && status.accountSyncStatus === 'failed',
+    localLoginComplete,
+    completeLocalLogin,
     retry,
     cancelActiveSession,
   }

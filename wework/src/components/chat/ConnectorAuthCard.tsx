@@ -22,9 +22,10 @@ interface ConnectorAuthCardProps {
 }
 
 export function ConnectorAuthCard(props: ConnectorAuthCardProps) {
+  const { pluginKey, connectorSlug, pluginRoot, instance } = props.target
   return (
     <ConnectorAuthCardSession
-      key={`${props.target.pluginKey}:${props.target.connectorSlug}`}
+      key={JSON.stringify([pluginKey, connectorSlug, pluginRoot, instance])}
       {...props}
     />
   )
@@ -52,6 +53,8 @@ function ConnectorAuthCardSession({
     statusText,
     qrSrc,
     canRetry,
+    syncFailed,
+    localLoginComplete,
     retry,
     cancelActiveSession,
   } = useLocalConnectorAuthSession({
@@ -196,9 +199,11 @@ function ConnectorAuthCardSession({
             data-testid="connector-auth-retry"
             onClick={retry}
           >
-            {usesBrowser
-              ? t('workbench.plugins_local_browser_retry', '重新授权')
-              : t('workbench.retry', '重试')}
+            {syncFailed || localLoginComplete
+              ? t('workbench.plugins_local_auth_sync_retry')
+              : usesBrowser
+                ? t('workbench.plugins_local_browser_retry', '重新授权')
+                : t('workbench.retry', '重试')}
           </button>
         ) : null}
         {onCancel ? (

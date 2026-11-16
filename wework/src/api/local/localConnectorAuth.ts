@@ -20,6 +20,7 @@ export type LocalConnectorAuthStatus =
 
 export interface LocalConnectorAuthResult {
   status: LocalConnectorAuthStatus
+  accountSyncStatus?: 'failed'
   rawStatus?: string | null
   hint?: string | null
   sid?: string | null

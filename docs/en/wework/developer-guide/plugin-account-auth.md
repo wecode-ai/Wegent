@@ -121,6 +121,8 @@ that authentication has been removed or is unavailable, the native executor chec
 connection and current device grant. Local-auth children also receive the existing business broker
 environment, allowing SDK-based local calls with managed authentication.
 
+For bearer snapshots with local sign-in, local health remains authoritative; a cloud `connected` record cannot replace a failed source grant. A post-login synchronization failure returns native metadata `accountSyncStatus: "failed"` while local `status` stays `ok`, without deleting credentials or rolling back the local installation. Installation dialogs offer synchronization retry or explicit local completion; conversation recovery does not automatically resume after synchronization failure. This state grants no cloud access and does not bypass disconnection policy, device binding, or lifecycle validation. Managed OAuth and password flows retain their existing behavior.
+
 Logout first suspends synchronization for the plugin provenance and connector, disconnects its
 account connections so subsequent cloud calls lose authorization, and then runs local cleanup.
 Provider OAuth revocation uses the existing background queue. Failed local cleanup can be retried

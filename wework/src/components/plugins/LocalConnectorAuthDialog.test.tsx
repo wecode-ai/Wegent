@@ -144,4 +144,64 @@ describe('LocalConnectorAuthDialog browser oauth', () => {
     expect(screen.getByTestId('local-connector-auth-browser-error')).toBeInTheDocument()
     expect(screen.queryByTestId('local-connector-auth-browser-loading')).not.toBeInTheDocument()
   })
+
+  test.each(['local-connector-auth-cancel', 'local-connector-auth-close'])(
+    'preserves local success when %s dismisses a cloud sync failure',
+    async testId => {
+      const local = { status: 'ok', accountSyncStatus: 'failed' }
+      authMocks.start.mockResolvedValue(local)
+      const onSuccess = vi.fn()
+      const onCancel = vi.fn()
+      render(
+        <LocalConnectorAuthDialog open target={target} onSuccess={onSuccess} onCancel={onCancel} />
+      )
+      expect(
+        await screen.findByText('本机登录已成功，云端同步未完成。请重试同步，或先在本机使用。')
+      ).toBeInTheDocument()
+      expect(screen.getByTestId('local-connector-auth-retry')).toHaveTextContent('重试云端同步')
+      expect(onSuccess).not.toHaveBeenCalled()
+      await userEvent.click(screen.getByTestId(testId))
+      expect(onSuccess).toHaveBeenCalledExactlyOnceWith(local)
+      expect(onCancel).not.toHaveBeenCalled()
+      expect(authMocks.cancel).not.toHaveBeenCalled()
+    }
+  )
+
+  test('retries cloud synchronization before completing the login flow', async () => {
+    authMocks.start
+      .mockResolvedValueOnce({ status: 'ok', accountSyncStatus: 'failed' })
+      .mockResolvedValueOnce({ status: 'ok' })
+    const onSuccess = vi.fn()
+    render(
+      <LocalConnectorAuthDialog open target={target} onSuccess={onSuccess} onCancel={vi.fn()} />
+    )
+    await userEvent.click(await screen.findByTestId('local-connector-auth-retry'))
+    await waitFor(() => expect(onSuccess).toHaveBeenCalledExactlyOnceWith({ status: 'ok' }))
+    expect(authMocks.start).toHaveBeenCalledTimes(2)
+  })
+
+  test('does not reuse a previous local success when the dialog is reopened', async () => {
+    authMocks.start.mockResolvedValueOnce({ status: 'ok', accountSyncStatus: 'failed' })
+    const onSuccess = vi.fn()
+    const view = render(
+      <LocalConnectorAuthDialog open target={target} onSuccess={onSuccess} onCancel={vi.fn()} />
+    )
+    await screen.findByTestId('local-connector-auth-retry')
+    view.rerender(
+      <LocalConnectorAuthDialog
+        open={false}
+        target={target}
+        onSuccess={onSuccess}
+        onCancel={vi.fn()}
+      />
+    )
+    authMocks.start.mockResolvedValue({ status: 'waiting_browser', sessionId: 'new-session' })
+    authMocks.poll.mockResolvedValue({ status: 'waiting_browser', sessionId: 'new-session' })
+    view.rerender(
+      <LocalConnectorAuthDialog open target={target} onSuccess={onSuccess} onCancel={vi.fn()} />
+    )
+    await waitFor(() => expect(authMocks.start).toHaveBeenCalledTimes(2))
+    expect(screen.getByTestId('local-connector-auth-cancel')).toHaveTextContent('取消')
+    expect(onSuccess).not.toHaveBeenCalled()
+  })
 })

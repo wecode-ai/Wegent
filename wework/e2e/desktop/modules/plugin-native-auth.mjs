@@ -18,6 +18,8 @@ export async function verifyPluginNativeAuth({
   invokeLocal,
   resultDir,
   timeoutMs,
+  beforeBackendStop,
+  whileBackendStopped,
 }) {
   const flags = { ...cloud.backendEnv }
   const current = (await requestPluginExecutor(control, 'executor.backend.status')).payload.result
@@ -55,7 +57,9 @@ export async function verifyPluginNativeAuth({
       value: JSON.stringify({ pluginKey: 'desktop-account-auth', connectorSlug: 'mail', action }),
     })
   try {
+    await beforeBackendStop?.()
     await cloud.stopBackend()
+    await whileBackendStopped?.()
     cloud.backendEnv = { ...flags, PLUGIN_LOCAL_SYNC_ENABLED: 'true' }
     await cloud.launchBackend()
     // Change the authoritative profile too: a real token renewal must keep

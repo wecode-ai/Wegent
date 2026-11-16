@@ -16,7 +16,18 @@ interface LocalConnectorAuthDialogProps {
   onCancel: () => void
 }
 
-export function LocalConnectorAuthDialog({
+export function LocalConnectorAuthDialog(props: LocalConnectorAuthDialogProps) {
+  if (!props.open) return null
+  const { pluginKey, connectorSlug, pluginRoot, instance } = props.target
+  return (
+    <LocalConnectorAuthDialogSession
+      key={JSON.stringify([pluginKey, connectorSlug, pluginRoot, instance])}
+      {...props}
+    />
+  )
+}
+
+function LocalConnectorAuthDialogSession({
   open,
   target,
   title,
@@ -33,6 +44,9 @@ export function LocalConnectorAuthDialog({
     statusText,
     qrSrc,
     canRetry,
+    syncFailed,
+    localLoginComplete,
+    completeLocalLogin,
     retry,
     cancelActiveSession,
   } = useLocalConnectorAuthSession({
@@ -46,7 +60,7 @@ export function LocalConnectorAuthDialog({
 
   const cancel = () => {
     cancelActiveSession()
-    onCancel()
+    if (!completeLocalLogin()) onCancel()
   }
 
   return (
@@ -98,9 +112,9 @@ export function LocalConnectorAuthDialog({
               className="flex h-56 w-56 flex-col items-center justify-center gap-3 rounded-lg border border-dashed bg-background"
               data-testid="local-connector-auth-browser"
             >
-              {error ? (
+              {error || syncFailed ? (
                 <AlertCircle
-                  className="h-8 w-8 text-destructive"
+                  className={cn('h-8 w-8', error ? 'text-destructive' : 'text-muted-foreground')}
                   aria-hidden="true"
                   data-testid="local-connector-auth-browser-error"
                 />
@@ -121,7 +135,7 @@ export function LocalConnectorAuthDialog({
                 {t('workbench.plugins_local_browser_device_only', '本机安全授权')}
               </span>
             </div>
-          ) : qrSrc ? (
+          ) : qrSrc && !syncFailed ? (
             <img
               src={qrSrc}
               alt="Login QR code"
@@ -152,7 +166,9 @@ export function LocalConnectorAuthDialog({
             onClick={cancel}
             data-testid="local-connector-auth-cancel"
           >
-            {t('common.cancel', '取消')}
+            {localLoginComplete
+              ? t('workbench.plugins_local_auth_use_local')
+              : t('common.cancel', '取消')}
           </button>
           {canRetry ? (
             <button
@@ -162,9 +178,11 @@ export function LocalConnectorAuthDialog({
               data-testid="local-connector-auth-retry"
             >
               <RefreshCw className="h-3.5 w-3.5" />
-              {usesBrowser
-                ? t('workbench.plugins_local_browser_retry', '重新授权')
-                : t('workbench.plugins_local_qr_refresh', '刷新二维码')}
+              {syncFailed || localLoginComplete
+                ? t('workbench.plugins_local_auth_sync_retry')
+                : usesBrowser
+                  ? t('workbench.plugins_local_browser_retry', '重新授权')
+                  : t('workbench.plugins_local_qr_refresh', '刷新二维码')}
             </button>
           ) : null}
         </div>

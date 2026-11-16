@@ -4,6 +4,7 @@ import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { promisify } from 'node:util'
 import { createNativeAccountFixture } from './native-account-runtime-isolation.mjs'
+import { createLocalSnapshotFixture } from './local-snapshot-auth-fixture.mjs'
 const repository = resolve(dirname(fileURLToPath(import.meta.url)), '../../../..')
 const run = promisify(execFile)
 
@@ -91,6 +92,7 @@ print(json.dumps(result))
         shortDescription: 'Synthetic provider',
       },
       connectors: [
+        ...(recordPythonRuntime ? [await createLocalSnapshotFixture(fixtureRoot, homePath)] : []),
         ...(recordPythonRuntime
           ? [
               {

@@ -278,6 +278,7 @@ function mockCodexAppServerInvoke(
       pluginPath: string
     }>
     localConnectorAuthHealth?: () => Promise<unknown>
+    localConnectorAuthStart?: () => Promise<unknown>
     localConnectorAuthLogout?: () => Promise<unknown>
     localPluginImport?: {
       archivePath: string
@@ -428,6 +429,9 @@ function mockCodexAppServerInvoke(
     }
     if (request.method === 'runtime.local_connector_auth.health') {
       return options.localConnectorAuthHealth?.() ?? Promise.resolve({ status: 'ok' })
+    }
+    if (request.method === 'runtime.local_connector_auth.start') {
+      return options.localConnectorAuthStart?.() ?? Promise.resolve(undefined)
     }
     if (request.method === 'runtime.local_connector_auth.logout') {
       return options.localConnectorAuthLogout?.() ?? Promise.resolve({ status: 'ok' })
@@ -5222,6 +5226,41 @@ describe('PluginsWorkspace', () => {
       expect(authorizeWegentConnector).not.toHaveBeenCalled()
     }
   )
+
+  test('keeps the installed plugin after local login succeeds but cloud sync fails', async () => {
+    window.__WEWORK_RUNTIME_CONFIG__ = { desktopHost: 'electron' }
+    mockSystemSkillsFetch({
+      marketplaceName: 'dingtalk',
+      marketplaceDisplayName: '钉钉',
+      marketplaceConnectorSlug: 'dingtalk-access',
+      marketplaceConnectorLocal: true,
+      marketplaceConnectorAccountAuth: true,
+      marketplaceConnectorCredentialType: 'bearer',
+    })
+    mockCodexAppServerInvoke({
+      deviceId: 'current-device',
+      localConnectorAuthHealth: async () => ({ status: 'need_login' }),
+      localConnectorAuthStart: async () => ({ status: 'ok', accountSyncStatus: 'failed' }),
+    })
+    render(<PluginsWorkspace cloudApiBaseUrl="/api" cloudToken="cloud-token" />)
+    await screen.findByTestId('plugin-marketplace-install-101')
+    await installPluginFromMarketCard('plugin-marketplace-install-101')
+    expect(
+      await screen.findByText('本机登录已成功，云端同步未完成。请重试同步，或先在本机使用。')
+    ).toBeInTheDocument()
+    await userEvent.click(screen.getByTestId('local-connector-auth-close'))
+    await waitFor(() =>
+      expect(screen.getByTestId('plugin-operation-notice')).toHaveTextContent('钉钉 已安装')
+    )
+    expect(
+      vi
+        .mocked(fetch)
+        .mock.calls.some(
+          ([input, init]) =>
+            String(input).includes('/plugins/installed/') && init?.method === 'DELETE'
+        )
+    ).toBe(false)
+  })
 
   test.each(['install', 'manage'] as const)(
     'does not restart Python preparation through login after a %s failure',

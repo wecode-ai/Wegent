@@ -154,4 +154,58 @@ describe('useLocalConnectorAuthSession', () => {
       expect(onSuccess).not.toHaveBeenCalled()
     }
   )
+
+  test('retains a successful local login while cloud synchronization is retried', async () => {
+    const local = { status: 'ok', accountSyncStatus: 'failed', sessionId: 'local-session' }
+    mocks.start.mockResolvedValueOnce(local).mockResolvedValueOnce({ status: 'ok' })
+    const onSuccess = vi.fn()
+    const { result, unmount } = renderHook(() =>
+      useLocalConnectorAuthSession({
+        enabled: true,
+        target: { pluginKey: 'dingtalk', connectorSlug: 'dingtalk-access' },
+        t: ((key: string) => key) as never,
+        onSuccess,
+      })
+    )
+    await act(async () => vi.advanceTimersByTimeAsync(0))
+    expect(result.current.localLoginComplete).toBe(true)
+    expect(result.current.syncFailed).toBe(true)
+    expect(result.current.canRetry).toBe(true)
+    expect(result.current.error).toBeNull()
+    expect(onSuccess).not.toHaveBeenCalled()
+
+    act(() => result.current.retry())
+    await act(async () => vi.advanceTimersByTimeAsync(0))
+    expect(onSuccess).toHaveBeenCalledExactlyOnceWith({ status: 'ok' })
+    expect(result.current.syncFailed).toBe(false)
+    unmount()
+    expect(mocks.cancel).not.toHaveBeenCalled()
+  })
+
+  test('does not lose local success when a sync retry fails before returning a session', async () => {
+    const local = { status: 'ok', accountSyncStatus: 'failed' }
+    mocks.start.mockResolvedValueOnce(local).mockRejectedValueOnce(new Error('Host disconnected'))
+    const onSuccess = vi.fn()
+    const { result, rerender } = renderHook(
+      ({ slug }) =>
+        useLocalConnectorAuthSession({
+          enabled: true,
+          target: { pluginKey: 'dingtalk', connectorSlug: slug },
+          t: ((key: string) => key) as never,
+          onSuccess,
+        }),
+      { initialProps: { slug: 'dingtalk-access' } }
+    )
+    await act(async () => vi.advanceTimersByTimeAsync(0))
+    act(() => result.current.retry())
+    await act(async () => vi.advanceTimersByTimeAsync(0))
+    expect(result.current.error).toBe('Host disconnected')
+    expect(result.current.localLoginComplete).toBe(true)
+    act(() => expect(result.current.completeLocalLogin()).toBe(true))
+    expect(onSuccess).toHaveBeenCalledExactlyOnceWith(local)
+
+    rerender({ slug: 'another-account' })
+    expect(result.current.localLoginComplete).toBe(false)
+    expect(result.current.completeLocalLogin()).toBe(false)
+  })
 })

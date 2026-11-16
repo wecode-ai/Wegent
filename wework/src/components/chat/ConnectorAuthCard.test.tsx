@@ -51,6 +51,19 @@ describe('ConnectorAuthCard browser oauth', () => {
     authMocks.open.mockReset().mockResolvedValue(true)
   })
 
+  test('does not resume a cloud task while only the local login has succeeded', async () => {
+    authMocks.start
+      .mockResolvedValueOnce({ status: 'ok', accountSyncStatus: 'failed' })
+      .mockResolvedValueOnce({ status: 'ok' })
+    const onSuccess = vi.fn()
+    render(<ConnectorAuthCard target={browserTarget} onSuccess={onSuccess} />)
+    const retry = await screen.findByTestId('connector-auth-retry')
+    expect(retry).toHaveTextContent('重试云端同步')
+    expect(onSuccess).not.toHaveBeenCalled()
+    fireEvent.click(retry)
+    await waitFor(() => expect(onSuccess).toHaveBeenCalledExactlyOnceWith({ status: 'ok' }))
+  })
+
   test('polls browser sessions with sessionId until authorization succeeds', async () => {
     authMocks.start.mockResolvedValue({
       status: 'waiting_browser',

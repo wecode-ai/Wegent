@@ -44,6 +44,10 @@ When installing an unofficial plugin from Enterprise, Personal, or an external m
 
 ## Conversation picker and app authorization
 
+<a id="local-snapshot-auth"></a>
+
+On versions supporting locally refreshed access snapshots, plugins such as DingTalk use local health to decide whether sign-in is required; a stored cloud connection cannot hide an invalid local grant. If local sign-in succeeds but cloud synchronization fails, the authorization dialog reports both outcomes. Choose **Retry cloud synchronization**, or **Use this computer for now** to retain the completed local installation. Closing the dialog also retains local sign-in. Conversation authorization cards wait for a successful synchronization retry before resuming the task; users may also cancel recovery. Local success alone does not establish cloud-device readiness.
+
 The marketplace, plugin manager, and conversation picker share the installed inventory for the current account and device. The picker retains all installed, enabled plugins; scroll or search when the visible list has a fixed height. Plugins awaiting authorization remain selectable. Disabled plugins stay in the management list but are excluded from new conversation pickers.
 
 Manage the matching app under **App authorizations** on the plugin detail page; authorization for one app cannot authorize another. GitHub uses GitHub CLI (`gh`) on the execution device: Wework checks existing authentication first, offers logout when connected, and starts GitHub login only when needed. That device's `gh` manages the credentials, without authorizing ChatGPT. Environment-provided credentials cannot be removed by logout; remove them from the execution device's configuration instead.

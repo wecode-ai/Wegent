@@ -19,6 +19,7 @@ import {
 } from '../modules/shell-command-response.mjs'
 import { managedRoot } from '../modules/managed-plugin-root.mjs'
 import { verifyPluginNativeAuth } from '../modules/plugin-native-auth.mjs'
+import { localSnapshotChecks } from '../modules/local-snapshot-auth.mjs'
 import { verifyNativeAccountRuntimeIsolation } from '../modules/native-account-runtime-isolation.mjs'
 import {
   inspectManagedPython,
@@ -862,6 +863,17 @@ export async function createDesktopScenario({
       console.log(`[desktop-e2e-account] start ${checkpoint}`)
       await check()
       if (checkpoint === 'plugin-account-auth-password') {
+        const snapshot = localSnapshotChecks({
+          control,
+          homePath,
+          slug,
+          sourceDeviceId: local.execution_target_id,
+          connectionFor,
+          waitForValue,
+          timeoutMs: workbenchReadyTimeoutMs,
+          signalAutomaticRetry,
+        })
+        await snapshot.verifySourceHealth()
         await verifyPluginNativeAuth({
           cloud,
           control,
@@ -873,6 +885,8 @@ export async function createDesktopScenario({
           connectionFor,
           resultDir,
           timeoutMs: workbenchReadyTimeoutMs,
+          beforeBackendStop: snapshot.beforeBackendStop,
+          whileBackendStopped: snapshot.whileBackendStopped,
           invokeLocal: async root => {
             toolResult = null
             command = `python3 ${quote(join(root, 'scripts/native-cli.py'))} read`
@@ -891,6 +905,7 @@ export async function createDesktopScenario({
             assert.ok(!toolResult.includes(secret), 'Local conversation exposed a credential')
           },
         })
+        await snapshot.verifyRecovery()
       }
       console.log(`[desktop-e2e-account] end ${checkpoint}`)
       // Return to the visible plugin detail after a long background-only workflow.
@@ -923,6 +938,7 @@ export async function createDesktopScenario({
           transferSecret,
           'synthetic-desktop-dws-access',
           'synthetic-desktop-dws-refresh',
+          'synthetic-snapshot-access',
           'wegent-e2e-native-protocol-token',
           'wegent-e2e-synced-protocol-token',
         ]) {
