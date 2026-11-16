@@ -414,8 +414,7 @@ pub(super) async fn handle_for_token(
     let status = upstream_response.status();
     let upstream_headers = upstream_response.headers().clone();
     if status.is_success() {
-        commit_model_request(&token, &model_routing);
-        remember_foreign_history(&token, &foreign_history_keys);
+        commit_model_request(&token, &model_routing, &foreign_history_keys);
     }
     log_executor_event(
         "local model proxy upstream headers received",

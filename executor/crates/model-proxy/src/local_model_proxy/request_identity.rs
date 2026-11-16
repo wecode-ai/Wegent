@@ -247,14 +247,21 @@ pub(super) fn begin_model_request(
     }
 }
 
-pub(super) fn commit_model_request(token: &str, routing: &ModelRequestRouting) {
-    let Some(model_to_commit) = routing.model_to_commit.as_deref() else {
-        return;
-    };
+pub(super) fn commit_model_request(
+    token: &str,
+    routing: &ModelRequestRouting,
+    foreign_history_keys: &HashSet<String>,
+) {
     let mut registry = registry()
         .lock()
         .expect("local model proxy registry should not be poisoned");
     let Some(registered) = registry.routes.get_mut(token) else {
+        return;
+    };
+    registered
+        .foreign_history_keys
+        .extend(foreign_history_keys.iter().cloned());
+    let Some(model_to_commit) = routing.model_to_commit.as_deref() else {
         return;
     };
     let current_model = registered
@@ -268,21 +275,6 @@ pub(super) fn commit_model_request(token: &str, routing: &ModelRequestRouting) {
             registered.pending_model_switch_cleanup = false;
         }
     }
-}
-
-pub(super) fn remember_foreign_history(token: &str, foreign_history_keys: &HashSet<String>) {
-    if foreign_history_keys.is_empty() {
-        return;
-    }
-    let mut registry = registry()
-        .lock()
-        .expect("local model proxy registry should not be poisoned");
-    let Some(registered) = registry.routes.get_mut(token) else {
-        return;
-    };
-    registered
-        .foreign_history_keys
-        .extend(foreign_history_keys.iter().cloned());
 }
 
 pub(super) fn prepare_model_switch_request(

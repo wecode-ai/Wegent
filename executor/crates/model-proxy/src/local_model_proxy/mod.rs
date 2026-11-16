@@ -827,7 +827,6 @@ use request_identity::begin_model_request;
 use request_identity::commit_model_request;
 use request_identity::log_stale_requested_model;
 use request_identity::prepare_model_switch_request;
-use request_identity::remember_foreign_history;
 use request_identity::request_thread_identity;
 use request_identity::request_tool_diagnostic_fields;
 use request_identity::rewrite_request_model;
