@@ -350,6 +350,17 @@ const PROJECT_QUICK_PHRASE_CONTENT = 'Review the project constraints before impl
 const DEFAULT_ISSUE_ADDITIONAL_CONTEXT =
   'WEWORK_DESKTOP_E2E_DEFAULT_ISSUE_CONTEXT: preserve this acceptance criterion.'
 
+async function waitForLocalExecutorRequestCompletion(control, completedCount, message) {
+  const deadline = Date.now() + DEFAULT_STEP_TIMEOUT_MS
+  let last
+  while (Date.now() < deadline) {
+    last = JSON.parse(await control.command('getLocalExecutorRequestHoldSnapshot', 'body'))
+    if ((last?.completedCount ?? 0) >= completedCount) return last
+    await new Promise(resolvePromise => setTimeout(resolvePromise, 50))
+  }
+  assert.fail(`${message}: ${JSON.stringify(last)}`)
+}
+
 function assertDefaultIssueContextAbsent(request) {
   const serializedRequest = JSON.stringify(request.body)
   assert.ok(
@@ -3707,39 +3718,97 @@ source = ${JSON.stringify(staleBundledMarketplacePath)}`
 
       phase = 'early-cancellation'
       control.setScenario('cancellation')
-      await sendPrompt(control, composerSelector, CANCELLATION_PROMPT)
-      await control.command('waitFor', '[data-testid="pause-response-button"]', {
-        timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+      await control.command('holdLocalExecutorRequests', 'body', {
+        value: JSON.stringify({ method: 'runtime.tasks.send', phase: 'before-dispatch' }),
       })
-      const cancellationTaskSnapshot = JSON.parse(
-        await control.command('getWorkbenchDebugSnapshot', 'body')
-      )
-      const cancelledTaskId = cancellationTaskSnapshot.workbench?.currentRuntimeTask?.taskId
-      assert.ok(cancelledTaskId, 'The running cancellation task did not expose its runtime task ID')
-      assert.equal(
-        cancellationTaskSnapshot.pane?.messageSummary?.activeAssistantMessage,
-        null,
-        'Cancellation was delayed until an assistant turn was already streaming'
-      )
-      const cancellationRequestCountBeforeStop =
-        control.scenarioRequests.get('cancellation')?.length ?? 0
-      const cancellationExecutorLogOffset = (
-        await readFile(executorLogPath, 'utf8').catch(() => '')
-      ).length
-      await control.command('click', '[data-testid="pause-response-button"]')
-      await waitForLogPattern(
-        executorLogPath,
-        /app IPC request finished .* method=runtime\.tasks\.cancel .* ok=true/,
-        { fromOffset: cancellationExecutorLogOffset }
-      )
-      await waitForWorkbenchDebugState(
-        control,
-        snapshot =>
-          snapshot.workbench?.currentRuntimeTask?.taskId === cancelledTaskId &&
-          snapshot.workbench?.lifecycleCurrentTaskRunning === false &&
-          snapshot.pane?.status?.taskExecution?.status === 'cancelled',
-        'The current cancellation did not settle before releasing the upstream response'
-      )
+      let cancelledTaskId
+      let cancellationRequestCountBeforeStop
+      let earlyPromptVisibleBeforeCancel = false
+      let unboundCancellationTurn
+      try {
+        await sendPrompt(control, composerSelector, CANCELLATION_PROMPT)
+        const heldSend = JSON.parse(
+          await withTimeout(
+            control.command('awaitLocalExecutorRequestHold', 'body'),
+            DEFAULT_STEP_TIMEOUT_MS,
+            'The cancellation fixture did not reach the pre-dispatch send gate'
+          )
+        )
+        assert.equal(
+          heldSend?.method,
+          'runtime.tasks.send',
+          'The cancellation fixture held an unexpected local executor request'
+        )
+        await control.command('waitFor', '[data-testid="pause-response-button"]', {
+          timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+        })
+        const cancellationTaskSnapshot = await waitForWorkbenchDebugState(
+          control,
+          snapshot =>
+            Boolean(snapshot.workbench?.currentRuntimeTask?.taskId) &&
+            snapshot.workbench?.activeLifecycle?.turn?.active === true &&
+            snapshot.workbench.activeLifecycle.turn.id === null,
+          'The early cancellation did not run against an unbound turn'
+        )
+        cancelledTaskId = cancellationTaskSnapshot.workbench.currentRuntimeTask.taskId
+        unboundCancellationTurn = cancellationTaskSnapshot.workbench.activeLifecycle.turn
+        assert.equal(
+          cancellationTaskSnapshot.pane?.messageSummary?.activeAssistantMessage,
+          null,
+          'Cancellation was delayed until an assistant turn was already streaming'
+        )
+        cancellationRequestCountBeforeStop =
+          control.scenarioRequests.get('cancellation')?.length ?? 0
+        assert.equal(
+          cancellationRequestCountBeforeStop,
+          0,
+          'The pre-bind cancellation fixture reached the model before stopping'
+        )
+        const cancellationTextBeforeStop = await control.command('getText', 'body')
+        earlyPromptVisibleBeforeCancel = cancellationTextBeforeStop.includes(CANCELLATION_PROMPT)
+        assert.equal(
+          earlyPromptVisibleBeforeCancel,
+          true,
+          'The unbound cancellation fixture did not render its optimistic prompt'
+        )
+        const cancellationExecutorLogOffset = (
+          await readFile(executorLogPath, 'utf8').catch(() => '')
+        ).length
+        await control.command('click', '[data-testid="pause-response-button"]')
+        await waitForLogPattern(
+          executorLogPath,
+          /app IPC request finished .* method=runtime\.tasks\.cancel .* ok=true/,
+          { fromOffset: cancellationExecutorLogOffset }
+        )
+        await waitForWorkbenchDebugState(
+          control,
+          snapshot =>
+            snapshot.workbench?.currentRuntimeTask?.taskId === cancelledTaskId &&
+            snapshot.workbench?.lifecycleCurrentTaskRunning === false &&
+            snapshot.pane?.status?.taskExecution?.status === 'cancelled',
+          'The current cancellation did not settle before releasing the held send'
+        )
+        assert.equal(
+          await control.command('releaseLocalExecutorRequestHold', 'body'),
+          'true',
+          'The held send was not released after the cancellation acknowledgement'
+        )
+        await waitForLocalExecutorRequestCompletion(
+          control,
+          1,
+          'The cancelled pre-dispatch send did not settle'
+        )
+        await waitForWorkbenchDebugState(
+          control,
+          snapshot =>
+            snapshot.workbench?.currentRuntimeTask?.taskId === cancelledTaskId &&
+            snapshot.workbench?.lifecycleCurrentTaskRunning === false &&
+            snapshot.pane?.status?.taskExecution?.status === 'cancelled',
+          'The late pre-dispatch send reopened the cancelled task'
+        )
+      } finally {
+        await control.command('releaseLocalExecutorRequestHold', 'body').catch(() => undefined)
+      }
       const cancelledTaskUnreadTestId = `runtime-local-task-unread-dot-${cancelledTaskId}`
       await waitForSnapshot(
         control,
@@ -3751,6 +3820,11 @@ source = ${JSON.stringify(staleBundledMarketplacePath)}`
         cancellationText.includes(CANCELLATION_COMPLETION_TEXT),
         false,
         'The cancelled task unexpectedly rendered a completion response'
+      )
+      assert.equal(
+        cancellationText.includes(CANCELLATION_PROMPT),
+        false,
+        'The unbound cancelled prompt remained visible after cancellation'
       )
 
       phase = 'running-cancellation'
@@ -3842,6 +3916,11 @@ source = ${JSON.stringify(staleBundledMarketplacePath)}`
         true,
         'The replacement response disappeared after releasing the cancelled stream'
       )
+      assert.equal(
+        cancellationTextAfterUpstreamCompletion.includes(CANCELLATION_PROMPT),
+        false,
+        'The unbound cancelled prompt reappeared after the replacement response'
+      )
       const cancellationUiAfterUpstreamCompletion = JSON.parse(
         await control.command('snapshot', ACTIVE_WORKBENCH_SELECTOR)
       )
@@ -3878,6 +3957,11 @@ source = ${JSON.stringify(staleBundledMarketplacePath)}`
         false,
         'Reopening the conversation restored the cancelled completion at the end'
       )
+      assert.equal(
+        reopenedCancellationText.includes(CANCELLATION_PROMPT),
+        false,
+        'Reopening the conversation restored the unbound cancelled prompt'
+      )
       await writeFile(
         join(resultDir, 'cancellation-race-evidence.json'),
         JSON.stringify(
@@ -3886,7 +3970,13 @@ source = ${JSON.stringify(staleBundledMarketplacePath)}`
             cancellationRequestCountBeforeRelease,
             cancellationRequestCountBeforeStop,
             cancelledTaskId,
+            earlyPromptVisibleBeforeCancel,
+            earlyPromptVisibleAfterCancel: cancellationText.includes(CANCELLATION_PROMPT),
+            earlyPromptVisibleAfterReopen: reopenedCancellationText.includes(CANCELLATION_PROMPT),
+            earlyPromptVisibleAfterReplacement:
+              cancellationTextAfterUpstreamCompletion.includes(CANCELLATION_PROMPT),
             runningCancellationRequestObserved: true,
+            unboundTurnAtStop: unboundCancellationTurn,
             replacementVisibleAfterRelease: cancellationTextAfterUpstreamCompletion.includes(
               CHECKPOINT_TASK_COMPLETION_TEXT
             ),
