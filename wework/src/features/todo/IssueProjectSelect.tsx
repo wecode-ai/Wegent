@@ -20,8 +20,6 @@ export function IssueProjectSelect({
 }) {
   const { t } = useTranslation('common')
   const empty = placeholder ?? t('issue_creation.independent_option')
-  const label = (project: CloudProject) =>
-    [project.name, project.project_key].filter(Boolean).join(' · ')
   const selected = projects.find(project => String(project.id) === value)
   return (
     <IssueDetailSearchableSelect
@@ -35,10 +33,24 @@ export function IssueProjectSelect({
       emptyLabel={t('todo.no_project_results')}
       triggerContent={
         <>
-          <span className="min-w-0 flex-1 truncate">
-            {selected
-              ? [selected.workspace_context?.name, label(selected)].filter(Boolean).join(' / ')
-              : empty}
+          <span className="min-w-0 flex-1">
+            {selected ? (
+              <>
+                <span data-testid="issue-project-selected-name" className="block truncate">
+                  {selected.name}
+                </span>
+                {selected.project_key && (
+                  <span
+                    data-testid="issue-project-selected-key"
+                    className="block break-all text-xs text-text-secondary"
+                  >
+                    {selected.project_key}
+                  </span>
+                )}
+              </>
+            ) : (
+              empty
+            )}
           </span>
           <ChevronDown aria-hidden="true" className="h-4 w-4 shrink-0 text-text-secondary" />
         </>

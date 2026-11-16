@@ -86,6 +86,8 @@
     "working": "Working…"
   },
   "issue_creation": {
+    "participant_results_one": "{{count}} matching result",
+    "participant_results_other": "{{count}} matching results",
     "projects_loading": "Loading projects…",
     "unconfirmed_discard_title": "Discard this form's contents?",
     "unconfirmed_discard_hint": "The current form contents will be discarded. Any saved Issue will remain. Check the Issue list after closing to confirm the save result.",

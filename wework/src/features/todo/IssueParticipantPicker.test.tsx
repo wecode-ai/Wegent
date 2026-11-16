@@ -8,6 +8,38 @@ import { IssueParticipantPicker } from './IssueParticipantPicker'
 vi.mock('@/hooks/useTranslation', () => ({ useTranslation: () => ({ t: (key: string) => key }) }))
 afterEach(cleanup)
 
+it('keeps a polite result status mounted across loading, empty results and matches', async () => {
+  const searchUsers = vi
+    .fn()
+    .mockResolvedValueOnce({ users: [] })
+    .mockResolvedValueOnce({ users: [{ id: 8, user_name: 'Alice' }] })
+  render(
+    <IssueParticipantPicker
+      api={{ searchUsers } as unknown as PersonalIssuesApi}
+      userId={7}
+      selected={[]}
+      onChange={vi.fn()}
+      disabled={false}
+    />
+  )
+  fireEvent.click(screen.getByTestId('issue-participant-add'))
+  const status = screen.getByTestId('issue-participant-results-status')
+  expect(status).toHaveAttribute('role', 'status')
+  expect(status).toHaveAttribute('aria-live', 'polite')
+  fireEvent.change(screen.getByTestId('independent-issue-search-people'), {
+    target: { value: 'Missing' },
+  })
+  await waitFor(() => expect(status).toHaveTextContent('issue_creation.no_participants'))
+  expect(screen.getByTestId('issue-participant-results-status')).toBe(status)
+  fireEvent.change(screen.getByTestId('independent-issue-search-people'), {
+    target: { value: 'Alice' },
+  })
+  await screen.findByTestId('independent-issue-invite-8')
+  expect(screen.getByTestId('issue-participant-results-status')).toBe(status)
+  expect(status).toHaveTextContent('issue_creation.participant_results')
+  expect(screen.getByRole('tabpanel')).toContainElement(status)
+})
+
 it('shows a localized participant failure and retries the same search without changing invitations', async () => {
   const searchUsers = vi
     .fn()

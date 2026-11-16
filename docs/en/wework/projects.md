@@ -584,6 +584,8 @@ Project and assignee pickers focus a search field when opened. Search projects b
 
 The project list announces loading while title and description remain editable. Same-name participant candidates show identifiers, retained after selection and in the assignee picker. Invitations still use the original identities.
 
+The closed project picker keeps the project name and key; the candidate list retains full group context. Participant search announces result counts or no matches. An unconfirmed-save warning updates with the current interface language.
+
 If the connection fails during saving, the current form keeps its contents and reports that the save result is unconfirmed. Check whether the Issue already exists before retrying. Closing the form does not delete an Issue that was saved.
 
 The creator searches for colleagues under **Edit → Participants**, adds invitations or removes existing participants. Participants can read, edit, comment and work on the Issue, but cannot change invitations or delete it. Removing a participant also clears their assignment. Every subsequent read and write rechecks the current invitation. Assignment grants no access; assignees must be the creator or an invited participant.

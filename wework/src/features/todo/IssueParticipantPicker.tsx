@@ -150,6 +150,17 @@ export function IssueParticipantPicker({
         .toLocaleLowerCase()
         .includes(searchQuery.toLocaleLowerCase()) && person.key !== `human:${userId}`
   )
+  const statusMessage = error
+    ? ''
+    : busy
+      ? t('independentIssues.loading')
+      : candidates.length
+        ? t('issue_creation.participant_results', { count: candidates.length })
+        : t(
+            tab === 'human' && !searchQuery
+              ? 'issue_creation.search_people_hint'
+              : 'issue_creation.no_participants'
+          )
   return (
     <Popover.Root modal open={open} onOpenChange={setOpen}>
       <section
@@ -280,6 +291,7 @@ export function IssueParticipantPicker({
                 value={query}
                 data-testid="independent-issue-search-people"
                 aria-label={t('issue_creation.search_participants')}
+                aria-describedby={`${pickerId}-status`}
                 placeholder={t('issue_creation.search_participants')}
                 onChange={event => setQuery(event.target.value)}
                 onKeyDown={event => {
@@ -292,30 +304,42 @@ export function IssueParticipantPicker({
                 className="min-h-11 min-w-0 flex-1 bg-transparent text-base outline-none placeholder:text-text-secondary md:min-h-8"
               />
             </label>
-            {error ? (
-              <div role="alert" className="text-sm text-destructive">
-                {t('issue_creation.participants_load_failed')}
-                <button
-                  type="button"
-                  data-testid="issue-participant-retry"
-                  onClick={() => setRevision(v => v + 1)}
-                  className="ml-2 inline-flex min-h-11 min-w-11 items-center justify-center rounded-md underline md:min-h-8"
-                >
-                  {t('independentIssues.retry')}
-                </button>
-              </div>
-            ) : busy ? (
-              <p role="status" className="text-sm text-text-secondary">
-                {t('independentIssues.loading')}
-              </p>
-            ) : (
-              <div
-                id={`${pickerId}-panel`}
-                role="tabpanel"
-                aria-labelledby={`${pickerId}-${tab}-tab`}
-                className="max-h-48 overflow-y-auto"
+            <div
+              id={`${pickerId}-panel`}
+              role="tabpanel"
+              aria-labelledby={`${pickerId}-${tab}-tab`}
+              className="max-h-48 overflow-y-auto"
+            >
+              {error && (
+                <div role="alert" className="text-sm text-destructive">
+                  {t('issue_creation.participants_load_failed')}
+                  <button
+                    type="button"
+                    data-testid="issue-participant-retry"
+                    onClick={() => setRevision(v => v + 1)}
+                    className="ml-2 inline-flex min-h-11 min-w-11 items-center justify-center rounded-md underline md:min-h-8"
+                  >
+                    {t('independentIssues.retry')}
+                  </button>
+                </div>
+              )}
+              <p
+                id={`${pickerId}-status`}
+                data-testid="issue-participant-results-status"
+                role="status"
+                aria-live="polite"
+                aria-atomic="true"
+                className={
+                  busy || (!error && !candidates.length)
+                    ? 'py-2 text-sm text-text-secondary'
+                    : 'sr-only'
+                }
               >
-                {candidates.map(person => {
+                {statusMessage}
+              </p>
+              {!error &&
+                !busy &&
+                candidates.map(person => {
                   const checked = selected.some(item => item.key === person.key)
                   const Icon = icon(person.kind)
                   const label = participantLabel(person, results)
@@ -354,17 +378,7 @@ export function IssueParticipantPicker({
                     </button>
                   )
                 })}
-                {!candidates.length && (
-                  <p className="py-2 text-sm text-text-secondary">
-                    {t(
-                      tab === 'human' && !searchQuery
-                        ? 'issue_creation.search_people_hint'
-                        : 'issue_creation.no_participants'
-                    )}
-                  </p>
-                )}
-              </div>
-            )}
+            </div>
             <div className="flex justify-end">
               <button
                 type="button"

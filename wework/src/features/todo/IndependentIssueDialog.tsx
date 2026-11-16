@@ -144,13 +144,7 @@ export function IndependentIssueDialog({
       await operation()
     } catch (reason) {
       const unconfirmed = reason instanceof TypeError && editing
-      setError(
-        unconfirmed
-          ? t('issue_creation.save_unconfirmed')
-          : reason instanceof Error
-            ? reason.message
-            : String(reason)
-      )
+      setError(reason instanceof Error ? reason.message : String(reason))
       setErrorKind(
         unconfirmed
           ? 'unconfirmed'
@@ -271,7 +265,7 @@ export function IndependentIssueDialog({
               editing ? 'flex min-h-0 flex-1 flex-col overflow-hidden' : 'min-h-0 overflow-auto p-5'
             }
           >
-            {error ? (
+            {error || errorKind !== 'default' ? (
               <div
                 role="alert"
                 className={`mb-4 flex shrink-0 flex-wrap items-center gap-3 text-sm text-destructive ${editing ? 'mx-5 mt-4' : ''}`}
@@ -281,7 +275,13 @@ export function IndependentIssueDialog({
                     {t('issue_creation.association_pending')}
                   </p>
                 )}
-                <span>{conflicted ? t('issue_creation.conflict_hint') : error}</span>
+                <span>
+                  {conflicted
+                    ? t('issue_creation.conflict_hint')
+                    : saveUnconfirmed
+                      ? t('issue_creation.save_unconfirmed')
+                      : error}
+                </span>
                 {!editing ? (
                   <button
                     type="button"

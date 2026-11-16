@@ -4,10 +4,12 @@ import { waitForAttribute } from './workspace-flows.mjs'
 const testId = id => `[data-testid="${id}"]`
 
 async function setIssueTestLanguage(control, language) {
-  await control.command('navigate', 'body', { value: '/settings/general' })
+  await control.command('clickWhenEnabled', testId('settings-button'))
+  await control.command('clickWhenEnabled', testId('settings-menu-button'))
+  await control.command('clickWhenEnabled', testId('settings-nav-general'))
   await control.command('clickWhenEnabled', testId(`general-language-${language}-button`))
   await waitForAttribute(control, 'html', 'lang', language)
-  await control.command('navigate', 'body', { value: '/' })
+  await control.command('clickWhenEnabled', testId('settings-back-button'))
   await control.command('clickWhenEnabled', testId('workspace-tab-select-fixed-board'))
 }
 
@@ -37,6 +39,21 @@ export async function verifyEnglishLinkedIssueLayout(
     const metric = async selector =>
       JSON.parse(await control.command('getElementMetrics', selector))[0]
     const scroll = await metric(testId('independent-issue-editor-scroll'))
+    assert.equal(
+      await control.command('getText', testId('issue-project-selected-name')),
+      project.name
+    )
+    assert.equal(
+      await control.command('getText', testId('issue-project-selected-key')),
+      project.project_key
+    )
+    const key = await metric(testId('issue-project-selected-key'))
+    assert.ok(
+      key.scrollWidth <= key.clientWidth + 1 &&
+        key.visibleIntersection?.width >= key.width - 1 &&
+        key.visibleIntersection?.height >= key.height - 1,
+      'The selected project key must remain fully readable in the closed narrow-window picker'
+    )
     assert.ok(
       scroll.scrollWidth <= scroll.clientWidth + 1,
       'A linked English Issue must not introduce horizontal scrolling'
