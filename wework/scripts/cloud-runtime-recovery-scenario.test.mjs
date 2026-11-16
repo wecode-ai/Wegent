@@ -11,6 +11,8 @@ const state = vi.hoisted(() => ({
   fetchJson: vi.fn(),
   existingVerify: vi.fn(),
   notificationCleanup: vi.fn(),
+  questionVerify: vi.fn(),
+  questionCleanup: vi.fn(),
   proxyStop: vi.fn(),
   existingCleanup: vi.fn(),
   disconnected: false,
@@ -21,6 +23,14 @@ vi.mock('../e2e/desktop/modules/runtime-notification-reconnect.mjs', () => ({
     handleHttp: async () => false,
     verify: async () => {},
     cleanup: state.notificationCleanup,
+  }),
+}))
+
+vi.mock('../e2e/desktop/modules/runtime-im-questions.mjs', () => ({
+  createRuntimeImQuestions: () => ({
+    handleHttp: async () => false,
+    verify: state.questionVerify,
+    cleanup: state.questionCleanup,
   }),
 }))
 
@@ -54,7 +64,12 @@ import { createDesktopScenario } from '../e2e/desktop/scenarios/cloud-runtime-re
 
 beforeEach(() => {
   vi.clearAllMocks()
-  for (const cleanup of [state.notificationCleanup, state.proxyStop, state.existingCleanup]) {
+  for (const cleanup of [
+    state.notificationCleanup,
+    state.questionCleanup,
+    state.proxyStop,
+    state.existingCleanup,
+  ]) {
     cleanup.mockReset()
   }
   state.disconnected = false
@@ -65,11 +80,13 @@ test('cleanup releases every owner and preserves each cleanup failure', async ()
   await scenario.prepareCloud({ backendUrl: 'http://backend' })
   const errors = [
     new Error('notification cleanup'),
+    new Error('question cleanup'),
     new Error('proxy cleanup'),
     new Error('base cleanup'),
   ]
   for (const [index, cleanup] of [
     state.notificationCleanup,
+    state.questionCleanup,
     state.proxyStop,
     state.existingCleanup,
   ].entries()) {
@@ -80,7 +97,12 @@ test('cleanup releases every owner and preserves each cleanup failure', async ()
     assert.deepEqual(error.errors, errors)
     return true
   })
-  for (const cleanup of [state.notificationCleanup, state.proxyStop, state.existingCleanup]) {
+  for (const cleanup of [
+    state.notificationCleanup,
+    state.questionCleanup,
+    state.proxyStop,
+    state.existingCleanup,
+  ]) {
     assert.equal(cleanup.mock.calls.length, 1)
   }
 })
@@ -170,6 +192,7 @@ test('accepts the completed runtime-work list projection without native executio
   const { scenario, control, cloud } = await fixture({ status: 'done', running: false })
   await scenario.verify(control)
   assert.equal(state.existingVerify.mock.calls.length, 1)
+  assert.deepEqual(state.questionVerify.mock.calls, [[cloud, control]])
   assert.equal(cloud.waitForRuntimeTask.mock.calls.length, 1)
   assert.ok(control.command.mock.calls.some(([command]) => command === 'getWorkbenchDebugSnapshot'))
   assert.equal(state.disconnected, false)
