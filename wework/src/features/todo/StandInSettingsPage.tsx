@@ -743,6 +743,7 @@ function StandInSettingsEditor({
             {!scheduleDirty && (
               <StandInSettingsActions
                 prefix="stand-in"
+                busy={saving}
                 leading={footerLeading}
                 disabled={saving}
                 saveDisabled={

@@ -226,7 +226,7 @@ export function StandInGitConnections({
         <div className="flex items-center justify-between gap-3">
           <div className="min-w-0 space-y-1">
             <p className="text-sm font-medium">{t('standIn.git.account')}</p>
-            <p className="text-xs leading-relaxed text-text-muted">
+            <p className="text-xs leading-relaxed text-text-secondary">
               {t('standIn.git.account_help')}
             </p>
           </div>
@@ -268,7 +268,7 @@ export function StandInGitConnections({
         >
           <div className="min-w-0 flex-1">
             <p className="break-all text-sm">{row.name}</p>
-            <p className="text-xs text-text-muted">
+            <p className="text-xs text-text-secondary">
               {t(`standIn.git.${row.kind}`)} · {profileInstance(row.profile)}
             </p>
           </div>
@@ -341,11 +341,11 @@ export function StandInGitConnections({
             {t(kind === 'personal' ? 'standIn.git.check_account' : 'standIn.git.search')}
           </Button>
         </div>
-        <p className="text-xs leading-relaxed text-text-muted">
+        <p className="text-xs leading-relaxed text-text-secondary">
           {t(kind === 'personal' ? 'standIn.git.personal_help' : 'standIn.git.repository_help')}
         </p>
       </div>
-      <p className="text-xs leading-relaxed text-text-muted">{t('standIn.git.permissions')}</p>
+      <p className="text-xs leading-relaxed text-text-secondary">{t('standIn.git.permissions')}</p>
       {items.map(item => (
         <label
           key={`${item.profile}:${item.id}`}

@@ -309,7 +309,7 @@ Roles can receive personal events or all subscribable repository events. The plu
 
 <a id="assistant-settings-recovery"></a>
 
-**Settings errors and retry**: If the execution environment cannot load, choose **Reload** beside that error to retry only the device's project and workspace directory while retaining your settings draft. Reloading saved settings after a save failure asks before discarding unsaved changes. Choose **Keep editing** to retain your input, or confirm discard to read the saved configuration.
+**Settings errors and retry**: If the execution environment cannot load, choose **Reload** beside that error to retry only the device's project and workspace directory while retaining your settings draft. Reloading saved settings after a save failure asks before discarding unsaved changes. Choose **Keep editing** to retain your input, or confirm discard to read the saved configuration. Model catalog loading status appears below the **Model** field. On failure, choose **Reload** there to retain the selected model and current draft. During saving, primary and role settings show **Saving** on the save button.
 
 <a id="assistant-first-use"></a>
 

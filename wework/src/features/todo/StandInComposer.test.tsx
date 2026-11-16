@@ -99,6 +99,26 @@ function Fixture({
 }
 
 describe('Stand-in configuration composer', () => {
+  it('shows and retries model catalog failures beside configuration fields without losing selection', async () => {
+    const selected = { runtime: 'codex' as const, provider: 'local', model_id: 'saved-model' }
+    const catalog = vi
+      .fn(async () => ({ models: [selected] }))
+      .mockRejectedValueOnce(new Error('Catalog unavailable'))
+    const services = {
+      standInApi: { catalog },
+      modelApi: { listModels: vi.fn(async () => ({ data: [] })) },
+    } as unknown as WorkbenchServices
+    const save = vi.fn(async () => true)
+    render(<Fixture save={save} services={services} initialModel={selected} showPrompt={false} />)
+    await screen.findByRole('alert')
+    expect(screen.queryByTestId('stand-in-prompt')).not.toBeInTheDocument()
+    await userEvent.click(screen.getByTestId('stand-in-models-retry'))
+    await waitFor(() => expect(catalog).toHaveBeenCalledTimes(2))
+    await waitFor(() => expect(screen.queryByRole('alert')).not.toBeInTheDocument())
+    await userEvent.click(screen.getByTestId('stand-in-save'))
+    expect(save).toHaveBeenCalledWith(expect.objectContaining({ model: selected }))
+  })
+
   it('omits the device row when its parent already owns device selection', () => {
     render(<Fixture save={vi.fn()} showPrompt={false} showDevice={false} />)
     const bar = screen.getByTestId('stand-in-workspace-bar')

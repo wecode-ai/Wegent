@@ -1,4 +1,3 @@
-import { getStandInErrorMessage } from '@/lib/stand-in-error-message'
 import { useEffect, type ReactNode, type Dispatch, type SetStateAction } from 'react'
 import { ModelSelector } from '@/components/chat/composer/ModelSelector'
 import { useStandInModels } from './useStandInModels'
@@ -15,6 +14,7 @@ import { listProjectBranches } from '@/api/environment'
 import { useTranslation } from '@/hooks/useTranslation'
 import { runtimeProjectKey, runtimeProjectToProject } from '@/lib/runtime-project'
 import type { DeviceInfo, RuntimeWorkListResponse } from '@/types/api'
+import { StandInSettingsError } from './StandInSettingsLayout'
 
 /** Configuration uses the ordinary composer without starting a conversation. */
 export function StandInComposer({
@@ -181,7 +181,9 @@ export function StandInComposer({
             <span className="px-1.5 text-text-secondary">{t('standIn.inherit_environment')}</span>
           )}
         </div>
-        <span className="text-text-secondary">{t('standIn.model_label')}</span>
+        <span className="self-start pt-3 text-text-secondary md:pt-1.5">
+          {t('standIn.model_label')}
+        </span>
         <div className="min-w-0">
           <ModelSelector
             models={models.models}
@@ -214,6 +216,19 @@ export function StandInComposer({
               }))
             }
           />
+          {models.loading && (
+            <p
+              role="status"
+              data-testid="stand-in-models-loading"
+              className="text-xs text-text-secondary"
+            >
+              {t('workbench.local_model_loading_models_action')}
+            </p>
+          )}
+          <StandInSettingsError
+            error={models.error}
+            retry={{ testId: 'stand-in-models-retry', disabled, onClick: models.refresh }}
+          />
         </div>
       </div>
       {showPrompt && (
@@ -244,15 +259,6 @@ export function StandInComposer({
             onSetGoal={() => onChange(current => ({ ...current, goalMode: true }))}
             goalDraftActive={Boolean(draft.goalMode)}
             onCancelGoalDraft={() => onChange(current => ({ ...current, goalMode: false }))}
-            toolbarLeadingContext={
-              <>
-                {models.error && (
-                  <span role="status" className="text-xs text-error">
-                    {getStandInErrorMessage(models.error)}
-                  </span>
-                )}
-              </>
-            }
           />
         </ComposerCatalogContext.Provider>
       )}

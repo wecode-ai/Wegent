@@ -77,6 +77,18 @@ function fixture() {
   }
 }
 
+it('distinguishes a pending save from a disabled unchanged save', () => {
+  const props = fixture()
+  const view = render(<StandInPrimaryProfile {...props} saving />)
+  const save = screen.getByTestId('stand-in-primary-save')
+  expect(save).toHaveTextContent('保存中')
+  expect(save).toHaveAttribute('aria-busy', 'true')
+  view.rerender(<StandInPrimaryProfile {...props} />)
+  expect(save).toHaveTextContent('保存设置')
+  expect(save).not.toHaveAttribute('aria-busy', 'true')
+  expect(save).toBeDisabled()
+})
+
 it('keeps the editor default scope without treating an unsaved default as configured', async () => {
   const props = fixture()
   props.settings.primary!.connections = []

@@ -866,7 +866,8 @@ export function StandInOverviewPage({
                     key={`${state.draft.executionDeviceId}:${calendarRequest}`}
                     initialCalendar={calendarRequest > 0}
                     settings={state.draft}
-                    saving={state.saving || state.loading}
+                    saving={state.saving}
+                    loading={state.loading}
                     services={props.services}
                     devices={props.devices}
                     deviceReadOnly={!!primaryDeviceId}

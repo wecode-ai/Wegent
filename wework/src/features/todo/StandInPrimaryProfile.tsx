@@ -32,6 +32,7 @@ import type { StandInSettingsHandle } from './StandInSettingsPage'
 export function StandInPrimaryProfile({
   settings,
   saving,
+  loading = false,
   error,
   onSave,
   onClose,
@@ -51,6 +52,7 @@ export function StandInPrimaryProfile({
 }: {
   settings: PersonalStandInSettings
   saving: boolean
+  loading?: boolean
   error: string | null
   onSave(settings: PersonalStandInSettings): Promise<void>
   onClose(): void
@@ -69,6 +71,7 @@ export function StandInPrimaryProfile({
   footerLeading?: ReactNode
 }) {
   const { t } = useTranslation('common')
+  const blocked = saving || loading
   const saved = settings.primary ?? { enabled: true, prompt: '', preferences: '' }
   const defaultRole = newStandInRole(settings.executionDeviceId, '@primary')
   const defaultCollaboration = {
@@ -115,7 +118,7 @@ export function StandInPrimaryProfile({
     ...defaultRole,
     ...draft,
   }
-  const navigation = useStandInPanelNavigation(!dequal(original, draft), saving, () =>
+  const navigation = useStandInPanelNavigation(!dequal(original, draft), blocked, () =>
     setDiscard(true)
   )
   const connectionRef = useRef<StandInConnectionNavigationHandle>(null)
@@ -167,7 +170,7 @@ export function StandInPrimaryProfile({
         title={t(
           connections ? 'standIn.workspace.connections' : 'standIn.workspace.primary_profile'
         )}
-        disabled={saving}
+        disabled={blocked}
         back={
           connections
             ? {
@@ -195,7 +198,7 @@ export function StandInPrimaryProfile({
               <textarea
                 data-testid="stand-in-preferences"
                 value={draft.preferences}
-                disabled={saving}
+                disabled={blocked}
                 onChange={event => setDraft({ ...draft, preferences: event.target.value })}
                 placeholder={t('standIn.workspace.profile_instructions_placeholder')}
                 rows={5}
@@ -211,7 +214,7 @@ export function StandInPrimaryProfile({
               label={t('standIn.workspace.connections')}
               description={t('standIn.workspace.connections_help')}
               testId="stand-in-primary-connections-open"
-              disabled={saving}
+              disabled={blocked}
               onClick={() => setConnections(true)}
             />
           </div>
@@ -243,7 +246,7 @@ export function StandInPrimaryProfile({
             api={api}
             deviceId={settings.executionDeviceId}
             localDeviceId={localDeviceId}
-            disabled={saving}
+            disabled={blocked}
             onChange={value =>
               setDraft({
                 ...draft,
@@ -282,8 +285,8 @@ export function StandInPrimaryProfile({
               })
             }}
             onSave={async () => {}}
-            disabled={saving}
-            submitDisabled={saving}
+            disabled={blocked}
+            submitDisabled={blocked}
             services={services}
             devices={devices}
             runtimeWork={runtimeWork}
@@ -293,7 +296,7 @@ export function StandInPrimaryProfile({
                 value={settings.executionDeviceId}
                 currentDeviceId={localDeviceId}
                 devices={devices}
-                disabled={saving || dirty}
+                disabled={blocked || dirty}
                 onChange={onSelectDevice}
               />
             }
@@ -330,8 +333,10 @@ export function StandInPrimaryProfile({
         <StandInSettingsActions
           prefix="stand-in-primary"
           leading={footerLeading}
-          disabled={saving}
-          saveDisabled={saving || !dirty || scheduleDirty || connectionDraftDirty}
+          busy={blocked}
+          saveLabel={saving ? t('standIn.saving') : loading ? t('standIn.loading') : undefined}
+          disabled={blocked}
+          saveDisabled={blocked || !dirty || scheduleDirty || connectionDraftDirty}
           onCancel={close}
           onSave={() =>
             void onSave({
@@ -354,7 +359,7 @@ export function StandInPrimaryProfile({
                   onReload
                     ? {
                         testId: 'stand-in-primary-settings-retry',
-                        disabled: saving,
+                        disabled: blocked,
                         onClick: onReload,
                       }
                     : undefined

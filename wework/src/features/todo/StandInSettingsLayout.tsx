@@ -119,6 +119,7 @@ export function StandInSettingsActions({
   onCancel,
   onSave,
   saveLabel,
+  busy = false,
   children,
   leading,
 }: {
@@ -128,6 +129,7 @@ export function StandInSettingsActions({
   onCancel(): void
   onSave(): void
   saveLabel?: string
+  busy?: boolean
   children?: ReactNode
   leading?: ReactNode
 }) {
@@ -152,6 +154,7 @@ export function StandInSettingsActions({
       <button
         type="button"
         data-testid={`${prefix}-save`}
+        aria-busy={busy || undefined}
         disabled={saveDisabled}
         onClick={onSave}
         className="min-h-11 rounded-lg bg-text-primary px-4 text-sm text-background disabled:opacity-50 md:min-h-9"
