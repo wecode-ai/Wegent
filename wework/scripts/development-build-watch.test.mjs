@@ -4,6 +4,7 @@ import { mkdtemp, mkdir, open, writeFile, readFile, realpath, rename, rm } from 
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { EventEmitter } from 'node:events'
+import { statSync } from 'node:fs'
 import chokidar from 'chokidar'
 import { test, expect, vi, onTestFinished } from 'vitest'
 import { watchDevelopmentBuild, watchDevelopmentDirectory } from './lib/development-build-watch.mjs'
@@ -51,8 +52,8 @@ test.each(checkouts.flatMap(checkout => ['directory', 'file'].map(input => [chec
   async (checkout, input) => {
     const startedAt = Date.now()
     const phases = []
-    const record = phase => {
-      if (phases.length < 24) phases.push({ phase, elapsedMs: Date.now() - startedAt })
+    const record = (phase, ...details) => {
+      phases.push({ phase, elapsedMs: Date.now() - startedAt, details })
     }
     const temporary = await mkdtemp(path.join(tmpdir(), 'development-build-watch-'))
     const root = path.join(temporary, checkout)
@@ -68,12 +69,21 @@ test.each(checkouts.flatMap(checkout => ['directory', 'file'].map(input => [chec
       await writeFile(staged, value)
       await rename(staged, source)
     }
+    let nativeWatcher
+    const sourceVersion = () => {
+      try {
+        const stat = statSync(source, { bigint: true })
+        return { ino: String(stat.ino), size: String(stat.size), mtimeNs: String(stat.mtimeNs) }
+      } catch (error) {
+        return { error: error.code }
+      }
+    }
     let published = ''
     const snapshots = []
     const failedBuild = Promise.withResolvers()
     const recoveredBuild = Promise.withResolvers()
     const onError = vi.fn(error => {
-      record('failure-callback')
+      record('failure-callback', { name: error.name, code: error.code, message: error.message })
       failedBuild.resolve(error)
     })
     const build = vi.fn(async () => {
@@ -98,18 +108,46 @@ test.each(checkouts.flatMap(checkout => ['directory', 'file'].map(input => [chec
           directory,
           options,
           (...event) => {
-            record('file-notification', ...event)
+            record('file-notification', ...event, sourceVersion())
             notify(...event)
           },
-          (directory, options) =>
-            chokidar.watch(directory, { ...options, interval: 20, binaryInterval: 20 })
+          (directory, options) => {
+            nativeWatcher = chokidar.watch(directory, {
+              ...options,
+              interval: 20,
+              binaryInterval: 20,
+            })
+            nativeWatcher.on('error', error =>
+              record('native-error', { name: error.name, code: error.code, message: error.message })
+            )
+            nativeWatcher.on('raw', (event, filename, details) => {
+              record(
+                'native-raw',
+                event,
+                filename,
+                {
+                  watchedPath: details?.watchedPath,
+                  currentInode: details?.curr?.ino,
+                  previousInode: details?.prev?.ino,
+                },
+                sourceVersion()
+              )
+            })
+            nativeWatcher.on('all', (event, filename) =>
+              record('native-normalized', event, filename, sourceVersion())
+            )
+            return nativeWatcher
+          }
         ),
     })
-    record('watch-ready')
+    record('watch-ready', nativeWatcher.getWatched())
     onTestFinished(async () => {
       await watcher.close()
       await rm(temporary, { recursive: true, force: true })
-      console.info('[development-build-watch-phases]', { checkout, input, phases, snapshots })
+      console.info(
+        '[development-build-watch-phases]',
+        JSON.stringify({ checkout, input, phases, snapshots })
+      )
     })
     expect(published).toBe('one')
     record('write-invalid')
@@ -134,7 +172,16 @@ test.each(checkouts.flatMap(checkout => ['directory', 'file'].map(input => [chec
     // Use one handle so completing the save does not truncate the file again.
     const handle = await open(source, 'r+')
     try {
+      const beforeTruncate = await handle.stat()
+      record('truncate-start', { handleInode: beforeTruncate.ino, pathInode: statSync(source).ino })
       await handle.truncate(0)
+      record('truncate-finished', {
+        handleInode: (await handle.stat()).ino,
+        pathInode: statSync(source).ino,
+        size: statSync(source).size,
+        contents: await readFile(source, 'utf8'),
+        subscriptions: nativeWatcher.getWatched(),
+      })
       await expect.poll(() => published).toBe('')
       await handle.writeFile('four')
       await expect.poll(() => published).toBe('four')
