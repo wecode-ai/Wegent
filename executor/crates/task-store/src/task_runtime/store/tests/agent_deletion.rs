@@ -92,7 +92,8 @@ fn delete_chat_agent_checks_version_project_and_managed_agents() {
 fn stale_group_draft_cannot_reference_an_agent_deleted_after_the_project_was_read() {
     let (_directory, store, project) = chat_agent_store();
     let agent = make_local_agent(&store, &project.id, "auto");
-    LocalTaskStore::open(store.path()).unwrap()
+    LocalTaskStore::open(store.path())
+        .unwrap()
         .delete_chat_agent(&project.id, &agent.id, agent.version)
         .unwrap();
     let error = store
