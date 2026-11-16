@@ -39,7 +39,7 @@ export function StandInSettingsHeader({
           <nav
             aria-label={t('standIn.workspace.settings_path')}
             data-testid="stand-in-settings-path"
-            className="mb-1 flex flex-wrap items-center gap-1 text-xs text-text-muted"
+            className="mb-1 flex flex-wrap items-center gap-1 text-xs text-text-secondary"
           >
             {path.map((entry, index) => (
               <span key={entry.testId} className="inline-flex items-center gap-1">
@@ -66,7 +66,7 @@ export function StandInSettingsHeader({
         {title && (!path || path.length < 2) && (
           <h2 className="heading-sm flex min-h-8 items-center">{title}</h2>
         )}
-        {description && <p className="mt-1 text-sm text-text-muted">{description}</p>}
+        {description && <p className="mt-1 text-sm text-text-secondary">{description}</p>}
       </div>
       {actions}
       {close && (
@@ -148,17 +148,23 @@ export function StandInSettingsEntry({
   label: string
   description?: string
 }) {
+  const { t } = useTranslation('common')
   return (
     <button
       type="button"
       data-testid={testId}
       disabled={disabled}
       onClick={onClick}
-      className="flex min-h-11 w-full items-center gap-3 border-t border-border py-4 text-left disabled:opacity-40"
+      className="flex min-h-11 w-full items-center gap-3 rounded-lg border border-border bg-muted/30 p-3 text-left hover:bg-muted focus-visible:outline-none keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-focus/70 disabled:opacity-40"
     >
       <span className="flex-1">
         <span className="block font-medium">{label}</span>
-        {description && <span className="mt-1 block text-sm text-text-muted">{description}</span>}
+        {description && (
+          <span className="mt-1 block text-sm text-text-secondary">{description}</span>
+        )}
+      </span>
+      <span className="shrink-0 rounded-md border border-border bg-background px-2 py-1 text-sm">
+        {t('standIn.personal.manage')}
       </span>
       <ChevronRight className="h-4 w-4" />
     </button>

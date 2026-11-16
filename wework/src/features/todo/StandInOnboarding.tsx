@@ -216,7 +216,7 @@ export function StandInOnboarding({
                           </button>
                         ))}
                       </div>
-                      <p className="text-xs leading-relaxed text-text-muted">
+                      <p className="text-xs leading-relaxed text-text-secondary">
                         {t('standIn.onboarding.examples_scope')}
                       </p>
                     </section>

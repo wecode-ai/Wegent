@@ -158,9 +158,9 @@ export function StandInComposer({
         className="grid grid-cols-[5rem_minmax(0,1fr)] items-center gap-x-3 gap-y-1 text-sm"
         data-testid="stand-in-workspace-bar"
       >
-        <span className="text-text-muted">{t('standIn.device_label')}</span>
+        <span className="text-text-secondary">{t('standIn.device_label')}</span>
         <div className="min-w-0">{deviceControl}</div>
-        <span className="text-text-muted">{t('standIn.local_project')}</span>
+        <span className="text-text-secondary">{t('standIn.local_project')}</span>
         <div className="min-w-0" inert={disabled || !draft.executionDeviceId}>
           <ProjectWorkBar
             {...projectWork}
@@ -169,15 +169,15 @@ export function StandInComposer({
             showWorkSection={false}
           />
         </div>
-        <span className="text-text-muted">{t('standIn.workspace_label')}</span>
+        <span className="text-text-secondary">{t('standIn.workspace_label')}</span>
         <div className="flex min-h-8 min-w-0 flex-wrap items-center gap-1" inert={disabled}>
           {project ? (
             <ProjectWorkSection context={{ ...projectWork, project }} />
           ) : (
-            <span className="px-1.5 text-text-muted">{t('standIn.inherit_environment')}</span>
+            <span className="px-1.5 text-text-secondary">{t('standIn.inherit_environment')}</span>
           )}
         </div>
-        <span className="text-text-muted">{t('standIn.model_label')}</span>
+        <span className="text-text-secondary">{t('standIn.model_label')}</span>
         <div className="min-w-0">
           <ModelSelector
             models={models.models}

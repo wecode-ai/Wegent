@@ -44,10 +44,29 @@ export function createDesktopScenario({ uiTimeoutMs, captureScreenshot }) {
       await control.command('waitFor', selector('stand-in-primary-profile'), { visible: true })
       await control.command('press', selector('stand-in-preferences'), { key: 'Escape' })
       await control.command('waitFor', selector('stand-in-profile-panel'), { visible: false })
-      await control.command('waitFor', `${selector('stand-in-details-open')}:focus`, {
+      assert.equal(await control.command('getActiveElementTestId', 'body'), 'stand-in-details-open')
+      await control.command('clickWhenEnabled', selector('stand-in-details-open'))
+      await control.command('clickWhenEnabled', selector('stand-in-details-work-sources'))
+      await control.command('clickWhenEnabled', selector('stand-in-primary-connections-open'))
+      await control.command('clickWhenEnabled', selector('stand-in-add-projects-connection'))
+      await control.command('waitFor', selector('stand-in-processing-settings-toggle'), {
+        text: '配置',
         visible: true,
       })
-      assert.equal(await control.command('getActiveElementTestId', 'body'), 'stand-in-details-open')
+      await control.command('nativePress', selector('stand-in-processing-settings-toggle'), {
+        key: 'Enter',
+      })
+      await control.command('waitFor', selector('stand-in-project-default-policy'), {
+        visible: true,
+      })
+      assert.deepEqual(
+        await rpc('runtime.stand_in.personal.get', { userId: USER_ID }),
+        before,
+        'Inspecting processing settings must not change the saved policy'
+      )
+      await captureScreenshot(control, 'stand-in-processing-disclosure.png')
+      await control.command('clickWhenEnabled', selector('stand-in-primary-profile-close'))
+      await control.command('waitFor', selector('stand-in-profile-panel'), { visible: false })
     },
   }
 }

@@ -1,5 +1,9 @@
 {
   "order": 37000,
-  "scenario": "./scenarios/stand-in-processing.scenario.mjs",
-  "scenarioOnly": true
+  "scenario": "./scenarios/stand-in-onboarding-and-processing.scenario.mjs",
+  "scenarioOnly": true,
+  "paths": [
+    "wework/src/features/todo/StandInOnboarding.tsx",
+    "wework/src/features/todo/StandInOnboardingSetup.tsx"
+  ]
 }

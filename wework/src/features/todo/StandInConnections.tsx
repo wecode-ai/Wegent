@@ -1,6 +1,6 @@
 import { StandInConnectionHeader } from './StandInConnectionHeader'
 import { SettingsSwitch } from '@/components/settings/settings-ui'
-import { Folder, Plus } from 'lucide-react'
+import { ChevronDown, Folder } from 'lucide-react'
 import type { CollaborationProject } from '@wegent/collaboration'
 import type { StandInHandlingPolicy, StandInProjectRef, StandInRole } from '@/api/personalStandIn'
 import { roleSelectsProject, standInPolicy } from '@/api/personalStandIn'
@@ -78,7 +78,7 @@ export function StandInConnections({
           />
           <span>
             {t('standIn.personal.all_projects')}
-            <span className="mt-1 block text-xs text-text-muted">
+            <span className="mt-1 block text-xs text-text-secondary">
               {t('standIn.personal.all_projects_help')}
             </span>
           </span>
@@ -116,7 +116,7 @@ export function StandInConnections({
                     onChange={event => toggleProject(project, event.target.checked)}
                   />
                   <span className="min-w-0 flex-1 truncate">{project.name}</span>
-                  <span className="text-xs text-text-muted">
+                  <span className="text-xs text-text-secondary">
                     {t(
                       project.project_store === 'local'
                         ? 'standIn.personal.local'
@@ -127,7 +127,7 @@ export function StandInConnections({
               </div>
             ))}
           {!projects.length && (
-            <p className="py-3 text-text-muted">
+            <p className="py-3 text-text-secondary">
               {t(
                 source.allProjects
                   ? 'standIn.workspace.connection_projects_empty_all'
@@ -137,15 +137,24 @@ export function StandInConnections({
           )}
         </div>
         <details
-          className="border-t border-border pt-3"
+          className="group border-t border-border pt-3"
           open={source.tags.length ? true : undefined}
         >
           <summary
-            className="flex min-h-9 cursor-pointer items-center gap-2 text-text-secondary"
+            className="flex min-h-11 cursor-pointer items-center gap-3 rounded-lg px-2 py-2 text-sm hover:bg-muted focus-visible:outline-none keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-focus/70"
             data-testid="stand-in-source-tags-toggle"
           >
-            <Plus className="h-4 w-4" />
-            {t('standIn.personal.limit_tags')}
+            <span className="min-w-0 flex-1 font-medium">{t('standIn.personal.limit_tags')}</span>
+            <span className="rounded-md border border-border bg-background px-2 py-1">
+              <span className="group-open:hidden">{t('standIn.workspace.processing_edit')}</span>
+              <span className="hidden group-open:inline">
+                {t('standIn.workspace.processing_hide')}
+              </span>
+            </span>
+            <ChevronDown
+              aria-hidden="true"
+              className="h-4 w-4 text-text-secondary group-open:rotate-180"
+            />
           </summary>
           <div className="mt-2 rounded-md border border-border p-2">
             <TagEditor
@@ -159,7 +168,9 @@ export function StandInConnections({
               testIdPrefix="stand-in-connection-tags"
             />
           </div>
-          <p className="mt-2 text-xs text-text-muted">{t('standIn.personal.limit_tags_help')}</p>
+          <p className="mt-2 text-xs text-text-secondary">
+            {t('standIn.personal.limit_tags_help')}
+          </p>
         </details>
       </fieldset>
       <StandInProcessingSettings
