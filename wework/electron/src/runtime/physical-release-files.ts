@@ -11,9 +11,9 @@ const require = createRequire(import.meta.url)
 const SCRIPT = `
 (async () => {
   const [operation, source, destination, tarModule] = process.argv.slice(1)
+  const tar = operation === 'extract' ? require(tarModule) : null
   process.noAsar = true
   const fs = require('node:fs/promises')
-  const tar = operation === 'extract' ? require(tarModule) : null
   if (operation === 'copy' && process.platform === 'darwin') {
     const metadata = await fs.lstat(source)
     const directory = metadata.isDirectory()
