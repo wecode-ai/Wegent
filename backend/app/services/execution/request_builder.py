@@ -563,6 +563,10 @@ class TaskRequestBuilder:
             executor_deleted=getattr(subtask, "executor_deleted_at", False),
             new_session=new_session,
         )
+        if not inherited_sessions and not legacy_session_bindings:
+            # A continuation without authenticated prior-session evidence must
+            # not ask the executor to resume its remembered native session.
+            new_session = True
 
         execution_request = ExecutionRequest(
             task_id=task.id,

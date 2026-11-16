@@ -38,6 +38,77 @@ def test_owner_query_supplies_bindings_without_expanding_inheritance(
     assert bindings == [{**session, "task_id": 123, "user_id": 7}]
 
 
+def test_owned_unproven_continuation_starts_a_new_session(test_db, mocker):
+    builder = TaskRequestBuilder(test_db)
+    mocker.patch.object(
+        builder,
+        "_build_session_context",
+        return_value=([], []),
+    )
+    mocker.patch(
+        "app.services.execution.request_builder.ExecutionRequest",
+        side_effect=lambda **kwargs: SimpleNamespace(
+            new_session=kwargs["new_session"],
+            bot=kwargs["bot"],
+            skill_configs=[],
+            preload_skills=[],
+            user_selected_skills=[],
+            skill_names=[],
+            system_prompt=kwargs["system_prompt"],
+            task_id=kwargs["task_id"],
+            subtask_id=kwargs["subtask_id"],
+            attachments=[],
+            auth_token="task-jwt",
+            backend_url="http://backend",
+        ),
+    )
+    mocker.patch(
+        "app.services.execution.request_builder.Team.model_validate",
+        return_value=SimpleNamespace(
+            spec=SimpleNamespace(collaborationModel="solo", members=[])
+        ),
+    )
+    mocker.patch.object(
+        builder,
+        "_get_bot_for_subtask",
+        return_value=SimpleNamespace(id=23, name="bot", namespace="default"),
+    )
+    mocker.patch.object(builder, "_build_user_info", return_value={"id": 7})
+    mocker.patch.object(builder, "_get_model_config", return_value={})
+    mocker.patch.object(builder, "_get_base_system_prompt", return_value="sys")
+    mocker.patch.object(builder, "_inject_conditional_provider_skills", return_value=[])
+    mocker.patch.object(builder, "_get_bot_skills", return_value=([], [], [], {}))
+    mocker.patch.object(
+        builder,
+        "_build_bot_config",
+        return_value=[{"id": 23, "shell_type": "ClaudeCode"}],
+    )
+    mocker.patch.object(builder, "_build_mcp_servers", return_value=[])
+    mocker.patch.object(builder, "_is_group_chat", return_value=False)
+    mocker.patch.object(builder, "_generate_auth_token", return_value="task-jwt")
+    mocker.patch.object(
+        builder, "_generate_skill_identity_token", return_value="skill-jwt"
+    )
+    mocker.patch.object(builder, "_build_workspace", return_value={})
+
+    request = builder.build(
+        subtask=SimpleNamespace(id=2, message_id=33, executor_deleted_at=False),
+        task=SimpleNamespace(
+            id=123,
+            user_id=7,
+            json={"spec": {}},
+            project_id=None,
+        ),
+        user=SimpleNamespace(id=7, user_name="alice"),
+        team=SimpleNamespace(
+            id=5, user_id=7, name="team", namespace="default", json={}
+        ),
+        message="continue",
+    )
+
+    assert request.new_session is True
+
+
 @pytest.mark.parametrize(
     ("user_id", "new_session", "shell"),
     [(8, False, "Codex"), (7, True, "Codex"), (7, False, "Chat")],
