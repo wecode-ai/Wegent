@@ -428,9 +428,13 @@ In a collaboration project, open **Project settings → Execution environment** 
 
 Manual work does not require execution-environment initialization or an extra form. Choose status or assignee in Issue details; property changes save independently of unsaved description. See this page's [project operations](#project-controls) for discussion assignment, archive and restore.
 
+<a id="project-conversations"></a>
+
 ## Message AI
 
 Select the always-visible **Ask AI** button on the right of the board to expand its conversation sidebar. The **New conversation** icon next to a project in the collaboration sidebar also opens it. No collaboration group, AI leader, or experimental feature is required. Both local and cloud projects are supported. New conversations run on the current computer with the current project board as their default context, subject to the user's actual access and execution permissions.
+
+The sidebar keeps the current project and Issue capabilities visible. Ask **list issues** to query this project's Issues, or request Issue creation, status changes, or assignment changes. Results identify the project and Issue; an empty result explicitly states that no matching Issues were found in the current project. Say **list personal tasks** or **list my conversations** for personal execution tasks or conversations. The assistant asks for clarification only when the target is ambiguous. The home assistant has no implicitly selected project; name the project when needed.
 
 The board filter toolbar adapts to its pane's available width. In a narrow pane, grouping, group-value, tag, milestone, parent-row, and Ask AI controls collapse to icons, and the search field becomes shorter. This also applies when the conversation sidebar is open. Hover or keyboard-focus an icon for its full label; filtering and switching behavior stay unchanged.
 

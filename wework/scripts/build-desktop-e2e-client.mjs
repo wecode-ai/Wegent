@@ -16,8 +16,8 @@ const entries = [
   ['lz-string', fileURLToPath(new URL('./desktop-e2e-inventory-codec.mjs', import.meta.url))],
   ['tiktoken', createRequire(import.meta.url).resolve('tiktoken')],
   [
-    'local-runtime-payload',
-    fileURLToPath(new URL('./desktop-e2e-local-runtime-payload.mjs', import.meta.url)),
+    'mobile-local-payload',
+    fileURLToPath(new URL('./desktop-e2e-mobile-builders.mjs', import.meta.url)),
   ],
 ]
 for (const [name, entry] of entries) {
