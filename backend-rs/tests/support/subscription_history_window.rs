@@ -304,7 +304,7 @@ async fn assert_pipeline_handoff_reads(
     );
 }
 
-async fn assert_session_identifiers(mysql: &MysqlService, task_id: i64, table: &str) {
+pub(crate) async fn assert_session_identifiers(mysql: &MysqlService, task_id: i64, table: &str) {
     let sessions = [
         json!({"agent": "Codex", "botId": 23, "threadId": "", "thread_id": "legacy-1"}),
         json!({"agent": "Codex", "botId": 23, "threadId": "", "thread_id": "legacy-2"}),

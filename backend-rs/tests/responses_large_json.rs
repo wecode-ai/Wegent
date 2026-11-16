@@ -182,6 +182,49 @@ async fn history_candidates_materialize_keys_before_sorting_large_json() {
     fixture.close().await;
 }
 
+#[tokio::test]
+#[ignore = "requires disposable MySQL 8; run explicitly in the Backend Rust CI job"]
+async fn executor_sessions_rank_metadata_without_sorting_large_results() {
+    let fixture = fixture::Fixture::new().await;
+    for table in ["subtasks", "subtasks_0007"] {
+        fixture.seed(table, 42, 7).await;
+        for message in 3..=11_i64 {
+            fixture
+                .mysql
+                .execute(
+                    format!(
+                        "INSERT INTO {table} (id,user_id,task_id,message_id) VALUES (?,7,42,?)"
+                    ),
+                    (2000 + message, message),
+                )
+                .await
+                .unwrap();
+        }
+        // An older duplicate must be excluded after ranking even when its
+        // conversation result is larger than MySQL's session sort buffer.
+        fixture
+            .mysql
+            .execute(
+                format!("UPDATE {table} SET result=? WHERE task_id=42 AND message_id=0"),
+                (Json(serde_json::json!({
+                    "value": "x".repeat(fixture::LARGE_RESULT_BYTES),
+                    "executor_session": {
+                        "agent": "Codex", "botId": 23, "thread_id": "legacy-2",
+                    },
+                })),),
+            )
+            .await
+            .unwrap();
+        http_e2e::subscription_history_window::assert_session_identifiers(
+            &fixture.mysql,
+            42,
+            table,
+        )
+        .await;
+    }
+    fixture.close().await;
+}
+
 async fn history_candidate_bytes_sent(mysql: &brz_mysql::MysqlService) -> u64 {
     let rows: Vec<MysqlRow> = mysql
         .fetch_all("SHOW SESSION STATUS LIKE 'Bytes_sent'", ())

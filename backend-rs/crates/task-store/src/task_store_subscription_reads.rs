@@ -72,8 +72,9 @@ pub fn recent_executor_sessions_statement(table: &str, bot_count: usize) -> Stri
         text("botId"),
         text("bot_id")
     );
-    let identity = format!(
-        "{}, {bot}, {}, {}",
+    let identity_columns = format!(
+        "{} AS session_agent, {bot} AS session_bot, \
+         {} AS session_id, {} AS thread_id",
         text("agent"),
         identifier("sessionId", "session_id"),
         identifier("threadId", "thread_id")
@@ -86,13 +87,18 @@ pub fn recent_executor_sessions_statement(table: &str, bot_count: usize) -> Stri
             vec!["?"; bot_count].join(", ")
         )
     };
+    // Materialize session metadata before window ranking so MySQL cannot carry
+    // the full conversation result into the partition sort.
     format!(
-        "SELECT executor_session FROM (SELECT {session} AS executor_session, \
-         message_id, created_at, id, ROW_NUMBER() OVER (PARTITION BY {identity} \
-         ORDER BY message_id DESC, created_at DESC, id DESC) AS session_rank FROM {table} \
+        "SELECT executor_session FROM (\
+         SELECT /*+ NO_MERGE(session_candidates) */ executor_session, message_id, created_at, id, \
+         ROW_NUMBER() OVER (PARTITION BY session_agent, session_bot, session_id, thread_id \
+         ORDER BY message_id DESC, created_at DESC, id DESC) AS session_rank \
+         FROM (SELECT {session} AS executor_session, message_id, created_at, id, \
+         {identity_columns} FROM {table} \
          WHERE {table}.task_id = ? AND {table}.`role` = 'ASSISTANT' \
          AND JSON_TYPE({result}) = 'OBJECT' AND JSON_TYPE({session}) = 'OBJECT' \
-         AND {agent} AND ({identifiers}){bot_filter}) AS sessions \
+         AND {agent} AND ({identifiers}){bot_filter}) AS session_candidates) AS sessions \
          WHERE session_rank = 1 \
          ORDER BY message_id DESC, created_at DESC, id DESC \
          LIMIT {SUBSCRIPTION_SESSION_LIMIT}"
@@ -110,8 +116,11 @@ mod tests {
             assert!(latest.contains(&format!("JOIN (SELECT id FROM {table}")));
             assert!(latest.contains("DESC LIMIT 1) AS latest"));
             let sessions = recent_executor_sessions_statement(table, 1);
-            assert!(sessions.starts_with("SELECT executor_session FROM (SELECT JSON_EXTRACT("));
+            assert!(sessions.starts_with("SELECT executor_session FROM ("));
+            assert!(sessions.contains("NO_MERGE(session_candidates)"));
             assert!(sessions.contains("ROW_NUMBER() OVER (PARTITION BY"));
+            let ranking = sessions.split("FROM (SELECT").next().unwrap();
+            assert!(!ranking.contains("JSON_EXTRACT"));
             assert!(sessions.contains("WHERE session_rank = 1"));
             assert!(sessions.contains("IN (?)"));
             assert!(!sessions.contains(&format!("{table}.result AS")));
