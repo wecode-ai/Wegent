@@ -434,12 +434,19 @@ test.describe('Collaboration group Executor coordination', () => {
       await expect(page.getByTestId('cloud-todo-save')).toHaveCount(0)
       await captureEvidence(page, testInfo, '01-group-assigned')
 
-      const collectorCard = page
+      const memberExecutionCard = (agentName: string) =>
+        page
+          .locator('[data-testid^="cloud-task-activity-card-"]')
+          .filter({ hasText: agentName })
+          .filter({
+            has: page.locator('[data-testid^="cloud-task-activity-execution-badge-"]'),
+          })
+      const collectorCard = memberExecutionCard(`Coordinate Collector ${suffix}`)
+      const reviewerCard = memberExecutionCard(`Coordinate Reviewer ${suffix}`)
+      const collectorAssignment = page
         .locator('[data-testid^="cloud-task-activity-card-"]')
         .filter({ hasText: collectorTask })
-      const reviewerCard = page
-        .locator('[data-testid^="cloud-task-activity-card-"]')
-        .filter({ hasText: reviewerTask })
+      await expect(collectorAssignment).toBeVisible({ timeout: 60_000 })
       await expect(collectorCard).toBeVisible({ timeout: 60_000 })
       await expect(reviewerCard).toBeVisible({ timeout: 60_000 })
       await waitForHeldStreamResponse(request, collectorTask)
