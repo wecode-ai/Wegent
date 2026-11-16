@@ -52,6 +52,12 @@ pnpm --filter wework test src/features/todo/CloudTodoWorkspace.test.tsx src/feat
 
 最初同时执行完整 lint、两个类型检查和两个 jsdom 套件时，5 个用例触发 5 秒超时，另有人员搜索错误缺少本地化前缀。前缀已修复并保留后端原因。对普通入口超时用例加入临时 Profiler 和请求计数后，3 条完整交互分别在 109、133、123 毫秒完成，每项仅读取项目和看板各一次；没有观测到循环加载。诊断代码随后移除。按同一原有超时和断言串行执行上述两个完整套件，297 项全部通过；此前并行失败不记为通过，也没有提高超时或跳过测试。
 
+完整推送前检查通过，包含两分片的全量桌面 renderer 单元测试。首轮 CI 发现导航脚本的两种布局夹具没有传入新增 `members` 参数，稳定复现为 `members is not iterable`；补齐真实调用契约中的成员、名单、重载就绪与导航断言后，4 项脚本测试通过。
+
+进一步复核发现：普通项目会继承分组 Viewer；只按用户 ID 判断已加入会错误跳过所选 Viewer。实际 helper 两次复现未调用添加且返回 Viewer 成功，新增回归修复前 3 项失败。现通过既有项目成员 API 授予所选 Viewer 项目 Developer，保留分组角色及已有更高项目角色；回读角色未达到 Developer 时仍报告失败，重试仅处理缺失或权限不足成员。helper 的 11 项测试全部通过，未修改权限不变量或后端契约；随后共享创建目录与完整协作平台的 215 项测试通过。
+
+首轮 Web CI 的两个创建流程稳定报出高级设置按钮被 footer 遮挡，桌面 CI 的成员搜索框也落在视口外。恢复原有 div 滚动容器，将原生 disabled fieldset 放入其中并使用 display: contents，保留锁定行为。现有 Dialog 的 4 项测试通过。内置浏览器的 300×150 诊断视口中，旧结构 scrollIntoView 后整体容器移到 y=-621.5，内部 scrollTop 仍为 0；修复后容器保持 y=55.5，内部 scrollTop=649，目标按钮命中正确。该小视口诊断未复现 CI 的 footer 拦截，完整 Web/桌面流程以新一轮 CI 为准。
+
 # Verification and rollback
 
 The unit plan covers cloud member creation, partial failures, search recovery, authoritative server-roster checks, the existing template pipeline, local-source hiding and the disabled flag. The existing CI-covered `collaboration-shared-core` scenario now includes real-account member persistence and reload checks. Local E2E and real Electron verification were not run, as instructed. The initial test results above were recorded before integration with the latest main branch. Set `VITE_COLLAB_PROJECT_CREATE_MEMBERS_V1=false` in the Wework build environment and rebuild to disable ordinary-entry member creation without deleting existing memberships.

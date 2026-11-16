@@ -3056,8 +3056,8 @@ function CollaborationPlatformAppContent({
                 members: projectWorkspaceMembers,
                 verificationFailureMessage:
                   locale === "zh-CN"
-                    ? "保存后未在项目成员列表中找到该成员，请重试"
-                    : "The member was not found in the project after saving. Please retry.",
+                    ? "未能确认该成员拥有项目 Developer 权限，请重试"
+                    : "Project Developer access has not been confirmed for this member. Please retry.",
               });
               if (selection.template) {
                 await prepareTemplateProject(

@@ -51,13 +51,21 @@ function failureReason(cause: unknown): string {
   return cause instanceof Error ? cause.message : String(cause);
 }
 
+function hasDeveloperAccess(member: CollaborationMember): boolean {
+  return (
+    member.role === "Developer" ||
+    member.role === "Maintainer" ||
+    member.role === "Owner"
+  );
+}
+
 export async function configureProjectMembers({
   api,
   projectId,
   memberUserIds,
   currentUserId,
   members = [],
-  verificationFailureMessage = "The member was not found in the project after saving",
+  verificationFailureMessage = "The member has not received Developer access in the project",
 }: ConfigureProjectMembersInput): Promise<CollaborationMember[]> {
   const selectedIds = [...new Set(memberUserIds)].filter(
     (userId) => userId !== currentUserId,
@@ -81,7 +89,9 @@ export async function configureProjectMembers({
       failureReason(cause),
     );
   }
-  const existingIds = new Set(existingMembers.map((member) => member.user_id));
+  const existingIds = new Set(
+    existingMembers.filter(hasDeveloperAccess).map((member) => member.user_id),
+  );
   const pendingIds = selectedIds.filter((userId) => !existingIds.has(userId));
   const results = await Promise.allSettled(
     pendingIds.map((userId) => api.members.add(projectId, userId, "Developer")),
@@ -105,7 +115,8 @@ export async function configureProjectMembers({
       failureReason(cause),
     );
   }
-  const verifiedIds = new Set(verifiedMembers.map((member) => member.user_id));
+  const confirmedMembers = verifiedMembers.filter(hasDeveloperAccess);
+  const verifiedIds = new Set(confirmedMembers.map((member) => member.user_id));
   const missingMembers = selectedIds
     .filter((userId) => !verifiedIds.has(userId))
     .map((userId) =>
@@ -115,7 +126,7 @@ export async function configureProjectMembers({
       ),
     );
   if (missingMembers.length) {
-    throw new ProjectCreateMembersError(missingMembers, verifiedMembers);
+    throw new ProjectCreateMembersError(missingMembers, confirmedMembers);
   }
   return verifiedMembers;
 }

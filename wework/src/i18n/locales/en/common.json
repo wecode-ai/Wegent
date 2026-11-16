@@ -4127,7 +4127,7 @@
     "cloud_todo_status_in_review": "In review",
     "cloud_todo_status_completed": "Completed",
     "cloud_project_bind_failed": "Failed to link the project space",
-    "project_create_members_verification_failed": "Project membership has not been confirmed. Please retry.",
+    "project_create_members_verification_failed": "Project Developer access has not been confirmed. Please retry.",
     "project_create_members_confirmed": "Added to project: {{members}} (Developer)",
     "task_board_change": "Change board link",
     "task_board_association_title": "Add to \"{{name}}\"",

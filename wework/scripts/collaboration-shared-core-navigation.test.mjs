@@ -29,6 +29,7 @@ const owner = { id: 7, user_name: 'reader' }
 
 function controlFixture(compact, memberSettings = false) {
   const command = vi.fn(async (action, selector, input) => {
+    if (action === 'getStartupSplashSnapshot') return JSON.stringify({ state: 'closed' })
     if (action === 'getElementCount') {
       if (selector.includes('collaboration-project-view-select')) return compact ? '1' : '0'
       return memberSettings && selector.includes('[role="cell"]') ? '4' : '0'
@@ -52,7 +53,7 @@ function controlFixture(compact, memberSettings = false) {
     }
     return ''
   })
-  return { command }
+  return { command, readyCount: 1, awaitReadyAfter: vi.fn(async () => undefined) }
 }
 
 function backendFixture() {
@@ -133,18 +134,54 @@ test.each([false, true])(
   'member settings enter and leave through actual controls, compact=%s',
   async compact => {
     const control = controlFixture(compact, true)
+    const members = [
+      { id: 8, user_name: 'alice' },
+      { id: 9, user_name: 'bob' },
+    ]
+    const project = { id: 'project', name: 'Created project members' }
+    const request = vi.fn(async () => [
+      { user_id: owner.id, inherited_role: 'Maintainer' },
+      ...members.map(member => ({
+        user_id: member.id,
+        user_name: member.user_name,
+        role: 'Developer',
+        direct_role: 'Developer',
+      })),
+    ])
     await verifyCollaborationMemberSettings(control, {
       scoped,
       owner,
-      project: { id: 'project' },
-      request: async () => [{ user_id: owner.id, inherited_role: 'Maintainer' }],
+      project,
+      members,
+      request,
     })
     const switches = control.command.mock.calls.filter(([action]) => action === 'chooseWhenEnabled')
-    expect(switches).toHaveLength(2)
-    expect(switches.map(([, , input]) => input.value)).toEqual(['manage', 'board'])
+    expect(switches).toHaveLength(3)
+    expect(switches.map(([, , input]) => input.value)).toEqual(['manage', 'manage', 'board'])
     expect(control.command).toHaveBeenCalledWith(
       'waitFor',
       scoped('[data-testid="cloud-project-members-inheritance-note"]')
     )
+    expect(request.mock.calls).toEqual(
+      Array.from({ length: 3 }, () => ['/api/v1/cloud-projects/project/members'])
+    )
+    expect(control.command).toHaveBeenCalledWith('getStartupSplashSnapshot', 'body')
+    expect(control.command).toHaveBeenCalledWith('reloadMainWindow', 'body')
+    expect(control.awaitReadyAfter).toHaveBeenCalledWith(1)
+    expect(control.command).toHaveBeenCalledWith(
+      'waitFor',
+      scoped('[data-testid="cloud-project-header-title"]'),
+      { text: project.name, timeoutMs: DEFAULT_STEP_TIMEOUT_MS }
+    )
+    for (const member of members) {
+      const rowSelector = scoped(`[data-testid="cloud-project-member-${member.id}"]`)
+      const rowWaits = control.command.mock.calls.filter(
+        ([action, selector]) => action === 'waitFor' && selector === rowSelector
+      )
+      expect(rowWaits).toEqual([
+        ['waitFor', rowSelector, { text: member.user_name }],
+        ['waitFor', rowSelector, { text: member.user_name }],
+      ])
+    }
   }
 )
