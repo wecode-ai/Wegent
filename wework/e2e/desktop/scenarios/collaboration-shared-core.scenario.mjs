@@ -96,7 +96,7 @@ async function createPickerTask(control, uiTimeoutMs) {
   await control.command('clickWhenEnabled', scoped('[data-testid="send-message-button"]'), {
     timeoutMs: uiTimeoutMs,
   })
-  return waitForValue(
+  const settled = await waitForValue(
     async () => {
       const state = JSON.parse(await control.command('getWorkbenchDebugSnapshot', 'body'))
       return {
@@ -114,6 +114,7 @@ async function createPickerTask(control, uiTimeoutMs) {
     'The standalone picker task did not settle',
     uiTimeoutMs
   )
+  return settled.task
 }
 
 async function verifyCurrentTableAssignment(control, scoped, issueId, assigneeName, timeoutMs) {
