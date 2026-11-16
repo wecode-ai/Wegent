@@ -91,7 +91,12 @@ for (const destination of ['existing', 'new'] as const) {
         if (await picker.isVisible()) await picker.click()
         await expect(nameInput).toHaveValue(configuration.project.name)
         await nameInput.fill(name)
+        await page.getByTestId('project-create-configure-template').click()
+        await expect(page.getByTestId('project-create-template-configuration')).toBeVisible()
         await bindMembers()
+        await page.getByTestId('project-create-template-configuration-apply').click()
+        await expect(page.getByTestId('project-create-template-configuration')).toBeHidden()
+        await expect(nameInput).toHaveValue(name)
         const created = page.waitForResponse(
           response =>
             response.request().method() === 'POST' &&

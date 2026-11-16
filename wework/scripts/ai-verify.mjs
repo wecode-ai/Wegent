@@ -85,6 +85,7 @@ export const AI_VERIFY_ACTIONS = Object.freeze({
   'select-file': 'selectFile',
   'drop-paths': 'dropPaths',
   fill: 'fill',
+  select: 'select',
   'get-attribute': 'getAttribute',
   hover: 'hover',
   metrics: 'getElementMetrics',
@@ -909,8 +910,10 @@ async function main() {
         : dropFileExtension === '.txt'
           ? 'text/plain'
           : 'application/octet-stream'
-  const previousReady =
-    command === 'reload' ? await request(session, session.token, '/status') : null
+  const requiresFreshClient = command === 'reload' || command === 'restart-core-dsh'
+  const previousReady = requiresFreshClient
+    ? await request(session, session.token, '/status')
+    : null
   const effectiveTimeoutMs = resolveCommandTimeout(options.timeout)
   const value = await request(session, session.token, '/command', 'POST', {
     action,
@@ -926,7 +929,7 @@ async function main() {
     stableMs: options.stable ? Number(options.stable) : undefined,
     timeoutMs: effectiveTimeoutMs,
   })
-  if (command === 'reload') {
+  if (requiresFreshClient) {
     await waitForFreshControlClient(
       session,
       session.token,

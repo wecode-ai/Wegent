@@ -25,7 +25,10 @@ export async function waitForProjectCreateViewport(control) {
 export async function assertProjectCreateActionHit(control, selector) {
   await control.command('waitFor', selector, { visible: true })
   const [metrics] = JSON.parse(await control.command('getElementMetrics', selector))
-  assert.ok(metrics?.hitTestVisible, `Project creation action is covered: ${selector}`)
+  assert.ok(
+    metrics?.hitTestVisible,
+    `Project creation action is covered: ${selector}; metrics=${JSON.stringify(metrics)}`
+  )
   assert.ok(metrics.top >= 0 && metrics.bottom <= metrics.viewportHeight)
   assert.ok(metrics.left >= 0 && metrics.right <= metrics.viewportWidth)
 }
@@ -162,7 +165,9 @@ async function verifyGroupConfigurationDraft(control, scoped, workspace, agents)
     visible: true,
   })
   await control.command('click', '[data-testid="workspace-tab-select-fixed-board"]')
-  const home = scoped(testId(`collaboration-workspace-home-${workspace.id}`))
+  const home = scoped(
+    `${testId(`collaboration-workspace-tree-${workspace.id}`)} .collaboration-workspace-identity`
+  )
   await revealCollaborationSidebarElement(control, home)
   await control.command('click', home)
   await openDirectProjectCreation(control, scoped('').trim())
@@ -222,6 +227,26 @@ async function verifyGroupConfigurationDraft(control, scoped, workspace, agents)
   await control.command('waitFor', configuration, { visible: true })
   await control.command('click', back)
   await assertDraftRetained()
+  await control.command('click', scoped(testId('collaboration-project-create-add-collaborator')))
+  await control.command('click', testId('collaboration-project-create-collaborator-tab-groups'))
+  const menuEntry = `${MENU} ${testId('collaboration-project-create-new-group')}`
+  await control.command('waitFor', `${menuEntry}:not(:disabled)`, { visible: true })
+  await control.command('nativePress', menuEntry, { key: 'Enter' })
+  await control.command('waitFor', configuration, { visible: true })
+  await control.command('nativePress', back, { key: 'Escape' })
+  await control.command('waitFor', configuration, { visible: false })
+  await control.command('waitFor', nameInput, { visible: true })
+  assert.equal(await control.command('getValue', nameInput), draftName)
+  for (const agent of agents) {
+    await control.command('waitFor', scoped('.collaboration-project-create-collaborator-tokens'), {
+      text: agent.name,
+    })
+  }
+  assert.equal(
+    await control.command('getActiveElementTestId', 'body'),
+    'collaboration-project-create-add-collaborator',
+    'Leaving group configuration opened from its removed menu entry must focus Add collaborator'
+  )
   await control.command('nativePress', nameInput, { key: 'Escape' })
   await control.command('waitFor', DIALOG, { visible: false })
 }
@@ -385,7 +410,9 @@ export async function verifyPrivateProjectCreation({
   await withProjectCreationAgents(request, workspace, agents =>
     verifyGroupConfigurationDraft(control, scoped, workspace, agents)
   )
-  const workspaceHome = scoped(testId(`collaboration-workspace-home-${workspace.id}`))
+  const workspaceHome = scoped(
+    `${testId(`collaboration-workspace-tree-${workspace.id}`)} .collaboration-workspace-identity`
+  )
   await revealCollaborationSidebarElement(control, workspaceHome)
   await control.command('click', workspaceHome)
   await openDirectProjectCreation(control, scoped('').trim())

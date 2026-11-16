@@ -64,6 +64,7 @@ describe('AI_VERIFY_ACTIONS', () => {
       'select-file': 'selectFile',
       'drop-paths': 'dropPaths',
       fill: 'fill',
+      select: 'select',
       'get-attribute': 'getAttribute',
       hover: 'hover',
       metrics: 'getElementMetrics',

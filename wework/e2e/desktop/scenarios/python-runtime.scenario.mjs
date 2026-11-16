@@ -43,7 +43,7 @@ export async function createDesktopScenario({
   let cloudEnvironment
   let restartDesktopApp
   const observations = []
-  const projectNotice = createProjectPythonNoticeRegression()
+  const projectNotice = createProjectPythonNoticeRegression({ captureScreenshot })
   await mkdir(launchDirectory, { recursive: true })
   for (const name of ['ssl', 'ensurepip', 'venv']) {
     await writeFile(

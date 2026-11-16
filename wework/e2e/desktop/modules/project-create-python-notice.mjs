@@ -14,9 +14,18 @@ const ACTIVE = '[data-workspace-tab-content][aria-hidden="false"]'
 const DIALOG = '[data-testid="collaboration-project-create-dialog"]'
 const NOTICE = '[data-testid="plugin-python-runtime-notice"]'
 
-export function createProjectPythonNoticeRegression() {
+export function createProjectPythonNoticeRegression({ captureScreenshot }) {
   let cloud
   let workspace
+
+  async function assertActionHit(control, selector) {
+    try {
+      await assertProjectCreateActionHit(control, selector)
+    } catch (error) {
+      await captureScreenshot(control, 'project-create-python-notice-hit-failure.png', 'body')
+      throw error
+    }
+  }
 
   async function request(path, options = {}) {
     const response = await fetch(`${cloud.backendUrl}${path}`, {
@@ -64,7 +73,7 @@ export function createProjectPythonNoticeRegression() {
           noticeZ < modalZ,
           `Python failure notice ${noticeZ} covers project modal ${modalZ}`
         )
-        await assertProjectCreateActionHit(
+        await assertActionHit(
           control,
           `${DIALOG} [data-testid="collaboration-project-create-close"]`
         )
@@ -75,7 +84,7 @@ export function createProjectPythonNoticeRegression() {
             value: 'Project remains usable during Python failure',
           }
         )
-        await assertProjectCreateActionHit(
+        await assertActionHit(
           control,
           `${DIALOG} [data-testid="collaboration-project-create-confirm"]`
         )
