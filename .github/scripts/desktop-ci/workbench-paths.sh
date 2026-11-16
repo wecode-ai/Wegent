@@ -127,6 +127,15 @@ classify_workbench_path() {
       select_target "core:collaboration-issue-attachment-preview"
       return
       ;;
+    wework/src/lib/clipboard-images* | \
+      wework/src/features/todo/TaskDescriptionEditor* | \
+      wework/src/components/chat/composer/desktopComposerServices* | \
+      wework/electron/src/host/clipboard-image-conversion* | \
+      wework/e2e/desktop/scenarios/clipboard-history-image.scenario.mjs)
+      select_target "core:clipboard-history-image"
+      macos_inspector_e2e=true
+      return
+      ;;
     wework/e2e/desktop/scenarios/collaboration-issue-comment-notification.scenario.mjs | \
       wework/e2e/desktop/scenarios/issue-notification-read.scenario.mjs)
       select_target "core:collaboration-issue-comment-notification"
@@ -453,17 +462,26 @@ classify_workbench_path() {
       return
       ;;
 
-    # File editing and Office previews have independently bootstrapped checkpoints.
+    # File editing, Cloud HTML links, and Office previews have independently
+    # bootstrapped checkpoints.
     wework/electron/src/host/local-workspace-files* | \
       wework/src/desktop/localWorkspaceFiles* | \
       wework/src/components/layout/workspace-panels/FileWorkspacePanel* | \
       wework/src/components/layout/workspace-panels/WorkspaceFilePreview* | \
       wework/src/components/layout/workspace-panels/WorkspaceFileTree* | \
       wework/src/components/layout/workspace-panels/WorkspaceTextFileEditor* | \
+      wework/src/components/layout/workspace-panels/workspaceFileTypes* | \
+      wework/src/components/chat/useDesktopMarkdownServices* | \
       wework/src/components/chat/FileChangesReviewPanel* | \
       wework/e2e/desktop/scenarios/local-file-preview.scenario.mjs)
       select_target "core:local-file-preview"
       select_target "core:office-file-preview"
+      if [[ "$path" == wework/src/components/layout/workspace-panels/FileWorkspacePanel* || \
+        "$path" == wework/src/components/layout/workspace-panels/WorkspaceFilePreview* || \
+        "$path" == wework/src/components/layout/workspace-panels/workspaceFileTypes* || \
+        "$path" == wework/src/components/chat/useDesktopMarkdownServices* ]]; then
+        select_target "cloud:rendering-extensions"
+      fi
       return
       ;;
     wework/e2e/desktop/scenarios/office-file-preview.scenario.mjs | \

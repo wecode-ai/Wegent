@@ -11,11 +11,20 @@ export function onlineDevicesFirst(devices: readonly DeviceInfo[]): DeviceInfo[]
 }
 
 export function mobileOperableDevices(devices: readonly DeviceInfo[]): DeviceInfo[] {
-  return devices.filter(
-    device =>
-      (device.device_type === 'cloud' || device.device_type === 'remote') &&
-      device.bind_shell === 'claudecode'
-  )
+  return devices
+    .filter(
+      device =>
+        (device.device_type === 'cloud' ||
+          device.device_type === 'remote' ||
+          (device.device_type === 'app' &&
+            Boolean(device.execution_target_id) &&
+            device.runtime_features?.remoteTaskAccess?.version === 1 &&
+            device.runtime_features.remoteTaskAccess.enabled === true)) &&
+        device.bind_shell === 'claudecode'
+    )
+    .map(device =>
+      device.device_type === 'app' ? { ...device, device_id: device.execution_target_id! } : device
+    )
 }
 
 export function selectedOnlineDeviceId(
@@ -28,4 +37,17 @@ export function selectedOnlineDeviceId(
   return (
     preferred?.device_id ?? devices.find(device => device.status !== 'offline')?.device_id ?? null
   )
+}
+
+export function mobileCreatableDevices(devices: readonly DeviceInfo[]): DeviceInfo[] {
+  return mobileOperableDevices(devices).filter(
+    device =>
+      device.status !== 'offline' &&
+      (device.device_type !== 'app' ||
+        device.runtime_features?.remoteTaskAccess?.taskCreation === true)
+  )
+}
+
+export function mobileProjectCreatableDevices(devices: readonly DeviceInfo[]): DeviceInfo[] {
+  return mobileCreatableDevices(devices).filter(device => device.device_type !== 'app')
 }

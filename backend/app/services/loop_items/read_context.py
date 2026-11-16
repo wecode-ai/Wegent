@@ -37,6 +37,19 @@ class LoopItemReadContext:
         user_id: int,
         access: CloudProjectAccess,
     ) -> "LoopItemReadContext":
+        return cls.load_for_projects(db, items, user_id, [access])
+
+    @classmethod
+    def load_for_projects(
+        cls,
+        db: Session,
+        items: list[LoopItem],
+        user_id: int,
+        accesses: list[CloudProjectAccess],
+    ) -> "LoopItemReadContext":
+        access_by_project = {str(access.project.id): access for access in accesses}
+        if any(str(item.cloud_project_id) not in access_by_project for item in items):
+            raise ValueError("Issue response context requires its project's access")
         item_ids = [item.id for item in items]
         executions = _latest_executions(db, item_ids)
         user_ids = {item.assignee_user_id for item in items if item.assignee_user_id}
@@ -71,9 +84,9 @@ class LoopItemReadContext:
             ),
             messages=_messages(db, items),
             human_bindings=human_task_bindings(
-                db, items, user_id, projects=[access.project]
+                db, items, user_id, projects=[access.project for access in accesses]
             ),
-            visible_ids=_visible_ids(db, items, user_id, access),
+            visible_ids=_visible_ids(db, items, user_id, access_by_project),
         )
 
 
@@ -96,22 +109,34 @@ def _latest_executions(
 
 
 def _visible_ids(
-    db: Session, items: list[LoopItem], user_id: int, access: CloudProjectAccess
+    db: Session,
+    items: list[LoopItem],
+    user_id: int,
+    access_by_project: dict[str, CloudProjectAccess],
 ) -> set[str]:
-    item_ids = {item.id for item in items}
-    if not items or has_permission(access.role, BaseRole.Maintainer):
-        return item_ids
+    restricted_ids = {
+        item.id
+        for item in items
+        if (
+            not has_permission(
+                access_by_project[str(item.cloud_project_id)].role, BaseRole.Maintainer
+            )
+            and item_security(
+                item, access_by_project[str(item.cloud_project_id)].project
+            )
+            != "open"
+        )
+    }
+    visible_ids = {item.id for item in items} - restricted_ids
+    if not restricted_ids:
+        return visible_ids
     related_ids = {
         item_id
         for (item_id,) in db.query(LoopItem.id).filter(
-            LoopItem.id.in_(item_ids), related_item_filter(user_id)
+            LoopItem.id.in_(restricted_ids), related_item_filter(user_id)
         )
     }
-    return {
-        item.id
-        for item in items
-        if item_security(item, access.project) == "open" or item.id in related_ids
-    }
+    return visible_ids | related_ids
 
 
 def _messages(

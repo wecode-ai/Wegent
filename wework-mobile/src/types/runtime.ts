@@ -1,23 +1,13 @@
 export type DeviceStatus = 'online' | 'offline' | 'busy'
-export type ModelType = 'public' | 'user' | 'group' | 'runtime' | string
-export type ModelOptions = Record<string, string>
-
-export interface UnifiedModel {
-  name: string
-  type: ModelType
-  displayName?: string | null
-  provider?: string | null
-  modelId?: string | null
-  contextWindow?: number | null
-  maxOutputTokens?: number | null
-  namespace?: string
-  resourceUserId?: number
-  config?: Record<string, unknown>
-  runtime?: { family?: string | null; provider?: string | null } | null
-  isActive?: boolean
-  compatibilityDisabled?: boolean
-  compatibilityDisabledReason?: string
-}
+import type { ModelType, ModelOptions, UnifiedModel } from '../../../packages/chat-core/src/models'
+import type { Attachment, TurnFileChangesSummary } from '../../../packages/chat-core/src/runtime'
+export type { Attachment }
+export type { ModelType, ModelOptions, UnifiedModel }
+export type { RunnerModel } from '../../../packages/collaboration/src/agent-form/runnerRouting'
+export type {
+  RequestUserInputPayload,
+  RequestUserInputResponse,
+} from '../../../packages/chat-core/src/runtime'
 
 export interface UnifiedModelListResponse {
   data: UnifiedModel[]
@@ -38,27 +28,59 @@ export interface ModelExecutionFields {
 export interface DeviceInfo {
   id: number
   device_id: string
+  execution_target_id?: string | null
+  runtime_instance_id?: string | null
+  app_device_id?: string | null
+  socket_device_id?: string | null
+  runtime_routes?: import('../../../packages/chat-core/src/execution-project').DeviceRuntimeRoute[]
   name: string
   status: DeviceStatus
   device_type: 'local' | 'app' | 'cloud' | 'remote'
   bind_shell: 'claudecode' | 'openclaw'
   capabilities?: string[] | null
+  runtime_features?: {
+    schemaVersion: number
+    remoteTaskAccess?: { version: number; enabled: boolean; taskCreation?: boolean } | null
+    [feature: string]: unknown
+  } | null
 }
 
 export interface DeviceListResponse {
   items: DeviceInfo[]
 }
 
-export interface RuntimeTaskAddress {
+export type RuntimeTaskAddress =
+  import('../../../packages/chat-core/src/runtime').RuntimeTaskAddress
+
+export interface RuntimeTaskPinRequest {
   deviceId: string
+  threadId: string
+  pinned: boolean
+  beforeThreadId?: string | null
+}
+
+export interface RuntimeSidebarMutationResponse {
+  accepted: boolean
+  deviceId: string
+  error?: string | null
+}
+
+export interface RuntimeTaskRenameRequest {
+  address: RuntimeTaskAddress
+  title: string
+}
+
+export interface RuntimeTaskArchiveResponse {
+  accepted: boolean
   taskId: string
-  runtime?: string
   workspacePath?: string | null
-  workspaceKind?: string | null
+  error?: string | null
 }
 
 export interface RuntimeTaskSummary {
   taskId: string
+  runtimeHandle?: Record<string, unknown> | null
+  optimistic?: boolean
   threadId?: string | null
   title: string
   runtime: string
@@ -115,6 +137,7 @@ export interface RuntimeTranscriptMessage {
   id: string
   role: 'user' | 'assistant' | 'system' | 'tool' | string
   content: string
+  attachments?: Attachment[]
   clientUserMessageId?: string | null
   client_user_message_id?: string | null
   subtaskId?: string | number | null
@@ -125,6 +148,10 @@ export interface RuntimeTranscriptMessage {
   errorType?: string | null
   error_type?: string | null
   blocks?: RuntimeChatBlock[] | null
+  runtimeItems?: (
+    | { id: string; type: 'assistant_text'; content: string; createdAt?: string | number | null }
+    | { id: string; type: 'block'; block: RuntimeChatBlock }
+  )[]
   fileChanges?: RuntimeFileChangesSummary | null
   file_changes?: RuntimeFileChangesSummary | null
   createdAt?: string | number | null
@@ -135,6 +162,7 @@ export interface RuntimeTranscriptMessage {
 
 export interface RuntimeTranscriptResponse {
   taskId: string
+  threadId?: string | null
   workspacePath: string
   runtime: string
   title?: string | null
@@ -147,7 +175,8 @@ export interface RuntimeTranscriptResponse {
 export interface RuntimeCreateRequest {
   schemaVersion: 2
   deviceId: string
-  workspacePath: string
+  workspacePath?: string
+  standaloneChatWorkspace?: boolean
   taskId: string
   runtime: 'codex'
   message: string
@@ -272,20 +301,25 @@ export interface RuntimeWorktreePreflightResponse {
 
 export interface ConversationItem {
   address: RuntimeTaskAddress
+  sourceWorkspacePath: string
   title: string
   deviceName: string
   projectName: string | null
   updatedAt: number
   running: boolean
+  pinned?: boolean
+  pinnedOrder?: number | null
 }
 
 export interface ChatMessage {
+  pendingDelivery?: boolean
   id: string
   taskId?: string
   subtaskId?: string
   turnId?: string
   role: 'user' | 'assistant' | 'system'
   content: string
+  attachments?: Attachment[]
   textItems?: ChatTextItem[]
   blocks?: ChatProcessingBlock[]
   fileChanges?: ChatFileChangesSummary
@@ -308,6 +342,7 @@ export type ChatBlockStatus = 'generating_arguments' | 'pending' | 'streaming' |
 interface ChatProcessingBlockBase {
   id: string
   subtaskId: string
+  parentToolUseId?: string
   status: ChatBlockStatus
   createdAt: number
   completedAt?: number
@@ -332,7 +367,11 @@ export interface ChatFileChangesBlock extends ChatProcessingBlockBase {
   fileChanges: ChatFileChangesSummary
 }
 
-export type ChatProcessingBlock = ChatToolBlock | ChatNarrativeBlock | ChatFileChangesBlock
+export type ChatSubagentBlock =
+  import('../../../packages/chat-core/src/runtime-conversation').SubagentBlock
+
+export type ChatProcessingBlock =
+  ChatToolBlock | ChatNarrativeBlock | ChatFileChangesBlock | ChatSubagentBlock
 
 export interface ChatFileChangeItem {
   path: string
@@ -344,13 +383,14 @@ export interface ChatFileChangeItem {
 }
 
 export interface ChatFileChangesSummary {
+  source?: TurnFileChangesSummary
   fileCount: number
   additions: number
   deletions: number
   files: ChatFileChangeItem[]
 }
 
-export interface RuntimeFileChangesSummary {
+export interface RuntimeFileChangesSummary extends Partial<Omit<TurnFileChangesSummary, 'files'>> {
   file_count?: number
   fileCount?: number
   additions?: number

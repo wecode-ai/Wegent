@@ -146,8 +146,7 @@ describe("active project needs-my-input quick filter", () => {
           />,
         ),
       );
-      expect(filter.getAttribute("aria-pressed")).toBe("false");
-      act(() => filter.click());
+      expect(filter.getAttribute("aria-pressed")).toBe("true");
       expect(
         container.querySelector('[data-testid="visible-creator"]'),
       ).toBeNull();
@@ -180,8 +179,6 @@ describe("active project needs-my-input quick filter", () => {
         ),
       );
       expect(filter().textContent).toBe("待我处理2");
-      expect(filter().getAttribute("aria-pressed")).toBe("false");
-      act(() => filter().click());
       expect(filter().getAttribute("aria-pressed")).toBe("true");
       expect(visible("creator")).toBeTruthy();
       expect(visible("question")).toBeTruthy();
@@ -207,8 +204,8 @@ describe("active project needs-my-input quick filter", () => {
           />,
         ),
       );
-      expect(filter().getAttribute("aria-pressed")).toBe("false");
-      expect(visible("stand-in")).toBeTruthy();
+      expect(filter().getAttribute("aria-pressed")).toBe("true");
+      expect(visible("stand-in")).toBeNull();
       act(() => filter().click());
       act(() =>
         root.render(
@@ -223,7 +220,7 @@ describe("active project needs-my-input quick filter", () => {
           />,
         ),
       );
-      expect(filter().getAttribute("aria-pressed")).toBe("false");
+      expect(filter().getAttribute("aria-pressed")).toBe("true");
       expect(filter().textContent).toBe("待我处理1");
       expect(props.onSaveViews).not.toHaveBeenCalled();
     } finally {
@@ -260,7 +257,7 @@ describe("active project needs-my-input quick filter", () => {
         '[data-testid="project-needs-my-input-filter"]',
       )!;
       expect(filter.textContent).toBe("待我处理2");
-      act(() => filter.click());
+      expect(filter.getAttribute("aria-pressed")).toBe("true");
       expect(
         container.querySelector('[data-testid="visible-stand-in"]'),
       ).toBeNull();

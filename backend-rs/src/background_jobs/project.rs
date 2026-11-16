@@ -16,12 +16,16 @@ pub(crate) mod store;
 pub(crate) mod agents;
 #[path = "project_authority.rs"]
 pub(crate) mod authority;
+#[path = "project_device_access.rs"]
+pub(crate) mod device_access;
 #[path = "project_profile.rs"]
 pub(crate) mod profile;
 #[path = "project_queue.rs"]
 pub(crate) mod queue;
 #[path = "project_routing.rs"]
 pub(crate) mod routing;
+#[path = "project_routing_diagnostics.rs"]
+mod routing_diagnostics;
 #[path = "project_runtime_rpc.rs"]
 pub(crate) mod runtime_rpc;
 

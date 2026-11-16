@@ -972,12 +972,14 @@ export function useWorkbenchRuntimeMessaging({
       const runtime = options?.runtime ?? inferRuntimeName(selectedModel)
       const friendlyTitle =
         runtime === 'codex'
-          ? friendlyTitleForTask(
-              preferences,
-              modelSelection.models,
-              executionModel,
-              options?.ephemeral
-            )
+          ? typeof options?.origin?.generatedIssueTitle === 'string' && !options?.ephemeral
+            ? titleModelForGeneration(preferences, modelSelection.models, executionModel)
+            : friendlyTitleForTask(
+                preferences,
+                modelSelection.models,
+                executionModel,
+                options?.ephemeral
+              )
           : null
       const taskSeed = createRuntimeTaskId(runtime)
       const taskId = createRuntimeTaskIdFromSeed(taskSeed)
@@ -1796,15 +1798,16 @@ export function useWorkbenchRuntimeMessaging({
       options: CreateProjectRuntimeTaskOptions
     ): Promise<RuntimeTaskAddress | false> => {
       const message = input.trim()
-      if (!message) {
-        reportSendBlocked('请输入内容后再发送', undefined, options)
+      const selectedAttachments = options.attachments ?? attachmentSelection.attachments
+      if (!message && selectedAttachments.length === 0) {
+        reportSendBlocked('请输入内容或添加附件后再发送', undefined, options)
         return false
       }
 
       const taskRequest = options.taskRequest
       const prepared = buildSendPayload(
         message,
-        options.attachments,
+        selectedAttachments,
         options.project,
         taskRequest?.additionalSkills ? false : undefined,
         taskRequest?.additionalSkills,
@@ -1912,7 +1915,13 @@ export function useWorkbenchRuntimeMessaging({
         openInMainPane: false,
       })
     },
-    [buildSendPayload, reportSendBlocked, sendPreparedRuntimeMessage, state.devices]
+    [
+      attachmentSelection.attachments,
+      buildSendPayload,
+      reportSendBlocked,
+      sendPreparedRuntimeMessage,
+      state.devices,
+    ]
   )
 
   const loadTurnFileChangesDiff = useCallback(

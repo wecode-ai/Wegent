@@ -10,6 +10,20 @@ async function selectReadConversationAction(control, action) {
   await control.command('click', `[data-testid="runtime-task-view-${action}"]`)
 }
 
+export async function expandAllReadConversations(control) {
+  await control.command('click', '[data-testid="runtime-task-view-menu-button"]')
+  const expandSelector = '[data-testid="runtime-task-view-expand-read"]'
+  const deadline = Date.now() + 2000
+  while (Date.now() < deadline) {
+    if (Number(await control.command('getElementCount', expandSelector)) > 0) {
+      await control.command('click', expandSelector)
+      return
+    }
+    await new Promise(resolve => setTimeout(resolve, 100))
+  }
+  await control.command('press', 'body', { key: 'Escape' })
+}
+
 export async function verifyActiveConversationSurvivesCollapse({ control, taskId, state }) {
   const rowTestId = `runtime-local-task-row-${taskId}`
   const indicatorTestId = `runtime-local-task-${state}-${taskId}`

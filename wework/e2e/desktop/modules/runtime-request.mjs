@@ -8,6 +8,7 @@ export async function fetchLocalRuntime(control, url, init = {}) {
     await control.command('fetchLocalRuntime', 'body', {
       value: JSON.stringify({ url: String(url), ...request }),
       ...(request.timeoutMs ? { timeoutMs: request.timeoutMs } : {}),
+      preserveResultAcrossClientReplacement: true,
     })
   )
   signal?.throwIfAborted()

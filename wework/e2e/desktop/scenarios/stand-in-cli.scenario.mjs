@@ -37,6 +37,7 @@ export function createDesktopScenario(options) {
       assert.ok(provider)
       const declaration = provider.cliReadTools.dingtalk
       assert.deepEqual(Object.keys(declaration.operations).sort(), [
+        'downloadImage',
         'listConversation',
         'listDirectConversation',
         'listMentions',

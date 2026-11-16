@@ -99,6 +99,51 @@ def test_catalog_rejects_duplicate_model_identity():
         RunnerCatalog(models=[model, model])
 
 
+@pytest.mark.parametrize(
+    "reasoning",
+    [
+        {},
+        {"default_reasoning_effort": None, "supported_reasoning_efforts": None},
+        {"default_reasoning_effort": "low", "supported_reasoning_efforts": []},
+        {
+            "default_reasoning_effort": "high",
+            "supported_reasoning_efforts": ["low", "high", "future-effort"],
+        },
+    ],
+)
+def test_catalog_preserves_optional_reasoning_metadata(reasoning):
+    report = RunnerCatalog(
+        runtimes=["codex"],
+        models=[
+            {**MODEL, "label": "Model X", "local_model_id": "native-x", **reasoning}
+        ],
+    )
+
+    model = report.model_dump()["models"][0]
+    assert model["default_reasoning_effort"] == reasoning.get(
+        "default_reasoning_effort"
+    )
+    assert model["supported_reasoning_efforts"] == reasoning.get(
+        "supported_reasoning_efforts"
+    )
+
+
+@pytest.mark.parametrize(
+    "invalid",
+    [
+        {"default_reasoning_effort": 42},
+        {"supported_reasoning_efforts": "high"},
+        {"supported_reasoning_efforts": ["low", 42]},
+        {"unknown_reasoning_field": "high"},
+    ],
+)
+def test_catalog_rejects_invalid_reasoning_metadata_and_unknown_fields(invalid):
+    with pytest.raises(ValidationError):
+        RunnerCatalog(
+            models=[{**MODEL, "label": "X", "local_model_id": "native-x", **invalid}]
+        )
+
+
 def resolve(db, user, issue, mode="project_pool", selection=None, **kwargs):
     return resolve_routing(
         db,
@@ -612,6 +657,7 @@ def test_group_automation_keeps_run_identity_and_assignment_snapshot(
     )
     agent.metadata_json = {
         **agent.metadata_json,
+        "system_prompt": "Configured template coordinator instructions.",
         "execution_policy": {"mode": "project_pool"},
         "model_policy": {"mode": "fixed", "model": MODEL},
     }
@@ -659,6 +705,14 @@ def test_group_automation_keeps_run_identity_and_assignment_snapshot(
         group=group,
         automatic=True,
         automation_context={"run_id": "automation-run"},
+    )
+    assert (
+        "Configured template coordinator instructions."
+        in execution.runtime_origin_context["system_prompt"]
+    )
+    assert (
+        "Do not execute member work"
+        in execution.runtime_origin_context["system_prompt"]
     )
     assert execution.automation_run_id == "automation-run"
     assert (
@@ -727,8 +781,9 @@ async def test_queue_explains_offline_capacity_and_revoked_model(
     assert rows[0]["error_message"].startswith("RUNNER_CONFIGURATION_CONFLICT:")
 
 
+@pytest.mark.parametrize("policy_mode", ["fixed", "project_pool"])
 def test_role_downgrade_prevents_queued_execution_claim(
-    test_db, test_admin_user, routing_setup, monkeypatch
+    test_db, test_admin_user, routing_setup, monkeypatch, policy_mode
 ):
     from app.models.resource_member import ResourceMember
     from app.schemas.base_role import BaseRole
@@ -749,6 +804,11 @@ def test_role_downgrade_prevents_queued_execution_claim(
         status="approved",
     )
     test_db.add(grant)
+    if policy_mode == "fixed":
+        test_db.query(ResourceMember).filter(
+            ResourceMember.resource_type == "Device",
+            ResourceMember.resource_id.in_([device.id for device in devices]),
+        ).delete(synchronize_session=False)
     test_db.flush()
     monkeypatch.setattr(
         "app.services.runner_routing.require_cloud_project_role",
@@ -757,7 +817,14 @@ def test_role_downgrade_prevents_queued_execution_claim(
     kwargs = dict(
         config={
             "runtime": "codex",
-            "execution_policy": {"mode": "project_pool"},
+            "execution_policy": {
+                "mode": policy_mode,
+                **(
+                    {"environment_id": str(devices[0].id)}
+                    if policy_mode == "fixed"
+                    else {}
+                ),
+            },
             "model_policy": {"mode": "fixed", "model": MODEL},
         },
         project_id=str(project.id),
@@ -898,7 +965,7 @@ def test_stale_content_writer_preserves_committed_binding(tmp_path):
 
 
 @pytest.mark.parametrize("mode", ["fixed", "project_pool", "user_select"])
-def test_cp12_all_routing_policies_require_current_project_resource_grants(
+def test_cp12_automatic_routing_requires_current_project_resource_grants(
     test_db, routing_setup, mode
 ):
     from app.models.resource_member import ResourceMember
@@ -928,6 +995,7 @@ def test_cp12_all_routing_policies_require_current_project_resource_grants(
             project_id=issue.cloud_project_id,
             issue_id=issue.id,
             selection=selection,
+            automatic=True,
         )
 
 
@@ -951,7 +1019,15 @@ def test_catalog_report_preserves_device_config_updated_after_loading(
     assert "cloudConfig" not in device.json["spec"]
 
     report = RunnerCatalog(
-        models=[{**MODEL, "label": "Updated model", "local_model_id": "updated-native"}]
+        models=[
+            {
+                **MODEL,
+                "label": "Updated model",
+                "local_model_id": "updated-native",
+                "default_reasoning_effort": "high",
+                "supported_reasoning_efforts": ["low", "high"],
+            }
+        ]
     )
     save_catalog(test_db, device, report)
     test_db.expire(device, ["json"])

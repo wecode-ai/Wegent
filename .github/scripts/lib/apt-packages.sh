@@ -2,10 +2,6 @@
 
 set -euo pipefail
 
-rewrite_ci_ubuntu_archive() {
-  sed -E 's#https?://(archive|security|azure\.archive)\.ubuntu\.com/ubuntu/?|mirror\+file:/etc/apt/apt-mirrors\.txt#http://mirrors.edge.kernel.org/ubuntu#g'
-}
-
 find_missing_apt_packages() {
   local package
 
@@ -26,7 +22,7 @@ run_apt_with_diagnostics() {
       printf 'APT command failed with exit status %s; resolver diagnostics follow.\n' "$apt_status"
       awk '/^nameserver[[:space:]]/ { print }' /etc/resolv.conf
       local apt_host apt_family
-      for apt_host in mirrors.edge.kernel.org archive.ubuntu.com security.ubuntu.com azure.archive.ubuntu.com deb.nodesource.com; do
+      for apt_host in archive.ubuntu.com security.ubuntu.com azure.archive.ubuntu.com deb.nodesource.com; do
         for apt_family in ahostsv4 ahostsv6; do
           printf 'APT resolver host=%s family=%s\n' "$apt_host" "$apt_family"
           timeout 2 getent "$apt_family" "$apt_host"
@@ -35,4 +31,18 @@ run_apt_with_diagnostics() {
     } >&2 || true
   fi
   return "$apt_status"
+}
+
+install_missing_apt_packages() {
+  local package
+  local missing=()
+  while IFS= read -r package; do
+    missing+=("$package")
+  done < <(find_missing_apt_packages "$@")
+  if ((${#missing[@]} == 0)); then return 0; fi
+
+  local privileged=()
+  if ((EUID != 0)); then privileged=(sudo); fi
+  run_apt_with_diagnostics "${privileged[@]}" apt-get -o APT::Update::Error-Mode=any update || return
+  run_apt_with_diagnostics "${privileged[@]}" apt-get install --yes --no-install-recommends "${missing[@]}"
 }

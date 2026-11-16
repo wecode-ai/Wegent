@@ -1,5 +1,6 @@
 import { open } from 'node:fs/promises'
 import { waitForElementWidth, waitForSnapshot } from './conversation-layout.mjs'
+import { runtimeTransportGates } from './runtime-transport-gates.mjs'
 import { waitForTerminalOutput } from './terminal-compatibility-flows.mjs'
 
 import {
@@ -442,23 +443,48 @@ async function verifyPastedWorkspacePaths({ composerSelector, control, workspace
   assert.equal(await control.command('getValue', composerSelector), '')
   await control.command('hover', '[data-testid="attachment-badge"]')
   await control.command('click', '[data-testid="remove-attachment-button"]')
-  await control.command('pasteFile', composerSelector, {
-    filename: 'test-large-generated.bin',
-    mimeType: 'application/octet-stream',
-    fileSize: 100 * 1024 * 1024 + 1,
-    value: 'YQ==',
+  const transportGates = runtimeTransportGates(control)
+  const finishGateId = 'attachment-finish-response-drop'
+  await transportGates.arm({
+    id: finishGateId,
+    kind: 'response',
+    name: 'attachment.finish',
+    drop: true,
   })
-  await waitForSnapshot(
-    control,
-    snapshot =>
-      snapshot.text.includes('test-large-generated.bin') &&
-      snapshot.testIds.includes('attachment-badge') &&
-      !snapshot.testIds.includes('uploading-attachment-badge') &&
-      !snapshot.testIds.includes('attachment-error-badge'),
-    'A generated local attachment above 100 MiB did not finish staging',
-    60_000,
-    ACTIVE_WORKBENCH_SELECTOR
-  )
+  try {
+    await control.command('pasteFile', composerSelector, {
+      filename: 'test-large-generated.bin',
+      mimeType: 'application/octet-stream',
+      fileSize: 100 * 1024 * 1024 + 1,
+      value: 'YQ==',
+    })
+    await waitForSnapshot(
+      control,
+      snapshot =>
+        snapshot.text.includes('test-large-generated.bin') &&
+        snapshot.testIds.includes('attachment-badge') &&
+        !snapshot.testIds.includes('uploading-attachment-badge') &&
+        !snapshot.testIds.includes('attachment-error-badge'),
+      'A generated local attachment above 100 MiB did not recover after its finish response was dropped',
+      120_000,
+      ACTIVE_WORKBENCH_SELECTOR
+    )
+    const droppedFinish = await transportGates.wait(finishGateId)
+    assert.equal(droppedFinish.dropped, true, 'The real attachment finish response was not dropped')
+    assert.equal(
+      droppedFinish.deliveries,
+      0,
+      'The dropped attachment finish response was delivered'
+    )
+    assert.match(
+      droppedFinish.value.result,
+      /test-large-generated\.bin$/,
+      'The dropped response did not contain the completed host attachment path'
+    )
+    await transportGates.save(resultDir, 'attachment-finish-response-recovery.json', [finishGateId])
+  } finally {
+    await transportGates.reset()
+  }
   await control.command('hover', '[data-testid="attachment-badge"]')
   await control.command('click', '[data-testid="remove-attachment-button"]')
   await control.command('pastePaths', composerSelector, {

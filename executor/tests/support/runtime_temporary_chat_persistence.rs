@@ -353,7 +353,11 @@ done
     .replace("@LOG_PATH@", log_path.to_str().unwrap())
     .replace("@STATE_ROOT@", root.to_str().unwrap())
     .replace("@WORKSPACE@", workspace.to_str().unwrap());
-    fs::write(&binary, script).unwrap();
+    fs::write(
+        &binary,
+        wegent_executor_test_support::with_codex_bundled_catalog(&script),
+    )
+    .unwrap();
     fs::set_permissions(&binary, fs::Permissions::from_mode(0o755)).unwrap();
     binary
 }

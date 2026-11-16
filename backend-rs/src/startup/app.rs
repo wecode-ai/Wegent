@@ -164,6 +164,8 @@ pub async fn build_with_clients(
         erp: Arc::new(NoopErpProvider),
         video_result_urls: Arc::new(crate::video_result_urls::NoVideoResultUrlRefresh),
         cloud_runtime_features: Arc::new(crate::devices::NoCloudRuntimeFeatures),
+        unique_app_device_names: config::env_or_dotenv("WEGENT_RS_UNIQUE_APP_DEVICE_NAMES")
+            .is_some_and(|value| value == "1"),
         skill_market: crate::skill_market::SkillMarketRegistry::default(),
         mcp_providers: crate::mcp_providers::McpProviderRegistry::default(),
         interactive_form: crate::InteractiveFormRegistry::default(),

@@ -292,3 +292,29 @@ test('event waits have a deadline and stopping rejects outstanding waits', async
   proxy.fail(new Error('Runtime event proxy stopped'))
   await pending
 })
+
+test('network fault closes real Runtime sockets and rejects upgrades until restored', async t => {
+  const network = await fixture(t)
+  const closed = once(network.client, 'close')
+  network.proxy.disconnectWebSockets(true)
+  await closed
+  const blocked = connect(new URL(network.proxy.url).port, '127.0.0.1')
+  t.after(() => blocked.destroy())
+  const rejected = once(blocked, 'close')
+  blocked.write(
+    'GET /socket.io/?EIO=4&transport=websocket HTTP/1.1\r\nHost: 127.0.0.1\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Version: 13\r\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n\r\n'
+  )
+  await rejected
+  await until(() => network.proxy.websockets.size === 0)
+  assert.equal(network.proxy.failure, null, 'A deliberate network fault is not a proxy failure')
+  network.proxy.disconnectWebSockets(false)
+  const restored = connect(new URL(network.proxy.url).port, '127.0.0.1')
+  t.after(() => restored.destroy())
+  const upgraded = once(restored, 'data')
+  restored.write(
+    'GET /socket.io/?EIO=4&transport=websocket HTTP/1.1\r\nHost: 127.0.0.1\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Version: 13\r\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n\r\n'
+  )
+  assert.match((await upgraded)[0].toString(), /^HTTP\/1.1 101 /)
+  restored.write(clientFrame(packet(completed)))
+  await network.proxy.waitForEvent(entry => entry.event === 'response.completed')
+})

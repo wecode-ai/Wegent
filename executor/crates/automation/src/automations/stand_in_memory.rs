@@ -125,7 +125,7 @@ mod tests {
         assert!(!store.ensure_stand_in_memory_review(7, "mac").unwrap());
         assert_eq!(store.list().len(), 1);
         assert!(store
-            .create(weekly_review(7, "mac", "09:00", "en").unwrap())
+            .create(weekly_review(7, "mac", "09:00", "UTC", "en").unwrap())
             .is_ok());
     }
 }

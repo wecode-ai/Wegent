@@ -117,7 +117,15 @@
     "edited_file": "编辑 {{filename}}",
     "created_file": "创建 {{filename}}",
     "deleted_file": "删除 {{filename}}",
-    "renamed_file": "重命名 {{filename}}"
+    "renamed_file": "重命名 {{filename}}",
+    "overload_retry_in": "模型繁忙，将在 {{remaining}} 后用原模型重试…",
+    "overload_retrying": "模型繁忙，正在用原模型重试…",
+    "overload_waiting": "模型繁忙，等待用原模型自动重试。",
+    "quota_waiting": "额度已用完，等待用原模型自动继续。",
+    "quota_wait_unknown": "额度已用完，正在查询恢复时间，将用原模型自动继续。",
+    "cancel_automatic_recovery": "取消自动继续",
+    "quota_wait_until": "额度已用完，将在 {{remaining}} 后用原模型自动继续。",
+    "quota_checking": "正在检查额度恢复情况，恢复后将用原模型自动继续…"
   },
   "assistant_status": {
     "working": "处理中",

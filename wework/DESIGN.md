@@ -1017,6 +1017,13 @@ component-level validation outlines to override the native-outline reset.
   禁止远程控制的 APP 设备；这些设备的工作目录保留展示但不可用于 Web 发起执行。
   ProjectChat is the canonical per-Issue activity stream. Connected hosts must not
   add REST comments, assignments or runs, or switch sources after subscription failure.
+  协作 exp 的只读任务时间线还可以独立呈现 Issue 已持久化的状态与指派历史，
+  使用其原始身份与用户署名；这些历史事实不得伪装成 ProjectChat 消息，
+  不得重复合并 REST 评论或执行记录，也不得作为消息订阅失败的替代源。
+  The collaboration experiment may separately present persisted Issue status and
+  assignment history using native identities and user attribution. These facts
+  are not ProjectChat messages, must not duplicate REST comments or executions,
+  and must never substitute for a failed message subscription.
   Browser execution selection excludes APP devices from standalone targets and marks
   their workspaces unavailable, following the backend remote-control policy.
   看板卡片、进展弹层、任务侧栏及执行详情还须在挂载会话读取组件前检查设备能力。

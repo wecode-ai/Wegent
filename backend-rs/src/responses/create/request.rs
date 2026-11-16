@@ -45,6 +45,9 @@ use super::skill_generation;
 use super::skills::{BotSkills, SkillAccess, SkillBindingContext, get_bot_skills};
 use super::tokens::{create_skill_identity_token, create_task_token};
 
+#[path = "request_coordinate.rs"]
+mod coordinate;
+
 /// The inputs the create flow has after the session setup and team resolution.
 pub struct BuildExecutionRequestInput<'a> {
     pub user_id: i64,
@@ -387,6 +390,7 @@ pub(crate) async fn build_chat_execution_request(
     preload_skills: &[Value],
     generation: Option<&Value>,
     model_options: Option<&Value>,
+    created_git_repository: Option<&Value>,
 ) -> Result<ExecutionRequest, FastApiError> {
     let runtime_model = super::socket_runtime_model::resolve(state, input, model_options).await?;
     build_request_with_runtime(
@@ -396,7 +400,11 @@ pub(crate) async fn build_chat_execution_request(
         preload_skills,
         true,
         generation,
-        runtime_model,
+        ExecutionOverrides {
+            runtime_model,
+            created_git_repository,
+            include_coordinate_members: true,
+        },
     )
     .await
 }
@@ -434,9 +442,16 @@ pub(super) async fn build_request(
         preload_skills,
         compile_coding_mcp,
         generation,
-        None,
+        ExecutionOverrides::default(),
     )
     .await
+}
+
+#[derive(Default)]
+struct ExecutionOverrides<'a> {
+    runtime_model: Option<serde_json::Map<String, Value>>,
+    created_git_repository: Option<&'a Value>,
+    include_coordinate_members: bool,
 }
 
 async fn build_request_with_runtime(
@@ -446,8 +461,13 @@ async fn build_request_with_runtime(
     preload_skills: &[Value],
     compile_coding_mcp: bool,
     generation: Option<&Value>,
-    runtime_model: Option<serde_json::Map<String, Value>>,
+    overrides: ExecutionOverrides<'_>,
 ) -> Result<ExecutionRequest, FastApiError> {
+    let ExecutionOverrides {
+        runtime_model,
+        created_git_repository,
+        include_coordinate_members,
+    } = overrides;
     // `prepare_execution_request`'s generation-context enrichment
     // (`request_preparation.py:868-878`) runs before `builder.build`, so its
     // attachment reads stay ahead of the bot and model lookups.
@@ -505,6 +525,7 @@ async fn build_request_with_runtime(
         input.task_json,
         input.task_project_id,
         input.user_id,
+        created_git_repository,
     )
     .await;
     let project_repository = project_config
@@ -523,6 +544,12 @@ async fn build_request_with_runtime(
     }
     let (git_repo, git_url, git_domain, git_repo_id, branch_name) =
         git_fields(&workspace_repository);
+    if created_git_repository.is_some() && git_url.trim().is_empty() {
+        return Err(FastApiError::detail(
+            brz_http_server::StatusCode::BAD_REQUEST,
+            "Git workspace is missing a repository URL",
+        ));
+    }
     // `_build_user_info` + `classify_git_auth_transport`: match the user's
     // stored Git account against the task's resolved domain, resolve/encrypt
     // its token, and classify the transport the executor must expect.
@@ -788,7 +815,7 @@ async fn build_request_with_runtime(
     } else {
         None
     };
-    let built_agent_config = if let Some(runtime_model) = runtime_model {
+    let built_agent_config = if let Some(runtime_model) = runtime_model.as_ref() {
         serde_json::json!({"protocol": runtime_model["protocol"], "apiFormat": runtime_model["api_format"], "env": runtime_model})
     } else {
         build_agent_config(
@@ -820,6 +847,26 @@ async fn build_request_with_runtime(
         tracing::error!(%error, "failed to read the bot system prompt");
         FastApiError::internal()
     })?;
+
+    let collaboration = collaboration_model(team_json);
+    let coordinate_team = include_coordinate_members && collaboration == "coordinate";
+    let mut member_configs = if coordinate_team {
+        coordinate::members(state, input, runtime_model.as_ref(), &shell_type).await?
+    } else {
+        Vec::new()
+    };
+    if coordinate_team && super::skills::is_coding_shell(&shell_type) {
+        super::skills::extend_resolved_skills_from_bot_configs(
+            &kinds_cache,
+            &member_configs,
+            &mut skills,
+            input.user_preferences,
+            &tokens,
+            input.team.user_id,
+            &input.team.namespace,
+        )
+        .await?;
+    }
 
     // `build_execution_request` (`unified.py:277-306`): persist the request's
     // knowledge-base refs before `current_contexts` is loaded, and keep the
@@ -871,11 +918,7 @@ async fn build_request_with_runtime(
     // (`background::finalize`) and asks this single-Bot build to skip it.
     // `ExecutionRequest.mcp_servers` (the `tools` list) comes from the separate
     // `_build_mcp_servers` and keeps the Ghost/deployment servers.
-    let mut bot_mcp_servers = bot_mcp_servers;
-    if compile_coding_mcp && super::skills::is_coding_shell(&shell_type) {
-        super::skills::append_coding_mcp(&mut bot_mcp_servers, &skills, &shell_type);
-    }
-    let bot_entry = build_bot_config(&BotConfigInput {
+    let leader = build_bot_config(&BotConfigInput {
         id: input.bot.id,
         name: &input.bot.name,
         shell_type: &shell_type,
@@ -901,6 +944,26 @@ async fn build_request_with_runtime(
         base_image: base_image.as_deref(),
     });
 
+    let mut bot_configs = vec![leader];
+    bot_configs.append(&mut member_configs);
+    if super::skills::is_coding_shell(&shell_type) {
+        if coordinate_team {
+            super::background::merge_leader_capabilities(&mut bot_configs);
+            for bot in &mut bot_configs {
+                super::skills::sync_bot_skill_refs(bot, &skills.skill_refs);
+            }
+        }
+        if compile_coding_mcp {
+            let leader = &mut bot_configs[0];
+            let mut servers = leader["mcp_servers"]
+                .as_array()
+                .cloned()
+                .unwrap_or_default();
+            super::skills::append_coding_mcp(&mut servers, &skills, &shell_type);
+            leader["mcp_servers"] = Value::Array(servers);
+        }
+    }
+
     // Tokens.
     let auth_token = create_task_token(
         state,
@@ -921,8 +984,6 @@ async fn build_request_with_runtime(
         input.executor_name,
     )?;
 
-    let collaboration = collaboration_model(team_json);
-
     // `_build_session_context` (`request_builder.py:554`): the persisted
     // executor sessions and the legacy bindings. It is the last read of the
     // source builder, and its predicate decides whether the assistant-subtask
@@ -935,7 +996,7 @@ async fn build_request_with_runtime(
             // user (`get_owned_active_task` / the newly inserted row).
             task_user_id: input.user_id,
             user_id: input.user_id,
-            bot_configs: std::slice::from_ref(&bot_entry),
+            bot_configs: &bot_configs,
             task_json: input.task_json,
             executor_deleted: input.executor_deleted,
             new_session: input.new_session,
@@ -986,7 +1047,7 @@ async fn build_request_with_runtime(
         // `_build_request_task_data(user)`: the enabled user-configured MCP
         // services, or `null` when the caller has none.
         task_data: crate::mcp_user_service::build_request_task_data(input.user_preferences)?,
-        bot: Value::Array(vec![bot_entry]),
+        bot: Value::Array(bot_configs),
         mcp_servers,
         bot_name: input.bot.name.clone(),
         bot_namespace: input.bot.namespace.clone(),
@@ -1069,11 +1130,20 @@ async fn build_request_with_runtime(
         &input.team.namespace,
     )
     .await?;
+    if coordinate_team && super::skills::is_coding_shell(&shell_type) {
+        coordinate::keep_compiled_mcp_servers(&mut request);
+    }
     if !resolved_api_key.is_empty() {
-        // Let the deployment resolve its placeholders in both request sections.
+        // The key belongs to the primary model unless an explicit runtime
+        // override gives every team member the same model.
+        let bots = if runtime_model.is_some() {
+            &mut request.bot
+        } else {
+            &mut request.bot[0]
+        };
         state
             .llm_proxy_credentials
-            .replace_api_key_placeholder(&mut request.bot, &resolved_api_key);
+            .replace_api_key_placeholder(bots, &resolved_api_key);
         state
             .llm_proxy_credentials
             .replace_api_key_placeholder(&mut request.model_config, &resolved_api_key);

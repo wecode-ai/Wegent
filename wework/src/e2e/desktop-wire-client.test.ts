@@ -25,6 +25,7 @@ test('prebuilt desktop wire client runs without workspace dependencies', async (
     for (const runtimePath of [
       'wework/electron/src/runtime/release-preparation-progress.mjs',
       'wework/scripts/lib/extract-runtime-archive.mjs',
+      'wework/scripts/lib/windows-native-runtime.mjs',
       'packages/chat-core/package.json',
       'packages/chat-core/src/runtime-user-message.js',
       'packages/chat-core/test-fixtures/conversation-search-contract.json',

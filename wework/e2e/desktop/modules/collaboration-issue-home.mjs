@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict'
 
 import { inCollaborationSidebar } from './workspace-flows.mjs'
+import { openCollaborationIssueCreation } from './collaboration-personal-home.mjs'
 
 // Invoked by collaboration-shared-core after its real project/agent fixtures exist.
 export async function verifyCollaborationIssueHome(
@@ -18,18 +19,15 @@ export async function verifyCollaborationIssueHome(
   const projectRow = inCollaborationSidebar(
     `[data-testid="collaboration-workspace-project-${project.id}"]`
   )
-  const newConversation = inCollaborationSidebar(
-    `[data-testid="collaboration-project-new-conversation-${project.id}"]`
+  const projectMenu = inCollaborationSidebar(
+    `[data-testid="collaboration-project-menu-${project.id}"]`
   )
   const input = scoped(
     '[data-testid="collaboration-issue-workspace"] [data-testid="collaboration-home-issue-content"]'
   )
   const ownerButton = scoped('[data-testid="collaboration-issue-owner"]')
   const openComposer = async () => {
-    await control.command(
-      'click',
-      inCollaborationSidebar('[data-testid="collaboration-primary-home"]')
-    )
+    await openCollaborationIssueCreation(control, scoped)
     await control.command('waitFor', input)
     await control.command('click', scoped('[data-testid="collaboration-issue-project-trigger"]'))
     await control.command('click', `[data-testid="collaboration-issue-project-${project.id}"]`)
@@ -39,7 +37,7 @@ export async function verifyCollaborationIssueHome(
       { text: project.name }
     )
   }
-  await control.command('click', scoped('[data-testid="cloud-todo-detail-close"]'))
+  await control.command('clickWhenEnabled', scoped('[data-testid="cloud-todo-detail-close"]'))
   assert.equal(
     Number(await control.command('getElementCount', `${projectRow} svg:not(.stand-in-icon)`)),
     0,
@@ -54,7 +52,19 @@ export async function verifyCollaborationIssueHome(
   )
   await control.command('hover', projectRow)
   assert.equal(
-    await control.command('getComputedStyleValue', `${newConversation}`, { value: 'height' }),
+    Number(
+      await control.command(
+        'getElementCount',
+        inCollaborationSidebar(
+          `[data-testid="collaboration-project-new-conversation-${project.id}"]`
+        )
+      )
+    ),
+    0,
+    'Project conversations must not add a trailing sidebar action'
+  )
+  assert.equal(
+    await control.command('getComputedStyleValue', projectMenu, { value: 'height' }),
     '28px'
   )
   const rowHeight = await control.command(
@@ -142,16 +152,15 @@ export async function verifyCollaborationIssueHome(
       'clickWhenEnabled',
       scoped('[data-testid="collaboration-home-create-issue"]')
     )
-    await control.command('waitFor', scoped('[data-testid="cloud-project-header-title"]'), {
-      text: project.name,
-    })
+    await control.command('waitFor', scoped('[data-testid="collaboration-issue-detail"]'))
     const created = (await request(`/api/v1/cloud-projects/${project.id}/loop-items`)).items.find(
       item => item.description?.includes(marker)
     )
     assert.ok(created, 'Issue creation did not persist the composer content')
     assert.equal(String(created[target.field]), target.id, `${target.kind} owner was not persisted`)
     assert.match(created.description, /wework-issue:\/\//)
-    await control.command('click', scoped('[data-testid="cloud-todo-detail-close"]'))
+    await control.command('waitFor', scoped(`[data-testid="cloud-task-activity-${created.id}"]`))
+    await control.command('clickWhenEnabled', scoped('[data-testid="cloud-todo-detail-close"]'))
   }
 
   await openComposer()
@@ -172,7 +181,7 @@ export async function verifyCollaborationIssueHome(
   await control.command('waitFor', ownerButton, { text: group.name })
   await control.command('click', ownerButton)
   await control.command('click', '[data-testid="collaboration-issue-owner-none"]')
-  assert.equal((await control.command('getText', ownerButton)).trim(), '')
+  assert.equal((await control.command('getText', ownerButton)).trim(), '分配给')
   await control.command('fill', input, { value: '' })
   const issueCard = scoped(`[data-testid="cloud-todo-card-${issue.id}"]`)
   await control.command('click', projectRow)

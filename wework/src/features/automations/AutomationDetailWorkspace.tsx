@@ -116,6 +116,7 @@ export function AutomationDetailWorkspace({
 }: AutomationDetailWorkspaceProps) {
   const { t } = useTranslation('common')
   const [actionsOpen, setActionsOpen] = useState(false)
+  const [frequencySettingsOpen, setFrequencySettingsOpen] = useState(false)
   const nameRef = useRef<HTMLInputElement>(null)
   const promptRef = useRef<HTMLTextAreaElement>(null)
   useEffect(() => {
@@ -494,9 +495,22 @@ export function AutomationDetailWorkspace({
 
         <SectionTitle
           title={t('todo.automation_frequency', '频率')}
-          action={<Settings className="h-4 w-4" />}
+          action={
+            draft.scheduleType !== 'one_time' ? (
+              <button
+                type="button"
+                data-testid="automation-frequency-settings"
+                aria-label={t('todo.automation_frequency_settings')}
+                aria-expanded={frequencySettingsOpen}
+                onClick={() => setFrequencySettingsOpen(open => !open)}
+                className="flex h-11 w-11 items-center justify-center rounded-md hover:bg-surface md:h-7 md:w-7"
+              >
+                <Settings className="h-4 w-4" />
+              </button>
+            ) : undefined
+          }
         />
-        <FrequencySettings draft={draft} onChange={onChange} />
+        <FrequencySettings draft={draft} showAdvanced={frequencySettingsOpen} onChange={onChange} />
         {calendarMode && (
           <p className="mt-2 text-xs text-text-muted">
             {t('standIn.workspace.schedule_inherits_settings')}
@@ -585,9 +599,11 @@ function deviceOptionLabel(
 
 function FrequencySettings({
   draft,
+  showAdvanced,
   onChange,
 }: {
   draft: AutomationDraft
+  showAdvanced: boolean
   onChange: <K extends keyof AutomationDraft>(key: K, value: AutomationDraft[K]) => void
 }) {
   const { t } = useTranslation('common')
@@ -711,6 +727,23 @@ function FrequencySettings({
             testId="automation-cron-time"
             value={draft.cronTime}
             onChange={value => onChange('cronTime', value)}
+          />
+        </SettingsRow>
+      ) : null}
+      {showAdvanced && draft.scheduleType !== 'one_time' ? (
+        <SettingsRow
+          label={t('todo.automation_timezone')}
+          description={t('todo.automation_timezone_hint')}
+        >
+          <input
+            data-testid="automation-timezone-input"
+            aria-label={t('todo.automation_timezone')}
+            value={draft.timezone}
+            onChange={event => onChange('timezone', event.target.value)}
+            autoCapitalize="none"
+            autoCorrect="off"
+            spellCheck={false}
+            className="w-full bg-transparent text-right text-sm outline-none"
           />
         </SettingsRow>
       ) : null}

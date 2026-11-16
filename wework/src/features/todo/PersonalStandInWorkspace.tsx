@@ -27,6 +27,9 @@ import {
   type WorkspaceNavigationDetail,
 } from '@/lib/navigation'
 import { useStandInRoleDirectory } from './useStandInRoleDirectory'
+import { StandInHomeWorkspace } from './StandInHomeWorkspace'
+import { StandInHomeSetup, StandInHomeSetupPrompt } from './StandInHomeSetup'
+import type { PersonalHomeCollaborationWork } from './WeworkPersonalHome'
 
 type PersonalStandInWorkspaceProps = {
   services: WorkbenchServices
@@ -36,7 +39,10 @@ type PersonalStandInWorkspaceProps = {
   contentRoute: string
   entryRequestKey?: number
   onClose(): void
-  onOpenTask(address: RuntimeTaskAddress): Promise<void> | void
+  onOpenTask?(address: RuntimeTaskAddress): Promise<void> | void
+  embedded?: boolean
+  homeProjects?: CollaborationProject[]
+  collaborationWork?: PersonalHomeCollaborationWork
 }
 
 export function PersonalStandInWorkspace(props: PersonalStandInWorkspaceProps) {
@@ -59,20 +65,23 @@ function AccountStandInWorkspace({
   entryRequestKey,
   onClose,
   onOpenTask,
+  embedded = false,
+  homeProjects = [],
+  collaborationWork,
 }: PersonalStandInWorkspaceProps) {
   const { t, i18n } = useTranslation('common')
   const cloud = useContext(CloudConnectionContext)
   const [reentry, setReentry] = useState(0)
   const refreshKey = (entryRequestKey ?? 0) + reentry
   useEffect(() => {
-    if (!active || contentRoute !== '/stand-in') return
+    if (embedded || !active || contentRoute !== '/stand-in') return
     const onNavigate = (event: Event) => {
       if ((event as CustomEvent<WorkspaceNavigationDetail>).detail?.contentRoute === contentRoute)
         setReentry(current => current + 1)
     }
     window.addEventListener(WORKSPACE_NAVIGATION_EVENT, onNavigate)
     return () => window.removeEventListener(WORKSPACE_NAVIGATION_EVENT, onNavigate)
-  }, [active, contentRoute])
+  }, [active, contentRoute, embedded])
   const query = new URLSearchParams(contentRoute.split('?')[1] ?? '')
   const [initialBindingDevice] = useState(() => query.get('deviceId') ?? undefined)
   const instance = useStandInInstance(
@@ -121,7 +130,7 @@ function AccountStandInWorkspace({
     services.standInApi,
     ownerId,
     deviceId,
-    active && ownerAvailable && binding?.status === 'active',
+    !embedded && active && ownerAvailable && binding?.status === 'active',
     localDeviceId,
     refreshKey,
     cloud?.isConnected ? availableStandInDevices(devices).map(device => device.device_id) : []
@@ -160,13 +169,14 @@ function AccountStandInWorkspace({
     [services, ownerId, user.user_name, user.email, i18n.language]
   )
   useEffect(() => {
-    if (!active || !isElectronRuntime() || getDesktopWindowLabel() !== 'main') return
+    if (embedded || !active || !isElectronRuntime() || getDesktopWindowLabel() !== 'main') return
     void invokeDesktopHost<void>('renderer.startupReady').catch(cause => {
       console.error('[Wework] Failed to reveal the personal stand-in workspace', cause)
     })
-  }, [active])
+  }, [active, embedded])
   useEffect(() => {
-    if (!api || !active || !target || !ownerAvailable || binding?.status !== 'active') return
+    if (embedded || !api || !active || !target || !ownerAvailable || binding?.status !== 'active')
+      return
     let current = true
     void api.projects.list().then(
       rows => {
@@ -185,7 +195,7 @@ function AccountStandInWorkspace({
     return () => {
       current = false
     }
-  }, [api, active, target, ownerAvailable, binding?.status, attempt])
+  }, [api, active, target, ownerAvailable, binding?.status, attempt, embedded])
   const actions = (
     <button
       type="button"
@@ -249,6 +259,8 @@ function AccountStandInWorkspace({
         <p role="alert" className="p-5 text-sm">
           {t('standIn.instance.owner_unavailable')}
         </p>
+      ) : binding.status === 'stopped' && embedded ? (
+        <StandInHomeSetupPrompt />
       ) : binding.status === 'stopped' ? (
         <section className="space-y-4 p-5" data-testid="stand-in-instance-stopped">
           <h2 className="text-heading-sm font-medium">{t('standIn.instance.stopped')}</h2>
@@ -318,6 +330,28 @@ function AccountStandInWorkspace({
           </p>
           {actions}
         </section>
+      ) : target && embedded ? (
+        <StandInHomeSetup
+          api={services.standInApi}
+          userId={ownerId}
+          deviceId={target.deviceId}
+          active={active}
+        >
+          {settings => (
+            <StandInHomeWorkspace
+              key={`${ownerId}:${target.deviceId}`}
+              services={services}
+              userId={ownerId}
+              deviceId={target.deviceId}
+              localDeviceId={localDeviceId}
+              active={active}
+              onOpenTask={onOpenTask}
+              settings={settings}
+              projects={homeProjects}
+              collaborationWork={collaborationWork}
+            />
+          )}
+        </StandInHomeSetup>
       ) : target && api ? (
         <>
           {directory?.error && (

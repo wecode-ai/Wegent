@@ -29,17 +29,28 @@
   min-width: 0;
   min-height: 0;
   flex-direction: column;
-  overflow: hidden;
+  overflow-x: hidden;
+  overflow-y: hidden;
   padding: 12px 8px 8px;
   border-right: 1px solid rgb(var(--color-border));
   background: rgb(var(--color-bg-subtle));
 }
 
-.collaboration-platform-sidebar-context {
-  height: 100%;
+.collaboration-platform-sidebar > * {
+  flex-shrink: 0;
+}
+
+.collaboration-platform-sidebar > .collaboration-projects-scroll {
+  flex: 1 1 0;
+  min-height: 0;
+  overflow-x: hidden;
   overflow-y: auto;
   overscroll-behavior: contain;
   scrollbar-width: thin;
+}
+
+.collaboration-platform-sidebar-context {
+  height: 100%;
   padding: 14px 0 0;
   border-top: 1px solid rgb(var(--color-border));
   border-right: 0;
@@ -126,10 +137,10 @@
   padding: 0 6px 14px;
 }
 
-.collaboration-primary-navigation > button {
+.collaboration-primary-navigation button {
   display: flex;
   width: 100%;
-  height: 34px;
+  height: 30px;
   align-items: center;
   gap: 10px;
   padding: 0 10px;
@@ -142,20 +153,20 @@
   cursor: pointer;
 }
 
-.collaboration-primary-navigation > button:hover,
-.collaboration-primary-navigation > button.active {
+.collaboration-primary-navigation button:hover,
+.collaboration-primary-navigation button.active {
   color: rgb(var(--color-text-primary));
   background: rgb(var(--color-bg-hover));
 }
 
 :where(html:not([data-input-modality="pointer"]))
   .collaboration-primary-navigation
-  > button:focus-visible {
+  button:focus-visible {
   outline: 2px solid rgb(var(--color-primary));
   outline-offset: 2px;
 }
 
-.collaboration-primary-navigation > button > svg {
+.collaboration-primary-navigation button > svg {
   width: 16px;
   height: 16px;
   flex: 0 0 16px;
@@ -301,14 +312,10 @@
   min-width: 0;
   min-height: 0;
   box-sizing: border-box;
-  flex: 1 1 auto;
+  flex: 0 0 auto;
   flex-direction: column;
   gap: 4px;
   padding: 0 6px;
-  overflow-x: hidden;
-  overflow-y: auto;
-  overscroll-behavior: contain;
-  scrollbar-width: thin;
 }
 
 .collaboration-workspace-group {
@@ -378,6 +385,12 @@
   line-height: 20px;
   text-align: left;
   cursor: pointer;
+}
+
+.collaboration-platform-sidebar
+  .collaboration-ungrouped-projects
+  .collaboration-workspace-project {
+  padding-left: 10px;
 }
 
 .collaboration-workspace-folder {
@@ -556,11 +569,24 @@
 
 .collaboration-workspace-project > .collaboration-project-sidebar-badge {
   position: absolute;
-  left: -4px;
+  left: 10px;
   display: flex;
-  width: 24px;
-  height: 24px;
+  width: 16px;
+  height: 16px;
+  align-items: center;
+  justify-content: center;
   overflow: visible;
+}
+
+.collaboration-project-sidebar-badge > svg {
+  width: 16px;
+  height: 16px;
+}
+
+.collaboration-platform-sidebar
+  .collaboration-ungrouped-projects
+  .collaboration-workspace-project:has(> .collaboration-project-sidebar-badge) {
+  padding-left: 36px;
 }
 
 .collaboration-workspace-project-row {
@@ -578,6 +604,35 @@
   gap: 4px;
   opacity: 0;
   pointer-events: none;
+}
+
+.collaboration-project-offline {
+  position: absolute;
+  top: 1px;
+  right: 4px;
+  display: flex;
+  width: 28px;
+  height: 28px;
+  align-items: center;
+  justify-content: center;
+  border: 0;
+  border-radius: 6px;
+  color: rgb(var(--color-text-muted));
+  background: transparent;
+}
+
+button.collaboration-project-offline:hover {
+  color: rgb(var(--color-text-primary));
+  background: rgb(var(--color-bg-hover));
+}
+
+.collaboration-project-offline svg {
+  width: 16px;
+  height: 16px;
+}
+
+.has-offline-project .collaboration-project-row-actions {
+  right: 36px;
 }
 
 .collaboration-workspace-project-row:hover .collaboration-project-row-actions,
@@ -4807,6 +4862,10 @@
     flex-shrink: 0;
   }
 
+  .collaboration-platform-sidebar > .collaboration-projects-scroll {
+    flex: 0 0 auto;
+  }
+
   .collaboration-platform-brand {
     display: none;
   }
@@ -5026,4 +5085,31 @@
   .collaboration-resource-summary {
     min-width: calc(100% - 44px);
   }
+}
+
+.collaboration-management {
+  margin-top: auto;
+  padding-top: 12px;
+}
+.collaboration-management-navigation {
+  padding-left: 12px;
+}
+.collaboration-management-navigation[hidden] {
+  display: none;
+}
+.collaboration-management-navigation button {
+  width: 100%;
+}
+
+.collaboration-management-navigation {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.collaboration-management > button > svg:last-child {
+  margin-left: auto;
+}
+
+.collaboration-management + .collaboration-platform-sidebar-footer {
+  margin-top: 0;
 }

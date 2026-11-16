@@ -331,7 +331,7 @@ async fn remove_dropped_board_statuses<T: MysqlTransaction>(
 
 /// `project_board_statuses(project)`: the project's `(id, name)` columns,
 /// falling back to the default board when the stored metadata has none.
-fn metadata_board_statuses(metadata: &Map<String, Value>) -> Vec<(String, String)> {
+pub(crate) fn metadata_board_statuses(metadata: &Map<String, Value>) -> Vec<(String, String)> {
     let raw = metadata
         .get("board_config")
         .and_then(Value::as_object)

@@ -12,7 +12,15 @@
 
 'use client'
 
-import { useState, useEffect, useMemo, useCallback, useRef } from 'react'
+import {
+  useState,
+  useEffect,
+  useMemo,
+  useCallback,
+  useRef,
+  type ComponentProps,
+  type ReactNode,
+} from 'react'
 import { useSearchParams } from 'next/navigation'
 import { Files, Library, FileText, MessageSquare, Shield, WandSparkles } from 'lucide-react'
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
@@ -41,6 +49,24 @@ import type { Team } from '@/types/api'
 import type { ArtifactPromptRequest } from '@/types/knowledge-artifact'
 import type { KnowledgeCapabilityDraftRequest } from '@/types/knowledge-capability'
 import { getTaskQueryParam } from '@/features/tasks/utils/task-query-params'
+
+function KnowledgeChatArea(props: ComponentProps<typeof ChatArea>) {
+  const [chatActions, setChatActions] = useState<ReactNode>(null)
+
+  return (
+    <>
+      {chatActions && (
+        <div
+          className="flex shrink-0 justify-end border-b border-border px-4 py-2 [&>div]:flex-wrap [&>div]:justify-end [&_button]:min-h-11 [&_button]:min-w-11 lg:[&_button]:min-h-0 lg:[&_button]:min-w-0"
+          data-testid="knowledge-chat-actions"
+        >
+          {chatActions}
+        </div>
+      )}
+      <ChatArea {...props} onShareButtonRender={setChatActions} />
+    </>
+  )
+}
 
 interface KnowledgeDetailPanelProps {
   /** Currently selected knowledge base */
@@ -298,7 +324,8 @@ export function KnowledgeDetailPanel({
           className={`${mobileWorkspaceTab === 'chat' ? 'flex' : 'hidden'} min-h-0 min-w-0 flex-1 flex-col lg:flex`}
           data-testid="knowledge-workspace-chat"
         >
-          <ChatArea
+          <KnowledgeChatArea
+            key={selectedKb.id}
             teams={filteredTeams}
             isTeamsLoading={isTeamsLoading}
             loadError={teams.length === 0 ? loadError : null}

@@ -52,6 +52,26 @@ const pickerProjects: CloudProject[] = [
 ]
 
 describe('WorkItemComposerGuide', () => {
+  test('keeps board changes usable while project options refresh', async () => {
+    const user = userEvent.setup()
+    const onSelectProject = vi.fn()
+    const item = { id: 'WORK-1', title: 'Linked work' } as CloudLoopItem
+    const props = { project: teamProject, item, onSelectProject }
+    const { rerender } = render(<WorkItemComposerGuide {...props} projects={[teamProject]} />)
+    const trigger = screen.getByTestId('work-item-change-board')
+
+    rerender(<WorkItemComposerGuide {...props} projects={[]} />)
+
+    expect(screen.getByTestId('work-item-change-board')).toBe(trigger)
+    await user.click(trigger)
+    expect(screen.getByTestId('work-item-context-menu')).toBeVisible()
+    expect(screen.getByTestId('project-space-picker-empty')).toBeVisible()
+
+    rerender(<WorkItemComposerGuide {...props} projects={[teamProject]} />)
+    await user.click(screen.getByTestId('work-item-workspace-option-team-work'))
+    expect(onSelectProject).toHaveBeenCalledExactlyOnceWith(teamProject)
+  })
+
   test('reopens Issue selection for the current draft project', async () => {
     const user = userEvent.setup()
     const onSelectProject = vi.fn()
@@ -159,10 +179,13 @@ describe('WorkItemComposerGuide', () => {
     )
 
     await user.click(screen.getByTestId('project-space-context-pill'))
-    const menu = screen.getByRole('dialog', { name: '加入项目空间' })
+    const menu = screen.getByRole('dialog', { name: '选择项目' })
     const search = screen.getByTestId('project-space-picker-search')
     await waitFor(() => expect(search).toHaveFocus())
     expect(projectOptions().getAllByRole('option')).toHaveLength(4)
+    expect(within(menu).queryByRole('button', { name: '运营协作' })).not.toBeInTheDocument()
+    expect(within(menu).getByRole('button', { name: '远程项目' })).toBeVisible()
+    await user.click(screen.getByTestId('project-space-picker-toggle-workspaces'))
     await user.click(within(menu).getByRole('button', { name: '运营协作' }))
     expect(projectOptions().getAllByRole('option')).toHaveLength(1)
     expect(projectOptions().getByRole('option')).toHaveAccessibleName(
@@ -177,7 +200,7 @@ describe('WorkItemComposerGuide', () => {
     await user.click(screen.getByTestId('project-space-picker-clear-search'))
     expect(search).toHaveFocus()
     expect(projectOptions().getAllByRole('option')).toHaveLength(1)
-    await user.click(within(menu).getByRole('button', { name: '全部空间' }))
+    await user.click(within(menu).getByRole('button', { name: '全部分组' }))
     await user.type(search, '研发 report')
     expect(projectOptions().getByRole('option')).toHaveAccessibleName(
       '行业周报 · 产品研发 · REPORT'
@@ -203,7 +226,7 @@ describe('WorkItemComposerGuide', () => {
 
     await user.click(screen.getByTestId('project-space-context-pill'))
     const localOption = projectOptions().getByRole('option', { name: '周报 · 本地项目 · LOCAL' })
-    const cloudOption = projectOptions().getByRole('option', { name: '周报 · 云端项目 · CLOUD' })
+    const cloudOption = projectOptions().getByRole('option', { name: '周报 · 远程项目 · CLOUD' })
     expect(localOption).toHaveAttribute('aria-selected', 'false')
     expect(cloudOption).toHaveAttribute('aria-selected', 'true')
     await user.click(localOption)
@@ -223,7 +246,7 @@ describe('WorkItemComposerGuide', () => {
 
     const search = screen.getByTestId('project-space-picker-search')
     await waitFor(() => expect(search).toHaveFocus())
-    const option = projectOptions().getByRole('option', { name: '周报 · 云端项目 · CLOUD' })
+    const option = projectOptions().getByRole('option', { name: '周报 · 远程项目 · CLOUD' })
     expect(search).toHaveAttribute('aria-activedescendant', option.id)
     await user.keyboard('{Enter}')
     expect(onSelectProject).toHaveBeenCalledExactlyOnceWith(cloud)

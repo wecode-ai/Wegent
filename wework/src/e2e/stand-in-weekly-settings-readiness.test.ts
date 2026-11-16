@@ -97,7 +97,9 @@ test.each([false, true])(
       }
       return undefined
     })
-    const verified = story.verify({ command }, vi.fn()).catch((error: unknown) => error)
+    const verified = story
+      .verify({ command }, vi.fn(), schedule.timezone)
+      .catch((error: unknown) => error)
     await Promise.race([
       entryObserved,
       verified.then((error: unknown) => {

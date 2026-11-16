@@ -16,7 +16,7 @@ import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path'
 import { promisify } from 'node:util'
 import { DatabaseSync } from 'node:sqlite'
 
-import { CHECKPOINT_TASK_PROMPT, MODEL_PROVIDER_ID } from './shared.mjs'
+import { CHECKPOINT_TASK_PROMPT, MODEL_API_KEY, MODEL_PROVIDER_ID } from './shared.mjs'
 import { verifyNativeMcpEnvironment } from './native-mcp-environment.mjs'
 import { verifyNativeAgentMcp } from './native-agent-mcp.mjs'
 import { collectCodexSqliteDiagnostics } from './codex-sqlite-diagnostics.mjs'
@@ -85,9 +85,25 @@ async function runNativeTurn(fixture, home, resumeId) {
         '--skip-git-repo-check',
         `${CHECKPOINT_TASK_PROMPT} ${NATIVE_SESSION_MARKER}`,
       ]
-  // Desktop startup may select a different default provider. Native migration
-  // probes must keep using the runner's model service when resuming a session.
-  args.push('-c', `model_provider=${JSON.stringify(MODEL_PROVIDER_ID)}`)
+  // Upgrade changes the persisted provider identity. Native CLI probes must use
+  // that identity too, while still addressing only the fixture model service.
+  const provider = resumeId ? '~' : MODEL_PROVIDER_ID
+  args.push('-c', `model_provider=${JSON.stringify(provider)}`)
+  if (resumeId) {
+    const profile = {
+      name: 'Workbench migration fixture',
+      base_url: `http://127.0.0.1:${process.env.WEWORK_E2E_MODEL_SERVER_PORT}/v1`,
+      experimental_bearer_token: MODEL_API_KEY,
+      wire_api: 'responses',
+      requires_openai_auth: false,
+    }
+    args.push(
+      '-c',
+      `model_providers.${provider}={${Object.entries(profile)
+        .map(([key, value]) => `${key}=${JSON.stringify(value)}`)
+        .join(',')}}`
+    )
+  }
   const execution = promisify(execFile)(fixture.codexBinary, args, {
     cwd: fixture.workspace,
     env: {

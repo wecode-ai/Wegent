@@ -101,11 +101,7 @@ import {
   readSettingsReturnPath,
   writeSettingsReturnPath,
 } from '@/features/workspace-tabs/settingsReturnPath'
-import {
-  TitlebarActionsPortal,
-  TitlebarFeedbackPortal,
-} from '@/components/topnav/TitlebarActionsPortal'
-import { GlobalFeedbackButton } from '@/features/feedback/GlobalFeedbackButton'
+import { TitlebarActionsPortal } from '@/components/topnav/TitlebarActionsPortal'
 import { TaskBoardCreateButton } from '@/features/todo/TaskBoardActions'
 
 type ImNotificationDialogMode = { type: 'task'; address: RuntimeTaskAddress }
@@ -1081,17 +1077,12 @@ export function DesktopWorkbenchLayout({
             </div>
           )}
           {taskBoardOpen && routeActive && !settingsOpen ? (
-            <>
-              <TitlebarActionsPortal>
-                <TaskBoardCreateButton
-                  label={t('todo.new_task', '新建任务')}
-                  onClick={startNewChatOutsideHarness}
-                />
-              </TitlebarActionsPortal>
-              <TitlebarFeedbackPortal>
-                <GlobalFeedbackButton testId="task-feedback-button" />
-              </TitlebarFeedbackPortal>
-            </>
+            <TitlebarActionsPortal>
+              <TaskBoardCreateButton
+                label={t('todo.new_task', '新建任务')}
+                onClick={startNewChatOutsideHarness}
+              />
+            </TitlebarActionsPortal>
           ) : null}
           {taskBoardOpen ? (
             <div
@@ -1255,9 +1246,7 @@ export function DesktopWorkbenchLayout({
                         open
                         mode="existing"
                         preferNativeLocalPicker={shouldUseNativeProjectDirectoryPicker()}
-                        devices={state.devices.filter(
-                          device => device.device_type === 'local' || device.device_type === 'app'
-                        )}
+                        devices={state.devices.filter(device => device.device_type === 'local')}
                         preferredDeviceId={
                           state.standaloneDeviceId ??
                           state.user?.preferences?.default_execution_target

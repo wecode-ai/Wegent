@@ -1,9 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { localHtmlBrowserUrl } from './assistantMarkdownLinks'
-import {
-  createVisualizationWheelScript,
-  forwardVisualizationWheel,
-} from './inlineVisualizationScroll'
+import { forwardVisualizationWheel, withVisualizationWheel } from './inlineVisualizationScroll'
 import { joinDevicePath } from '@/lib/device-workspace-path'
 import { readInlineVisualizationHtml } from '@/desktop/inlineVisualization'
 import { useOptionalAppearance } from '@/features/appearance'
@@ -290,8 +287,10 @@ function buildVisualizationDocument(
     addEventListener('load',send);
     send();
   })()</script>`
-  const wheelScript = `<script>${createVisualizationWheelScript(token)}</script>`
-  return `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">${base}${styles}</head><body>${fragment}${resizeScript}${wheelScript}</body></html>`
+  return withVisualizationWheel(
+    `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">${base}${styles}</head><body>${fragment}${resizeScript}</body></html>`,
+    token
+  )
 }
 
 function escapeHtmlAttribute(value: string): string {

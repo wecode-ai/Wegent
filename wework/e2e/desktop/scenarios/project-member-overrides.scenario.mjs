@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 
 import { ensureExperimentalFeaturesEnabled } from '../modules/preferences-automation-flows.mjs'
 import {
-  expandCollaborationWorkspace,
+  revealCollaborationSidebarElement,
   inCollaborationSidebar,
   selectCollaborationDomain,
 } from '../modules/workspace-flows.mjs'
@@ -139,9 +139,9 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
     })
     await control.command('click', '[data-testid="workspace-tab-select-fixed-board"]')
     await selectCollaborationDomain(control, CONTENT, 'cloud')
-    await expandCollaborationWorkspace(
+    await revealCollaborationSidebarElement(
       control,
-      inCollaborationSidebar(`[data-testid="collaboration-workspace-toggle-${workspace.id}"]`)
+      inCollaborationSidebar(`[data-testid="collaboration-workspace-project-${project.id}"]`)
     )
     const projectSelector = inCollaborationSidebar(
       `[data-testid="collaboration-workspace-project-${project.id}"]`

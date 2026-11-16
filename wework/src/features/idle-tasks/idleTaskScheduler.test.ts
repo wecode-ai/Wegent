@@ -69,6 +69,53 @@ class FakeIdleHost implements IdleTaskSchedulerHost {
 }
 
 describe('IdleTaskScheduler', () => {
+  test.each([undefined, true, false])(
+    'applies the configured system load policy while retaining real pressure diagnostics: %s',
+    async enforceSystemLoadLimits => {
+      const host = new FakeIdleHost()
+      host.pressure = {
+        cpuLoadRatio: 1,
+        freeMemoryRatio: 0.01,
+        userIdleSeconds: 5,
+        enforceSystemLoadLimits,
+      }
+      const scheduler = new IdleTaskScheduler(host)
+      const task = vi.fn()
+      scheduler.start()
+      scheduler.schedule('plugin-update', task)
+      host.nowMs = 2_000
+      host.runIdle()
+      if (enforceSystemLoadLimits === false) {
+        await vi.waitFor(() => expect(task).toHaveBeenCalledOnce())
+      } else {
+        await vi.waitFor(() => expect(host.timers).toHaveLength(1))
+        expect(task).not.toHaveBeenCalled()
+      }
+      expect(scheduler.diagnostics().lastPressure).toEqual(host.pressure)
+    }
+  )
+
+  test('keeps user idle checks when system load limits are disabled', async () => {
+    const host = new FakeIdleHost()
+    host.pressure.enforceSystemLoadLimits = false
+    host.pressure.userIdleSeconds = 0
+    const scheduler = new IdleTaskScheduler(host)
+    const task = vi.fn()
+    scheduler.start()
+    scheduler.schedule('plugin-update', task)
+    host.runIdle()
+    expect(task).not.toHaveBeenCalled()
+    host.nowMs = 2_000
+    host.runTimer()
+    host.runIdle()
+    await vi.waitFor(() => expect(host.timers).toHaveLength(1))
+    expect(task).not.toHaveBeenCalled()
+    host.pressure.userIdleSeconds = 5
+    host.runTimer()
+    host.runIdle()
+    await vi.waitFor(() => expect(task).toHaveBeenCalledOnce())
+  })
+
   test('waits for startup and a renderer idle slice before running work', async () => {
     const host = new FakeIdleHost()
     const scheduler = new IdleTaskScheduler(host)

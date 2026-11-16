@@ -17,6 +17,22 @@ afterEach(async () => {
 })
 
 describe('stand-in error localization', () => {
+  it.each(['zh-CN', 'en'])(
+    'offers reasoning recovery for structured and persisted failures in %s',
+    async language => {
+      await i18n.changeLanguage(language)
+      const expected = i18n.t('common:standIn.errors.model_reasoning_unavailable')
+      expect(getStandInErrorMessage({ code: 'model_reasoning_unavailable' })).toBe(expected)
+      expect(
+        getStandInErrorMessage(
+          new Error(
+            'The selected model does not support the saved reasoning effort; update the stand-in model settings'
+          )
+        )
+      ).toBe(expected)
+      expect(expected).not.toBe(i18n.t('common:standIn.errors.model_unavailable'))
+    }
+  )
   it('keeps compatibility guidance independent of the failed operation in both languages', async () => {
     for (const [language, message] of [
       ['zh-CN', '当前 Wework 与执行设备的版本不兼容。请前往云端工作查看设备情况，升级后重试。'],
@@ -145,7 +161,7 @@ describe('stand-in error localization', () => {
     const error = { code: 'dependency_missing', message: 'Dependency dingtalk is missing' }
     await i18n.changeLanguage('zh-CN')
     const chinese =
-      '来源所需插件尚未安装。请打开分身设置，在「连接」中选择该来源并点击「安装所需插件」，安装后重新加载。'
+      '来源所需插件尚未安装。请打开助理设置，在「连接」中选择该来源并点击「安装所需插件」，安装后重新加载。'
     expect(getStandInErrorMessage(error)).toBe(chinese)
     expect(getStandInErrorMessage(new Error(chinese))).toBe(chinese)
     await i18n.changeLanguage('en')
@@ -163,7 +179,7 @@ it('preserves recovery guidance for historical agent binding errors through repe
     message: 'invalid task data: Project-scoped agents can only receive work from their project',
   }
   const message = getStandInErrorMessage(error)
-  expect(message).toBe('分身的旧智能体绑定已失效。请重新加载分身设置后重试。')
+  expect(message).toBe('助理的旧智能体绑定已失效。请重新加载助理设置后重试。')
   expect(getStandInErrorMessage(new Error(message))).toBe(message)
   expect(getStandInErrorMessage(error.message)).toBe(message)
 })

@@ -26,6 +26,18 @@ pub struct WorkspaceRepository<'a> {
     pub branch_name: &'a str,
 }
 
+impl WorkspaceRepository<'_> {
+    pub fn to_json(&self) -> Value {
+        json!({
+            "gitUrl": self.git_url,
+            "gitRepo": self.git_repo,
+            "gitRepoId": self.git_repo_id,
+            "gitDomain": self.git_domain,
+            "branchName": self.branch_name,
+        })
+    }
+}
+
 /// `workspace_factory`: the Workspace CRD payload for `workspace-{task_id}`.
 pub fn build_workspace_payload(
     name: &str,
@@ -34,15 +46,7 @@ pub fn build_workspace_payload(
 ) -> Value {
     json!({
         "kind": "Workspace",
-        "spec": {
-            "repository": {
-                "gitUrl": repository.git_url,
-                "gitRepo": repository.git_repo,
-                "gitRepoId": repository.git_repo_id,
-                "gitDomain": repository.git_domain,
-                "branchName": repository.branch_name,
-            }
-        },
+        "spec": {"repository": repository.to_json()},
         "status": {"state": "Available"},
         "metadata": {"name": name, "namespace": namespace},
         "apiVersion": "agent.wecode.io/v1",

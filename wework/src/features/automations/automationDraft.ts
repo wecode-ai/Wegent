@@ -1,4 +1,5 @@
 import { normalizeRuntimeWorkspacePath, runtimeProjectWorkKey } from '@/lib/runtime-project'
+import { getDeviceTimezone } from '@/lib/timezone'
 import { selectedModelExecutionFields } from '@/features/workbench/runtimeModelSelection'
 import type { RuntimeTaskWorkspaceBinding } from '@/lib/runtime-task-workspace-binding'
 import type {
@@ -234,7 +235,7 @@ export function emptyAutomationDraft(
     intervalValue: '1',
     intervalUnit: 'hours',
     executeAt: toDateTimeLocal(new Date(Date.now() + 60 * 60 * 1000)),
-    timezone: Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC',
+    timezone: getDeviceTimezone(),
     deviceId,
     workspacePath,
     conversationMode: 'independent',

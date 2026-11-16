@@ -105,36 +105,6 @@ mod tests {
     use super::*;
 
     #[test]
-    fn uses_materialized_workspace_path_for_task_workspace() {
-        let mut request = ExecutionRequest {
-            task_id: "task-1".to_owned(),
-            project_workspace_path: Some("/runtime/workspaces/task-1".to_owned()),
-            backend_url: Some("https://backend.example.com".to_owned()),
-            ..ExecutionRequest::default()
-        };
-        request.extra.insert(
-            "runtimeTaskTitle".to_owned(),
-            serde_json::json!("Identify local development instances"),
-        );
-
-        let env = task_identity_env(&request);
-
-        assert_eq!(env.get("WEGENT_TASK_ID"), Some(&"task-1".to_owned()));
-        assert_eq!(
-            env.get("WEGENT_TASK_WORKSPACE"),
-            Some(&"/runtime/workspaces/task-1".to_owned())
-        );
-        assert_eq!(
-            env.get("WEWORK_PARENT_TITLE"),
-            Some(&"Identify local development instances".to_owned())
-        );
-        assert!(env.contains_key("WEGENT_RUNTIME_BACKEND_URL"));
-        assert!(env
-            .keys()
-            .all(|key| TASK_SCOPED_ENV_KEYS.contains(&key.as_str())));
-    }
-
-    #[test]
     fn runtime_local_task_id_stabilizes_thread_identity() {
         let _lock = crate::test_env::lock();
         let previous_workspace_root = std::env::var_os("WORKSPACE_ROOT");

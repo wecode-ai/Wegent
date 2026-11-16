@@ -23,6 +23,7 @@ mod stand_in_dispatches;
 pub use human_requests::IssueHumanRequestScope;
 mod issue_badges;
 pub mod milestones;
+mod my_work;
 mod ordering;
 #[path = "project_coordination.rs"]
 mod project_coordination;
@@ -155,19 +156,25 @@ impl LocalTaskStore {
     }
 
     pub fn open(path: impl AsRef<Path>) -> Result<Self, TaskRuntimeError> {
-        let _initialization = LOCAL_TASK_STORE_INITIALIZATION
-            .lock()
-            .map_err(|_| TaskRuntimeError::LockPoisoned)?;
+        use wegent_runtime_logging::project_index_diagnostics::{trace, Stage};
+
+        let _stage = Stage::start("task_store.open");
+        let _initialization = trace("task_store.initialization_lock", || {
+            LOCAL_TASK_STORE_INITIALIZATION.lock()
+        })
+        .map_err(|_| TaskRuntimeError::LockPoisoned)?;
         let path = path.as_ref().to_path_buf();
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent)
                 .map_err(|error| TaskRuntimeError::Invalid(error.to_string()))?;
         }
-        let connection = Connection::open(&path)?;
+        let connection = trace("task_store.sqlite_open", || Connection::open(&path))?;
         connection.busy_timeout(Duration::from_secs(5))?;
         connection.pragma_update(None, "foreign_keys", "ON")?;
-        connection.pragma_update(None, "journal_mode", "WAL")?;
-        migrate(&connection)?;
+        trace("task_store.journal_mode", || {
+            connection.pragma_update(None, "journal_mode", "WAL")
+        })?;
+        trace("task_store.migrate", || migrate(&connection))?;
         Ok(Self {
             connection: Arc::new(Mutex::new(connection)),
             path,
@@ -199,9 +206,11 @@ impl LocalTaskStore {
     pub(crate) fn connection(
         &self,
     ) -> Result<std::sync::MutexGuard<'_, Connection>, TaskRuntimeError> {
-        self.connection
-            .lock()
-            .map_err(|_| TaskRuntimeError::LockPoisoned)
+        wegent_runtime_logging::project_index_diagnostics::trace(
+            "task_store.connection_lock",
+            || self.connection.lock(),
+        )
+        .map_err(|_| TaskRuntimeError::LockPoisoned)
     }
 }
 
@@ -227,7 +236,8 @@ const TASK_BINDING_COLUMNS: &str = "
             json_extract(metadata, '$.human_assignment_id'),
             json_extract(metadata, '$.dispatch_id'),
             json_extract(metadata, '$.dispatch_round_id'),
-            json_extract(metadata, '$.assignment_id')
+            json_extract(metadata, '$.assignment_id'),
+            json_extract(metadata, '$.stand_in_pending')
 ";
 
 struct RuntimeProjectionTask {
@@ -312,7 +322,9 @@ mod archive_tests;
 #[path = "store/tests/mod.rs"]
 mod tests;
 
+mod project_migration;
 mod project_records;
+pub use project_migration::ProjectMigrationSnapshot;
 
 mod task_records;
 

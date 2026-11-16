@@ -37,7 +37,7 @@ import type { CodeCommentContext, WorkspaceTextFileResponse } from '@/types/work
 import { WorkspaceXMindPreview } from './WorkspaceXMindPreview'
 import { useWorkspaceCodeEditor } from './useWorkspaceCodeEditor'
 import { PierreCodeProvider } from '@/components/code/PierreCodeProvider'
-import { isMarkdownFile } from './workspaceFileTypes'
+import { isHtmlFile, isMarkdownFile, workspaceFileViewerType } from './workspaceFileTypes'
 
 const PIERRE_WORKSPACE_CODE_VIEW_CSS = `
   :host {
@@ -131,47 +131,7 @@ interface WorkspaceFilePreviewProps {
   loadVersion?: number
   onEditedContentChange?: (content: string) => void
   onSave?: () => void
-  markdownMode?: 'preview' | 'source'
-}
-
-const FILE_VIEWER_TYPE_BY_MIME: Record<string, string> = {
-  'application/epub+zip': 'epub',
-  'application/msword': 'doc',
-  'application/pdf': 'pdf',
-  'application/vnd.ms-excel': 'xls',
-  'application/vnd.ms-powerpoint': 'ppt',
-  'application/vnd.oasis.opendocument.presentation': 'odp',
-  'application/vnd.oasis.opendocument.spreadsheet': 'ods',
-  'application/vnd.oasis.opendocument.text': 'odt',
-  'application/vnd.openxmlformats-officedocument.presentationml.presentation': 'pptx',
-  'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet': 'xlsx',
-  'application/vnd.openxmlformats-officedocument.wordprocessingml.document': 'docx',
-  'application/zip': 'zip',
-  'image/avif': 'avif',
-  'image/bmp': 'bmp',
-  'image/gif': 'gif',
-  'image/jpeg': 'jpg',
-  'image/png': 'png',
-  'image/svg+xml': 'svg',
-  'image/tiff': 'tiff',
-  'image/webp': 'webp',
-  'text/csv': 'csv',
-}
-
-const DIAGRAM_FILE_VIEWER_TYPE_BY_EXTENSION: Record<string, string> = {
-  mermaid: 'mermaid',
-  mmd: 'mermaid',
-  plantuml: 'plantuml',
-  puml: 'plantuml',
-}
-
-function workspaceFileViewerType(name: string, mimeType: string): string | undefined {
-  const extension = name.split('.').pop()?.toLowerCase() ?? ''
-  return (
-    ({ csv: 'csv', tsv: 'csv', xlsm: 'xlsx' } as Record<string, string>)[extension] ??
-    DIAGRAM_FILE_VIEWER_TYPE_BY_EXTENSION[extension] ??
-    FILE_VIEWER_TYPE_BY_MIME[mimeType.split(';', 1)[0].trim().toLowerCase()]
-  )
+  previewMode?: 'preview' | 'source'
 }
 
 const WorkspaceBinaryFilePreview = memo(function WorkspaceBinaryFilePreview({
@@ -318,15 +278,12 @@ interface WorkspaceFilePreviewContentProps {
   onSave?: () => void
 }
 
-function isHtmlFile(file: WorkspaceTextFileResponse) {
-  return /\.(?:html?|xhtml)$/i.test(file.name)
-}
-
 function WorkspaceHtmlPreview({ file }: { file: WorkspaceTextFileResponse }) {
+  const { t } = useTranslation('common')
   return (
     <section
       data-testid="workspace-html-file-preview"
-      className="min-w-0 flex-1 overflow-hidden bg-background"
+      className="relative min-w-0 flex-1 overflow-hidden bg-background"
     >
       <iframe
         title={file.name}
@@ -334,6 +291,14 @@ function WorkspaceHtmlPreview({ file }: { file: WorkspaceTextFileResponse }) {
         sandbox="allow-forms allow-popups allow-scripts"
         className="h-full w-full border-0 bg-white"
       />
+      {file.truncated && (
+        <div
+          data-testid="workspace-html-file-preview-truncated"
+          className="absolute inset-x-0 bottom-0 border-t border-border bg-background/95 px-4 py-2 text-xs text-warning backdrop-blur wework:text-amber-700"
+        >
+          {t('workbench.workspace_file_truncated', '文件过大，仅显示前 256 KiB')}
+        </div>
+      )}
     </section>
   )
 }
@@ -747,7 +712,7 @@ export function WorkspaceFilePreview({
   loadVersion,
   onEditedContentChange,
   onSave,
-  markdownMode = 'preview',
+  previewMode = 'preview',
 }: WorkspaceFilePreviewProps) {
   const { t } = useTranslation('common')
   const appearance = useOptionalAppearance()
@@ -790,7 +755,11 @@ export function WorkspaceFilePreview({
 
   if (error) {
     return (
-      <section className="flex min-w-0 flex-1 flex-col items-center justify-center gap-2 text-sm text-destructive wework:text-red-500">
+      <section
+        className="flex min-w-0 flex-1 flex-col items-center justify-center gap-2 text-sm text-destructive wework:text-red-500"
+        data-testid="workspace-file-preview-error"
+        role="alert"
+      >
         <p>{error}</p>
         <button
           type="button"
@@ -815,11 +784,11 @@ export function WorkspaceFilePreview({
     )
   }
 
-  if (!editing && isHtmlFile(file)) {
+  if (!editing && isHtmlFile(file.name) && previewMode === 'preview') {
     return <WorkspaceHtmlPreview file={file} />
   }
 
-  if (!editing && isMarkdownFile(file.name) && markdownMode === 'preview') {
+  if (!editing && isMarkdownFile(file.name) && previewMode === 'preview') {
     return <WorkspaceMarkdownPreview file={file} targetLineStart={targetLineStart} />
   }
 

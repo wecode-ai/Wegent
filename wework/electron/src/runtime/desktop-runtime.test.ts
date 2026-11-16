@@ -9,6 +9,7 @@ import {
 } from './desktop-runtime.js'
 import type { DshRuntimeOptions } from './dsh-runtime.js'
 import { assertExecutorWorkbenchCompatibility } from './workbench-executor-schema.js'
+import { migrateCodexProviderState } from './codex-provider-upgrade.js'
 import { resolveDesktopDeviceId } from './desktop-device-id.js'
 import { CoreDshPluginManager } from './core-dsh-plugin-manager.js'
 import type { ModelConfigurationStore } from '../host/model-configuration-store.js'
@@ -16,6 +17,7 @@ import type { ModelConfigurationStore } from '../host/model-configuration-store.
 vi.mock('./workbench-executor-schema.js', () => ({
   assertExecutorWorkbenchCompatibility: vi.fn(),
 }))
+vi.mock('./codex-provider-upgrade.js', () => ({ migrateCodexProviderState: vi.fn() }))
 
 interface Deferred<T> {
   promise: Promise<T>
@@ -164,6 +166,7 @@ async function flush(): Promise<void> {
 
 describe('DesktopRuntime lifecycle generation', () => {
   beforeEach(() => {
+    vi.mocked(migrateCodexProviderState).mockReset().mockResolvedValue(undefined)
     vi.mocked(assertExecutorWorkbenchCompatibility).mockReset().mockResolvedValue(undefined)
     created.length = 0
     createdOptions.length = 0
@@ -357,6 +360,72 @@ describe('DesktopRuntime lifecycle generation', () => {
     await expect(runtime.start()).rejects.toThrow('incompatible schema')
     expect(createExecutor).not.toHaveBeenCalled()
     expect(resolveDesktopDeviceId).not.toHaveBeenCalled()
+    await runtime.stop()
+  })
+
+  test('migration completion gates executor construction and Goal recovery after restart', async () => {
+    const migration = deferred<void>()
+    const createExecutor = vi.fn(() => new FakeExecutor())
+    vi.mocked(migrateCodexProviderState).mockReturnValueOnce(migration.promise)
+    const runtime = createRuntime(
+      { ...EXTERNAL_DSH, WEWORK_EXECUTOR_PATH: '/executor' },
+      { createExecutor }
+    )
+    const started = runtime.start()
+    await flush()
+    expect(migrateCodexProviderState).toHaveBeenCalledTimes(1)
+    expect(createExecutor).not.toHaveBeenCalled()
+    migration.resolve()
+    await started
+    expect(createExecutor).toHaveBeenCalledTimes(1)
+    await runtime.stop()
+  })
+
+  test('an interrupted migration can converge on the next start without admitting Goal recovery early', async () => {
+    const createExecutor = vi.fn(() => new FakeExecutor())
+    vi.mocked(migrateCodexProviderState).mockRejectedValueOnce(new Error('migration interrupted'))
+    const runtime = createRuntime(
+      { ...EXTERNAL_DSH, WEWORK_EXECUTOR_PATH: '/executor' },
+      { createExecutor }
+    )
+    await expect(runtime.start()).rejects.toThrow('migration interrupted')
+    expect(createExecutor).not.toHaveBeenCalled()
+    expect(runtime.state().ready).toBe(false)
+    await runtime.start()
+    expect(createExecutor).toHaveBeenCalledTimes(1)
+    expect(migrateCodexProviderState).toHaveBeenCalledTimes(2)
+    await runtime.stop()
+  })
+
+  test('shutdown cancels migration and waits for its writer before allowing another start', async () => {
+    const entered = deferred<AbortSignal>()
+    const exited = deferred<void>()
+    const createExecutor = vi.fn(() => new FakeExecutor())
+    vi.mocked(migrateCodexProviderState).mockImplementationOnce(async (_options, signal) => {
+      entered.resolve(signal!)
+      await exited.promise
+      throw new Error('migration cancelled')
+    })
+    const runtime = createRuntime(
+      { ...EXTERNAL_DSH, WEWORK_EXECUTOR_PATH: '/executor' },
+      { createExecutor }
+    )
+    const started = runtime.start()
+    const rejected = expect(started).rejects.toThrow('migration cancelled')
+    const signal = await entered.promise
+    let stopped = false
+    const stopping = runtime.stop().then(() => {
+      stopped = true
+    })
+    await flush()
+    expect(signal.aborted).toBe(true)
+    expect(stopped).toBe(false)
+    expect(createExecutor).not.toHaveBeenCalled()
+    exited.resolve()
+    await Promise.all([stopping, rejected])
+    expect(stopped).toBe(true)
+    await runtime.start()
+    expect(createExecutor).toHaveBeenCalledTimes(1)
     await runtime.stop()
   })
 

@@ -72,7 +72,7 @@ describe('stand-in onboarding', () => {
           finish = resolve
         })
       )
-      expect(screen.getByRole('status')).toHaveTextContent('正在读取分身功能设置')
+      expect(screen.getByRole('status')).toHaveTextContent('正在读取助理功能设置')
       expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
       expect(screen.getByTestId('stand-in-onboarding-content')).not.toHaveAttribute('inert')
 
@@ -101,7 +101,7 @@ describe('stand-in onboarding', () => {
   it('opens an explicitly requested guide while its settings are loading', () => {
     setup(true, true, undefined, new Promise(() => {}))
     expect(screen.getByRole('dialog')).toBeVisible()
-    expect(screen.getByRole('status')).toHaveTextContent('正在读取分身功能设置')
+    expect(screen.getByRole('status')).toHaveTextContent('正在读取助理功能设置')
   })
 
   it('uses the connection catalog first and allows continuing without selecting any apps', async () => {

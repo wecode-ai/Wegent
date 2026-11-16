@@ -21,6 +21,7 @@ DOCKER_SOCKET_PATH = "/var/run/docker.sock"
 
 # API configuration
 DEFAULT_API_ENDPOINT = "/v1/responses"
+DEFAULT_RUNTIME_PORT = 10001
 
 # Environment configuration
 DEFAULT_TIMEZONE = "Asia/Shanghai"

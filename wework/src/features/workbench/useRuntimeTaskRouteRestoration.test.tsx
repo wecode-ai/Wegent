@@ -1,4 +1,5 @@
 import { act, renderHook, waitFor } from '@testing-library/react'
+import { useLayoutEffect } from 'react'
 import { beforeEach, describe, expect, test, vi } from 'vitest'
 import { RuntimeTaskLifecycleProvider, RuntimeTaskLifecycleStore } from './runtimeTaskLifecycle'
 import { useRuntimeTaskRouteRestoration } from './useRuntimeTaskRouteRestoration'
@@ -58,6 +59,21 @@ describe('useRuntimeTaskRouteRestoration', () => {
         taskId: 'task-b',
       })
     )
+  })
+
+  test('does not restore a task from a stale render after navigation has already changed', () => {
+    window.history.replaceState({}, '', '/runtime-tasks?deviceId=local-device&taskId=task-b')
+    renderHook(
+      () => {
+        useRuntimeTaskRouteRestoration()
+        useLayoutEffect(() => {
+          window.history.replaceState({}, '', '/stand-in')
+          window.dispatchEvent(new PopStateEvent('popstate'))
+        }, [])
+      },
+      { wrapper }
+    )
+    expect(openRuntimeTaskMock).not.toHaveBeenCalled()
   })
 
   test('does not reopen the task that is already active', () => {

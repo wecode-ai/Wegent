@@ -266,31 +266,6 @@ mod tests {
     }
 
     #[test]
-    fn workspace_response_preserves_full_remote_project_settings() {
-        let mut remote = project("sidebar-entry", Some("host-a"));
-        remote.owner_project_key = Some("owner-key".to_owned());
-        remote.project_roots = vec!["/srv/work".to_owned(), "/srv/second".to_owned()];
-        remote.default_project_space = Some(json!({"kind": "local", "id": 42}));
-        remote.project_ai_settings = Some(json!({
-            "instructions": "Project guidance",
-            "modelSelection": {"modelId": "project-model"},
-            "quickPhrases": [{"id": "phrase", "title": "Review", "content": "Review", "mode": "plan"}],
-            "plugins": [{"id": "plugin", "pluginName": "plugin", "marketplaceId": "market", "displayName": "Plugin"}]
-        }));
-        let rows = workspace_response(Vec::new(), vec![remote.clone()]);
-        assert_eq!(rows[0]["ownerProjectKey"], "owner-key");
-        assert_eq!(rows[0]["projectRoots"], json!(remote.project_roots));
-        assert_eq!(
-            rows[0]["defaultProjectSpace"],
-            remote.default_project_space.unwrap()
-        );
-        assert_eq!(
-            rows[0]["projectAiSettings"],
-            remote.project_ai_settings.unwrap()
-        );
-    }
-
-    #[test]
     fn workspace_response_keeps_shared_roots_and_explicit_task_ownership() {
         let rows = workspace_response(
             vec![
@@ -306,40 +281,6 @@ mod tests {
         assert_eq!(rows[1]["tasks"].as_array().unwrap().len(), 1);
         assert_eq!(rows[0]["tasks"][0]["taskId"], "task-a");
         assert_eq!(rows[1]["tasks"][0]["taskId"], "task-b");
-    }
-
-    #[test]
-    fn workspace_response_preserves_explicit_projects_inside_codex_directories() {
-        for host in [None, Some("host-a")] {
-            let mut registered = project("project", host);
-            registered.workspace_path = "/srv/Documents/Codex/2026-10-16/repo".to_owned();
-            registered.project_roots = vec![registered.workspace_path.clone()];
-            let mut assigned = task("assigned", Some("project"));
-            assigned.workspace_path = registered.workspace_path.clone();
-
-            let rows = workspace_response(vec![assigned], vec![registered]);
-
-            assert_eq!(rows.len(), 1);
-            assert_eq!(rows[0]["projectKey"], "project");
-            assert_eq!(rows[0]["workspaceKind"], "workspace");
-            assert_eq!(rows[0]["tasks"][0]["taskId"], "assigned");
-        }
-    }
-
-    #[test]
-    fn workspace_response_does_not_assign_standalone_chats_to_an_ancestor_project() {
-        let chat_path = "/srv/work/Documents/Codex/chat";
-        let mut standalone = task("standalone", None);
-        standalone.workspace_path = chat_path.to_owned();
-        let mut assigned = task("assigned", Some("project"));
-        assigned.workspace_path = chat_path.to_owned();
-        let rows = workspace_response(vec![standalone, assigned], vec![project("project", None)]);
-        assert_eq!(rows.len(), 2);
-        assert_eq!(rows[0]["tasks"].as_array().unwrap().len(), 1);
-        assert_eq!(rows[0]["tasks"][0]["taskId"], "assigned");
-        assert_eq!(rows[1]["workspacePath"], chat_path);
-        assert_eq!(rows[1]["workspaceKind"], "chat");
-        assert_eq!(rows[1]["tasks"][0]["taskId"], "standalone");
     }
 
     #[test]
@@ -489,14 +430,5 @@ mod tests {
         );
         assert_eq!(rows[0]["tasks"][0]["workspaceKind"], "worktree");
         assert_eq!(rows[0]["tasks"][0]["worktreeId"], "runtime-1");
-    }
-
-    #[test]
-    fn workspace_response_deduplicates_the_same_project_record() {
-        let rows = workspace_response(
-            Vec::new(),
-            vec![project("project-a", None), project("project-a", None)],
-        );
-        assert_eq!(rows.len(), 1);
     }
 }

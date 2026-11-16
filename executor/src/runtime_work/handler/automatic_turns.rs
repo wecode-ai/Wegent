@@ -129,12 +129,12 @@ impl RuntimeWorkRpcHandler {
             );
             return;
         }
-        self.preparing_worktree_turns
+        self.preparing_turns
             .lock()
             .expect("preparation map poisoned")
             .remove(&turn.local_task_id);
         for next in &ready {
-            self.reserve_worktree_preparation(next);
+            self.reserve_turn_preparation(next);
         }
         drop(operation);
         for next in ready {

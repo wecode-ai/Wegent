@@ -166,13 +166,25 @@ def map_indexing_exception(
     exc: Exception, *, generation: int
 ) -> DocumentProcessingError:
     """Map an indexing exception without exposing its raw message."""
-    dimension_message = _DIMENSION_MISMATCH_MESSAGES.get(getattr(exc, "code", None))
-    if dimension_message is not None:
+    error_code = getattr(exc, "code", None)
+    if error_code == "milvus_row_too_large":
+        return build_processing_error(
+            stage=DocumentProcessingStage.INDEXING,
+            code="milvus_row_too_large",
+            message=(
+                "A document chunk exceeds the vector storage message limit. "
+                "Its content was not truncated."
+            ),
+            retryable=False,
+            generation=generation,
+        )
+    if isinstance(error_code, str) and error_code in _DIMENSION_MISMATCH_MESSAGES:
+        dimension_message = _DIMENSION_MISMATCH_MESSAGES[error_code]
         details = getattr(exc, "details", None) or {}
         model = details.get("model")
         return build_processing_error(
             stage=DocumentProcessingStage.INDEXING,
-            code=str(exc.code),
+            code=error_code,
             message=dimension_message,
             retryable=False,
             generation=generation,

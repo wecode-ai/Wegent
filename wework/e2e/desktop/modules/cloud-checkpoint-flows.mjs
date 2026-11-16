@@ -27,6 +27,10 @@ import {
 } from './cloud-sidebar-project-flow.mjs'
 import { verifyGitCloneRecovery } from './git-clone-recovery-flow.mjs'
 import { verifyCloudFileAccessOutsideWorkspace } from './workspace-file-access-flow.mjs'
+import { verifyCloudFileChunkIntegrity } from './workspace-file-chunks-flow.mjs'
+import { verifyCloudGitReview } from './workspace-git-review-flow.mjs'
+import { verifyCloudConversationMenu } from './conversation-menu-flow.mjs'
+import { verifyCloudHtmlFileLinkPreview } from './markdown-file-preview.mjs'
 import {
   createCloudAttachmentVerification,
   verifyCloudWorkspacePathMentions,
@@ -991,6 +995,10 @@ async function verifyCloudCheckpoint({
       })
       setPhase('cloud-files-outside-workspace')
       await verifyCloudFileAccessOutsideWorkspace({ cloudEnvironment, workspacePath })
+      setPhase('cloud-file-chunk-integrity')
+      await verifyCloudFileChunkIntegrity({ cloudEnvironment, workspacePath })
+      setPhase('cloud-git-review')
+      await verifyCloudGitReview({ cloudEnvironment, workspacePath })
       setPhase('cloud-attachment-sidebar')
       await verifyAttachmentOnlySidebarLifecycle({
         app,
@@ -1007,14 +1015,24 @@ async function verifyCloudCheckpoint({
         control,
         prepareConversation: verification.prepareConversation,
       })
+      const menuTask = await verification.verifySubmittedTask()
       setPhase('cloud-workspace-path-mentions')
       await verifyCloudWorkspacePathMentions(
         { composerSelector, control, workspacePath },
         verification.prepareConversation
       )
+      setPhase('cloud-conversation-menu')
+      await verifyCloudConversationMenu({ cloudEnvironment, address: menuTask, workspacePath })
       return
     }
     case 'rendering-extensions':
+      setPhase('cloud-html-file-link-preview')
+      await verifyCloudHtmlFileLinkPreview({
+        composerSelector,
+        control,
+        projectRowSelector,
+        workspacePath,
+      })
       setPhase('cloud-tool-block-order')
       await verifyToolBlockChronologicalOrder({ composerSelector, control })
       setPhase('cloud-view-image')

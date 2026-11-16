@@ -851,7 +851,12 @@ class SubtaskStore(Protocol):
     ) -> Optional[Subtask]: ...
 
     def list_assistant_by_task(
-        self, db: Session, *, task_id: int, owner_user_id: Optional[int] = None
+        self,
+        db: Session,
+        *,
+        task_id: int,
+        owner_user_id: Optional[int] = None,
+        include_contexts: bool = True,
     ) -> list[Subtask]: ...
 
     def list_after_message_id(

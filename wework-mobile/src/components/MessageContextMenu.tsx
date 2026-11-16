@@ -1,6 +1,8 @@
 import Ionicons from '@expo/vector-icons/Ionicons'
 import { Pressable, StyleSheet, useWindowDimensions, View } from 'react-native'
+import { useKeyboardState } from 'react-native-keyboard-controller'
 import { Portal, Text, useTheme } from 'react-native-paper'
+import { useSafeAreaInsets } from 'react-native-safe-area-context'
 
 import { LiquidGlassSurface } from './LiquidGlass'
 
@@ -23,17 +25,19 @@ const ANCHOR_GAP = 10
 export function MessageContextMenu({ anchor, onCopy, onDismiss }: MessageContextMenuProps) {
   const theme = useTheme()
   const { height, width } = useWindowDimensions()
+  const insets = useSafeAreaInsets()
+  const keyboardHeight = useKeyboardState(state => (state.isVisible ? state.height : 0))
 
   if (!anchor) return null
 
-  const left = Math.max(
-    EDGE_INSET,
-    Math.min(anchor.x - MENU_WIDTH / 2, width - MENU_WIDTH - EDGE_INSET)
-  )
-  const fitsBelow = anchor.y + ANCHOR_GAP + MENU_HEIGHT <= height - EDGE_INSET
-  const top = fitsBelow
-    ? anchor.y + ANCHOR_GAP
-    : Math.max(EDGE_INSET, anchor.y - MENU_HEIGHT - ANCHOR_GAP)
+  const leftEdge = insets.left + EDGE_INSET
+  const rightEdge = width - insets.right - EDGE_INSET
+  const topEdge = insets.top + EDGE_INSET
+  const bottomEdge = height - Math.max(insets.bottom, keyboardHeight) - EDGE_INSET
+  const left = Math.max(leftEdge, Math.min(anchor.x - MENU_WIDTH / 2, rightEdge - MENU_WIDTH))
+  const fitsBelow = anchor.y + ANCHOR_GAP + MENU_HEIGHT <= bottomEdge
+  const preferredTop = fitsBelow ? anchor.y + ANCHOR_GAP : anchor.y - MENU_HEIGHT - ANCHOR_GAP
+  const top = Math.max(topEdge, Math.min(preferredTop, bottomEdge - MENU_HEIGHT))
 
   return (
     <Portal>

@@ -1,4 +1,8 @@
 #!/bin/sh
+if [ "$1" = debug ]; then
+  printf '%s\n' "${WEGENT_TEST_CODEX_BUNDLED_CATALOG:?}"
+  exit 0
+fi
 while IFS= read -r line; do
   printf '%s\n' "$line" >> "$CODEX_HOME/requests.jsonl"
   id=$(printf '%s' "$line" | sed -n 's/.*"id":\([0-9][0-9]*\).*/\1/p')

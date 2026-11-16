@@ -38,8 +38,8 @@ fn dependency(error: brz_mysql::MysqlError) -> FastApiError {
 #[path = "skills_requested.rs"]
 mod requested;
 pub(super) use requested::{
-    append_coding_mcp, append_requested_skills, is_coding_shell, late_bot_reads,
-    resolve_request_preload_skills,
+    append_coding_mcp, append_requested_skills, extend_resolved_skills_from_bot_configs,
+    is_coding_shell, late_bot_reads, resolve_request_preload_skills, sync_bot_skill_refs,
 };
 
 /// `SKILL_BINDING_KIND` / `SKILL_BINDING_NAMESPACE`.
@@ -80,6 +80,22 @@ pub struct SkillKindRow {
     pub kinds_created_at: Option<chrono::NaiveDateTime>,
     #[allow(dead_code)]
     pub kinds_updated_at: Option<chrono::NaiveDateTime>,
+}
+
+impl From<crate::task_skills::repository::KindRow> for SkillKindRow {
+    fn from(row: crate::task_skills::repository::KindRow) -> Self {
+        Self {
+            kinds_id: row.kinds_id,
+            kinds_user_id: row.kinds_user_id,
+            kinds_kind: row.kinds_kind,
+            kinds_name: row.kinds_name,
+            kinds_namespace: row.kinds_namespace,
+            kinds_json: Json(row.kinds_json.0.to_value()),
+            kinds_is_active: row.kinds_is_active,
+            kinds_created_at: Some(row.kinds_created_at),
+            kinds_updated_at: Some(row.kinds_updated_at),
+        }
+    }
 }
 
 /// `build_skill_ref_meta`: the runtime skill reference metadata.

@@ -37,6 +37,8 @@ interface VisualizationTargetObservation extends VisualizationRootObservation {
 }
 
 const ACTIONS = ['text', 'click', 'fill', 'attribute', 'value', 'metrics', 'wheel']
+const INLINE_FRAME_SELECTOR =
+  'iframe[data-testid="codex-inline-visualization-frame"], iframe[data-testid="mcp-app-frame"]'
 const FRAME_READY_TIMEOUT_MS = 10_000
 
 export async function controlInlineVisualizationFrame(
@@ -50,7 +52,7 @@ export async function controlInlineVisualizationFrame(
   const { url, action, selector, value, deltaX = 0, deltaY = 0 } = params
   if (
     typeof url !== 'string' ||
-    !url.startsWith('blob:') ||
+    (!url.startsWith('blob:') && !url.startsWith('codex-sandbox:')) ||
     typeof action !== 'string' ||
     !ACTIONS.includes(action) ||
     typeof selector !== 'string' ||
@@ -69,7 +71,7 @@ export async function controlInlineVisualizationFrame(
   }
   const deadline = Date.now() + FRAME_READY_TIMEOUT_MS
   const owned = await contents.mainFrame.executeJavaScript(`(() => {
-    return Array.from(document.querySelectorAll('iframe[data-testid="codex-inline-visualization-frame"]'))
+    return Array.from(document.querySelectorAll(${JSON.stringify(INLINE_FRAME_SELECTOR)}))
       .some(frame => frame.src === ${JSON.stringify(url)});
   })()`)
   if (!owned) {
@@ -86,6 +88,7 @@ export async function controlInlineVisualizationFrame(
     });
     const { action, selector, value } = ${JSON.stringify({ action, selector, value: value ?? '' })};
     const element = document.querySelector(selector);
+    if (action === 'text') return element?.textContent ?? null;
     if (!element) throw new Error('Inline visualization target not found');
     if (action === 'metrics' || action === 'wheel') {
       const rect = element.getBoundingClientRect();
@@ -155,7 +158,7 @@ async function sendVisualizationWheel(
   deltaY: number
 ) {
   const result = await contents.mainFrame.executeJavaScript(`(() => {
-    const frame = Array.from(document.querySelectorAll('iframe[data-testid="codex-inline-visualization-frame"]'))
+    const frame = Array.from(document.querySelectorAll(${JSON.stringify(INLINE_FRAME_SELECTOR)}))
       .find(candidate => candidate.src === ${JSON.stringify(url)});
     if (!frame) throw new Error('Inline visualization frame is not loaded');
     const rect = frame.getBoundingClientRect();
@@ -310,7 +313,7 @@ async function visualizationRootProbe(
       if (!probe) throw new Error('Inline visualization wheel probe is unavailable');
       return { observation: probe.observe(), wheelEvents: probe.events.slice() };
     }
-    const frame = Array.from(document.querySelectorAll('iframe[data-testid="codex-inline-visualization-frame"]'))
+    const frame = Array.from(document.querySelectorAll(${JSON.stringify(INLINE_FRAME_SELECTOR)}))
       .find(candidate => candidate.src === point.url);
     const describe = element => element instanceof Element ? {
       tag: element.tagName.toLowerCase(),

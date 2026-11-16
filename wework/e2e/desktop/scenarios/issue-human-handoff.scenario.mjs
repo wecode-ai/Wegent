@@ -1,3 +1,4 @@
+import { showAllCollaborationIssues } from '../modules/collaboration-board-flows.mjs'
 import assert from 'node:assert/strict'
 import { mkdir, rm, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
@@ -307,6 +308,14 @@ export function createDesktopScenario({
         })
         await reloadMainWindow(control, 'Restore native Issue ownership fixtures')
         await verifyHeader(control, ordinaryId, 'human', 'local')
+        await control.command(
+          'waitFor',
+          `${scoped('project-needs-my-input-filter')}[aria-pressed="true"]`
+        )
+        await control.command('waitFor', scoped(`cloud-todo-card-${foreign.id}`), {
+          visible: false,
+        })
+        await showAllCollaborationIssues(control, ACTIVE)
         await control.command('waitFor', scoped(`cloud-todo-card-${foreign.id}`))
         const filter = scoped('project-needs-my-input-filter')
         await control.command('clickWhenEnabled', filter)

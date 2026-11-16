@@ -80,6 +80,7 @@ pub struct SetupChatSessionInput<'a> {
     pub model_override_type: Option<&'a str>,
     pub model_options: Option<&'a serde_json::Value>,
     pub input_text: &'a str,
+    pub user_result: Option<&'a serde_json::Value>,
     pub additional_skills: &'a [serde_json::Value],
     /// The Task CRD template; its `task_id` is replaced with the allocated id.
     pub crd: TaskCrdInput<'a>,
@@ -363,7 +364,8 @@ async fn append_subtasks(
     }
 
     let bot_ids = python_json_value(&serde_json::json!(input.bot_ids));
-    let (user_subtask, assistant_subtask) = subtask_rows(
+    let user_result = input.user_result.map(python_json_value);
+    let (mut user_subtask, assistant_subtask) = subtask_rows(
         input.user_id,
         task_id,
         input.team_id,
@@ -372,6 +374,9 @@ async fn append_subtasks(
         input.completed_at,
         ids,
     );
+    if let Some(result) = user_result.as_deref() {
+        user_subtask.result = result;
+    }
     // `create_assistant_subtask` resolves the executor reference in the same
     // transaction as the insert; `build_execution_request` later reads the
     // assistant subtask's executor fields from the inserted row.

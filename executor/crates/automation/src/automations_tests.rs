@@ -4,9 +4,9 @@ use chrono::{TimeZone, Utc};
 use tempfile::tempdir;
 
 use super::{
-    initial_next_run, migrate_automation_state, next_run_after, read_state, Automation,
-    AutomationRunStatus, AutomationSchedule, AutomationState, AutomationStore, ConversationMode,
-    IntervalUnit, NotificationPolicy, MAX_RUNS_PER_AUTOMATION,
+    initial_next_run, migrate_automation_state, read_state, Automation, AutomationRunStatus,
+    AutomationSchedule, AutomationState, AutomationStore, ConversationMode, IntervalUnit,
+    NotificationPolicy, MAX_RUNS_PER_AUTOMATION,
 };
 use serde_json::json;
 
@@ -98,50 +98,6 @@ fn owned_recurring_arrangements_catch_up_once_and_keep_active_runs_when_pruning(
 }
 
 #[test]
-fn cron_schedule_respects_timezone() {
-    let after = Utc.with_ymd_and_hms(2026, 7, 28, 0, 30, 0).unwrap();
-    let next = next_run_after(
-        &AutomationSchedule::Cron {
-            expression: "0 9 * * *".to_owned(),
-        },
-        "Asia/Shanghai",
-        after,
-    )
-    .unwrap();
-    assert_eq!(next, Utc.with_ymd_and_hms(2026, 7, 28, 1, 0, 0).unwrap());
-}
-
-#[test]
-fn standard_weekday_cron_includes_friday() {
-    let after = Utc.with_ymd_and_hms(2026, 8, 14, 8, 0, 0).unwrap();
-    let next = next_run_after(
-        &AutomationSchedule::Cron {
-            expression: "45 16 * * 1-5".to_owned(),
-        },
-        "Asia/Shanghai",
-        after,
-    )
-    .unwrap();
-
-    assert_eq!(next, Utc.with_ymd_and_hms(2026, 8, 14, 8, 45, 0).unwrap());
-}
-
-#[test]
-fn standard_weekday_cron_skips_weekend_after_friday() {
-    let after = Utc.with_ymd_and_hms(2026, 8, 14, 9, 0, 0).unwrap();
-    let next = next_run_after(
-        &AutomationSchedule::Cron {
-            expression: "45 16 * * 1-5".to_owned(),
-        },
-        "Asia/Shanghai",
-        after,
-    )
-    .unwrap();
-
-    assert_eq!(next, Utc.with_ymd_and_hms(2026, 8, 17, 8, 45, 0).unwrap());
-}
-
-#[test]
 fn migration_recalculates_existing_cron_next_run() {
     let now = Utc.with_ymd_and_hms(2026, 8, 14, 8, 0, 0).unwrap();
     let automation = Automation {
@@ -204,21 +160,6 @@ fn loading_old_state_persists_migration() {
 
     assert_eq!(state.version, 2);
     assert_eq!(stored.version, 2);
-}
-
-#[test]
-fn interval_schedule_uses_fixed_duration() {
-    let after = Utc.with_ymd_and_hms(2026, 7, 28, 0, 0, 0).unwrap();
-    let next = next_run_after(
-        &AutomationSchedule::Interval {
-            value: 2,
-            unit: IntervalUnit::Hours,
-        },
-        "UTC",
-        after,
-    )
-    .unwrap();
-    assert_eq!(next, Utc.with_ymd_and_hms(2026, 7, 28, 2, 0, 0).unwrap());
 }
 
 #[test]

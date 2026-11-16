@@ -259,10 +259,14 @@ describe('DesktopSidebar', () => {
       workspacePath: `/workspace/worktrees/${taskId.replace('worktree-', '')}/Wegent`,
       taskId,
     })
-    await userEvent.click(screen.getByTestId('project-runtime-tasks-expand-7'))
+    const expandButton = screen.getByTestId('project-runtime-tasks-expand-7')
+    expect(expandButton).toHaveTextContent('显示更多')
+    await userEvent.click(expandButton)
     expect(screen.getAllByTestId(/^runtime-local-task-row-/)).toHaveLength(15)
     expect(screen.getByTestId('project-runtime-tasks-expand-7')).toBeInTheDocument()
-    await userEvent.click(screen.getByTestId('project-runtime-tasks-collapse-7'))
+    const collapseButton = screen.getByTestId('project-runtime-tasks-collapse-7')
+    expect(collapseButton).toHaveTextContent('收起')
+    await userEvent.click(collapseButton)
     expect(screen.getAllByTestId(/^runtime-local-task-row-/)).toHaveLength(5)
     expect(screen.queryByTestId('project-runtime-tasks-collapse-7')).not.toBeInTheDocument()
   })
@@ -2727,6 +2731,7 @@ describe('DesktopSidebar', () => {
     })
 
     await user.click(screen.getByTestId('project-menu-7'))
+    expect(screen.getByTestId('archive-project-conversations-7')).toHaveTextContent('归档所有聊天')
     await user.click(screen.getByTestId('archive-project-conversations-7'))
 
     const dialog = screen.getByTestId('archive-project-conversations-dialog-7')

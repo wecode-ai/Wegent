@@ -11,6 +11,7 @@ import {
 import { createMcpAppConversationServices } from '@/features/mcp-apps/conversationServices'
 import { AttachmentPreviewContext } from '@/components/chat/AttachmentPreviewContext'
 import { BackgroundTerminalsSummary } from './BackgroundTerminalsSummary'
+import { useBoundRuntimeTaskReconciliation } from './useBoundRuntimeTaskReconciliation'
 import { conversationTerminals } from './backgroundTerminals'
 import type { BackgroundTerminal } from './backgroundTerminals'
 import {
@@ -84,8 +85,7 @@ import {
   isClaudeCodeDevice,
   isDeviceBelowWeWorkVersion,
   isWeWorkCompatibleDevice,
-  isCloudDevice,
-  isRemoteDevice,
+  isRemoteTaskDevice,
 } from '@/lib/device-capabilities'
 import {
   applyProjectEnvironmentPatch,
@@ -162,7 +162,6 @@ import { DeviceStatusPrompt } from './DeviceStatusPrompt'
 import {
   TITLEBAR_ACTIONS_PORTAL_ID,
   TITLEBAR_RIGHT_PANEL_PORTAL_ID,
-  TitlebarFeedbackPortal,
   WORKBENCH_MAIN_HEADER_PORTAL_ID,
   WORKBENCH_SPLIT_ACTIONS_PORTAL_ID,
   WorkbenchMainHeaderPortal,
@@ -361,23 +360,6 @@ function runtimeTaskForkModelOptions(
       options: executionModel.modelOptions ?? {},
     },
   }
-}
-
-function hasResolvedExecutionAddress(
-  current: RuntimeTaskAddress,
-  resolved: RuntimeTaskAddress
-): boolean {
-  return (
-    current.deviceId === resolved.deviceId &&
-    current.taskId === resolved.taskId &&
-    current.runtime === resolved.runtime &&
-    current.threadId === resolved.threadId &&
-    current.workspacePath === resolved.workspacePath &&
-    current.workspaceKind === resolved.workspaceKind &&
-    current.worktreeId === resolved.worktreeId &&
-    JSON.stringify(current.runtimeHandle?.modelSelection ?? null) ===
-      JSON.stringify(resolved.runtimeHandle?.modelSelection ?? null)
-  )
 }
 
 const MACOS_COLLAPSED_SIDEBAR_CONTROL_ALIGNMENT_CLASS = 'pl-2'
@@ -1461,16 +1443,12 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
     services,
     userId: state.user?.id,
   })
-  useEffect(() => {
-    if (
-      !currentRuntimeTask ||
-      !boundRuntimeTaskAddress ||
-      hasResolvedExecutionAddress(currentRuntimeTask, boundRuntimeTaskAddress)
-    ) {
-      return
-    }
-    void openRuntimeTask(boundRuntimeTaskAddress)
-  }, [boundRuntimeTaskAddress, currentRuntimeTask, openRuntimeTask])
+  useBoundRuntimeTaskReconciliation(
+    paneActive && paneVisible && workbenchVisible,
+    currentRuntimeTask,
+    boundRuntimeTaskAddress,
+    openRuntimeTask
+  )
   const workItemContextAvailable = Boolean(
     currentProjectSpaceRuntimeTask && boundCloudProject && boundCloudItem && boundProjectSpaceApi
   )
@@ -2291,9 +2269,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
   const conversationImageDevice = findWorkbenchDevice(devices, conversationImageTarget?.deviceId)
   const remoteImageTarget =
     conversationImageTarget &&
-    (!isElectronRuntime() ||
-      (conversationImageDevice?.device_type !== 'local' &&
-        conversationImageDevice?.device_type !== 'app'))
+    (!isElectronRuntime() || conversationImageDevice?.device_type !== 'local')
       ? conversationImageTarget
       : null
   const selectedFileWorkspaceTarget =
@@ -2322,8 +2298,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
     ? devices.find(device => device.device_id === composerWorkspaceTarget.deviceId)
     : undefined
   const centralHarnessUsesRemoteDevice = Boolean(
-    centralHarnessTargetDevice &&
-    (isCloudDevice(centralHarnessTargetDevice) || isRemoteDevice(centralHarnessTargetDevice))
+    centralHarnessTargetDevice && isRemoteTaskDevice(centralHarnessTargetDevice)
   )
   const centralHarnessUsesRemoteSource = composerWorkspaceTarget?.workspaceSource === 'remote'
   const centralHarnessCwd = composerWorkspaceTarget?.path?.trim() || devWorkspacePath
@@ -5250,13 +5225,6 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
           {paneHeaderActions}
         </WorkbenchPaneHeaderActionsPortal>
       ) : null}
-      {feedbackInChromeTitlebar &&
-      !activeLocalHarnessSession &&
-      paneActive &&
-      workbenchVisible &&
-      !splitMode ? (
-        <TitlebarFeedbackPortal>{feedbackButton}</TitlebarFeedbackPortal>
-      ) : null}
       <>
         {!isDesktop && presentation !== 'popout' && (
           <div
@@ -6177,7 +6145,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
           }
         />
         <TaskForkDialog
-          key={forkDialogOpen ? `open-${currentRuntimeTask?.taskId ?? 'none'}` : 'closed'}
+          key={forkDialogOpen ? `fork-open-${currentRuntimeTask?.taskId ?? 'none'}` : 'fork-closed'}
           open={forkDialogOpen}
           source={currentRuntimeTask}
           runtimeWork={runtimeWork}
@@ -6230,8 +6198,8 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
         <TaskBoardAssociationDialog
           key={
             taskBoardAssociation
-              ? `${taskBoardAssociation.project.project_store}:${taskBoardAssociation.project.id}`
-              : 'closed'
+              ? `board-association-${taskBoardAssociation.project.project_store}:${taskBoardAssociation.project.id}`
+              : 'board-association-closed'
           }
           project={taskBoardAssociation?.project ?? null}
           currentProject={boundCloudProject}

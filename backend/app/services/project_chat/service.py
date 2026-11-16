@@ -73,6 +73,10 @@ from app.services.loop_item_unread import advance_content_revision
 from app.services.loop_items.access import can_view_item
 from app.services.loop_items.change_requests import update_change_request_source
 from app.services.notification_copy import comment_preview
+from app.services.project_chat.agent_permissions import (
+    can_edit_project_definition,
+    preserve_redacted_mcp_servers,
+)
 from app.services.project_chat.mention_notification import (
     notify_project_chat_mentions,
 )
@@ -719,6 +723,7 @@ class ProjectChatService:
             raise HTTPException(status.HTTP_409_CONFLICT, "Project chat AI changed")
         if (
             row.created_by_user_id != user_id
+            and not can_edit_project_definition(db, row, user_id)
             and self._changes_executable_agent_configuration(request)
         ):
             raise HTTPException(
@@ -775,7 +780,11 @@ class ProjectChatService:
                 skill.model_dump(by_alias=True) for skill in request.additional_skills
             ]
         if request.mcp_servers is not None:
-            metadata[BOT_MCP_SERVERS_KEY] = request.mcp_servers
+            metadata[BOT_MCP_SERVERS_KEY] = preserve_redacted_mcp_servers(
+                metadata.get(BOT_MCP_SERVERS_KEY) or {},
+                request.mcp_servers,
+                is_creator=row.created_by_user_id == user_id,
+            )
         if request.capability_description is not None:
             row.description = request.capability_description.strip()
         for field in ("execution_policy", "model_policy"):
@@ -1310,6 +1319,12 @@ class ProjectChatService:
         accepted_terminal: bool = False,
     ) -> tuple[ProjectChatMessageView, str] | None:
         from app.services.project_chat.execution_snapshot import runtime_event_sequence
+        from app.services.runtime_event_context import (
+            runtime_event_is_private_discussion,
+        )
+
+        if runtime_event_is_private_discussion(payload):
+            return None
 
         sequence = runtime_event_sequence(payload)
         identities = [device_id]
@@ -2633,6 +2648,8 @@ class ProjectChatService:
             "model",
             "model_type",
             "model_options",
+            "execution_policy",
+            "model_policy",
             "system_prompt",
             "capability_mode",
             "execution_environment",
@@ -2670,7 +2687,9 @@ class ProjectChatService:
     ) -> ProjectChatAgentView:
         config = bot_config(row)
         can_edit = (
-            viewer_user_id is not None and viewer_user_id == row.created_by_user_id
+            db is not None
+            and viewer_user_id is not None
+            and can_edit_project_definition(db, row, viewer_user_id, project_access)
         )
         if db is not None and config.get("wegent_team_id") is not None:
             from app.services.team_access_policy import can_edit_team

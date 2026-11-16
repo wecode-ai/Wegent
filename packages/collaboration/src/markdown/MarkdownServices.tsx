@@ -15,9 +15,9 @@ export interface MarkdownServices {
   openExternalUrl: (url: string) => void | Promise<unknown>
   openAuthorizationUrl?: (url: string) => void | boolean | Promise<unknown>
   navigateTo?: (path: string) => void
-  openHtmlFile?: (path: string) => boolean
   fetchAttachmentBlob?: (id: number) => Promise<Blob>
   readLocalFile?: (path: string) => Promise<Blob>
+  resolveImageUrl?: (src: string) => Promise<string>
   renderVisualization?: (part: { file: string; mode?: 'wide'; title?: string }) => ReactNode
   windowMarkdown?: boolean
   theme: 'dark' | 'light' | 'system'
@@ -26,6 +26,7 @@ export interface MarkdownServices {
 
 export const markdownMessages = {
   'zh-CN': {
+    'workbench.plantuml_unconfigured': 'PlantUML 预览需要配置渲染服务，当前可查看源码',
     'citation.page': '页码',
     'citation.slide': '幻灯片',
     'followup.idle': '复制后续问题',
@@ -56,6 +57,8 @@ export const markdownMessages = {
     'code.wrap_off': '禁用自动换行',
   },
   en: {
+    'workbench.plantuml_unconfigured':
+      'Configure a PlantUML rendering service to preview this diagram. Source is available below.',
     'citation.page': 'page',
     'citation.slide': 'slide',
     'followup.idle': 'Copy follow-up prompt',

@@ -1,10 +1,17 @@
 import { render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { useState } from 'react'
+import { createInstance } from 'i18next'
+import { useState, type ReactElement } from 'react'
+import { I18nextProvider } from 'react-i18next'
 import { describe, expect, test, vi } from 'vitest'
 import type { DeviceInfo, RuntimeWorkListResponse } from '@/types/api'
 import type { Automation, AutomationRun } from '@/types/automation'
-import { emptyAutomationDraft, type AutomationDraft } from './automationDraft'
+import zhCommon from '@/i18n/locales/zh-CN/common.json'
+import {
+  automationDraftFromAutomation,
+  emptyAutomationDraft,
+  type AutomationDraft,
+} from './automationDraft'
 import { AutomationDetailWorkspace } from './AutomationDetailWorkspace'
 
 function AutomationDetailHarness({
@@ -15,6 +22,7 @@ function AutomationDetailHarness({
   localDeviceIds = ['local-device'],
   runs = [],
   onOpenRun,
+  onSaveDraft,
   validationError,
 }: {
   devices?: React.ComponentProps<typeof AutomationDetailWorkspace>['devices']
@@ -24,6 +32,7 @@ function AutomationDetailHarness({
   localDeviceIds?: string[]
   runs?: AutomationRun[]
   onOpenRun?(run: AutomationRun): void
+  onSaveDraft?(draft: AutomationDraft): void
   validationError?: string
 }) {
   const [draft, setDraft] = useState<AutomationDraft>(initialDraft)
@@ -51,7 +60,7 @@ function AutomationDetailHarness({
       onModelChange={vi.fn()}
       onSourceChange={source => setDraft(current => ({ ...current, source }))}
       onClose={vi.fn()}
-      onSave={vi.fn()}
+      onSave={() => onSaveDraft?.(draft)}
       onRun={vi.fn()}
       onToggle={vi.fn()}
       onDelete={vi.fn()}
@@ -77,6 +86,17 @@ function device(
   }
 }
 
+async function renderTranslated(element: ReactElement) {
+  const i18n = createInstance()
+  await i18n.init({
+    lng: 'zh-CN',
+    resources: { 'zh-CN': { common: zhCommon } },
+    defaultNS: 'common',
+    interpolation: { escapeValue: false },
+  })
+  return render(<I18nextProvider i18n={i18n}>{element}</I18nextProvider>)
+}
+
 const savedAutomation: Automation = {
   id: 'automation-1',
   version: 1,
@@ -94,6 +114,54 @@ const savedAutomation: Automation = {
 }
 
 describe('AutomationDetailWorkspace', () => {
+  test.each(['cron', 'interval'] as const)(
+    'edits the saved %s time zone only after opening frequency settings',
+    async scheduleType => {
+      const user = userEvent.setup()
+      const onSaveDraft = vi.fn()
+      const draft = {
+        ...automationDraftFromAutomation(savedAutomation),
+        scheduleType,
+        timezone: 'America/Los_Angeles',
+      }
+      await renderTranslated(
+        <AutomationDetailHarness initialDraft={draft} onSaveDraft={onSaveDraft} />
+      )
+      const settings = screen.getByRole('button', { name: '频率设置' })
+      expect(settings).toHaveAttribute('aria-expanded', 'false')
+      expect(screen.queryByTestId('automation-timezone-input')).not.toBeInTheDocument()
+
+      await user.click(settings)
+      expect(screen.getByRole('textbox', { name: '时区' })).toHaveValue('America/Los_Angeles')
+      await user.clear(screen.getByTestId('automation-timezone-input'))
+      await user.type(screen.getByTestId('automation-timezone-input'), 'Europe/London')
+      await user.click(settings)
+      expect(screen.queryByTestId('automation-timezone-input')).not.toBeInTheDocument()
+      await user.click(settings)
+      expect(screen.getByTestId('automation-timezone-input')).toHaveValue('Europe/London')
+      await user.click(screen.getByTestId('automation-save-button'))
+      expect(onSaveDraft).toHaveBeenCalledWith(
+        expect.objectContaining({ scheduleType, timezone: 'Europe/London' })
+      )
+    }
+  )
+
+  test('keeps one-time execution in local time without a time zone override', async () => {
+    const onSaveDraft = vi.fn()
+    const draft = {
+      ...emptyAutomationDraft('local', 'local-device'),
+      scheduleType: 'one_time' as const,
+      timezone: 'Europe/London',
+      executeAt: '2026-11-12T09:30',
+    }
+    render(<AutomationDetailHarness initialDraft={draft} onSaveDraft={onSaveDraft} />)
+    expect(screen.queryByTestId('automation-frequency-settings')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('automation-timezone-input')).not.toBeInTheDocument()
+    expect(screen.getByTestId('automation-execute-at-input')).toHaveValue(draft.executeAt)
+    await userEvent.setup().click(screen.getByTestId('automation-save-button'))
+    expect(onSaveDraft).toHaveBeenCalledWith(draft)
+  })
+
   test('shows invalid draft feedback beside the editor and focuses the missing instructions', () => {
     const draft = { ...emptyAutomationDraft('local', 'local-device'), name: '每周回顾' }
     render(<AutomationDetailHarness initialDraft={draft} validationError="请填写名称和任务说明" />)

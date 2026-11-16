@@ -12,6 +12,7 @@ import { createRuntimeReconciliationModel } from '../modules/runtime-reconciliat
 import { REMOTE_DOCKER_DEVICE_ID } from '../modules/shared.mjs'
 import { stopProcessGroup } from '../process-lifecycle.mjs'
 import {
+  revealCollaborationSidebarElement,
   reloadMainWindow,
   selectCollaborationDomain,
   selectCollaborationProjectView,
@@ -428,10 +429,10 @@ export async function createDesktopScenario({
     await control.command('click', '[data-testid="workspace-tab-select-fixed-board"]')
     await control.command('waitFor', `${CONTENT} [data-testid="wework-collaboration-platform"]`)
     await selectCollaborationDomain(control, CONTENT, 'cloud')
-    const toggle = `${CONTENT} [data-testid="collaboration-workspace-toggle-${workspace.id}"]`
-    await control.command('waitFor', toggle)
-    if ((await control.command('getAttribute', toggle, { value: 'aria-expanded' })) !== 'true')
-      await control.command('click', toggle)
+    await revealCollaborationSidebarElement(
+      control,
+      `${CONTENT} [data-testid="collaboration-workspace-project-${project.id}"]`
+    )
     const projectRow = `${CONTENT} [data-testid="collaboration-workspace-project-${project.id}"]`
     await control.command('waitFor', projectRow, { visible: true, timeoutMs: uiTimeoutMs })
     await control.command('click', projectRow, { visible: true })

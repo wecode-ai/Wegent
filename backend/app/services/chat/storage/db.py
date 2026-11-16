@@ -17,6 +17,7 @@ Other modules can use run_sync_in_executor() to wrap their sync DB functions.
 """
 
 import asyncio
+import json
 import logging
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
@@ -27,6 +28,7 @@ from typing import Any, Callable, Dict, Generator, Optional, TypeVar
 from sqlalchemy.orm import Session
 
 import app.stores.tasks as task_stores
+from app.models.kind import Kind
 from app.models.subtask import Subtask
 from app.models.task import TaskResource
 from app.schemas.kind import TaskStatus
@@ -40,8 +42,15 @@ _db_executor = ThreadPoolExecutor(max_workers=20)
 
 # Terminal statuses that mark completion
 _TERMINAL_STATUSES = frozenset(["COMPLETED", "FAILED", "CANCELLED"])
+PIPELINE_RECOVERY_KIND = "PipelineRecovery"
+PIPELINE_RECOVERY_NAMESPACE = "internal"
+
 
 T = TypeVar("T")
+
+
+class TerminalPersistenceError(RuntimeError):
+    """A terminal database transition could not be confirmed."""
 
 
 @dataclass
@@ -52,6 +61,73 @@ class PipelineAutoAdvanceIntent:
     user_id: int
     completed_subtask_id: int
     advance_info: dict[str, Any]
+    next_pair: tuple[int, int] | None = None
+    dispatch_acknowledged: bool = False
+
+    @property
+    def label(self) -> str:
+        return f"pipelineAutoAdvance:{self.completed_subtask_id}"
+
+    def write(self, payload: dict[str, Any]) -> None:
+        metadata = payload.setdefault("metadata", {})
+        labels = metadata.get("labels") or {}
+        labels[self.label] = json.dumps(
+            {
+                "advance_info": self.advance_info,
+                "next_pair": self.next_pair,
+                "dispatch_acknowledged": self.dispatch_acknowledged,
+            }
+        )
+        metadata["labels"] = labels
+
+    @classmethod
+    def read(
+        cls, task: TaskResource, completed_subtask_id: int
+    ) -> Optional["PipelineAutoAdvanceIntent"]:
+        labels = task.json.get("metadata", {}).get("labels") or {}
+        saved = labels.get(f"pipelineAutoAdvance:{completed_subtask_id}")
+        if saved is None:
+            return None
+        data = json.loads(saved)
+        pair = data["next_pair"]
+        return cls(
+            task.id,
+            task.user_id,
+            completed_subtask_id,
+            data["advance_info"],
+            (pair[0], pair[1]) if pair is not None else None,
+            data.get("dispatch_acknowledged", False),
+        )
+
+
+def pipeline_recovery_key(task_id: int, subtask_id: int) -> str:
+    return f"{task_id}:{subtask_id}"
+
+
+def add_pipeline_recovery(db: Session, intent: PipelineAutoAdvanceIntent) -> None:
+    db.add(
+        Kind(
+            kind=PIPELINE_RECOVERY_KIND,
+            namespace=PIPELINE_RECOVERY_NAMESPACE,
+            name=pipeline_recovery_key(intent.task_id, intent.completed_subtask_id),
+            user_id=intent.user_id,
+            json={},
+            is_active=True,
+        )
+    )
+
+
+def settle_pipeline_handoff(payload: dict[str, Any], subtask_id: int) -> None:
+    """Retire a handoff only when its assistant's terminal write can commit."""
+    labels = payload.get("metadata", {}).get("labels") or {}
+    rust_marker = labels.get("pipelinePendingHandoff", "")
+    if rust_marker.rsplit(":", 1)[-1] == str(subtask_id):
+        labels.pop("pipelinePendingHandoff")
+    for key in list(labels):
+        if key.startswith("pipelineAutoAdvance:"):
+            pair = json.loads(labels[key]).get("next_pair")
+            if pair is not None and pair[1] == subtask_id:
+                labels.pop(key)
 
 
 @dataclass
@@ -59,6 +135,7 @@ class TaskStatusUpdateResult:
     """Post-commit work discovered while updating task status."""
 
     auto_advance: Optional[PipelineAutoAdvanceIntent] = None
+    replay_result: dict[str, Any] | None = None
 
 
 @contextmanager
@@ -93,11 +170,12 @@ class DatabaseHandler:
         executor_name: str | None = None,
         executor_namespace: str | None = None,
         expected_status: str | None = None,
+        expected_device: tuple[int, str] | None = None,
     ) -> bool:
         """Update subtask status asynchronously.
 
-        Returns False when ``expected_status`` was supplied and the subtask no
-        longer has that status, so the caller can drop a stale terminal event.
+        Returns False when the subtask is missing or the transition is stale.
+        Terminal database failures propagate to the caller.
         """
         update_result = await self._run_in_executor(
             self._update_subtask_sync,
@@ -108,17 +186,22 @@ class DatabaseHandler:
             executor_name,
             executor_namespace,
             expected_status,
+            expected_device,
         )
         if update_result is None:
             return False
-        if update_result and update_result.auto_advance:
+        if update_result.auto_advance:
             from app.services.chat.pipeline_advance import (
                 advance_pipeline_stage_from_auto_completion,
             )
 
-            await advance_pipeline_stage_from_auto_completion(
+            if not await advance_pipeline_stage_from_auto_completion(
                 update_result.auto_advance
-            )
+            ):
+                return False
+            if result is not None and update_result.replay_result is not None:
+                result.clear()
+                result.update(update_result.replay_result)
         return True
 
     def _update_subtask_sync(
@@ -130,6 +213,7 @@ class DatabaseHandler:
         executor_name: str | None = None,
         executor_namespace: str | None = None,
         expected_status: str | None = None,
+        expected_device: tuple[int, str] | None = None,
     ) -> Optional[TaskStatusUpdateResult]:
         """Synchronous subtask update (runs in thread pool)."""
         from app.models.subtask import SubtaskStatus
@@ -137,9 +221,53 @@ class DatabaseHandler:
 
         try:
             with _db_session() as db:
-                subtask = task_stores.subtask_store.get_by_id(db, subtask_id=subtask_id)
+                subtask = task_stores.subtask_store.get_basic_by_id(
+                    db, subtask_id=subtask_id
+                )
                 if not subtask:
                     return None
+                task_id = subtask.task_id
+                terminal = status in _TERMINAL_STATUSES
+                if terminal:
+                    task = task_stores.task_store.get_by_id_for_update(
+                        db, task_id=task_id
+                    )
+                    if (
+                        task is None
+                        or task.kind != "Task"
+                        or task.is_active not in TaskResource.is_active_query()
+                    ):
+                        return None
+                    db.expire(subtask)
+                    subtask = task_stores.subtask_store.get_basic_by_id_for_update(
+                        db, subtask_id=subtask_id
+                    )
+                    if (
+                        subtask is None
+                        or subtask.task_id != task_id
+                        or subtask.status == SubtaskStatus.DELETE
+                    ):
+                        return None
+
+                    if expected_device is not None:
+                        owner, device_id = expected_device
+                        if (
+                            task.user_id != owner
+                            or subtask.user_id != owner
+                            or subtask.executor_name != f"device-{device_id}"
+                            or subtask.executor_namespace != f"user-{owner}"
+                        ):
+                            return None
+
+                    if subtask.status.value in _TERMINAL_STATUSES:
+                        if status == subtask.status.value == "COMPLETED":
+                            pending = PipelineAutoAdvanceIntent.read(task, subtask_id)
+                            if pending is not None:
+                                return TaskStatusUpdateResult(
+                                    auto_advance=pending,
+                                    replay_result=subtask.result or {},
+                                )
+                        return None
 
                 fields: dict[str, Any] = {"status": SubtaskStatus(status)}
 
@@ -226,24 +354,31 @@ class DatabaseHandler:
                     task_stores.subtask_store.update_fields(
                         db, subtask=subtask, **fields
                     )
-                task_id = subtask.task_id
-            # Context manager commits here, then update task status
+                if terminal:
+                    db.flush()
+                    if expected_status is not None:
+                        db.expire(subtask)
+                    update = self._update_task_status_in_session(
+                        db, task, subtask_id, terminal=True
+                    )
+                    if update is None:
+                        raise LookupError(
+                            "No assistant subtask for terminal task status"
+                        )
+                    return update
             return self._update_task_status_sync(task_id, changed_subtask_id=subtask_id)
-        except Exception:
+        except Exception as exc:
             logger.exception("Error updating subtask %s status", subtask_id)
+            if status in _TERMINAL_STATUSES:
+                raise TerminalPersistenceError(
+                    f"Could not save terminal status for subtask {subtask_id}"
+                ) from exc
             return None
 
     def _update_task_status_sync(
         self, task_id: int, changed_subtask_id: int | None = None
     ) -> TaskStatusUpdateResult:
         """Update task status based on subtask status using collaboration strategy."""
-        from app.schemas.kind import Task
-        from app.services.adapters.collaboration_strategy import (
-            CollaborationStrategy,
-            CollaborationStrategyFactory,
-        )
-
-        update_result = TaskStatusUpdateResult()
         try:
             with _db_session() as db:
                 task = task_stores.task_store.get_task_by_states(
@@ -251,69 +386,90 @@ class DatabaseHandler:
                     task_id=task_id,
                     states=TaskResource.is_active_query(),
                 )
-                if not task:
-                    return update_result
-
-                subtasks = task_stores.subtask_store.list_assistant_by_task(
-                    db,
-                    task_id=task_id,
-                    owner_user_id=task.user_id,
-                )
-                if not subtasks:
-                    return update_result
-
-                task_crd = Task.model_validate(task.json)
-                last_subtask = subtasks[-1]
-                changed_subtask = None
-                if changed_subtask_id is not None:
-                    changed_subtask = next(
-                        (
-                            subtask
-                            for subtask in subtasks
-                            if subtask.id == changed_subtask_id
-                        ),
-                        None,
-                    )
-                    if changed_subtask is None:
-                        changed_subtask = task_stores.subtask_store.get_by_id(
-                            db, subtask_id=changed_subtask_id
+                if task is not None:
+                    return (
+                        self._update_task_status_in_session(
+                            db, task, changed_subtask_id
                         )
-
-                if task_crd.status:
-                    # Use collaboration strategy to determine task status
-                    strategy: CollaborationStrategy = (
-                        CollaborationStrategyFactory.get_strategy_for_task(db, task_id)
+                        or TaskStatusUpdateResult()
                     )
-                    self._apply_status_update(
-                        db, task_id, task_crd.status, last_subtask, strategy
-                    )
-                    task_crd.status.updatedAt = datetime.now()
-
-                    # Check if pipeline should auto-advance to next stage
-                    advance_subtask = changed_subtask or last_subtask
-                    advance_info = strategy.get_auto_advance_info(
-                        db,
-                        task_id,
-                        advance_subtask.id,
-                        advance_subtask.status.value,
-                    )
-                    if advance_info:
-                        task_crd.status.status = "PENDING"
-                        task_crd.status.progress = 0
-                        update_result.auto_advance = PipelineAutoAdvanceIntent(
-                            task_id=task.id,
-                            user_id=task.user_id,
-                            completed_subtask_id=advance_subtask.id,
-                            advance_info=advance_info,
-                        )
-
-                task_stores.task_store.update_json(
-                    db, task=task, payload=task_crd.model_dump(mode="json")
-                )
-
         except Exception:
             logger.exception("Error updating task %s status", task_id)
-            return TaskStatusUpdateResult()
+        return TaskStatusUpdateResult()
+
+    def _update_task_status_in_session(
+        self,
+        db: Session,
+        task: TaskResource,
+        changed_subtask_id: int | None,
+        *,
+        terminal: bool = False,
+    ) -> Optional[TaskStatusUpdateResult]:
+        from app.schemas.kind import Task
+        from app.services.adapters.collaboration_strategy import (
+            CollaborationStrategyFactory,
+        )
+
+        task_id = task.id
+        update_result = TaskStatusUpdateResult()
+        subtasks = task_stores.subtask_store.list_assistant_by_task(
+            db,
+            task_id=task_id,
+            owner_user_id=task.user_id,
+            include_contexts=False,
+        )
+        if not subtasks:
+            return None
+
+        task_crd = Task.model_validate(task.json)
+        last_subtask = subtasks[-1]
+        changed_subtask = None
+        if changed_subtask_id is not None:
+            changed_subtask = next(
+                (subtask for subtask in subtasks if subtask.id == changed_subtask_id),
+                None,
+            )
+            if changed_subtask is None:
+                changed_subtask = task_stores.subtask_store.get_basic_by_id(
+                    db, subtask_id=changed_subtask_id
+                )
+
+        if task_crd.status:
+            # Use collaboration strategy to determine task status
+            strategy: CollaborationStrategy = (
+                CollaborationStrategyFactory.get_strategy_for_task(db, task_id)
+            )
+            self._apply_status_update(
+                db, task_id, task_crd.status, last_subtask, strategy
+            )
+            task_crd.status.updatedAt = datetime.now()
+
+            # Check if pipeline should auto-advance to next stage
+            advance_subtask = changed_subtask or last_subtask
+            advance_info = strategy.get_auto_advance_info(
+                db,
+                task_id,
+                advance_subtask.id,
+                advance_subtask.status.value,
+            )
+            if advance_info and advance_subtask.id == last_subtask.id:
+                task_crd.status.status = "PENDING"
+                task_crd.status.progress = 0
+                update_result.auto_advance = PipelineAutoAdvanceIntent(
+                    task_id=task.id,
+                    user_id=task.user_id,
+                    completed_subtask_id=advance_subtask.id,
+                    advance_info=advance_info,
+                )
+
+        payload = task_crd.model_dump(mode="json")
+        if terminal and changed_subtask_id is not None:
+            settle_pipeline_handoff(payload, changed_subtask_id)
+        if update_result.auto_advance is not None:
+            update_result.auto_advance.write(payload)
+            if terminal:
+                add_pipeline_recovery(db, update_result.auto_advance)
+        task_stores.task_store.update_json(db, task=task, payload=payload)
 
         return update_result
 

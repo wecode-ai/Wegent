@@ -21,7 +21,6 @@ import 'katex/dist/katex.min.css'
 import { normalizeMathDelimiters, remarkMathDelimiters } from './remarkMathDelimiters'
 import {
   classifyMarkdownLink,
-  isHtmlFilePath,
   transformMarkdownUrl,
   type MarkdownLinkTarget,
 } from './assistantMarkdownLinks'
@@ -664,7 +663,7 @@ function AssistantMarkdownLink({
   onOpenFile?: (path: string, options?: MarkdownFileOpenOptions) => void
   children?: ReactNode
 }) {
-  const { openExternalUrl, navigateTo, openHtmlFile, translate } = useMarkdownServices()
+  const { openExternalUrl, navigateTo, translate } = useMarkdownServices()
   const target: MarkdownLinkTarget = citation ?? classifyMarkdownLink(href)
   const icon =
     target.kind === 'file' ? (
@@ -687,7 +686,6 @@ function AssistantMarkdownLink({
 
   if (target.kind === 'file') {
     const filePath = target.path
-    const canOpenWithoutWorkspace = isHtmlFilePath(filePath) && Boolean(openHtmlFile)
     const artifact = citation?.artifact
     const lineLabel =
       artifact?.kind === 'document'
@@ -719,11 +717,8 @@ function AssistantMarkdownLink({
           data-testid="assistant-markdown-link"
           data-citation-purpose={citation?.purpose}
           data-search-excluded={citation ? true : undefined}
-          disabled={!onOpenFile && !canOpenWithoutWorkspace}
+          disabled={!onOpenFile}
           onClick={() => {
-            if (isHtmlFilePath(filePath)) {
-              if (openHtmlFile?.(filePath)) return
-            }
             if (openOptions) {
               onOpenFile?.(filePath, openOptions)
               return

@@ -148,6 +148,43 @@ def mysql_url() -> Iterator[str]:
         admin.dispose()
 
 
+def test_my_work_legacy_and_explicit_ordering_page_on_mysql(mysql_url: str) -> None:
+    from app.services.loop_items.service import loop_item_service
+    from tests.services.test_loop_item_assignment import _make_project
+    from tests.services.test_my_work_pagination import add_items
+
+    engine = sa.create_engine(mysql_url)
+    Base.metadata.create_all(engine)
+    try:
+        with Session(engine, expire_on_commit=False) as db:
+            owner = User(user_name="my-work-owner", password_hash="unused")
+            db.add(owner)
+            db.commit()
+            project = _make_project(db, owner)
+            items = add_items(db, project, owner.id, 2)
+            for order in (
+                None,
+                "recent",
+                "attention",
+                "activity",
+                "priority",
+                "assignment",
+            ):
+                first, cursor = loop_item_service.list_my_work_page(
+                    db, owner.id, limit=1, order=order
+                )
+                assert cursor is not None
+                second, final_cursor = loop_item_service.list_my_work_page(
+                    db, owner.id, limit=1, cursor=cursor, order=order
+                )
+                assert [row["id"] for row in first + second] == [
+                    item.id for item in reversed(items)
+                ]
+                assert final_cursor is None
+    finally:
+        engine.dispose()
+
+
 def test_manager_decision_completes_dispatch_after_concurrent_heartbeat(
     mysql_url: str, monkeypatch: pytest.MonkeyPatch
 ) -> None:

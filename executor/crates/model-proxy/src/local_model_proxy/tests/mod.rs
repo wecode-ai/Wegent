@@ -254,3 +254,6 @@ mod cases_2;
 mod cases_3;
 
 mod cases_4;
+
+mod deepseek_custom_tools;
+mod sse_regressions;

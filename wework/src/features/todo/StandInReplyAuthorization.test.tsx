@@ -37,7 +37,7 @@ describe('source reply authorization', () => {
   it('explains the exact scope before persistent authorization and allows cancellation', async () => {
     const { toggle, onChange, user } = fixture()
     await user.click(toggle)
-    const dialog = screen.getByRole('dialog', { name: '持续允许分身回复？' })
+    const dialog = screen.getByRole('dialog', { name: '持续允许助理回复？' })
     expect(dialog).toHaveTextContent('产品研发群')
     expect(dialog).toHaveTextContent('新收件人仍需确认')
     expect(dialog).toHaveTextContent('撤销持续授权')

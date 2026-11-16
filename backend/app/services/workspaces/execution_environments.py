@@ -226,6 +226,7 @@ class WorkspaceExecutionEnvironmentService:
             namespace=current.namespace,
             public_id=current.public_id,
             is_default=current.is_default,
+            is_system_default=current.is_system_default,
             execution_environment=merge_execution_environment_device_state(
                 current.execution_environment,
                 device_key=runtime_device_route_id(device),

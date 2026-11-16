@@ -511,7 +511,7 @@ export function AutomationsPage({
       track('automation_action_completed', { action: editing ? 'update' : 'create' })
     } catch (saveError) {
       track('operation_failed', { operation: 'automation_save' })
-      setError(
+      setDraftError(
         saveError instanceof Error
           ? saveError.message
           : t('todo.automation_save_failed', '保存自动化失败')

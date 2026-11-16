@@ -6,7 +6,12 @@
 
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import httpx
+
+from executor_manager.clients import executor_binding
+from executor_manager.executors.docker.executor import DockerExecutor
 from executor_manager.services.task_queue_consumer import TaskQueueConsumer
+from executor_manager.tasks.task_processor import TaskProcessor
 
 TASK_ID = 10000000000001
 SUBTASK_ID = 10000000000002
@@ -58,6 +63,43 @@ def test_failed_result_without_executor_name_is_requeued():
     consumer.queue_service.requeue_task.assert_called_once()
 
 
+def test_obsolete_binding_is_dropped_without_runtime_dispatch_or_failure_callback(
+    mocker,
+):
+    consumer = _build_consumer()
+    consumer.task_processor = TaskProcessor()
+    executor = DockerExecutor.__new__(DockerExecutor)
+    mocker.patch.object(executor, "_should_recreate_container", return_value=False)
+    mocker.patch.object(executor, "wait_instance_ready", return_value={"port": 8080})
+    dispatch = mocker.patch.object(executor, "_dispatch_initial_task_to_new_container")
+    mocker.patch(
+        "executor_manager.tasks.task_processor.ExecutorDispatcher.get_executor",
+        return_value=executor,
+    )
+    mocker.patch.object(
+        executor_binding,
+        "traced_sync_client",
+        return_value=httpx.Client(
+            transport=httpx.MockTransport(lambda _: httpx.Response(410))
+        ),
+    )
+    callback = mocker.patch(
+        "executor_manager.clients.callback_client.get_callback_client"
+    )
+    task = _task()
+    task["metadata"].update(
+        executor_name="wegent-task-existing",
+        executor_binding_token="dispatch-token",
+    )
+
+    consumer._process_task_with_retry(task)
+
+    dispatch.assert_not_called()
+    consumer.queue_service.clear_pending.assert_called_once_with(TASK_ID, SUBTASK_ID)
+    consumer.queue_service.requeue_task.assert_not_called()
+    callback.assert_not_called()
+
+
 def test_successful_result_is_not_requeued():
     """Successful submissions keep the current no-retry behavior."""
     consumer = _build_consumer()
@@ -70,7 +112,7 @@ def test_successful_result_is_not_requeued():
     consumer._process_task_with_retry(_task())
 
     consumer.queue_service.requeue_task.assert_not_called()
-    consumer.queue_service.clear_pending.assert_called_once_with(TASK_ID)
+    consumer.queue_service.clear_pending.assert_called_once_with(TASK_ID, SUBTASK_ID)
 
 
 def test_exhausted_retries_report_failure_to_backend():
@@ -99,7 +141,7 @@ def test_exhausted_retries_report_failure_to_backend():
     callback_client.send_error.assert_awaited_once()
     assert callback_client.send_error.await_args.kwargs["task_id"] == TASK_ID
     assert callback_client.send_error.await_args.kwargs["subtask_id"] == SUBTASK_ID
-    consumer.queue_service.clear_pending.assert_called_once_with(TASK_ID)
+    consumer.queue_service.clear_pending.assert_called_once_with(TASK_ID, SUBTASK_ID)
 
 
 def test_failed_failure_callback_keeps_pending_record():

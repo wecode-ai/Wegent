@@ -716,6 +716,31 @@ fn attach_legacy_thread_preview(messages: &mut Vec<Value>, thread: &Value, has_o
     messages.insert(0, synthetic);
 }
 
+fn prepare_initial_user_message(
+    local_task_id: &str,
+    request: &mut ExecutionRequest,
+    payload: &mut Value,
+) -> Option<Value> {
+    let mut message = cached_user_message(local_task_id, request, payload)?;
+    // Server-created tasks must join their pre-native transcript to the native turn
+    // using one durable identity, just like tasks created by the composer.
+    let client_id = message
+        .get("clientUserMessageId")
+        .or_else(|| request.extra.get("client_user_message_id"))
+        .or_else(|| request.extra.get("clientUserMessageId"))
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|id| !id.is_empty())
+        .map(str::to_owned)
+        .unwrap_or_else(|| message["id"].as_str().unwrap().to_owned());
+    message["clientUserMessageId"] = json!(client_id);
+    payload["clientUserMessageId"] = json!(client_id);
+    request
+        .extra
+        .insert("client_user_message_id".to_owned(), json!(client_id));
+    Some(message)
+}
+
 fn cached_user_message(
     local_task_id: &str,
     request: &ExecutionRequest,

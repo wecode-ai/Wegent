@@ -18,16 +18,16 @@ With the CRD-based device model:
 import asyncio
 import logging
 from dataclasses import dataclass
-from datetime import datetime
 from typing import Optional
 
 from app.core.distributed_lock import distributed_lock
 from app.db.session import SessionLocal
 from app.services.device_service import device_service
-from app.services.execution.dispatcher import execution_dispatcher
-from app.services.execution.emitters import WebSocketResultEmitter
+from app.services.execution.emitters import (
+    StatusUpdatingEmitter,
+    WebSocketResultEmitter,
+)
 from app.stores.tasks import subtask_store
-from shared.models import ExecutionRequest
 from shared.models.db.subtask import SubtaskStatus
 
 logger = logging.getLogger(__name__)
@@ -80,58 +80,29 @@ def _list_running_device_subtasks() -> list[_RunningDeviceSubtask]:
         db.close()
 
 
-def _mark_subtasks_failed(
-    candidates: list[_RunningDeviceSubtask],
-) -> set[int]:
-    """Persist device-timeout failures in a worker thread."""
-    db = SessionLocal()
-    marked_ids: set[int] = set()
+async def _emit_device_timeout(candidate: _RunningDeviceSubtask) -> bool:
+    """Fail the still-running attempt and notify clients after commit."""
+    emitter = StatusUpdatingEmitter(
+        wrapped=WebSocketResultEmitter(
+            task_id=candidate.task_id,
+            subtask_id=candidate.subtask_id,
+            user_id=candidate.user_id,
+        ),
+        task_id=candidate.task_id,
+        subtask_id=candidate.subtask_id,
+        expected_status=SubtaskStatus.RUNNING.value,
+        expected_device=(candidate.user_id, candidate.device_id),
+    )
     try:
-        for candidate in candidates:
-            subtask = subtask_store.get_basic_by_id(
-                db,
-                subtask_id=candidate.subtask_id,
-                owner_user_id=candidate.user_id,
-            )
-            if subtask is None or subtask.status != SubtaskStatus.RUNNING:
-                continue
-            subtask_store.update_fields(
-                db,
-                subtask=subtask,
-                status=SubtaskStatus.FAILED,
-                error_message="Device connection lost (heartbeat timeout)",
-                completed_at=datetime.now(),
-            )
-            marked_ids.add(candidate.subtask_id)
-        if marked_ids:
-            db.commit()
-        return marked_ids
-    except Exception:
-        db.rollback()
-        raise
+        await emitter.emit_error(
+            task_id=candidate.task_id,
+            subtask_id=candidate.subtask_id,
+            error="Device connection lost (heartbeat timeout)",
+            message_id=candidate.message_id,
+        )
+        return not emitter.terminal_transition_lost
     finally:
-        db.close()
-
-
-async def _emit_device_timeout(candidate: _RunningDeviceSubtask) -> None:
-    """Notify clients after a device subtask is marked failed."""
-    request = ExecutionRequest(
-        task_id=candidate.task_id,
-        subtask_id=candidate.subtask_id,
-        prompt="",
-        user_id=candidate.user_id,
-        message_id=candidate.message_id,
-    )
-    emitter = WebSocketResultEmitter(
-        task_id=candidate.task_id,
-        subtask_id=candidate.subtask_id,
-        user_id=candidate.user_id,
-    )
-    await execution_dispatcher.error(
-        request=request,
-        error_message="Device connection lost",
-        emitter=emitter,
-    )
+        await emitter.close()
 
 
 async def check_and_mark_failed_subtasks() -> int:
@@ -147,44 +118,25 @@ async def check_and_mark_failed_subtasks() -> int:
     """
     try:
         candidates = await asyncio.to_thread(_list_running_device_subtasks)
-        offline_candidates = [
-            candidate
-            for candidate in candidates
-            if not await device_service.is_device_online(
-                candidate.user_id, candidate.device_id
-            )
-        ]
-        if not offline_candidates:
-            return 0
-        marked_ids = await asyncio.to_thread(
-            _mark_subtasks_failed,
-            offline_candidates,
-        )
-
-    except Exception as e:
-        logger.error(f"[DeviceMonitor] Error checking subtasks: {e}")
+    except Exception:
+        logger.exception("[DeviceMonitor] Failed to list running device subtasks")
         return 0
 
-    for candidate in offline_candidates:
-        if candidate.subtask_id not in marked_ids:
-            continue
-        logger.warning(
-            "[DeviceMonitor] Device offline, failing subtask: "
-            "user_id=%s, device_id=%s, subtask_id=%s",
-            candidate.user_id,
-            candidate.device_id,
-            candidate.subtask_id,
-        )
+    marked_count = 0
+    for candidate in candidates:
         try:
-            await _emit_device_timeout(candidate)
-        except Exception as e:
-            logger.error(
-                "[DeviceMonitor] Failed to emit error for subtask %s: %s",
+            if await device_service.is_device_online(
+                candidate.user_id, candidate.device_id
+            ):
+                continue
+            if await _emit_device_timeout(candidate):
+                marked_count += 1
+        except Exception:
+            logger.exception(
+                "[DeviceMonitor] Failed to settle device timeout for subtask %s",
                 candidate.subtask_id,
-                e,
             )
 
-    marked_count = len(marked_ids)
     if marked_count:
         logger.info(
             "[DeviceMonitor] Marked %s subtasks as failed due to device timeout",

@@ -28,6 +28,9 @@ use wegent_executor::{
 #[path = "support/runtime_side_source_contract.rs"]
 mod runtime_side_source_contract;
 
+#[path = "support/runtime_compaction_context.rs"]
+mod runtime_compaction_context;
+
 #[path = "support/runtime_task_project_move.rs"]
 mod runtime_task_project_move;
 
@@ -1214,14 +1217,7 @@ async fn assert_runtime_tasks_fork_completed_turn(fail_transcript: bool, cloud_m
     assert_eq!(fork_call["params"]["threadId"], "thread-1");
     assert_eq!(fork_call["params"]["cwd"], "/tmp/project");
     assert_eq!(fork_call["params"]["model"], "gpt-5.6-sol");
-    assert_eq!(
-        fork_call["params"]["modelProvider"],
-        if cloud_model {
-            "wework-router"
-        } else {
-            "openai"
-        }
-    );
+    assert_eq!(fork_call["params"]["modelProvider"], "~");
     assert_eq!(fork_call["params"]["excludeTurns"], true);
 
     let mut follow_up_request = if cloud_model {
@@ -1261,21 +1257,13 @@ async fn assert_runtime_tasks_fork_completed_turn(fail_transcript: bool, cloud_m
             "gpt-5.5"
         }
     );
-    assert_eq!(
-        resume_call["params"]["modelProvider"],
-        if cloud_model {
-            "wework-router"
-        } else {
-            "openai"
-        }
-    );
+    assert_eq!(resume_call["params"]["modelProvider"], "~");
     if cloud_model {
-        let fork_proxy_url = fork_call["params"]["config"]
-            ["model_providers.wework-router.base_url"]
+        let fork_proxy_url = fork_call["params"]["config"]["model_providers.~"]["base_url"]
             .as_str()
             .expect("cloud fork should configure an authenticated proxy route");
         assert_eq!(
-            resume_call["params"]["config"]["model_providers.wework-router.base_url"].as_str(),
+            resume_call["params"]["config"]["model_providers.~"]["base_url"].as_str(),
             Some(fork_proxy_url),
             "fork follow-up should reuse its own authenticated route"
         );
@@ -4089,8 +4077,8 @@ async fn refreshed_transcript_reads_without_resuming_an_active_thread() {
         }))
         .await
         .expect("create should be accepted");
-    wait_until_task_running(&handler, "local-task-active-transcript-refresh").await;
     wait_for_method_count(&log_path, "turn/start", 1).await;
+    wait_until_native_turn_recorded(&handler, "local-task-active-transcript-refresh").await;
 
     let transcript = handler
         .handle_runtime_rpc(json!({
@@ -4147,8 +4135,8 @@ async fn active_transcript_without_a_snapshot_reads_provider_history() {
         }))
         .await
         .expect("create should be accepted");
-    wait_until_task_running(&handler, "local-task-active-transcript-no-snapshot").await;
     wait_for_method_count(&log_path, "turn/start", 1).await;
+    wait_until_native_turn_recorded(&handler, "local-task-active-transcript-no-snapshot").await;
 
     let transcript = handler
         .handle_runtime_rpc(json!({
@@ -4631,6 +4619,15 @@ async fn runtime_tasks_send_recovers_thread_from_unique_workspace_when_visible_t
 
 #[tokio::test]
 async fn runtime_tasks_rollback_reverts_the_source_turn_before_the_replacement_turn() {
+    verify_rollback_inference_context(true).await
+}
+
+#[tokio::test]
+async fn runtime_tasks_rollback_restores_the_api_provider_after_cold_control_resume() {
+    verify_rollback_inference_context(false).await
+}
+
+async fn verify_rollback_inference_context(native: bool) {
     let _lock = env_lock().await;
     let _home = EnvGuard::set(
         "WEGENT_EXECUTOR_HOME",
@@ -4664,10 +4661,11 @@ async fn runtime_tasks_rollback_reverts_the_source_turn_before_the_replacement_t
                 "message": "edited from address handle",
                 "messageId": "user-last",
                 "retrySourceTurnId": "turn-1",
-                "executionRequest": codex_execution_request(
+                "executionRequest": execution_request_with_model_config(
                     "edited from address handle",
                     "/tmp/project",
-                    "gpt-4.1"
+                    if native { json!({"model":"openai","model_id":"gpt-4.1","protocol":"openai-responses"}) }
+                    else { json!({"model":"api-provider","model_id":"api-model","protocol":"openai-responses","base_url":"http://127.0.0.1:9/v1","api_key":"test-key"}) }
                 )
             }
         }))
@@ -4699,6 +4697,20 @@ async fn runtime_tasks_rollback_reverts_the_source_turn_before_the_replacement_t
     assert!(
         resume_index < revert_index,
         "revert must run only after thread/resume has loaded the thread"
+    );
+    let inference_resume = calls
+        .iter()
+        .enumerate()
+        .find(|(index, call)| *index > revert_index && call["method"] == "thread/resume")
+        .expect("the replacement must restore its inference context after control-only revert");
+    assert_eq!(inference_resume.1["params"]["modelProvider"], "~");
+    assert_eq!(
+        inference_resume.1["params"]["config"]["model_providers.~"]["supports_websockets"],
+        native
+    );
+    assert_eq!(
+        inference_resume.1["params"]["config"]["model_providers.~"]["requires_openai_auth"],
+        native
     );
     let turn_start = calls
         .iter()
@@ -4925,6 +4937,7 @@ async fn runtime_tasks_rollback_uses_the_task_agent_home() {
         json!({
             "threadId": "thread-1",
             "executionRequest": {
+                "user_id": 1,
                 "bot": [{"id": 42, "shell_type": "codex"}],
                 "team_id": 7,
                 "team_namespace": "default",
@@ -5476,7 +5489,10 @@ done
 "#,
         log_path.display()
     );
-    write_executable(&path, &content);
+    write_executable(
+        &path,
+        &wegent_executor_test_support::with_codex_bundled_catalog(&content),
+    );
     path
 }
 
@@ -5535,7 +5551,10 @@ done
 "#,
         log_path.display()
     );
-    write_executable(&path, &content);
+    write_executable(
+        &path,
+        &wegent_executor_test_support::with_codex_bundled_catalog(&content),
+    );
     path
 }
 
@@ -5585,7 +5604,10 @@ done
 "#,
         log_path.display()
     );
-    write_executable(&path, &content);
+    write_executable(
+        &path,
+        &wegent_executor_test_support::with_codex_bundled_catalog(&content),
+    );
     path
 }
 
@@ -5648,7 +5670,10 @@ done
 "#,
         log_path.display()
     );
-    write_executable(&path, &content);
+    write_executable(
+        &path,
+        &wegent_executor_test_support::with_codex_bundled_catalog(&content),
+    );
     path
 }
 
@@ -5695,7 +5720,10 @@ done
 "#,
         log_path.display()
     );
-    write_executable(&path, &content);
+    write_executable(
+        &path,
+        &wegent_executor_test_support::with_codex_bundled_catalog(&content),
+    );
     path
 }
 
@@ -5742,7 +5770,10 @@ done
 "#,
         log_path.display()
     );
-    write_executable(&path, &content);
+    write_executable(
+        &path,
+        &wegent_executor_test_support::with_codex_bundled_catalog(&content),
+    );
     path
 }
 
@@ -5799,7 +5830,10 @@ done
 "#,
         log_path.display()
     );
-    write_executable(&path, &content);
+    write_executable(
+        &path,
+        &wegent_executor_test_support::with_codex_bundled_catalog(&content),
+    );
     path
 }
 
@@ -5925,7 +5959,10 @@ done
         notification_count,
         completion_request_id
     );
-    write_executable(&path, &content);
+    write_executable(
+        &path,
+        &wegent_executor_test_support::with_codex_bundled_catalog(&content),
+    );
     path
 }
 
@@ -5995,7 +6032,10 @@ done
 "#,
         log_path.display()
     );
-    write_executable(&path, &content);
+    write_executable(
+        &path,
+        &wegent_executor_test_support::with_codex_bundled_catalog(&content),
+    );
     path
 }
 
@@ -6075,7 +6115,10 @@ done
         log_path.display(),
         steer_release_path.display()
     );
-    write_executable(&path, &content);
+    write_executable(
+        &path,
+        &wegent_executor_test_support::with_codex_bundled_catalog(&content),
+    );
     path
 }
 
@@ -6132,7 +6175,10 @@ done
 "#,
         log_path.display()
     );
-    write_executable(&path, &content);
+    write_executable(
+        &path,
+        &wegent_executor_test_support::with_codex_bundled_catalog(&content),
+    );
     path
 }
 
@@ -6221,7 +6267,10 @@ done
         log_path.display(),
         steer_mismatch
     );
-    write_executable(&path, &content);
+    write_executable(
+        &path,
+        &wegent_executor_test_support::with_codex_bundled_catalog(&content),
+    );
     path
 }
 
@@ -6237,7 +6286,10 @@ done
 "#,
         log_path.display()
     );
-    write_executable(&path, &content);
+    write_executable(
+        &path,
+        &wegent_executor_test_support::with_codex_bundled_catalog(&content),
+    );
     path
 }
 
@@ -6275,7 +6327,10 @@ done
 "#,
         log_path.display()
     );
-    write_executable(&path, &content);
+    write_executable(
+        &path,
+        &wegent_executor_test_support::with_codex_bundled_catalog(&content),
+    );
     path
 }
 
@@ -6317,7 +6372,10 @@ done
 "#,
         log_path.display()
     );
-    write_executable(&path, &content);
+    write_executable(
+        &path,
+        &wegent_executor_test_support::with_codex_bundled_catalog(&content),
+    );
     path
 }
 
@@ -6361,7 +6419,10 @@ done
 "#,
         log_path.display()
     );
-    write_executable(&path, &content);
+    write_executable(
+        &path,
+        &wegent_executor_test_support::with_codex_bundled_catalog(&content),
+    );
     path
 }
 
@@ -6643,6 +6704,34 @@ fn process_exists(pid: u32) -> bool {
         .stderr(std::process::Stdio::null())
         .status()
         .is_ok_and(|status| status.success())
+}
+
+async fn wait_until_native_turn_recorded(handler: &RuntimeWorkRpcHandler, local_task_id: &str) {
+    // A logged request precedes its response and the native turn's durable mapping.
+    for _ in 0..50 {
+        let listed = handler
+            .handle_runtime_rpc(json!({
+                "method": "runtime.tasks.list",
+                "payload": {}
+            }))
+            .await
+            .expect("list should succeed");
+        let started = listed["workspaces"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .flat_map(|workspace| workspace["tasks"].as_array().into_iter().flatten())
+            .any(|task| {
+                task["taskId"] == local_task_id
+                    && task["running"] == true
+                    && task["runtimeHandle"]["lastTurnId"] == "turn-1"
+            });
+        if started {
+            return;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+    }
+    panic!("native turn identity was not recorded");
 }
 
 async fn wait_until_task_running(handler: &RuntimeWorkRpcHandler, local_task_id: &str) {

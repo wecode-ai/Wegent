@@ -78,7 +78,11 @@ export function IssueWebCommentComposer({
   }, [])
   const mentionCandidates = useIssueMentionCandidates(members, agents, translate)
 
-  async function submit(body: string, mentions: IssueMentionOption[]) {
+  async function submit(
+    body: string,
+    mentions: IssueMentionOption[],
+    submission?: { commentOnly?: boolean }
+  ) {
     if (!canComment || loading || submitting.current || !body || !selection.isAttachmentReadyToSend)
       return false
     submitting.current = true
@@ -87,7 +91,13 @@ export function IssueWebCommentComposer({
     try {
       const comment = await send(
         issueCommentBody(body, selection.attachments),
-        ...(mentions.length ? [mentions] : [])
+        ...(mentions.length
+          ? [
+              submission?.commentOnly
+                ? mentions.filter(mention => mention.type === 'user')
+                : mentions,
+            ]
+          : [])
       )
       if (!active.current) return true
       if (comment) onSent(comment)

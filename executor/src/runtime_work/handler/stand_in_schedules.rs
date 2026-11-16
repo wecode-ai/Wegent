@@ -240,7 +240,12 @@ impl RuntimeWorkRpcHandler {
         if memory_review {
             payload["origin"]["memoryReview"] = json!(true);
         }
-        let mut prepared = self.prepare_stand_in_execution(payload, &config).await?;
+        let mut prepared = if memory_review {
+            self.prepare_background_stand_in_execution(payload, &config)
+                .await?
+        } else {
+            self.prepare_stand_in_execution(payload, &config).await?
+        };
         if review || memory_review {
             let invalid = || AppIpcError::new("bad_request", "Invalid review execution context");
             let request = prepared["executionRequest"]
@@ -329,6 +334,28 @@ impl RuntimeWorkRpcHandler {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn memory_review_rejects_a_non_codex_primary_model_before_creating_work() {
+        let root = tempfile::tempdir().unwrap();
+        let handler = fixture(root.path());
+        let store = LocalTaskStore::open(handler.task_store_path.as_ref()).unwrap();
+        store.materialize_implicit_primary(7, "mac").unwrap();
+        let mut settings = store.personal_stand_in(7, "mac").unwrap();
+        settings["primary"]["model"] =
+            json!({"runtime":"claude_code","provider":"claude","model_id":"chosen"});
+        let settings = store.save_personal_stand_in(7, "mac", settings).unwrap();
+        let entry = crate::runtime_work::automations::memory_review(7, "mac").unwrap();
+
+        let error = handler
+            .prepare_stand_in_schedule(&entry, json!({"message":entry.prompt}))
+            .await
+            .unwrap_err();
+
+        assert_eq!(error.code, "model_unavailable");
+        assert!(handler.local_task_links(true).is_empty());
+        assert_eq!(store.personal_stand_in(7, "mac").unwrap(), settings);
+    }
 
     #[tokio::test]
     async fn chat_created_calendar_events_use_connection_routing_and_reject_execution_targets() {

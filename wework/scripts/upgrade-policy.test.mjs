@@ -101,6 +101,89 @@ test('prefers a verified direct path over two hops', () => {
   assert.deepEqual(planUpgrade(catalog, '1.0.0').path, ['1.2.0'])
 })
 
+function intervalCatalogFixture() {
+  const catalog = catalogFixture()
+  const releases = catalog.releases
+  releases.push({
+    ...releases[2],
+    version: '1.3.0',
+    sha256: '4'.repeat(64),
+    sourceSha: '4'.repeat(40),
+    minSourceVersion: '1.0.0',
+  })
+  for (const from of [releases[2], releases[0]]) {
+    catalog.edges.push({
+      ...catalog.edges[0],
+      from: from.version,
+      fromSha256: from.sha256,
+      fromSourceSha: from.sourceSha,
+      to: releases[3].version,
+      toSha256: releases[3].sha256,
+      toSourceSha: releases[3].sourceSha,
+    })
+  }
+  return catalog
+}
+
+test('A to D evidence lets A, B and C upgrade directly to D without fabricating edges', () => {
+  const catalog = intervalCatalogFixture()
+  const original = structuredClone(catalog)
+  for (const source of ['1.0.0', '1.1.0', '1.2.0']) {
+    const plan = planUpgrade(catalog, source)
+    assert.equal(plan.targetVersion, '1.3.0')
+    assert.deepEqual(plan.path, ['1.3.0'])
+    assert.equal(plan.next.version, '1.3.0')
+  }
+  assert.equal(planUpgrade(catalog, '1.3.0'), null)
+  assert.equal(planUpgrade(catalog, '1.4.0'), null)
+  assert.equal(planUpgrade(catalog, '1.0.5'), null)
+  assert.deepEqual(catalog, original)
+})
+
+test('revoking the interval witness restores the independently verified chain', () => {
+  const catalog = intervalCatalogFixture()
+  catalog.edges.at(-1).revoked = true
+  assert.deepEqual(planUpgrade(catalog, '1.1.0').path, ['1.2.0', '1.3.0'])
+})
+
+test('an explicit pair revocation overrides a covering interval', () => {
+  const catalog = intervalCatalogFixture()
+  const source = catalog.releases[1]
+  catalog.edges.push({
+    ...catalog.edges.at(-1),
+    from: source.version,
+    fromSha256: source.sha256,
+    fromSourceSha: source.sourceSha,
+    revoked: true,
+  })
+  assert.deepEqual(planUpgrade(catalog, source.version).path, ['1.2.0', '1.3.0'])
+})
+
+test('revoked interval targets and anchors cannot authorize inferred upgrades', () => {
+  const catalog = intervalCatalogFixture()
+  catalog.releases[3].revoked = true
+  assert.deepEqual(planUpgrade(catalog, '1.1.0').path, ['1.2.0'])
+  catalog.releases[3].revoked = false
+  catalog.releases[0].revoked = true
+  assert.deepEqual(planUpgrade(catalog, '1.1.0').path, ['1.2.0', '1.3.0'])
+  assert.deepEqual(planUpgrade(catalog, '1.0.0').path, ['1.3.0'])
+})
+
+test('intervals do not cover older sources and do not replace a bridge with transitive inference', () => {
+  const catalog = catalogFixture()
+  catalog.releases[2].minSourceVersion = '0.9.0'
+  assert.deepEqual(planUpgrade(catalog, '1.0.0').path, ['1.1.0', '1.2.0'])
+})
+
+test('Beta intervals use semantic version ordering while Stable still rejects Beta releases', () => {
+  const catalog = intervalCatalogFixture()
+  catalog.channel = 'beta'
+  catalog.releases.push({ ...catalog.releases[1], version: '1.3.0-beta.2' })
+  assert.deepEqual(planUpgrade(catalog, '1.3.0-beta.2').path, ['1.3.0'])
+  catalog.channel = 'stable'
+  assert.throws(() => planUpgrade(catalog, '1.3.0-beta.2'), /Invalid Wework upgrade release/)
+})
+
 test('missing or mismatched source revisions invalidate release and edge evidence', () => {
   for (const sourceSha of [undefined, 'not-a-revision']) {
     const catalog = catalogFixture()

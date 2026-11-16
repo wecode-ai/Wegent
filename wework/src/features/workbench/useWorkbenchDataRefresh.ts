@@ -14,7 +14,7 @@ import type {
   RuntimeWorkListResponse,
   User,
 } from '@/types/api'
-import { isCloudDevice, isRemoteDevice } from '@/lib/device-capabilities'
+import { isRemoteTaskDevice } from '@/lib/device-capabilities'
 import { normalizeRuntimeWorkspacePath } from '@/lib/runtime-project'
 import type { CloudRuntimeState, CloudWorkCheckKey, WorkbenchState } from '@/types/workbench'
 import {
@@ -913,7 +913,7 @@ export function useWorkbenchDataRefresh({
       }
       const device = devicesRef.current.find(item => item.device_id === address.deviceId)
       const listCloudRuntimeWork =
-        device && (isCloudDevice(device) || isRemoteDevice(device))
+        device && isRemoteTaskDevice(device)
           ? cloudBackgroundApiRef.current?.listRuntimeWork
           : undefined
       const runtimeWork = applyRuntimeTaskOverrides(

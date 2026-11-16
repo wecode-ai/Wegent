@@ -623,3 +623,37 @@ creationTest(
     await expect(page.getByTestId('knowledge-authorization-complete')).toBeVisible()
   }
 )
+
+creationTest(
+  'refreshes creation locations after managing a team without losing the draft',
+  async ({ page, creation }) => {
+    await page.goto('/knowledge?type=document')
+    await page.getByTestId('create-kb-button').click()
+    const dialog = page.getByTestId('create-kb-dialog')
+    const draftName = fixtureName('e2e-return-draft')
+    await dialog.getByTestId('kb-name-input').fill(draftName)
+    await dialog.getByTestId('group-selector').click()
+    const popup = page.waitForEvent('popup')
+    await page.getByTestId('create-manage-organizations').click()
+    const management = await popup
+    await expect(management).toHaveURL(/settings\?tab=group-manager/)
+    const name = fixtureName('e2e-return-team')
+    creation.groups.add(name)
+    expect((await creation.api.post('/api/groups', { name, display_name: name })).status).toBe(201)
+    const refreshed = page.waitForResponse(
+      response =>
+        new URL(response.url()).pathname === '/api/groups' && response.request().method() === 'GET'
+    )
+    await management.close()
+    await page.bringToFront()
+    // Headless popup closure does not guarantee a window focus event. Reopening
+    // locations is also a real return interaction that must refresh permissions.
+    await dialog.getByTestId('group-selector').click()
+    await refreshed
+    await expect(dialog.getByTestId('kb-name-input')).toHaveValue(draftName)
+    await page.getByTestId('create-space-search').fill(name)
+    await page.getByTestId('create-space-option-group-' + name).click()
+    await expect(dialog.getByTestId('submit-create-kb')).toBeEnabled()
+    expect((await createLibraryInDialog(page, creation)).namespace).toBe(name)
+  }
+)

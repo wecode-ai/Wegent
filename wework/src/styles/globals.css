@@ -358,13 +358,13 @@ body[data-wework-panel-resizing] [data-testid='workspace-browser-frame'] {
 .task-detail-workspace-description:not(.task-detail-content-readonly)
   .task-description-editor
   .bn-editor {
-  padding-inline: 32px 0;
+  padding-inline: 16px 0;
 }
 
 .task-detail-workspace-description:not(.task-detail-content-readonly)
   .task-description-editor
   .bn-side-menu {
-  margin-inline-start: 16px;
+  margin-inline-start: 0;
 }
 
 .issue-description-editor,

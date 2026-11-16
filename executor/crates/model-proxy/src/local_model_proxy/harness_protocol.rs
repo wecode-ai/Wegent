@@ -592,15 +592,16 @@ fn responses_json_to_messages(body: &Value) -> Value {
 pub(super) fn adapt_upstream_sse<S, E>(
     upstream_format: String,
     source: S,
-) -> impl Stream<Item = Result<Bytes, E>>
+) -> impl Stream<Item = Result<Bytes, std::io::Error>>
 where
     S: Stream<Item = Result<Bytes, E>> + Send + 'static,
-    E: Send + 'static,
+    E: std::fmt::Display + Send + 'static,
 {
     let state = StreamAdapterState {
         source: Box::pin(source),
         upstream_format,
         input_buffer: String::new(),
+        pending_utf8: Vec::new(),
         output_buffer: message_start_event(),
         open_blocks: HashSet::new(),
         tool_seen: false,
@@ -619,24 +620,33 @@ where
             }
             match state.source.next().await {
                 Some(Ok(bytes)) => {
-                    state
-                        .input_buffer
-                        .push_str(&String::from_utf8_lossy(&bytes));
-                    while let Some(index) = state.input_buffer.find("\n\n") {
-                        let event = state.input_buffer[..index].to_owned();
-                        state.input_buffer.drain(..index + 2);
-                        let converted = if state.upstream_format == "openai-chat-completions" {
-                            convert_chat_sse_event(&event, &mut state)
-                        } else {
-                            convert_responses_sse_event(&event, &mut state)
-                        };
-                        state.output_buffer.push_str(&converted);
+                    if let Err(error) = super::append_stream_utf8(
+                        &mut state.input_buffer,
+                        &mut state.pending_utf8,
+                        &bytes,
+                    ) {
+                        state.completed = true;
+                        return Some((Err(error), state));
+                    }
+                    while let Some(event) = super::take_sse_block(&mut state.input_buffer) {
+                        state.handle_block(&event);
                     }
                 }
-                Some(Err(error)) => return Some((Err(error), state)),
+                Some(Err(error)) => {
+                    state.completed = true;
+                    return Some((Err(std::io::Error::other(error.to_string())), state));
+                }
                 None => {
-                    let finished = finish_stream(&mut state, None);
-                    state.output_buffer.push_str(&finished);
+                    if let Err(error) = super::finish_stream_utf8(&state.pending_utf8) {
+                        state.completed = true;
+                        return Some((Err(error), state));
+                    }
+                    let trailing = std::mem::take(&mut state.input_buffer);
+                    state.handle_block(&trailing);
+                    if !state.completed {
+                        let finished = finish_stream(&mut state, None);
+                        state.output_buffer.push_str(&finished);
+                    }
                     state.completed = true;
                 }
             }
@@ -648,27 +658,26 @@ struct StreamAdapterState<S> {
     source: std::pin::Pin<Box<S>>,
     upstream_format: String,
     input_buffer: String,
+    pending_utf8: Vec<u8>,
     output_buffer: String,
     open_blocks: HashSet<usize>,
     tool_seen: bool,
     completed: bool,
 }
 
-fn event_data(event: &str) -> Option<Value> {
-    let data = event
-        .lines()
-        .filter_map(|line| line.strip_prefix("data:"))
-        .map(str::trim)
-        .collect::<Vec<_>>()
-        .join("\n");
-    if data.is_empty() || data == "[DONE]" {
-        return None;
+impl<S> StreamAdapterState<S> {
+    fn handle_block(&mut self, event: &str) {
+        let converted = if self.upstream_format == "openai-chat-completions" {
+            convert_chat_sse_event(event, self)
+        } else {
+            convert_responses_sse_event(event, self)
+        };
+        self.output_buffer.push_str(&converted);
     }
-    serde_json::from_str(&data).ok()
 }
 
 fn convert_chat_sse_event<S>(event: &str, state: &mut StreamAdapterState<S>) -> String {
-    let Some(value) = event_data(event) else {
+    let Some(value) = super::sse::json(event) else {
         return String::new();
     };
     let delta = value.pointer("/choices/0/delta");
@@ -725,7 +734,7 @@ fn convert_chat_sse_event<S>(event: &str, state: &mut StreamAdapterState<S>) -> 
 }
 
 fn convert_responses_sse_event<S>(event: &str, state: &mut StreamAdapterState<S>) -> String {
-    let Some(value) = event_data(event) else {
+    let Some(value) = super::sse::json(event) else {
         return String::new();
     };
     match value

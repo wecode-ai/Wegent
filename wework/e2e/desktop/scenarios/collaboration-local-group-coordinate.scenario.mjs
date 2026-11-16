@@ -696,7 +696,7 @@ export async function createDesktopScenario({
         text: HUMAN_ISSUE,
         timeoutMs: uiTimeoutMs,
       })
-      await control.command('waitFor', scoped('[data-testid="cloud-todo-personal-task-start"]'), {
+      await control.command('waitFor', scoped('[data-testid="cloud-todo-create-task"]'), {
         timeoutMs: uiTimeoutMs,
       })
       await control.command('waitFor', scoped('[data-testid="issue-assignment-receipts"]'), {

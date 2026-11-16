@@ -4516,6 +4516,44 @@ describe('createLocalAppServices', () => {
     )
   })
 
+  test.each([
+    undefined,
+    { startNewSession: true, expectedThreadId: 'previous-thread' },
+    { startNewSession: false, expectedThreadId: 'previous-thread' },
+  ])('preserves a session boundary in the final Runtime IPC payload: %j', async boundary => {
+    const request = vi.fn().mockResolvedValue({ accepted: true })
+    const services = createLocalAppServices({
+      ensure: vi.fn().mockResolvedValue({ running: true, ready: true, deviceId: 'device-uuid' }),
+      request,
+      subscribe: vi.fn(),
+    })
+
+    await services.runtimeWorkApi!.sendRuntimeMessage({
+      address: { deviceId: 'local-device', taskId: 'stand-in-chat-9-primary' },
+      message: 'Continue with the selected model',
+      modelId: 'gpt-6.1-sol',
+      modelType: 'runtime',
+      modelOptions: { codexProviderId: 'openai', codexProviderType: 'official' },
+      ...boundary,
+    })
+
+    const payload = request.mock.calls.find(([method]) => method === 'runtime.tasks.send')?.[1]
+    expect(payload).toMatchObject({
+      taskId: 'stand-in-chat-9-primary',
+      modelSelection: { modelName: 'gpt-6.1-sol', modelType: 'runtime' },
+      executionRequest: {
+        prompt: 'Continue with the selected model',
+        model_config: { model_id: 'gpt-6.1-sol' },
+      },
+    })
+    if (boundary) {
+      expect(payload).toMatchObject(boundary)
+    } else {
+      expect(payload).not.toHaveProperty('startNewSession')
+      expect(payload).not.toHaveProperty('expectedThreadId')
+    }
+  })
+
   test('keeps official Codex classification when OpenAI provider metadata is present', async () => {
     const request = vi.fn().mockResolvedValue({ accepted: true })
     const services = createLocalAppServices({

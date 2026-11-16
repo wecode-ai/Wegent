@@ -10,8 +10,8 @@ Linux.
 
 ## Prerequisites
 
-Install Node.js, pnpm, Git, and the Rust toolchain required to build the
-Executor. Then install dependencies:
+Install Node.js, pnpm, Git, the Visual Studio C++ Build Tools, and the Rust
+MSVC toolchain required to build the Executor. Then install dependencies:
 
 ```powershell
 pnpm install --frozen-lockfile
@@ -71,12 +71,41 @@ Icons, plugins, runtime descriptors, and sidecars come from
 The installer uses Electron Builder's standard NSIS installation flow without
 custom passive-install arguments or installation registry migration.
 
+### Self-contained native binaries
+
+The Windows launcher and Executor use the static C runtime
+(`-C target-feature=+crt-static`). A clean Windows installation therefore does
+not need the Visual C++ Redistributable, Node.js, or an app-local copy of
+`vcruntime140.dll` or `msvcp140.dll`. The build does not copy runtime DLLs from
+the build machine, so there is no binary redistribution or servicing obligation
+for those files.
+
+Packaging reads the normal and delay import tables of every `.exe` under the
+packaged resources and fails when any executable imports `vcruntime*`,
+`msvcp*`, or `concrt*`. This also covers an externally supplied
+`WEWORK_EXECUTOR_PATH`, so a future native component cannot silently restore the
+machine-wide runtime dependency.
+
+Security fixes for the statically linked runtime arrive by rebuilding these
+components with an updated MSVC toolchain; there is no separate redistributable
+to install, service, or remove.
+
+The build passes the static flag through `CARGO_ENCODED_RUSTFLAGS`, preserving
+existing flags while preventing `RUSTFLAGS` from overriding the target setting.
+
+Clean Windows sandbox acceptance must still cover first installation and
+startup without a machine-wide VC++ runtime, one cloud-model text conversation,
+and component upgrade and rollback. A hosted runner with the runtime installed
+is not equivalent, although packaging proves that the shipped executables do
+not request it.
+
 ## Verification
 
 ```powershell
 pnpm --filter wework typecheck
 pnpm --dir wework/electron typecheck
 pnpm --dir wework/electron test
+node --test wework/scripts/windows-native-runtime.test.mjs
 pnpm --dir wework/electron build:release
 ```
 

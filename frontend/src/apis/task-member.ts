@@ -7,6 +7,7 @@
  */
 
 import apiClient from './client'
+import { getToken } from './user'
 
 // Types for task members
 export interface TaskMember {
@@ -109,12 +110,14 @@ export const taskMemberApi = {
   },
 
   /**
-   * Get invite information (no authentication required).
+   * Get invite information. Legacy locators require existing task permission.
    * Used to display the invite confirmation page.
    */
   getInviteInfo: async (token: string): Promise<InviteInfoResponse> => {
-    // This endpoint doesn't require auth, so we use fetch directly
-    const response = await fetch(`/api/tasks/invite/info?token=${encodeURIComponent(token)}`)
+    const sessionToken = getToken()
+    const response = await fetch(`/api/tasks/invite/info?token=${encodeURIComponent(token)}`, {
+      headers: sessionToken ? { Authorization: `Bearer ${sessionToken}` } : {},
+    })
     if (!response.ok) {
       const error = await response.json()
       throw new Error(error.detail || 'Invalid invite link')

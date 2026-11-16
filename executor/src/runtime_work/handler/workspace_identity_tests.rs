@@ -314,8 +314,10 @@ fn explicit_local_path_get_preserves_unlisted_primary_cwd_without_private_metada
             | "model_selection"
             | "queuePosition"
             | "threadId"
+            | "modelProviderRouting"
     )));
     assert_eq!(handle["threadId"], "native-primary-thread");
+    assert_eq!(handle["modelProviderRouting"], "thread");
     let encoded = serde_json::to_string(&result).unwrap();
     for private in [
         "executionRequest",

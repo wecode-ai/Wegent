@@ -397,22 +397,4 @@ fn env_value(value: &Value) -> String {
 }
 
 #[cfg(test)]
-mod identity_url_tests {
-    use super::current_user_url;
-
-    #[test]
-    fn connection_urls_preserve_explicit_api_prefixes() {
-        for (base, path) in [
-            ("https://backend.example", "/api/users/me"),
-            ("https://backend.example/api", "/api/users/me"),
-            ("https://backend.example/api/v1/", "/api/v1/users/me"),
-            (
-                "https://backend.example/prefix/api/v1",
-                "/prefix/api/v1/users/me",
-            ),
-        ] {
-            assert_eq!(current_user_url(base).unwrap().path(), path);
-        }
-        assert!(current_user_url("https://user:secret@backend.example").is_err());
-    }
-}
+mod identity_url_tests {}

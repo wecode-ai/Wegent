@@ -50,9 +50,9 @@ export function useRuntimeTaskRouteRestoration(enabled = true) {
   }, [route, runtimeTask, state.currentRuntimeTask])
 
   useEffect(() => {
-    if (!routeRuntimeTask) return
+    if (!routeRuntimeTask || getNavigationSnapshot() !== runtimeTaskLocation) return
     void openRuntimeTask(routeRuntimeTask)
-  }, [openRuntimeTask, routeRuntimeTask])
+  }, [openRuntimeTask, routeRuntimeTask, runtimeTaskLocation])
 
   return routeRuntimeTask
 }

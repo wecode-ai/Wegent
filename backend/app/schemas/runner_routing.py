@@ -62,6 +62,8 @@ class RunnerModel(ModelIdentity):
     local_model_id: str = Field(min_length=1, max_length=255)
     account_label: str = Field(default="", max_length=255)
     is_default: bool = False
+    default_reasoning_effort: str | None = None
+    supported_reasoning_efforts: list[str] | None = None
 
 
 class RunnerCatalog(BaseModel):

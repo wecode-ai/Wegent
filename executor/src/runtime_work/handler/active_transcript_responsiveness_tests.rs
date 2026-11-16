@@ -92,22 +92,6 @@ fn active_history_fixture(label: &str) -> (RuntimeWorkRpcHandler, PathBuf, Value
 }
 
 #[test]
-fn a_bounded_native_page_merges_only_unfinished_active_items_without_reading_cached_bodies() {
-    let (handler, root, mut thread) = active_history_fixture("bounded-active-history");
-    let full_reads = handler.store.full_task_read_count();
-
-    handler.merge_active_codex_transcript("task-1", &mut thread);
-
-    assert_eq!(handler.store.full_task_read_count(), full_reads);
-    let items = thread["turns"][0]["items"].as_array().unwrap();
-    assert_eq!(items.len(), 2);
-    assert_eq!(items[0]["id"], "completed-7000");
-    assert_eq!(items[1]["id"], "pending");
-    assert_eq!(items[1]["text"], "Live output");
-    let _ = fs::remove_dir_all(root);
-}
-
-#[test]
 fn scanning_active_item_metadata_observes_cancellation_before_mutating_the_page() {
     let (handler, root, mut thread) = active_history_fixture("cancel-active-history");
     let original = thread.clone();

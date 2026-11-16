@@ -4,26 +4,30 @@ import { beforeEach, expect, test, vi } from 'vitest'
 import type { Automation } from '@/types/automation'
 import { AutomationsPage, type AutomationNavigationHandle } from './AutomationsPage'
 
-const { listAutomations, listAutomationRuns, updateAutomation, workbench } = vi.hoisted(() => {
-  const listAutomations = vi.fn()
-  const listAutomationRuns = vi.fn().mockResolvedValue({ items: [] })
-  const updateAutomation = vi.fn()
-  return {
-    listAutomations,
-    listAutomationRuns,
-    updateAutomation,
-    workbench: {
-      state: { devices: [], projects: [], runtimeWork: null, currentRuntimeTask: null },
-      services: { automationApi: { listAutomations, listAutomationRuns, updateAutomation } },
-      projectChat: { models: [], selectedModel: null, selectedModelOptions: {} },
-      refreshWorkLists: vi.fn(),
-    },
+const { listAutomations, listAutomationRuns, updateAutomation, viewport, workbench } = vi.hoisted(
+  () => {
+    const listAutomations = vi.fn()
+    const listAutomationRuns = vi.fn().mockResolvedValue({ items: [] })
+    const updateAutomation = vi.fn()
+    return {
+      listAutomations,
+      listAutomationRuns,
+      updateAutomation,
+      viewport: { isMobile: false },
+      workbench: {
+        state: { devices: [], projects: [], runtimeWork: null, currentRuntimeTask: null },
+        services: { automationApi: { listAutomations, listAutomationRuns, updateAutomation } },
+        projectChat: { models: [], selectedModel: null, selectedModelOptions: {} },
+        refreshWorkLists: vi.fn(),
+      },
+    }
   }
-})
+)
 
 vi.mock('@/features/workbench/useWorkbench', () => ({ useWorkbench: () => workbench }))
 vi.mock('@/features/auth/useAuth', () => ({ useAuth: () => ({ logout: vi.fn() }) }))
 vi.mock('@/components/layout/WorkbenchSearchDialog', () => ({ WorkbenchSearchDialog: () => null }))
+vi.mock('@/hooks/useIsMobile', () => ({ useIsMobile: () => viewport.isMobile }))
 
 const savedAutomation: Automation = {
   id: 'saved-schedule',
@@ -44,6 +48,7 @@ const savedAutomation: Automation = {
 beforeEach(() => {
   vi.clearAllMocks()
   updateAutomation.mockReset()
+  viewport.isMobile = false
 })
 
 function holdInitialList() {
@@ -165,27 +170,70 @@ test('detail-only mode does not expose a list or create action for an unavailabl
   expect(screen.queryByTestId('automation-name-input')).not.toBeInTheDocument()
 })
 
-test('detail-only editor shows failed saves without losing the draft', async () => {
-  const owner = { userId: 7, roleId: '@primary' }
-  listAutomations.mockResolvedValue({
-    items: [{ ...savedAutomation, taskRequest: { standInOwner: owner, standInCalendar: {} } }],
-  })
-  updateAutomation.mockRejectedValue(new Error('安排版本已变更，请重新加载'))
-  render(
-    <AutomationsPage
-      embedded
-      detailOnly
-      standInOwner={owner}
-      initialAutomationId={savedAutomation.id}
-    />
-  )
-  const name = await screen.findByTestId('automation-name-input')
-  fireEvent.change(name, { target: { value: '保留修改' } })
-  fireEvent.click(screen.getByTestId('automation-save-button'))
-  expect(await screen.findByRole('alert')).toHaveTextContent('安排版本已变更，请重新加载')
-  expect(name).toHaveValue('保留修改')
-  expect(screen.getByTestId('automation-save-button')).toBeEnabled()
-})
+test.each([
+  { mode: 'detail-only', calendar: true, detailOnly: true, mobile: false },
+  { mode: 'stand-in', calendar: true, detailOnly: false, mobile: false },
+  { mode: 'ordinary desktop', calendar: false, detailOnly: false, mobile: false },
+  { mode: 'ordinary mobile', calendar: false, detailOnly: false, mobile: true },
+])(
+  '$mode editor shows failed saves and preserves the draft for retry',
+  async ({ calendar, detailOnly, mobile }) => {
+    viewport.isMobile = mobile
+    const owner = { userId: 7, roleId: '@primary' }
+    const automation: Automation = {
+      ...savedAutomation,
+      taskRequest: {
+        schemaVersion: 2,
+        runtime: 'codex',
+        deviceId: 'local',
+        message: savedAutomation.prompt,
+        ...(calendar ? { standInOwner: owner, standInCalendar: {} } : {}),
+      },
+    }
+    const onDirtyChange = vi.fn()
+    listAutomations.mockResolvedValue({ items: [automation] })
+    updateAutomation
+      .mockRejectedValueOnce(new Error('安排版本已变更，请重新加载'))
+      .mockResolvedValueOnce({
+        automation: { ...automation, name: '保留修改', prompt: '保留任务说明' },
+      })
+    render(
+      <AutomationsPage
+        embedded
+        detailOnly={detailOnly}
+        standInOwner={calendar ? owner : undefined}
+        initialAutomationId={savedAutomation.id}
+        onDirtyChange={onDirtyChange}
+      />
+    )
+    const name = await screen.findByTestId('automation-name-input')
+    const prompt = screen.getByTestId('automation-prompt-input')
+    fireEvent.change(name, { target: { value: '保留修改' } })
+    fireEvent.change(prompt, { target: { value: '保留任务说明' } })
+    fireEvent.click(screen.getByTestId('automation-save-button'))
+    const error = await screen.findByTestId('automation-draft-error')
+    expect(error).toBeVisible()
+    expect(error).toHaveTextContent('安排版本已变更，请重新加载')
+    expect(name).toHaveValue('保留修改')
+    expect(prompt).toHaveValue('保留任务说明')
+    expect(onDirtyChange).toHaveBeenLastCalledWith(true)
+    expect(screen.getByTestId('automation-save-button')).toBeEnabled()
+    if (calendar) {
+      expect(screen.queryByTestId('automation-list-pane')).not.toBeInTheDocument()
+    } else if (mobile) {
+      expect(screen.getByTestId('automation-list-pane')).toHaveClass('hidden')
+    }
+
+    fireEvent.click(screen.getByTestId('automation-save-button'))
+    await waitFor(() => expect(onDirtyChange).toHaveBeenLastCalledWith(false))
+    expect(screen.queryByTestId('automation-draft-error')).not.toBeInTheDocument()
+    expect(updateAutomation).toHaveBeenNthCalledWith(
+      2,
+      savedAutomation.id,
+      expect.objectContaining({ name: '保留修改', prompt: '保留任务说明' })
+    )
+  }
+)
 
 test('detail-only editor keeps the existing unsaved-change confirmation', async () => {
   const owner = { userId: 7, roleId: '@primary' }

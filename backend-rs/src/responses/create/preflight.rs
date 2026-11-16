@@ -87,9 +87,14 @@ pub(super) async fn workspace<M: brz_mysql::Mysql>(
     task_json: &Value,
     project_id: i64,
     user_id: i64,
+    created_git_repository: Option<&Value>,
 ) -> WorkspaceReads {
-    let workspace_resource =
-        super::project_workspace::workspace_repository(task_store, task_json, user_id).await;
+    let workspace_resource = if let Some(repository) = created_git_repository {
+        let branch = repository["branchName"].as_str().unwrap_or_default();
+        Some((repository.clone(), branch.to_owned()))
+    } else {
+        super::project_workspace::workspace_repository(task_store, task_json, user_id).await
+    };
     let project_config =
         super::project_workspace::load_project_config(mysql, project_id, user_id).await;
     WorkspaceReads {

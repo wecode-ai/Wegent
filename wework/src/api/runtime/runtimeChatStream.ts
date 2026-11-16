@@ -1,3 +1,4 @@
+import { logRuntimeTaskCreateStage } from '@/lib/runtime-create-diagnostics'
 import type { ChatCancelAck, ChatCancelPayload, ChatGuideAck, ChatGuidePayload } from '@/types/api'
 import type { ChatStreamHandlers } from '@/stream/chatStream'
 import type { LocalExecutorEvent } from '@/desktop/localExecutor'
@@ -19,6 +20,7 @@ let activeRuntimeChatStreamSubscriptions = 0
 const RUNTIME_CHAT_STREAM_DEBUG_STORAGE_KEY = 'wework:debug-runtime-chat-stream'
 const STREAM_EVENT_BATCH_INTERVAL_MS = 16
 export const E2E_DROPPED_RUNTIME_EVENTS_KEY = '__WEWORK_E2E_DROPPED_RUNTIME_EVENTS__'
+export const E2E_DROPPED_RUNTIME_EVENT_COUNTS_KEY = '__WEWORK_E2E_DROPPED_RUNTIME_EVENT_COUNTS__'
 export const E2E_RUNTIME_EVENT_DISPATCHERS_KEY = '__WEWORK_E2E_RUNTIME_EVENT_DISPATCHERS__'
 export const E2E_RUNTIME_EVENT_LISTENERS_KEY = '__WEWORK_E2E_RUNTIME_EVENT_LISTENERS__'
 
@@ -293,11 +295,14 @@ function shouldDropRuntimeEventForE2E(eventName: string): boolean {
   if (import.meta.env.VITE_WEWORK_E2E !== 'true') return false
   const root = globalThis as typeof globalThis & {
     [E2E_DROPPED_RUNTIME_EVENTS_KEY]?: string[]
+    [E2E_DROPPED_RUNTIME_EVENT_COUNTS_KEY]?: Record<string, number>
   }
   const droppedEvents = root[E2E_DROPPED_RUNTIME_EVENTS_KEY]
   const index = droppedEvents?.indexOf(eventName) ?? -1
   if (!droppedEvents || index < 0) return false
   droppedEvents.splice(index, 1)
+  const counts = (root[E2E_DROPPED_RUNTIME_EVENT_COUNTS_KEY] ??= {})
+  counts[eventName] = (counts[eventName] ?? 0) + 1
   return true
 }
 
@@ -307,14 +312,19 @@ function logRuntimeChatTerminalEvent(
   subscriptionCount: number
 ): void {
   const payload = asRecord(event.payload)
-  console.info('[Wework] Runtime chat stream terminal event received', {
+  const details = {
     event: event.event,
     taskId: stringField(payload, 'taskId') ?? null,
     subtaskId: stringField(payload, 'subtaskId') ?? null,
     deviceId: stringField(payload, 'deviceId') ?? null,
     subscriptionCount,
     matchedSubscriptionCount,
-  })
+  }
+  if (import.meta.env.VITE_WEWORK_E2E === 'true') {
+    logRuntimeTaskCreateStage('runtime-terminal-received', details)
+  } else {
+    console.info('[Wework] Runtime chat stream terminal event received', details)
+  }
 }
 
 function isBatchableRuntimeStreamEvent(event: LocalExecutorEvent): boolean {
@@ -589,6 +599,10 @@ function logRuntimeChatStreamSubscription(
   subscriptionId: number,
   details: Record<string, unknown>
 ): void {
+  if (import.meta.env.VITE_WEWORK_E2E === 'true') {
+    logRuntimeTaskCreateStage('runtime-stream-subscription', { action, subscriptionId, ...details })
+    return
+  }
   if (!isRuntimeChatStreamDebugEnabled()) return
   console.debug('[Wework] Runtime chat stream subscription', {
     action,
@@ -601,6 +615,10 @@ function logRuntimeChatStreamNativeSubscription(
   action: string,
   details: Record<string, unknown> = {}
 ): void {
+  if (import.meta.env.VITE_WEWORK_E2E === 'true') {
+    logRuntimeTaskCreateStage('runtime-stream-native-subscription', { action, ...details })
+    return
+  }
   if (!isRuntimeChatStreamDebugEnabled()) return
   console.debug('[Wework] Runtime chat stream native subscription', {
     action,

@@ -18,6 +18,7 @@ from app.schemas.rag import (
 )
 from app.services.rag.gateway_factory import get_rag_gateway
 from app.services.rag.remote_gateway import RemoteRagGatewayError
+from app.services.rag.reporting import report_retrieval_request
 from app.services.rag.runtime_resolver import RagRuntimeResolver
 
 router = APIRouter()
@@ -100,35 +101,47 @@ async def retrieve_documents(
     """
     try:
         knowledge_base_id = int(request.knowledge_id)
-        runtime_spec = runtime_resolver.build_public_query_runtime_spec(
-            db=db,
-            knowledge_base_id=knowledge_base_id,
-            query=request.query,
-            search_hints=request.search_hints,
-            max_results=request.top_k,
-            retriever_name=request.retriever_ref.name,
-            retriever_namespace=request.retriever_ref.namespace,
-            embedding_model_name=request.embedding_model_ref.model_name,
-            embedding_model_namespace=request.embedding_model_ref.model_namespace,
-            user_id=current_user.id,
-            user_name=current_user.user_name,
-            score_threshold=request.score_threshold,
-            retrieval_mode=request.retrieval_mode.value,
-            vector_weight=(
-                request.hybrid_weights.vector_weight
-                if request.hybrid_weights is not None
-                else None
-            ),
-            keyword_weight=(
-                request.hybrid_weights.keyword_weight
-                if request.hybrid_weights is not None
-                else None
-            ),
-            metadata_condition=request.metadata_condition,
-        )
 
-        gateway = get_rag_gateway()
-        result = await gateway.query(runtime_spec, db=db)
+        async def execute_query() -> dict:
+            runtime_spec = runtime_resolver.build_public_query_runtime_spec(
+                db=db,
+                knowledge_base_id=knowledge_base_id,
+                query=request.query,
+                search_hints=request.search_hints,
+                max_results=request.top_k,
+                retriever_name=request.retriever_ref.name,
+                retriever_namespace=request.retriever_ref.namespace,
+                embedding_model_name=request.embedding_model_ref.model_name,
+                embedding_model_namespace=request.embedding_model_ref.model_namespace,
+                user_id=current_user.id,
+                user_name=current_user.user_name,
+                score_threshold=request.score_threshold,
+                retrieval_mode=request.retrieval_mode.value,
+                vector_weight=(
+                    request.hybrid_weights.vector_weight
+                    if request.hybrid_weights is not None
+                    else None
+                ),
+                keyword_weight=(
+                    request.hybrid_weights.keyword_weight
+                    if request.hybrid_weights is not None
+                    else None
+                ),
+                metadata_condition=request.metadata_condition,
+            )
+
+            gateway = get_rag_gateway()
+            return await gateway.query(runtime_spec, db=db)
+
+        result = await report_retrieval_request(
+            entrypoint="openapi",
+            client_surface="external_api",
+            requested_kb_ids=[knowledge_base_id],
+            effective_kb_ids=[knowledge_base_id],
+            route_mode="rag_retrieval",
+            actor_user_id=current_user.id,
+            execute=execute_query,
+        )
 
         return {"records": result.get("records", [])}
     except HTTPException:

@@ -2,7 +2,10 @@ import assert from 'node:assert/strict'
 import { readFile } from 'node:fs/promises'
 
 import { ensureExperimentalFeaturesEnabled } from '../modules/preferences-automation-flows.mjs'
-import { openDirectProjectCreation } from '../modules/workspace-flows.mjs'
+import {
+  expandCollaborationSpaces,
+  openDirectProjectCreation,
+} from '../modules/workspace-flows.mjs'
 import { verifyProjectAgentEditing } from '../modules/project-agent-editing.mjs'
 
 const CONTENT = '[data-workspace-tab-content][aria-hidden="false"]'
@@ -103,6 +106,7 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
       await control.command('waitFor', scoped('[data-testid="collaboration-platform-root"]'), {
         timeoutMs: workbenchReadyTimeoutMs,
       })
+      await expandCollaborationSpaces(control, CONTENT)
       const workspaceTree = scoped(`[data-testid="collaboration-workspace-tree-${workspace.id}"]`)
       await control.command('waitFor', workspaceTree, { timeoutMs: workbenchReadyTimeoutMs })
       await control.command('click', `${workspaceTree} .collaboration-workspace-identity`)
