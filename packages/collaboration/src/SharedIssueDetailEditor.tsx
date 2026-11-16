@@ -2807,6 +2807,9 @@ export function TodoEditor(props: TodoEditorProps) {
 
   return (
     <div
+      data-sidebar-backdrop-blur={
+        !workspacePanel && (fullScreen || !twoColumn) ? "true" : undefined
+      }
       className={cn(
         "flex items-start justify-center",
         workspacePanel

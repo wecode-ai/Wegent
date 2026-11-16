@@ -31,9 +31,6 @@ export function CloudTodoModal({
   const modal = (
     <div
       ref={dialogRef}
-      data-sidebar-backdrop-blur={
-        width === 'workspace' || width === 'workflow' ? 'true' : undefined
-      }
       className={cn(
         'inset-0 z-system flex items-center justify-center bg-black/35 p-6 backdrop-blur-sm',
         width === 'workspace' || width === 'workflow' ? 'fixed' : 'absolute'
