@@ -121,6 +121,9 @@ export function ProjectAutomaticProcessing({
   const [hooksError, setHooksError] = useState('')
   const translateRef = useRef(translate)
   translateRef.current = translate
+  const saveScope = useMemo(() => ({ api, projectId: project.id }), [api, project.id])
+  const activeSaveScope = useRef(saveScope)
+  activeSaveScope.current = saveScope
   const needsHooks = editing && draft.trigger === 'external'
   const error =
     actionError ||
@@ -434,9 +437,11 @@ export function ProjectAutomaticProcessing({
         await api.automations.create(project.id, input)
       }
       await load()
+      if (activeSaveScope.current !== saveScope) return
       setEditing(false)
       setDraft(EMPTY_DRAFT)
     } catch (saveError) {
+      if (activeSaveScope.current !== saveScope) return
       setError(
         saveError instanceof Error
           ? saveError.message

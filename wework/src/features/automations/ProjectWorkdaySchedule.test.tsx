@@ -170,3 +170,44 @@ it('keeps the saved rule editor pending until its refreshed list can be reopened
   await user.click(screen.getByTestId('automatic-processing-edit-workday'))
   expect(screen.getByTestId('automatic-processing-workday-only')).not.toBeChecked()
 })
+
+it('keeps another project draft open when the previous project save refresh finishes', async () => {
+  const user = userEvent.setup()
+  const rule = workdayRule('Asia/Shanghai')
+  let finishRefresh!: (rules: WorkspaceAutomationRule[]) => void
+  const refresh = new Promise<WorkspaceAutomationRule[]>(resolve => {
+    finishRefresh = resolve
+  })
+  const list = vi
+    .fn()
+    .mockResolvedValueOnce([rule])
+    .mockReturnValueOnce(refresh)
+    .mockResolvedValue([])
+  const api = {
+    automations: { list, update: vi.fn(async () => rule) },
+    projects: { listCollaborationGroups: vi.fn(async () => []) },
+    agents: { list: vi.fn(async () => [{ id: 'agent', name: 'Agent' }]) },
+    members: { list: vi.fn(async () => []) },
+  } as unknown as SharedWorkspaceApi
+  const panel = (id: string) => (
+    <ProjectAutomaticProcessing
+      api={api}
+      project={{ id, name: id, access_role: 'Owner' } as CollaborationProject}
+      members={[]}
+      agents={[]}
+      locale="zh-CN"
+      translate={createCollaborationTranslator('zh-CN')}
+    />
+  )
+  const view = render(panel('project'))
+  await user.click(await screen.findByTestId('automatic-processing-edit-workday'))
+  await user.click(screen.getByTestId('automatic-processing-save'))
+  await waitFor(() => expect(list).toHaveBeenCalledTimes(2))
+  view.rerender(panel('other-project'))
+  await user.click(await screen.findByTestId('automatic-processing-create'))
+  const form = screen.getByTestId('automatic-processing-form')
+  expect(form).toBeVisible()
+  await act(async () => finishRefresh([rule]))
+  expect(form).toBeInTheDocument()
+  expect(screen.getByTestId('automatic-processing-form')).toBeVisible()
+})
