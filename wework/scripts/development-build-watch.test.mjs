@@ -98,11 +98,11 @@ test.each(checkouts.flatMap(checkout => ['directory', 'file'].map(input => [chec
           directory,
           options,
           (...event) => {
-            record('native-notification', ...event)
+            record('file-notification', ...event)
             notify(...event)
           },
           (directory, options) =>
-            chokidar.watch(directory, { ...options, useFsEvents: false, usePolling: false })
+            chokidar.watch(directory, { ...options, interval: 20, binaryInterval: 20 })
         ),
     })
     record('watch-ready')
@@ -129,6 +129,12 @@ test.each(checkouts.flatMap(checkout => ['directory', 'file'].map(input => [chec
     expect(published).toBe('two')
     expect(build).toHaveBeenCalledTimes(3)
     expect(snapshots).toEqual(['one', 'invalid', 'two'])
+    await saveSource('three')
+    await expect.poll(() => published).toBe('three')
+    await writeFile(source, 'four')
+    await expect.poll(() => published).toBe('four')
+    expect(build).toHaveBeenCalledTimes(5)
+    expect(snapshots).toEqual(['one', 'invalid', 'two', 'three', 'four'])
   }
 )
 
