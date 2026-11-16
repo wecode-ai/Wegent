@@ -407,7 +407,10 @@ mod tests {
                 .create_stand_in_schedule(&identity, &args)
                 .await
                 .unwrap();
-            assert_eq!(saved["automation"]["schedule"]["workdayOnly"], filtered);
+            assert_eq!(
+                saved["automation"]["schedule"].get("workdayOnly"),
+                filtered.then_some(&json!(true))
+            );
         }
     }
 

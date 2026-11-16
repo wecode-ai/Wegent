@@ -85,7 +85,7 @@ pub struct Automation {
 pub enum AutomationSchedule {
     Cron {
         expression: String,
-        #[serde(default, rename = "workdayOnly")]
+        #[serde(default, rename = "workdayOnly", skip_serializing_if = "is_false")]
         workday_only: bool,
     },
     Interval {
@@ -871,6 +871,10 @@ fn default_timezone() -> String {
 
 fn default_true() -> bool {
     true
+}
+
+fn is_false(value: &bool) -> bool {
+    !value
 }
 
 #[cfg(test)]

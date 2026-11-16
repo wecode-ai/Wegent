@@ -67,6 +67,21 @@ fn old_cron_defaults_false_and_workday_flag_survives_storage() {
         }
     ));
     assert_eq!(
+        serde_json::to_value(&old).unwrap(),
+        json!({"type":"cron","expression":"0 9 * * 1-5"})
+    );
+    let explicit_false: AutomationSchedule =
+        serde_json::from_value(json!({"type":"cron","expression":"0 9 * * *","workdayOnly":false}))
+            .unwrap();
+    assert_eq!(
+        serde_json::to_value(explicit_false).unwrap(),
+        json!({"type":"cron","expression":"0 9 * * *"})
+    );
+    assert_eq!(
+        serde_json::to_value(china_schedule()).unwrap()["workdayOnly"],
+        true
+    );
+    assert_eq!(
         super::next_run_after(
             &old,
             "Asia/Shanghai",
