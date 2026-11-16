@@ -103,6 +103,8 @@ async function verifyLocalOperation(control, operationAndWaitForResult) {
 
 区间记录包含期间的后台更新，不证明更新全部由操作导致。采集绑定开始时的控制客户端，操作中切换窗口不会混入另一个窗口的计数；各窗口可以分别采集。原渲染器整页重载、退出或丢失采集状态会使结束失败，并保存 `complete: false`，不得返回零更新。DOM 指标仅覆盖当前文档的所选 DOM，不进入 iframe 或 Shadow DOM 内部，也不等同于像素重绘。操作失败仍尝试保存指标，并保留原始失败；采集也失败时一起报告。既有 `core-task-flow` 增加了真实 DOM 瞬时区域写入／移除自检，沿用原 CI 与实例；接入不等于已经运行真实 Electron 验证。
 
+验证控制客户端连接期间，会话布局诊断使用独立租约持续采集，避免长操作越过普通 10 秒交互窗口后丢失上下文；客户端结束或注册失败都会归还租约。原有环形缓冲仍最多保留 400 条脱敏事件，并报告丢弃数量。ResizeObserver 错误快照同时附带这份已采集的滚动与布局记录，附加快照不读取 DOM。普通产品交互仍使用原有短时窗口。
+
 ## 逐检查点性能诊断
 
 共享桌面控制通道自动在 ready／started／results 回执中携带累计指标，按 renderer capture ID 合并，保存为每个结果目录的 `performance.json`。CI 在原有桌面作业中生成逐检查点表格，并上传独立数值产物。当前阶段只采集、分析本次运行；不创建 main 基线、不比较历史总量，也不将“未发现增长”当作性能通过。报告明确记录 `baselineStatus: not-established` 和 `comparisonValidated: false`。

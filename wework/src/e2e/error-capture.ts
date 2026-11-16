@@ -1,5 +1,6 @@
 import { installResizeObserverDiagnostics } from './resize-observer-diagnostics'
 import { getDesktopE2ERuntimeConfig } from './runtime-config'
+import { getConversationDiagnosticsSnapshot } from '@wegent/collaboration/conversation/conversationDiagnostics'
 
 function captureEnabled(): boolean {
   if (typeof window === 'undefined' || getDesktopE2ERuntimeConfig().disabled) return false
@@ -48,7 +49,9 @@ export function installE2EErrorCapture(target: Window = window): () => void {
     reportE2EError(
       'uncaught-exception',
       event.error ?? event.message,
-      event.message?.includes('ResizeObserver loop') ? resize?.snapshot() : undefined
+      event.message?.includes('ResizeObserver loop')
+        ? { ...resize?.snapshot(), conversation: getConversationDiagnosticsSnapshot() }
+        : undefined
     )
   const onRejection = (event: PromiseRejectionEvent) =>
     reportE2EError('unhandled-rejection', event.reason)

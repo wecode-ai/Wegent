@@ -2,6 +2,7 @@
 
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
 import {
+  acquireConversationDiagnosticCapture,
   getConversationDiagnosticContext,
   getConversationDiagnosticScroller,
   getConversationDiagnosticWheelInput,
@@ -16,6 +17,36 @@ import {
 describe('conversation diagnostics', () => {
   beforeEach(() => resetConversationDiagnosticsForTest())
   afterEach(() => vi.restoreAllMocks())
+
+  test('verification leases survive long operations and release independently', () => {
+    let now = 100
+    vi.spyOn(performance, 'now').mockImplementation(() => now)
+    const releaseFirst = acquireConversationDiagnosticCapture()
+    const releaseSecond = acquireConversationDiagnosticCapture()
+    now += 60_000
+    recordConversationDiagnostic('scroll-write', {
+      scrollTop: 123,
+      writeSource: 1,
+    })
+    expect(getConversationDiagnosticsSnapshot()?.events[0].details.scrollTop).toBe(123)
+    releaseFirst()
+    releaseFirst()
+    expect(isConversationDiagnosticsEnabled()).toBe(true)
+    releaseSecond()
+    expect(isConversationDiagnosticsEnabled()).toBe(false)
+  })
+
+  test('releasing verification preserves a live timed interaction capture', () => {
+    let now = 100
+    vi.spyOn(performance, 'now').mockImplementation(() => now)
+    startConversationDiagnosticCapture()
+    const release = acquireConversationDiagnosticCapture()
+    now += 5_000
+    release()
+    expect(isConversationDiagnosticsEnabled()).toBe(true)
+    now += 5_001
+    expect(isConversationDiagnosticsEnabled()).toBe(false)
+  })
 
   test('records only around reader interaction and extends capture on new input', () => {
     let now = 100

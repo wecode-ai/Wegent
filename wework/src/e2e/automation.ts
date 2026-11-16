@@ -64,6 +64,7 @@ import {
   recordDesktopControlPhase,
 } from './desktop-control-diagnostics'
 import {
+  acquireConversationDiagnosticCapture,
   getConversationDiagnosticsSnapshot,
   setConversationFrameProbeEnabled,
   startConversationDiagnosticCapture,
@@ -4097,11 +4098,13 @@ async function postDesktopControlStarted(
 
 export async function runDesktopControlClient(url: string, windowLabel: string): Promise<void> {
   const token = isUiRefreshCaptureEnabled() ? startUiRefreshCapture() : undefined
+  const releaseConversationCapture = token ? acquireConversationDiagnosticCapture() : undefined
   try {
     return await runDesktopControlLoop(url, windowLabel, () =>
       token ? readUiRefreshCapture(token) : undefined
     )
   } finally {
+    releaseConversationCapture?.()
     if (token) stopUiRefreshCapture(token)
   }
 }
