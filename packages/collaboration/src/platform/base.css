@@ -565,12 +565,26 @@
   color: rgb(var(--color-text-muted));
 }
 
+.collaboration-project-collaborator-search:focus-within {
+  outline: 2px solid rgb(var(--color-focus, var(--color-primary)));
+  outline-offset: 2px;
+}
+
 .collaboration-project-collaborator-search > input {
   width: 100%;
   min-width: 0;
+  min-height: 0;
+  align-self: stretch;
   border: 0;
+  border-radius: 0;
+  padding: 0;
   background: transparent;
   color: inherit;
+}
+
+.collaboration-project-collaborator-search > input:focus {
+  outline: none;
+  box-shadow: none;
 }
 
 .collaboration-project-collaborator-search > input::placeholder {
@@ -1570,7 +1584,8 @@
   gap: 16px;
 }
 
-.collaboration-dialog label,
+/* Keep dialog defaults weaker than feature field and focus styles. */
+:where(.collaboration-dialog) label,
 .collaboration-issue-detail label,
 .collaboration-settings label {
   display: grid;
@@ -1578,7 +1593,6 @@
   color: rgb(var(--color-text-secondary));
 }
 
-/* Keep dialog defaults weaker than feature field and focus styles. */
 .collaboration-dialog :where(input:not([type='checkbox']):not([type='radio'])),
 .collaboration-dialog :where(textarea),
 .collaboration-dialog :where(select),

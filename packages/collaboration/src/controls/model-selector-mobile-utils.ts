@@ -1,4 +1,5 @@
 import { useEffect, type KeyboardEvent, type RefObject } from "react";
+import { hideModalBackground } from "./dialogAccessibility";
 
 const FOCUSABLE_SELECTOR =
   'button:not([disabled]), input:not([disabled]), [href], [tabindex]:not([tabindex="-1"])';
@@ -16,7 +17,13 @@ export function useMobileModelSelectorFocus(
         ? document.activeElement
         : null;
     closeButtonRef.current?.focus();
-    return () => previousActiveElement?.focus();
+    const restoreBackground = hideModalBackground(
+      closeButtonRef.current?.closest<HTMLElement>('[role="dialog"]') ?? null,
+    );
+    return () => {
+      restoreBackground?.();
+      previousActiveElement?.focus();
+    };
   }, [closeButtonRef, isMobile, open]);
 }
 
@@ -26,6 +33,8 @@ export function handleMobileModelSelectorDialogKeyDown(
   onClose: () => void,
 ) {
   if (event.key === "Escape") {
+    event.preventDefault();
+    event.stopPropagation();
     onClose();
     return;
   }

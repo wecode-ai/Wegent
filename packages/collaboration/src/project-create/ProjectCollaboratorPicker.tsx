@@ -86,6 +86,14 @@ export function ProjectCollaboratorPicker({
   )
   const availableAgents = agents.filter(agent => matches(agent.name))
   const availableGroups = groups.filter(group => matches(group.name, group.description))
+  const peopleSearchStatus =
+    !open || activeTab !== 'members' || !query.trim() || failed
+      ? ''
+      : loading
+        ? labels.searchingPeople
+        : users.length
+          ? `${labels.availablePeople}: ${users.length}`
+          : labels.noMatchingCollaborators
   const empty = (message: string) => (
     <div className="collaboration-project-create-collaborator-empty">
       <p>{query.trim() ? labels.noMatchingCollaborators : message}</p>
@@ -140,6 +148,15 @@ export function ProjectCollaboratorPicker({
                 onChange={event => setQuery(event.target.value)}
               />
             </label>
+            <p
+              role="status"
+              aria-live="polite"
+              aria-atomic="true"
+              className="sr-only"
+              data-testid="collaboration-project-create-people-search-status"
+            >
+              {peopleSearchStatus}
+            </p>
             <CollaborationParticipantsTabs
               ariaLabel={labels.collaborators}
               initialTab="members"
@@ -151,7 +168,7 @@ export function ProjectCollaboratorPicker({
               groupsLabel={labels.availableGroups}
               membersContent={
                 <>
-                  {loading && <p role="status">{labels.searchingPeople}</p>}
+                  {loading && <p aria-hidden="true">{labels.searchingPeople}</p>}
                   {failed && <p role="alert">{labels.peopleSearchFailed}</p>}
                   {users.map(user => (
                     <button

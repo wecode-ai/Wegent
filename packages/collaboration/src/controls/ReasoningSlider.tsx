@@ -39,6 +39,7 @@ interface ReasoningSliderProps {
   selectedStepValue?: string;
   onSelectStep?: (value: string) => void;
   accentPulse?: boolean;
+  describedBy?: string;
 }
 
 export interface ReasoningSliderStep {
@@ -68,6 +69,7 @@ export function ReasoningSlider({
   selectedStepValue,
   onSelectStep,
   accentPulse = false,
+  describedBy,
 }: ReasoningSliderProps) {
   const dragActiveRef = useRef(false);
   const dragMovedRef = useRef(false);
@@ -217,6 +219,10 @@ export function ReasoningSlider({
       <div
         data-testid="model-control-reasoning-track"
         role="slider"
+        aria-label={
+          control.labelKey ? t(control.labelKey, control.label) : control.label
+        }
+        aria-describedby={describedBy}
         tabIndex={0}
         aria-valuemin={0}
         aria-valuemax={steps.length - 1}

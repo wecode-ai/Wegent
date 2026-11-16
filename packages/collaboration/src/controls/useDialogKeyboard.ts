@@ -1,5 +1,6 @@
 import { useEffect, useRef } from 'react'
 import { useEscapeKey } from '../markdown/useEscapeKey'
+import { hideModalBackground } from './dialogAccessibility'
 
 const focusableSelector =
   'button:not([disabled]), [href], input:not([disabled]):not([type="hidden"]), select:not([disabled]), textarea:not([disabled]), [contenteditable="true"]:not([tabindex="-1"]), [tabindex]:not([tabindex="-1"])'
@@ -46,6 +47,7 @@ export function useDialogKeyboard<T extends HTMLElement>(
         dialog
       target.focus()
     }
+    const restoreBackground = hideModalBackground(dialog, trapFocus)
     const handleTab = (event: KeyboardEvent) => {
       if (event.key !== 'Tab' || event.defaultPrevented) return
       const elements = Array.from(dialog.querySelectorAll<HTMLElement>(focusableSelector)).filter(
@@ -69,6 +71,7 @@ export function useDialogKeyboard<T extends HTMLElement>(
     }
     if (trapFocus) dialog.addEventListener('keydown', handleTab)
     return () => {
+      restoreBackground?.()
       dialog.removeEventListener('keydown', handleTab)
       const returnTarget =
         previousFocus instanceof HTMLElement &&

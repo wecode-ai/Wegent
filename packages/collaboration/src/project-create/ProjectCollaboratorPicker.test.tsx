@@ -63,6 +63,115 @@ const get = (id: string) => document.querySelector<HTMLElement>(`[data-testid="$
 const click = async (id: string) => {
   await act(async () => get(id).click())
 }
+
+function deferredUsers() {
+  let resolve!: (users: (typeof person)[]) => void
+  let reject!: (error: Error) => void
+  const promise = new Promise<(typeof person)[]>((success, failure) => {
+    resolve = success
+    reject = failure
+  })
+  return { promise, resolve, reject }
+}
+
+async function renderSearchPicker(
+  searchUsers: (query: string) => Promise<(typeof person)[]>,
+  locale: 'zh-CN' | 'en' = 'zh-CN'
+) {
+  await act(async () =>
+    root.render(
+      <ProjectCollaboratorPicker
+        labels={projectCreateLabels[locale]}
+        open
+        onOpenChange={vi.fn()}
+        people={[]}
+        excludedIds={[1]}
+        agents={[]}
+        groups={[]}
+        searchUsers={searchUsers}
+        onSelectPerson={vi.fn()}
+        onSelectAgent={vi.fn()}
+        onSelectGroup={vi.fn()}
+      />
+    )
+  )
+}
+
+it.each([
+  ['zh-CN', 'results'],
+  ['zh-CN', 'empty'],
+  ['zh-CN', 'failure'],
+  ['en', 'results'],
+  ['en', 'empty'],
+  ['en', 'failure'],
+] as const)(
+  'announces %s search completion for %s without moving focus',
+  async (locale, outcome) => {
+    const pending = deferredUsers()
+    await renderSearchPicker(() => pending.promise, locale)
+    const field = get('collaboration-project-create-people-search')
+    const status = get('collaboration-project-create-people-search-status')
+    expect(status?.getAttribute('role')).toBe('status')
+    expect(status.getAttribute('aria-live')).toBe('polite')
+    expect(status.getAttribute('aria-atomic')).toBe('true')
+    expect(status.textContent).toBe('')
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+    try {
+      await input('QA')
+      expect(status.textContent).toBe(projectCreateLabels[locale].searchingPeople)
+      expect(document.querySelectorAll('[role="status"]')).toHaveLength(1)
+      await act(async () => vi.advanceTimersByTimeAsync(180))
+      await act(async () => {
+        if (outcome === 'failure') pending.reject(new Error('Directory unavailable'))
+        else pending.resolve(outcome === 'empty' ? [] : [{ ...person, id: 1 }, person, person])
+      })
+      expect(get('collaboration-project-create-people-search-status')).toBe(status)
+      expect(document.activeElement).toBe(field)
+      const copy = projectCreateLabels[locale]
+      if (outcome === 'failure') {
+        expect(status.textContent).toBe('')
+        expect(document.querySelector('[role="alert"]')?.textContent).toBe(copy.peopleSearchFailed)
+      } else {
+        expect(status.textContent).toBe(
+          outcome === 'empty' ? copy.noMatchingCollaborators : `${copy.availablePeople}: 1`
+        )
+        expect(document.querySelector('[role="alert"]')).toBeNull()
+      }
+    } finally {
+      vi.useRealTimers()
+    }
+  }
+)
+
+it('announces only the current query and keeps its live region when switching categories', async () => {
+  const first = deferredUsers()
+  const second = deferredUsers()
+  const search = vi.fn((query: string) => (query === 'first' ? first.promise : second.promise))
+  await renderSearchPicker(search)
+  const status = get('collaboration-project-create-people-search-status')
+  vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+  try {
+    await input('first')
+    await act(async () => vi.advanceTimersByTimeAsync(180))
+    await input('second')
+    await act(async () => vi.advanceTimersByTimeAsync(180))
+    await act(async () => second.resolve([]))
+    expect(status?.textContent).toBe(labels.noMatchingCollaborators)
+    await act(async () => first.resolve([person]))
+    expect(status.textContent).toBe(labels.noMatchingCollaborators)
+    expect(get('collaboration-project-create-member-2')).toBeNull()
+    await click('collaboration-project-create-collaborator-tab-agents')
+    expect(get('collaboration-project-create-people-search-status')).toBe(status)
+    expect(status.textContent).toBe('')
+    await click('collaboration-project-create-collaborator-tab-members')
+    expect(get('collaboration-project-create-people-search-status')).toBe(status)
+    expect(status.textContent).toBe(labels.noMatchingCollaborators)
+    await input('')
+    expect(status.textContent).toBe('')
+  } finally {
+    vi.useRealTimers()
+  }
+})
 async function input(value: string) {
   const field = get('collaboration-project-create-people-search') as HTMLInputElement
   await act(async () => {

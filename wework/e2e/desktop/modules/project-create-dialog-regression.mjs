@@ -16,7 +16,10 @@ import {
   withProjectRenderer,
 } from './project-create-test-utils.mjs'
 import { verifyModelDialogKeyboard } from './project-create-interaction-checks.mjs'
-import { assertCollaboratorAccessibilityIsolation } from './project-create-accessibility.mjs'
+import {
+  assertCollaboratorAccessibilityIsolation,
+  assertCollaboratorSearchLayout,
+} from './project-create-accessibility.mjs'
 export {
   waitForProjectCreateViewport,
   assertProjectCreateActionHit,
@@ -608,6 +611,7 @@ export async function verifyProjectCreateDialogUi(control, scoped) {
     await control.command('waitFor', MENU, { visible: true })
     await assertCollaboratorMenuBounds(control)
     await assertCollaboratorAccessibilityIsolation('open', true)
+    await assertCollaboratorSearchLayout()
     for (const [category, emptyText] of [
       ['members', '当前分组暂无其他可添加人员。'],
       ['agents', '暂无其他可添加的智能体。'],
@@ -629,6 +633,23 @@ export async function verifyProjectCreateDialogUi(control, scoped) {
         text: '没有匹配项，请换个关键词或切换类别。',
       })
       assert.equal(Number(await control.command('getElementCount', `${panel} button`)), 0)
+      if (category === 'members') {
+        const status = `${MENU} ${testId('collaboration-project-create-people-search-status')}`
+        await control.command('waitFor', status, { text: '没有匹配项，请换个关键词或切换类别。' })
+        assert.equal(await control.command('getAttribute', status, { value: 'role' }), 'status')
+        assert.equal(
+          await control.command('getAttribute', status, { value: 'aria-live' }),
+          'polite'
+        )
+        assert.equal(
+          await control.command('getAttribute', status, { value: 'aria-atomic' }),
+          'true'
+        )
+        assert.equal(
+          await control.command('getActiveElementTestId', 'body'),
+          'collaboration-project-create-people-search'
+        )
+      }
     }
     await control.command('nativePress', SEARCH, { key: 'Escape' })
     await control.command('waitFor', MENU, { visible: false })

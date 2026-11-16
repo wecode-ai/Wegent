@@ -3,6 +3,8 @@ import { getSingleElementMetrics } from './conversation-layout.mjs'
 import { waitForValue } from './workspace-agent-setup.mjs'
 import { DEFAULT_STEP_TIMEOUT_MS } from './shared.mjs'
 import { withProjectRenderer } from './project-create-test-utils.mjs'
+import { assertModelAccessibilityIsolation } from './project-create-accessibility.mjs'
+import { verifyReasoningSliderAccessibility } from './project-create-reasoning-slider.mjs'
 
 const MENU = '[data-testid="model-selector-menu"]'
 
@@ -61,6 +63,7 @@ export async function verifyModelDialogKeyboard(control, configuration) {
   )
   assert.ok(state.name, 'The model dialog must have an accessible name')
   assert.equal(state.modal, 'true')
+  await assertModelAccessibilityIsolation('open', true)
   await control.command('nativePress', state.focusable.at(-1), { key: 'Tab' })
   state = await readModelDialog()
   assert.equal(state.focusedIndex, 0, 'Tab must wrap inside the model dialog')
@@ -87,6 +90,8 @@ export async function verifyModelDialogKeyboard(control, configuration) {
   await control.command('waitFor', MENU, { visible: false })
   assert.equal(await control.command('getActiveElementTestId', 'body'), 'model-selector-button')
   await control.command('waitFor', configuration, { visible: true })
+  await assertModelAccessibilityIsolation('restored', false)
+  await verifyReasoningSliderAccessibility(control, trigger)
 }
 
 export async function assertMobileInlineTarget(control, selector) {

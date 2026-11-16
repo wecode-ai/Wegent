@@ -13,6 +13,7 @@ import {
   withProjectRenderer,
 } from './project-create-test-utils.mjs'
 import { assertMobileInlineTarget } from './project-create-interaction-checks.mjs'
+import { assertCollaboratorSearchLayout } from './project-create-accessibility.mjs'
 
 const testId = value => `[data-testid="${value}"]`
 const MENU = testId('collaboration-project-create-collaborator-menu')
@@ -330,6 +331,7 @@ export async function verifyGeneratedGroupDraft(
     await control.command('click', add)
     await control.command('waitFor', MENU, { visible: true })
     await assertCollaboratorMenuBounds(control)
+    await assertCollaboratorSearchLayout()
     await control.command('nativePress', SEARCH, { key: 'Escape' })
     await control.command('waitFor', MENU, { visible: false })
     await control.command('waitFor', summary, { text: editedName })

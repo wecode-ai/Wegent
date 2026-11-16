@@ -490,6 +490,7 @@
     "@streamdown/math": "1.0.3",
     "@tanstack/react-virtual": "3.14.23",
     "@wegent/chat-core": "workspace:*",
+    "aria-hidden": "1.2.6",
     "class-variance-authority": "^0.7.1",
     "dompurify": "3.4.13",
     "katex": "0.16.47",
