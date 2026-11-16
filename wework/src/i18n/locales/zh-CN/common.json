@@ -87,6 +87,7 @@
   },
   "issue_creation": {
     "save_personal_runner": "保存个人默认设备",
+    "unavailable_runner_option": "{{name}} · 当前不可用",
     "personal_runner_hint": "用于之后启动的任务；选择或清除后，点击“保存个人默认设备”才会生效。不会自动执行事项。",
     "project_device_settings": "项目设备授权（立即生效）",
     "project_device_settings_hint": "添加设备会立即更新项目授权，取消事项不会撤销。也可以创建事项后再配置。",

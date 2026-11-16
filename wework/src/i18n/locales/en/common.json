@@ -87,6 +87,7 @@
   },
   "issue_creation": {
     "save_personal_runner": "Save personal default device",
+    "unavailable_runner_option": "{{name}} · Unavailable",
     "personal_runner_hint": "Used for tasks you start later. Select or clear a device, then save your personal default to apply it. This does not run the Issue.",
     "project_device_settings": "Project device access (applies immediately)",
     "project_device_settings_hint": "Adding a device updates project access immediately. Canceling the Issue does not undo it. You can also configure access after creating the Issue.",

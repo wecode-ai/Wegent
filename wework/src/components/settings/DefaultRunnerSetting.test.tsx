@@ -1,10 +1,62 @@
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, expect, it, vi } from 'vitest'
+import { createInstance } from 'i18next'
+import { I18nextProvider } from 'react-i18next'
+import englishCommon from '@/i18n/locales/en/common.json'
 import { WorkbenchContext } from '@/features/workbench/useWorkbench'
 import type { WorkbenchContextValue } from '@/features/workbench/workbenchContextTypes'
 import { DefaultRunnerSetting } from './DefaultRunnerSetting'
 
 afterEach(cleanup)
+
+it('keeps the pending device visible when it goes offline so the submitted choice stays explicit', async () => {
+  const i18n = createInstance()
+  await i18n.init({ lng: 'en', defaultNS: 'common', resources: { en: { common: englishCommon } } })
+  const updateUserPreferences = vi.fn().mockRejectedValue(new Error('Device unavailable'))
+  const value = {
+    state: {
+      devices: [
+        { device_id: 'mac', name: 'Mac', status: 'online' },
+        { device_id: 'cloud', name: 'Cloud', status: 'online' },
+      ],
+      user: { preferences: { default_execution_target: 'mac' } },
+    },
+    updateUserPreferences,
+  } as unknown as WorkbenchContextValue
+  const content = (context: WorkbenchContextValue) => (
+    <I18nextProvider i18n={i18n}>
+      <WorkbenchContext.Provider value={context}>
+        <DefaultRunnerSetting compact confirmChanges />
+      </WorkbenchContext.Provider>
+    </I18nextProvider>
+  )
+  const { rerender } = render(content(value))
+  fireEvent.change(screen.getByTestId('settings-default-runner'), { target: { value: 'cloud' } })
+  rerender(
+    content({
+      ...value,
+      state: {
+        ...value.state,
+        devices: value.state.devices.map(device => ({
+          ...device,
+          status: device.device_id === 'cloud' ? 'offline' : 'online',
+        })),
+      },
+    })
+  )
+  const selector = screen.getByTestId('settings-default-runner') as HTMLSelectElement
+  expect(selector).toHaveValue('cloud')
+  expect(selector.selectedOptions[0]).toHaveTextContent('Cloud')
+  expect(screen.getByTestId('settings-default-runner-pending-unavailable')).toBe(
+    selector.selectedOptions[0]
+  )
+  expect(selector.selectedOptions[0]).toHaveTextContent(/Unavailable|不可用/)
+  expect(updateUserPreferences).not.toHaveBeenCalled()
+  fireEvent.click(screen.getByTestId('settings-default-runner-save'))
+  await screen.findByRole('alert')
+  expect(selector).toHaveValue('cloud')
+  expect(updateUserPreferences).toHaveBeenCalledWith({ default_execution_target: 'cloud' })
+})
 
 it('replaces the obsolete unavailable-default warning with the pending save action', () => {
   const updateUserPreferences = vi.fn()

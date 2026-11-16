@@ -14,12 +14,15 @@ export function DefaultRunnerSetting({
   const { t } = useTranslation('common')
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
-  const [pending, setPending] = useState<string | null>(null)
+  const [pending, setPending] = useState<{ deviceId: string; name: string } | null>(null)
   if (!workbench?.updateUserPreferences) return null
-  const devices = (workbench.state.devices ?? []).filter(device => device.status === 'online')
+  const allDevices = workbench.state.devices ?? []
+  const devices = allDevices.filter(device => device.status === 'online')
   const selected = workbench.state.user?.preferences?.default_execution_target ?? ''
-  const hasPendingChange = confirmChanges && pending !== null && pending !== selected
-  const value = confirmChanges ? (pending ?? selected) : selected
+  const hasPendingChange = confirmChanges && pending !== null && pending.deviceId !== selected
+  const value = confirmChanges ? (pending?.deviceId ?? selected) : selected
+  const valueAvailable = devices.some(device => device.device_id === value)
+  const pendingUnavailable = hasPendingChange && Boolean(value) && !valueAvailable
   const unavailable = Boolean(selected) && !devices.some(device => device.device_id === selected)
   const save = async (deviceId: string) => {
     setSaving(true)
@@ -39,14 +42,32 @@ export function DefaultRunnerSetting({
         <select
           aria-label={t('workbench.runner_personal_default')}
           className="wework-native-select h-9 min-h-11 md:min-h-9 max-w-64 rounded-md border border-border bg-background px-2 text-sm"
-          value={devices.some(device => device.device_id === value) ? value : ''}
+          value={pendingUnavailable || valueAvailable ? value : ''}
           disabled={saving}
-          onChange={event =>
-            confirmChanges ? setPending(event.target.value) : void save(event.target.value)
-          }
+          onChange={event => {
+            const deviceId = event.target.value
+            if (confirmChanges) {
+              setPending({
+                deviceId,
+                name: devices.find(device => device.device_id === deviceId)?.name ?? '',
+              })
+            } else void save(deviceId)
+          }}
           data-testid="settings-default-runner"
         >
           <option value="">{t('workbench.runner_choose_environment')}</option>
+          {pendingUnavailable && pending && (
+            <option
+              value={pending.deviceId}
+              data-testid="settings-default-runner-pending-unavailable"
+            >
+              {t('issue_creation.unavailable_runner_option', {
+                name:
+                  allDevices.find(device => device.device_id === pending.deviceId)?.name ??
+                  pending.name,
+              })}
+            </option>
+          )}
           {devices.map(device => (
             <option key={device.device_id} value={device.device_id}>
               {device.name} ·{' '}
@@ -74,7 +95,9 @@ export function DefaultRunnerSetting({
             disabled={saving}
             data-testid="settings-default-runner-clear"
             className="min-h-11 min-w-11 text-text-primary underline md:min-h-8"
-            onClick={() => (confirmChanges ? setPending('') : void save(''))}
+            onClick={() =>
+              confirmChanges ? setPending({ deviceId: '', name: '' }) : void save('')
+            }
           >
             {t('workbench.runner_clear_default')}
           </button>

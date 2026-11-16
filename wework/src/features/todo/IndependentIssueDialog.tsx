@@ -142,7 +142,7 @@ export function IndependentIssueDialog({
       await operation()
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : String(reason))
-      setConflicted(reason instanceof ApiError && reason.status === 409)
+      setConflicted(editing && reason instanceof ApiError && reason.status === 409)
     } finally {
       setBusy(false)
     }
