@@ -4,6 +4,7 @@ import { join } from 'node:path'
 import { requestExecutor } from '../modules/executor-rpc.mjs'
 import { selectedToolCall } from '../modules/model-tool-calls.mjs'
 import { wireDeclarations } from '../modules/model-wire-contract.mjs'
+import { runtimeTranscriptBlocks } from '../modules/runtime-transcript-evidence.mjs'
 import { waitForWindowState } from '../modules/native-window-state.mjs'
 import {
   assistantMessage,
@@ -128,6 +129,31 @@ function selectQuestionTool(body, question) {
 
 function interactionUrlPrefix(address) {
   return `wework://interactions/${encodeURIComponent(address.deviceId)}/${encodeURIComponent(address.taskId)}/`
+}
+
+export function hasPersistedInteractionAnswer(transcript, expected) {
+  if (transcript.taskId !== expected.taskId) return false
+  return runtimeTranscriptBlocks(transcript).some(block => {
+    const payload = block.render_payload
+    if (payload?.kind !== 'request_user_input') return false
+    const question = payload.questions?.find(item => item.question === expected.question)
+    if (!question) return false
+    if (payload.delivery === 'async') {
+      return transcript.messages.some(
+        message => message.role === 'user' && message.content?.includes(expected.answer)
+      )
+    }
+    const response = payload.response
+    const answers = response?.answers?.[question.id]?.answers
+    return (
+      payload.interactionStatus === 'answered' &&
+      response?.requestId === payload.requestId &&
+      response?.itemId === payload.itemId &&
+      response?.interactionScope === payload.interactionScope &&
+      answers?.length === 1 &&
+      answers[0] === expected.answer
+    )
+  })
 }
 
 export function createDesktopScenario({
@@ -501,8 +527,11 @@ export function createDesktopScenario({
             body: JSON.stringify(remoteSystem),
           }),
         transcript =>
-          transcript.taskId === remoteSystem.taskId &&
-          JSON.stringify(transcript.turns).includes(REMOTE_ANSWER),
+          hasPersistedInteractionAnswer(transcript, {
+            taskId: remoteSystem.taskId,
+            question: REMOTE_SYSTEM_QUESTION,
+            answer: REMOTE_ANSWER,
+          }),
         'The remote Runtime did not persist the answer submitted from this device',
         uiTimeoutMs * 4
       )

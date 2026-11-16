@@ -18,6 +18,7 @@ const CAPTURE_TIMEOUT_MS = 5_000
 const SMOKE_TIMEOUT_MS = 10_000
 const POLL_MS = 25
 const GDB_COMMAND_FILE = fileURLToPath(new URL('./startup-gdb-probe.gdb', import.meta.url))
+const SMOKE_DIRECTORY = fileURLToPath(new URL('.', import.meta.url))
 
 function readIdentity(pid) {
   const stat = readFileSync(`/proc/${pid}/stat`, 'utf8')
@@ -309,19 +310,10 @@ export async function verifyStartupGdbContract({ resultDir }) {
   assert.equal(process.platform, 'linux', 'The startup GDB contract requires Linux')
   await mkdir(resultDir, { recursive: true })
   for (const mode of ['normal', 'trap', 'interrupt']) {
-    const program = `
-      const fs = require('node:fs');
-      const stat = fs.readFileSync('/proc/self/stat', 'utf8');
-      const fields = stat.slice(stat.lastIndexOf(')') + 1).trim().split(/\\s+/);
-      fs.writeSync(1, '${IDENTITY_PREFIX}' + JSON.stringify({
-        pid: process.pid, ppid: process.ppid, pgid: Number(fields[2])
-      }) + '\\n');
-      if (fs.readSync(3, Buffer.alloc(1), 0, 1, null) !== 1) process.exit(2);
-      if ('${mode}' === 'normal') process.exit(0);
-      if ('${mode}' === 'trap') process.kill(process.pid, 'SIGTRAP');
-      setInterval(() => {}, 1000);
-    `
-    const probe = spawnStartupGdbProbe(process.execPath, ['-e', program], {
+    // GDB reconstructs --args before its shell-free launch. Keep source code and
+    // even a whitespace-containing fixture directory out of that argument string.
+    const probe = spawnStartupGdbProbe(process.execPath, ['startup-gdb-smoke.mjs', mode], {
+      cwd: SMOKE_DIRECTORY,
       env: { PATH: '/usr/bin:/bin', LC_ALL: 'C' },
       detached: true,
       stdio: ['ignore', 'pipe', 'pipe', 'pipe'],
