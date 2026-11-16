@@ -157,6 +157,7 @@ function fixture() {
     experienceMessageFixture({
       messageId: 'execution-1',
       sequenceNumber: 2,
+      type: 'agent_status',
       sender: { type: 'agent', id: 'private-agent', name: 'Private assistant name' },
       content: 'Private prompt and execution arguments',
       metadata: {

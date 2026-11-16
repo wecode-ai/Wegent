@@ -753,6 +753,7 @@ describe('experience canonical timeline', () => {
     const run = message({
       messageId: 'run',
       sequenceNumber: 2,
+      type: 'agent_status',
       sender: { type: 'agent', id: 'assistant', name: 'PRIVATE-ASSISTANT' },
       triggerMessageId: 'message-1',
       rootMessageId: 'message-1',
