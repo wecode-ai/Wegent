@@ -378,7 +378,7 @@ fn removes_encrypted_compaction_on_the_first_proxied_request_after_a_model_switc
                 && !message.to_string().contains("encrypted_content")
         })));
 
-    commit_model_request(&token, &routing);
+    commit_model_request(&token, &routing, &Default::default());
     {
         let entries = registry().lock().expect("registry lock");
         assert!(
@@ -430,7 +430,7 @@ fn consumes_pending_model_switch_cleanup_on_the_first_plain_request() {
     assert!(routing.model_switched);
     assert!(routing.clear_pending_model_switch);
 
-    commit_model_request(&token, &routing);
+    commit_model_request(&token, &routing, &Default::default());
     {
         let entries = registry().lock().expect("registry lock");
         let route = entries.routes.get(&token).expect("registered route");
