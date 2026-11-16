@@ -48,11 +48,7 @@ import {
   requestUserInputResponseKey,
   requestUserInputResponseText,
 } from '@/components/chat/requestUserInputMessages'
-import type {
-  ChatInputHandle,
-  ChatSubmitOptions,
-  ProjectWorkControls,
-} from '@/components/chat/ChatInput'
+import type { ChatSubmitOptions, ProjectWorkControls } from '@/components/chat/ChatInput'
 import { BufferedChatInput } from '@/components/layout/BufferedChatInput'
 import { retryRuntimeConversation } from '@wegent/collaboration/execution/retryRuntimeConversation'
 import { DESKTOP_MESSAGE_LIST_CLASS } from '@/components/layout/desktopChatLayout'
@@ -108,11 +104,6 @@ import type {
   WorkbenchMessage,
 } from '@/types/workbench'
 
-export interface ConversationDraftSnapshot {
-  scopeKey: string
-  value: string
-}
-
 interface TemporaryChatPanelProps {
   currentProject: ProjectWithTasks | null
   source: RuntimeTaskAddress | null
@@ -137,7 +128,7 @@ interface TemporaryChatPanelProps {
     message: string,
     options: RuntimeTaskComposerCreateOptions
   ) => Promise<RuntimeTaskAddress | false>
-  onAddressChange?: (address: RuntimeTaskAddress | null, draft?: ConversationDraftSnapshot) => void
+  onAddressChange?: (address: RuntimeTaskAddress | null) => void
   runtimeContext?: Pick<
     RuntimeSendRequest,
     'cloudProjectId' | 'origin' | 'additionalContext' | 'conversationContext'
@@ -435,7 +426,6 @@ export function TemporaryChatPanel({
     [hideProcessing, scopedHistory]
   )
   const draftScopeKey = `pane:${instanceId}`
-  const composerInputRef = useRef<ChatInputHandle>(null)
   const [initialDraftScope] = useState(draftScopeKey)
   const [inputState, setInputState] = useState(() => ({
     scopeKey: draftScopeKey,
@@ -450,12 +440,10 @@ export function TemporaryChatPanel({
   if (inputState.scopeKey !== draftScopeKey) {
     setInputState({ scopeKey: draftScopeKey, value: input })
   }
-  const composerDraftRef = useRef(input)
   const writeDraftInput = projectChat.setInputForScope
   const setInput = useCallback(
     (value: SetStateAction<string>) => {
       const next = typeof value === 'function' ? value(input) : value
-      composerDraftRef.current = next
       if (draft) {
         draft.onChange(next)
         return
@@ -551,17 +539,9 @@ export function TemporaryChatPanel({
   const updateAddress = useCallback(
     (nextAddress: RuntimeTaskAddress | null) => {
       setAddress(nextAddress)
-      onAddressChange?.(
-        nextAddress,
-        nextAddress && !address
-          ? {
-              scopeKey: draftScopeKey,
-              value: composerInputRef.current?.getValue() ?? composerDraftRef.current,
-            }
-          : undefined
-      )
+      onAddressChange?.(nextAddress)
     },
-    [address, draftScopeKey, onAddressChange]
+    [onAddressChange]
   )
 
   useEffect(() => {
@@ -1486,7 +1466,6 @@ export function TemporaryChatPanel({
             >
               <ComposerCatalogContext.Provider value={composerCatalog}>
                 <BufferedChatInput
-                  inputRef={composerInputRef}
                   predictionAddress={address}
                   value={input}
                   replaceDraftKey={replaceDraftKey}
@@ -1494,8 +1473,7 @@ export function TemporaryChatPanel({
                     setInput(value)
                     return { appliedSynchronously: true }
                   }}
-                  onDraftEdit={value => {
-                    composerDraftRef.current = value
+                  onDraftEdit={() => {
                     draftEditVersionRef.current += 1
                     setError(null)
                   }}

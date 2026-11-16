@@ -8,12 +8,10 @@ import {
   useState,
   type PointerEvent as ReactPointerEvent,
   type CSSProperties,
+  type ComponentProps,
 } from 'react'
 
-import {
-  TemporaryChatPanel,
-  type ConversationDraftSnapshot,
-} from '@/components/layout/workspace-panels/TemporaryChatPanel'
+import { TemporaryChatPanel } from '@/components/layout/workspace-panels/TemporaryChatPanel'
 import { formatRelativeSidebarTime } from '@/components/layout/runtimeSidebarTime'
 import { Tooltip } from '@/components/ui/tooltip'
 import { useTranslation } from '@/hooks/useTranslation'
@@ -101,6 +99,52 @@ function lastConversationStorageKey(project: CloudProject): string {
   return `wework-project-space-chat:${project.project_store}:${project.id}`
 }
 
+function ProjectSpaceConversationFrame(props: ComponentProps<typeof TemporaryChatPanel>) {
+  const { projectChat } = useWorkbenchPaneContext()
+  const { onAddressChange: rememberAddress } = props
+  const active = useRef(true)
+  useLayoutEffect(() => {
+    active.current = true
+    return () => {
+      active.current = false
+    }
+  }, [])
+  const onAddressChange = useCallback(
+    (address: RuntimeTaskAddress | null) => {
+      if (active.current) rememberAddress?.(address)
+    },
+    [rememberAddress]
+  )
+  // Runtime discovery binds the same frame to its new task; it does not replace the composer.
+  const [instanceId] = useState(props.instanceId)
+  const draftKey = `pane:${props.instanceId}`
+  const draftKeyRef = useRef(draftKey)
+  const [value, setValue] = useState(() => projectChat.inputByScope[draftKey] ?? '')
+  const writeDraft = projectChat.setInputForScope
+  useLayoutEffect(() => {
+    const previousKey = draftKeyRef.current
+    if (previousKey === draftKey) return
+    draftKeyRef.current = draftKey
+    writeDraft(draftKey, value)
+    writeDraft(previousKey, '')
+  }, [draftKey, value, writeDraft])
+  const onChange = useCallback(
+    (value: string) => {
+      setValue(value)
+      writeDraft(draftKeyRef.current, value)
+    },
+    [writeDraft]
+  )
+  return (
+    <TemporaryChatPanel
+      {...props}
+      instanceId={instanceId}
+      draft={{ value, onChange }}
+      onAddressChange={onAddressChange}
+    />
+  )
+}
+
 export function ProjectSpaceChatSidebar({
   project,
   localProjects,
@@ -109,8 +153,7 @@ export function ProjectSpaceChatSidebar({
   startNew = false,
 }: ProjectSpaceChatSidebarProps) {
   const { t } = useTranslation('common')
-  const { state, services, projectChat } = useWorkbenchPaneContext()
-  const { setInputForScope } = projectChat
+  const { state, services } = useWorkbenchPaneContext()
   const conversations = useMemo(
     () =>
       projectSpaceConversations(
@@ -135,29 +178,9 @@ export function ProjectSpaceChatSidebar({
   const [selectedConversationKey, setSelectedConversationKey] = useState<string | null>(() =>
     window.localStorage.getItem(lastConversationStorageKey(project))
   )
-  const [boundConversation, setBoundConversation] = useState<{
-    projectKey: string
-    key: string
-  } | null>(null)
-  const projectKey = `${project.project_store}:${project.id}`
   const [creatingNew, setCreatingNew] = useState(startNew)
+  const [createdAddress, setCreatedAddress] = useState<RuntimeTaskAddress | null>(null)
   const [chatInstance, setChatInstance] = useState(0)
-  const chatOwner = useMemo(() => ({ projectKey, chatInstance }), [projectKey, chatInstance])
-  const chatOwnerRef = useRef<typeof chatOwner | null>(chatOwner)
-  const retiredDraftScopeRef = useRef<string | null>(null)
-  useLayoutEffect(() => {
-    chatOwnerRef.current = chatOwner
-    return () => {
-      chatOwnerRef.current = null
-    }
-  }, [chatOwner])
-  useEffect(() => {
-    const retiredScope = retiredDraftScopeRef.current
-    if (!retiredScope) return
-    retiredDraftScopeRef.current = null
-    // Retire after the old composer's scope cleanup has published its buffer.
-    setInputForScope(retiredScope, '')
-  }, [boundConversation, setInputForScope])
   const [width, setWidth] = useState(storedProjectChatWidth)
   const [resizing, setResizing] = useState(false)
   const [conversationMenuOpen, setConversationMenuOpen] = useState(false)
@@ -189,23 +212,18 @@ export function ProjectSpaceChatSidebar({
   const selectedConversation = creatingNew
     ? null
     : (conversations.find(conversation => conversation.key === selectedConversationKey) ??
-      conversations[0] ??
+      (createdAddress ? null : conversations[0]) ??
       null)
-  // The accepted address owns the live composer, even before its summary arrives.
-  const draftConversationKey = creatingNew
-    ? 'new'
-    : boundConversation?.projectKey === projectKey
-      ? boundConversation.key
-      : (selectedConversation?.key ?? 'new')
   const effectiveLocalProjectId = selectedConversation?.localProjectId ?? localProjectId
   const selectedLocalProject =
     localProjects.find(candidate => candidate.id === effectiveLocalProjectId) ?? null
-  const showsNewConversationControls = creatingNew || selectedConversation === null
+  const showsNewConversationControls =
+    creatingNew || (!createdAddress && selectedConversation === null)
 
   const selectConversation = useCallback(
     (key: string) => {
-      setBoundConversation(null)
       setCreatingNew(false)
+      setCreatedAddress(null)
       setSelectedConversationKey(key)
       setChatInstance(current => current + 1)
       window.localStorage.setItem(lastConversationStorageKey(project), key)
@@ -214,32 +232,22 @@ export function ProjectSpaceChatSidebar({
   )
 
   const startNewConversation = useCallback(() => {
-    setBoundConversation(null)
-    setCreatingNew(current => {
-      if (current) return false
-      setSelectedConversationKey(null)
-      setChatInstance(instance => instance + 1)
-      return true
-    })
-  }, [])
+    setCreatingNew(current => !current)
+    setCreatedAddress(null)
+    if (!creatingNew) setSelectedConversationKey(null)
+    setChatInstance(instance => instance + 1)
+  }, [creatingNew])
 
   const rememberAddress = useCallback(
-    (address: RuntimeTaskAddress | null, draft?: ConversationDraftSnapshot) => {
-      // A creation callback must not retarget a composer the user has left.
-      if (!address || chatOwnerRef.current !== chatOwner) return
+    (address: RuntimeTaskAddress | null) => {
+      if (!address) return
       const key = `${address.deviceId}:${address.taskId}`
-      const nextScope = `pane:project-space:${projectKey}:${key}`
-      if (draft && draft.scopeKey !== nextScope) {
-        // Include edits that have not reached the debounced draft store yet.
-        setInputForScope(nextScope, draft.value)
-        retiredDraftScopeRef.current = draft.scopeKey
-      }
-      setBoundConversation({ projectKey, key })
+      setCreatedAddress(address)
       setCreatingNew(false)
       setSelectedConversationKey(key)
       window.localStorage.setItem(lastConversationStorageKey(project), key)
     },
-    [project, projectKey, chatOwner, setInputForScope]
+    [project]
   )
 
   const runtimeContext = useMemo<
@@ -261,12 +269,22 @@ export function ProjectSpaceChatSidebar({
     if (!identity?.deviceId) throw new Error(t('standIn.errors.workspace_unavailable'))
     return identity.deviceId
   }, [services, t])
-  const createConversation = useProjectRuntimeTaskComposer({
+  const createRuntimeConversation = useProjectRuntimeTaskComposer({
     resolveDeviceId: localExecution ? resolveLocalDeviceId : undefined,
     project: selectedLocalProject,
     workspaceExecution: null,
     runtimeContext,
   })
+
+  const createConversation = useCallback<
+    NonNullable<ComponentProps<typeof TemporaryChatPanel>['createTask']>
+  >(
+    (...args) => {
+      setCreatingNew(true)
+      return createRuntimeConversation(...args)
+    },
+    [createRuntimeConversation]
+  )
 
   const resize = useCallback(
     (event: ReactPointerEvent<HTMLDivElement>) => {
@@ -493,13 +511,13 @@ export function ProjectSpaceChatSidebar({
         {t('workbench.project_space_chat.capabilities', { name: project.name })}
       </p>
 
-      <TemporaryChatPanel
-        key={`${project.project_store}:${project.id}:${chatInstance}`}
+      <ProjectSpaceConversationFrame
+        key={`${project.project_store}:${project.id}:${chatInstance}:${creatingNew || createdAddress ? 'new' : (selectedConversation?.key ?? 'new')}`}
         currentProject={selectedLocalProject}
         source={null}
-        instanceId={`project-space:${projectKey}:${draftConversationKey}`}
+        instanceId={`project-space:${project.project_store}:${project.id}:${createdAddress ? `${createdAddress.deviceId}:${createdAddress.taskId}` : (selectedConversation?.key ?? 'new')}`}
         testId="project-space-chat-panel"
-        initialAddress={selectedConversation?.address ?? null}
+        initialAddress={selectedConversation?.address ?? createdAddress}
         createTask={createConversation}
         runtimeContext={runtimeContext}
         onAddressChange={rememberAddress}
