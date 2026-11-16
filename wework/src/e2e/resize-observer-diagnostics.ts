@@ -4,6 +4,8 @@ interface ResizeDelivery {
   creationStack: string | undefined
   atMs: number
   targets: Array<{ tag: string; testId: string | null; width: number; height: number }>
+  writeCount: number
+  writes: Array<{ tag: string; testId: string | null; attribute: string | null }>
 }
 
 /** Observe native delivery without changing callback timing, layout or error handling. */
@@ -15,13 +17,24 @@ export function installResizeObserverDiagnostics(target: Window) {
   let failed = false
   if (typeof NativeObserver !== 'function')
     return { snapshot: () => ({ recent, failed }), stop() {} }
+  const writes = scope.document?.documentElement
+    ? new scope.MutationObserver(() => undefined)
+    : undefined
+  writes?.observe(scope.document.documentElement, {
+    subtree: true,
+    childList: true,
+    attributes: true,
+    attributeFilter: ['style', 'class'],
+  })
   class ObservedResizeObserver extends NativeObserver {
     constructor(callback: ResizeObserverCallback) {
       const observerId = ++nextId
       const creationStack = new Error('ResizeObserver created').stack
       super((entries, observer) => {
+        let delivery: ResizeDelivery | undefined
         try {
-          recent.push({
+          writes?.takeRecords()
+          delivery = {
             observerId,
             callbackName: callback.name,
             creationStack,
@@ -32,12 +45,37 @@ export function installResizeObserverDiagnostics(target: Window) {
               width: entry.contentRect.width,
               height: entry.contentRect.height,
             })),
-          })
+            writeCount: 0,
+            writes: [],
+          }
+          recent.push(delivery)
           if (recent.length > 32) recent.shift()
         } catch {
           failed = true
         }
-        callback.call(observer, entries, observer)
+        try {
+          callback.call(observer, entries, observer)
+        } finally {
+          try {
+            const mutations = writes?.takeRecords() ?? []
+            if (delivery) {
+              delivery.writeCount = mutations.length
+              delivery.writes = mutations.slice(0, 8).flatMap(record => {
+                if (!(record.target instanceof Element)) return []
+                return [
+                  {
+                    tag: record.target.tagName,
+                    testId:
+                      record.target.closest('[data-testid]')?.getAttribute('data-testid') ?? null,
+                    attribute: record.attributeName,
+                  },
+                ]
+              })
+            }
+          } catch {
+            failed = true
+          }
+        }
       })
     }
   }
@@ -45,6 +83,7 @@ export function installResizeObserverDiagnostics(target: Window) {
   return {
     snapshot: () => ({ recent: [...recent], failed }),
     stop: () => {
+      writes?.disconnect()
       if (scope.ResizeObserver === ObservedResizeObserver) scope.ResizeObserver = NativeObserver
     },
   }

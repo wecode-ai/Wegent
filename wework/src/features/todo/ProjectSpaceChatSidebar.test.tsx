@@ -1,6 +1,6 @@
 import '@/i18n'
 
-import { render, screen, waitFor } from '@testing-library/react'
+import { act, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { useRef } from 'react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
@@ -20,6 +20,7 @@ const mocks = vi.hoisted(() => ({
   readLocalIdentity: vi.fn(),
   sendError: vi.fn(),
   chatPanelMounts: 0,
+  addressChanged: undefined as ((address: RuntimeTaskAddress | null) => void) | undefined,
   state: {
     runtimeWork: {
       projects: [],
@@ -41,6 +42,7 @@ vi.mock('@/features/workbench/useWorkbench', () => ({
 }))
 
 interface MockChatPanelProps {
+  instanceId?: string
   initialInput?: string
   initialAddress?: RuntimeTaskAddress | null
   emptyStateText?: string
@@ -65,6 +67,7 @@ interface MockChatPanelProps {
 
 vi.mock('@/components/layout/workspace-panels/TemporaryChatPanel', () => ({
   TemporaryChatPanel: ({
+    instanceId,
     initialAddress,
     initialInput,
     emptyStateText,
@@ -73,10 +76,12 @@ vi.mock('@/components/layout/workspace-panels/TemporaryChatPanel', () => ({
     createTask,
     onAddressChange,
   }: MockChatPanelProps) => {
+    mocks.addressChanged = onAddressChange
     const mountId = useRef(++mocks.chatPanelMounts).current
     return (
       <div
         data-testid="mock-chat-panel"
+        data-instance-id={instanceId}
         data-task-id={initialAddress?.taskId ?? ''}
         data-initial-input={initialInput ?? ''}
         data-mount-id={mountId}
@@ -315,8 +320,10 @@ describe('ProjectSpaceChatSidebar', () => {
 
     await userEvent.click(screen.getByTestId('project-space-chat-new'))
     expect(screen.getByTestId('project-space-chat-runtime-project')).toBeInTheDocument()
+    const createdDraftScope = screen.getByTestId('mock-chat-panel').getAttribute('data-instance-id')
     await userEvent.click(screen.getByTestId('mock-chat-send'))
     const createdChatMountId = screen.getByTestId('mock-chat-panel').getAttribute('data-mount-id')
+    act(() => mocks.addressChanged?.(address))
 
     await waitFor(() => expect(mocks.createProjectRuntimeTask).toHaveBeenCalledTimes(1))
     expect(mocks.createProjectRuntimeTask).toHaveBeenCalledWith(
@@ -381,6 +388,10 @@ describe('ProjectSpaceChatSidebar', () => {
     expect(screen.getByTestId('mock-chat-panel')).toHaveAttribute(
       'data-mount-id',
       createdChatMountId
+    )
+    expect(screen.getByTestId('mock-chat-panel')).toHaveAttribute(
+      'data-instance-id',
+      createdDraftScope
     )
   })
 })

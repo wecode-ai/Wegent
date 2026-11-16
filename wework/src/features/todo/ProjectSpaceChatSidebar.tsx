@@ -131,7 +131,16 @@ export function ProjectSpaceChatSidebar({
     window.localStorage.getItem(lastConversationStorageKey(project))
   )
   const [creatingNew, setCreatingNew] = useState(startNew)
-  const [chatInstance, setChatInstance] = useState(0)
+  const selectedConversation = creatingNew
+    ? null
+    : (conversations.find(conversation => conversation.key === selectedConversationKey) ??
+      conversations[0] ??
+      null)
+  // History can adopt the created address after the user has started the next draft.
+  const [chatInstance, setChatInstance] = useState(() => ({
+    revision: 0,
+    draftKey: selectedConversation?.key ?? 'new',
+  }))
   const [width, setWidth] = useState(storedProjectChatWidth)
   const [resizing, setResizing] = useState(false)
   const [conversationMenuOpen, setConversationMenuOpen] = useState(false)
@@ -160,11 +169,6 @@ export function ProjectSpaceChatSidebar({
     }
   }, [conversationMenuOpen])
 
-  const selectedConversation = creatingNew
-    ? null
-    : (conversations.find(conversation => conversation.key === selectedConversationKey) ??
-      conversations[0] ??
-      null)
   const effectiveLocalProjectId = selectedConversation?.localProjectId ?? localProjectId
   const selectedLocalProject =
     localProjects.find(candidate => candidate.id === effectiveLocalProjectId) ?? null
@@ -174,20 +178,24 @@ export function ProjectSpaceChatSidebar({
     (key: string) => {
       setCreatingNew(false)
       setSelectedConversationKey(key)
-      setChatInstance(current => current + 1)
+      setChatInstance(current => ({ revision: current.revision + 1, draftKey: key }))
       window.localStorage.setItem(lastConversationStorageKey(project), key)
     },
     [project]
   )
 
   const startNewConversation = useCallback(() => {
-    setCreatingNew(current => {
-      if (current) return false
-      setSelectedConversationKey(null)
-      setChatInstance(instance => instance + 1)
-      return true
-    })
-  }, [])
+    const returning = creatingNew
+      ? (conversations.find(conversation => conversation.key === selectedConversationKey) ??
+        conversations[0])
+      : null
+    setCreatingNew(!creatingNew)
+    if (!creatingNew) setSelectedConversationKey(null)
+    setChatInstance(current => ({
+      revision: current.revision + 1,
+      draftKey: returning?.key ?? 'new',
+    }))
+  }, [conversations, creatingNew, selectedConversationKey])
 
   const rememberAddress = useCallback(
     (address: RuntimeTaskAddress | null) => {
@@ -452,10 +460,10 @@ export function ProjectSpaceChatSidebar({
       </p>
 
       <TemporaryChatPanel
-        key={`${project.project_store}:${project.id}:${chatInstance}`}
+        key={`${project.project_store}:${project.id}:${chatInstance.revision}`}
         currentProject={selectedLocalProject}
         source={null}
-        instanceId={`project-space:${project.project_store}:${project.id}:${selectedConversation?.key ?? 'new'}`}
+        instanceId={`project-space:${project.project_store}:${project.id}:${chatInstance.draftKey}`}
         testId="project-space-chat-panel"
         initialAddress={selectedConversation?.address ?? null}
         createTask={createConversation}

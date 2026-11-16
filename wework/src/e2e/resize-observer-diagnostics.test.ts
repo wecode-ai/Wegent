@@ -54,3 +54,39 @@ test('a diagnostic read failure cannot prevent native callback delivery', () => 
   expect(diagnostics.snapshot().failed).toBe(true)
   diagnostics.stop()
 })
+
+test('attributes synchronous DOM writes to their callback without reading layout or text', () => {
+  let deliver!: ResizeObserverCallback
+  class NativeObserver {
+    constructor(callback: ResizeObserverCallback) {
+      deliver = callback
+    }
+  }
+  const scope = {
+    ResizeObserver: NativeObserver,
+    MutationObserver,
+    document,
+  } as unknown as Window & typeof globalThis
+  const diagnostics = installResizeObserverDiagnostics(scope)
+  const parent = document.createElement('div')
+  parent.dataset.testid = 'measured-ancestor'
+  document.body.append(parent)
+  const observer = new scope.ResizeObserver(() => {
+    parent.style.height = '42px'
+    parent.textContent = 'private content'
+  })
+  deliver(
+    [{ target: parent, contentRect: { width: 100, height: 20 } } as ResizeObserverEntry],
+    observer
+  )
+  expect(diagnostics.snapshot().recent[0]).toMatchObject({
+    writeCount: 2,
+    writes: [
+      { tag: 'DIV', testId: 'measured-ancestor', attribute: 'style' },
+      { tag: 'DIV', testId: 'measured-ancestor', attribute: null },
+    ],
+  })
+  expect(JSON.stringify(diagnostics.snapshot())).not.toContain('private content')
+  diagnostics.stop()
+  parent.remove()
+})
