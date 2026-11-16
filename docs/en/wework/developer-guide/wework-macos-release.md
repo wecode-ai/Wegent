@@ -432,6 +432,15 @@ is complete.
 
 ## Development hot reload
 
+On macOS, development watching checks source file and directory metadata once per
+second so missing FSEvents or native directory notifications cannot stop atomic
+saves, subsequent edits, or new directories from triggering builds. Only changed
+input versions trigger a build; output directories, `node_modules`, `.git`, and
+`dist` remain excluded. Polling does not read file contents. Chokidar 3 requires
+both `useFsEvents: false` and `usePolling: true`: setting only
+`CHOKIDAR_USEPOLLING=true` does not disable the already selected FSEvents backend.
+Other platforms retain native watching.
+
 Wait for Chokidar's `ready` before taking the input snapshot and starting the
 initial build. Creating a native watcher alone does not establish subscription
 readiness, so the first edit can lose its notification. Await all watcher

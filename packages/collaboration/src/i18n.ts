@@ -1420,6 +1420,8 @@ const sharedMessages: Record<
   },
 };
 
+import { issueCommentMessages } from "./issue-detail/issueCommentMessages";
+
 export function createCollaborationTranslator(
   locale: CollaborationLocale,
 ): CollaborationTranslate {
@@ -1431,6 +1433,7 @@ export function createCollaborationTranslator(
         ? `${key}_${pluralRules.select(options.count)}`
         : key;
     let value =
+      issueCommentMessages[locale][key] ??
       autocompleteMessages[locale][key] ??
       contextUsageMessages[locale][key] ??
       pluginPickerMessages[locale][key] ??

@@ -29,6 +29,10 @@ export * from "./project-create";
 export * from "./project-manage";
 export * from "./project-shell";
 export * from "./SharedIssueDetailEditor";
+export type {
+  CommentIssueActions,
+  IssueCommentBoardContext,
+} from "./issue-detail/issueCommentActions";
 export { IssueDetailSearchableSelect } from "./issue-detail/IssueDetailControls";
 export * from "./permissions";
 export * from "./platform";

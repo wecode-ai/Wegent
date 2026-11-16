@@ -5,6 +5,12 @@ import { IssueDeliveryEditor } from "./issue-detail/IssueDeliveryEditor";
 import { collaborationIssueCardPriorityClasses as priorityBadgeClasses } from "./issue-card/priorityBadgeClasses";
 import { useIssueFieldSaves } from "./issue-detail/useIssueFieldSaves";
 import { persistIssueDetailFields } from "./issue-detail/persistIssueDetailFields";
+import {
+  createIssueCommentActions,
+  defaultIssueCommentBoard,
+  type CommentIssueActions,
+  type IssueCommentBoardContext,
+} from "./issue-detail/issueCommentActions";
 import * as Popover from "@radix-ui/react-popover";
 import { runnerEnvironmentError } from "./execution-environment/runnerEnvironmentError";
 import { collectProjectTags } from "./project-board/projectTags";
@@ -136,6 +142,7 @@ export interface SharedEditorTeam {
 }
 
 export interface SharedIssueDetailExtensionContext {
+  commentActions?: CommentIssueActions;
   commentAssignment?: import("./issue-detail/useCommentAssignment").CommentAssignment;
   item: SharedEditorIssue;
   project: SharedEditorProject;
@@ -632,6 +639,7 @@ export interface TodoEditorEditProps {
 }
 
 export type TodoEditorProps = {
+  commentBoard?: IssueCommentBoardContext;
   port: TodoEditorPort;
   extensions?: SharedIssueDetailExtensions;
   translate?: (
@@ -1643,6 +1651,21 @@ export function TodoEditor(props: TodoEditorProps) {
     (project !== undefined &&
       (item === null || item.can_view_detail !== false) &&
       canAssignCollaborationIssue(project));
+  const commentActions =
+    item && project && editProps && (editable || canAssign)
+      ? createIssueCommentActions({
+          issue: item,
+          board:
+            props.commentBoard ??
+            defaultIssueCommentBoard(project, allItems, statusOptions, t),
+          statuses: statusOptions,
+          editable,
+          canAssign,
+          issues: editorPort.issues,
+          onUpdated: editProps.onUpdated,
+          translate: t,
+        })
+      : undefined;
   const canManageIssueSecurity =
     project !== undefined && canManageCollaborationIssueSecurity(project);
   const assigneeChanged =
@@ -2234,6 +2257,7 @@ export function TodoEditor(props: TodoEditorProps) {
     editProps?.project &&
     editProps.project.task_provider !== "dingtalk_aitable"
       ? extensions?.renderActivity?.({
+          commentActions,
           item,
           project: editProps.project,
           editable,
@@ -2716,6 +2740,26 @@ export function TodoEditor(props: TodoEditorProps) {
         data-testid="cloud-todo-current-assignment"
       >
         <div className="task-detail-workspace-properties-grid">
+          {commentActions ? (
+            <RailProp
+              label={t("todo.comment_board_position")}
+              clickable={false}
+              wrapValue
+            >
+              <span
+                data-testid="issue-current-board-position"
+                className="flex min-w-0 flex-col gap-1"
+              >
+                <span className="text-xs text-text-muted">
+                  {commentActions.boardName}
+                </span>
+                <span>
+                  {commentActions.currentColumns.join(" · ") ||
+                    t("todo.comment_board_unmatched")}
+                </span>
+              </span>
+            </RailProp>
+          ) : null}
           <RailProp
             label={t("todo.issue_priority", "优先级")}
             control={prioritySelect}
