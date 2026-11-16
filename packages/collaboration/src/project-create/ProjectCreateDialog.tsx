@@ -1010,9 +1010,9 @@ export function ProjectCreateDialog(props: ProjectCreateDialogProps) {
                 {selectedAgents.map((agent) => (
                   <span
                     key={agent.id}
-                    className="inline-flex h-12 min-w-36 max-w-52 items-center gap-2 rounded-xl border border-border/70 bg-background px-2.5 shadow-sm"
+                    className="inline-flex max-w-full items-center gap-2 rounded-md bg-muted px-2 py-1"
                   >
-                    <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-muted text-text-secondary">
+                    <span className="flex shrink-0 items-center justify-center text-text-secondary">
                       <Bot className="h-4 w-4" aria-hidden="true" />
                     </span>
                     <span className="flex min-w-0 flex-col text-left">
@@ -1022,7 +1022,7 @@ export function ProjectCreateDialog(props: ProjectCreateDialogProps) {
                       >
                         {agent.name}
                       </strong>
-                      <small className="text-xs text-text-muted">
+                      <small className="sr-only">
                         {labels.agentAttachment}
                       </small>
                     </span>
@@ -1031,9 +1031,9 @@ export function ProjectCreateDialog(props: ProjectCreateDialogProps) {
                 {selectedGenerationHumans.map((member) => (
                   <span
                     key={`human:${member.id}`}
-                    className="inline-flex h-12 min-w-36 max-w-52 items-center gap-2 rounded-xl border border-border/70 bg-background px-2.5 shadow-sm"
+                    className="inline-flex max-w-full items-center gap-2 rounded-md bg-muted px-2 py-1"
                   >
-                    <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-muted text-text-secondary">
+                    <span className="flex shrink-0 items-center justify-center text-text-secondary">
                       <UserRound className="h-4 w-4" aria-hidden="true" />
                     </span>
                     <span className="flex min-w-0 flex-col text-left">
@@ -1043,7 +1043,7 @@ export function ProjectCreateDialog(props: ProjectCreateDialogProps) {
                       >
                         {member.name}
                       </strong>
-                      <small className="text-xs text-text-muted">
+                      <small className="sr-only">
                         {labels.memberAttachment}
                       </small>
                     </span>

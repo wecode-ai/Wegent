@@ -1748,6 +1748,12 @@
     max-height: calc(100vh - 32px);
   }
 
+  .collaboration-project-create-header button {
+    width: 44px;
+    height: 44px;
+    padding: 14px;
+  }
+
   .collaboration-project-create-providers {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
