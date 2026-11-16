@@ -85,8 +85,8 @@ const cloudBlock = workflow
   .split(/\n  [\w-]+:\n/)[0];
 assert.match(
   cloudBlock,
-  /if: contains\(matrix.segments, 'plugin-write-coordination'\)[^\n]*\n\s+uses: \.\/\.github\/actions\/setup-minio-e2e/,
-  "Cloud plugin write coordination must use real object storage for sync recovery",
+  /- name: Set up real object storage for desktop E2E\n\s+uses: \.\/\.github\/actions\/setup-minio-e2e/,
+  "Every cloud checkpoint must use real object storage",
 );
 assert.doesNotMatch(
   cloudBlock,
@@ -98,10 +98,18 @@ for (const job of [
   "wework-desktop-windows-core-e2e",
 ]) {
   const block = workflow.split(`  ${job}:\n`)[1].split(/\n  [\w-]+:\n/)[0];
-  assert.match(
-    block,
-    /if: .*contains\(matrix.segments, 'collaboration-issue-mcp-comments'\).*contains\(matrix.segments, 'collaboration-delivery-editing'\)/,
-    `${job} must prepare real object storage for both collaboration segments`,
+  const setupName =
+    job === "wework-desktop-windows-core-e2e"
+      ? "Enable real object storage"
+      : "Set up real object storage for desktop E2E";
+  const setup = block
+    .split(`- name: ${setupName}\n`)[1]
+    ?.split(/\n      - name:/)[0];
+  assert.ok(setup, `${job} must prepare real object storage`);
+  assert.doesNotMatch(
+    setup,
+    /^\s+if:/m,
+    `${job} must prepare real object storage for every checkpoint`,
   );
   if (job === "wework-desktop-windows-core-e2e") {
     assert.match(

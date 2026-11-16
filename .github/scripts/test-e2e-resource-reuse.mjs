@@ -16,6 +16,18 @@ import { runtimeArtifact } from "./runtime-artifact.mjs";
 import { containerIPv4, runnerLoopbackHosts } from "./e2e-runner-network.mjs";
 import { fetchGithubReleaseAsset } from "../../wework/e2e/desktop/modules/github-release-asset.mjs";
 
+function runFixtureShell(script, directory, { env, ...options }) {
+  // Shell startup can rebuild PATH; select test commands after startup completes.
+  return spawnSync(
+    "bash",
+    ["-e", "-c", 'export PATH="$TEST_COMMAND_BIN:$PATH"\n' + script],
+    {
+      ...options,
+      env: { ...env, TEST_COMMAND_BIN: directory },
+    },
+  );
+}
+
 test("CI package installation preserves distribution repositories and trust", (t) => {
   const root = resolve(import.meta.dirname, "../..");
   const installer = readFileSync(
@@ -344,13 +356,12 @@ fs.writeFileSync('.coverage', 'guard coverage')
     chmodSync(git, 0o755);
     const log = join(directory, "uv.log");
     const run = (step, extra = {}) =>
-      spawnSync("bash", ["-c", step.run], {
+      runFixtureShell(step.run, bin, {
         cwd: backend,
         encoding: "utf8",
         env: {
           ...process.env,
           ...job.env,
-          PATH: `${bin}:${process.env.PATH}`,
           TEST_UV_LOG: log,
           TEST_HEAD: "a".repeat(40),
           ...extra,
@@ -534,11 +545,10 @@ test("platform image reuse checks the registry before starting a builder", () =>
         `#!${process.execPath}\nconst assert = require('node:assert/strict')\nassert.deepEqual(process.argv.slice(2), ['manifest', 'inspect', process.env.IMAGE])\nprocess.exit(${exists ? 0 : 1})\n`,
       );
       chmodSync(join(root, "docker"), 0o755);
-      const probe = spawnSync("bash", ["-e", "-c", steps[checkIndex].run], {
+      const probe = runFixtureShell(steps[checkIndex].run, root, {
         encoding: "utf8",
         env: {
           ...process.env,
-          PATH: `${root}:${process.env.PATH}`,
           IMAGE: image,
           GITHUB_OUTPUT: output,
         },

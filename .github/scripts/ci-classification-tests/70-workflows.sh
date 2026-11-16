@@ -283,16 +283,15 @@ const permissionShard = JSON.parse(outputs.wework_desktop_core_e2e_matrix).inclu
   shard => shard.segments.split(',').includes('permission-modes')
 )
 assert.equal(permissionShard?.id, 'core-4', 'Bounded permission fixtures must reuse an existing runner')
-const cloudJob = workflow.split('\n  wework-desktop-cloud-e2e:\n')[1]?.split(/\n  [\w-]+:\n/)[0]
-const minioSetup = cloudJob?.match(/- name: Set up real object storage for plugin sync recovery E2E\n([\s\S]*?)(?=\n      - name:)/)?.[1]
-assert.ok(minioSetup?.includes('uses: ./.github/actions/setup-minio-e2e'))
-for (const checkpoint of [
-  'plugin-runtime-route-refresh',
-  'plugin-background-sync-isolation',
-  'plugin-periodic-reconcile',
-  'plugin-package-integrity-recovery',
+for (const job of [
+  'wework-desktop-core-e2e',
+  'wework-desktop-cloud-e2e',
+  'wework-desktop-e2e',
 ]) {
-  assert.ok(minioSetup.includes(`contains(matrix.segments, '${checkpoint}')`), `${checkpoint}: CI must prepare real object storage`)
+  const body = workflow.split(`\n  ${job}:\n`)[1]?.split(/\n  [\w-]+:\n/)[0]
+  const minioSetup = body?.match(/- name: Set up real object storage for desktop E2E\n([\s\S]*?)(?=\n      - name:)/)?.[1]
+  assert.ok(minioSetup?.includes('uses: ./.github/actions/setup-minio-e2e'), `${job}: CI must prepare real object storage`)
+  assert.doesNotMatch(minioSetup, /^\s+if:/m, `${job}: every checkpoint requires real object storage`)
 }
 NODE
 node "$script_dir/test-wework-windows-ci.mjs"
