@@ -131,10 +131,13 @@ test.each(checkouts.flatMap(checkout => ['directory', 'file'].map(input => [chec
     expect(snapshots).toEqual(['one', 'invalid', 'two'])
     await saveSource('three')
     await expect.poll(() => published).toBe('three')
+    // Hold the truncated revision so an in-place save may publish both states.
+    await writeFile(source, '')
+    await expect.poll(() => published).toBe('')
     await writeFile(source, 'four')
     await expect.poll(() => published).toBe('four')
-    expect(build).toHaveBeenCalledTimes(5)
-    expect(snapshots).toEqual(['one', 'invalid', 'two', 'three', 'four'])
+    expect(build).toHaveBeenCalledTimes(6)
+    expect(snapshots).toEqual(['one', 'invalid', 'two', 'three', '', 'four'])
   }
 )
 
