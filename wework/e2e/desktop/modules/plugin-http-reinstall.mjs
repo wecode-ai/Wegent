@@ -51,6 +51,7 @@ export async function verifyPluginHttpReinstall({
       [item.installedId, source]
     )
   const originalRule = apiProxy.rule
+  const storageProbeKey = 'wework.e2e.plugin-cache-ipc'
   let held
   let oldRemoval
   apiProxy.pauseDeviceDelivery(true)
@@ -77,9 +78,10 @@ export async function verifyPluginHttpReinstall({
     assert.equal(current[0].state, 'installed')
     assert.equal(current[0].actual_release_id, installed.spec.releaseId)
     assert.equal(current[0].desired_release_id, installed.spec.releaseId)
-    const persisted = JSON.parse(
-      await control.command('getLocalStorageItem', 'body', { value: 'wework.plugins.inventory.v2' })
-    )
+    const persistedRaw = await control.command('getLocalStorageItem', 'body', {
+      value: 'wework.plugins.inventory.v2',
+    })
+    const persisted = JSON.parse(persistedRaw)
     const cached = Object.values(persisted.entries).find(entry =>
       entry.installedPlugins.some(plugin => Number(plugin.metadata.labels?.id) === item.installedId)
     )
@@ -89,8 +91,20 @@ export async function verifyPluginHttpReinstall({
       'string',
       'Directory encoding was not separated from installation state'
     )
+    // Exercise real storage IPC without fabricating plugin or account state.
+    // Reload flushes the update, then initializes storage through the reverse pipe.
+    const storageProbeValue = `\u2028\u2029插件🙂${persistedRaw}`
+    await control.command('setLocalStorageItem', 'body', {
+      value: JSON.stringify({ key: storageProbeKey, value: storageProbeValue }),
+    })
     await reloadMainWindow(control, 'The plugin cache did not reconnect after reload')
     await control.command('waitFor', testId('plugins-button'), { visible: true })
+    assert.equal(
+      await control.command('getLocalStorageItem', 'body', { value: storageProbeKey }),
+      storageProbeValue,
+      'Unicode storage IPC lost data or disconnected the local service'
+    )
+    await control.command('removeLocalStorageItem', 'body', { value: storageProbeKey })
     await openPlugin(control, item)
     await control.command('waitFor', testId(`plugin-marketplace-actions-${item.pluginId}`))
     assert.equal((await rows())[0].state, 'installed', 'Reload lost the confirmed reinstall')
@@ -157,6 +171,7 @@ export async function verifyPluginHttpReinstall({
       source,
       installedId: item.installedId,
       lateRemovalIgnored: true,
+      unicodeStorageSurvivesReload: true,
     })
   } catch (error) {
     evidence.push({
@@ -176,6 +191,7 @@ export async function verifyPluginHttpReinstall({
     if (held && !held.released) held.release()
     if (oldRemoval) await oldRemoval
     apiProxy.pauseDeviceDelivery(false)
+    await control.command('removeLocalStorageItem', 'body', { value: storageProbeKey })
     const cleanup = await invoke({ action: 'uninstall', targetId: item.installedId })
     assert.equal(cleanup.error, undefined, JSON.stringify(cleanup.error))
   }
