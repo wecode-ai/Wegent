@@ -1,9 +1,8 @@
 import assert from 'node:assert/strict'
 import { randomUUID } from 'node:crypto'
 import { mkdir, writeFile } from 'node:fs/promises'
+import { createRequire } from 'node:module'
 import { join } from 'node:path'
-import { fileURLToPath } from 'node:url'
-import { createServer } from 'vite'
 import { createDesktopScenario as createNativeGuidance } from './native-guidance.scenario.mjs'
 import { requestExecutor } from '../modules/executor-rpc.mjs'
 import { waitForValue } from '../modules/workspace-agent-setup.mjs'
@@ -21,25 +20,10 @@ const FOLLOW_UP = 'WEWORK_MOBILE_LOCAL_FOLLOW_UP'
 const INITIAL_DONE = 'WEWORK_MOBILE_LOCAL_INITIAL_DONE'
 const FOLLOW_UP_DONE = 'WEWORK_MOBILE_LOCAL_FOLLOW_UP_DONE'
 
-async function loadSharedBuilders() {
-  const loader = await createServer({
-    root: fileURLToPath(new URL('../../../../', import.meta.url)),
-    configFile: false,
-    envFile: false,
-    logLevel: 'error',
-    optimizeDeps: { noDiscovery: true, include: [] },
-    server: { middlewareMode: true, watch: null, hmr: false },
-    appType: 'custom',
-  })
-  try {
-    return {
-      ...(await loader.ssrLoadModule('/packages/chat-core/src/local-runtime-execution.ts')),
-      ...(await loader.ssrLoadModule('/packages/chat-core/src/local-runtime-model.ts')),
-      ...(await loader.ssrLoadModule('/wework/electron/src/host/model-interface-runtime.ts')),
-    }
-  } finally {
-    await loader.close()
-  }
+function loadSharedBuilders() {
+  const path = process.env.WEWORK_E2E_SHARED_BUILDERS
+  assert.ok(path, 'The desktop E2E shared builders artifact is not configured')
+  return createRequire(import.meta.url)(path)
 }
 
 // Exercise the phone's shared payload through the existing real executor and Codex.
@@ -74,7 +58,7 @@ export function createDesktopScenario(options) {
     },
     async verify(control) {
       await existing.verify(control)
-      const builders = await loadSharedBuilders()
+      const builders = loadSharedBuilders()
       const rpc = (method, params) => requestExecutor(control, method, params, options.uiTimeoutMs)
       const snapshot = JSON.parse(await control.command('getWorkbenchDebugSnapshot', 'body'))
       const deviceId = snapshot.workbench?.currentRuntimeTask?.deviceId

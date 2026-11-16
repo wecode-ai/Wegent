@@ -137,7 +137,7 @@ test("the real archive and restore scripts round-trip every Codex file independe
     `
 import { mkdirSync, writeFileSync } from 'node:fs'
 mkdirSync(process.argv[2], { recursive: true })
-for (const name of ['socket.io-client.cjs', 'lz-string.cjs', 'yaml.cjs'])
+for (const name of ['socket.io-client.cjs', 'lz-string.cjs', 'yaml.cjs', 'shared-builders.cjs'])
   writeFileSync(process.argv[2] + '/' + name, 'client module')
 `,
   );

@@ -71,6 +71,7 @@ async function isolatedConsumer(name) {
         ...process.env,
         NODE_PATH: '',
         WEWORK_E2E_SOCKET_IO_CLIENT: join(client, 'socket.io-client.cjs'),
+        WEWORK_E2E_SHARED_BUILDERS: join(client, 'shared-builders.cjs'),
       },
     },
   }
@@ -90,6 +91,11 @@ test('the shared build loads plugin scenarios and decodes inventory without node
     const { decodeInventory } = await import(pathToFileURL(process.argv[2]))
     assert.deepEqual(decodeInventory(process.argv[3]), JSON.parse(process.argv[4]))
     assert.equal(typeof createRequire(import.meta.url)(process.env.WEWORK_E2E_SOCKET_IO_CLIENT).io, 'function')
+    const builders = createRequire(import.meta.url)(process.env.WEWORK_E2E_SHARED_BUILDERS)
+    assert.equal(typeof builders.buildLocalRuntimeExecutionRequest, 'function')
+    assert.equal(typeof builders.modelInterfaceProviderId, 'function')
+    assert.equal(typeof builders.modelInterfaceRuntimeConfig, 'function')
+    assert.equal(typeof builders.resolveLocalRuntimeModelConfig, 'function')
   `
   await run(
     process.execPath,
