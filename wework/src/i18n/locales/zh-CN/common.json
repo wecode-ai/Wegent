@@ -1210,6 +1210,8 @@
     "cloud_connection_authorize": "连接",
     "cloud_connection_waiting_authorization": "请在弹出窗口中完成 Wework 授权",
     "cloud_connection_login_failed": "连接失败",
+    "cloud_connection_recovery": "请检查服务地址和网络后重试。若不确定服务地址，请联系团队管理员。",
+    "cloud_connection_error_details": "查看技术详情",
     "remote_host": "远程主机",
     "remote_host_cloud_group": "云设备",
     "remote_host_docker_group": "远程 Docker 设备",

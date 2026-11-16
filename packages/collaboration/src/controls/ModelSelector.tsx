@@ -652,7 +652,7 @@ export function ModelSelector({
   function renderMobileControlSection(control: ModelControlConfig) {
     return (
       <section key={control.id} className="space-y-2">
-        <h3 className="px-1 text-xs font-semibold text-text-muted">
+        <h3 className="px-1 text-xs font-semibold text-text-secondary">
           {control.labelKey
             ? t(control.labelKey, control.label)
             : control.label}

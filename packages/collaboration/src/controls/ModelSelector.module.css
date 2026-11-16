@@ -87,7 +87,7 @@
 .groupLabel,
 .subgroupLabel {
   padding: 4px 8px;
-  color: rgb(var(--color-text-muted));
+  color: rgb(var(--color-text-secondary));
   font-size: 14px;
   font-weight: 400;
   line-height: 20px;
@@ -95,7 +95,7 @@
 
 .groupLabel {
   padding-top: 12px;
-  color: rgb(var(--color-text-muted));
+  color: rgb(var(--color-text-secondary));
 }
 
 .subgroupLabel {
@@ -145,7 +145,7 @@
 
 .defaultDescription {
   display: block;
-  color: rgb(var(--color-text-muted));
+  color: rgb(var(--color-text-secondary));
   font-size: 12px;
   line-height: 16px;
 }
@@ -183,5 +183,14 @@
   .submenu {
     animation: none;
     transition: none;
+  }
+}
+
+@media (max-width: 767px) {
+  .defaultItem,
+  .modelItem,
+  .fastModeToggle {
+    min-height: 44px;
+    min-width: 44px;
   }
 }

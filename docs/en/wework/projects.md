@@ -86,9 +86,11 @@ With no projects yet, the home starts with **Start with your first issue**. **Ne
 
 Selecting, switching or clearing a code workspace on the home updates execution context while retaining the collaboration page and draft. The connection dialog contains keyboard focus and returns it to the original entry when closed. Small viewports keep the input toolbar visible with touch targets of at least 44px.
 
+Connection failures retain the entered address and explain how to check the service address and network or contact the team administrator. Expand **Technical details** to inspect the underlying error.
+
 When disconnected, **New issue** explains cloud storage and sign-in before authorization, then resumes the independent-Issue form on success. Cancelling returns to the current work. The disconnected first-use home omits empty-list filters when there are no projects; existing Issue filtering and recovery stay available. Use arrow keys, Home and End to switch creation modes; the selected tab participates in the Tab order.
 
-Long titles stay compact in sidebar details; **Read full title** expands them. The original content remains in the description. Issue rows avoid repeating the source text used as the title prefix, while narrow details group primary properties compactly. Comments remain in the activity section.
+Sidebar titles use a consistent type scale and wrap to display their full content. The original content remains in the description. Issue rows avoid repeating the source text used as the title prefix, while narrow details group primary properties compactly. Comments remain in the activity section.
 
 On desktop, **Hide sidebar** beside the home heading gives the Issue list more space. **Show sidebar** restores the assistant or details without clearing unsent input. Opening or creating an Issue reveals the sidebar. Empty states identify the current assignment or unfinished scope. **View all participating items** selects Participating and All; when that scope is confirmed empty, **Start writing** focuses the current composer without submitting. Read failures retain the existing error and retry action rather than appearing empty.
 

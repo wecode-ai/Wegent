@@ -214,13 +214,13 @@ function IssueCardHeading({
           {display.showReference !== false && (
             <span
               data-testid={`cloud-todo-card-reference-${itemId}`}
-              className="shrink-0 pt-1 text-sm text-text-muted"
+              className="shrink-0 pt-1 text-sm text-text-secondary"
             >
               {model.shortReference}
             </span>
           )}
         </span>
-        <span className="collaboration-issue-list-metadata text-sm text-text-muted">
+        <span className="collaboration-issue-list-metadata text-sm text-text-secondary">
           {statusLabel && (
             <span
               data-testid={`cloud-todo-card-status-${itemId}`}
@@ -257,7 +257,7 @@ function IssueCardHeading({
       {statusLabel || display.showReference !== false || tags.length > 0 || showPriority ? (
         <span
           data-testid={`cloud-todo-card-header-${itemId}`}
-          className="mb-1.5 flex min-w-0 items-center gap-2 pr-5 text-xs text-text-muted"
+          className="mb-1.5 flex min-w-0 items-center gap-2 pr-5 text-xs text-text-secondary"
         >
           <span className="flex min-w-0 flex-1 items-center gap-2">
             {display.showReference !== false ? (
@@ -356,7 +356,7 @@ function IssueCardMetadata({
     <span
       data-testid={`cloud-todo-card-metadata-${itemId}`}
       className={classNames(
-        'min-w-0 items-center gap-3 text-xs text-text-muted',
+        'min-w-0 items-center gap-3 text-xs text-text-secondary',
         variant === 'list' ? 'flex flex-wrap' : 'mt-3 grid grid-cols-[minmax(0,1fr)_auto]'
       )}
     >

@@ -229,7 +229,7 @@ export function CloudConnectionDialog({
                 className="mt-2 h-11 w-full rounded-lg border border-border bg-background px-3 text-sm text-text-primary outline-none focus:border-text-secondary"
                 disabled={submitting}
               />
-              <p className="mt-1.5 text-xs text-text-muted">
+              <p className="mt-1.5 text-xs text-text-secondary">
                 {t(
                   'workbench.cloud_connection_backend_hint',
                   '可输入 backend 根地址或 /api 地址，系统会自动归一化连接配置。'
@@ -261,7 +261,7 @@ export function CloudConnectionDialog({
                   className="mt-2 h-11 w-full rounded-lg border border-border bg-background px-3 text-sm text-text-primary outline-none focus:border-text-secondary"
                   disabled={submitting}
                 />
-                <p className="mt-1.5 text-xs text-text-muted">
+                <p className="mt-1.5 text-xs text-text-secondary">
                   {t(
                     'workbench.cloud_connection_socket_hint',
                     '留空时使用应用配置，未配置则自动使用 Backend 域名。'
@@ -280,10 +280,32 @@ export function CloudConnectionDialog({
             {(error || cloudError) && (
               <div
                 data-testid="cloud-connection-error"
-                className="flex items-start gap-2 rounded-lg border border-destructive/20 bg-destructive/10 px-3 py-2 text-sm text-destructive wework:border-red-500/20 wework:bg-red-500/10 wework:text-red-500"
+                role="alert"
+                className="flex items-start gap-2 rounded-lg border border-destructive/20 bg-destructive/10 px-3 py-2 text-sm text-text-primary"
               >
-                <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />
-                <span>{error || cloudError}</span>
+                <AlertCircle
+                  className="mt-0.5 h-4 w-4 shrink-0 text-destructive"
+                  aria-hidden="true"
+                />
+                <div className="min-w-0 flex-1">
+                  <p className="font-medium">{t('workbench.cloud_connection_login_failed')}</p>
+                  <p className="mt-1 text-text-secondary">
+                    {t(
+                      !error && cloud.status === 'expired'
+                        ? 'workbench.cloud_connection_relogin_required'
+                        : 'workbench.cloud_connection_recovery'
+                    )}
+                  </p>
+                  <details data-testid="cloud-connection-error-details" className="mt-1">
+                    <summary
+                      data-testid="cloud-connection-error-details-toggle"
+                      className="inline-flex min-h-11 cursor-pointer items-center text-text-primary md:min-h-7"
+                    >
+                      {t('workbench.cloud_connection_error_details')}
+                    </summary>
+                    <p className="break-words text-xs text-text-secondary">{error || cloudError}</p>
+                  </details>
+                </div>
               </div>
             )}
 

@@ -204,13 +204,12 @@
 .collaboration-workspace-section-title {
   min-width: 0;
   overflow: hidden;
-  color: rgb(var(--color-text-muted));
+  color: rgb(var(--color-text-secondary));
   font-size: 12px;
   font-weight: 500;
   line-height: 16px;
   text-overflow: ellipsis;
   white-space: nowrap;
-  opacity: 0.75;
 }
 
 .collaboration-workspace-section-toggle {
@@ -223,14 +222,13 @@
   padding: 0 64px 0 0;
   border: 0;
   border-radius: 6px;
-  color: rgb(var(--color-text-muted));
+  color: rgb(var(--color-text-secondary));
   background: transparent;
   font-size: 12px;
   font-weight: 500;
   line-height: 16px;
   text-align: left;
   cursor: pointer;
-  opacity: 0.75;
 }
 
 .collaboration-workspace-section-toggle > span {
@@ -929,7 +927,7 @@ button.collaboration-project-offline:hover {
 .collaboration-first-project-starter p {
   max-width: 480px;
   margin: 0;
-  color: rgb(var(--color-text-muted));
+  color: rgb(var(--color-text-secondary));
   font-size: 14px;
   line-height: 1.5;
 }

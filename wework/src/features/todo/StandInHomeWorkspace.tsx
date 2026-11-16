@@ -209,7 +209,7 @@ export function StandInHomeWorkspace(props: Props) {
             </div>
           )}
           {!inbox.scope && !inbox.error && (
-            <p role="status" className="p-4 text-sm text-text-muted">
+            <p role="status" className="p-4 text-sm text-text-secondary">
               {t('standIn.loading')}
             </p>
           )}
@@ -218,7 +218,7 @@ export function StandInHomeWorkspace(props: Props) {
               <p className="text-base font-medium text-text-secondary">
                 {t('personalHome.assistantEmpty')}
               </p>
-              <p className="mt-2 max-w-xs text-sm leading-5 text-text-muted">
+              <p className="mt-2 max-w-xs text-sm leading-5 text-text-secondary">
                 {t('personalHome.assistantEmptyHint')}
               </p>
             </div>
@@ -243,7 +243,7 @@ export function StandInHomeWorkspace(props: Props) {
                   <div key={group} data-testid={`personal-home-role-${roleId}-${group}`}>
                     <h4 className="flex items-center gap-2 px-4 py-2 text-sm font-medium">
                       {t(`personalHome.${group}`)}
-                      <span className="rounded-md bg-muted px-1.5 py-0.5 text-xs font-normal text-text-muted">
+                      <span className="rounded-md bg-muted px-1.5 py-0.5 text-xs font-normal text-text-secondary">
                         {grouped.length}
                       </span>
                     </h4>
@@ -278,7 +278,7 @@ export function StandInHomeWorkspace(props: Props) {
                           />
                           <span className="min-w-0 flex-1">
                             <span className="block truncate font-medium">{item.task.title}</span>
-                            <span className="mt-1 flex min-w-0 items-center gap-1.5 text-xs text-text-muted">
+                            <span className="mt-1 flex min-w-0 items-center gap-1.5 text-xs text-text-secondary">
                               <span className="shrink-0">{status}</span>
                               {item.projectName && (
                                 <>

@@ -411,14 +411,14 @@ function ScheduleRangeControl({
         >
           <Calendar className="h-4 w-4 shrink-0 text-text-muted" />
           {showLabel ? (
-            <span className="text-text-muted">
+            <span className="text-text-secondary">
               {translate("todo.schedule_range", "时间范围")}
             </span>
           ) : null}
           <span
             className={cn(
               "max-w-64 truncate text-text-primary",
-              !startDate && !dueDate && "text-text-muted",
+              !startDate && !dueDate && "text-text-secondary",
               invalid && "text-destructive",
             )}
           >
@@ -439,7 +439,7 @@ function ScheduleRangeControl({
           style={portalTheme.style}
         >
           <div className="grid gap-3">
-            <label className="grid gap-1.5 text-xs text-text-muted">
+            <label className="grid gap-1.5 text-xs text-text-secondary">
               {translate("todo.start_date", "开始时间")}
               <input
                 data-testid={startTestId}
@@ -450,7 +450,7 @@ function ScheduleRangeControl({
                 className="h-9 rounded-lg border border-border bg-background px-3 text-sm text-text-primary outline-none focus:border-text-muted"
               />
             </label>
-            <label className="grid gap-1.5 text-xs text-text-muted">
+            <label className="grid gap-1.5 text-xs text-text-secondary">
               {translate("todo.due_date", "结束时间")}
               <input
                 data-testid={dueTestId}
@@ -1056,8 +1056,6 @@ export function TodoEditor(props: TodoEditorProps) {
     return () => observer.disconnect();
   }, [item?.id, canPinPersonalTaskAction]);
   const titleRef = useRef<HTMLTextAreaElement>(null);
-  const [titleExpanded, setTitleExpanded] = useState(false);
-  const [titleOverflowing, setTitleOverflowing] = useState(false);
   const descriptionCollapseRef = useRef<HTMLDivElement>(null);
   const propertiesTriggerRef = useRef<HTMLButtonElement>(null);
   const [propertiesExpanded, setPropertiesExpanded] = useState(false);
@@ -1237,12 +1235,6 @@ export function TodoEditor(props: TodoEditorProps) {
       if (textarea.scrollHeight > 0) {
         textarea.style.height = `${textarea.scrollHeight}px`;
       }
-      const lineHeight = Number.parseFloat(
-        window.getComputedStyle(textarea).lineHeight,
-      );
-      setTitleOverflowing(
-        workspacePanel && textarea.scrollHeight > lineHeight * 3 + 1,
-      );
     };
     resize();
 
@@ -1334,7 +1326,6 @@ export function TodoEditor(props: TodoEditorProps) {
     setAttachmentBusy(false);
     setAttachmentError(null);
     setEditingContent(!readFirst);
-    setTitleExpanded(false);
   }, [editItemId, readFirst]);
 
   useLayoutEffect(() => {
@@ -2145,7 +2136,7 @@ export function TodoEditor(props: TodoEditorProps) {
           </button>
         </header>
         <div className="min-h-0 flex-1 overflow-y-auto p-5">
-          <p className="font-mono text-xs text-text-muted">
+          <p className="font-mono text-xs text-text-secondary">
             {item.id} · {t("todo.delivered", "已交付")}
           </p>
           <div className="mt-2 flex items-center gap-2">
@@ -2522,7 +2513,9 @@ export function TodoEditor(props: TodoEditorProps) {
   const statusChip = (
     <span className={propChipClass}>
       <Circle className="h-3.5 w-3.5 text-text-muted" />
-      <span className="text-text-muted">{t("todo.issue_status", "状态")}</span>
+      <span className="text-text-secondary">
+        {t("todo.issue_status", "状态")}
+      </span>
       {statusValue}
       <ChevronDown className="h-3 w-3 text-text-muted" />
       {statusSelect}
@@ -2538,7 +2531,7 @@ export function TodoEditor(props: TodoEditorProps) {
         aria-expanded={statusHistoryOpen}
         title={t("todo.status_history_trigger", "查看状态历史")}
         onClick={() => setStatusHistoryOpen((current) => !current)}
-        className="relative z-10 ml-0.5 flex h-4 w-4 shrink-0 items-center justify-center rounded text-text-muted transition hover:bg-muted hover:text-text-primary"
+        className="relative z-10 ml-0.5 flex h-4 w-4 shrink-0 items-center justify-center rounded text-text-secondary transition hover:bg-muted hover:text-text-primary"
       >
         <History className="h-3.5 w-3.5" />
       </button>
@@ -2546,7 +2539,7 @@ export function TodoEditor(props: TodoEditorProps) {
   const priorityChip = (
     <span className={propChipClass}>
       <Flag className="h-3.5 w-3.5 text-text-muted" />
-      <span className="text-text-muted">
+      <span className="text-text-secondary">
         {t("todo.issue_priority", "优先级")}
       </span>
       {priorityValue}
@@ -2582,17 +2575,21 @@ export function TodoEditor(props: TodoEditorProps) {
       {statusHistoryTrigger}
       {priorityChip}
       {showAssignee ? (
-        <span className={cn(propChipClass, !assigneeName && "text-text-muted")}>
+        <span
+          className={cn(propChipClass, !assigneeName && "text-text-secondary")}
+        >
           {assigneeSelect}
         </span>
       ) : null}
       {item && (
         <span
           data-testid="cloud-todo-detail-creator"
-          className={cn(propChipClass, "text-text-muted")}
+          className={cn(propChipClass, "text-text-secondary")}
         >
           <CircleUserRound className="h-3.5 w-3.5 text-text-muted" />
-          <span className="text-text-muted">{t("todo.creator", "创建人")}</span>
+          <span className="text-text-secondary">
+            {t("todo.creator", "创建人")}
+          </span>
           <span className="text-text-primary">
             {creator ??
               (item.created_by_user_id > 0
@@ -2603,7 +2600,7 @@ export function TodoEditor(props: TodoEditorProps) {
       )}
       <span className={propChipClass}>
         <ListTodo className="h-3.5 w-3.5 text-text-muted" />
-        <span className="text-text-muted">
+        <span className="text-text-secondary">
           {t("todo.parent_issue", "父任务")}
         </span>
         <span className="max-w-40 truncate">
@@ -2617,7 +2614,7 @@ export function TodoEditor(props: TodoEditorProps) {
         {parentSelect}
       </span>
       {scheduleRangeControl(
-        cn(propChipClass, !startDate && !dueDate && "text-text-muted"),
+        cn(propChipClass, !startDate && !dueDate && "text-text-secondary"),
       )}
     </>
   );
@@ -2683,7 +2680,7 @@ export function TodoEditor(props: TodoEditorProps) {
               setCollaboratorError(null);
             }}
             className={cn(
-              "flex h-6 w-6 shrink-0 items-center justify-center rounded-full border border-border bg-background text-text-muted transition hover:bg-muted hover:text-text-primary",
+              "flex h-6 w-6 shrink-0 items-center justify-center rounded-full border border-border bg-background text-text-secondary transition hover:bg-muted hover:text-text-primary",
               collaboratorPreview.length > 0 && "-ml-2",
             )}
           >
@@ -2691,7 +2688,7 @@ export function TodoEditor(props: TodoEditorProps) {
           </button>
           {collaborators.length === 0 &&
           !item?.resource_participants?.length ? (
-            <span className="ml-2 text-text-muted">
+            <span className="ml-2 text-text-secondary">
               {t("todo.none", "暂无")}
             </span>
           ) : null}
@@ -2755,7 +2752,7 @@ export function TodoEditor(props: TodoEditorProps) {
                 data-testid="issue-current-board-position"
                 className="flex min-w-0 flex-col gap-1"
               >
-                <span className="text-xs text-text-muted">
+                <span className="text-xs text-text-secondary">
                   {commentActions.boardName}
                 </span>
                 <span>
@@ -2786,7 +2783,7 @@ export function TodoEditor(props: TodoEditorProps) {
               />
             ) : (
               <RailProp label={t("todo.assignment", "指派")} clickable={false}>
-                <span className="text-text-muted">
+                <span className="text-text-secondary">
                   {t("todo.none", "暂无")}
                 </span>
               </RailProp>
@@ -2903,7 +2900,7 @@ export function TodoEditor(props: TodoEditorProps) {
                 : "px-4 pt-3",
           )}
         >
-          <span className="inline-flex min-w-0 items-center gap-1.5 text-xs text-text-muted">
+          <span className="inline-flex min-w-0 items-center gap-1.5 text-xs text-text-secondary">
             <Folder className="h-3.5 w-3.5" />
             <span className="truncate">
               {item
@@ -2921,7 +2918,7 @@ export function TodoEditor(props: TodoEditorProps) {
               aria-label={t("todo.copy_issue_id", "复制任务编号")}
               title={t("todo.copy_issue_id", "复制任务编号")}
               onClick={() => void navigator.clipboard?.writeText(item.id)}
-              className="flex h-6 w-6 items-center justify-center rounded-md text-text-muted transition hover:bg-muted hover:text-text-primary"
+              className="flex h-6 w-6 items-center justify-center rounded-md text-text-secondary transition hover:bg-muted hover:text-text-primary"
             >
               <Copy className="h-3.5 w-3.5" />
             </button>
@@ -3097,7 +3094,6 @@ export function TodoEditor(props: TodoEditorProps) {
                     }
                     aria-label={t("todo.issue_title", "任务标题")}
                     autoFocus={isCreate}
-                    data-title-expanded={titleExpanded}
                     value={title}
                     onChange={(event) => setTitle(event.target.value)}
                     onBlur={() => void saveTitle()}
@@ -3120,7 +3116,7 @@ export function TodoEditor(props: TodoEditorProps) {
                       "目标或事项标题",
                     )}
                     className={cn(
-                      "block w-full resize-none overflow-hidden border-0 bg-transparent font-bold tracking-tight text-text-primary outline-none placeholder:text-text-muted",
+                      "block w-full resize-none overflow-hidden border-0 bg-transparent font-bold tracking-tight text-text-primary outline-none placeholder:text-text-secondary",
                       twoColumn
                         ? "task-detail-title"
                         : "py-1.5 text-heading-lg",
@@ -3133,28 +3129,6 @@ export function TodoEditor(props: TodoEditorProps) {
                         "task-detail-content-clickable",
                     )}
                   />
-                  {workspacePanel && titleOverflowing ? (
-                    <button
-                      type="button"
-                      data-testid="cloud-todo-title-expand"
-                      className="task-detail-workspace-properties-toggle"
-                      aria-expanded={titleExpanded}
-                      onClick={() => setTitleExpanded((current) => !current)}
-                    >
-                      {t(
-                        titleExpanded
-                          ? "todo.collapse_title"
-                          : "todo.expand_title",
-                      )}
-                      <ChevronDown
-                        className={cn(
-                          "h-3.5 w-3.5",
-                          titleExpanded && "rotate-180",
-                        )}
-                        aria-hidden="true"
-                      />
-                    </button>
-                  ) : null}
                 </div>
                 {workspacePanel && item ? (
                   <section
@@ -3394,7 +3368,7 @@ export function TodoEditor(props: TodoEditorProps) {
 
               {!twoColumn ? (
                 <div className="mt-2.5 flex items-center gap-2">
-                  <span className="flex shrink-0 select-none items-center gap-1.5 text-xs text-text-muted">
+                  <span className="flex shrink-0 select-none items-center gap-1.5 text-xs text-text-secondary">
                     <Tag className="h-3.5 w-3.5" />
                     {t("todo.project_tags", "标签")}
                   </span>
@@ -3424,7 +3398,7 @@ export function TodoEditor(props: TodoEditorProps) {
                           onClick={() =>
                             setAssignmentChainOpen((current) => !current)
                           }
-                          className="relative z-10 flex h-4 w-4 shrink-0 items-center justify-center rounded text-text-muted transition hover:bg-muted hover:text-text-primary"
+                          className="relative z-10 flex h-4 w-4 shrink-0 items-center justify-center rounded text-text-secondary transition hover:bg-muted hover:text-text-primary"
                         >
                           <Waypoints className="h-3.5 w-3.5" />
                         </button>
@@ -3557,7 +3531,7 @@ export function TodoEditor(props: TodoEditorProps) {
                       ) : null}
                       <p
                         className={cn(
-                          "text-xs text-text-muted",
+                          "text-xs text-text-secondary",
                           twoColumn && !workspacePanel && "hidden",
                           workspacePanel && "task-detail-desc-hint",
                         )}
@@ -3759,7 +3733,7 @@ export function TodoEditor(props: TodoEditorProps) {
                           {t("todo.activity", "动态")}
                         </span>
                       </header>
-                      <div className="task-detail-comments-list text-sm text-text-muted">
+                      <div className="task-detail-comments-list text-sm text-text-secondary">
                         {workspacePanel &&
                           item.status_history?.map((entry, index) => (
                             <div
@@ -3850,11 +3824,11 @@ export function TodoEditor(props: TodoEditorProps) {
                 <>
                   {!twoColumn && showChildren ? (
                     <section className="mt-7" data-testid="cloud-todo-children">
-                      <div className="mb-3 flex items-center gap-2 text-sm font-medium text-text-muted">
-                        <h3 className="text-sm font-medium text-text-muted">
+                      <div className="mb-3 flex items-center gap-2 text-sm font-medium text-text-secondary">
+                        <h3 className="text-sm font-medium text-text-secondary">
                           {t("todo.sub_issues", "子任务")}
                         </h3>
-                        <span className="ml-2 text-xs font-normal text-text-muted">
+                        <span className="ml-2 text-xs font-normal text-text-secondary">
                           {twoColumn && childItems.length > 0
                             ? `${completedChildCount}/${childItems.length}`
                             : childItems.length}
@@ -3864,7 +3838,7 @@ export function TodoEditor(props: TodoEditorProps) {
                             type="button"
                             data-testid="cloud-todo-detail-add-child"
                             onClick={editProps.onAddChild}
-                            className="ml-auto flex items-center gap-1 rounded-md px-2 py-1 text-xs text-text-muted transition hover:bg-muted hover:text-text-primary"
+                            className="ml-auto flex items-center gap-1 rounded-md px-2 py-1 text-xs text-text-secondary transition hover:bg-muted hover:text-text-primary"
                           >
                             <Plus className="h-3 w-3" />{" "}
                             {t("todo.create_sub_issue", "新建子任务")}
@@ -3882,7 +3856,7 @@ export function TodoEditor(props: TodoEditorProps) {
                         </div>
                       ) : null}
                       {childItems.length === 0 ? (
-                        <p className="rounded-lg border border-dashed border-border px-3 py-3 text-center text-sm text-text-muted">
+                        <p className="rounded-lg border border-dashed border-border px-3 py-3 text-center text-sm text-text-secondary">
                           {t("todo.no_sub_issues", "暂无子任务")}
                         </p>
                       ) : (
@@ -3898,13 +3872,13 @@ export function TodoEditor(props: TodoEditorProps) {
                                   columnDotClasses[child.status],
                                 )}
                               />
-                              <span className="shrink-0 font-mono text-xs text-text-muted">
+                              <span className="shrink-0 font-mono text-xs text-text-secondary">
                                 {child.id}
                               </span>
                               <span className="min-w-0 flex-1 truncate">
                                 {child.title}
                               </span>
-                              <span className="shrink-0 text-xs text-text-muted">
+                              <span className="shrink-0 text-xs text-text-secondary">
                                 {
                                   statusOptions.find(
                                     (option) => option.id === child.status,
@@ -3926,7 +3900,7 @@ export function TodoEditor(props: TodoEditorProps) {
                         <h3 className="text-sm font-semibold">
                           {t("todo.collaborators", "参与者")}
                         </h3>
-                        <span className="ml-2 text-xs font-normal text-text-muted">
+                        <span className="ml-2 text-xs font-normal text-text-secondary">
                           {collaborators.length +
                             (item.resource_participants?.length ?? 0)}
                         </span>
@@ -3938,7 +3912,7 @@ export function TodoEditor(props: TodoEditorProps) {
                               setAddingCollaborator((current) => !current);
                               setCollaboratorError(null);
                             }}
-                            className="ml-auto flex h-7 items-center gap-1 rounded-md px-2 text-xs text-text-muted transition hover:text-text-primary"
+                            className="ml-auto flex h-7 items-center gap-1 rounded-md px-2 text-xs text-text-secondary transition hover:text-text-primary"
                           >
                             <Plus className="h-3 w-3" />
                             {t("todo.add_collaborator", "添加参与者")}
@@ -3987,7 +3961,7 @@ export function TodoEditor(props: TodoEditorProps) {
                       )}
                       {resourceParticipants}
                       {collaborators.length === 0 ? (
-                        <p className="rounded-xl border border-dashed border-border px-3 py-4 text-center text-xs text-text-muted">
+                        <p className="rounded-xl border border-dashed border-border px-3 py-4 text-center text-xs text-text-secondary">
                           {t("todo.no_collaborators", "暂无参与者")}
                         </p>
                       ) : (
@@ -4024,7 +3998,7 @@ export function TodoEditor(props: TodoEditorProps) {
                                   onClick={() =>
                                     void removeCollaborator(collaborator)
                                   }
-                                  className="flex h-6 w-6 shrink-0 items-center justify-center rounded-md text-text-muted transition hover:bg-background hover:text-text-primary disabled:opacity-40"
+                                  className="flex h-6 w-6 shrink-0 items-center justify-center rounded-md text-text-secondary transition hover:bg-background hover:text-text-primary disabled:opacity-40"
                                 >
                                   <X className="h-3.5 w-3.5" />
                                 </button>
@@ -4047,7 +4021,7 @@ export function TodoEditor(props: TodoEditorProps) {
                           {t("todo.execution_history", "执行记录")}
                         </h3>
                         {effectiveTasks.length === 0 ? (
-                          <p className="rounded-xl border border-dashed border-border px-3 py-4 text-center text-xs text-text-muted">
+                          <p className="rounded-xl border border-dashed border-border px-3 py-4 text-center text-xs text-text-secondary">
                             {t("todo.no_local_task", "尚未关联本地任务")}
                           </p>
                         ) : (
@@ -4064,7 +4038,7 @@ export function TodoEditor(props: TodoEditorProps) {
                                 >
                                   {task.task_title || task.task_id}
                                 </span>
-                                <span className="shrink-0 text-text-muted">
+                                <span className="shrink-0 text-text-secondary">
                                   {taskDeviceLabel(task, props.deviceNamesById)}
                                 </span>
                               </div>
@@ -4094,7 +4068,7 @@ export function TodoEditor(props: TodoEditorProps) {
                                   },
                                 )}
                               </span>
-                              <span className="ml-auto shrink-0 text-text-muted">
+                              <span className="ml-auto shrink-0 text-text-secondary">
                                 {delivery.delivered_at?.slice(0, 10)}
                               </span>
                               <ChevronRight className="h-3.5 w-3.5 shrink-0 text-text-muted" />
@@ -4422,7 +4396,7 @@ export function TodoEditor(props: TodoEditorProps) {
                   fullScreenReadingColumn,
                 )}
               >
-                <span className="text-xs text-text-muted">
+                <span className="text-xs text-text-secondary">
                   {isCreate
                     ? t(
                         "todo.create_shortcut_hint",

@@ -175,7 +175,7 @@ export function TagEditor({
           }}
           placeholder={tags.length === 0 ? placeholder : ""}
           className={cn(
-            "h-6 min-w-16 flex-1 bg-transparent text-xs text-text-primary outline-none placeholder:text-text-muted",
+            "h-6 min-w-16 flex-1 bg-transparent text-xs text-text-primary outline-none placeholder:text-text-secondary",
           )}
         />
       )}

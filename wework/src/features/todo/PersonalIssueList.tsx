@@ -134,7 +134,7 @@ export function PersonalIssueList({
   return (
     <>
       {state.loading && (
-        <p role="status" className="py-4 text-sm text-text-muted">
+        <p role="status" className="py-4 text-sm text-text-secondary">
           {t('personalHome.loading')}
         </p>
       )}
@@ -142,7 +142,9 @@ export function PersonalIssueList({
         !state.loading &&
         !state.error &&
         !groups.length &&
-        (emptyState ?? <p className="py-8 text-sm text-text-muted">{t('personalHome.empty')}</p>)}
+        (emptyState ?? (
+          <p className="py-8 text-sm text-text-secondary">{t('personalHome.empty')}</p>
+        ))}
       {groups.map(({ project, items }) => (
         <section
           key={project.id}
@@ -163,7 +165,7 @@ export function PersonalIssueList({
             ) : (
               project.name
             )}
-            <span className="rounded-md bg-muted px-1.5 py-0.5 text-xs font-normal text-text-muted">
+            <span className="rounded-md bg-muted px-1.5 py-0.5 text-xs font-normal text-text-secondary">
               {items.length}
             </span>
           </h3>
@@ -233,7 +235,7 @@ export function PersonalIssueList({
                       <span
                         data-testid={`personal-home-assignment-age-${item.id}`}
                         title={new Date(assignedAt).toLocaleString(i18n.language)}
-                        className="shrink-0 text-xs font-normal text-text-muted"
+                        className="shrink-0 text-xs font-normal text-text-secondary"
                       >
                         {t('personalHome.assignedFor', {
                           duration: personalHomeAssignmentDuration(assignedAt, i18n.language),

@@ -263,7 +263,7 @@ export function WeworkIssueHomeComposer({
                 <Icon aria-hidden="true" className="h-4 w-4 shrink-0 text-text-muted" />
                 <span className="min-w-0 flex-1">
                   <span className="block truncate">{project.name}</span>
-                  <span className="block truncate text-xs text-text-muted">
+                  <span className="block truncate text-xs text-text-secondary">
                     {projectLocation(project)}
                   </span>
                 </span>

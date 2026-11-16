@@ -70,7 +70,7 @@ export function IssueActivityFeed({
           </span>
         </span>
         {compact && count > 0 ? (
-          <span className="text-sm text-text-muted">
+          <span className="text-sm text-text-secondary">
             {t("activity.task_activity_count", undefined, { count })}
           </span>
         ) : null}
@@ -96,7 +96,7 @@ export function IssueActivityFeed({
         {loading ? (
           <div
             role="status"
-            className="flex min-h-48 items-center justify-center text-sm text-text-muted"
+            className="flex min-h-48 items-center justify-center text-sm text-text-secondary"
           >
             <CompositedSpinner className="mr-2 h-4 w-4" />
             {t("activity.project_chat_loading")}
@@ -107,7 +107,7 @@ export function IssueActivityFeed({
             <p className="mt-3 text-sm font-medium text-text-primary">
               {t("activity.task_activity_empty")}
             </p>
-            <p className="mt-1 max-w-sm text-xs leading-5 text-text-muted">
+            <p className="mt-1 max-w-sm text-xs leading-5 text-text-secondary">
               {emptyDescription}
             </p>
           </div>

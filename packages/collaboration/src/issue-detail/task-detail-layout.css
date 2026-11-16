@@ -85,7 +85,7 @@
   border-radius: 999px;
   background: rgb(var(--color-bg-muted));
   padding: 1px 6px;
-  color: rgb(var(--color-text-muted));
+  color: rgb(var(--color-text-secondary));
   font-size: var(--text-xs);
   text-align: center;
 }
@@ -156,7 +156,7 @@
 
 .task-detail-current-assignment-hint {
   margin: 0;
-  color: rgb(var(--color-text-muted));
+  color: rgb(var(--color-text-secondary));
   font-size: var(--text-xs);
 }
 
@@ -203,7 +203,7 @@
 }
 
 .task-detail-assignment-value small {
-  color: rgb(var(--color-text-muted));
+  color: rgb(var(--color-text-secondary));
   font-size: var(--text-xs);
 }
 
@@ -431,11 +431,6 @@
   line-height: 1.35;
 }
 
-.task-detail-workspace-panel .task-detail-title[data-title-expanded="false"] {
-  max-height: 4.05em;
-  overflow-y: auto;
-}
-
 .task-detail-workspace-layout .task-detail-rail-prop {
   min-height: 36px;
   gap: 10px;
@@ -445,7 +440,7 @@
 
 .task-detail-workspace-layout .task-detail-rail-key {
   width: 92px;
-  color: rgb(var(--color-text-muted));
+  color: rgb(var(--color-text-secondary));
   font-size: var(--text-sm);
   font-weight: 400;
   line-height: 18px;
@@ -612,7 +607,7 @@
 .task-detail-default-assistant-copy small,
 .task-detail-default-assistant-copy span {
   overflow: hidden;
-  color: rgb(var(--color-text-muted));
+  color: rgb(var(--color-text-secondary));
   font-size: 11px;
   line-height: 1.45;
   text-overflow: ellipsis;
@@ -677,7 +672,7 @@
 }
 
 .task-detail-property dt {
-  color: rgb(var(--color-text-muted));
+  color: rgb(var(--color-text-secondary));
   font-weight: 400;
 }
 
@@ -894,7 +889,7 @@
 
 .task-detail-state-metrics {
   gap: 4px;
-  color: rgb(var(--color-text-muted));
+  color: rgb(var(--color-text-secondary));
   font-size: var(--text-xs);
 }
 
@@ -1039,7 +1034,7 @@
 
 .task-detail-personal-task-copy small {
   overflow: hidden;
-  color: rgb(var(--color-text-muted));
+  color: rgb(var(--color-text-secondary));
   font-size: var(--text-xs);
   line-height: 1.35;
   text-overflow: ellipsis;
@@ -1187,7 +1182,7 @@
   flex: none;
   max-width: 100%;
   overflow: hidden;
-  color: rgb(var(--color-text-muted));
+  color: rgb(var(--color-text-secondary));
   font-size: var(--text-xs);
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -1218,32 +1213,16 @@
 .task-detail-workspace-description .task-detail-desc.is-collapsed .bn-editor {
   max-height: calc(var(--task-detail-body-font-size) * 1.75 * 2 + 6px);
   overflow: hidden;
-  color: rgb(var(--color-text-muted));
+  color: rgb(var(--color-text-secondary));
 }
 
 .task-detail-workspace-description .task-detail-desc.is-collapsed textarea {
-  color: rgb(var(--color-text-muted));
+  color: rgb(var(--color-text-secondary));
   min-height: calc(var(--task-detail-body-font-size) * 1.75);
   max-height: calc(var(--task-detail-body-font-size) * 1.75 * 2 + 4px);
   overflow: hidden;
   resize: none;
   field-sizing: content;
-}
-
-.task-detail-workspace-description
-  .task-detail-desc.is-collapsed[data-overflowing="true"]::after {
-  position: absolute;
-  right: 0;
-  bottom: 0;
-  left: 0;
-  height: 16px;
-  background: linear-gradient(
-    to bottom,
-    rgb(var(--color-bg-base) / 0),
-    rgb(var(--color-bg-base)) 88%
-  );
-  content: "";
-  pointer-events: none;
 }
 
 .task-detail-workspace-description .task-detail-desc-toggle {
@@ -1357,7 +1336,7 @@
 .task-detail-workspace-count {
   border-radius: 999px;
   padding: 1px 8px;
-  color: rgb(var(--color-text-muted));
+  color: rgb(var(--color-text-secondary));
   background: rgb(var(--color-bg-muted));
   font-size: var(--text-xs);
 }
@@ -1383,7 +1362,7 @@
   border: 1px dashed rgb(var(--color-border));
   border-radius: 8px;
   padding: 12px;
-  color: rgb(var(--color-text-muted));
+  color: rgb(var(--color-text-secondary));
   text-align: center;
   font-size: var(--text-xs);
 }
@@ -1403,7 +1382,7 @@
 }
 
 .task-detail-workspace-sub-row.is-completed > span:nth-child(2) {
-  color: rgb(var(--color-text-muted));
+  color: rgb(var(--color-text-secondary));
   text-decoration: line-through;
 }
 
@@ -1560,7 +1539,7 @@
   display: flex;
   align-items: center;
   gap: 4px;
-  color: rgb(var(--color-text-muted));
+  color: rgb(var(--color-text-secondary));
   font-size: var(--text-xs);
 }
 
@@ -1572,7 +1551,7 @@
   border-radius: 999px;
   padding: 1px 8px;
   background: rgb(var(--color-bg-muted));
-  color: rgb(var(--color-text-muted));
+  color: rgb(var(--color-text-secondary));
   font-size: var(--text-xs);
   white-space: nowrap;
 }
@@ -1624,7 +1603,7 @@
   display: inline-flex;
   align-items: center;
   gap: 4px;
-  color: rgb(var(--color-text-muted));
+  color: rgb(var(--color-text-secondary));
   font-size: var(--text-xs);
 }
 
@@ -1674,7 +1653,7 @@
   align-items: center;
   gap: 8px;
   margin-bottom: 6px;
-  color: rgb(var(--color-text-muted));
+  color: rgb(var(--color-text-secondary));
   font-size: var(--text-xs);
 }
 
@@ -1698,7 +1677,7 @@
 
 .issue-workflow-deliverables-missing {
   margin-top: 4px;
-  color: rgb(var(--color-text-muted));
+  color: rgb(var(--color-text-secondary));
   font-size: var(--text-xs);
 }
 
@@ -1752,7 +1731,7 @@
   display: block;
   overflow: hidden;
   margin-top: 1px;
-  color: rgb(var(--color-text-muted));
+  color: rgb(var(--color-text-secondary));
   text-overflow: ellipsis;
   white-space: nowrap;
   font-size: var(--text-xs);
@@ -1760,7 +1739,7 @@
 
 .issue-workflow-stage-empty {
   padding: 8px 2px;
-  color: rgb(var(--color-text-muted));
+  color: rgb(var(--color-text-secondary));
   font-size: var(--text-xs);
 }
 
@@ -1774,7 +1753,7 @@
   margin-top: 6px;
   border: 1px dashed rgb(var(--color-border));
   border-radius: 8px;
-  color: rgb(var(--color-text-muted));
+  color: rgb(var(--color-text-secondary));
   font-size: var(--text-xs);
 }
 
@@ -1909,7 +1888,7 @@
 .task-detail-flat-task-status[data-status="cancelled"],
 .task-detail-flat-task-status[data-status="skipped"],
 .task-detail-flat-task-status[data-status="unknown"] {
-  color: rgb(var(--color-text-muted));
+  color: rgb(var(--color-text-secondary));
 }
 
 [data-theme="dark"] .task-detail-flat-task-row[data-selected="true"] {
@@ -1925,7 +1904,7 @@
 
 .task-detail-current-assignment-status {
   margin-left: auto;
-  color: rgb(var(--color-text-muted));
+  color: rgb(var(--color-text-secondary));
   font-size: var(--text-xs);
 }
 
@@ -1976,7 +1955,7 @@
 
 .task-detail-current-assignment-main small,
 .task-detail-current-assignment-source {
-  color: rgb(var(--color-text-muted));
+  color: rgb(var(--color-text-secondary));
   font-size: var(--text-xs);
 }
 
@@ -2071,7 +2050,7 @@
   display: flex;
   align-items: center;
   gap: 10px;
-  color: rgb(var(--color-text-muted));
+  color: rgb(var(--color-text-secondary));
   font-size: var(--text-sm);
   margin-bottom: 12px;
 }
@@ -2141,7 +2120,7 @@
   align-items: center;
   gap: 16px;
   flex-wrap: wrap;
-  color: rgb(var(--color-text-muted));
+  color: rgb(var(--color-text-secondary));
   font-size: var(--text-sm);
   padding: 14px 0;
   margin: 10px 0 0;
@@ -2165,7 +2144,7 @@
   align-items: center;
   gap: 8px;
   font-size: var(--text-sm);
-  color: rgb(var(--color-text-muted));
+  color: rgb(var(--color-text-secondary));
   font-weight: 500;
   margin: 30px 0 12px;
 }
@@ -2307,7 +2286,7 @@
 .task-detail-execution-status-trigger[data-status="skipped"],
 .task-detail-execution-status-trigger[data-status="interrupted"],
 .task-detail-execution-status-trigger[data-status="unknown"] {
-  color: rgb(var(--color-text-muted));
+  color: rgb(var(--color-text-secondary));
 }
 
 .task-detail-execution-status-popover {
@@ -2349,7 +2328,7 @@
   gap: 4px;
   border-radius: 6px;
   padding: 4px 6px;
-  color: rgb(var(--color-text-muted));
+  color: rgb(var(--color-text-secondary));
   font-size: var(--text-xs);
 }
 
@@ -2368,7 +2347,7 @@
 
 .task-detail-execution-status-detail > span:first-child,
 .task-detail-execution-status-empty {
-  color: rgb(var(--color-text-muted));
+  color: rgb(var(--color-text-secondary));
 }
 
 .task-detail-execution-status-detail > span:last-child {
@@ -2462,7 +2441,7 @@
 }
 
 .task-detail-comment-inline-composer textarea::placeholder {
-  color: rgb(var(--color-text-muted));
+  color: rgb(var(--color-text-secondary));
 }
 
 .task-detail-comment-inline-composer textarea:disabled {
@@ -2533,7 +2512,7 @@
   min-width: 0;
   align-items: center;
   gap: 6px;
-  color: rgb(var(--color-text-muted));
+  color: rgb(var(--color-text-secondary));
 }
 
 .task-detail-thread-message-aside {
@@ -2545,7 +2524,7 @@
 }
 
 .task-detail-thread-message-time {
-  color: rgb(var(--color-text-muted));
+  color: rgb(var(--color-text-secondary));
   font-size: var(--text-xs);
   white-space: nowrap;
 }
@@ -2617,7 +2596,7 @@
   align-items: center;
   gap: 8px;
   margin-top: 8px;
-  color: rgb(var(--color-text-muted));
+  color: rgb(var(--color-text-secondary));
   font-size: var(--text-xs);
 }
 
@@ -2659,7 +2638,7 @@
 
 .task-detail-run-event-time {
   margin-left: auto;
-  color: rgb(var(--color-text-muted));
+  color: rgb(var(--color-text-secondary));
   font-size: var(--text-xs);
 }
 
@@ -2741,7 +2720,7 @@
 }
 
 .task-detail-comment-editor.composer-prosemirror-placeholder {
-  color: rgb(var(--color-text-muted));
+  color: rgb(var(--color-text-secondary));
 }
 
 .task-detail-new-comment-actions,
@@ -3437,7 +3416,7 @@
 
 .task-detail-workspace-panel .task-detail-comments-list > .min-h-48 p {
   margin: 0;
-  color: rgb(var(--color-text-muted));
+  color: rgb(var(--color-text-secondary));
   font-size: var(--text-xs);
   font-weight: 400;
 }
@@ -3462,7 +3441,7 @@
 .task-detail-execution-pill[data-status="skipped"],
 .task-detail-execution-pill[data-status="interrupted"],
 .task-detail-execution-pill[data-status="unknown"] {
-  color: rgb(var(--color-text-muted));
+  color: rgb(var(--color-text-secondary));
 }
 
 .task-detail-execution-pill[data-status="succeeded"] {
@@ -3547,7 +3526,7 @@
 }
 
 .task-detail-slim-rail .task-detail-rail-key {
-  color: rgb(var(--color-text-muted));
+  color: rgb(var(--color-text-secondary));
 }
 
 .task-detail-slim-rail .task-detail-rail-value {
@@ -3596,7 +3575,7 @@
   min-width: 0;
   align-items: center;
   gap: 8px;
-  color: rgb(var(--color-text-muted));
+  color: rgb(var(--color-text-secondary));
   font-weight: 500;
 }
 
@@ -3607,7 +3586,7 @@
 }
 
 .task-detail-rail-sections .task-detail-section-label .count {
-  color: rgb(var(--color-text-muted));
+  color: rgb(var(--color-text-secondary));
   font-weight: 500;
 }
 
@@ -3685,7 +3664,7 @@
   display: flex;
   align-items: center;
   gap: 5px;
-  color: rgb(var(--color-text-muted));
+  color: rgb(var(--color-text-secondary));
   font-size: var(--text-xs);
 }
 
@@ -3777,7 +3756,7 @@
   overflow: hidden;
   place-items: center;
   background: rgb(var(--color-bg-muted));
-  color: rgb(var(--color-text-muted));
+  color: rgb(var(--color-text-secondary));
 }
 
 .task-detail-rail-preview .icon {
@@ -3810,14 +3789,14 @@
   min-width: 0;
   gap: 8px;
   overflow: hidden;
-  color: rgb(var(--color-text-muted));
+  color: rgb(var(--color-text-secondary));
   font-size: var(--text-xs);
   white-space: nowrap;
 }
 
 .task-detail-rail-meta {
   flex-shrink: 0;
-  color: rgb(var(--color-text-muted));
+  color: rgb(var(--color-text-secondary));
   font-size: var(--text-sm);
   font-weight: 500;
 }
@@ -3835,7 +3814,7 @@
   border-radius: 999px;
   background: rgb(var(--color-bg-muted));
   padding: 0 6px;
-  color: rgb(var(--color-text-muted));
+  color: rgb(var(--color-text-secondary));
   font-size: var(--text-xs);
   font-weight: 500;
 }
@@ -3871,7 +3850,7 @@
   border: 1px dashed rgb(var(--color-border));
   border-radius: 12px;
   background: rgb(var(--color-bg-base) / 0.92);
-  color: rgb(var(--color-text-muted));
+  color: rgb(var(--color-text-secondary));
   font-weight: 500;
 }
 
@@ -3895,7 +3874,7 @@
   height: 28px;
   border-radius: 8px;
   background: rgb(var(--color-bg-base) / 0.88);
-  color: rgb(var(--color-text-muted));
+  color: rgb(var(--color-text-secondary));
   opacity: 0;
   box-shadow: 0 1px 4px rgb(0 0 0 / 12%);
   transition: opacity 120ms ease;
@@ -3919,7 +3898,7 @@
   border: 1px dashed rgb(var(--color-border));
   border-radius: 10px;
   padding: 12px;
-  color: rgb(var(--color-text-muted));
+  color: rgb(var(--color-text-secondary));
   font-size: var(--text-sm);
   text-align: center;
 }

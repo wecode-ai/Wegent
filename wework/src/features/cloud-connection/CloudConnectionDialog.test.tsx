@@ -36,8 +36,9 @@ function renderDialog(connection: CloudConnectionContextValue, onClose = vi.fn()
 }
 
 describe('CloudConnectionDialog', () => {
-  afterEach(() => {
+  afterEach(async () => {
     vi.unstubAllEnvs()
+    await i18n.changeLanguage('zh-CN')
   })
 
   it('names the dialog, contains keyboard focus and restores its trigger and background', async () => {
@@ -125,6 +126,24 @@ describe('CloudConnectionDialog', () => {
     renderDialog(cloudConnection('https://saved.example.com'))
 
     expect(screen.getByTestId('cloud-backend-url-input')).toHaveValue('https://saved.example.com')
+  })
+
+  it('explains recovery, preserves the address and keeps raw errors in expandable details', async () => {
+    await i18n.changeLanguage('en')
+    renderDialog({
+      ...cloudConnection('https://saved.example.com'),
+      connectWithAuthorization: vi.fn().mockRejectedValue(new Error('Failed to fetch')),
+    })
+    await userEvent.click(screen.getByTestId('cloud-authorization-submit-button'))
+    expect(await screen.findByRole('alert')).toHaveTextContent(
+      'Check the service address and your network'
+    )
+    expect(screen.getByTestId('cloud-backend-url-input')).toHaveValue('https://saved.example.com')
+    const details = screen.getByTestId('cloud-connection-error-details')
+    expect(details).not.toHaveAttribute('open')
+    await userEvent.click(screen.getByTestId('cloud-connection-error-details-toggle'))
+    expect(details).toHaveAttribute('open')
+    expect(details).toHaveTextContent('Failed to fetch')
   })
 
   it('starts cloud authorization when pressing Enter in the Backend URL input', async () => {

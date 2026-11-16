@@ -1211,6 +1211,8 @@
     "cloud_connection_authorize": "Connect",
     "cloud_connection_waiting_authorization": "Complete Wework authorization in the popup window",
     "cloud_connection_login_failed": "Connection failed",
+    "cloud_connection_recovery": "Check the service address and your network, then try again. If you are unsure of the address, contact your team administrator.",
+    "cloud_connection_error_details": "Technical details",
     "remote_host": "Remote host",
     "remote_host_cloud_group": "Cloud devices",
     "remote_host_docker_group": "Remote Docker devices",
