@@ -1492,6 +1492,7 @@
     "away_im_reminder_choose_session": "选择 IM 会话",
     "away_im_reminder_change_session": "更换会话",
     "away_im_reminder_needs_session": "需要选择 IM 会话",
+    "im_connections_required": "请在我的助理的详情浮层中，通过三个点菜单添加 IM 连接。",
     "global_im_notifications_unavailable": "IM 推送不可用，请重新登录或检查配置",
     "global_im_notifications_requires_cloud_login": "登录云端后可开启离开电脑提醒",
     "code_comment_count": "{{count}} 个评论",
@@ -5575,7 +5576,7 @@
     "channel_in_app": "应用内通知",
     "channel_system": "系统通知",
     "channel_im": "IM 推送",
-    "im_target_required": "请先在侧栏的离开电脑提醒中选择 IM 会话。",
+    "im_requires_cloud": "登录云端后可使用 IM 通知。",
     "back": "返回分类",
     "total_unread": "{{count}} 条未读",
     "category_tasks": "任务动态",
@@ -5599,8 +5600,7 @@
     "ask_body": "保存分配后，将发送应用内通知，并推送到对方已连接的 IM。",
     "without_notification": "不通知",
     "with_notification": "通知对方",
-    "connect": "连接云端后查看通知",
-    "im_target": "设置 IM 接收会话"
+    "connect": "连接云端后查看通知"
   },
   "standIn": {
     "native_input_pending": "请先通过当前问题或权限确认卡片完成确认，再发送新消息。",
@@ -5625,6 +5625,8 @@
       "default": "默认设备的主助理",
       "saving": "正在连接…",
       "refresh": "刷新会话",
+      "add_channels": "添加聊天渠道",
+      "add_channel": "添加 {{channel}}",
       "channel_action": "连接或查看 {{channel}}",
       "dialog_title": "设置 {{channel}}",
       "connect_channel": "连接 {{channel}}",
