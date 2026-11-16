@@ -4,6 +4,7 @@ import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { inspectBeforeStart } from './inspect-before-start.mjs'
 import { resolveElectronLaunchArguments } from './electron-launch-arguments.mjs'
+import { captureStartupNativeStack } from './startup-native-stack.mjs'
 import { stopProcessGroup } from '../process-lifecycle.mjs'
 
 export async function seedInstalledRelease({ data, appBinary, version, id = 'installed-fixture' }) {
@@ -111,6 +112,9 @@ export async function verifyStartupFaultIsolation({ appBinary, environment, resu
       assert.ok(result.state.error)
       assert.equal(await readFile(credentials, 'utf8'), saved)
       assert.equal(await readFile(descriptorPath, 'utf8'), original)
+    } catch (error) {
+      await captureStartupNativeStack(child)
+      throw error
     } finally {
       await stopProcessGroup(child)
       await writeFile(join(resultDir, `startup-fault-${fault}.log`), output)

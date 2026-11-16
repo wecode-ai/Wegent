@@ -1,11 +1,11 @@
 import assert from 'node:assert/strict'
-import { execFile, spawn } from 'node:child_process'
+import { spawn } from 'node:child_process'
 import { once } from 'node:events'
 import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { release } from 'node:os'
-import { promisify } from 'node:util'
 import { routeUpgradeRequests } from './upgrade-request-route.mjs'
+import { captureStartupNativeStack } from './startup-native-stack.mjs'
 import { requiresMacosQuitWorkaround } from '../../../electron/src/host/macos-quit-workaround.mjs'
 
 const forceQuit = requiresMacosQuitWorkaround(process.platform, release())
@@ -13,45 +13,6 @@ export const PROBE_EXPECTED_EXIT = forceQuit ? [null, 'SIGKILL'] : [0, null]
 export const PROBE_QUIT_SCRIPT = forceQuit
   ? "app.once('quit', () => process.kill(process.pid, 'SIGKILL'))"
   : ''
-
-async function captureStartupNativeStack(child) {
-  if (child.exitCode !== null || child.signalCode !== null) return
-  if (process.platform !== 'linux' && process.platform !== 'darwin') return
-  const command = process.platform === 'linux' ? 'sudo' : '/usr/bin/sample'
-  const args =
-    process.platform === 'linux'
-      ? [
-          '-n',
-          'gdb',
-          '--quiet',
-          '--nx',
-          '--batch',
-          '-ex',
-          'set pagination off',
-          '-ex',
-          'set debuginfod enabled off',
-          '-ex',
-          'set print frame-arguments none',
-          '-ex',
-          'thread apply all bt',
-          '-p',
-          String(child.pid),
-        ]
-      : [String(child.pid), '1', '-file', '/dev/stdout']
-  try {
-    const { stdout, stderr } = await promisify(execFile)(command, args, {
-      timeout: 5_000,
-      maxBuffer: 2 * 1024 * 1024,
-    })
-    console.error('Isolated startup native stack:', stdout, stderr)
-  } catch (error) {
-    console.error('Isolated startup native stack unavailable:', {
-      code: error.code,
-      stdout: error.stdout,
-      stderr: error.stderr,
-    })
-  }
-}
 
 async function createProbeApp(root, index) {
   const profile = join(root, `startup-${index}`)
