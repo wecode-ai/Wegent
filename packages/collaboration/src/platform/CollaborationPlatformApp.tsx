@@ -1440,6 +1440,7 @@ function CollaborationPlatformAppContent({
     refreshKey,
   });
   const [workspaceDialogOpen, setWorkspaceDialogOpen] = useState(false);
+  const [mobileNavigationOpen, setMobileNavigationOpen] = useState(false);
   const [archiveProject, setArchiveProject] =
     useState<CollaborationProject | null>(null);
   const [projectDialogOpen, setProjectDialogOpen] = useState(false);
@@ -2445,6 +2446,7 @@ function CollaborationPlatformAppContent({
       );
     if (rootView === "home" && host.renderPersonalHome) {
       content = host.renderPersonalHome({
+        contentVisible: !mobileNavigationOpen,
         projects: state.navigationProjects,
         createIssue: content,
         createdIssue: createdHomeIssue,
@@ -2765,6 +2767,8 @@ function CollaborationPlatformAppContent({
 
   const sidebar = (
     <CollaborationPlatformNavigation
+      mobileNavigationOpen={mobileNavigationOpen}
+      onMobileNavigationOpenChange={setMobileNavigationOpen}
       domain={collaborationDomain}
       host={host}
       messages={messages}

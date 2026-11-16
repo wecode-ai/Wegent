@@ -684,3 +684,24 @@ it('reveals and focuses a narrow Issue and restores its list position on return'
     Object.defineProperty(window, 'innerWidth', { configurable: true, value: originalWidth })
   }
 })
+
+it('keeps narrow workspace keyboard focus in its tablist until an explicit return', async () => {
+  const originalWidth = window.innerWidth
+  Object.defineProperty(window, 'innerWidth', { configurable: true, value: 768 })
+  try {
+    await setup([source(vi.fn().mockResolvedValue([issue('keyboard')]))])
+    fireEvent.click(await screen.findByTestId('personal-home-issue-keyboard'))
+    const detailTab = screen.getByTestId('personal-home-tab-keyboard')
+    const assistantTab = screen.getByTestId('personal-home-tab-stand-in')
+    fireEvent.keyDown(detailTab, { key: 'Home' })
+    expect(assistantTab).toHaveFocus()
+    expect(assistantTab).toHaveAttribute('tabindex', '0')
+    expect(detailTab).toHaveAttribute('tabindex', '-1')
+    fireEvent.keyDown(assistantTab, { key: 'ArrowRight' })
+    expect(detailTab).toHaveFocus()
+    fireEvent.click(screen.getByTestId('personal-home-back-to-issues'))
+    expect(screen.getByTestId('personal-home-issue-keyboard')).toHaveFocus()
+  } finally {
+    Object.defineProperty(window, 'innerWidth', { configurable: true, value: originalWidth })
+  }
+})

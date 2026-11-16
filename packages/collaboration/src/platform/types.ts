@@ -74,6 +74,7 @@ export interface CollaborationPlatformHostAdapter {
     onChange(value: string): void;
   };
   renderPersonalHome?(props: {
+    contentVisible: boolean;
     projects: CollaborationProject[];
     createIssue: ReactNode;
     createdIssue?: {

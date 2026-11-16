@@ -33,6 +33,8 @@ import { buildWorkspaceNavigation } from "./workspaceNavigation";
 
 export function CollaborationPlatformNavigation({
   domain,
+  mobileNavigationOpen,
+  onMobileNavigationOpenChange: setMobileNavigationOpen,
   host: sourceHost,
   messages,
   workspaces,
@@ -48,6 +50,8 @@ export function CollaborationPlatformNavigation({
   footer,
 }: {
   domain: CollaborationDomain;
+  mobileNavigationOpen: boolean;
+  onMobileNavigationOpenChange(open: boolean): void;
   host: CollaborationPlatformHostAdapter;
   messages: PlatformMessages;
   workspaces: CollaborationWorkspace[];
@@ -65,7 +69,6 @@ export function CollaborationPlatformNavigation({
   onArchiveProject(project: CollaborationProject): void;
   footer?: React.ReactNode;
 }) {
-  const [mobileNavigationOpen, setMobileNavigationOpen] = useState(false);
   const navigationId = useId();
   const navigationRef = useRef<HTMLDivElement>(null);
   const toggleRef = useRef<HTMLButtonElement>(null);
@@ -85,7 +88,7 @@ export function CollaborationPlatformNavigation({
     };
     media.addEventListener("change", update);
     return () => media.removeEventListener("change", update);
-  }, []);
+  }, [setMobileNavigationOpen]);
   const host: CollaborationPlatformHostAdapter = {
     ...sourceHost,
     navigate: (location) => {
@@ -429,7 +432,7 @@ export function CollaborationPlatformNavigation({
           data-testid="collaboration-navigation-toggle"
           aria-expanded={mobileNavigationOpen}
           aria-controls={navigationId}
-          onClick={() => setMobileNavigationOpen((open) => !open)}
+          onClick={() => setMobileNavigationOpen(!mobileNavigationOpen)}
         >
           <span>{messages.navigation}</span>
           <ChevronRight aria-hidden="true" />

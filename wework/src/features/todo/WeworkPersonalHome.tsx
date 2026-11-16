@@ -126,7 +126,10 @@ export function WeworkPersonalHome({
   const [activeTab, setActiveTab] = useState('stand-in')
   const viewport = useRef<HTMLDivElement>(null)
   const sidebar = useRef<HTMLElement>(null)
-  const previousTab = useRef('stand-in')
+  const [workspaceFocus, setWorkspaceFocus] = useState<{
+    target: 'detail' | 'list'
+    captureList?: boolean
+  } | null>(null)
   const listPosition = useRef(0)
   const returnFocus = useRef<HTMLElement | null>(null)
   const [detailExpanded, setDetailExpanded] = useState(false)
@@ -138,11 +141,9 @@ export function WeworkPersonalHome({
   useLayoutEffect(() => {
     const root = viewport.current
     const panel = sidebar.current
-    const previous = previousTab.current
-    previousTab.current = activeTab
-    if (isDesktop || !root || !panel) return
-    if (activeTab !== 'stand-in') {
-      if (previous === 'stand-in') {
+    if (isDesktop || !root || !panel || !workspaceFocus) return
+    if (workspaceFocus.target === 'detail') {
+      if (workspaceFocus.captureList) {
         listPosition.current = root.scrollTop
         returnFocus.current = root.querySelector<HTMLElement>('[aria-current="true"] button')
       }
@@ -150,13 +151,13 @@ export function WeworkPersonalHome({
       panel
         .querySelector<HTMLElement>('[role="tabpanel"]:not([inert])')
         ?.focus({ preventScroll: true })
-    } else if (previous !== 'stand-in') {
+    } else {
       root.scrollTop = listPosition.current
       const list = composerRegion.current?.closest('main')
       const target = returnFocus.current?.isConnected ? returnFocus.current : list
       target?.focus({ preventScroll: true })
     }
-  }, [activeTab, isDesktop])
+  }, [workspaceFocus, isDesktop])
   const independent = useIndependentIssuePage(
     assignedOnly ? 'assigned' : 'participating',
     showCompleted,
@@ -192,6 +193,7 @@ export function WeworkPersonalHome({
     )
     setExpandedTabs(current => (current.has(id) ? current : new Set()))
     setSidebarCollapsed(false)
+    setWorkspaceFocus({ target: 'detail', captureList: activeTab === 'stand-in' })
     setActiveTab(id)
   }
   const [handledCreation, setHandledCreation] = useState<string>()
@@ -209,11 +211,13 @@ export function WeworkPersonalHome({
   ) {
     setDetailScope({ userId, sources })
     setIssueTabs([])
+    setWorkspaceFocus(null)
     setActiveTab('stand-in')
     setExpandedTabs(new Set())
     setRecentCreation(undefined)
   }
   if (createdIssue && createdIssue.key !== handledCreation) {
+    setWorkspaceFocus({ target: 'detail', captureList: activeTab === 'stand-in' })
     setSidebarCollapsed(false)
     setHandledCreation(createdIssue.key)
     const ownIds =
@@ -255,7 +259,11 @@ export function WeworkPersonalHome({
     const index = issueTabs.findIndex(tab => tab.id === id)
     const remaining = issueTabs.filter(tab => tab.id !== id)
     setIssueTabs(remaining)
-    if (activeTab === id) setActiveTab(remaining[Math.max(0, index - 1)]?.id ?? 'stand-in')
+    if (activeTab === id) {
+      const next = remaining[Math.max(0, index - 1)]?.id ?? 'stand-in'
+      setActiveTab(next)
+      setWorkspaceFocus({ target: next === 'stand-in' ? 'list' : 'detail' })
+    }
   }
   const firstUse = !projects.length && !independent.context?.api
   return (
@@ -439,7 +447,10 @@ export function WeworkPersonalHome({
             <button
               type="button"
               data-testid="personal-home-back-to-issues"
-              onClick={() => setActiveTab('stand-in')}
+              onClick={() => {
+                setWorkspaceFocus({ target: 'list' })
+                setActiveTab('stand-in')
+              }}
               className="flex min-h-11 items-center gap-2 border-b border-border px-3 text-sm text-text-secondary hover:bg-muted"
             >
               <ArrowLeft aria-hidden="true" className="h-4 w-4" />
@@ -452,25 +463,6 @@ export function WeworkPersonalHome({
             aria-label={t('personalHome.workspaceTabs')}
             data-testid="personal-home-tabs"
             className="flex h-12 min-h-12 shrink-0 items-center gap-1.5 overflow-x-auto border-b border-border px-3 lg:h-10 lg:min-h-10"
-            onKeyDown={event => {
-              if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return
-              const tabs = Array.from(
-                event.currentTarget.querySelectorAll<HTMLElement>('[role="tab"]')
-              )
-              const index = tabs.indexOf(event.target as HTMLElement)
-              if (index < 0) return
-              event.preventDefault()
-              const target =
-                event.key === 'Home'
-                  ? tabs[0]
-                  : event.key === 'End'
-                    ? tabs.at(-1)
-                    : tabs[
-                        (index + (event.key === 'ArrowRight' ? 1 : -1) + tabs.length) % tabs.length
-                      ]
-              target?.click()
-              target?.focus()
-            }}
           >
             <WorkspaceTitleTab
               id={`${panelId}-stand-in-tab`}
@@ -479,7 +471,10 @@ export function WeworkPersonalHome({
               active={activeTab === 'stand-in'}
               label={t('personalHome.standInTab')}
               icon={<UserRound aria-hidden="true" className="h-4 w-4" />}
-              onSelect={() => setActiveTab('stand-in')}
+              onSelect={() => {
+                setWorkspaceFocus(null)
+                setActiveTab('stand-in')
+              }}
             />
             {issueTabs.map(tab => (
               <WorkspaceTitleTab
@@ -491,7 +486,10 @@ export function WeworkPersonalHome({
                 label={tab.issue.title}
                 title={`${tab.project.name} · #${tab.issue.sequence_number} ${tab.issue.title}`}
                 icon={<Circle aria-hidden="true" className="h-4 w-4" />}
-                onSelect={() => setActiveTab(tab.id)}
+                onSelect={() => {
+                  setWorkspaceFocus(null)
+                  setActiveTab(tab.id)
+                }}
                 onClose={() => closeIssue(tab.id)}
               />
             ))}

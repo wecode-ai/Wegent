@@ -1,4 +1,5 @@
 import type { EnvironmentDiffMode, EnvironmentInfoLoadOptions } from '@/api/environment'
+import type { PersonalHomeTaskDraftStore } from '../todo/personalHomeTaskDrafts'
 import type { ModelSelectorCloseReason } from '@wegent/collaboration/controls/model-selector-types'
 import type { RuntimeTaskLifecycleStore } from './runtimeTaskLifecycle'
 import type { ModelSelectionDiagnostics } from './modelSelectionDiagnostics'
@@ -225,6 +226,7 @@ export interface WorkbenchContextValue {
     scopeKey: string
     inputByScope: Readonly<Record<string, string>>
     goalDraftActiveByScope: Readonly<Record<string, boolean>>
+    personalHomeTaskDraftStore: PersonalHomeTaskDraftStore
     setGoalDraftActiveForScope: (scopeKey: string, active: boolean) => void
     models: UnifiedModel[]
     skills: UnifiedSkill[]

@@ -2181,6 +2181,35 @@ describe("CollaborationPlatformApp real component flow", () => {
     expect(document.activeElement).toBe(toggle);
   });
 
+  it("pauses hidden home work while compact navigation preserves its draft", async () => {
+    const { api } = createApi();
+    await render(
+      <PlatformHarness
+        api={api}
+        renderPersonalHome={({ contentVisible }) => (
+          <section
+            data-testid="home-visibility"
+            data-active={String(contentVisible)}
+          >
+            <input data-testid="home-draft" defaultValue="Unfinished work" />
+          </section>
+        )}
+      />,
+    );
+    const draft = byTestId("home-draft") as HTMLInputElement;
+    draft.value = "Keep this draft";
+    await click(byTestId("collaboration-navigation-toggle"));
+    expect(byTestId("home-visibility").getAttribute("data-active")).toBe(
+      "false",
+    );
+    expect(byTestId("home-draft")).toBe(draft);
+    await click(byTestId("collaboration-navigation-toggle"));
+    expect(byTestId("home-visibility").getAttribute("data-active")).toBe(
+      "true",
+    );
+    expect(draft.value).toBe("Keep this draft");
+  });
+
   it("records a Markdown heading as the Issue title without flattening its body", async () => {
     const { api } = createApi();
     const content =

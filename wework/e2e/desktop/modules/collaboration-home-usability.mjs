@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict'
 import { until } from './plugin-regression-fixture.mjs'
 import { verifyComposerLayout } from './issue-comment-workflow.mjs'
+import { setGoalDraftForTabTransfer } from './goal-draft-flows.mjs'
 
 async function resizeHome(control, home, width, height, timeoutMs) {
   await control.command('setMainWindowSize', 'body', {
@@ -34,6 +35,11 @@ async function waitForNarrowIssue(control, home, timeoutMs) {
 }
 
 async function verifyTaskLabels(control, home) {
+  const participating = await control.command(
+    'getAttribute',
+    `${home} [data-testid="personal-home-scope-participating"]`,
+    { value: 'aria-pressed' }
+  )
   await control.command('nativePress', `${home} [data-testid="personal-home-record-mode"]`, {
     key: 'ArrowRight',
   })
@@ -58,6 +64,11 @@ async function verifyTaskLabels(control, home) {
   )
   const taskInput = `${panel} [data-testid="personal-home-task-content"]`
   const draft = await control.command('getValue', taskInput)
+  const projectLabel = await control.command(
+    'getAttribute',
+    `${panel} [data-testid="collaboration-issue-project-trigger"]`,
+    { value: 'aria-label' }
+  )
   await control.command('click', `${panel} [data-testid="project-work-button"]`)
   await control.command(
     'click',
@@ -73,6 +84,35 @@ async function verifyTaskLabels(control, home) {
     draft,
     'Clearing an optional code workspace must retain the collaboration composer and draft'
   )
+  const goal = `${panel} [data-testid="goal-draft-pill"]`
+  const existingGoal = JSON.parse(await control.command('getElementMetrics', goal)).length > 0
+  if (!existingGoal) await setGoalDraftForTabTransfer(control, panel)
+  const goalText = 'Keep pursuing this goal after opening global settings.'
+  await control.command('fill', taskInput, { value: goalText })
+  await control.command('click', '[data-testid="settings-button"]')
+  await control.command('click', '[data-testid="settings-menu-button"]')
+  await control.command('click', '[data-testid="settings-back-button"]')
+  await control.command('click', '[data-testid="workspace-tab-select-fixed-board"]')
+  await control.command('click', `${home} [data-testid="personal-home-new-issue"]`)
+  await control.command('waitFor', goal, { visible: true })
+  assert.equal(
+    await control.command('getValue', taskInput),
+    goalText,
+    'Global settings must retain the goal text'
+  )
+  assert.equal(
+    await control.command(
+      'getAttribute',
+      `${panel} [data-testid="collaboration-issue-project-trigger"]`,
+      { value: 'aria-label' }
+    ),
+    projectLabel
+  )
+  if (!existingGoal)
+    await control.command('click', `${panel} [data-testid="cancel-goal-draft-button"]`)
+  await control.command('fill', taskInput, { value: draft })
+  if (participating === 'true')
+    await control.command('click', `${home} [data-testid="personal-home-scope-participating"]`)
   await control.command('nativePress', `${home} [data-testid="personal-home-new-issue"]`, {
     key: 'ArrowLeft',
   })
@@ -340,6 +380,16 @@ export async function verifyCollaborationHomeUsability(
     await resizeHome(control, home, 768, 900, timeoutMs)
     await control.command('click', `${home} [data-testid="personal-home-issue-${issueId}"]`)
     await waitForNarrowIssue(control, home, timeoutMs)
+    const selectedTab = `${home} [data-testid="personal-home-tabs"] [role="tab"][aria-selected="true"]`
+    const detailTab = await control.command('getAttribute', selectedTab, { value: 'data-testid' })
+    await control.command('nativePress', selectedTab, { key: 'ArrowLeft' })
+    assert.equal(
+      await control.command('getActiveElementTestId', 'body'),
+      await control.command('getAttribute', selectedTab, { value: 'data-testid' }),
+      'Changing workspace panels must keep keyboard focus on the selected tab'
+    )
+    await control.command('nativePress', ':focus', { key: 'ArrowRight' })
+    assert.equal(await control.command('getActiveElementTestId', 'body'), detailTab)
     await control.command('click', `${home} [data-testid="personal-home-back-to-issues"]`)
 
     await resizeHome(control, home, 390, 900, timeoutMs)

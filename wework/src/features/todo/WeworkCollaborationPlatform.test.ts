@@ -1,6 +1,7 @@
 import { DEFAULT_WORK_ITEM_PROJECT_ID, type DeliveryApi } from '@/api/deliveries'
 import { ApiError } from '@/api/http'
 import { createLocalProjectChatAgentApi } from '@/api/local/localDelivery'
+import { createPersonalHomeTaskDraftStore } from './personalHomeTaskDrafts'
 import {
   CloudConnectionContext,
   DISCONNECTED_STATE,
@@ -526,7 +527,11 @@ function deferred<T>() {
 }
 
 function createHomeDraft() {
-  return { inputByScope: {}, setInputForScope: vi.fn() }
+  return {
+    inputByScope: {},
+    setInputForScope: vi.fn(),
+    personalHomeTaskDraftStore: createPersonalHomeTaskDraftStore(),
+  }
 }
 
 describe('Wework collaboration workspace API', () => {

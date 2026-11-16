@@ -6,7 +6,6 @@ import { migrateLocalProject } from './localProjectMigration'
 import { ConfirmDialog } from '@/components/common/ConfirmDialog'
 import { prepareIssueRuntimeTask } from './prepareIssueRuntimeTask'
 import { PersonalHomeTaskComposer } from './PersonalHomeTaskComposer'
-import { usePersonalHomeTaskDrafts } from './personalHomeTaskDrafts'
 import { issueRuntimePort } from './issueRuntimePort'
 import { IssueChangeRequestBadges } from '@/features/change-requests/IssueChangeRequestBadges'
 import { requireIssueTaskAvailable } from './issueTaskAvailability'
@@ -326,7 +325,10 @@ export interface WeworkCollaborationPlatformProps {
   services: WorkbenchServices
   startupActive?: boolean
   workspaceActive?: boolean
-  homeDraft: Pick<WorkbenchContextValue['projectChat'], 'inputByScope' | 'setInputForScope'>
+  homeDraft: Pick<
+    WorkbenchContextValue['projectChat'],
+    'inputByScope' | 'setInputForScope' | 'personalHomeTaskDraftStore'
+  >
   activeProjectRef?: RuntimeProjectSpaceRef | null
   defaultProjectRequested?: boolean
   focusedItemId?: string | null
@@ -1720,7 +1722,7 @@ function WeworkCollaborationPlatformContent(props: WeworkCollaborationPlatformPr
       locale,
     ]
   )
-  const personalHomeTaskDrafts = usePersonalHomeTaskDrafts(templateScope, [
+  const personalHomeTaskDrafts = props.homeDraft.personalHomeTaskDraftStore.get(templateScope, [
     api,
     props.services.projectSpaceApis?.local,
   ])
@@ -2164,7 +2166,7 @@ function WeworkCollaborationPlatformContent(props: WeworkCollaborationPlatformPr
                 active={props.workspaceActive ?? true}
               />
             ),
-            renderPersonalHome: home => (
+            renderPersonalHome: ({ contentVisible, ...home }) => (
               <WeworkPersonalHome
                 key={templateScope}
                 entryRequestKey={personalHomeEntryKey}
@@ -2172,7 +2174,7 @@ function WeworkCollaborationPlatformContent(props: WeworkCollaborationPlatformPr
                 localUserIds={
                   props.services.localParticipationIdentity?.viewerUserIds ?? [LOCAL_USER.id]
                 }
-                active={props.workspaceActive ?? true}
+                active={(props.workspaceActive ?? true) && contentVisible}
                 {...home}
                 sources={navigationApis}
                 draftScope={personalHomeTaskDrafts}
