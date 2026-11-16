@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict'
 import { waitForElementWidth } from './layout-metrics.mjs'
+import { selectWorkbenchTheme } from './appearance-theme.mjs'
 
 const VOICE = '[data-testid="composer-voice-input"] button'
 const GUIDE_ACTION = '[role="dialog"] button[data-modal-autofocus]'
@@ -8,6 +9,59 @@ const CONTENT = '.wework-voice-setup-content'
 const BODY = `${CONTENT} > :last-child`
 const CLOSE = '[data-testid="voice-input-setup-close"]'
 const HELP = '[data-testid="voice-input-model-help"]'
+
+export async function assertReadableVoiceSurface(control, background, foreground = background) {
+  const style = (selector, value) => control.command('getStyle', selector, { value })
+  const color = (await style(foreground, 'color')).match(/[\d.]+/g)?.map(Number)
+  const fill = (await style(background, 'background-color')).match(/[\d.]+/g)?.map(Number)
+  assert.ok(color?.length >= 3 && fill?.length >= 3, 'Voice surface must expose RGB colors')
+  assert.equal(fill[3] ?? 1, 1, 'Voice contrast requires its actual opaque background')
+  const luminance = channels =>
+    channels.slice(0, 3).reduce((sum, channel, index) => {
+      const value = channel / 255
+      return (
+        sum +
+        (value <= 0.04045 ? value / 12.92 : ((value + 0.055) / 1.055) ** 2.4) *
+          [0.2126, 0.7152, 0.0722][index]
+      )
+    }, 0)
+  const text = luminance(color)
+  const surface = luminance(fill)
+  const ratio = (Math.max(text, surface) + 0.05) / (Math.min(text, surface) + 0.05)
+  assert.ok(
+    ratio >= 4.5,
+    `Voice text needs 4.5:1 contrast: ${foreground} on ${background}: ${ratio}`
+  )
+}
+
+/** Use the application's preference, independent of the OS media query. */
+export async function verifyVoiceThemeTransitions(control) {
+  for (const mode of ['dark', 'light']) {
+    await selectWorkbenchTheme(control, { mode, themeId: 'wework' })
+    await control.command(
+      'waitFor',
+      mode === 'dark' ? 'body[data-ds-dark-theme]' : 'body:not([data-ds-dark-theme])'
+    )
+    await control.command('navigate', 'body', { value: '/settings/general' })
+    await control.command('waitFor', '[data-testid="voice-input-settings"]')
+    await assertReadableVoiceSurface(
+      control,
+      'body',
+      '[data-testid="voice-input-settings"] .wework-voice-preparation'
+    )
+    await control.command('navigate', 'body', { value: '/' })
+    await control.command('click', '[data-testid="new-chat-button"]')
+    await control.command('waitFor', `${VOICE}:not(:disabled)`)
+    await control.command('click', VOICE)
+    await control.command('waitFor', GUIDE_ACTION)
+    await assertReadableVoiceSurface(control, '[role="dialog"]:has(button[data-modal-autofocus])')
+    await control.command('click', GUIDE_ACTION)
+    await control.command('waitFor', '[data-testid="voice-input-setup"] select')
+    await assertReadableVoiceSurface(control, MODAL, `${MODAL} .wework-voice-preparation`)
+    await control.command('click', CLOSE)
+    await control.command('waitFor', MODAL, { visible: false })
+  }
+}
 
 async function metrics(control, selector) {
   const values = JSON.parse(await control.command('getElementMetrics', selector))

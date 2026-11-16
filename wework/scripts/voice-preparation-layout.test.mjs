@@ -1,7 +1,46 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import { loadDesktopCheckpointCatalog } from '../e2e/desktop/checkpoint-catalog.mjs'
-import { assertVoicePreparationLayout } from '../e2e/desktop/modules/voice-preparation-layout.mjs'
+import {
+  assertVoicePreparationLayout,
+  assertReadableVoiceSurface,
+} from '../e2e/desktop/modules/voice-preparation-layout.mjs'
+
+test('theme acceptance rejects the observed white text on white dialog', async () => {
+  await assert.rejects(
+    assertReadableVoiceSurface(
+      {
+        async command() {
+          return 'rgb(255, 255, 255)'
+        },
+      },
+      'dialog'
+    ),
+    /4.5:1 contrast/
+  )
+})
+
+test('theme acceptance checks the actual opaque surface and accepts readable dark text', async () => {
+  await assertReadableVoiceSurface(
+    {
+      async command(_action, _selector, { value }) {
+        return value === 'color' ? 'rgb(255, 255, 255)' : 'rgb(24, 24, 24)'
+      },
+    },
+    'dialog'
+  )
+  await assert.rejects(
+    assertReadableVoiceSurface(
+      {
+        async command(_action, _selector, { value }) {
+          return value === 'color' ? 'rgb(255, 255, 255)' : 'rgba(0, 0, 0, 0)'
+        },
+      },
+      'dialog'
+    ),
+    /actual opaque background/
+  )
+})
 
 const visible = {
   top: 100,
