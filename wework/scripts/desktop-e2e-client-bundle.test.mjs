@@ -165,6 +165,46 @@ test('the shared build counts complete model requests without node_modules', asy
   )
 }, 30_000)
 
+test('the shared build loads mobile production builders without Vite or node_modules', async () => {
+  const fixture = await isolatedConsumer('mobile-builders')
+  const script = `
+    import assert from 'node:assert/strict'
+    import { createRequire } from 'node:module'
+    import { pathToFileURL } from 'node:url'
+    assert.throws(() => createRequire(pathToFileURL(process.argv[1])).resolve('vite'), { code: 'MODULE_NOT_FOUND' })
+    const scene = await import(pathToFileURL(process.argv[1]))
+    assert.equal(typeof scene.createDesktopScenario, 'function')
+    const { loadSharedBuilders } = await import(pathToFileURL(process.argv[2]))
+    const builders = await loadSharedBuilders()
+    assert.equal(builders.modelInterfaceProviderId('mobile/model'), 'local-mobile-model')
+    const configured = builders.modelInterfaceRuntimeConfig({
+      id: 'mobile', modelId: 'mobile-model', displayName: 'Mobile',
+      baseUrl: 'http://127.0.0.1:1234/v1', apiFormat: 'openai-responses',
+    })
+    assert.equal(configured.responses_url, 'http://127.0.0.1:1234/v1/responses')
+    assert.equal(typeof builders.resolveLocalRuntimeModelConfig, 'function')
+    const request = builders.buildLocalRuntimeExecutionRequest({
+      taskId: 'mobile-task', runtime: 'codex', title: 'Mobile', message: 'hello',
+      turnSeed: 1, modelConfig: configured, reasoningConfig: null,
+      localDeviceId: 'device', workspacePath: '/workspace', workspaceSource: 'local_path',
+      newSession: true, user: { id: 0, user_name: 'local', email: 'local@wework.local' },
+    })
+    assert.equal(request.task_id, 'mobile-task')
+    assert.equal(request.task_title, 'Mobile')
+  `
+  await run(
+    process.execPath,
+    [
+      '--input-type=module',
+      '-e',
+      script,
+      join(fixture.desktop, 'scenarios/mobile-local-payload.scenario.mjs'),
+      join(fixture.desktop, 'modules/mobile-local-builders.mjs'),
+    ],
+    fixture.options
+  )
+}, 30_000)
+
 test('an explicitly configured incomplete artifact never falls back to workspace dependencies', async () => {
   const fixture = await isolatedConsumer('incomplete')
   await rm(join(fixture.client, 'lz-string.cjs'))
@@ -187,5 +227,24 @@ test('an explicitly configured incomplete artifact never falls back to workspace
       fixture.options
     ),
     error => error.stderr.includes('MODULE_NOT_FOUND') && error.stderr.includes('lz-string.cjs')
+  )
+}, 30_000)
+
+test('a missing mobile builder in an explicit artifact fails without invoking Vite', async () => {
+  const fixture = await isolatedConsumer('incomplete-mobile')
+  await rm(join(fixture.client, 'mobile-builders.cjs'))
+  await assert.rejects(
+    run(
+      process.execPath,
+      [
+        '--input-type=module',
+        '-e',
+        "import { pathToFileURL } from 'node:url'; const { loadSharedBuilders } = await import(pathToFileURL(process.argv[1])); await loadSharedBuilders()",
+        join(fixture.desktop, 'modules/mobile-local-builders.mjs'),
+      ],
+      fixture.options
+    ),
+    error =>
+      error.stderr.includes('MODULE_NOT_FOUND') && error.stderr.includes('mobile-builders.cjs')
   )
 }, 30_000)

@@ -2,8 +2,7 @@ import assert from 'node:assert/strict'
 import { randomUUID } from 'node:crypto'
 import { mkdir, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
-import { fileURLToPath } from 'node:url'
-import { createServer } from 'vite'
+import { loadSharedBuilders } from '../modules/mobile-local-builders.mjs'
 import { createDesktopScenario as createNativeGuidance } from './native-guidance.scenario.mjs'
 import { requestExecutor } from '../modules/executor-rpc.mjs'
 import { waitForValue } from '../modules/workspace-agent-setup.mjs'
@@ -20,27 +19,6 @@ const INITIAL = 'WEWORK_MOBILE_LOCAL_INITIAL'
 const FOLLOW_UP = 'WEWORK_MOBILE_LOCAL_FOLLOW_UP'
 const INITIAL_DONE = 'WEWORK_MOBILE_LOCAL_INITIAL_DONE'
 const FOLLOW_UP_DONE = 'WEWORK_MOBILE_LOCAL_FOLLOW_UP_DONE'
-
-async function loadSharedBuilders() {
-  const loader = await createServer({
-    root: fileURLToPath(new URL('../../../../', import.meta.url)),
-    configFile: false,
-    envFile: false,
-    logLevel: 'error',
-    optimizeDeps: { noDiscovery: true, include: [] },
-    server: { middlewareMode: true, watch: null, hmr: false },
-    appType: 'custom',
-  })
-  try {
-    return {
-      ...(await loader.ssrLoadModule('/packages/chat-core/src/local-runtime-execution.ts')),
-      ...(await loader.ssrLoadModule('/packages/chat-core/src/local-runtime-model.ts')),
-      ...(await loader.ssrLoadModule('/wework/electron/src/host/model-interface-runtime.ts')),
-    }
-  } finally {
-    await loader.close()
-  }
-}
 
 // Exercise the phone's shared payload through the existing real executor and Codex.
 // Native iOS scheduling and OAuth are outside this desktop checkpoint's coverage.
