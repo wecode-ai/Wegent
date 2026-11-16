@@ -81,6 +81,7 @@ export function installedItem(
           connectors: [],
         },
         interface: null,
+        manifest: {},
       },
       status: { state: 'enabled' },
     },
