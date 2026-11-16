@@ -91,3 +91,46 @@ it.each(['account', 'backend'])(
     expect(screen.queryByTestId('issue-participant-invite-agent:12')).not.toBeInTheDocument()
   }
 )
+
+it.each([
+  ['human', 8, 'independent-issue-invite-8'],
+  ['agent', 12, 'issue-participant-invite-agent:12'],
+  ['group', 15, 'issue-participant-invite-group:15'],
+] as const)(
+  'finds and selects %s participants with padded mixed-case search text',
+  async (kind, id, result) => {
+    const searchUsers = vi.fn().mockResolvedValue({ users: [{ id: 8, user_name: 'Alice' }] })
+    const collaborationApi = {
+      resources: {
+        list: vi.fn().mockResolvedValue({
+          agents: [
+            { id: '12', name: 'Alice Agent', location: 'cloud', owner_type: 'user', owner_id: '7' },
+          ],
+        }),
+      },
+      workspaces: {
+        list: vi.fn().mockResolvedValue([{ id: 'w', location: 'cloud' }]),
+        listCollaborationGroups: vi.fn().mockResolvedValue([{ id: '15', name: 'Alice Group' }]),
+      },
+    } as unknown as SharedWorkspaceApi
+    const change = vi.fn()
+    render(
+      <IssueParticipantPicker
+        api={{ searchUsers } as unknown as PersonalIssuesApi}
+        collaborationApi={collaborationApi}
+        selected={[]}
+        onChange={change}
+        disabled={false}
+        userId={7}
+      />
+    )
+    fireEvent.click(screen.getByTestId('issue-participant-add'))
+    if (kind !== 'human') fireEvent.click(screen.getByTestId(`issue-participant-tab-${kind}`))
+    fireEvent.change(screen.getByTestId('independent-issue-search-people'), {
+      target: { value: '  ALICE  ' },
+    })
+    fireEvent.click(await screen.findByTestId(result))
+    expect(change).toHaveBeenCalledWith([expect.objectContaining({ kind, id })])
+    if (kind === 'human') expect(searchUsers).toHaveBeenCalledWith('ALICE')
+  }
+)

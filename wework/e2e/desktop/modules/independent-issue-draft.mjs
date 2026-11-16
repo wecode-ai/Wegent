@@ -31,6 +31,17 @@ export async function verifyIssueDeviceLayout(control, deviceId) {
       panel.top >= 7 && panel.bottom <= panel.viewportHeight - 7,
       'Device selection must remain inside the narrow window'
     )
+    const more = testId(`${prefix}-actions-toggle-${deviceId}`)
+    await control.command('scrollIntoView', more)
+    await control.command('clickWhenEnabled', more)
+    const preparation = testId(`${prefix}-initialize-${deviceId}`)
+    await control.command('scrollIntoView', preparation)
+    const [action] = await metrics(preparation)
+    assert.ok(
+      action.visibleIntersection?.width >= action.width - 1 &&
+        action.scrollWidth <= action.clientWidth,
+      'The complete project preparation action must fit inside the narrow device panel'
+    )
     const controls = (
       await metrics(`${picker} button, ${picker} select, ${picker} summary`)
     ).filter(control => control.height > 0)
@@ -41,7 +52,7 @@ export async function verifyIssueDeviceLayout(control, deviceId) {
         'Every visible device action must have a 44px touch target'
       )
     }
-    await control.command('nativePress', picker, { key: 'Escape' })
+    await control.command('nativePress', preparation, { key: 'Escape' })
     await control.command('waitFor', picker, { visible: false })
   } finally {
     await control.command('setMainWindowSize', 'body', { value: previousSize })

@@ -18,6 +18,7 @@ export function DefaultRunnerSetting({
   if (!workbench?.updateUserPreferences) return null
   const devices = (workbench.state.devices ?? []).filter(device => device.status === 'online')
   const selected = workbench.state.user?.preferences?.default_execution_target ?? ''
+  const hasPendingChange = confirmChanges && pending !== null && pending !== selected
   const value = confirmChanges ? (pending ?? selected) : selected
   const unavailable = Boolean(selected) && !devices.some(device => device.device_id === selected)
   const save = async (deviceId: string) => {
@@ -53,19 +54,19 @@ export function DefaultRunnerSetting({
             </option>
           ))}
         </select>
-        {confirmChanges && pending !== null && pending !== selected && (
+        {hasPendingChange && (
           <button
             type="button"
             data-testid="settings-default-runner-save"
             disabled={saving}
-            onClick={() => void save(pending)}
+            onClick={() => void save(value)}
             className="min-h-11 rounded-md border border-border px-3 text-sm text-text-primary hover:bg-muted disabled:opacity-50 md:min-h-8"
           >
             {t(saving ? 'independentIssues.saving' : 'issue_creation.save_personal_runner')}
           </button>
         )}
       </div>
-      {unavailable && (
+      {unavailable && !hasPendingChange && (
         <div className="flex flex-wrap items-center gap-2 text-xs text-text-secondary">
           <span>{t('workbench.runner_default_unavailable')}</span>
           <button

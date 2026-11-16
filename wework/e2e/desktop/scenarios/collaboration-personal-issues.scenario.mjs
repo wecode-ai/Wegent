@@ -200,6 +200,10 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
       await click(control, 'independent-issue-edit')
       await click(control, 'issue-participant-add')
       await control.command('fill', '[data-testid="independent-issue-search-people"]', {
+        value: `  ${participant.user_name}  `,
+      })
+      await wait(control, `[data-testid="independent-issue-invite-${participant.id}"]`)
+      await control.command('fill', '[data-testid="independent-issue-search-people"]', {
         value: participant.user_name,
       })
       await wait(control, `[data-testid="independent-issue-invite-${participant.id}"]`)

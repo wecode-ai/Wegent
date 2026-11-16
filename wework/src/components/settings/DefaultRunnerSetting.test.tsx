@@ -6,6 +6,29 @@ import { DefaultRunnerSetting } from './DefaultRunnerSetting'
 
 afterEach(cleanup)
 
+it('replaces the obsolete unavailable-default warning with the pending save action', () => {
+  const updateUserPreferences = vi.fn()
+  const value = {
+    state: {
+      devices: [{ device_id: 'cloud', name: 'Cloud', status: 'online' }],
+      user: { preferences: { default_execution_target: 'old' } },
+    },
+    updateUserPreferences,
+  } as unknown as WorkbenchContextValue
+  render(
+    <WorkbenchContext.Provider value={value}>
+      <DefaultRunnerSetting compact confirmChanges />
+    </WorkbenchContext.Provider>
+  )
+  const warning = screen.getByTestId('settings-default-runner-clear').parentElement
+  expect(warning).toBeVisible()
+  fireEvent.change(screen.getByTestId('settings-default-runner'), { target: { value: 'cloud' } })
+  expect(warning).not.toBeInTheDocument()
+  expect(screen.getByTestId('settings-default-runner-save')).toBeVisible()
+  expect(screen.getByTestId('settings-default-runner')).toHaveValue('cloud')
+  expect(updateUserPreferences).not.toHaveBeenCalled()
+})
+
 it('stages an Issue-form selection, retains failures and applies only through its separate save action', async () => {
   const updateUserPreferences = vi
     .fn()

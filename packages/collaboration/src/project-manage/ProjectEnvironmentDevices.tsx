@@ -241,7 +241,7 @@ export function ProjectEnvironmentDevices({
                   ) : null}
                   {canManage && environment.status === 'online' ? (
                     <details
-                      className="relative"
+                      className="collaboration-environment-device-actions relative"
                       data-testid={`${testIdPrefix}-actions-${environment.device_id}`}
                     >
                       <summary

@@ -152,6 +152,23 @@
     min-width: 44px;
     min-height: 44px;
   }
+
+  .collaboration-environment-device-actions[open] {
+    flex-basis: 100%;
+    min-width: 0;
+  }
+
+  .collaboration-environment-device-actions > div {
+    position: static;
+    max-width: 100%;
+    white-space: normal;
+  }
+
+  .collaboration-environment-device-actions > div > button {
+    max-width: 100%;
+    text-align: left;
+    white-space: normal;
+  }
 }
 
 .collaboration-alert {

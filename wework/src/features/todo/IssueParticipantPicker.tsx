@@ -31,8 +31,9 @@ export function IssueParticipantPicker({
   const pickerId = useId()
   const [tab, setTab] = useState<IssueParticipant['kind']>('human')
   const [query, setQuery] = useState('')
+  const searchQuery = query.trim()
   const [revision, setRevision] = useState(0)
-  const requestKey = JSON.stringify([tab, query, revision])
+  const requestKey = JSON.stringify([tab, searchQuery, revision])
   const [response, setResponse] = useState<{
     key: string
     api?: PersonalIssuesApi
@@ -57,8 +58,8 @@ export function IssueParticipantPicker({
       () => {
         const load = async (): Promise<IssueParticipant[]> => {
           if (tab === 'human') {
-            if (!query.trim()) return []
-            const page = await api.searchUsers(query.trim())
+            if (!searchQuery) return []
+            const page = await api.searchUsers(searchQuery)
             return page.users.map(user => ({
               key: `human:${user.id}`,
               kind: 'human',
@@ -135,12 +136,12 @@ export function IssueParticipantPicker({
       clearTimeout(timer)
       generation.current = current + 1
     }
-  }, [api, collaborationApi, open, query, revision, tab, userId, requestKey])
+  }, [api, collaborationApi, open, searchQuery, tab, userId, requestKey])
   const icon = (kind: IssueParticipant['kind']) =>
     kind === 'agent' ? Bot : kind === 'group' ? Users : UserRound
   const candidates = results.filter(
     person =>
-      person.name.toLocaleLowerCase().includes(query.toLocaleLowerCase()) &&
+      person.name.toLocaleLowerCase().includes(searchQuery.toLocaleLowerCase()) &&
       person.key !== `human:${userId}`
   )
   return (
@@ -322,7 +323,7 @@ export function IssueParticipantPicker({
                 {!candidates.length && (
                   <p className="py-2 text-sm text-text-secondary">
                     {t(
-                      tab === 'human' && !query.trim()
+                      tab === 'human' && !searchQuery
                         ? 'issue_creation.search_people_hint'
                         : 'issue_creation.no_participants'
                     )}
