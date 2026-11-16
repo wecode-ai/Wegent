@@ -35,6 +35,12 @@ async function assertProjects(control, projects, message) {
   assert.deepEqual(await optionKeys(control), projects.map(projectKey), message)
 }
 
+async function selectGroup(control, selector, timeoutMs) {
+  // Project refreshes can briefly replace the picker's group buttons. Wait for
+  // the exact group to become actionable instead of racing the render.
+  await control.command('clickWhenEnabled', selector, { visible: true, timeoutMs })
+}
+
 export function createProjectSpacePickerRegression({
   request,
   uiTimeoutMs,
@@ -128,7 +134,7 @@ export function createProjectSpacePickerRegression({
         'false',
         'The picker must default to storage groups'
       )
-      await control.command('click', groupSelector('backend'))
+      await selectGroup(control, groupSelector('backend'), uiTimeoutMs)
       await assertProjects(
         control,
         [sharedA, sharedB, project10, project2],
@@ -139,31 +145,32 @@ export function createProjectSpacePickerRegression({
       await control.command('fill', SEARCH, { value: marker })
       await control.command('click', grouping)
       await control.command('waitFor', `${grouping}[aria-pressed="true"]`)
-      await control.command('click', groupSelector(`backend:${spaceA.id}`))
+      await selectGroup(control, groupSelector(`backend:${spaceA.id}`), uiTimeoutMs)
       await assertProjects(control, [sharedA, project10, project2], 'Descending within Space A')
       await control.command('select', SORT, { value: 'name-asc' })
       await assertProjects(control, [project2, project10, sharedA], 'Ascending within Space A')
-      await control.command('click', groupSelector(`backend:${spaceB.id}`))
+      await selectGroup(control, groupSelector(`backend:${spaceB.id}`), uiTimeoutMs)
       await assertProjects(control, [sharedB], 'Space B must exclude all Space A projects')
-      await control.command('click', groupSelector(`backend:${spaceA.id}`))
+      await selectGroup(control, groupSelector(`backend:${spaceA.id}`), uiTimeoutMs)
       await control.command('fill', SEARCH, { value: `${marker} Shared` })
       await assertProjects(control, [sharedA], 'Search and Space A must both constrain results')
-      await control.command('click', groupSelector(`backend:${spaceB.id}`))
+      await selectGroup(control, groupSelector(`backend:${spaceB.id}`), uiTimeoutMs)
       await assertProjects(
         control,
         [sharedB],
         'Same-named projects must retain their space identity'
       )
 
-      await control.command('click', groupSelector('all'))
+      await selectGroup(control, groupSelector('all'), uiTimeoutMs)
       await control.command('fill', SEARCH, { value: spaceB.name })
       await assertProjects(control, [sharedB], 'Workspace name search must exclude other spaces')
       await control.command('fill', SEARCH, { value: `${spaceB.name} ${sharedB.project_key}` })
       await assertProjects(control, [sharedB], 'Search must combine owning space and project key')
       await control.command('fill', SEARCH, { value: marker })
-      await control.command(
-        'click',
-        '[data-testid="project-space-picker-group"][data-group-key^="local"]'
+      await selectGroup(
+        control,
+        '[data-testid="project-space-picker-group"][data-group-key^="local"]',
+        uiTimeoutMs
       )
       await control.command('waitFor', '[data-testid="project-space-picker-empty"]')
       await assertProjects(control, [], 'Local space must exclude matching cloud projects')
@@ -175,7 +182,7 @@ export function createProjectSpacePickerRegression({
         'Local space leaked cloud projects'
       )
 
-      await control.command('click', groupSelector('all'))
+      await selectGroup(control, groupSelector('all'), uiTimeoutMs)
       await control.command('fill', SEARCH, { value: `${marker} Shared` })
       await assertProjects(
         control,
