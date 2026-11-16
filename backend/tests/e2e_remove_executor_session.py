@@ -1,4 +1,4 @@
-"""Remove executor session proof for the CI-covered legacy continuation E2E."""
+"""Inspect or remove executor session proof for the CI-covered E2E."""
 
 import json
 import os
@@ -13,6 +13,7 @@ def main() -> None:
         raise RuntimeError("Fixture requires the isolated MySQL wegent_test database")
 
     data = json.loads(os.environ["WEGENT_ISOLATED_DATABASE_REQUEST"])
+    operation = data.get("operation", "remove")
     task_id = int(data["task_id"])
     user_id = int(data["user_id"])
 
@@ -36,6 +37,22 @@ def main() -> None:
                 "Fixture requires at least one completed assistant subtask"
             )
 
+        sessions = [
+            row.result["executor_session"]
+            for row in rows
+            if isinstance(row.result, dict) and row.result.get("executor_session")
+        ]
+        if not sessions:
+            raise RuntimeError("Fixture found no persisted executor_session proof")
+
+        if operation == "inspect":
+            print(json.dumps({"task_id": task_id, "sessions": sessions}))
+            return
+        if operation != "remove":
+            raise RuntimeError(
+                f"Unknown executor session fixture operation: {operation}"
+            )
+
         removed = 0
         for row in rows:
             result: dict[str, Any] = row.result or {}
@@ -46,7 +63,9 @@ def main() -> None:
         if removed == 0:
             raise RuntimeError("Fixture found no persisted executor_session proof")
         db.commit()
-        print(json.dumps({"task_id": task_id, "removed": removed}))
+        print(
+            json.dumps({"task_id": task_id, "removed": removed, "sessions": sessions})
+        )
 
 
 if __name__ == "__main__":

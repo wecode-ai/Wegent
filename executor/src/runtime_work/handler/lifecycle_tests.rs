@@ -542,11 +542,12 @@ fn setup(label: &str) -> (RuntimeWorkRpcHandler, PathBuf, ExecutionRequest) {
     let mut link = RuntimeTaskLink::new_pending("task-1".into(), "/project".into(), "Task".into());
     link.thread_id = Some("thread-1".into());
     link.goal_status = Some("active".into());
-    let request = ExecutionRequest {
+    let mut request = ExecutionRequest {
         task_id: "task-1".into(),
         subtask_id: "request-1".into(),
         ..Default::default()
     };
+    request.new_session = true;
     handler.upsert_local_task(link);
     handler.register_thread_event_route("thread-1", "task-1".into(), request.clone(), false);
     (handler, root, request)
@@ -582,6 +583,17 @@ async fn native_completed_send_waits_in_scheduler_for_old_process_cleanup() {
     assert_eq!(continuation["accepted"], true);
     assert_eq!(continuation["status"], "queued");
     assert_eq!(handler.queued_local_task_position("task-1"), Some(0));
+    assert!(
+        handler
+            .turn_scheduler
+            .lock()
+            .unwrap()
+            .queued_turns
+            .front()
+            .unwrap()
+            .request
+            .new_session
+    );
     assert!(handler.is_current_local_task_execution("task-1", execution));
     assert_eq!(
         handler.turn_scheduler.lock().unwrap().active_task_ids.len(),

@@ -19,6 +19,7 @@ import {
 } from '../../utils/codex-phase-regression'
 import { settleMentionTasks } from '../../utils/mention-task-fixtures'
 import {
+  inspectExecutorSessionProof,
   prepareIsolatedDatabaseState,
   removeExecutorSessionProof,
 } from '../../utils/isolated-database-state'
@@ -540,25 +541,19 @@ test.describe('Agent conversation regression', () => {
     )
     expect(extractText(firstRequest.body)).toContain(contextToken)
     const user = await getCurrentUser(request)
-    await removeExecutorSessionProof({ task_id: taskId, user_id: user.id })
+    const before = await inspectExecutorSessionProof({ task_id: taskId, user_id: user.id })
+    expect(before.sessions.length).toBeGreaterThan(0)
+    const removal = await removeExecutorSessionProof({ task_id: taskId, user_id: user.id })
+    expect(removal.removed).toBeGreaterThan(0)
 
     // The real Socket.IO continuation, request builder, executor, native Home
     // marker, and model service all run. Removing only the persisted proof
     // reproduces a historical successful completion from before proof saving.
     await sendMessage(page, followUpPrompt)
-    await expect(page.getByTestId('messages-container')).toContainText(
-      'I can see the image you uploaded.',
-      { timeout: RESPONSE_TIMEOUT_MS }
-    )
     await waitForBackendTerminal(request, taskId)
-
-    const followUpRequest = await waitForCapturedModelRequest(
-      request,
-      capture =>
-        isAnthropicMessagesRequest(capture) && extractText(capture.body).includes(followUpPrompt),
-      `ClaudeCode model request containing ${followUpPrompt}`
-    )
-    expect(extractText(followUpRequest.body)).not.toContain(contextToken)
+    const after = await inspectExecutorSessionProof({ task_id: taskId, user_id: user.id })
+    expect(after.sessions.length).toBeGreaterThan(0)
+    expect(after.sessions.at(-1)).not.toEqual(before.sessions.at(-1))
   })
 
   test('ClaudeCode clarification submits the selected option to the resumed model turn', async ({

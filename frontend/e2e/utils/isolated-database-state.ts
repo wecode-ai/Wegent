@@ -63,6 +63,23 @@ export async function prepareIsolatedDatabaseState(): Promise<void> {
 export async function removeExecutorSessionProof(input: {
   task_id: number
   user_id: number
-}): Promise<void> {
-  await runIsolatedDatabasePython('tests/e2e_remove_executor_session.py', input, 30_000)
+}): Promise<{ removed: number; sessions: Array<Record<string, unknown>> }> {
+  const output = await runIsolatedDatabasePython(
+    'tests/e2e_remove_executor_session.py',
+    input,
+    30_000
+  )
+  return JSON.parse(output)
+}
+
+export async function inspectExecutorSessionProof(input: {
+  task_id: number
+  user_id: number
+}): Promise<{ sessions: Array<Record<string, unknown>> }> {
+  const output = await runIsolatedDatabasePython(
+    'tests/e2e_remove_executor_session.py',
+    { ...input, operation: 'inspect' },
+    30_000
+  )
+  return JSON.parse(output)
 }

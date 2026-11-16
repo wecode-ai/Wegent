@@ -1281,7 +1281,10 @@ impl RuntimeWorkRpcHandler {
             self.refresh_identity_conversation_origin(&mut request, link)?;
             self.refresh_stand_in_confirmation(&local_task_id, &mut request)?;
         }
-        request.new_session = start_new_session;
+        // A backend continuation may safely start a native session when it has
+        // no authenticated proof of the remembered one; preserve that decision.
+        // Local session-boundary commands only strengthen continuation to true.
+        request.new_session |= start_new_session;
         if request.runtime_project_key.is_none() {
             request.runtime_project_key = existing_link
                 .as_ref()
