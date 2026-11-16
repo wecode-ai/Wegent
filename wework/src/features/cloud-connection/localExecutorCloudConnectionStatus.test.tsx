@@ -96,3 +96,49 @@ test('keeps the latest query when an earlier query fails later', async () => {
 
   expect(hook.result.current).toMatchObject({ apiBaseUrl: '/current-api', connected: true })
 })
+
+test('checks health on every poll without rendering unchanged connection state', async () => {
+  request.mockResolvedValue({ configured: true, connected: true })
+  const rendered = vi.fn()
+  const hook = renderHook(() => {
+    rendered()
+    return useLocalExecutorCloudConnectionStatus()
+  })
+  await act(async () => {
+    await refreshLocalExecutorCloudConnectionStatus('/api')
+  })
+  const connected = hook.result.current
+  const renders = rendered.mock.calls.length
+
+  await act(async () => {
+    await refreshLocalExecutorCloudConnectionStatus('/api')
+  })
+
+  expect(request).toHaveBeenCalledTimes(2)
+  expect(hook.result.current).toBe(connected)
+  expect(rendered).toHaveBeenCalledTimes(renders)
+
+  request.mockResolvedValue({ configured: true, connected: false })
+  await act(async () => {
+    await refreshLocalExecutorCloudConnectionStatus('/api')
+  })
+  expect(hook.result.current.connected).toBe(false)
+  expect(rendered).toHaveBeenCalledTimes(renders + 1)
+})
+
+test('an unchanged explicit state still invalidates older pending health reads', async () => {
+  setLocalExecutorCloudConnectionStatus({ apiBaseUrl: '/api', connected: true })
+  let finish!: (value: { configured: boolean; connected: boolean }) => void
+  request.mockReturnValue(new Promise(resolve => (finish = resolve)))
+  const pending = refreshLocalExecutorCloudConnectionStatus('/api')
+  const hook = renderHook(useLocalExecutorCloudConnectionStatus)
+  const current = hook.result.current
+
+  await act(async () => {
+    setLocalExecutorCloudConnectionStatus({ apiBaseUrl: '/api', connected: true })
+    finish({ configured: true, connected: false })
+    expect(await pending).toBeNull()
+  })
+
+  expect(hook.result.current).toBe(current)
+})

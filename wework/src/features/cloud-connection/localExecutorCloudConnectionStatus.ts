@@ -31,6 +31,7 @@ export function setLocalExecutorCloudConnectionStatus(
   next: Omit<LocalExecutorCloudConnectionStatus, 'revision'>
 ): void {
   refreshRevision += 1
+  if (status.apiBaseUrl === next.apiBaseUrl && status.connected === next.connected) return
   status = { ...next, revision: status.revision + 1 }
   for (const listener of listeners) listener()
 }
