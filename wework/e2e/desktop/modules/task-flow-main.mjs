@@ -1407,7 +1407,7 @@ async function main() {
         'openai-responses',
         desktopScenario?.modelProviderConfigToml,
         desktopScenario?.modelProviderAuthToml,
-        usesModelRoutingSubscription ? 'openai' : desktopScenario?.modelProviderId,
+        desktopScenario?.modelProviderId,
         desktopScenario?.modelId
       )
       if (usesModelRoutingSubscription) {
