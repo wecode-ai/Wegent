@@ -178,11 +178,17 @@ Open **titlebar bell → Notification center**, not the obsolete account-area aw
 | Mark all read | Mark the aggregated notification set read; does not complete tasks or submit outstanding answers                                                                                        |
 | Refresh/more  | Refresh and load further records when available; inspect errors and retry without repeating business actions                                                                            |
 | Channels      | Center → Settings → configure in-app, system and IM per source. Task/stand-in IM requires the runtime API, not all their channels. Collaboration/general preferences require cloud APIs |
-| IM target     | Select the receiving conversation in settings and connect its account when prompted; selecting a channel is not app authorization                                                       |
+| IM connections     | Stand-ins and tasks share existing account IM conversations by default without a target picker; platform authorization is still required                                                       |
 
 System notification permission also applies. The center differs from **Needs your input**, which retains business questions and their handling state.
 
 Wegent chat mode remains available. In stand-in mode, connect IM private conversations to a primary stand-in or scenario role under [stand-in details popover → IM channel](./personal-stand-in.md#im-conversations). Task notification subscriptions remain independent; replies quoting a notification in stand-in mode enter the currently connected stand-in.
+
+Both synchronous and asynchronous Codex business questions can be answered in IM. Desktop tasks share existing account IM conversations by default without choosing a recipient. Desktop-task delivery respects an explicit opt-out from IM notifications. When enabled, questions are sent even while the desktop is active. Tasks started from a bound private IM conversation send questions back to that conversation. Question messages identify the task and whether it is waiting for your answer or continuing other work. Quoting a question with text or an option number answers the original task directly. Ordinary messages enter the stand-in conversation, where it considers pending questions and recent chat: clear answers are submitted, unrelated requests are handled normally, and ambiguity is clarified first. A single pending question never automatically consumes an ordinary message. Requests containing several questions ask them one at a time and submit the collected answers to the original task. Quoted question replies take priority over ordinary chat and stand-in routing. Ordinary messages are not consumed by the question reply handler. Task subscriptions control foreground notifications rather than selecting recipients.
+
+Turning off **Task updates → IM** stops proactive desktop-task notifications. Conversations started in a private IM chat still ask and receive answers in that originating chat, independently of the desktop notification switch.
+
+Synchronous answers release the original waiting request. Asynchronous answers steer the original running task or continue its idle conversation, preserving its model and execution configuration. Questions already answered on the desktop, cancelled, or expired cannot be submitted again. Business answers in IM do not replace execution approvals, MCP confirmations, or account authorization.
 
 ## Split tasks by dragging
 

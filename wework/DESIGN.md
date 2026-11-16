@@ -2380,8 +2380,12 @@ flowchart LR
   actually deliver: in-app, system, and IM independently. Disabling in-app
   delivery prevents new unread items and acknowledges existing unread items in
   that category without deleting notification history. The sidebar IM control
-  may open this settings view or select an IM target, but must not maintain a
+  may open this settings view; tasks share the account’s existing private IM
+  connections without a recipient picker. The sidebar must not maintain a
   second notification toggle.
+  This switch governs proactive desktop-task notifications. A conversation
+  started in private IM still asks questions and receives answers in its
+  originating chat, independently of that notification preference.
 - Preserve the current local task list and read actions while disconnected.
   Show cloud unavailability in the popover rather than disabling the whole bell.
   Never discard already loaded cloud items because a refresh fails.

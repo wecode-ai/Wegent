@@ -290,6 +290,9 @@ pub(super) fn tools(context: &SpaceMcpRequestContext) -> Vec<Value> {
         tools.extend(super::stand_in_tasks::tools());
         tools.extend(super::stand_in_tasks::schedule_tools());
     }
+    if super::stand_in_questions::available(context) {
+        tools.push(super::stand_in_questions::tool());
+    }
     for read in super::stand_in_tasks::read_tools() {
         if !tools.iter().any(|tool| tool["name"] == read["name"]) {
             tools.push(read);
@@ -333,6 +336,12 @@ pub(super) async fn call(
             format!("Unknown {STAND_IN_MCP_SERVER_NAME} tool: {name}"),
             true,
         );
+    }
+    if name == "answer_im_question" {
+        return match super::stand_in_questions::call(context, &arguments).await {
+            Ok(value) => text_result(value.to_string(), false),
+            Err(error) => text_result(error, true),
+        };
     }
     if name == "list_projects" {
         return call_tool_with_runtime_context(runtime, "list_spaces", json!({}), context).await;
