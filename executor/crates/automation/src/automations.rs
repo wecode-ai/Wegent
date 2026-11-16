@@ -383,10 +383,9 @@ impl AutomationStore {
                 updated.enabled = false;
                 updated.next_run_at = None;
             } else {
-                match next {
-                    Ok(next) => updated.next_run_at = next,
-                    // Retain the due timestamp so a refreshed calendar can resume this item.
-                    Err(_) => {}
+                // Retain the due timestamp on error so an updated calendar can resume this item.
+                if let Ok(next) = next {
+                    updated.next_run_at = next;
                 }
             }
             state.automations.insert(automation_id, updated.clone());
