@@ -49,6 +49,9 @@ export function IndependentIssueDialog({
   const [comments, setComments] = useState<IndependentIssueComment[]>([])
   const [loading, setLoading] = useState(Boolean(issueId))
   const [error, setError] = useState('')
+  const [conflicted, setConflicted] = useState(false)
+  const [reloadIssueId, setReloadIssueId] = useState<string | null>(null)
+  const loadId = issueId ?? reloadIssueId
   const [commentError, setCommentError] = useState('')
   const [editing, setEditing] = useState(!issueId)
   const [busy, setBusy] = useState(false)
@@ -57,10 +60,22 @@ export function IndependentIssueDialog({
   const [body, setBody] = useState('')
   const [retry, setRetry] = useState(0)
   const [dirty, setDirty] = useState(false)
-  const [discarding, setDiscarding] = useState<'close' | 'edit' | null>(null)
+  const [discarding, setDiscarding] = useState<'close' | 'edit' | 'reload' | null>(null)
   const [associationPending, setAssociationPending] = useState(false)
   const refreshSavedIssue = () => {
     if (associationPending && issue) onSaved(issue)
+  }
+  const reloadLatest = () => {
+    if (!issue) return
+    refreshSavedIssue()
+    setReloadIssueId(issue.id)
+    setEditing(false)
+    setLoading(true)
+    setDirty(false)
+    setError('')
+    setConflicted(false)
+    setAssociationPending(false)
+    setRetry(value => value + 1)
   }
   const requestClose = () => {
     if (busy) return
@@ -77,15 +92,16 @@ export function IndependentIssueDialog({
   )
   useEscapeKey(requestClose, presentation === 'drawer' && !deleting && !discarding, ref)
   useEffect(() => {
-    if (!issueId) return
+    if (!loadId) return
     let active = true
     void api
-      .get(issueId)
+      .get(loadId)
       .then(
         row => {
           if (active) {
             setIssue(row)
             setError('')
+            setConflicted(false)
           }
         },
         reason => {
@@ -102,7 +118,7 @@ export function IndependentIssueDialog({
       .finally(() => {
         if (active) setLoading(false)
       })
-    void api.comments(issueId).then(
+    void api.comments(loadId).then(
       rows => {
         if (active) {
           setComments(rows)
@@ -116,15 +132,17 @@ export function IndependentIssueDialog({
     return () => {
       active = false
     }
-  }, [api, issueId, retry])
+  }, [api, loadId, retry])
   const run = async (operation: () => Promise<void>) => {
     if (busy) return
     setBusy(true)
     setError('')
+    setConflicted(false)
     try {
       await operation()
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : String(reason))
+      setConflicted(reason instanceof ApiError && reason.status === 409)
     } finally {
       setBusy(false)
     }
@@ -248,7 +266,7 @@ export function IndependentIssueDialog({
                     {t('issue_creation.association_pending')}
                   </p>
                 )}
-                <span>{error}</span>
+                <span>{conflicted ? t('issue_creation.conflict_hint') : error}</span>
                 {!editing ? (
                   <button
                     type="button"
@@ -258,10 +276,19 @@ export function IndependentIssueDialog({
                   >
                     {t('independentIssues.retry')}
                   </button>
+                ) : conflicted && issue ? (
+                  <button
+                    type="button"
+                    data-testid="independent-issue-reload"
+                    onClick={() => (dirty ? setDiscarding('reload') : reloadLatest())}
+                    className={action}
+                  >
+                    {t('issue_creation.reload_latest')}
+                  </button>
                 ) : null}
               </div>
             ) : null}
-            {loading && !issue ? (
+            {loading ? (
               <p role="status">{t('independentIssues.loading')}</p>
             ) : editing ? (
               <IndependentIssueEditor
@@ -463,14 +490,20 @@ export function IndependentIssueDialog({
       </div>
       <ConfirmDialog
         open={Boolean(discarding)}
-        title={t('issue_creation.discard_title')}
+        title={t(
+          discarding === 'reload' ? 'issue_creation.reload_latest' : 'issue_creation.discard_title'
+        )}
         description={t(
-          associationPending
-            ? 'issue_creation.saved_issue_discard_hint'
-            : 'issue_creation.discard_hint'
+          discarding === 'reload'
+            ? 'issue_creation.reload_hint'
+            : associationPending
+              ? 'issue_creation.saved_issue_discard_hint'
+              : 'issue_creation.discard_hint'
         )}
         cancelLabel={t('issue_creation.keep_editing')}
-        confirmLabel={t('issue_creation.discard')}
+        confirmLabel={t(
+          discarding === 'reload' ? 'issue_creation.reload_confirm' : 'issue_creation.discard'
+        )}
         confirmTestId="independent-issue-discard-confirm"
         dialogTestId="independent-issue-discard-dialog"
         destructive
@@ -478,6 +511,10 @@ export function IndependentIssueDialog({
         onConfirm={() => {
           const action = discarding
           setDiscarding(null)
+          if (action === 'reload') {
+            reloadLatest()
+            return
+          }
           refreshSavedIssue()
           if (action === 'edit') setEditing(false)
           else {

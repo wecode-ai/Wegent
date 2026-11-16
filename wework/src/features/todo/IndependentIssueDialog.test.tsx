@@ -2,10 +2,74 @@ import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/re
 import { afterEach, expect, it, vi } from 'vitest'
 import userEvent from '@testing-library/user-event'
 import type { PersonalIssuesApi } from '@/api/personalIssues'
+import { ApiError } from '@/api/http'
 import { IndependentIssueDialog } from './IndependentIssueDialog'
 vi.mock('@/hooks/useTranslation', () => ({ useTranslation: () => ({ t: (key: string) => key }) }))
 vi.mock('./IndependentIssueTaskButton', () => ({ IndependentIssueTaskButton: () => null }))
 afterEach(cleanup)
+
+it('keeps a conflicted draft until confirmed reload and saves with the latest version afterward', async () => {
+  const initial = {
+    id: 'conflict',
+    title: 'Original',
+    description: 'Original description',
+    status: 'pending',
+    priority: 'medium',
+    creator_id: 7,
+    assignee_id: 7,
+    version: 1,
+    people: {},
+    metadata: { standalone: true, participants: [], archived: false, due_at: null },
+  }
+  const latest = { ...initial, title: 'Server work', description: 'Server description', version: 2 }
+  const update = vi
+    .fn()
+    .mockRejectedValueOnce(new ApiError('Changed', 409))
+    .mockResolvedValue({ ...latest, title: 'Revised', version: 3 })
+  const get = vi.fn().mockResolvedValueOnce(initial).mockResolvedValue(latest)
+  const api = {
+    get,
+    update,
+    comments: vi.fn().mockResolvedValue([]),
+  } as unknown as PersonalIssuesApi
+  render(
+    <IndependentIssueDialog
+      api={api}
+      userId={7}
+      issueId="conflict"
+      onClose={vi.fn()}
+      onSaved={vi.fn()}
+    />
+  )
+  fireEvent.click(await screen.findByTestId('independent-issue-edit'))
+  fireEvent.change(screen.getByTestId('independent-issue-title'), {
+    target: { value: 'Local draft' },
+  })
+  fireEvent.click(screen.getByTestId('independent-issue-save'))
+  fireEvent.click(await screen.findByTestId('independent-issue-reload'))
+  expect(screen.getByText('issue_creation.reload_hint')).toBeVisible()
+  fireEvent.click(screen.getByTestId('independent-issue-discard-confirm-cancel-button'))
+  expect(screen.getByTestId('independent-issue-title')).toHaveValue('Local draft')
+  expect(get).toHaveBeenCalledOnce()
+  fireEvent.click(screen.getByTestId('independent-issue-reload'))
+  fireEvent.click(screen.getByTestId('independent-issue-discard-confirm'))
+  fireEvent.click(await screen.findByTestId('independent-issue-edit'))
+  expect(get).toHaveBeenCalledTimes(2)
+  expect(update).toHaveBeenCalledOnce()
+  expect(screen.getByTestId('independent-issue-title')).toHaveValue('Server work')
+  expect(screen.getByTestId('independent-issue-description')).toHaveValue('Server description')
+  fireEvent.change(screen.getByTestId('independent-issue-title'), { target: { value: 'Revised' } })
+  fireEvent.click(screen.getByTestId('independent-issue-save'))
+  await screen.findByTestId('independent-issue-edit')
+  expect(update).toHaveBeenLastCalledWith(
+    'conflict',
+    expect.objectContaining({
+      title: 'Revised',
+      description: 'Server description',
+      version: 2,
+    })
+  )
+})
 
 it.each(['dialog', 'drawer'] as const)(
   'keeps a %s draft when dismissing the participant picker and canceling discard',

@@ -1,6 +1,7 @@
 import { verifyLocalProjectMigration } from '../modules/local-project-migration.mjs'
 import {
   verifyIndependentIssueDraft,
+  verifyIssueConflictRecovery,
   verifyIssueDeviceLayout,
   verifyIssueAssociationRecovery,
 } from '../modules/independent-issue-draft.mjs'
@@ -158,6 +159,11 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
       })
       await click(control, 'workspace-tab-select-fixed-board')
       const before = await request('/api/v1/cloud-projects')
+      await verifyIssueConflictRecovery(control, {
+        request,
+        reopen: () => navigate(control, 'collaboration-primary-create-issue'),
+        captureScreenshot,
+      })
       await navigate(control, 'collaboration-primary-create-issue')
       await wait(control, '[data-testid="independent-issue-dialog"]')
       await click(control, 'independent-issue-close')

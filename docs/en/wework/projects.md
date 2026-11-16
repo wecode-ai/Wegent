@@ -592,6 +592,8 @@ Existing catalogs are grouped under **Collaboration → Collaboration management
 
 Independent Issue details show invited Agents and Teams. Before **Ask AI to help**, choose a processing Agent; the action rereads Issue access and starts a task with that Agent without requiring a project. Project Issues retain project access control. If project association fails, the form explicitly states that the Issue is saved and the association is incomplete. Correct the selection and retry without duplicate creation, or close to retain the saved Issue. Any later unsaved edits still require a discard decision.
 
+If an edit encounters a version conflict, the local draft is retained. **Reload latest content** still lets you choose **Keep editing**; only **Discard changes and reload** discards local changes and reads the latest Issue. You can then edit the refreshed content.
+
 ## Create child Issues from comments
 
 In the Issue comment composer toolbar, use the **Assignment mode** branch icon and select **Create child Issue**, write a comment, choose an assignee, and select **Send and create child Issue**. The original comment is saved before the child is created. The selected assignee owns the child; the parent assignment remains unchanged. A failed creation or assignment keeps an actionable error, and retry reuses a child already created. Creation uses a stable operation identifier, so concurrent requests or a lost response do not create duplicate children.

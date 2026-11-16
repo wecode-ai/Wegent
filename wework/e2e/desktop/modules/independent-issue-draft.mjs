@@ -2,6 +2,71 @@ import assert from 'node:assert/strict'
 
 const testId = id => `[data-testid="${id}"]`
 
+/** Resolve a real optimistic-lock conflict without overwriting a concurrent edit. */
+export async function verifyIssueConflictRecovery(control, { request, reopen, captureScreenshot }) {
+  const title = `Version conflict recovery ${process.pid}`
+  await reopen()
+  await control.command('fill', testId('independent-issue-title'), { value: title })
+  await control.command('clickWhenEnabled', testId('independent-issue-save'))
+  await control.command('waitFor', testId('independent-issue-edit'), { visible: true })
+  const row = (await request('/api/v1/personal-issues?scope=created')).items.find(
+    item => item.title === title
+  )
+  assert.ok(row)
+  await control.command('clickWhenEnabled', testId('independent-issue-edit'))
+  await control.command('fill', testId('independent-issue-description'), {
+    value: 'Local unsaved draft',
+  })
+  const concurrent = await request(`/api/v1/personal-issues/${row.id}`, 'PATCH', {
+    title,
+    description: 'Concurrent server edit',
+    assignee_id: row.assignee_id,
+    version: row.version,
+  })
+  await control.command('clickWhenEnabled', testId('independent-issue-save'))
+  await control.command('waitFor', testId('independent-issue-reload'), { visible: true })
+  assert.equal(
+    (await request(`/api/v1/personal-issues/${row.id}`)).description,
+    'Concurrent server edit'
+  )
+  await captureScreenshot(control, 'new-issue-version-conflict.png')
+  await control.command('clickWhenEnabled', testId('independent-issue-reload'))
+  await control.command('waitFor', testId('independent-issue-discard-dialog'), { visible: true })
+  await captureScreenshot(control, 'new-issue-version-conflict-reload-confirm.png')
+  await control.command(
+    'clickWhenEnabled',
+    testId('independent-issue-discard-confirm-cancel-button')
+  )
+  assert.equal(
+    await control.command('getValue', testId('independent-issue-description')),
+    'Local unsaved draft'
+  )
+  await control.command('clickWhenEnabled', testId('independent-issue-reload'))
+  await control.command('clickWhenEnabled', testId('independent-issue-discard-confirm'))
+  await control.command('waitFor', testId('independent-issue-edit'), { visible: true })
+  await control.command('clickWhenEnabled', testId('independent-issue-edit'))
+  assert.equal(
+    await control.command('getValue', testId('independent-issue-description')),
+    'Concurrent server edit'
+  )
+  await control.command('fill', testId('independent-issue-description'), {
+    value: 'Explicitly revised after reload',
+  })
+  await control.command('clickWhenEnabled', testId('independent-issue-save'))
+  await control.command('waitFor', testId('independent-issue-edit'), { visible: true })
+  const resolved = await request(`/api/v1/personal-issues/${row.id}`)
+  assert.equal(resolved.description, 'Explicitly revised after reload')
+  assert.ok(resolved.version > concurrent.version)
+  assert.deepEqual(
+    (await request('/api/v1/personal-issues?scope=created')).items
+      .filter(item => item.title === title)
+      .map(item => item.id),
+    [row.id]
+  )
+  await control.command('clickWhenEnabled', testId('independent-issue-close'))
+  await control.command('waitFor', testId('independent-issue-dialog'), { visible: false })
+}
+
 /** The asynchronously loaded device selector uses the larger side of a narrow window. */
 export async function verifyIssueDeviceLayout(control, deviceId) {
   const trigger = testId('issue-environment-picker-trigger')
