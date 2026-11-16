@@ -26,22 +26,34 @@ test('cloud login proxy forwards Backend replies and approves the actual observe
     backendUrl: `http://127.0.0.1:${upstream.address().port}`,
     authToken: 'unit-owner-token',
   })
-  const forward = path =>
+  const forward = (path, origin = fixture.backendUrl) =>
     new Promise((resolve, reject) => {
-      const request = httpRequest(
-        fixture.proxyUrl,
-        { path: fixture.backendUrl + path },
-        response => {
-          const chunks = []
-          response.on('data', chunk => chunks.push(chunk))
-          response.once('end', () => resolve(JSON.parse(Buffer.concat(chunks).toString())))
-        }
-      )
+      const request = httpRequest(fixture.proxyUrl, { path: origin + path }, response => {
+        const chunks = []
+        response.on('data', chunk => chunks.push(chunk))
+        response.once('end', () => {
+          try {
+            resolve(JSON.parse(Buffer.concat(chunks).toString()))
+          } catch (error) {
+            reject(error)
+          }
+        })
+      })
       request.once('error', reject)
       request.end()
     })
   try {
     const path = '/api/auth/wework/sessions/test-session/poll?poll_token=private-poll-token'
+    await assert.rejects(
+      forward(path, `http://unrelated.invalid:${upstream.address().port}`),
+      SyntaxError
+    )
+    await assert.rejects(
+      forward(path, `http://${fixture.backendHost}:${upstream.address().port + 1}`),
+      SyntaxError
+    )
+    assert.deepEqual(fixture.backendRequests, [])
+    assert.equal(approvals, 0)
     assert.deepEqual(await forward(path), { source: 'upstream', path })
     assert.equal(approvals, 0)
     await forward(path)

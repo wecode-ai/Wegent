@@ -20,7 +20,7 @@ function close(server) {
   return new Promise(resolve => server.close(() => resolve()))
 }
 
-async function startRoutingProxy({ backendHost, requests, observe }) {
+async function startRoutingProxy({ backendHost, backendPort, requests, observe }) {
   const server = createServer((req, res) => {
     let target
     try {
@@ -31,12 +31,12 @@ async function startRoutingProxy({ backendHost, requests, observe }) {
       return
     }
     requests.push(`${req.method ?? 'GET'} ${target.origin}${target.pathname}`)
-    observe(req.method ?? 'GET', target.pathname)
-    if (target.hostname !== backendHost) {
+    if (target.hostname !== backendHost || target.port !== backendPort) {
       res.writeHead(502, { 'content-type': 'text/plain' })
       res.end(`The cloud login proxy has no upstream for ${target.host}`)
       return
     }
+    observe(req.method ?? 'GET', target.pathname)
     const upstream = request({
       headers: { ...req.headers, host: target.host },
       hostname: '127.0.0.1',
@@ -64,7 +64,7 @@ async function startRoutingProxy({ backendHost, requests, observe }) {
     // no longer needs, so every socket needs an error listener before it can be written to.
     socket.on('error', () => socket.destroy())
     const [host, port] = String(req.url ?? '').split(':')
-    if (host !== backendHost) {
+    if (host !== backendHost || port !== backendPort) {
       socket.end('HTTP/1.1 502 Bad Gateway\r\n\r\n')
       return
     }
@@ -99,6 +99,7 @@ export async function startCloudLoginProxyFixture({
   let failure
   const proxy = await startRoutingProxy({
     backendHost,
+    backendPort: target.port,
     requests: proxyRequests,
     observe(method, path) {
       backendRequests.push(method + ' ' + path)
