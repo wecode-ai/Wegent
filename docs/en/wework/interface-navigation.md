@@ -88,6 +88,8 @@ Edit Agent definitions from **Project settings → AI team**. Project Maintainer
 
 ## Sidebar feature entries
 
+For an initial task load or load failure, check the status below **Tasks** in the desktop sidebar; use **Retry** after a failure. In priority view, the status appears above the list. See [Sidebar task management](./tasks.md#sidebar-task-management).
+
 ### Jump to individual feature controls
 
 | Search terms                                                                                                    | Detailed steps                                                                          |
