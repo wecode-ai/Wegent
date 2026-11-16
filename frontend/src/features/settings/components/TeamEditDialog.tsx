@@ -1757,6 +1757,7 @@ export default function TeamEditDialog(props: TeamEditDialogProps) {
         scope={scope}
         groupName={groupName}
         targetGroupNames={publishTarget === 'team' ? publishGroupNames : []}
+        crossNamespaceClone={cloningBot?.namespace !== (scope === 'group' ? groupName : undefined)}
         targetGroupsLoading={agentBindingsLoading}
         targetGroupsError={agentBindingsError}
         onRetryTargetGroups={() => void retryAgentBindings()}

@@ -228,6 +228,7 @@ async function renderBotEdit(
     scope?: 'personal' | 'group' | 'all' | 'public'
     groupName?: string
     targetGroupNames?: string[]
+    crossNamespaceClone?: boolean
     targetGroupsLoading?: boolean
     targetGroupsError?: boolean
     onRetryTargetGroups?: () => void
@@ -272,6 +273,7 @@ async function renderBotEdit(
         scope={props.scope || 'personal'}
         groupName={props.groupName}
         targetGroupNames={props.targetGroupNames}
+        crossNamespaceClone={props.crossNamespaceClone}
         targetGroupsLoading={props.targetGroupsLoading}
         targetGroupsError={props.targetGroupsError}
         onRetryTargetGroups={props.onRetryTargetGroups}
@@ -975,6 +977,36 @@ describe('BotEdit default knowledge bases', () => {
 
     expect(await screen.findByText('shared-skill')).toBeInTheDocument()
     expect(screen.getByText('personal-skill')).toBeInTheDocument()
+  })
+
+  test('does not expose source team skills when cloning across namespaces', async () => {
+    mockedFetchUnifiedSkillsList.mockImplementation(async (params: { binding?: unknown }) => {
+      const binding = params?.binding as { targetGroupNames?: string[] } | undefined
+      if (binding?.targetGroupNames?.length) {
+        return [
+          { id: 30, name: 'personal-skill', namespace: 'default', is_public: false },
+          { id: 31, name: 'team-skill', namespace: 'default', is_public: false },
+        ]
+      }
+      return [{ id: 30, name: 'personal-skill', namespace: 'default', is_public: false }]
+    })
+
+    await renderBotEdit(
+      {},
+      {
+        scope: 'personal',
+        targetGroupNames: ['engineering'],
+        crossNamespaceClone: true,
+      }
+    )
+
+    expect(await screen.findByText('personal-skill')).toBeInTheDocument()
+    expect(screen.queryByText('team-skill')).not.toBeInTheDocument()
+    expect(mockedFetchUnifiedSkillsList).not.toHaveBeenCalledWith(
+      expect.objectContaining({
+        binding: expect.objectContaining({ targetGroupNames: ['engineering'] }),
+      })
+    )
   })
 
   test('blocks member bot saving while team groups are loading', async () => {

@@ -129,6 +129,8 @@ interface BotEditProps {
   groupName?: string
   /** Team groups that authorize shared Skills when saving a member Bot */
   targetGroupNames?: string[]
+  /** Whether a cloned Bot is saved into a different namespace from its source Team */
+  crossNamespaceClone?: boolean
   /** Whether the owning Team's target groups are still being resolved */
   targetGroupsLoading?: boolean
   /** Whether the owning Team's target groups failed to load */
@@ -160,6 +162,7 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
     scope,
     groupName,
     targetGroupNames = EMPTY_TARGET_GROUP_NAMES,
+    crossNamespaceClone = false,
     targetGroupsLoading = false,
     targetGroupsError = false,
     onRetryTargetGroups,
@@ -458,7 +461,8 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
     {
       botId: editingBotId > 0 ? editingBotId : undefined,
       namespace: editingBot?.namespace || (scope === 'group' ? groupName : undefined) || 'default',
-      targetGroupNames: targetGroupNames.length > 0 ? targetGroupNames : undefined,
+      targetGroupNames:
+        targetGroupNames.length > 0 && !crossNamespaceClone ? targetGroupNames : undefined,
     },
     supportsSkills,
     scope === 'public'
@@ -957,7 +961,7 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
           preload_skills: botData.preload_skills,
           preload_skill_refs: botData.preload_skill_refs,
           namespace: scope === 'group' && groupName ? groupName : undefined,
-          target_group_names: targetGroupNames,
+          target_group_names: crossNamespaceClone ? [] : targetGroupNames,
         }
 
         if (editingBotId && editingBotId > 0) {
@@ -979,7 +983,18 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
     } finally {
       setBotSaving(false)
     }
-  }, [validateBot, getBotData, editingBotId, setBots, toast, t, scope, groupName, targetGroupNames])
+  }, [
+    validateBot,
+    getBotData,
+    editingBotId,
+    setBots,
+    toast,
+    t,
+    scope,
+    groupName,
+    targetGroupNames,
+    crossNamespaceClone,
+  ])
 
   // Expose methods via ref
   // Use a stable object reference to avoid infinite loops with React 19 and Radix UI
@@ -1140,7 +1155,7 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
             groupName
           ),
           namespace: scope === 'group' && groupName ? groupName : undefined,
-          target_group_names: targetGroupNames,
+          target_group_names: crossNamespaceClone ? [] : targetGroupNames,
         }
 
         if (editingBotId && editingBotId > 0) {
