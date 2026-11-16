@@ -335,14 +335,14 @@ pub(crate) async fn write_sync_state<Q: PluginQuery>(
 
 /// Emit one state document write at a flush boundary.
 ///
-/// The caller owns the dirty tracking: an unchanged document still runs the
-/// source's `before_flush` lease check but emits no UPDATE.
+/// Request a CAS when metadata changes or dependent device writes need a
+/// commit fence. An unchanged document with no dependent writes needs no UPDATE.
 pub(crate) async fn write_sync_state_document<Q: PluginQuery>(
     query: &mut Q,
     state_id: Option<i64>,
     user_id: i64,
     document: &str,
-    changed: bool,
+    requires_cas: bool,
 ) -> MysqlResult<()> {
     let mut payload: Value =
         serde_json::from_str(document).map_err(|_| coordination_error("plugin_write_conflict"))?;
@@ -351,7 +351,7 @@ pub(crate) async fn write_sync_state_document<Q: PluginQuery>(
     let serialized = python_json_value(&payload);
     match state_id {
         Some(id) => {
-            if !changed {
+            if !requires_cas {
                 return Ok(());
             }
             let updated = query

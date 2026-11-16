@@ -605,12 +605,15 @@ impl PendingFlush {
             guard.check().await?;
         }
         if let Some(state) = self.state.take() {
+            // Even an unchanged watermark must fence device writes against
+            // a newer dispatch committed after the ACK read its state.
+            let requires_cas = state.changed || !self.writes.is_empty();
             super::plugin_sync_protocol::write_sync_state_document(
                 session,
                 state.id,
                 state.user_id,
                 &state.document,
-                state.changed,
+                requires_cas,
             )
             .await?;
         }

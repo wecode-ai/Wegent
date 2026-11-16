@@ -1,6 +1,9 @@
 //! Real completion, stale receipt and ownership checks in the existing HTTP fixture.
 use super::*;
 
+#[path = "record_sync_result_mysql_tests.rs"]
+mod ack_fence_tests;
+
 pub(super) async fn verify(
     mysql: &brz_mysql::MysqlService,
     address: std::net::SocketAddr,
@@ -146,6 +149,7 @@ pub(super) async fn verify(
         None,
         "Old install restored an uninstalled plugin"
     );
+    ack_fence_tests::verify(&context, state).await?;
     Ok(())
 }
 

@@ -275,7 +275,7 @@ impl<'a, R: Redis> PluginWriteLease<'a, R> {
                 .command(get)
                 .await
                 .map_err(|_| coordination_error("plugin_write_unavailable"))?;
-            if !current.is_some_and(|value| value.as_ref() == token.as_bytes()) {
+            if current.is_none_or(|value| value.as_ref() != token.as_bytes()) {
                 return Err(coordination_error("plugin_write_lease_lost"));
             }
         }

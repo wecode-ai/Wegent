@@ -230,6 +230,63 @@ async fn an_empty_record_flush_checks_and_emits_nothing() {
     assert!(capture.writes().is_empty());
 }
 
+#[tokio::test]
+async fn an_unchanged_ack_without_device_writes_does_not_update_sync_state() {
+    let capture = crate::sql_test_support::KindQueryCapture::writing();
+    let mut session = &capture;
+    let guard = FailingGuard::new(usize::MAX);
+    let mut flush = PendingFlush::default();
+    flush.assign_state(Some(1), 7, &json!({"spec":{"revision":4}}), false);
+    flush
+        .flush_with_guard(&mut session, Some(&guard))
+        .await
+        .unwrap();
+    assert_eq!(guard.calls(), 1);
+    assert!(capture.writes().is_empty());
+}
+
+#[tokio::test]
+async fn a_sync_cas_conflict_prevents_every_kind_of_ack_device_write() {
+    let writes = [
+        PendingWrite::Update {
+            id: 10,
+            assigns: vec!["state='failed'".into()],
+        },
+        PendingWrite::Insert(DesiredInsert {
+            actual_release_id: 0,
+            installed_kind_id: 1,
+            user_id: 7,
+            device_id: "d".into(),
+            release_id: 2,
+            state: "failed".into(),
+            error_code: String::new(),
+            error_message: String::new(),
+            attempt_count: 1,
+            now: Local::now().naive_local(),
+        }),
+        PendingWrite::Delete(10),
+    ];
+    for write in writes {
+        // This capture returns zero affected rows, simulating a newer sync revision.
+        let capture = crate::sql_test_support::KindQueryCapture::writing();
+        let mut session = &capture;
+        let mut flush = PendingFlush::default();
+        flush.assign_state(Some(1), 7, &json!({"spec":{"revision":4}}), false);
+        flush.writes.push(write);
+        let error = flush
+            .flush_with_guard(&mut session, None)
+            .await
+            .unwrap_err();
+        assert_eq!(
+            crate::plugins_installed::write_coordination::plugin_write_error_code(&error),
+            Some("plugin_write_conflict"),
+        );
+        let emitted = capture.writes();
+        assert_eq!(emitted.len(), 1);
+        assert!(emitted[0].sql.starts_with("UPDATE kinds SET json="));
+    }
+}
+
 #[test]
 fn failure_state_uses_the_item_error_code() {
     let result = SyncResult::from_ack(
