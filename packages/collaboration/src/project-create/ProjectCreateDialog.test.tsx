@@ -64,6 +64,7 @@ async function key(target: HTMLElement, value: string, shiftKey = false) {
 }
 
 beforeEach(async () => {
+  vi.useFakeTimers()
   vi.stubGlobal(
     'ResizeObserver',
     class {
@@ -82,6 +83,8 @@ beforeEach(async () => {
 })
 afterEach(async () => {
   await act(async () => root.unmount())
+  if (vi.isFakeTimers()) await act(async () => vi.runOnlyPendingTimersAsync())
+  vi.useRealTimers()
   container.remove()
   vi.unstubAllGlobals()
 })
@@ -104,7 +107,13 @@ it('closes the group-model dialog with Escape while preserving the project draft
   await click('collaboration-project-create-new-group')
   const dialog = get('collaboration-project-create-model-picker')
   expect(dialog).not.toBeNull()
+  await act(async () => vi.runOnlyPendingTimersAsync())
+  expect(
+    dialog.contains(document.activeElement),
+    `Group dialog focus escaped to ${document.activeElement?.getAttribute('data-testid') ?? document.activeElement?.tagName}`
+  ).toBe(true)
   await key(dialog.querySelector('button')!, 'Escape')
+  await act(async () => vi.runOnlyPendingTimersAsync())
   expect(get('collaboration-project-create-model-picker')).toBeNull()
   expect(get('collaboration-project-create-dialog')).not.toBeNull()
   expect((get('cloud-project-name') as HTMLInputElement).value).toBe('Keep this project')

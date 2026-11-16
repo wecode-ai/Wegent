@@ -1,6 +1,6 @@
 import * as Popover from '@radix-ui/react-popover'
 import { Bot, Plus, Search, UserRound, UsersRound } from 'lucide-react'
-import { useEffect, useState, type ReactNode } from 'react'
+import { useEffect, useState, type ReactNode, type Ref } from 'react'
 import {
   CollaborationParticipantsTabs,
   type ParticipantTab,
@@ -23,6 +23,8 @@ export function ProjectCollaboratorPicker({
   onSelectAgent,
   onSelectGroup,
   groupAction,
+  triggerRef,
+  onCloseAutoFocus,
 }: {
   labels: ProjectCreateLabels
   open: boolean
@@ -36,6 +38,8 @@ export function ProjectCollaboratorPicker({
   onSelectAgent(id: string): void
   onSelectGroup(id: string): void
   groupAction?: ReactNode
+  triggerRef?: Ref<HTMLButtonElement>
+  onCloseAutoFocus?(event: Event): void
 }) {
   const theme = useCollaborationPortalTheme()
   const [query, setQuery] = useState('')
@@ -91,6 +95,7 @@ export function ProjectCollaboratorPicker({
     <Popover.Root open={open} onOpenChange={onOpenChange}>
       <Popover.Trigger asChild>
         <button
+          ref={triggerRef}
           type="button"
           className="collaboration-project-create-collaborator-trigger"
           data-testid="collaboration-project-create-add-collaborator"
@@ -102,6 +107,7 @@ export function ProjectCollaboratorPicker({
       </Popover.Trigger>
       <Popover.Portal>
         <Popover.Content
+          onCloseAutoFocus={onCloseAutoFocus}
           {...theme}
           side="bottom"
           align="start"

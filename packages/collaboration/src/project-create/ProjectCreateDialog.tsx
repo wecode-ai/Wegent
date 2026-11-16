@@ -350,6 +350,10 @@ export function ProjectCreateDialog(props: ProjectCreateDialogProps) {
   const groupGenerationAgentSettlingRef = useRef(false);
   const groupGenerationStartedAtRef = useRef(0);
   const groupGenerationRunRef = useRef(0);
+  const collaboratorTriggerRef = useRef<HTMLButtonElement>(null);
+  const [groupReturnFocus, setGroupReturnFocus] = useState<HTMLElement | null>(
+    null,
+  );
   const closeGroupModelPicker = () => {
     groupGenerationRunRef.current += 1;
     if (groupGenerationAgentTimerRef.current !== null) {
@@ -367,6 +371,8 @@ export function ProjectCreateDialog(props: ProjectCreateDialogProps) {
   const groupDialogRef = useDialogKeyboard<HTMLElement>(
     closeGroupModelPicker,
     groupModelPickerOpen,
+    undefined,
+    { returnFocus: groupReturnFocus },
   );
   const [groupGenerationError, setGroupGenerationError] = useState<
     string | null
@@ -820,6 +826,7 @@ export function ProjectCreateDialog(props: ProjectCreateDialogProps) {
     }
   };
   const openGroupModelPicker = () => {
+    setGroupReturnFocus(collaboratorTriggerRef.current);
     setCollaboratorPickerOpen(false);
     setGroupGenerationError(null);
     setGroupModelPickerOpen(true);
@@ -1192,7 +1199,8 @@ export function ProjectCreateDialog(props: ProjectCreateDialogProps) {
                     <button
                       type="button"
                       data-testid="collaboration-project-create-edit-group"
-                      onClick={() => {
+                      onClick={(event) => {
+                        setGroupReturnFocus(event.currentTarget);
                         const agentIds = selectedAgents.map(
                           (agent) => agent.id,
                         );
@@ -1286,6 +1294,11 @@ export function ProjectCreateDialog(props: ProjectCreateDialogProps) {
                 ))}
               </div>
               <ProjectCollaboratorPicker
+                triggerRef={collaboratorTriggerRef}
+                onCloseAutoFocus={(event) => {
+                  if (groupDialogRef.current?.isConnected)
+                    event.preventDefault();
+                }}
                 labels={labels}
                 open={collaboratorPickerOpen && !collaboratorsLocked}
                 onOpenChange={setCollaboratorPickerOpen}
