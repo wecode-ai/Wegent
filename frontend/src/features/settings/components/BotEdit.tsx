@@ -458,7 +458,7 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
     {
       botId: editingBotId > 0 ? editingBotId : undefined,
       namespace: editingBot?.namespace || (scope === 'group' ? groupName : undefined) || 'default',
-      targetGroupNames,
+      targetGroupNames: targetGroupNames.length > 0 ? targetGroupNames : undefined,
     },
     supportsSkills,
     scope === 'public'
