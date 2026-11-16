@@ -4,7 +4,7 @@ import { mkdtemp, mkdir, open, writeFile, readFile, realpath, rename, rm } from 
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { EventEmitter } from 'node:events'
-import { statSync } from 'node:fs'
+import { fstatSync, statSync } from 'node:fs'
 import chokidar from 'chokidar'
 import { test, expect, vi, onTestFinished } from 'vitest'
 import { watchDevelopmentBuild, watchDevelopmentDirectory } from './lib/development-build-watch.mjs'
@@ -172,14 +172,13 @@ test.each(checkouts.flatMap(checkout => ['directory', 'file'].map(input => [chec
     // Use one handle so completing the save does not truncate the file again.
     const handle = await open(source, 'r+')
     try {
-      const beforeTruncate = await handle.stat()
+      const beforeTruncate = fstatSync(handle.fd)
       record('truncate-start', { handleInode: beforeTruncate.ino, pathInode: statSync(source).ino })
       await handle.truncate(0)
       record('truncate-finished', {
-        handleInode: (await handle.stat()).ino,
+        handleInode: fstatSync(handle.fd).ino,
         pathInode: statSync(source).ino,
         size: statSync(source).size,
-        contents: await readFile(source, 'utf8'),
         subscriptions: nativeWatcher.getWatched(),
       })
       await expect.poll(() => published).toBe('')
