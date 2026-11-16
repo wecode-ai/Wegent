@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import '@testing-library/jest-dom'
-import { fireEvent, render, screen } from '@testing-library/react'
+import { act, fireEvent, render, screen } from '@testing-library/react'
 import { KnowledgeDetailPanel } from '@/features/knowledge/document/components/KnowledgeDetailPanel'
 import type { KnowledgeBase } from '@/types/knowledge'
 import type { ArtifactPromptRequest } from '@/types/knowledge-artifact'
@@ -119,8 +119,25 @@ jest.mock('@/features/knowledge/document/components/DocumentList', () => ({
   ),
 }))
 
-jest.mock('@/features/knowledge/permission/components/PermissionManagementTab', () => ({
-  PermissionManagementTab: () => <div data-testid="mock-classic-permissions" />,
+jest.mock('@/features/knowledge/document/components/KnowledgeAccessDialog', () => ({
+  KnowledgeAccessDialog: ({
+    canManage,
+    onChanged,
+    onClose,
+  }: {
+    canManage: boolean
+    onChanged: () => void
+    onClose: () => void
+  }) => (
+    <div role="dialog">
+      {canManage && (
+        <button data-testid="mock-classic-permissions" onClick={onChanged}>
+          Change permission
+        </button>
+      )}
+      <button onClick={onClose}>Close permission dialog</button>
+    </div>
+  ),
 }))
 
 jest.mock('@/apis/knowledge', () => ({
@@ -209,7 +226,7 @@ it('exits the classic permission view when the list confirms management downgrad
   )
   const trigger = screen.getByTestId('knowledge-detail-permissions-tab')
   expect(trigger).toHaveClass('min-h-11', 'min-w-11')
-  fireEvent.mouseDown(trigger, { button: 0 })
+  fireEvent.click(trigger)
   expect(screen.getByTestId('mock-classic-permissions')).toBeInTheDocument()
   const calls = mockFetchPermission.mock.calls.length
   rerender(
@@ -218,4 +235,38 @@ it('exits the classic permission view when the list confirms management downgrad
   expect(screen.queryByTestId('knowledge-detail-permissions-tab')).not.toBeInTheDocument()
   expect(screen.queryByTestId('mock-classic-permissions')).not.toBeInTheDocument()
   expect(mockFetchPermission.mock.calls.length).toBeGreaterThan(calls)
+})
+
+it('renders the current chat actions and clears them when switching libraries', () => {
+  const action = jest.fn()
+  const { rerender } = render(
+    <KnowledgeDetailPanel selectedKb={knowledgeBase} currentView="notebook" />
+  )
+  const oldChat = mockChatArea.mock.calls.at(-1)![0]
+  expect(oldChat.onShareButtonRender).toEqual(expect.any(Function))
+  act(() => oldChat.onShareButtonRender(<button onClick={action}>Export current chat</button>))
+  fireEvent.click(screen.getByRole('button', { name: 'Export current chat' }))
+  expect(action).toHaveBeenCalledTimes(1)
+  act(() => oldChat.onShareButtonRender(<button>Export next conversation</button>))
+  expect(screen.queryByText('Export current chat')).not.toBeInTheDocument()
+  expect(screen.getByRole('button', { name: 'Export next conversation' })).toBeInTheDocument()
+  act(() => oldChat.onShareButtonRender(null))
+  expect(screen.queryByTestId('knowledge-chat-actions')).not.toBeInTheDocument()
+  rerender(
+    <KnowledgeDetailPanel selectedKb={{ ...knowledgeBase, id: 99 }} currentView="notebook" />
+  )
+  expect(screen.queryByRole('button', { name: 'Export current chat' })).not.toBeInTheDocument()
+  act(() => oldChat.onShareButtonRender(<button>Obsolete export</button>))
+  expect(screen.queryByText('Obsolete export')).not.toBeInTheDocument()
+})
+
+it('keeps the document list mounted while permissions are open', () => {
+  const classic = { ...knowledgeBase, kb_type: 'classic' as const }
+  render(
+    <KnowledgeDetailPanel selectedKb={classic} currentView="documents" verifiedRole="Maintainer" />
+  )
+  const list = screen.getByTestId('mock-classic-document-list')
+  fireEvent.mouseDown(screen.getByTestId('knowledge-detail-permissions-tab'), { button: 0 })
+  fireEvent.click(screen.getByTestId('knowledge-detail-permissions-tab'))
+  expect(screen.getByTestId('mock-classic-document-list')).toBe(list)
 })

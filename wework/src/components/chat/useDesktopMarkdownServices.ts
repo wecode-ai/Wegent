@@ -32,7 +32,7 @@ export function useDesktopMarkdownServices(): MarkdownServices {
       translate: (key: string, fallback?: string) =>
         key.startsWith('table.')
           ? chatTranslate(key)
-          : /^(?:code|citation|followup)\./.test(key)
+          : /^(?:code|citation|followup|image)\./.test(key)
             ? markdownMessages[i18n?.language?.startsWith('zh') ? 'zh-CN' : 'en'][
                 key as keyof typeof markdownMessages.en
               ]

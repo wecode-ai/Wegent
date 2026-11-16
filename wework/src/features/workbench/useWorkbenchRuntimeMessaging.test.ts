@@ -172,7 +172,13 @@ test.each(['accepted', 'queued'] as const)(
     let delivered = false
     const sending = messaging
       .sendRuntimePaneMessage(
-        { address, message: 'Continue', modelId: 'test-model' },
+        {
+          address,
+          message: 'Continue',
+          modelId: 'test-model',
+          queueIfBusy: true,
+          clientUserMessageId: 'durable-follow-up',
+        },
         { onQueued: queued }
       )
       .then(accepted => {
@@ -181,6 +187,15 @@ test.each(['accepted', 'queued'] as const)(
     try {
       await waitFor(() => expect(refresh).toHaveBeenCalledOnce())
       await waitFor(() => expect(delivered).toBe(true))
+      expect(send).toHaveBeenCalledOnce()
+      expect(send).toHaveBeenCalledWith(
+        expect.objectContaining({
+          address,
+          message: 'Continue',
+          queueIfBusy: true,
+          clientUserMessageId: 'durable-follow-up',
+        })
+      )
       expect(queued).toHaveBeenCalledTimes(status === 'queued' ? 1 : 0)
     } finally {
       finishRefresh()

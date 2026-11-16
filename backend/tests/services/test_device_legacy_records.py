@@ -291,3 +291,78 @@ async def test_offline_only_checks_cloud_runtime_route_and_preserves_cloud_remov
     test_db.refresh(row)
     assert row.is_active is True
     assert await record_operations.delete_device_record(test_db, 7, row.id) is True
+
+
+@pytest.mark.parametrize("status", ["claimed", "running", "cancel_requested"])
+async def test_offline_only_rejects_active_project_execution(
+    test_db, records, isolated_cache, status
+):
+    from app.models.loop_item_execution import LoopItemExecution
+
+    device = records[0]
+    execution = LoopItemExecution(
+        executor_owner_user_id=device.user_id,
+        runtime_device_id=record_route_id(device),
+        runtime_instance_id=device.json["spec"]["runtimeInstanceId"],
+        status=status,
+    )
+    test_db.add(execution)
+    test_db.commit()
+
+    with pytest.raises(DeviceIdentityConflictError, match="online or busy"):
+        await record_operations.delete_device_record(
+            test_db, device.user_id, device.id, offline_only=True
+        )
+    assert device.is_active
+
+    execution.status = "completed"
+    test_db.commit()
+    assert await record_operations.delete_device_record(
+        test_db, device.user_id, device.id, offline_only=True
+    )
+
+
+def test_heartbeat_connection_lookup_keeps_same_name_local_device(test_db, records):
+    from app.services.device.identity import active_device_connection
+
+    local = Kind(
+        user_id=records[0].user_id,
+        namespace="default",
+        name=records[0].name,
+        kind="Device",
+        json={"spec": {"deviceType": "local", "runtimeInstanceId": ""}},
+    )
+    test_db.add(local)
+    test_db.commit()
+
+    assert active_device_connection(test_db, local.user_id, local.name, None)
+    assert not active_device_connection(test_db, local.user_id, local.name, "runtime-0")
+    local.is_active = False
+    test_db.commit()
+    assert not active_device_connection(test_db, local.user_id, local.name, None)
+
+
+def test_binding_resolves_cloud_config_connection_route(test_db, monkeypatch):
+    from app.services.device.identity import lock_online_device_for_binding
+
+    device = Kind(
+        user_id=7,
+        namespace="default",
+        name="cloud-name",
+        kind="Device",
+        json={
+            "spec": {"deviceType": "cloud", "cloudConfig": {"deviceId": "cloud-route"}}
+        },
+    )
+    test_db.add(device)
+    test_db.commit()
+    monkeypatch.setattr(
+        record_operations.cache_manager,
+        "get_sync_or_raise",
+        lambda key: (
+            {"socket_id": "sid"} if key == "device:online:7:cloud-route" else None
+        ),
+    )
+
+    assert lock_online_device_for_binding(test_db, 7, "cloud-route") == "cloud-route"
+    assert lock_online_device_for_binding(test_db, 7, "cloud-name") == "cloud-route"

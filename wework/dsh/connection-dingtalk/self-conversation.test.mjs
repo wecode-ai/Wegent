@@ -82,6 +82,8 @@ test('collects manual self-chat commands without AI replies or outgoing messages
   )
   assert.equal(result.events[0].text, '我现在都有啥任务')
   assert.equal(result.events[0].conversationId, 'self-chat')
+  assert.equal(result.events[0].isOwn, true)
+  assert.equal(result.events[0].isSelfConversation, true)
   assert.deepEqual(calls[2], {
     tool: 'listDirectConversation',
     arguments: { peer: 'own', profile: 'account', time: checkpoint.until, limit: '1' },
@@ -104,6 +106,17 @@ test('self messages require an explicit self source and a verified conversation 
     other.map(event => event.id),
     ['foreign']
   )
+})
+
+test('messages from others and own group messages are not self-conversations', () => {
+  const other = normalizeMessages({ ...source, id: 'other' }, response, 'own', 'self-chat')
+  assert.equal(other[0].isOwn, false)
+  assert.equal(other[0].isSelfConversation, false)
+  const group = structuredClone(response)
+  group.result.conversationMessagesList[2].messages[0].sendType = 'user'
+  const ownGroup = normalizeMessages({ kind: 'group', id: 'group' }, group, 'own')
+  assert.equal(ownGroup[0].isOwn, true)
+  assert.equal(ownGroup[0].isSelfConversation, false)
 })
 
 test('invalid self-chat resolution fails before searching or advancing the checkpoint', async () => {

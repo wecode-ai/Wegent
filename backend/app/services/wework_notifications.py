@@ -373,7 +373,7 @@ def _validate_project_source(
     db: Session, user_id: int, recipient_id: int, values: NotificationCreate
 ) -> NotificationTarget:
     from app.services.cloud_project_visibility import project_participant_ids
-    from app.services.cloud_projects import cloud_project_service
+    from app.services.cloud_projects.service import cloud_project_service
     from app.services.loop_items.external_provider import external_loop_item_provider
     from app.services.loop_items.service import loop_item_service
 

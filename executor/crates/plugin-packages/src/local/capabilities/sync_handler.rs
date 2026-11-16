@@ -42,7 +42,7 @@ where
             auth_token,
             store,
             package_provider,
-            sync_lock: AsyncMutex::new(()),
+            sync_lock: std::sync::Arc::new(AsyncMutex::new(())),
             plugin_sync_inflight: Default::default(),
             plugin_sync_binding,
             plugin_preparation,
@@ -339,7 +339,8 @@ where
         manifest: &mut Value,
         lease: std::sync::Arc<plugin_preparation::PreparationLease>,
     ) -> Result<(), PluginSyncFailure> {
-        let mut prepared = self.prepare_plugin(spec, manifest, lease).await?;
+        // Legacy synchronization already holds sync_lock for the full transaction.
+        let mut prepared = self.prepare_plugin(spec, manifest, lease, None).await?;
         let _binding = self
             .plugin_sync_binding
             .lock_active()

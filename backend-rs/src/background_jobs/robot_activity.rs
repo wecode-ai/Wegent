@@ -1,5 +1,6 @@
 //! Project-chat terminal state preserves newer runs and existing Issue content.
 
+use crate::socketio::project_chat_messages::{database_timestamp, utc_timestamp};
 use brz_mysql::{Json, Mysql, MysqlResult, MysqlTransaction};
 use chrono::{NaiveDateTime, Utc};
 use serde_json::{Value, json};
@@ -36,7 +37,7 @@ pub(crate) async fn finish(
     }
     message.metadata.0["run_status"] = json!(status);
     message.metadata.0["activity_at"] = json!(now.and_utc().to_rfc3339());
-    message.updated_at = now;
+    message.updated_at = database_timestamp(now);
     if message.task_id.is_empty() {
         return Ok(());
     }
@@ -57,7 +58,7 @@ pub(crate) async fn finish(
         false
     };
     if applied || review || metadata != task.metadata.0 {
-        tx.execute("UPDATE loop_items SET metadata=?,status=?,completed_at=CASE WHEN ? THEN '1970-01-01 00:00:01' ELSE completed_at END,sort_order=CASE WHEN ? THEN 0 ELSE sort_order END,version=version+?,updated_at=UTC_TIMESTAMP(6) WHERE id=? AND resource_type='task'",(Json(metadata),if review{"in_review"}else{task.status.as_str()},review,review,i64::from(applied)+i64::from(review),task.id.as_str())).await?;
+        tx.execute("UPDATE loop_items SET metadata=?,status=?,completed_at=CASE WHEN ? THEN '1970-01-01 00:00:01' ELSE completed_at END,sort_order=CASE WHEN ? THEN 0 ELSE sort_order END,version=version+?,updated_at=CURRENT_TIMESTAMP(6) WHERE id=? AND resource_type='task'",(Json(metadata),if review{"in_review"}else{task.status.as_str()},review,review,i64::from(applied)+i64::from(review),task.id.as_str())).await?;
     }
     Ok(())
 }
@@ -91,13 +92,13 @@ pub(crate) async fn project_runtime_completion(
             &message.content,
         );
         let review = allow_review && !superseded && can_review(&task, &metadata, message)
-            && append_review_history(tx, &task, &mut metadata, message.updated_at).await?;
+            && append_review_history(tx, &task, &mut metadata, utc_timestamp(message.updated_at)).await?;
         if !review {
             if metadata == task.metadata.0 {
                 return Ok(false);
             }
             tx.execute(
-                "UPDATE loop_items SET metadata=?, version=version+1, updated_at=UTC_TIMESTAMP(6) WHERE id=? AND resource_type='task'",
+                "UPDATE loop_items SET metadata=?, version=version+1, updated_at=CURRENT_TIMESTAMP(6) WHERE id=? AND resource_type='task'",
                 (Json(metadata), task.id.as_str()),
             ).await?;
             return Ok(true);
@@ -109,7 +110,7 @@ pub(crate) async fn project_runtime_completion(
         let now = Utc::now().naive_utc();
         tx.execute(
             "UPDATE loop_items SET metadata=?, status='in_review', completed_at='1970-01-01 00:00:01', sort_order=0, version=version+1, updated_at=? WHERE id=? AND resource_type='task'",
-            (Json(metadata), now, task.id.as_str()),
+            (Json(metadata), database_timestamp(now), task.id.as_str()),
         )
         .await?;
         Ok(true)
@@ -323,7 +324,7 @@ pub(crate) async fn start_runtime_activity(
     }
     let changed = status != task.status;
     tx.execute(
-        "UPDATE loop_items SET metadata=?,status=?,completed_at=CASE WHEN ? THEN '1970-01-01 00:00:01' ELSE completed_at END,sort_order=CASE WHEN ? THEN 0 ELSE sort_order END,version=version+1,updated_at=UTC_TIMESTAMP(6) WHERE id=? AND resource_type='task'",
+        "UPDATE loop_items SET metadata=?,status=?,completed_at=CASE WHEN ? THEN '1970-01-01 00:00:01' ELSE completed_at END,sort_order=CASE WHEN ? THEN 0 ELSE sort_order END,version=version+1,updated_at=CURRENT_TIMESTAMP(6) WHERE id=? AND resource_type='task'",
         (Json(metadata), status, changed, changed, task.id.as_str()),
     ).await?;
     tx.execute(
@@ -365,6 +366,7 @@ pub(super) mod tests {
     }
 
     pub(crate) async fn verify_issue_activity_projection(mysql: &impl Mysql) -> anyhow::Result<()> {
+        let since = Utc::now();
         mysql.execute(
             "INSERT INTO loop_items(id, resource_type, description, metadata, created_at, updated_at) VALUES ('review-fixture-project', 'project', '', ?, NOW(), NOW())",
             (Json(json!({"board_config":{"statuses":[{"id":"doing","name":"Doing"}]}})),),
@@ -408,6 +410,18 @@ pub(super) mod tests {
         assert_eq!(issue.metadata.0["badges"][0]["url"], completed.content);
         assert_eq!(issue.metadata.0["badges"].as_array().unwrap().len(), 1);
         assert!(!project_runtime_completion(mysql, &completed, false).await?);
+        let updated: NaiveDateTime = mysql
+            .fetch_one(
+                "SELECT updated_at FROM loop_items WHERE id='review-fixture-issue'",
+                (),
+            )
+            .await?;
+        crate::socketio::issue_timestamp_tests::assert_current(
+            &json!(crate::socketio::project_chat_messages::utc_isoformat(
+                updated
+            )),
+            since,
+        );
         Ok(())
     }
 

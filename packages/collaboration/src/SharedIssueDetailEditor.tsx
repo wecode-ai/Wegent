@@ -1,3 +1,4 @@
+import { useCommentChildIssue } from "./issue-detail/useCommentChildIssue";
 import { MilestonePicker } from "./milestones/MilestonePicker";
 import { IssueDeliveryContent } from "./issue-detail/IssueDeliveryContent";
 import { IssueDeliveryEditor } from "./issue-detail/IssueDeliveryEditor";
@@ -708,6 +709,27 @@ export function TodoEditor(props: TodoEditorProps) {
   const isAITableEdit =
     item !== null && editProps?.project?.task_provider === "dingtalk_aitable";
   const project = createProps?.project ?? editProps?.project;
+  const [commentChildren, setCommentChildren] = useState<CloudLoopItem[]>([]);
+  useEffect(() => {
+    setCommentChildren((current) => {
+      const pending = current.filter(
+        (child) => !allItems.some((item) => item.id === child.id),
+      );
+      return pending.length === current.length ? current : pending;
+    });
+  }, [allItems]);
+  const createCommentChild = useCommentChildIssue({
+    port: editorPort,
+    project,
+    parent: item,
+    resolveTarget: resolveAssigneeTarget,
+    assign: persistAssignee,
+    onCreated: (child) =>
+      setCommentChildren((current) => [
+        ...current.filter((value) => value.id !== child.id),
+        child,
+      ]),
+  });
   const statusOptions = project?.board_config?.statuses
     ? localizeStandardStatuses(project.board_config.statuses, t)
     : columns.map((column) => ({
@@ -793,11 +815,21 @@ export function TodoEditor(props: TodoEditorProps) {
       return;
     if (field === "assigneeTarget") {
       void fieldSaves.save(field, async (source) => {
-        const updated = await persistAssignee(
-          source,
-          next as IssueAssigneeTarget,
-          notifyAssignee,
-        );
+        let updated;
+        try {
+          updated = await persistAssignee(
+            source,
+            next as IssueAssigneeTarget,
+            notifyAssignee,
+          );
+        } catch (error) {
+          const latest = latestItemRef.current;
+          if (runnerEnvironmentError(error, t) && latest?.id === source.id)
+            setIssueDraftField("assigneeTarget", (current) =>
+              current === next ? issueAssigneeTarget(latest) : current,
+            );
+          throw error;
+        }
         if (latestItemRef.current?.id === source.id) {
           setIssueDraftField("assigneeTarget", (current) =>
             current === next ? issueAssigneeTarget(updated) : current,
@@ -1478,7 +1510,15 @@ export function TodoEditor(props: TodoEditorProps) {
     (candidate) => !excludedParentIds.has(candidate.id),
   );
   const childItems = item
-    ? allItems.filter((candidate) => candidate.parent_id === item.id)
+    ? [
+        ...new Map(
+          [...commentChildren, ...allItems].map((child) => [child.id, child]),
+        ).values(),
+      ].filter(
+        (candidate) =>
+          candidate.parent_id === item.id &&
+          candidate.cloud_project_id === item.cloud_project_id,
+      )
     : [];
   const itemHasActiveTask = item
     ? (extensions?.isExecutionActive?.(item) ?? false)
@@ -2175,7 +2215,7 @@ export function TodoEditor(props: TodoEditorProps) {
     ...workspaceAgents.map((agent) => ({
       value: `resource:${agent.id}` as IssueAssigneeTarget,
       label: agent.name,
-      group: t("todo.workspace_agents", "空间智能体"),
+      group: t("todo.workspace_agents", "分组智能体"),
     })),
     ...wegentTeams
       .filter((team) => projectAgents.some((agent) => agent.teamId === team.id))
@@ -2194,35 +2234,42 @@ export function TodoEditor(props: TodoEditorProps) {
           item,
           project: editProps.project,
           editable,
-          commentAssignment: canAssign
-            ? {
-                options: assigneeOptions
-                  .filter((option) => option.value !== "")
-                  .map((option) => ({
-                    ...option,
-                    // Preserve the comment selector's existing human target IDs.
-                    value: option.value.startsWith("user:")
-                      ? option.value.slice(5)
-                      : option.value,
-                  })),
-                assign: async (value) => {
-                  const target = assigneeOptions.find(
-                    (option) =>
-                      (option.value.startsWith("user:")
+          commentAssignment:
+            canAssign || editable
+              ? {
+                  canAssignCurrent: canAssign,
+                  ...(editable ? { createChild: createCommentChild } : {}),
+                  options: assigneeOptions
+                    .filter((option) => option.value !== "")
+                    .map((option) => ({
+                      ...option,
+                      // Preserve the comment selector's existing human target IDs.
+                      value: option.value.startsWith("user:")
                         ? option.value.slice(5)
-                        : option.value) === value,
-                  )?.value;
-                  if (!target)
-                    throw new Error("Assignee is no longer available");
-                  if (!canAssign || saving)
-                    throw new Error(t("todo.saving", "保存中…"));
-                  const current = await editorPort.issues.get(item.id);
-                  if (issueAssigneeTarget(current) === target) return;
-                  const updated = await persistAssignee(current, target, true);
-                  editProps.onUpdated(updated);
-                },
-              }
-            : undefined,
+                        : option.value,
+                    })),
+                  assign: async (value) => {
+                    const target = assigneeOptions.find(
+                      (option) =>
+                        (option.value.startsWith("user:")
+                          ? option.value.slice(5)
+                          : option.value) === value,
+                    )?.value;
+                    if (!target)
+                      throw new Error("Assignee is no longer available");
+                    if (!canAssign || saving)
+                      throw new Error(t("todo.saving", "保存中…"));
+                    const current = await editorPort.issues.get(item.id);
+                    if (issueAssigneeTarget(current) === target) return;
+                    const updated = await persistAssignee(
+                      current,
+                      target,
+                      true,
+                    );
+                    editProps.onUpdated(updated);
+                  },
+                }
+              : undefined,
           tasks: effectiveTasks,
           deliveries,
           members: projectMembers,
@@ -2545,6 +2592,22 @@ export function TodoEditor(props: TodoEditorProps) {
   );
   // Two-column layout keeps secondary metadata in the expandable rail.
   // Assignee, priority, and due date stay editable in the primary header.
+  const resourceParticipants = Boolean(item?.resource_participants?.length) && (
+    <div
+      className="my-2 flex flex-wrap gap-2"
+      data-testid="issue-resource-participants"
+    >
+      {item?.resource_participants?.map((resource) => (
+        <span
+          key={resource.kind + ":" + resource.id}
+          className="inline-flex items-center gap-1 rounded-md bg-muted px-2 py-1 text-sm"
+        >
+          <UsersRound className="h-4 w-4" aria-hidden="true" />
+          {resource.name}
+        </span>
+      ))}
+    </div>
+  );
   const railProps = (
     <>
       <RailProp
@@ -2596,12 +2659,14 @@ export function TodoEditor(props: TodoEditorProps) {
           >
             <Plus className="h-3.5 w-3.5" />
           </button>
-          {collaborators.length === 0 ? (
+          {collaborators.length === 0 &&
+          !item?.resource_participants?.length ? (
             <span className="ml-2 text-text-muted">
               {t("todo.none", "暂无")}
             </span>
           ) : null}
         </span>
+        {resourceParticipants}
       </RailProp>
       {editable && addingCollaborator ? (
         <div className="col-span-full flex items-center gap-2 px-2 pb-1">
@@ -3416,7 +3481,13 @@ export function TodoEditor(props: TodoEditorProps) {
               {item && props.onOpenRelatedIssue ? (
                 <IssueHierarchySummary
                   item={item}
-                  allItems={allItems}
+                  allItems={[
+                    ...allItems,
+                    ...childItems.filter(
+                      (child) =>
+                        !allItems.some((current) => current.id === child.id),
+                    ),
+                  ]}
                   onOpen={props.onOpenRelatedIssue}
                   onAddChild={editable ? editProps?.onAddChild : undefined}
                   translate={t}
@@ -3738,7 +3809,8 @@ export function TodoEditor(props: TodoEditorProps) {
                           {t("todo.collaborators", "参与者")}
                         </h3>
                         <span className="ml-2 text-xs font-normal text-text-muted">
-                          {collaborators.length}
+                          {collaborators.length +
+                            (item.resource_participants?.length ?? 0)}
                         </span>
                         {editable ? (
                           <button
@@ -3795,6 +3867,7 @@ export function TodoEditor(props: TodoEditorProps) {
                           </button>
                         </div>
                       )}
+                      {resourceParticipants}
                       {collaborators.length === 0 ? (
                         <p className="rounded-xl border border-dashed border-border px-3 py-4 text-center text-xs text-text-muted">
                           {t("todo.no_collaborators", "暂无参与者")}
@@ -3830,7 +3903,9 @@ export function TodoEditor(props: TodoEditorProps) {
                                   aria-label={t(
                                     "todo.remove_collaborator",
                                     "移除参与者 {{name}}",
-                                    { name: collaborator.user_name },
+                                    {
+                                      name: collaborator.user_name,
+                                    },
                                   )}
                                   disabled={collaboratorBusy}
                                   onClick={() =>
@@ -3901,7 +3976,9 @@ export function TodoEditor(props: TodoEditorProps) {
                                 {t(
                                   "todo.attachment_count",
                                   "{{count}} 个附件",
-                                  { count: delivery.assets.length },
+                                  {
+                                    count: delivery.assets.length,
+                                  },
                                 )}
                               </span>
                               <span className="ml-auto shrink-0 text-text-muted">
@@ -4010,7 +4087,9 @@ export function TodoEditor(props: TodoEditorProps) {
                                 : t(
                                     "todo.view_all_count",
                                     "查看全部 {{count}} 个",
-                                    { count: childItems.length },
+                                    {
+                                      count: childItems.length,
+                                    },
                                   )}
                             </button>
                           )}
@@ -4110,7 +4189,9 @@ export function TodoEditor(props: TodoEditorProps) {
                               : t(
                                   "todo.view_all_count",
                                   "查看全部 {{count}} 个",
-                                  { count: effectiveTasks.length },
+                                  {
+                                    count: effectiveTasks.length,
+                                  },
                                 )}
                           </button>
                         )}
@@ -4156,7 +4237,9 @@ export function TodoEditor(props: TodoEditorProps) {
                                   ? t(
                                       "todo.attachment_count",
                                       "{{count}} 个附件",
-                                      { count: delivery.assets.length },
+                                      {
+                                        count: delivery.assets.length,
+                                      },
                                     )
                                   : t("todo.delivery_result", "交付结果")}
                               </span>
@@ -4177,7 +4260,9 @@ export function TodoEditor(props: TodoEditorProps) {
                               : t(
                                   "todo.view_all_count",
                                   "查看全部 {{count}} 个",
-                                  { count: deliveries.length },
+                                  {
+                                    count: deliveries.length,
+                                  },
                                 )}
                           </button>
                         )}

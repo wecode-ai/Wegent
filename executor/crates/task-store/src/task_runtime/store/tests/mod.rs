@@ -362,7 +362,15 @@ fn assert_collaboration_round_completion(has_human: bool, retry_member: bool, te
     assert_eq!(payload["executionRequest"]["bot"][0]["id"], leader.id);
     assert_eq!(payload["origin"]["dispatchRole"], "manager");
     assert_eq!(payload["origin"]["dispatchId"], issue.id);
-    assert_eq!(payload["collaboration_model"], "single");
+    assert!(payload.get("collaboration_model").is_none());
+    let mut explicit = claimed.clone();
+    explicit.execution_payload.as_mut().unwrap()["runtimePayload"] =
+        json!({"collaboration_model":"single"});
+    assert_eq!(
+        local_execution_runtime_payload(&explicit)["collaboration_model"],
+        "single",
+        "An explicit user mode must survive without forcing it onto other group work"
+    );
     assert_eq!(
         payload["runtimeHandle"]["collaborationMemberRuntimeProfiles"]
             .as_array()
@@ -555,10 +563,12 @@ fn assert_collaboration_round_completion(has_human: bool, retry_member: bool, te
         first_member_execution.execution_payload.as_ref().unwrap()["message"],
         "任务标题：采集运行证据\n\n执行要求：Collect verifiable evidence."
     );
-    assert_eq!(
-        first_member_execution.execution_payload.as_ref().unwrap()["collaboration_model"],
-        "single"
-    );
+    assert!(first_member_execution
+        .execution_payload
+        .as_ref()
+        .unwrap()
+        .get("collaboration_model")
+        .is_none());
     let member_system_prompt = first_member_execution.execution_payload.as_ref().unwrap()
         ["executionRequest"]["system_prompt"]
         .as_str()
@@ -723,10 +733,12 @@ fn assert_collaboration_round_completion(has_human: bool, retry_member: bool, te
         resumed_manager.execution_payload.as_ref().unwrap()["origin"]["dispatchRole"],
         "manager"
     );
-    assert_eq!(
-        resumed_manager.execution_payload.as_ref().unwrap()["collaboration_model"],
-        "single"
-    );
+    assert!(resumed_manager
+        .execution_payload
+        .as_ref()
+        .unwrap()
+        .get("collaboration_model")
+        .is_none());
     assert!(
         resumed_manager.execution_payload.as_ref().unwrap()["message"]
             .as_str()
@@ -792,3 +804,5 @@ mod cases_4;
 mod cases_5;
 
 mod cases_6;
+
+mod project_migration;

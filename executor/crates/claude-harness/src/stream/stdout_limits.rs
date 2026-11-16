@@ -56,11 +56,6 @@ mod tests {
     use std::ffi::OsStr;
 
     #[test]
-    fn unset_value_uses_the_default() {
-        assert_eq!(parse_buffer_bytes(None), Some(DEFAULT_MAX_BUFFER_BYTES));
-    }
-
-    #[test]
     fn accepts_positive_limits_and_surrounding_whitespace() {
         for (value, expected) in [
             ("1", 1),

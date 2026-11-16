@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import { requestExecutor } from './executor-rpc.mjs'
 import { reloadMainWindow, selectCollaborationProjectView } from './workspace-flows.mjs'
-import { waitForBoardValue } from './collaboration-board-flows.mjs'
+import { showAllCollaborationIssues, waitForBoardValue } from './collaboration-board-flows.mjs'
 
 const CONTENT = '[data-workspace-tab-content][aria-hidden="false"]'
 const test = id => `${CONTENT} [data-testid="${id}"]`
@@ -36,6 +36,7 @@ export async function verifyGanttHierarchyAndDetailArchive(control, project, tim
   const grandchild = await create('甘特孙任务', child.id, 'in_review')
   const undated = await create('从底部拖入甘特图', null, 'inbox', false)
   await reloadMainWindow(control, 'Gantt hierarchy fixtures did not reload')
+  await showAllCollaborationIssues(control, CONTENT)
   await wait(`cloud-todo-card-${parent.id}`)
   await selectCollaborationProjectView(control, CONTENT, 'gantt', timeoutMs)
   await wait(`collaboration-gantt-row-${grandchild.id}`)

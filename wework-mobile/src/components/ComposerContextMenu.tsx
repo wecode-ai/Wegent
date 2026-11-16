@@ -1,3 +1,4 @@
+import { ErrorNotice } from './errors/ErrorNotice'
 import Ionicons from '@expo/vector-icons/Ionicons'
 import { useEffect, useState } from 'react'
 import {
@@ -9,13 +10,17 @@ import {
   useWindowDimensions,
   View,
 } from 'react-native'
+import { useKeyboardState } from 'react-native-keyboard-controller'
 import { Portal, Text, useTheme } from 'react-native-paper'
+import { useSafeAreaInsets } from 'react-native-safe-area-context'
 
 import { composerLogoUrl } from '@/domain/composerApps'
 import type { RuntimeComposerApp } from '@/types/runtime'
 import { LiquidGlassSurface } from './LiquidGlass'
 
 const MENU_PEEK_HEIGHT = 364
+const EDGE_INSET = 12
+const ANCHOR_GAP = 8
 
 export interface ComposerMenuAnchor {
   x: number
@@ -55,6 +60,8 @@ export function ComposerContextMenu({
 }: ComposerContextMenuProps) {
   const theme = useTheme()
   const { height, width } = useWindowDimensions()
+  const insets = useSafeAreaInsets()
+  const keyboardHeight = useKeyboardState(state => (state.isVisible ? state.height : 0))
   const [apps, setApps] = useState<RuntimeComposerApp[]>([])
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -79,10 +86,17 @@ export function ComposerContextMenu({
     }
   }, [onLoadApps, visible])
 
-  const menuWidth = Math.min(360, width - 24)
-  const left = Math.max(12, Math.min(anchor.x, width - menuWidth - 12))
-  const bottom = Math.max(12, height - anchor.y + 8)
-  const menuHeight = Math.max(280, Math.min(MENU_PEEK_HEIGHT, anchor.y - 24, height * 0.72))
+  const leftEdge = insets.left + EDGE_INSET
+  const rightEdge = width - insets.right - EDGE_INSET
+  const topEdge = insets.top + EDGE_INSET
+  const bottomEdge = Math.min(
+    anchor.y - ANCHOR_GAP,
+    height - Math.max(insets.bottom, keyboardHeight) - EDGE_INSET
+  )
+  const menuWidth = Math.min(360, Math.max(0, rightEdge - leftEdge))
+  const left = Math.max(leftEdge, Math.min(anchor.x, rightEdge - menuWidth))
+  const menuHeight = Math.max(0, Math.min(MENU_PEEK_HEIGHT, bottomEdge - topEdge))
+  const top = Math.max(topEdge, bottomEdge - menuHeight)
 
   const run = (action: () => void) => {
     onDismiss()
@@ -96,7 +110,8 @@ export function ComposerContextMenu({
       <Pressable onPress={onDismiss} style={styles.backdrop} testID="composer-menu-backdrop">
         <Pressable
           onPress={event => event.stopPropagation()}
-          style={[styles.positioner, { bottom, height: menuHeight, left, width: menuWidth }]}
+          style={[styles.positioner, { top, height: menuHeight, left, width: menuWidth }]}
+          testID="composer-menu-positioner"
         >
           <LiquidGlassSurface
             colorScheme={theme.dark ? 'dark' : 'light'}
@@ -113,7 +128,9 @@ export function ComposerContextMenu({
             <ScrollView
               bounces={false}
               contentContainerStyle={styles.content}
+              keyboardShouldPersistTaps="handled"
               showsVerticalScrollIndicator={false}
+              testID="composer-menu-scroll"
             >
               <MenuAction
                 active={planModeActive}
@@ -157,7 +174,7 @@ export function ComposerContextMenu({
                   <Text style={{ color: theme.colors.onSurfaceVariant }}>正在加载插件</Text>
                 </View>
               ) : error ? (
-                <Text style={[styles.statusText, { color: theme.colors.error }]}>{error}</Text>
+                <ErrorNotice error={error} title="无法加载插件" testID="composer-plugins-error" />
               ) : apps.length ? (
                 apps.map(app => (
                   <PluginAction

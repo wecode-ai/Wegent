@@ -266,6 +266,7 @@ export interface ProjectCreateLabels {
 }
 
 export interface ProjectCreateDialogProps {
+  importActions?: ReactNode;
   initialTemplate?: import("../templates/types").CollaborationTemplate | null;
   targets: ProjectCreateTarget[];
   defaultLocation: ProjectCreateLocation;

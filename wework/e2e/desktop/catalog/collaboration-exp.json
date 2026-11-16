@@ -1,0 +1,18 @@
+{
+  "order": 23030,
+  "scenario": "./scenarios/collaboration-exp.scenario.mjs",
+  "scenarioOnly": true,
+  "ci": {
+    "core": { "order": 23030, "shard": 8, "position": 14030 }
+  },
+  "paths": [
+    "wework/e2e/desktop/modules/collaboration-exp-rhythm.mjs",
+    "wework/e2e/desktop/modules/collaboration-exp-state-motion.mjs",
+    "wework/e2e/desktop/modules/collaboration-exp-pane-verification.mjs",
+    "wework/e2e/desktop/modules/collaboration-exp-viewport-flows.mjs",
+    "wework/src/features/collaboration-exp/*",
+    "wework/src/features/collaboration-exp/**/*",
+    "wework/src/features/notifications/WeworkSchemeBridge.tsx",
+    "wework/src/features/notifications/scheme.ts"
+  ]
+}

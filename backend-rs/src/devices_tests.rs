@@ -175,6 +175,42 @@ fn absent_project_editing_does_not_mask_legacy_runtime_contracts() {
 }
 
 #[test]
+fn remote_task_access_requires_explicit_typed_consent() {
+    for enabled in [false, true] {
+        let info = json!({"runtime_features": {"schemaVersion": 4,
+            "remoteTaskAccess": {"version": 1, "enabled": enabled}}});
+        let projected =
+            crate::json_contract_tests::serialized(runtime_features(&info).unwrap()).unwrap();
+        assert_eq!(
+            projected["remoteTaskAccess"],
+            json!({"version": 1, "enabled": enabled, "taskCreation": false})
+        );
+    }
+    for access in [
+        Value::Null,
+        json!({}),
+        json!({"version": true, "enabled": true}),
+        json!({"version": 1, "enabled": "true"}),
+        json!({"version": 2, "enabled": true}),
+        json!({"version": 1, "enabled": true, "taskCreation": "true"}),
+    ] {
+        let info = json!({"runtime_features": {"schemaVersion": 4, "remoteTaskAccess": access}});
+        let projected =
+            crate::json_contract_tests::serialized(runtime_features(&info).unwrap()).unwrap();
+        assert!(projected.get("remoteTaskAccess").is_none());
+    }
+}
+
+#[test]
+fn remote_task_creation_capability_survives_device_projection() {
+    let access = json!({"version": 1, "enabled": true, "taskCreation": true});
+    let info = json!({"runtime_features": {"schemaVersion": 4, "remoteTaskAccess": access}});
+    let projected =
+        crate::json_contract_tests::serialized(runtime_features(&info).unwrap()).unwrap();
+    assert_eq!(projected["remoteTaskAccess"], access);
+}
+
+#[test]
 fn malformed_explicit_project_editing_is_preserved_conservatively() {
     for editing in [
         Value::Null,
@@ -280,6 +316,7 @@ fn runtime_features_extensions_follow_the_known_members() {
         worktrees: None,
         project_editing: None,
         plugin_sync: None,
+        remote_task_access: None,
         extensions: std::iter::once((
             "desktop".to_string(),
             json!({

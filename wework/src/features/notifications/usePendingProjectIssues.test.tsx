@@ -6,6 +6,7 @@ import type { CloudMyWorkItem } from '@/api/deliveries'
 import { NotificationTaskContext, type TaskSource } from './NotificationTaskSourceContext'
 import { usePendingProjectIssues } from './usePendingProjectIssues'
 import { interactionTask } from './runtimeInteractions.fixtures'
+import type { IssueHumanRequest } from '@wegent/collaboration'
 
 const item = {
   id: 'ISSUE-1',
@@ -24,6 +25,76 @@ function taskSource(services: unknown, userId = 7): TaskSource {
     markRuntimeTaskRead: vi.fn(),
   }
 }
+
+it.each(['local', 'backend'] as const)(
+  'does not recreate a resolved %s question as ordinary Issue work, including after remount',
+  async store => {
+    const question: IssueHumanRequest = {
+      id: 'question',
+      project_id: item.cloud_project_id,
+      issue_id: item.id,
+      root_comment_id: 'root',
+      runtime_device_id: 'device',
+      runtime_task_id: 'task',
+      item_id: 'question',
+      question: 'Choose scope',
+      recipient_user_id: 7,
+      recipient_name: 'Me',
+      status: 'pending',
+      version: 1,
+      blocks_progress: false,
+      created_at: '2026-11-10T00:00:00Z',
+      updated_at: '2026-11-10T00:00:00Z',
+    }
+    let current: CloudMyWorkItem = { ...item, human_requests: [question] }
+    const listMyWork = vi.fn(async () => ({ items: [current] }))
+    const source = taskSource({
+      localParticipationIdentity: { viewerUserIds: [0, 7] },
+      projectSpaceApis: { [store === 'local' ? 'local' : 'cloud']: { listMyWork } },
+    })
+    const wrapper = ({ children }: { children: ReactNode }) => (
+      <NotificationTaskContext.Provider value={{ taskSource: source, registerTaskSource: vi.fn() }}>
+        {children}
+      </NotificationTaskContext.Provider>
+    )
+    const rendered = renderHook(() => usePendingProjectIssues(true), { wrapper })
+    await waitFor(() => expect(rendered.result.current.items).toHaveLength(1))
+
+    current = {
+      ...current,
+      human_requests: [{ ...question, status: 'answering', answer_message_id: 'answer' }],
+    }
+    await act(async () => rendered.result.current.refresh())
+    expect(rendered.result.current.items).toHaveLength(1)
+
+    current = {
+      ...current,
+      human_requests: [{ ...question, status: 'resolved', updated_at: '2026-11-10T00:01:00Z' }],
+      execution_state: 'succeeded',
+      human_waiting_since: '2026-11-10T00:02:00Z',
+    }
+    await act(async () => rendered.result.current.refresh())
+    expect(rendered.result.current.items).toHaveLength(0)
+    rendered.unmount()
+    const restarted = renderHook(() => usePendingProjectIssues(true), { wrapper })
+    await waitFor(() => expect(restarted.result.current.loading).toBe(false))
+    expect(restarted.result.current.items).toHaveLength(0)
+
+    current = { ...current, updated_at: '2026-11-10T00:03:00Z', title: 'Edited title' }
+    await act(async () => restarted.result.current.refresh())
+    expect(restarted.result.current.items).toHaveLength(0)
+
+    current = {
+      ...current,
+      human_requests: [
+        ...current.human_requests!,
+        { ...question, id: 'new-question', item_id: 'new-question' },
+      ],
+    }
+    await act(async () => restarted.result.current.refresh())
+    expect(restarted.result.current.items).toHaveLength(1)
+  }
+)
 
 it('continues through an empty cursor page and filters actual human ownership', async () => {
   const read = vi.fn(async (options?: { cursor?: string }) =>

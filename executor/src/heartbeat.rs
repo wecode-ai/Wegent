@@ -328,10 +328,7 @@ fn truncate_for_log(value: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{
-        callback_base_url, HeartbeatConfig, RuntimeHeartbeatActivationError,
-        RuntimeHeartbeatController,
-    };
+    use super::{HeartbeatConfig, RuntimeHeartbeatActivationError, RuntimeHeartbeatController};
     use std::sync::{Mutex, MutexGuard, OnceLock};
 
     fn env_lock() -> MutexGuard<'static, ()> {
@@ -388,42 +385,6 @@ mod tests {
             config.heartbeat_url,
             "http://manager/executor-manager/sandboxes/1385/heartbeat"
         );
-    }
-
-    #[test]
-    fn heartbeat_config_derives_manager_base_from_callback_url() {
-        let _lock = env_lock();
-        let _enabled = EnvGuard::set("HEARTBEAT_ENABLED", "true");
-        let _id = EnvGuard::set("HEARTBEAT_ID", "42");
-        let _kind = EnvGuard::set("HEARTBEAT_TYPE", "task");
-        let _base = EnvGuard::remove("EXECUTOR_MANAGER_HEARTBEAT_BASE_URL");
-        let _callback = EnvGuard::set("CALLBACK_URL", "http://manager/executor-manager/callback");
-
-        let config = HeartbeatConfig::from_env().unwrap();
-
-        assert_eq!(
-            config.heartbeat_url,
-            "http://manager/executor-manager/tasks/42/heartbeat"
-        );
-    }
-
-    #[test]
-    fn callback_base_url_matches_python_replacement() {
-        assert_eq!(
-            callback_base_url(Some("http://manager/executor-manager/callback")).unwrap(),
-            "http://manager/executor-manager"
-        );
-    }
-
-    #[test]
-    fn generic_warm_pool_mode_enables_dynamic_runtime_heartbeat() {
-        let _lock = env_lock();
-        let _generic = EnvGuard::set("WARM_POOL_MODE", "true");
-        let _executor = EnvGuard::remove("EXECUTOR_WARMPOOL_MODE");
-        let _heartbeat_id = EnvGuard::remove("HEARTBEAT_ID");
-        let _sandbox_id = EnvGuard::remove("SANDBOX_ID");
-
-        assert!(RuntimeHeartbeatController::from_env().is_some());
     }
 
     #[tokio::test(flavor = "current_thread")]

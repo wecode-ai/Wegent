@@ -14,6 +14,8 @@ import { CloudConnectionDialog } from '@/features/cloud-connection/CloudConnecti
 import { useOptionalCloudConnection } from '@/features/cloud-connection/useCloudConnection'
 import { ExperimentalBadge } from '@/features/experimental-features/ExperimentalBadge'
 import { useExperimentalFeaturesEnabled } from '@/features/experimental-features/useExperimentalFeaturesEnabled'
+import { useAppPreferenceFeatureState } from '@/features/experimental-features/useAppPreferenceFeatureState'
+import { COLLABORATION_EXP_PATH } from '@/features/collaboration-exp/collaborationExpFeature'
 import { useAppPreferencesState } from '@/features/app-preferences/useAppPreferencesState'
 import { useTranslation } from '@/hooks/useTranslation'
 import {
@@ -291,6 +293,7 @@ export function WorkspaceTabStrip({
   const cloud = useOptionalCloudConnection()
   const appPreferences = useAppPreferencesState()
   const experimentalFeaturesEnabled = useExperimentalFeaturesEnabled()
+  const collaborationExperience = useAppPreferenceFeatureState('collaborationExperienceEnabled')
   const {
     tabs,
     activeTabId,
@@ -617,6 +620,24 @@ export function WorkspaceTabStrip({
                 >
                   <CheckSquare2 aria-hidden="true" className="h-4 w-4 text-text-secondary" />
                   {t('interactions.title', '待你处理')}
+                </button>
+              ) : null}
+              {availableKindSet.has('auxiliary') && collaborationExperience.enabled ? (
+                <button
+                  type="button"
+                  role="menuitem"
+                  data-testid="workspace-tab-add-collaboration-exp"
+                  onClick={() => {
+                    openTab('auxiliary', {
+                      contentRoute: COLLABORATION_EXP_PATH,
+                      title: t('workbench.workspace_tab_collaboration_exp', '协作 exp'),
+                    })
+                    setAddMenuPosition(null)
+                  }}
+                  className="flex h-11 w-full items-center gap-2 rounded-lg px-2 text-left text-sm text-text-primary hover:bg-muted md:h-8 wework:hover:bg-black/[0.04]"
+                >
+                  <Columns3 aria-hidden="true" className="h-4 w-4 text-text-secondary" />
+                  {t('workbench.workspace_tab_collaboration_exp', '协作 exp')}
                 </button>
               ) : null}
               {availableKindSet.has('auxiliary') && experimentalFeaturesEnabled ? (

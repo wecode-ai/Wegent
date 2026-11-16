@@ -143,7 +143,7 @@ describe('Project member settings presentation', () => {
 
   it('uses the parent-space label when its name is unavailable, without showing an ID', async () => {
     await render({ project: { ...project, workspace_context: undefined } })
-    expect(find('cloud-project-member-source-1').textContent).toBe('继承自父空间 · 管理员')
+    expect(find('cloud-project-member-source-1').textContent).toBe('继承自父分组 · 管理员')
   })
 
   it('preserves the effective inherited role while editing a lower direct role', async () => {
@@ -192,7 +192,7 @@ describe('Project member settings presentation', () => {
     expect(find('cloud-project-member-source-1').textContent).toBe('继承自 研发空间 · 成员')
     expect(find<HTMLSelectElement>('cloud-project-member-role-1').value).toBe('Viewer')
     expect(find('cloud-project-member-remove-1').getAttribute('aria-label')).toBe(
-      '恢复 admin 的空间角色'
+      '恢复 admin 的分组角色'
     )
   })
 
@@ -222,7 +222,7 @@ describe('Project member settings presentation', () => {
     const { onMembershipModeChange } = await render({
       project: { ...project, membership_mode: 'restricted' },
     })
-    expect(find('cloud-project-membership-hint').textContent).toContain('空间管理员')
+    expect(find('cloud-project-membership-hint').textContent).toContain('分组管理员')
     const select = find<HTMLSelectElement>('cloud-project-membership-mode')
     await act(async () => {
       select.value = 'inherit'
@@ -255,7 +255,7 @@ describe('Project member settings presentation', () => {
       'Inherited from 研发空间 · Administrator'
     )
     expect(find('cloud-project-members-inheritance-note').textContent).toContain(
-      'Space administrators always manage the project'
+      'Group administrators always manage the project'
     )
   })
 })

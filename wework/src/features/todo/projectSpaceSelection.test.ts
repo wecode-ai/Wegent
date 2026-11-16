@@ -1,12 +1,20 @@
 // @vitest-environment node
 
 import type { CloudProject } from '@/api/deliveries'
-import { describe, expect, test, vi } from 'vitest'
+import { afterEach, describe, expect, test, vi } from 'vitest'
+import { ApiError } from '@/api/http'
+import { DshExecutorTransportError } from '@/api/dsh/executorTransport'
+import type { RuntimeTaskAddress } from '@/types/api'
 import {
   canEditProjectSpaceIssue,
   findProjectSpaceContextForTask,
+  findProjectSpaceContextForTaskInStores,
+  forgetProjectSpaceTaskBinding,
   loadProjectSpaceOptions,
   projectSpaceRef,
+  projectSpaceForRuntimeTask,
+  ProjectSpaceTaskContextUnavailableError,
+  rememberProjectSpaceTaskBinding,
   runtimeCloudProjectId,
   type ProjectSpaceApi,
 } from './projectSpaceSelection'
@@ -131,5 +139,148 @@ describe('projectSpaceSelection', () => {
       'space-cloud'
     )
     expect(runtimeCloudProjectId(null)).toBeUndefined()
+  })
+})
+
+describe('known project context lifecycle', () => {
+  const task: RuntimeTaskAddress = { deviceId: 'device-context-source', taskId: 'current-task' }
+  const localProject = project('known-local', 'Local', 'local')
+  const backendProject = project('known-backend', 'Backend', 'backend')
+  const sources = () => ({
+    local: {
+      findCloudContextForTask: vi
+        .fn()
+        .mockResolvedValue({ project: localProject, loop_item: null }),
+    },
+    backend: {
+      findCloudContextForTask: vi
+        .fn()
+        .mockResolvedValue({ project: backendProject, loop_item: null }),
+    },
+  })
+  afterEach(() => {
+    const binding = projectSpaceForRuntimeTask(task)
+    if (binding) forgetProjectSpaceTaskBinding(task, binding)
+  })
+
+  test.each(['local', 'backend'] as const)(
+    'invalidates a missing %s binding before discovery',
+    async store => {
+      const apis = sources()
+      const expected = store === 'local' ? localProject : backendProject
+      const other = store === 'local' ? backendProject : localProject
+      const missing =
+        store === 'local'
+          ? new DshExecutorTransportError('not_found', 'Task not found')
+          : new ApiError('Task not linked', 404)
+      rememberProjectSpaceTaskBinding(task, projectSpaceRef(expected))
+      apis[store].findCloudContextForTask.mockRejectedValue(missing)
+      await expect(
+        findProjectSpaceContextForTaskInStores(task, apis.local, apis.backend)
+      ).resolves.toEqual({ project: other, loop_item: null })
+      expect(projectSpaceForRuntimeTask(task)).toBeUndefined()
+      expect(apis[store].findCloudContextForTask).toHaveBeenCalledTimes(2)
+      expect(
+        apis[store === 'local' ? 'backend' : 'local'].findCloudContextForTask
+      ).toHaveBeenCalledOnce()
+    }
+  )
+
+  test.each([
+    new ApiError('Forbidden', 403),
+    new ApiError('Service unavailable', 503),
+    new DshExecutorTransportError('transport_failed', 'Connection interrupted'),
+    new Error('Task not found'),
+  ])('keeps the known source and mapping for $message', async error => {
+    const apis = sources()
+    rememberProjectSpaceTaskBinding(task, projectSpaceRef(localProject))
+    apis.local.findCloudContextForTask.mockRejectedValue(error)
+    await expect(
+      findProjectSpaceContextForTaskInStores(task, apis.local, apis.backend)
+    ).rejects.toMatchObject({ errors: [error] })
+    expect(apis.local.findCloudContextForTask).toHaveBeenCalledOnce()
+    expect(apis.backend.findCloudContextForTask).not.toHaveBeenCalled()
+    expect(projectSpaceForRuntimeTask(task)).toEqual(projectSpaceRef(localProject))
+  })
+
+  test('restores discovery and its nondefault priority after the actual project mismatches cache', async () => {
+    const apis = sources()
+    const defaultProject = {
+      ...localProject,
+      id: 'default-work-items',
+      project_key: 'WORK',
+      metadata: { system_kind: 'default_work_items' },
+    }
+    apis.local.findCloudContextForTask.mockResolvedValue({
+      project: defaultProject,
+      loop_item: null,
+    })
+    rememberProjectSpaceTaskBinding(task, projectSpaceRef(localProject))
+    await expect(
+      findProjectSpaceContextForTaskInStores(task, apis.local, apis.backend)
+    ).resolves.toEqual({ project: backendProject, loop_item: null })
+    expect(projectSpaceForRuntimeTask(task)).toBeUndefined()
+    expect(apis.local.findCloudContextForTask).toHaveBeenCalledTimes(2)
+    expect(apis.backend.findCloudContextForTask).toHaveBeenCalledOnce()
+  })
+
+  test('does not discover local contexts after a project-session authorization miss', async () => {
+    const apis = sources()
+    const missing = new ApiError('Project session unavailable', 404)
+    rememberProjectSpaceTaskBinding(task, projectSpaceRef(localProject))
+    apis.backend.findCloudContextForTask.mockRejectedValue(missing)
+    await expect(
+      findProjectSpaceContextForTaskInStores(
+        { ...task, projectSession: { projectId: 'cloud-project', issueId: 'cloud-issue' } },
+        apis.local,
+        apis.backend
+      )
+    ).rejects.toMatchObject({ errors: [missing] })
+    expect(apis.local.findCloudContextForTask).not.toHaveBeenCalled()
+    expect(projectSpaceForRuntimeTask(task)).toEqual(projectSpaceRef(localProject))
+  })
+
+  test('invalidates an actual store mismatch even when the project ID is unchanged', async () => {
+    const apis = sources()
+    const actualProject = { ...backendProject, id: localProject.id }
+    rememberProjectSpaceTaskBinding(task, projectSpaceRef(localProject))
+    apis.local.findCloudContextForTask.mockResolvedValue({
+      project: actualProject,
+      loop_item: null,
+    })
+    await expect(
+      findProjectSpaceContextForTaskInStores(task, apis.local, apis.backend)
+    ).resolves.toEqual({ project: actualProject, loop_item: null })
+    expect(projectSpaceForRuntimeTask(task)).toBeUndefined()
+    expect(apis.local.findCloudContextForTask).toHaveBeenCalledTimes(2)
+    expect(apis.backend.findCloudContextForTask).toHaveBeenCalledOnce()
+  })
+
+  test('does not erase a newer binding when the old owner reports a late miss', async () => {
+    const apis = sources()
+    let rejectInitial!: (error: unknown) => void
+    apis.local.findCloudContextForTask.mockImplementationOnce(
+      () =>
+        new Promise((_, reject) => {
+          rejectInitial = reject
+        })
+    )
+    rememberProjectSpaceTaskBinding(task, projectSpaceRef(localProject))
+    const lookup = findProjectSpaceContextForTaskInStores(task, apis.local, apis.backend)
+    rememberProjectSpaceTaskBinding(task, projectSpaceRef(backendProject))
+    rejectInitial(new ApiError('No previous binding', 404))
+    await expect(lookup).rejects.toBeInstanceOf(AggregateError)
+    expect(projectSpaceForRuntimeTask(task)).toEqual(projectSpaceRef(backendProject))
+    expect(apis.backend.findCloudContextForTask).not.toHaveBeenCalled()
+  })
+
+  test('reports an unavailable known owner without substituting another store', async () => {
+    const apis = sources()
+    rememberProjectSpaceTaskBinding(task, projectSpaceRef(backendProject))
+    await expect(
+      findProjectSpaceContextForTaskInStores(task, apis.local, undefined)
+    ).rejects.toBeInstanceOf(ProjectSpaceTaskContextUnavailableError)
+    expect(apis.local.findCloudContextForTask).not.toHaveBeenCalled()
+    expect(projectSpaceForRuntimeTask(task)).toEqual(projectSpaceRef(backendProject))
   })
 })

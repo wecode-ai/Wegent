@@ -9,6 +9,27 @@ export const executionEnvironmentMessages: Record<
   Readonly<Record<string, string>>
 > = {
   'zh-CN': {
+    'todo.runner_issue_conflict':
+      'Issue 的执行设备与本次分配不兼容。请在项目设置中检查智能体的运行设置和执行环境授权。',
+    'todo.runner_diagnostic_group': '协作小组：{{name}}。',
+    'todo.runner_diagnostic_agent': '智能体：{{name}}。',
+    'todo.runner_diagnostic_bound': 'Issue 已绑定设备：{{environment}}。',
+    'todo.runner_diagnostic_fixed': '本次策略指定设备：{{environment}}。',
+    'todo.runner_diagnostic_authorized': '已获授权的设备：{{environments}}。',
+    'todo.runner_reason_policy_mismatch':
+      '已绑定设备不符合智能体的执行策略；请调整智能体运行设置以使用该设备。',
+    'todo.runner_reason_workspace_authorization_missing':
+      '所需设备缺少有效的分组使用授权，请先在分组设置 → 执行环境中授权，再检查项目授权。',
+    'todo.runner_reason_project_authorization_missing':
+      '所需设备已获分组授权，但缺少有效的项目使用授权，请在项目设置 → 执行环境中添加。',
+    'todo.runner_reason_environment_unavailable':
+      '所需设备记录已停用或不存在，请联系设备所有者恢复设备。',
+    'todo.runner_reason_no_authorized_environment':
+      '当前策略下没有可用设备，请检查分组和项目的设备授权。',
+    'todo.runner_reason_history_requires_configuration':
+      '历史执行设备冲突或无法解析，需要核对历史执行记录和设备绑定。',
+    'todo.runner_reason_group_no_common_environment':
+      '小组成员没有共同可用的设备，请调整以下成员的运行设置。',
     'gitAccount.configure': '配置 Git 账户',
     'gitAccount.openFailed': '无法打开配置页面，请重试。',
     'common:workbench.git_access_credentials_required':
@@ -30,7 +51,7 @@ export const executionEnvironmentMessages: Record<
     'todo.device_catalog_cloud_failed': '云端设备加载失败',
     'todo.device_catalog_loading_more': '正在加载其他设备…',
     'todo.device_catalog_empty': '尚未添加设备',
-    'todo.workspace_execution_environments_intro': '管理共享给空间内项目的执行环境。',
+    'todo.workspace_execution_environments_intro': '管理共享给分组内项目的执行环境。',
     'todo.project_execution_environments_intro':
       '选择此项目可以使用的执行环境，项目目录会在首次运行时自动准备。',
     'todo.project_available_environments': '项目可用环境',
@@ -113,28 +134,49 @@ export const executionEnvironmentMessages: Record<
     'todo.configured_workspace_execution_environments': '共享环境',
     'todo.local_device': '本地设备',
     'todo.cloud_host': '云主机',
-    'todo.workspace_shared': '空间共享',
+    'todo.workspace_shared': '分组共享',
     'todo.personal_resource': '我的资源',
     'todo.execution_environment_share_and_add': '共享并添加',
     'todo.execution_environment_checking_sharing': '正在检查共享状态',
     'todo.execution_environment_sharing_unknown': '共享状态未确认',
     'todo.execution_environment_share_scope_hint':
-      '共享后，空间成员可为其他项目授权使用；仍使用此环境的账号和额度。',
+      '共享后，分组成员可为其他项目授权使用；仍使用此环境的账号和额度。',
     'todo.execution_environment_share_failed': '共享环境失败：{{reason}}',
     'todo.execution_environment_shared_add_failed':
-      '环境已共享到空间，但添加到项目失败：{{reason}}。请重试添加。',
+      '环境已共享到分组，但添加到项目失败：{{reason}}。请重试添加。',
     'todo.execution_environment_workspace_share_required':
-      '环境尚未共享给项目所属空间，请刷新后选择“共享并添加”。',
-    'todo.execution_environment_already_shared': '环境已共享给空间，请刷新后重试添加。',
+      '环境尚未共享给项目所属分组，请刷新后选择“共享并添加”。',
+    'todo.execution_environment_already_shared': '环境已共享给分组，请刷新后重试添加。',
     'todo.execution_environment_already_added': '环境已添加到项目，请刷新列表。',
     'todo.execution_environment_owned_not_found': '个人环境不存在或已失去所有权，请刷新设备列表。',
     'todo.execution_environment_not_found': '环境不存在或已停用，请刷新设备列表。',
     'todo.execution_environment_workspace_not_found':
-      '空间不存在或你已失去访问权限，请联系空间管理员。',
-    'todo.execution_environment_workspace_required': '项目尚未加入空间，请先配置所属空间。',
-    'todo.execution_environment_permission_denied': '没有操作权限，请联系空间或项目管理员。',
+      '分组不存在或你已失去访问权限，请联系分组管理员。',
+    'todo.execution_environment_workspace_required': '项目尚未加入分组，请先配置所属分组。',
+    'todo.execution_environment_permission_denied': '没有操作权限，请联系分组或项目管理员。',
   },
   en: {
+    'todo.runner_issue_conflict':
+      'The Issue runner is incompatible with this assignment. Check the Agent runtime settings and execution environment authorization in Project settings.',
+    'todo.runner_diagnostic_group': 'Group: {{name}}.',
+    'todo.runner_diagnostic_agent': 'Agent: {{name}}.',
+    'todo.runner_diagnostic_bound': 'Issue bound environment: {{environment}}.',
+    'todo.runner_diagnostic_fixed': 'Policy environment: {{environment}}.',
+    'todo.runner_diagnostic_authorized': 'Authorized environments: {{environments}}.',
+    'todo.runner_reason_policy_mismatch':
+      'The bound environment does not satisfy the Agent policy. Adjust the Agent runtime settings to use that environment.',
+    'todo.runner_reason_workspace_authorization_missing':
+      'The required device has no valid group use grant. Authorize it in Group settings → Execution environments, then check project authorization.',
+    'todo.runner_reason_project_authorization_missing':
+      'The required device is authorized for the group but has no valid project use grant. Add it in Project settings → Execution environments.',
+    'todo.runner_reason_environment_unavailable':
+      'The required device record is inactive or missing. Ask its owner to restore it.',
+    'todo.runner_reason_no_authorized_environment':
+      'No device is available under this policy. Check group and project device authorization.',
+    'todo.runner_reason_history_requires_configuration':
+      'Historical runners conflict or cannot be resolved. Review execution history and the Issue device binding.',
+    'todo.runner_reason_group_no_common_environment':
+      'Group members have no common eligible environment. Adjust the following members’ runtime settings.',
     'gitAccount.configure': 'Configure Git accounts',
     'gitAccount.openFailed': 'Could not open Git settings. Try again.',
     'common:workbench.git_access_credentials_required':
@@ -158,7 +200,7 @@ export const executionEnvironmentMessages: Record<
     'todo.device_catalog_loading_more': 'Loading more devices…',
     'todo.device_catalog_empty': 'No devices added yet',
     'todo.workspace_execution_environments_intro':
-      'Manage execution environments shared with projects in this workspace.',
+      'Manage execution environments shared with projects in this group.',
     'todo.project_execution_environments_intro':
       'Choose runners for this project. Project directories are prepared automatically on first use.',
     'todo.project_available_environments': 'Available environments',
@@ -245,20 +287,20 @@ export const executionEnvironmentMessages: Record<
     'todo.configured_workspace_execution_environments': 'Shared environments',
     'todo.local_device': 'Local device',
     'todo.cloud_host': 'Cloud host',
-    'todo.workspace_shared': 'Shared by workspace',
+    'todo.workspace_shared': 'Shared by group',
     'todo.personal_resource': 'My resources',
     'todo.execution_environment_share_and_add': 'Share and add',
     'todo.execution_environment_checking_sharing': 'Checking sharing status',
     'todo.execution_environment_sharing_unknown': 'Sharing status unavailable',
     'todo.execution_environment_share_scope_hint':
-      'Workspace members can authorize this environment for other projects. Its account and quota remain in use.',
+      'Group members can authorize this environment for other projects. Its account and quota remain in use.',
     'todo.execution_environment_share_failed': 'Failed to share the environment: {{reason}}',
     'todo.execution_environment_shared_add_failed':
-      'The environment was shared with the workspace, but could not be added to the project: {{reason}}. Retry adding it.',
+      'The environment was shared with the group, but could not be added to the project: {{reason}}. Retry adding it.',
     'todo.execution_environment_workspace_share_required':
-      'This environment is not shared with the project’s workspace. Refresh, then select “Share and add”.',
+      'This environment is not shared with the project’s group. Refresh, then select “Share and add”.',
     'todo.execution_environment_already_shared':
-      'The environment is already shared with the workspace. Refresh and retry adding it.',
+      'The environment is already shared with the group. Refresh and retry adding it.',
     'todo.execution_environment_already_added':
       'The environment is already available in the project. Refresh the list.',
     'todo.execution_environment_owned_not_found':
@@ -266,10 +308,10 @@ export const executionEnvironmentMessages: Record<
     'todo.execution_environment_not_found':
       'The environment no longer exists or is disabled. Refresh the device list.',
     'todo.execution_environment_workspace_not_found':
-      'The workspace no longer exists or you have lost access. Contact a workspace administrator.',
+      'The group no longer exists or you have lost access. Contact a group administrator.',
     'todo.execution_environment_workspace_required':
-      'The project is not attached to a workspace. Configure its workspace first.',
+      'The project is not attached to a group. Configure its group first.',
     'todo.execution_environment_permission_denied':
-      'You do not have permission. Contact a workspace or project administrator.',
+      'You do not have permission. Contact a group or project administrator.',
   },
 }

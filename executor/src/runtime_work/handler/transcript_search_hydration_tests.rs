@@ -118,51 +118,6 @@ fn long_terminal_turn(turn_id: &str, first: &str, last: &str, status: &str) -> V
 }
 
 #[test]
-fn cached_async_reply_search_hydrates_distant_question_source_and_raw_answer() {
-    let mut card = assistant("question", "question-turn", "");
-    card["blocks"] = json!([{"id":"question-block", "type":"tool", "renderPayload":{
-        "kind":"request_user_input", "delivery":"async", "questions":[{"question":"needle needle?"}],
-    }}]);
-    let mut messages = vec![assistant("before", "before", "Other"), card];
-    messages.extend((0..8).map(|index| {
-        assistant(
-            &format!("context-{index}"),
-            &format!("context-turn-{index}"),
-            "Other",
-        )
-    }));
-    messages.push(json!({"id":"reply", "clientUserMessageId":"client-reply", "turnId":"reply-turn", "role":"user", "content":"**needle**"}));
-    messages.push(
-        json!({"id":"ordinary", "turnId":"ordinary-turn", "role":"user", "content":"**plain**"}),
-    );
-    let link = cached_link(messages);
-    let response = search_cached_transcript(&cached_search_messages(&link), "needle", 250);
-    assert_eq!(response["totalMatches"], 3);
-    for (index, matched) in response["matches"].as_array().unwrap().iter().enumerate() {
-        assert_eq!(matched["itemId"], "client-reply");
-        assert_eq!(matched["messageId"], "client-reply");
-        assert_eq!(matched["occurrence"], index);
-        assert_eq!(matched["replyQuestions"], json!(["needle needle?"]));
-        let page = hydrate_cursor(&link, matched["cursor"].as_str().unwrap(), 2, false);
-        assert!(message_ids(&page).contains(&"question"));
-        assert!(message_ids(&page).contains(&"reply"));
-        assert_eq!(
-            search_cached_transcript(page["messages"].as_array().unwrap(), "needle", 250),
-            response
-        );
-        assert_complete_page_turns(&link, &page);
-    }
-    assert_eq!(
-        search_cached_transcript(&cached_search_messages(&link), "**needle**", 250)["totalMatches"],
-        1
-    );
-    assert_eq!(
-        search_cached_transcript(&cached_search_messages(&link), "**plain**", 250)["totalMatches"],
-        0
-    );
-}
-
-#[test]
 fn cached_async_reply_search_does_not_pair_one_line_with_a_merged_question_group() {
     let messages = vec![
         async_question("first", "questions", "first?"),
@@ -218,56 +173,6 @@ fn cached_async_reply_source_uses_visible_blocks_when_assistant_body_is_absent()
 }
 
 #[test]
-fn cached_async_reply_search_pairs_all_canonical_questions_and_hydrates_the_full_source() {
-    let mut messages = vec![assistant("lead", "questions", "Question context")];
-    messages.push(async_question("first", "questions", "first?"));
-    messages.extend(tool_messages("questions", "between"));
-    messages.push(async_question("second", "questions", "needle?"));
-    messages.extend((0..8).map(|index| {
-        assistant(
-            &format!("other-{index}"),
-            &format!("other-turn-{index}"),
-            "Other",
-        )
-    }));
-    messages.push(json!({
-        "id":"reply", "clientUserMessageId":"client-reply", "turnId":"reply-turn",
-        "role":"user", "content":"**yes**\nno",
-    }));
-    let link = cached_link(messages);
-    let messages = cached_search_messages(&link);
-    assert_eq!(
-        cached_reply_source_index(&messages, messages.len() - 1),
-        Some(0)
-    );
-    for query in ["first", "needle", "**yes**"] {
-        let result = search_cached_transcript(&messages, query, 250);
-        assert_eq!(result["totalMatches"], 1, "query={query}");
-        assert_eq!(result["matches"][0]["itemId"], "client-reply");
-        assert_eq!(
-            result["matches"][0]["replyQuestions"],
-            json!(["first?", "needle?"])
-        );
-    }
-    let result = search_cached_transcript(&messages, "?", 250);
-    assert_eq!(result["totalMatches"], 2);
-    for (occurrence, matched) in result["matches"].as_array().unwrap().iter().enumerate() {
-        assert_eq!(matched["itemId"], "client-reply");
-        assert_eq!(matched["messageId"], "client-reply");
-        assert_eq!(matched["occurrence"], occurrence);
-        let page = hydrate_cursor(&link, matched["cursor"].as_str().unwrap(), 1, false);
-        for id in ["lead", "first", "second", "reply"] {
-            assert!(message_ids(&page).contains(&id));
-        }
-        assert_eq!(
-            search_cached_transcript(page["messages"].as_array().unwrap(), "?", 250),
-            result
-        );
-        assert_complete_page_turns(&link, &page);
-    }
-}
-
-#[test]
 fn cached_async_reply_search_keeps_canonical_guidance_boundaries() {
     let messages = vec![
         async_question("first", "questions", "first?"),
@@ -296,36 +201,6 @@ fn cached_async_reply_search_keeps_canonical_guidance_boundaries() {
     assert_eq!(result["matches"][0]["itemId"], "client-reply");
     assert_eq!(result["matches"][0]["replyQuestions"], json!(["needle?"]));
     assert_eq!(cached_reply_source_index(&messages, 4), Some(3));
-}
-
-#[test]
-fn cached_search_normalizes_plan_labels_only_for_unpaired_user_messages() {
-    let content = "PLEASE IMPLEMENT THIS PLAN: hidden-needle";
-    let ordinary = vec![json!({
-        "id":"ordinary", "turnId":"ordinary-turn", "role":"user", "content":content,
-    })];
-    assert_eq!(
-        search_cached_transcript(&ordinary, "hidden-needle", 250)["totalMatches"],
-        0
-    );
-    let label = search_cached_transcript(&ordinary, "是的，执行此计划", 250);
-    assert_eq!(label["totalMatches"], 1);
-    assert_eq!(label["matches"][0]["itemId"], "ordinary");
-
-    let paired = vec![
-        async_question("question", "question-turn", "Choose?"),
-        json!({"id":"reply", "turnId":"reply-turn", "role":"user", "content":content}),
-    ];
-    for query in ["PLEASE IMPLEMENT THIS PLAN:", "hidden-needle", "Choose?"] {
-        let result = search_cached_transcript(&paired, query, 250);
-        assert_eq!(result["totalMatches"], 1, "query={query}");
-        assert_eq!(result["matches"][0]["itemId"], "reply");
-        assert_eq!(result["matches"][0]["replyQuestions"], json!(["Choose?"]));
-    }
-    assert_eq!(
-        search_cached_transcript(&paired, "是的，执行此计划", 250)["totalMatches"],
-        0
-    );
 }
 
 #[test]

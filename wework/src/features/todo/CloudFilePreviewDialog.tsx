@@ -2,27 +2,11 @@ import { useEffect, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { Download, X } from 'lucide-react'
 import { useTranslation } from '@/hooks/useTranslation'
-
-type PreviewKind = 'text' | 'image' | 'pdf' | 'unsupported'
-
-const TEXT_FILE_EXTENSION =
-  /\.(?:c|cc|cpp|css|csv|go|h|hpp|html?|ini|java|js|jsx|json|log|md|py|rb|rs|sh|sql|toml|ts|tsx|txt|xml|ya?ml)$/i
-
-function previewKind(filename: string, contentType: string | null): PreviewKind {
-  const normalizedType = contentType?.toLowerCase() ?? ''
-  if (normalizedType.startsWith('image/')) return 'image'
-  if (normalizedType === 'application/pdf' || /\.pdf$/i.test(filename)) return 'pdf'
-  if (
-    normalizedType.startsWith('text/') ||
-    normalizedType.includes('json') ||
-    normalizedType.includes('javascript') ||
-    normalizedType.includes('xml') ||
-    TEXT_FILE_EXTENSION.test(filename)
-  ) {
-    return 'text'
-  }
-  return 'unsupported'
-}
+import {
+  IssueActivityMarkdown,
+  createCollaborationTranslator,
+  useAttachmentPreview,
+} from '@wegent/collaboration'
 
 export function CloudFilePreviewDialog({
   filename,
@@ -39,40 +23,20 @@ export function CloudFilePreviewDialog({
   onDownload: () => Promise<void>
   onClose: () => void
 }) {
-  const { t } = useTranslation('common')
-  const [loading, setLoading] = useState(true)
-  const [downloading, setDownloading] = useState(false)
-  const [error, setError] = useState<string | null>(null)
-  const [text, setText] = useState('')
-  const [objectUrl, setObjectUrl] = useState<string | null>(null)
-  const kind = previewKind(filename, contentType)
-
-  useEffect(() => {
-    let active = true
-    let url: string | null = null
-    void loadFile()
-      .then(async blob => {
-        if (!active) return
-        if (kind === 'text') {
-          const content = await blob.text()
-          if (active) setText(content)
-        } else if (kind === 'image' || kind === 'pdf') {
-          url = URL.createObjectURL(blob)
-          setObjectUrl(url)
-        }
-      })
-      .catch(cause => {
-        if (active) setError(cause instanceof Error ? cause.message : String(cause))
-      })
-      .finally(() => {
-        if (active) setLoading(false)
-      })
-    return () => {
-      active = false
-      if (url) URL.revokeObjectURL(url)
-    }
-  }, [kind, loadFile])
-
+  const { t, i18n } = useTranslation('common')
+  const translate = createCollaborationTranslator(i18n.language.startsWith('zh') ? 'zh-CN' : 'en')
+  const [downloadState, setDownloadState] = useState<{
+    source: typeof loadFile
+    pending: boolean
+    error?: string
+  } | null>(null)
+  const downloading = downloadState?.source === loadFile && downloadState.pending
+  const downloadError = downloadState?.source === loadFile ? downloadState.error : undefined
+  const { preview, failed, errorMessage, loading, markLoaded, markFailed, retry } =
+    useAttachmentPreview(loadFile, filename, contentType)
+  const kind = preview?.kind
+  const text = preview?.text ?? ''
+  const objectUrl = preview?.url
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
       if (event.key === 'Escape') onClose()
@@ -82,14 +46,17 @@ export function CloudFilePreviewDialog({
   }, [onClose])
 
   async function download() {
-    setDownloading(true)
-    setError(null)
+    const source = loadFile
+    setDownloadState({ source, pending: true })
+    const finish = (error?: string) =>
+      setDownloadState(current =>
+        current?.source === source ? { source, pending: false, error } : current
+      )
     try {
       await onDownload()
+      finish()
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : String(cause))
-    } finally {
-      setDownloading(false)
+      finish(cause instanceof Error ? cause.message : t('todo.file_preview_failed', '预览失败'))
     }
   }
 
@@ -133,15 +100,36 @@ export function CloudFilePreviewDialog({
             <X className="h-4 w-4" />
           </button>
         </header>
+        {downloadError ? (
+          <p
+            role="alert"
+            data-testid="cloud-file-preview-download-error"
+            className="px-4 py-2 text-sm text-destructive"
+          >
+            {downloadError}
+          </p>
+        ) : null}
         <div className="min-h-0 flex-1 overflow-auto bg-muted/20">
-          {loading ? (
+          {loading && !preview && !failed ? (
             <div className="flex h-full items-center justify-center text-sm text-text-muted">
               {t('todo.file_preview_loading', '正在加载预览…')}
             </div>
-          ) : error ? (
+          ) : failed ? (
             <div className="flex h-full items-center justify-center px-6 text-sm text-destructive">
-              {error}
+              {errorMessage ?? t('todo.file_preview_failed', '预览失败')}
+              <button
+                type="button"
+                data-testid="cloud-file-preview-retry"
+                className="ml-2 min-h-11 min-w-11 underline md:min-h-0 md:min-w-0"
+                onClick={retry}
+              >
+                {translate('attachment.retry')}
+              </button>
             </div>
+          ) : kind === 'markdown' ? (
+            <article data-testid="cloud-file-preview-markdown" className="min-h-full p-5">
+              <IssueActivityMarkdown content={text} variant="document" translate={translate} />
+            </article>
           ) : kind === 'text' ? (
             <pre
               data-testid="cloud-file-preview-text"
@@ -155,6 +143,8 @@ export function CloudFilePreviewDialog({
                 data-testid="cloud-file-preview-image"
                 src={objectUrl}
                 alt={filename}
+                onLoad={markLoaded}
+                onError={markFailed}
                 className="max-h-full max-w-full object-contain"
               />
             </div>
@@ -166,7 +156,10 @@ export function CloudFilePreviewDialog({
               className="h-full w-full border-0"
             />
           ) : (
-            <div className="flex h-full flex-col items-center justify-center gap-3 px-6 text-sm text-text-muted">
+            <div
+              data-testid="cloud-file-preview-unsupported"
+              className="flex h-full flex-col items-center justify-center gap-3 px-6 text-sm text-text-muted"
+            >
               <span>{t('todo.file_preview_unsupported', '此文件格式暂不支持预览')}</span>
               <button
                 type="button"

@@ -140,6 +140,7 @@ fn claude_continuation_requires_a_safe_session_for_the_current_bot() {
 
 async fn recovery_fixture(task_json: Value) -> MysqlRows {
     MysqlRows::start_results(move |sql| {
+        let status = task_json["status"]["status"].as_str().unwrap_or("PENDING");
         if sql.starts_with("UPDATE ") {
             return (vec![], vec![]);
         }
@@ -150,6 +151,8 @@ async fn recovery_fixture(task_json: Value) -> MysqlRows {
             let mut row = vec![("unused", SqlValue::Null); 23];
             for (column, value) in [
                 ("task_id", SqlValue::I64(100)),
+                ("role", SqlValue::Text("ASSISTANT".into())),
+                ("status", SqlValue::Text(status.into())),
                 ("executor_name", SqlValue::Text("old-executor".into())),
                 ("executor_namespace", SqlValue::Text("old-namespace".into())),
                 ("executor_deleted_at", SqlValue::I8(0)),
@@ -159,11 +162,17 @@ async fn recovery_fixture(task_json: Value) -> MysqlRows {
             row
         } else {
             assert!(sql.contains("FROM tasks"), "{sql}");
-            vec![
+            let mut row = vec![("unused", SqlValue::Null); 12];
+            for (column, value) in [
                 ("id", SqlValue::I64(100)),
                 ("user_id", SqlValue::I32(7)),
+                ("kind", SqlValue::Text("Task".into())),
                 ("json", SqlValue::Text(task_json.to_string())),
-            ]
+                ("is_active", SqlValue::I64(1)),
+            ] {
+                row[crate::task_store::task_column_index(column).unwrap()] = (column, value);
+            }
+            row
         };
         (row.clone(), vec![row])
     })
@@ -172,7 +181,7 @@ async fn recovery_fixture(task_json: Value) -> MysqlRows {
 
 #[tokio::test]
 async fn missing_executor_prepares_a_replacement_before_building_the_dispatch_payload() {
-    let (result, _, queries) = recover_missing_executor(false).await;
+    let (result, _, queries) = run_executor_recovery(false, false).await;
     result.unwrap();
     let writes: Vec<&str> = queries
         .iter()
@@ -182,16 +191,40 @@ async fn missing_executor_prepares_a_replacement_before_building_the_dispatch_pa
     assert_eq!(writes.len(), 2);
     assert!(writes[0].contains("executor_deleted_at = true"));
     assert!(writes[1].contains("executor_deleted_at = false"));
+    let lock = queries
+        .iter()
+        .position(|sql| sql.contains("FROM tasks") && sql.ends_with("FOR UPDATE"))
+        .expect("dispatch locks the parent task");
+    let subtask = queries
+        .iter()
+        .position(|sql| sql.starts_with("UPDATE subtasks SET status="))
+        .expect("dispatch transitions the subtask to RUNNING");
+    let parent = queries
+        .iter()
+        .position(|sql| sql.starts_with("UPDATE tasks SET json="))
+        .expect("dispatch transitions the parent to RUNNING");
+    assert!(lock < subtask && subtask < parent);
+}
+
+#[tokio::test]
+async fn pipeline_executor_reaches_manager_when_replica_is_missing_the_stage() {
+    let (result, _, writer_queries) = run_executor_recovery(false, true).await;
+    result.unwrap();
     assert!(
-        queries
+        writer_queries
             .iter()
-            .any(|sql| sql.contains("s.status IN ('PENDING', 'RUNNING')"))
+            .any(|sql| sql.contains("FROM subtasks") && sql.ends_with("FOR UPDATE"))
+    );
+    assert!(
+        !writer_queries
+            .iter()
+            .any(|sql| sql.contains("FROM subtask_contexts"))
     );
 }
 
 #[tokio::test]
 async fn a_failed_prepare_keeps_the_deleted_binding_and_reports_the_manager_error() {
-    let (result, request, queries) = recover_missing_executor(true).await;
+    let (result, request, queries) = run_executor_recovery(true, false).await;
     assert_eq!(result.unwrap_err().to_string(), "Pod preparation timed out");
     assert_eq!(request.executor_name.as_deref(), Some("old-executor"));
     assert!(
@@ -206,15 +239,43 @@ async fn a_failed_prepare_keeps_the_deleted_binding_and_reports_the_manager_erro
     );
 }
 
-async fn recover_missing_executor(
+async fn run_executor_recovery(
     prepare_fails: bool,
+    pipeline: bool,
 ) -> (anyhow::Result<()>, ExecutionRequest, Vec<String>) {
     use std::sync::Arc;
     use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
     use tokio::net::TcpListener;
 
-    let fixture = recovery_fixture(json!({})).await;
-    let mut app = crate::app_test_support::app(fixture.mysql.clone());
+    let status = if pipeline { "RUNNING" } else { "PENDING" };
+    let fixture = recovery_fixture(json!({"status":{"status":status}})).await;
+    let replica = MysqlRows::start_results(|sql| {
+        if sql.contains("FROM tasks") || sql.contains("FROM `tasks`") {
+            let task = vec![
+                ("id", SqlValue::I64(100)),
+                ("user_id", SqlValue::I32(7)),
+                ("json", SqlValue::Text("{}".into())),
+            ];
+            return (task.clone(), vec![task]);
+        }
+        assert!(
+            sql.contains("FROM subtasks") || sql.contains("FROM `subtasks`"),
+            "{sql}"
+        );
+        (vec![("id", SqlValue::I64(0))], vec![])
+    })
+    .await;
+    let mysql = if pipeline {
+        brz_mysql::MysqlService::connect_lazy_read_write_with_options(
+            &fixture.url,
+            &replica.url,
+            Default::default(),
+        )
+        .unwrap()
+    } else {
+        fixture.mysql.clone()
+    };
+    let mut app = crate::app_test_support::app(mysql);
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let url = format!("http://{}", listener.local_addr().unwrap());
     Arc::get_mut(&mut app).unwrap().executor_manager =
@@ -234,6 +295,7 @@ async fn recover_missing_executor(
             let mut request_line = String::new();
             connection.read_line(&mut request_line).await.unwrap();
             let mut length = 0;
+            let mut has_binding_credential = false;
             loop {
                 let mut header = String::new();
                 assert!(connection.read_line(&mut header).await.unwrap() > 0);
@@ -243,6 +305,9 @@ async fn recover_missing_executor(
                 if let Some(value) = header.to_ascii_lowercase().strip_prefix("content-length:") {
                     length = value.trim().parse().unwrap();
                 }
+                has_binding_credential |= header
+                    .to_ascii_lowercase()
+                    .starts_with("authorization: wegentexecutorbinding ");
             }
             let (status, body) = if path.ends_with("/address") {
                 assert!(request_line.starts_with(&format!("GET {path}?")));
@@ -257,6 +322,7 @@ async fn recover_missing_executor(
                 connection.read_exact(&mut body).await.unwrap();
                 let body: Value = serde_json::from_slice(&body).unwrap();
                 if path.ends_with("/responses") {
+                    assert!(has_binding_credential);
                     assert_eq!(body["metadata"]["executor_name"], "replacement");
                     assert_eq!(body["metadata"]["executor_namespace"], "replacement-ns");
                     ("200 OK", json!({"id": "resp_100", "status": "queued"}))
@@ -303,8 +369,46 @@ async fn recover_missing_executor(
         ..ExecutionRequest::default()
     };
     tokio::time::timeout(Duration::from_secs(10), async {
-        let result = if prepare_fails {
-            recover_executor_if_needed(&app, &mut request, None)
+        let result = if pipeline {
+            assert!(
+                read_subtask_with_contexts(
+                    &app.mysql,
+                    app.task_store.table_templates(),
+                    request.subtask_id
+                )
+                .await
+                .unwrap()
+                .is_none()
+            );
+            use crate::responses::dispatch::{ConsumerState, DispatchJob, ExecutorDispatchBody};
+            let (accepted, dispatched) = tokio::sync::oneshot::channel();
+            let job = DispatchJob::Executor {
+                consumer: Box::new(ConsumerState::from_app(&app)),
+                task_id: request.task_id,
+                subtask_id: request.subtask_id,
+                user_id: request.user_id,
+                message_id: request.message_id,
+                url: format!("{url}/executor-manager/v1/responses"),
+                body: ExecutorDispatchBody::Recover(Box::new(request.clone())),
+                start: None,
+            };
+            app.responses_dispatch
+                .reserve()
+                .unwrap()
+                .send(DispatchJob::Pipeline(Box::new(job), accepted));
+            dispatched.await.unwrap().unwrap();
+            assert_eq!(
+                replica
+                    .queries()
+                    .iter()
+                    .filter(|sql| sql.contains("subtasks"))
+                    .count(),
+                1,
+                "only the explicit replica read may query the subtask"
+            );
+            Ok(())
+        } else if prepare_fails {
+            recover_executor_if_needed(&app, &mut request, None, false)
                 .await
                 .map(|_| ())
         } else {

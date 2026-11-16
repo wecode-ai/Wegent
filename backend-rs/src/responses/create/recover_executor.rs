@@ -4,7 +4,7 @@
 
 //! Recover a coding executor and its workspace before dispatching a turn.
 use anyhow::{Context, Result, ensure};
-use brz_mysql::{Json, Mysql, MysqlResult, MysqlRow};
+use brz_mysql::{Json, Mysql, MysqlResult, MysqlRow, MysqlTransaction};
 use serde_json::Value;
 
 use crate::chat_repository::{ChatHistoryRepository, TaskRow, contexts_by_subtask_ids_statement};
@@ -68,6 +68,27 @@ pub(crate) async fn read_subtask_with_contexts<M: Mysql>(
     routed
         .fetch_all::<_, _, MysqlRow>(contexts_by_subtask_ids_statement(1), vec![subtask_id])
         .await?;
+    Ok(Some(decode_binding(row)))
+}
+
+pub(crate) async fn read_pipeline_binding<M: Mysql>(
+    mysql: &M,
+    templates: TableTemplates,
+    task_id: i64,
+    subtask_id: i64,
+) -> MysqlResult<Option<RecoverySubtask>> {
+    let routed = mysql.route(ByTaskId(task_id as u64));
+    routed
+        .with_transaction(async |tx| {
+            let row: Option<MysqlRow> = tx
+                .fetch_optional(subtask_by_id_statement(templates.subtasks), (subtask_id,))
+                .await?;
+            Ok(row.map(decode_binding))
+        })
+        .await
+}
+
+fn decode_binding(row: MysqlRow) -> RecoverySubtask {
     let column = |name: &str| {
         subtask_column_index(name).and_then(|index| row.get_at::<Option<i64>>(index).ok().flatten())
     };
@@ -75,12 +96,12 @@ pub(crate) async fn read_subtask_with_contexts<M: Mysql>(
         subtask_column_index(name)
             .and_then(|index| row.get_at::<Option<String>>(index).ok().flatten())
     };
-    Ok(Some(RecoverySubtask {
+    RecoverySubtask {
         executor_deleted: column("executor_deleted_at").is_some_and(|value| value != 0),
         task_id: column("task_id").unwrap_or(0),
         executor_name: text("executor_name").unwrap_or_default(),
         executor_namespace: text("executor_namespace").unwrap_or_default(),
-    }))
+    }
 }
 
 /// `_mark_missing_executor_deleted`'s probe gate
@@ -121,6 +142,7 @@ pub(crate) async fn recover_executor_if_needed(
     state: &AppState,
     request: &mut ExecutionRequest,
     device_id: Option<&str>,
+    pipeline: bool,
 ) -> Result<bool> {
     if !shell_supports_recovery(&request_shell_type(request)) {
         return Ok(false);
@@ -129,14 +151,13 @@ pub(crate) async fn recover_executor_if_needed(
     if device_id.is_some_and(|id| !id.is_empty()) && restore_fork_workspace {
         return Ok(false);
     }
-    let Some(subtask) = read_subtask_with_contexts(
-        &state.mysql,
-        state.task_store.table_templates(),
-        request.subtask_id,
-    )
-    .await
-    .context("Could not read the executor binding")?
-    else {
+    let tables = state.task_store.table_templates();
+    let binding = if pipeline {
+        read_pipeline_binding(&state.mysql, tables, request.task_id, request.subtask_id).await
+    } else {
+        read_subtask_with_contexts(&state.mysql, tables, request.subtask_id).await
+    };
+    let Some(subtask) = binding.context("Could not read the executor binding")? else {
         return Ok(false);
     };
     ensure!(

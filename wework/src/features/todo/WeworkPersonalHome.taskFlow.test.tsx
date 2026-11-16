@@ -47,7 +47,7 @@ afterEach(() => {
   else Reflect.deleteProperty(Element.prototype, 'getAnimations')
 })
 
-function setup() {
+function setup(bindingDeviceId = 'device') {
   const issue = {
     id: 'one',
     cloud_project_id: 'p1',
@@ -60,7 +60,7 @@ function setup() {
   const binding = {
     projectId: 'p1',
     issueId: 'one',
-    deviceId: 'device',
+    deviceId: bindingDeviceId,
     taskId: 'existing',
     taskUserId: 7,
   }
@@ -135,4 +135,27 @@ it('opens an explicitly created task in the new Issue using the existing availab
   expect(props.services.standInApi?.readTask).toHaveBeenCalledWith('device', 'existing')
   expect(props.services.standInApi?.deviceIdentity).toHaveBeenCalledWith('device')
   expect(setLocation).not.toHaveBeenCalled()
+})
+
+it('attests an alias before opening a binding stored under its registered identity', async () => {
+  const { props } = setup('registered-device')
+  vi.mocked(props.services.standInApi!.deviceIdentity).mockResolvedValue({
+    deviceId: 'device',
+    backendDeviceId: 'registered-device',
+  })
+  fireEvent.click(await screen.findByTestId('existing-task'))
+  expect(await screen.findByTestId('shared-board-conversation')).toHaveAttribute(
+    'data-task',
+    'existing'
+  )
+  expect(props.services.standInApi?.deviceIdentity).toHaveBeenCalledWith('device')
+  expect(props.services.standInApi?.readTask).toHaveBeenCalledWith('registered-device', 'existing')
+})
+
+it('rejects an alias that does not attest the persisted binding', async () => {
+  const { props } = setup('registered-device')
+  fireEvent.click(await screen.findByTestId('existing-task'))
+  await waitFor(() => expect(props.services.standInApi?.deviceIdentity).toHaveBeenCalled())
+  expect(props.services.standInApi?.readTask).not.toHaveBeenCalled()
+  expect(screen.queryByTestId('shared-board-conversation')).not.toBeInTheDocument()
 })

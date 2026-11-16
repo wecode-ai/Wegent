@@ -4,22 +4,29 @@ import { requestExecutor } from '../modules/executor-rpc.mjs'
 import { fetchLocalRuntime } from '../modules/runtime-request.mjs'
 import { createDingTalkReplyStory } from '../modules/stand-in-dingtalk-reply-story.mjs'
 import { createDirectRecoveryVerification } from '../modules/stand-in-direct-recovery.mjs'
+import { createSourceOwnerTaskStory } from '../modules/stand-in-source-owner-task.mjs'
 
 export function createDesktopScenario(options) {
   const { uiTimeoutMs, workbenchReadyTimeoutMs } = options
   const dingtalk = createStandInDingTalkFixture(options)
   const story = createDingTalkReplyStory(options)
   const recovery = createDirectRecoveryVerification(options)
+  const ownerTask = createSourceOwnerTaskStory(options)
   return {
     async prepareApp(context) {
       await story.prepareApp(context, dingtalk)
       await recovery.prepareApp(context)
+      await ownerTask.prepareApp(context)
     },
     async handleHttp(req, response, url) {
+      if (await ownerTask.handleHttp(req, response, url)) return true
       if (await recovery.handleHttp(req, response, url)) return true
       return story.model.handleHttp(req, response, url)
     },
-    reviewApproval: story.model.reviewApproval,
+    reviewApproval: (...args) =>
+      ownerTask.state.active
+        ? ownerTask.reviewApproval(...args)
+        : story.model.reviewApproval(...args),
     diagnostics: () => ({ directRecovery: recovery.diagnostics() }),
     async verify(control) {
       await dingtalk.install(control)
@@ -37,6 +44,7 @@ export function createDesktopScenario(options) {
       assert.ok(provider)
       const declaration = provider.cliReadTools.dingtalk
       assert.deepEqual(Object.keys(declaration.operations).sort(), [
+        'downloadImage',
         'listConversation',
         'listDirectConversation',
         'listMentions',
@@ -104,6 +112,9 @@ export function createDesktopScenario(options) {
       assert.ok(recovered.items.some(item => item.id === provider.id))
       await recovery.verify(control)
       await story.verify(control, (method, params) =>
+        requestExecutor(control, method, params, uiTimeoutMs)
+      )
+      await ownerTask.verify(control, (method, params) =>
         requestExecutor(control, method, params, uiTimeoutMs)
       )
     },

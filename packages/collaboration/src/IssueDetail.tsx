@@ -10,7 +10,7 @@ import type { RuntimeExecutionTarget } from "./issue-detail/runtimeExecutionTarg
 // SPDX-License-Identifier: Apache-2.0
 
 import { collaborationTestIds } from "./testIds";
-import { useLayoutEffect, useMemo, useState, type ReactNode } from "react";
+import { useMemo, useState, type ReactNode } from "react";
 
 import {
   collaborationMessages,
@@ -24,6 +24,7 @@ import {
 } from "./SharedIssueDetailEditor";
 import { createSharedIssueDetailPort } from "./issue-detail";
 import { IssueActivityPanel } from "./issue-detail";
+import { IssueMarkdownProvider } from "./issue-detail/IssueMarkdownProvider";
 import {
   dueDateTimeLocalFromSource,
   dueDateTimeLocalToSource,
@@ -189,11 +190,11 @@ export function IssueDetail(props: IssueDetailProps) {
         key={props.issue.id}
         runtime={props.api.runtime}
       >
-        <BrowserIssueDetail {...props} />
+        <BrowserIssueDetail key={props.issue.id} {...props} />
       </RuntimeConversationScope>
     </BrowserTaskDrafts>
   ) : (
-    <BrowserIssueDetail {...props} />
+    <BrowserIssueDetail key={props.issue.id} {...props} />
   );
 }
 
@@ -225,9 +226,6 @@ function BrowserIssueDetail({
     attachmentId: string;
     filename: string;
   } | null>(null);
-  useLayoutEffect(() => {
-    setAttachmentPreview(null);
-  }, [issue.id]);
   const [conversationSelection, setConversationSelection] = useState<{
     issueId: string;
     binding: SharedIssueDetailTaskBinding;
@@ -354,10 +352,11 @@ function BrowserIssueDetail({
                       : undefined
                   }
                   onOpenAttachment={(id, filename) => {
-                    void api.attachments
-                      .read(id)
-                      .then((blob) => browserSave(blob, filename))
-                      .catch(onError);
+                    setAttachmentPreview({
+                      issueId: issue.id,
+                      attachmentId: id,
+                      filename,
+                    });
                   }}
                   canComment={permissions.canComment}
                   canAttach={permissions.canEdit}
@@ -371,14 +370,27 @@ function BrowserIssueDetail({
         )}
       </IssueConversationDrawers>
       {attachmentPreview?.issueId === issue.id ? (
-        <BrowserAttachmentPreview
-          key={`${issue.id}:${attachmentPreview.attachmentId}`}
-          attachmentId={attachmentPreview.attachmentId}
-          filename={attachmentPreview.filename}
-          read={api.attachments.read}
-          translate={editorTranslate}
-          onClose={() => setAttachmentPreview(null)}
-        />
+        <IssueMarkdownProvider
+          attachments={api.attachments}
+          issueId={issue.id}
+          projectId={project.id}
+        >
+          <BrowserAttachmentPreview
+            key={`${issue.id}:${attachmentPreview.attachmentId}`}
+            attachmentId={attachmentPreview.attachmentId}
+            filename={attachmentPreview.filename}
+            read={api.attachments.read}
+            translate={editorTranslate}
+            onClose={() => setAttachmentPreview(null)}
+            onOpenAttachment={(attachmentId, filename) =>
+              setAttachmentPreview({
+                issueId: issue.id,
+                attachmentId,
+                filename,
+              })
+            }
+          />
+        </IssueMarkdownProvider>
       ) : null}
       {selectedExecution && api.runtime ? (
         <IssueExecutionDetails

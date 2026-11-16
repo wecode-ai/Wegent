@@ -85,8 +85,7 @@ import {
   isClaudeCodeDevice,
   isDeviceBelowWeWorkVersion,
   isWeWorkCompatibleDevice,
-  isCloudDevice,
-  isRemoteDevice,
+  isRemoteTaskDevice,
 } from '@/lib/device-capabilities'
 import {
   applyProjectEnvironmentPatch,
@@ -244,6 +243,7 @@ import {
   type WorkbenchPaneIdentity,
 } from './workbenchPaneIdentity'
 import { SplitWorkbenchPaneStack } from './workbenchPaneStack'
+import styles from './DesktopWorkbenchMain.module.css'
 import { getActiveWorkbenchLayout } from './workbenchSplitGroups'
 import type { WorkbenchSplitGroupsController } from './useWorkbenchSplitGroups'
 import {
@@ -1099,7 +1099,15 @@ export function DesktopWorkbenchMain(props: DesktopWorkbenchMainProps) {
   if (!isDesktop) return mainContent
 
   return (
-    <div className="relative flex min-w-0 flex-1 flex-col overflow-hidden">
+    <div
+      className={cn(
+        'relative flex min-w-0 flex-1 flex-col overflow-hidden',
+        props.presentation !== 'popout' && styles.frame,
+        background.imagePath && (background.inMain || background.inTopBar)
+          ? 'bg-transparent'
+          : 'bg-background'
+      )}
+    >
       {!splitMode && props.presentation !== 'popout' ? (
         <header
           id={WORKBENCH_MAIN_HEADER_PORTAL_ID}
@@ -2270,9 +2278,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
   const conversationImageDevice = findWorkbenchDevice(devices, conversationImageTarget?.deviceId)
   const remoteImageTarget =
     conversationImageTarget &&
-    (!isElectronRuntime() ||
-      (conversationImageDevice?.device_type !== 'local' &&
-        conversationImageDevice?.device_type !== 'app'))
+    (!isElectronRuntime() || conversationImageDevice?.device_type !== 'local')
       ? conversationImageTarget
       : null
   const selectedFileWorkspaceTarget =
@@ -2301,8 +2307,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
     ? devices.find(device => device.device_id === composerWorkspaceTarget.deviceId)
     : undefined
   const centralHarnessUsesRemoteDevice = Boolean(
-    centralHarnessTargetDevice &&
-    (isCloudDevice(centralHarnessTargetDevice) || isRemoteDevice(centralHarnessTargetDevice))
+    centralHarnessTargetDevice && isRemoteTaskDevice(centralHarnessTargetDevice)
   )
   const centralHarnessUsesRemoteSource = composerWorkspaceTarget?.workspaceSource === 'remote'
   const centralHarnessCwd = composerWorkspaceTarget?.path?.trim() || devWorkspacePath
@@ -6149,7 +6154,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
           }
         />
         <TaskForkDialog
-          key={forkDialogOpen ? `open-${currentRuntimeTask?.taskId ?? 'none'}` : 'closed'}
+          key={forkDialogOpen ? `fork-open-${currentRuntimeTask?.taskId ?? 'none'}` : 'fork-closed'}
           open={forkDialogOpen}
           source={currentRuntimeTask}
           runtimeWork={runtimeWork}
@@ -6202,8 +6207,8 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
         <TaskBoardAssociationDialog
           key={
             taskBoardAssociation
-              ? `${taskBoardAssociation.project.project_store}:${taskBoardAssociation.project.id}`
-              : 'closed'
+              ? `board-association-${taskBoardAssociation.project.project_store}:${taskBoardAssociation.project.id}`
+              : 'board-association-closed'
           }
           project={taskBoardAssociation?.project ?? null}
           currentProject={boundCloudProject}

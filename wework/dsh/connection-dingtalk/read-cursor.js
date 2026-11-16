@@ -45,7 +45,8 @@ export function createReadCursor(now = Date.now) {
           state.limit < 1 ||
           state.limit > 20 ||
           (input.since !== undefined && Date.parse(input.since) !== Date.parse(state.start)) ||
-          (input.limit !== undefined && input.limit !== state.limit)
+          (input.limit !== undefined && input.limit !== state.limit) ||
+          (input.includeImages !== undefined && input.includeImages !== state.includeImages)
         )
           throw invalid()
         return state

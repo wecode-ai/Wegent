@@ -5,13 +5,15 @@ use super::codex_global_state::CodexGlobalProjectIndex;
 use super::util::normalize_workspace_path;
 use crate::task_runtime::{LocalTaskStore, TaskRuntimeError};
 use std::collections::HashSet;
+use wegent_runtime_logging::project_index_diagnostics::trace;
 
 pub(crate) fn sync_local_collaboration_projects(
     store: &LocalTaskStore,
 ) -> Result<HashSet<String>, TaskRuntimeError> {
     let mut workspace_paths = HashSet::new();
     let mut duplicate_keys = HashSet::new();
-    for project in CodexGlobalProjectIndex::load().projects() {
+    let index = trace("projects_list.index", CodexGlobalProjectIndex::load);
+    for project in index.projects() {
         if project.remote_host_id.is_some() || project.kind != "local" {
             continue;
         }
@@ -27,7 +29,9 @@ pub(crate) fn sync_local_collaboration_projects(
         });
         // An archived alias remains a tombstone, but it must not hide the next
         // active alias for the same directory.
-        if store.ensure_code_project(&project.key, &project.name, &project.roots, bound_local_id)? {
+        if trace("projects_list.ensure_code_project", || {
+            store.ensure_code_project(&project.key, &project.name, &project.roots, bound_local_id)
+        })? {
             workspace_paths.insert(workspace_path);
         }
     }

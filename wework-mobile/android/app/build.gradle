@@ -180,3 +180,12 @@ dependencies {
         implementation jscFlavor
     }
 }
+
+// Bundle the same offline file renderers as iOS; no preview server is required on a developer machine.
+def filePreviewAssets = layout.buildDirectory.dir("generated/assets/weworkPreview")
+android.sourceSets.main.assets.srcDir(filePreviewAssets)
+def generateFilePreviewAssets = tasks.register("generateFilePreviewAssets", Exec) {
+    workingDir(rootDir.parentFile)
+    commandLine("node", "scripts/stage-preview.mjs", new File(filePreviewAssets.get().asFile, "wework-preview").absolutePath)
+}
+tasks.named("preBuild").configure { dependsOn(generateFilePreviewAssets) }

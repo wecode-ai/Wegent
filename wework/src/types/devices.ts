@@ -4,6 +4,7 @@ import type { RuntimeFeatureSet } from './api'
 export interface DeviceInfo {
   id: number
   device_id: string
+  execution_target_id?: string | null
   name: string
   status: 'online' | 'offline' | 'busy'
   is_default: boolean

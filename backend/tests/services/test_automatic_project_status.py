@@ -115,7 +115,7 @@ def test_assignment_and_completion_preserve_board_columns(
         groups = []
 
     with patch(
-        "app.services.workspaces.workspace_service.list_project_collaboration_groups",
+        "app.services.workspaces.service.workspace_service.list_project_collaboration_groups",
         return_value=groups,
     ):
         issue = loop_item_service.create(
@@ -195,7 +195,7 @@ def test_assignment_preserves_explicit_custom_status(
         assignment = {"assignee_agent_id": agent.id}
         groups = []
     with patch(
-        "app.services.workspaces.workspace_service.list_project_collaboration_groups",
+        "app.services.workspaces.service.workspace_service.list_project_collaboration_groups",
         return_value=groups,
     ):
         issue = loop_item_service.create(
@@ -247,7 +247,7 @@ def test_assignment_respects_explicit_completed_status(
     )
     completed_at = issue.completed_at
     with patch(
-        "app.services.workspaces.workspace_service.list_project_collaboration_groups",
+        "app.services.workspaces.service.workspace_service.list_project_collaboration_groups",
         return_value=groups,
     ):
         loop_item_service.update(
