@@ -234,7 +234,7 @@ export function IssueDetailSearchableSelect<TValue extends string>({
           }}
           className={`${portalTheme.className} z-system-popover flex max-h-[min(320px,var(--radix-popover-content-available-height))] w-72 flex-col overflow-hidden rounded-xl border border-border bg-background p-1.5 text-text-primary shadow-lg ${contentClassName ?? ""}`}
         >
-          <label className="flex h-8 shrink-0 items-center gap-2 rounded-lg bg-muted px-2.5 text-text-muted">
+          <label className="flex h-11 shrink-0 items-center gap-2 rounded-lg bg-muted px-2.5 text-text-secondary md:h-8">
             <Search className="h-3.5 w-3.5 shrink-0" />
             <input
               ref={searchInputRef}
@@ -243,7 +243,7 @@ export function IssueDetailSearchableSelect<TValue extends string>({
               onChange={(event) => setQuery(event.target.value)}
               placeholder={searchPlaceholder}
               aria-label={searchPlaceholder}
-              className="min-w-0 flex-1 bg-transparent text-sm text-text-primary outline-none placeholder:text-text-muted"
+              className="h-full min-w-0 flex-1 bg-transparent text-sm text-text-primary outline-none placeholder:text-text-secondary"
             />
           </label>
           <div

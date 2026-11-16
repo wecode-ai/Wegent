@@ -99,6 +99,25 @@ function setup(assignmentError?: Error, workspacePanel = false, backend = false)
 }
 
 describe('immediate Issue properties', () => {
+  it('opens the parent picker from visible expanded properties and returns keyboard focus', async () => {
+    setup(undefined, true)
+    const parent = screen.getByTestId('cloud-todo-detail-parent')
+    expect(parent).not.toBeVisible()
+    await userEvent.click(screen.getByTestId('cloud-todo-more-properties'))
+    expect(parent).toBeVisible()
+    await userEvent.click(parent)
+    const search = await screen.findByTestId('cloud-todo-detail-parent-search')
+    expect(search).toHaveFocus()
+    await userEvent.type(search, 'Missing parent')
+    expect(await screen.findByText('没有匹配的父任务')).toBeVisible()
+    await userEvent.keyboard('{Escape}')
+    expect(parent).toHaveFocus()
+    expect(parent).toBeVisible()
+    await userEvent.click(screen.getByTestId('cloud-todo-more-properties'))
+    await userEvent.tab()
+    expect(parent).not.toHaveFocus()
+  })
+
   it('isolates pending security writes when switching Issues', async () => {
     const { updateLoopItem, replaceIssue } = setup(undefined, true, true)
     const pending = Promise.withResolvers<CloudLoopItem>()

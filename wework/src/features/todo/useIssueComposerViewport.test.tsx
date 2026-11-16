@@ -17,6 +17,7 @@ it('reserves the current composer footprint for browser scrolling and restores t
         resize = callback
       }
       observe = vi.fn()
+      unobserve = vi.fn()
       disconnect = disconnect
     }
   )
@@ -49,6 +50,7 @@ it('releases the inset while an inline human question owns the reading surface',
     'ResizeObserver',
     class {
       observe = vi.fn()
+      unobserve = vi.fn()
       disconnect = vi.fn()
     }
   )
@@ -58,7 +60,7 @@ it('releases the inset while an inline human question owns the reading surface',
     this: HTMLElement
   ) {
     if (this.classList.contains('task-detail-human-requests'))
-      return { top: questionBottom - 100, bottom: questionBottom } as DOMRect
+      return { top: questionBottom - 100, bottom: questionBottom, height: 100 } as DOMRect
     return { top: 0, bottom: viewportBottom, height: 94 } as DOMRect
   })
   const computed = window.getComputedStyle.bind(window)
@@ -74,7 +76,11 @@ it('releases the inset while an inline human question owns the reading surface',
     const ref = useIssueComposerViewport(true)
     return (
       <div data-testid="viewport" style={{ overflowY: 'auto', scrollPaddingBottom: 12 }}>
-        {question && <section className="task-detail-human-requests">Question</section>}
+        {question && (
+          <section className="task-detail-human-requests" style={{ scrollMarginBottom: 8 }}>
+            Question
+          </section>
+        )}
         <footer ref={ref} />
       </div>
     )
@@ -83,13 +89,17 @@ it('releases the inset while an inline human question owns the reading surface',
   const viewport = screen.getByTestId('viewport')
   expect(viewport.style.scrollPaddingBottom).toBe('110px')
   await act(async () => rerender(<Fixture question />))
+  const question = screen.getByText('Question')
   expect(viewport.style.scrollPaddingBottom).toBe('12px')
+  expect(question.style.scrollMarginBottom).toBe('8px')
   questionBottom = -10
   fireEvent.scroll(viewport)
   expect(viewport.style.scrollPaddingBottom).toBe('110px')
+  expect(question.style.scrollMarginBottom).toBe('-100px')
   questionBottom = 200
   fireEvent.scroll(viewport)
   expect(viewport.style.scrollPaddingBottom).toBe('12px')
+  expect(question.style.scrollMarginBottom).toBe('8px')
   viewportBottom = 50
   fireEvent(window, new Event('resize'))
   expect(viewport.style.scrollPaddingBottom).toBe('110px')
@@ -98,4 +108,5 @@ it('releases the inset while an inline human question owns the reading surface',
   expect(viewport.style.scrollPaddingBottom).toBe('12px')
   await act(async () => rerender(<Fixture question={false} />))
   expect(viewport.style.scrollPaddingBottom).toBe('110px')
+  expect(question.style.scrollMarginBottom).toBe('8px')
 })

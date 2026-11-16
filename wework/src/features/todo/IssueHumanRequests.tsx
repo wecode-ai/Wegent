@@ -121,7 +121,7 @@ export function IssueHumanRequests({
           return (
             <div
               key={request.id}
-              className="space-y-2"
+              className="task-detail-human-request space-y-2"
               data-testid={`issue-human-request-${request.id}`}
             >
               <div className="flex flex-wrap items-center gap-2 text-sm text-text-secondary">

@@ -83,7 +83,7 @@ async function verifyConstrainedDiscussion(control, captureScreenshot, replySele
     assert.ok(taskAction.top >= header.top && taskAction.bottom <= header.bottom)
     assert.ok(
       scroll.height - reply.height - 16 >= scroll.height / 2,
-      'At least half the constrained discussion viewport must remain available for reading'
+      `At least half the constrained discussion viewport must remain available for reading: ${JSON.stringify({ scroll, reply })}`
     )
     const composer = scope('[data-testid="cloud-task-activity-composer"]')
     await control.command('fill', composer, {
@@ -155,6 +155,17 @@ export async function verifyIssueDetailReading(control, { captureScreenshot, uiT
     'The collapsed description must include the goal body, not only its heading'
   )
   await verifyComposerVisible(control)
+  const moreProperties = scope('[data-testid="cloud-todo-more-properties"]')
+  const parent = scope('[data-testid="cloud-todo-detail-parent"]')
+  await control.command('waitFor', parent, { visible: false })
+  await control.command('click', moreProperties)
+  await control.command('nativePress', parent, { key: 'Enter' })
+  const parentSearch = '[data-testid="cloud-todo-detail-parent-search"]'
+  await control.command('waitFor', `${parentSearch}:focus`, { visible: true })
+  await control.command('nativePress', parentSearch, { key: 'Escape' })
+  await control.command('waitFor', `${parent}:focus`, { visible: true })
+  await control.command('click', moreProperties)
+  await control.command('waitFor', parent, { visible: false })
   const toggle = scope('[data-testid="issue-description-toggle"]')
   await control.command('waitFor', `${toggle}[aria-expanded="false"]`)
   await control.command('click', toggle)

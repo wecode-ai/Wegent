@@ -152,3 +152,22 @@
     transition: none;
   }
 }
+
+@media (max-width: 767px) and (max-height: 600px) {
+  .collaboration-platform-app:has(
+    .issue-conversation-drawers-backdrop:not(
+      .issue-conversation-drawers-embedded
+    )
+  ) {
+    grid-template-rows: minmax(0, 1fr);
+  }
+
+  .collaboration-platform-app:has(
+      .issue-conversation-drawers-backdrop:not(
+        .issue-conversation-drawers-embedded
+      )
+    )
+    > .collaboration-platform-sidebar {
+    display: none;
+  }
+}

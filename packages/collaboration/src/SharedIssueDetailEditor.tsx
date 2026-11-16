@@ -2582,6 +2582,22 @@ export function TodoEditor(props: TodoEditorProps) {
       }
     />
   );
+  const parentLabel = parentItem
+    ? `${parentItem.id} · ${parentItem.title}`
+    : isCreate
+      ? t("todo.top_level_issue", "顶层任务")
+      : t("todo.no_parent_issue", "无父任务");
+  const parentChip = (
+    <span className={propChipClass}>
+      <ListTodo className="h-3.5 w-3.5 text-text-muted" />
+      <span className="text-text-muted">
+        {t("todo.parent_issue", "父任务")}
+      </span>
+      <span className="max-w-40 truncate">{parentLabel}</span>
+      <ChevronDown className="h-3 w-3 text-text-muted" />
+      {parentSelect}
+    </span>
+  );
   // Single-column layout: all props stay as one wrapping chip row.
   const propChips = (
     <>
@@ -2608,21 +2624,7 @@ export function TodoEditor(props: TodoEditorProps) {
           </span>
         </span>
       )}
-      <span className={propChipClass}>
-        <ListTodo className="h-3.5 w-3.5 text-text-muted" />
-        <span className="text-text-muted">
-          {t("todo.parent_issue", "父任务")}
-        </span>
-        <span className="max-w-40 truncate">
-          {parentItem
-            ? `${parentItem.id} · ${parentItem.title}`
-            : isCreate
-              ? t("todo.top_level_issue", "顶层任务")
-              : t("todo.no_parent_issue", "无父任务")}
-        </span>
-        <ChevronDown className="h-3 w-3 text-text-muted" />
-        {parentSelect}
-      </span>
+      {!twoColumn ? parentChip : null}
       {scheduleRangeControl(
         cn(propChipClass, !startDate && !dueDate && "text-text-muted"),
       )}
@@ -2752,6 +2754,12 @@ export function TodoEditor(props: TodoEditorProps) {
         data-testid="cloud-todo-current-assignment"
       >
         <div className="task-detail-workspace-properties-grid">
+          <RailProp
+            label={t("todo.parent_issue", "父任务")}
+            control={parentSelect}
+          >
+            <span className="task-detail-workspace-tag">{parentLabel}</span>
+          </RailProp>
           {commentActions ? (
             <RailProp
               label={t("todo.comment_board_position")}
@@ -3412,6 +3420,7 @@ export function TodoEditor(props: TodoEditorProps) {
 
               {twoColumn && !workspacePanel ? (
                 <div className="task-detail-meta-line">
+                  {parentChip}
                   {showAssignee ? (
                     <span className="task-detail-meta-item relative cursor-pointer">
                       {assigneeSelect}
@@ -3832,8 +3841,6 @@ export function TodoEditor(props: TodoEditorProps) {
                     item,
                   }) ?? null)
                 : null}
-
-              {twoColumn ? <div className="sr-only">{parentSelect}</div> : null}
 
               {!twoColumn ? (
                 <div className="mt-5">
