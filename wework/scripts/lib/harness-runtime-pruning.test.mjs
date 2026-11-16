@@ -62,10 +62,8 @@ describe('pruneHarnessRuntime', () => {
     const packageDependencies = join(root, 'node_modules', '.pnpm', 'package@1.0.0', 'node_modules')
     await mkdir(join(packageDependencies, 'optional-package'), { recursive: true })
     await symlink('optional-package', join(packageDependencies, 'present-optional'))
-    await symlink('pruned-package', join(packageDependencies, 'pruned-optional'))
-    const prunedDirectory = join(root, 'node_modules', 'pruned-package')
-    await mkdir(prunedDirectory, { recursive: true })
-    await writeFile(join(prunedDirectory, 'index.d.ts'), '')
+    await symlink('../../../../package/index.d.ts', join(packageDependencies, 'pruned-optional'))
+    await expectExists(join(packageDependencies, 'pruned-optional'))
 
     await pruneHarnessRuntime(root, 'macos-arm64')
 
