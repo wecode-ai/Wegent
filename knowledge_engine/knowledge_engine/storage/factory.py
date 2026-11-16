@@ -60,18 +60,7 @@ def create_storage_backend_from_runtime_config(
     *,
     request_timeout: float | None = None,
 ) -> BaseStorageBackend:
-    storage_type, config = prepare_runtime_storage_config(
-        retriever_config, request_timeout=request_timeout
-    )
-    return _load_backend_class(storage_type)(config)
-
-
-def prepare_runtime_storage_config(
-    retriever_config: RuntimeRetrieverConfig,
-    *,
-    request_timeout: float | None = None,
-) -> tuple[str, dict[str, Any]]:
-    """Validate and prepare local configuration without constructing SDK clients."""
+    """Validate local configuration before constructing the storage backend."""
     storage_config = retriever_config.storage_config or {}
     storage_type = normalize_storage_type(storage_config.get("type") or "")
     if not storage_config.get("url"):
@@ -101,7 +90,7 @@ def prepare_runtime_storage_config(
     validate_index_strategy(config["indexStrategy"])
     if storage_type == "milvus":
         validate_milvus_write_config(config["ext"])
-    return storage_type, config
+    return _load_backend_class(storage_type)(config)
 
 
 def _validate_runtime_storage_url(
@@ -138,7 +127,6 @@ def _validate_runtime_storage_url(
 __all__ = [
     "create_storage_backend_from_config",
     "create_storage_backend_from_runtime_config",
-    "prepare_runtime_storage_config",
     "get_all_storage_retrieval_methods",
     "get_supported_retrieval_methods",
     "get_supported_storage_types",

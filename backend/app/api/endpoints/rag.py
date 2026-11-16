@@ -162,7 +162,11 @@ async def list_index_chunks(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    """List indexed chunks stored for a knowledge base."""
+    """Inspect up to 10000 external candidates and page their visible chunks.
+
+    An empty window does not establish that the knowledge base is empty.
+    Candidates beyond the window cannot be reached through these page numbers.
+    """
     try:
         start = (page - 1) * page_size
         if start + page_size > INDEX_CHUNK_LIST_MAX_CHUNKS:

@@ -12,11 +12,9 @@ from typing import Any
 
 from knowledge_engine.storage.capabilities import normalize_storage_type
 from knowledge_engine.storage.cleanup_errors import external_cleanup_boundary
-from knowledge_engine.storage.document_scope import document_ref_variants
 from knowledge_engine.storage.factory import (
     create_storage_backend_from_config,
     create_storage_backend_from_runtime_config,
-    prepare_runtime_storage_config,
 )
 from knowledge_runtime.services.cleanup_deadline import cleanup_deadline
 from knowledge_runtime.services.config_loader import RuntimeConfigLoader
@@ -33,7 +31,6 @@ from shared.models import (
     RemotePurgeKnowledgeIndexRequest,
     RemoteTestConnectionRequest,
     RemoteTestConnectionResponse,
-    RetrievalScope,
 )
 from shared.telemetry.decorators import trace_async
 
@@ -188,16 +185,12 @@ class AdminExecutor:
         self,
         request: RemoteListChunksRequest,
     ) -> RemoteListChunksResponse:
-        """List all chunks in a knowledge base."""
+        """Return visible chunks from a bounded index inspection window."""
         config = self._config_loader.resolve_admin_config(
             knowledge_base_id=request.knowledge_base_id,
             operation="list_chunks",
             authorized=request.authorized_resources,
         )
-
-        if not config.document_ids:
-            prepare_runtime_storage_config(config.retriever_config)
-            return RemoteListChunksResponse(chunks=[], total=0)
 
         storage_backend = create_storage_backend_from_runtime_config(
             config.retriever_config
@@ -211,9 +204,12 @@ class AdminExecutor:
             max_chunks=request.max_chunks,
             metadata_condition=request.metadata_condition,
             user_id=config.index_owner_user_id,
-            scope=RetrievalScope(document_ids=config.document_ids),
         )
-        document_refs = set(document_ref_variants(config.document_ids))
+        document_refs = {
+            reference
+            for document_id in config.document_ids
+            for reference in (str(document_id), f"doc_{document_id}")
+        }
         chunks = [
             chunk
             for chunk in result["chunks"]

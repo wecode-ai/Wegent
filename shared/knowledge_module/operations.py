@@ -30,7 +30,7 @@ class IndexManagementAdapter(Protocol):
     ) -> dict[str, Any]: ...
 
     def get_all_chunks(
-        self, *, knowledge_id: str, scope: RetrievalScope | None = None, **kwargs: Any
+        self, *, knowledge_id: str, **kwargs: Any
     ) -> list[dict[str, Any]]: ...
 
     def extract_chunk_text(self, content: Any) -> str: ...
@@ -118,7 +118,6 @@ async def manage_index(
     user_id: int | None = None,
     max_chunks: int = 10000,
     metadata_condition: dict[str, Any] | None = None,
-    scope: RetrievalScope | None = None,
 ) -> dict[str, Any]:
     """Manage one authorized index and normalize its public chunk records."""
     if operation == "purge":
@@ -139,7 +138,6 @@ async def manage_index(
         max_chunks=max_chunks,
         metadata_condition=metadata_condition,
         user_id=user_id,
-        scope=scope,
     )
     records = [
         {

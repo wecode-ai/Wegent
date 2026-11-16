@@ -99,20 +99,19 @@ async def test_chunk_listing_hides_deleted_and_foreign_documents(
 
 
 @pytest.mark.asyncio
-async def test_deleted_chunks_do_not_consume_the_candidate_limit(
+async def test_bounded_inspection_does_not_claim_the_whole_knowledge_base(
     shared_model_db: Session, listing: tuple
 ) -> None:
     loader, request, storage = listing
     shared_model_db.delete(shared_model_db.get(KnowledgeDocument, 11))
     shared_model_db.commit()
-    stored = [_chunk("11"), _chunk("21", "99"), _chunk("doc_12")]
+    stored = [_chunk("11"), _chunk("doc_12")]
 
     def scan(
         *, max_chunks: int, scope: RetrievalScope | None = None, **kwargs: Any
     ) -> list[dict[str, Any]]:
         candidates = stored
         if scope is not None:
-            assert scope.document_ids == [12]
             candidates = [chunk for chunk in candidates if chunk["doc_ref"] == "doc_12"]
         return candidates[:max_chunks]
 
@@ -121,16 +120,23 @@ async def test_deleted_chunks_do_not_consume_the_candidate_limit(
         "knowledge_runtime.services.admin_executor.create_storage_backend_from_runtime_config",
         return_value=storage,
     ):
-        result = await AdminExecutor(config_loader=loader).list_chunks(
+        executor = AdminExecutor(config_loader=loader)
+        window = await executor.list_chunks(
             request.model_copy(update={"max_chunks": 1})
         )
+        assert window.chunks == []
+        assert window.total == 0
+        storage.get_all_chunks.assert_called_once()
+        assert storage.get_all_chunks.call_args.kwargs["max_chunks"] == 1
+        assert "scope" not in storage.get_all_chunks.call_args.kwargs
+        wider = await executor.list_chunks(request.model_copy(update={"max_chunks": 2}))
 
-    assert [chunk.content for chunk in result.chunks] == ["body-1-doc_12"]
-    assert result.total == 1
+    assert [chunk.content for chunk in wider.chunks] == ["body-1-doc_12"]
+    assert wider.total == 1
 
 
 @pytest.mark.asyncio
-async def test_no_live_documents_skips_storage_after_config_resolution(
+async def test_empty_document_scope_excludes_all_index_candidates(
     shared_model_db: Session, listing: tuple
 ) -> None:
     loader, request, storage = listing
@@ -138,13 +144,14 @@ async def test_no_live_documents_skips_storage_after_config_resolution(
         shared_model_db.delete(shared_model_db.get(KnowledgeDocument, document_id))
     shared_model_db.commit()
     with patch(
-        "knowledge_runtime.services.admin_executor.create_storage_backend_from_runtime_config"
-    ) as create_backend:
+        "knowledge_runtime.services.admin_executor.create_storage_backend_from_runtime_config",
+        return_value=storage,
+    ):
         result = await AdminExecutor(config_loader=loader).list_chunks(request)
 
     assert result.chunks == []
     assert result.total == 0
-    create_backend.assert_not_called()
+    storage.get_all_chunks.assert_called_once()
 
 
 @pytest.mark.asyncio
@@ -193,12 +200,10 @@ async def test_empty_document_scope_does_not_hide_invalid_configuration(
     retriever = shared_model_db.get(Kind, 2)
     retriever.json = {"spec": {"storageConfig": storage_config}}
     shared_model_db.commit()
-    with patch(
-        "knowledge_runtime.services.admin_executor.create_storage_backend_from_runtime_config"
-    ) as create_backend:
+    with patch("knowledge_engine.storage.factory._load_backend_class") as load_backend:
         with pytest.raises((ValueError, ConfigResolutionError)):
             await AdminExecutor(config_loader=loader).list_chunks(request)
-    create_backend.assert_not_called()
+    load_backend.assert_not_called()
 
 
 @pytest.mark.asyncio

@@ -453,7 +453,6 @@ class BaseStorageBackend(ABC):
         knowledge_id: str,
         max_chunks: int = 10000,
         metadata_condition: Optional[Dict[str, Any]] = None,
-        scope: Optional[RetrievalScope] = None,
         **kwargs,
     ) -> List[Dict[str, Any]]:
         """

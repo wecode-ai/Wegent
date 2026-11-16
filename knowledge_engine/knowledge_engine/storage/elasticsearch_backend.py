@@ -41,7 +41,6 @@ from knowledge_engine.retrieval.search_hints import (
 from knowledge_engine.storage.base import BaseStorageBackend
 from knowledge_engine.storage.capabilities import STORAGE_BACKEND_SPECS
 from knowledge_engine.storage.chunk_metadata import ChunkMetadata
-from knowledge_engine.storage.document_scope import document_ref_variants
 from knowledge_engine.storage.elasticsearch_cleanup import delete_matching_chunks
 from knowledge_engine.storage.elasticsearch_clients import managed_es_client
 from shared.event_reporting.operations import storage_fact
@@ -753,7 +752,6 @@ class ElasticsearchBackend(BaseStorageBackend):
         knowledge_id: str,
         max_chunks: int = 10000,
         metadata_condition: Optional[Dict[str, Any]] = None,
-        scope: Optional[RetrievalScope] = None,
         **kwargs,
     ) -> List[Dict[str, Any]]:
         """Read and normalize chunks from one knowledge base."""
@@ -770,21 +768,6 @@ class ElasticsearchBackend(BaseStorageBackend):
                     {"metadata.chunk_index": "asc"},
                 ],
             }
-            if scope is not None and scope.document_ids is not None:
-                search_body["query"] = {
-                    "bool": {
-                        "filter": [
-                            search_body["query"],
-                            {
-                                "terms": {
-                                    "metadata.doc_ref.keyword": document_ref_variants(
-                                        scope.document_ids
-                                    )
-                                }
-                            },
-                        ]
-                    }
-                }
 
             try:
                 # Check if index exists

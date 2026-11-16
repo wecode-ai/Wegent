@@ -99,18 +99,18 @@ def test_create_storage_backend_from_runtime_config_requires_url() -> None:
         ("milvus", "local-fixture.db"),
     ],
 )
-def test_preparing_runtime_config_keeps_existing_targets_without_loading_clients(
+def test_runtime_factory_keeps_existing_supported_targets(
     monkeypatch: pytest.MonkeyPatch, storage_type: str, url: str
 ) -> None:
-    def forbidden_load(storage_type: str) -> None:
-        raise AssertionError("Preparing configuration must not load storage clients")
+    class FakeBackend:
+        def __init__(self, config: dict) -> None:
+            self.config = config
 
-    monkeypatch.setattr(factory, "_load_backend_class", forbidden_load)
-    actual_type, config = factory.prepare_runtime_storage_config(
+    monkeypatch.setattr(factory, "_load_backend_class", lambda actual_type: FakeBackend)
+    backend = factory.create_storage_backend_from_runtime_config(
         RuntimeRetrieverConfig(
             name="test", storage_config={"type": storage_type, "url": url}
         )
     )
 
-    assert actual_type == storage_type
-    assert config["url"] == url
+    assert backend.config["url"] == url
