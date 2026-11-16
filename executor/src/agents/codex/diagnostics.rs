@@ -85,7 +85,7 @@ fn sanitize_raw_log_value(value: &Value, key: Option<&str>, preview: bool) -> Va
 }
 
 /// Removes common credential forms embedded in tool output and diagnostic text.
-pub(super) fn redact_diagnostic_text(text: &str) -> String {
+pub(crate) fn redact_diagnostic_text(text: &str) -> String {
     static AUTHORIZATION: OnceLock<Regex> = OnceLock::new();
     static CREDENTIAL_FIELD: OnceLock<Regex> = OnceLock::new();
     let authorization = AUTHORIZATION.get_or_init(|| {
