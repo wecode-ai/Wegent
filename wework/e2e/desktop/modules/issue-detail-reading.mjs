@@ -61,6 +61,44 @@ async function verifyConstrainedDiscussion(control, captureScreenshot, replySele
     })
   )
   try {
+    await control.command('click', scope('[data-testid="cloud-todo-detail-start-date-trigger"]'))
+    const dateFields =
+      '[data-testid="cloud-todo-detail-start-date"], [data-testid="cloud-todo-detail-due-date"]'
+    await control.command('waitFor', '[data-testid="cloud-todo-detail-start-date"]', {
+      visible: true,
+    })
+    const dates = JSON.parse(await control.command('getElementMetrics', dateFields))
+    assert.equal(dates.length, 2)
+    for (const date of dates) {
+      assert.ok(
+        date.width >= 44 && date.height >= 44,
+        `Narrow date fields must remain at least 44px: ${JSON.stringify(date)}`
+      )
+    }
+    const foreground = luminance(
+      await control.command(
+        'getComputedStyleValue',
+        'label:has([data-testid="cloud-todo-detail-start-date"])',
+        { value: 'color' }
+      )
+    )
+    const background = luminance(
+      await control.command(
+        'getComputedStyleValue',
+        '[role="dialog"]:has(> div > label > [data-testid="cloud-todo-detail-start-date"])',
+        { value: 'background-color' }
+      )
+    )
+    assert.ok(
+      (Math.max(foreground, background) + 0.05) / (Math.min(foreground, background) + 0.05) >= 4.5,
+      'Date labels must remain readable inside their portalled surface'
+    )
+    await control.command('nativePress', '[data-testid="cloud-todo-detail-start-date"]', {
+      key: 'Escape',
+    })
+    await control.command('waitFor', '[data-testid="cloud-todo-detail-start-date"]', {
+      visible: false,
+    })
     await control.command(
       'scrollToRatioAsUser',
       scope('[data-testid="cloud-todo-detail-scroll"]'),
@@ -252,6 +290,17 @@ export async function verifyIssueDetailReading(control, { captureScreenshot, uiT
   await verifyConstrainedDiscussion(control, captureScreenshot, replySelector)
   const routeDraft = '设置往返后保留这段回复草稿。'
   await control.command('fill', composer, { value: routeDraft })
+  const attachment = scope('[data-testid="task-comment-form"] [data-testid="attachment-badge"]')
+  const filename = 'issue-reply-route-draft.txt'
+  await control.command('pasteFile', composer, {
+    filename,
+    mimeType: 'text/plain',
+    value: Buffer.from('Issue reply route regression').toString('base64'),
+  })
+  await control.command('waitFor', attachment, { text: filename, visible: true })
+  await control.command('waitFor', scope('[data-testid="uploading-attachment-badge"]'), {
+    visible: false,
+  })
   const activityId = await control.command('getAttribute', scope('.task-detail-comments'), {
     value: 'data-testid',
   })
@@ -266,8 +315,11 @@ export async function verifyIssueDetailReading(control, { captureScreenshot, uiT
   }
   await control.command('waitFor', composer, { text: routeDraft, visible: true })
   await control.command('waitFor', replyComposer, { text: '继续此讨论', visible: true })
+  await control.command('waitFor', attachment, { text: filename, visible: true })
   assert.ok((await control.command('getText', replyComposer)).includes(body))
   await captureScreenshot(control, 'issue-detail-reading-04-restored-reply-draft.png')
+  await control.command('click', `${attachment} [data-testid="remove-attachment-button"]`)
+  await control.command('waitFor', attachment, { visible: false })
   await control.command('fill', composer, { value: '' })
   await control.command('click', scope('[data-testid="issue-reply-cancel"]'))
   const [beforeExpansion] = JSON.parse(await control.command('getElementMetrics', detail))

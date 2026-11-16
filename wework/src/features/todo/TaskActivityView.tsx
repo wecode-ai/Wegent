@@ -80,7 +80,7 @@ import { ConversationQueuePanel } from '@/components/chat/ConversationQueuePanel
 import { DESKTOP_MESSAGE_LIST_CLASS } from '@/components/layout/desktopChatLayout'
 import { useWorkbenchPaneContext } from '@/features/workbench/useWorkbench'
 import { useWorkbenchModels } from '@/features/workbench/useWorkbenchModels'
-import { useWorkbenchAttachments } from '@/features/workbench/useWorkbenchAttachments'
+import { useScopedComposerAttachments } from '@/features/workbench/useScopedComposerAttachments'
 import {
   getRuntimeTaskLifecycleKey,
   useRuntimeTaskLifecycleStoreSnapshot,
@@ -271,12 +271,27 @@ export function TaskActivityView({
   )
   const mentionCandidates = useIssueMentionCandidates(members, agents, activityTranslate)
   const lifecycleSnapshot = useRuntimeTaskLifecycleStoreSnapshot()
-  const { services, state, createProjectRuntimeTask, cancelRuntimeTask, sendRuntimePaneMessage } =
-    useWorkbenchPaneContext()
+  const {
+    services,
+    state,
+    projectChat,
+    workspaceTabId,
+    createProjectRuntimeTask,
+    cancelRuntimeTask,
+    sendRuntimePaneMessage,
+  } = useWorkbenchPaneContext()
   // Local project spaces keep their board, comments and runs in the local
   // executor; every delivery/approval call must route to the project's space
   // API instead of always hitting the cloud backend.
   const projectLocation = project.project_store === 'local' ? 'local' : 'cloud'
+  const commentDraftScope = JSON.stringify([
+    'issue-comment',
+    workspaceTabId,
+    state.user?.id ?? currentUserId ?? LOCAL_USER.id,
+    projectLocation,
+    project.id,
+    task.id,
+  ])
   const projectDeliveryApi =
     projectLocation === 'local'
       ? (services.projectSpaceApis?.local ?? services.deliveryApi)
@@ -370,11 +385,7 @@ export function TaskActivityView({
     // Stop following the robot record once this composer has its own model.
     selectionReady: !modelSelectionOverridden,
   })
-  const attachmentSelection = useWorkbenchAttachments({
-    uploadAttachment: services.attachmentApi?.uploadAttachment,
-    deleteAttachment: services.attachmentApi?.deleteAttachment,
-    scopeKey: `task-activity-${project.id}`,
-  })
+  const attachmentSelection = useScopedComposerAttachments(projectChat, commentDraftScope)
   const {
     models: availableModels,
     selectedModel,
@@ -452,14 +463,7 @@ export function TaskActivityView({
     setText: setNewCommentDraft,
     replyTarget: selectedReplyTarget,
     setReplyTarget,
-  } = useIssueCommentDraft(
-    JSON.stringify([
-      state.user?.id ?? currentUserId ?? LOCAL_USER.id,
-      projectLocation,
-      project.id,
-      task.id,
-    ])
-  )
+  } = useIssueCommentDraft(commentDraftScope)
   const replyTarget = selectedReplyTarget
     ? (commentCards.find(card => card.root.messageId === selectedReplyTarget.root.messageId) ??
       selectedReplyTarget)

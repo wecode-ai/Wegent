@@ -15,6 +15,7 @@ import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { TaskActivityView } from './TaskActivityView'
 import { clearIssueCommentDraftsForTests } from './useIssueCommentDraft'
+import { useState } from 'react'
 
 vi.mock('@/api/plugins', () => ({
   createPluginApi: () => ({ listInstalledPlugins: vi.fn().mockResolvedValue({ items: [] }) }),
@@ -141,6 +142,39 @@ function fixture({ identified = false, hasMoreBefore = false, publicStandIn = fa
     deliveryApi: { getLoopItem },
     chatStream: { subscribe: vi.fn(() => vi.fn()) },
   } as unknown as WorkbenchServices
+  services.attachmentApi = {
+    uploadAttachment: vi.fn(async () => ({
+      id: 42,
+      filename: 'route-draft.txt',
+      file_extension: 'txt',
+      created_at: createdAt,
+      file_size: 4,
+      mime_type: 'text/plain',
+      status: 'ready',
+      file_path: '/route-draft.txt',
+    })),
+    deleteAttachment: vi.fn(async () => undefined),
+  } as unknown as WorkbenchServices['attachmentApi']
+  function Route() {
+    const [shown, setShown] = useState(true)
+    return (
+      <>
+        <button data-testid="switch-route" onClick={() => setShown(!shown)}>
+          Switch route
+        </button>
+        {shown && (
+          <TaskActivityView
+            client={client}
+            project={{ id: '11', name: 'P' } as CloudProject}
+            task={{ id: 'WEG-1', title: 'Original task', status: 'in_progress' } as CloudLoopItem}
+            onTaskUpdated={onTaskUpdated}
+            linear
+            issueTimeline={publicStandIn}
+          />
+        )}
+      </>
+    )
+  }
   const view = render(
     <CloudConnectionContext.Provider
       value={{
@@ -153,14 +187,7 @@ function fixture({ identified = false, hasMoreBefore = false, publicStandIn = fa
       }}
     >
       <WorkbenchProvider user={{ id: 1, user_name: 'alice', email: 'a@b.c' }} services={services}>
-        <TaskActivityView
-          client={client}
-          project={{ id: '11', name: 'P' } as CloudProject}
-          task={{ id: 'WEG-1', title: 'Original task', status: 'in_progress' } as CloudLoopItem}
-          onTaskUpdated={onTaskUpdated}
-          linear
-          issueTimeline={publicStandIn}
-        />
+        <Route />
       </WorkbenchProvider>
     </CloudConnectionContext.Provider>
   )
@@ -187,6 +214,22 @@ describe('opening an activity execution with the real pane session', () => {
     sessionStorage.clear()
     clearRuntimeConversationCacheForTests()
     await i18n.changeLanguage('zh-CN')
+  })
+
+  it('retains selected comment attachments when the route unmounts', async () => {
+    fixture({ publicStandIn: true })
+    await screen.findByText('Activity summary')
+    await userEvent.upload(
+      screen.getByTestId('task-comment-file-input'),
+      new File(['test'], 'route-draft.txt', { type: 'text/plain' })
+    )
+    await screen.findByText('route-draft.txt')
+    await userEvent.click(screen.getByTestId('switch-route'))
+    await userEvent.click(screen.getByTestId('switch-route'))
+    await screen.findByText('Activity summary')
+    expect(screen.getByText('route-draft.txt')).toBeInTheDocument()
+    await userEvent.click(screen.getByTestId('remove-attachment-button'))
+    await waitFor(() => expect(screen.queryByText('route-draft.txt')).not.toBeInTheDocument())
   })
   afterEach(() => {
     cleanup()

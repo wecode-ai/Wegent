@@ -132,6 +132,17 @@ vi.mock('@/features/workbench/useWorkbench', async importOriginal => ({
       devices: devicesMock.value,
     },
     services: workbenchServices,
+    projectChat: {
+      attachmentStateByScope: new Proxy({}, { get: () => attachmentSelectionMock }),
+      handleFileSelectForScope: (_scope: string, files: File | File[]) =>
+        attachmentSelectionMock.handleFileSelect(files),
+      addExistingAttachmentForScope: (_scope: string, attachment: Attachment) =>
+        attachmentSelectionMock.addExistingAttachment(attachment),
+      removeAttachmentForScope: (_scope: string, id: number) =>
+        attachmentSelectionMock.removeAttachment(id),
+      dismissAttachmentErrorForScope: vi.fn(),
+      resetAttachmentsForScope: () => attachmentSelectionMock.resetAttachments(),
+    },
     createProjectRuntimeTask,
     sendRuntimePaneMessage,
     openRuntimeTask,

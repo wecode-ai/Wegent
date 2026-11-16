@@ -413,6 +413,7 @@ function ScheduleRangeControl({
           type="button"
           className={triggerClassName}
           disabled={!editable}
+          data-testid={`${startTestId}-trigger`}
           aria-label={translate("todo.schedule_range", "时间范围")}
         >
           <Calendar className="h-4 w-4 shrink-0 text-text-muted" />
@@ -445,7 +446,7 @@ function ScheduleRangeControl({
           style={portalTheme.style}
         >
           <div className="grid gap-3">
-            <label className="grid gap-1.5 text-xs text-text-muted">
+            <label className="grid gap-1.5 text-xs text-text-secondary">
               {translate("todo.start_date", "开始时间")}
               <input
                 data-testid={startTestId}
@@ -453,10 +454,10 @@ function ScheduleRangeControl({
                 value={startDate}
                 onClick={(event) => event.currentTarget.showPicker?.()}
                 onChange={(event) => onStartDateChange(event.target.value)}
-                className="h-9 rounded-lg border border-border bg-background px-3 text-sm text-text-primary outline-none focus:border-text-muted"
+                className="h-11 rounded-lg border border-border bg-background px-3 text-sm text-text-primary outline-none focus:border-text-muted md:h-9"
               />
             </label>
-            <label className="grid gap-1.5 text-xs text-text-muted">
+            <label className="grid gap-1.5 text-xs text-text-secondary">
               {translate("todo.due_date", "结束时间")}
               <input
                 data-testid={dueTestId}
@@ -464,7 +465,7 @@ function ScheduleRangeControl({
                 value={dueDate}
                 onClick={(event) => event.currentTarget.showPicker?.()}
                 onChange={(event) => onDueDateChange(event.target.value)}
-                className="h-9 rounded-lg border border-border bg-background px-3 text-sm text-text-primary outline-none focus:border-text-muted"
+                className="h-11 rounded-lg border border-border bg-background px-3 text-sm text-text-primary outline-none focus:border-text-muted md:h-9"
               />
             </label>
             {invalid ? (

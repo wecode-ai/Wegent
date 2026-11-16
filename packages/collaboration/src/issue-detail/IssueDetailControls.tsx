@@ -279,7 +279,7 @@ export function IssueDetailSearchableSelect<TValue extends string>({
                   ) : null}
                   {showGroup ? (
                     <p
-                      className={`px-2.5 pb-1 pt-2 text-xs font-medium text-text-muted ${option.section ? "pl-5" : ""}`}
+                      className={`px-2.5 pb-1 pt-2 text-xs font-medium text-text-secondary ${option.section ? "pl-5" : ""}`}
                     >
                       {option.group}
                     </p>
