@@ -1,6 +1,7 @@
 import { Bot, Boxes, CheckSquare2, CloudOff, Columns3, Pin, Plus, X } from 'lucide-react'
 import {
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -122,6 +123,7 @@ function useOutsideMenu(
 function WorkspaceTabButton({
   tab,
   active,
+  tabIndex,
   draggedTabId,
   onDragStartTab,
   onDragEndTab,
@@ -132,6 +134,7 @@ function WorkspaceTabButton({
 }: {
   tab: WorkspaceTab
   active: boolean
+  tabIndex: number
   draggedTabId: string | null
   onDragStartTab: (tabId: string) => void
   onDragEndTab: () => void
@@ -182,7 +185,7 @@ function WorkspaceTabButton({
         if (event.button === 1 && !tab.fixed) closeTab(tab.id)
       }}
       className={cn(
-        'group relative flex h-8 w-36 min-w-28 max-w-[188px] flex-none items-center rounded-md text-sm transition-[background-color,color,opacity] duration-150',
+        'group relative flex h-8 w-36 min-w-0 max-w-[min(188px,var(--workspace-tab-viewport-width,188px))] flex-none items-center rounded-md text-sm transition-[background-color,color,opacity] duration-150',
         pendingCount !== null && 'w-40',
         tab.contentRoute.startsWith('/app/harness-') && 'smart-app-workspace-tab-enter',
         active
@@ -194,7 +197,11 @@ function WorkspaceTabButton({
       <button
         type="button"
         role="tab"
+        id={`workspace-tab-select-${tab.id}`}
+        aria-controls={`workspace-tab-content-${tab.id}`}
         aria-selected={active}
+        tabIndex={tabIndex}
+        data-tab-id={tab.id}
         data-testid={`workspace-tab-select-${tab.id}`}
         data-pending-question-count={pendingTab ? interactions?.pending.length : undefined}
         data-project-pending-count={
@@ -266,6 +273,7 @@ function WorkspaceTabButton({
         <button
           type="button"
           data-testid={`workspace-tab-close-${tab.id}`}
+          tabIndex={active ? 0 : -1}
           onClick={event => {
             event.stopPropagation()
             closeTab(tab.id)
@@ -306,6 +314,8 @@ export function WorkspaceTabStrip({
     moveTab,
   } = useWorkspaceTabs()
   const addButtonRef = useRef<HTMLButtonElement>(null)
+  const tabStripRef = useRef<HTMLDivElement>(null)
+  const [focusedTabId, setFocusedTabId] = useState<string | null>(null)
   const addMenuRef = useRef<HTMLDivElement>(null)
   const contextMenuRef = useRef<HTMLDivElement>(null)
   const [addMenuPosition, setAddMenuPosition] = useState<MenuPosition | null>(null)
@@ -326,6 +336,32 @@ export function WorkspaceTabStrip({
   )
   const visibleActiveTabId =
     visibleTabs.find(tab => tab.id === activeTabId)?.id ?? visibleTabs[0]?.id ?? activeTabId
+  const rovingTabId = visibleTabs.some(tab => tab.id === focusedTabId)
+    ? focusedTabId
+    : visibleActiveTabId
+
+  useLayoutEffect(() => {
+    const strip = tabStripRef.current
+    if (!strip) return
+    const revealActive = () => {
+      if (!strip.clientWidth) return
+      strip.style.setProperty('--workspace-tab-viewport-width', `${strip.clientWidth}px`)
+      const targetId = rovingTabId ?? visibleActiveTabId
+      const active = Array.from(strip.querySelectorAll<HTMLElement>('[role="tab"]')).find(
+        tab => tab.dataset.tabId === targetId
+      )?.parentElement
+      if (!active) return
+      const viewport = strip.getBoundingClientRect()
+      const tab = active.getBoundingClientRect()
+      if (tab.left < viewport.left) strip.scrollLeft += tab.left - viewport.left
+      else if (tab.right > viewport.right) strip.scrollLeft += tab.right - viewport.right
+    }
+    revealActive()
+    const observer = new ResizeObserver(revealActive)
+    // Available space is independent of the widths we assign to the tabs.
+    observer.observe(strip.parentElement!)
+    return () => observer.disconnect()
+  }, [visibleActiveTabId, visibleTabs, rovingTabId])
   useOutsideMenu(Boolean(addMenuPosition), addMenuRef, () => setAddMenuPosition(null))
   useOutsideMenu(Boolean(contextMenu), contextMenuRef, () => setContextMenu(null))
 
@@ -518,10 +554,38 @@ export function WorkspaceTabStrip({
         className="flex h-full min-w-0 flex-1 items-center px-2"
       >
         <div
+          ref={tabStripRef}
           role="tablist"
           data-testid="workspace-tab-strip"
           aria-label={t('workbench.workspace_tabs', '工作区标签页')}
           className="workspace-tab-strip-scrollbar flex h-full min-w-0 max-w-[calc(100%-2rem)] flex-none items-center gap-0.5 overflow-x-auto overflow-y-hidden"
+          onFocusCapture={event => {
+            if (
+              event.target instanceof HTMLElement &&
+              event.target.getAttribute('role') === 'tab'
+            ) {
+              setFocusedTabId(event.target.dataset.tabId ?? null)
+            }
+          }}
+          onBlurCapture={event => {
+            if (!event.currentTarget.contains(event.relatedTarget)) setFocusedTabId(null)
+          }}
+          onKeyDown={event => {
+            if (event.altKey || event.ctrlKey || event.metaKey || event.shiftKey) return
+            const tabs = Array.from(
+              event.currentTarget.querySelectorAll<HTMLButtonElement>('[role="tab"]')
+            )
+            const index = tabs.indexOf(document.activeElement as HTMLButtonElement)
+            if (index < 0 || !['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return
+            event.preventDefault()
+            const target =
+              event.key === 'Home'
+                ? 0
+                : event.key === 'End'
+                  ? tabs.length - 1
+                  : (index + (event.key === 'ArrowRight' ? 1 : -1) + tabs.length) % tabs.length
+            tabs[target]?.focus()
+          }}
         >
           {visibleTabs.map((tab, index) => (
             <div
@@ -537,6 +601,7 @@ export function WorkspaceTabStrip({
               <WorkspaceTabButton
                 tab={tab}
                 active={tab.id === visibleActiveTabId}
+                tabIndex={tab.id === rovingTabId ? 0 : -1}
                 draggedTabId={draggedTabId}
                 onDragStartTab={setDraggedTabId}
                 onDragEndTab={() => setDraggedTabId(null)}

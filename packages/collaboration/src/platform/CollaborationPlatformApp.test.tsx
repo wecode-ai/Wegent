@@ -2150,6 +2150,37 @@ describe("CollaborationPlatformApp real component flow", () => {
     expect(api.projects.list).toHaveBeenCalledTimes(2);
   });
 
+  it("closes compact navigation after selecting a destination or pressing Escape", async () => {
+    const { api } = createApi();
+    await render(<PlatformHarness api={api} />);
+    const toggle = byTestId("collaboration-navigation-toggle");
+    expect(toggle.getAttribute("aria-expanded")).toBe("false");
+    const content = document.getElementById(
+      toggle.getAttribute("aria-controls")!,
+    );
+    expect(content).toBe(byTestId("collaboration-navigation-content"));
+    await click(toggle);
+    expect(toggle.getAttribute("aria-expanded")).toBe("true");
+    await click(byTestId("collaboration-primary-home"));
+    expect(toggle.getAttribute("aria-expanded")).toBe("false");
+    await click(toggle);
+    vi.spyOn(toggle, "getClientRects").mockReturnValue([
+      new DOMRect(0, 0, 200, 44),
+    ] as unknown as DOMRectList);
+    byTestId("collaboration-primary-home").focus();
+    await act(async () =>
+      document.dispatchEvent(
+        new KeyboardEvent("keydown", {
+          key: "Escape",
+          bubbles: true,
+          cancelable: true,
+        }),
+      ),
+    );
+    expect(toggle.getAttribute("aria-expanded")).toBe("false");
+    expect(document.activeElement).toBe(toggle);
+  });
+
   it("records a Markdown heading as the Issue title without flattening its body", async () => {
     const { api } = createApi();
     const content =

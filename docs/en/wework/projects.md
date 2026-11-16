@@ -80,6 +80,8 @@ Record an issue directly at the top of **Collaboration → My work**; choose the
 
 ### Personal collaboration home
 
+In a narrow window, select **Collaboration navigation** above the page to reveal the complete Issue, project and management navigation. Selecting a destination closes it; select the entry again or press Escape to return to the content. The navigation temporarily occupies the content area while drafts remain intact. The top workspace strip reveals its current tab after switching or resizing. Arrow keys, Home and End move tab focus; Enter or Space activates it.
+
 With no projects yet, the home starts with **Start with your first issue**. **New issue** opens the existing independent-Issue form without requiring a project. Independent Issues belong to the signed-in account; if disconnected, complete the existing sign-in flow first. Project association remains optional. To create or import a project, open **Projects → Personal group → Create project** in the sidebar; blank projects, local folders and existing projects remain available.
 
 **Collaboration project** selects where the Issue is saved; **Code workspace (optional)** in **Create task** selects the code directory used for execution. These selections are independent. Work that does not need a repository can run without a code directory. The recording area stays compact; mode switches retain drafts and attachments.

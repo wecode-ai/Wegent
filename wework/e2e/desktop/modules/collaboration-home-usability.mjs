@@ -212,6 +212,74 @@ async function verifyProjectDialogKeyboard(control, home, timeoutMs) {
   }
 }
 
+async function verifyCompactNavigation(control, home, timeoutMs) {
+  const record = `${home} [data-testid="collaboration-home-issue-content"]`
+  const previous = await control.command('getValue', record)
+  const target = await control.command(
+    'getAttribute',
+    `${home} [data-testid="collaboration-issue-project-trigger"]`,
+    { value: 'aria-label' }
+  )
+  const participating = await control.command(
+    'getAttribute',
+    `${home} [data-testid="personal-home-scope-participating"]`,
+    { value: 'aria-pressed' }
+  )
+  const draft = 'Retain the Issue draft while using compact navigation.'
+  await control.command('fill', record, { value: draft })
+  const toggle = '[data-testid="collaboration-navigation-toggle"]'
+  await control.command('waitFor', `${toggle}[aria-expanded="false"]`, { visible: true })
+  const [navigation] = JSON.parse(
+    await control.command('getElementMetrics', '[data-testid="collaboration-platform-sidebar"]')
+  )
+  assert.ok(
+    navigation.height <= 52,
+    'Collapsed navigation must leave the narrow viewport for content'
+  )
+  await control.command('click', toggle)
+  await control.command('waitFor', `${toggle}[aria-expanded="true"]`)
+  await control.command(
+    'click',
+    '[data-testid="collaboration-workspace-home-wework-local-workspace"]'
+  )
+  await control.command('waitFor', `${toggle}[aria-expanded="false"]`)
+  await control.command('click', toggle)
+  await control.command('click', '[data-testid="collaboration-primary-home"]')
+  await control.command('waitFor', home, { visible: true })
+  assert.equal(await control.command('getValue', record), draft)
+  assert.equal(
+    await control.command(
+      'getAttribute',
+      `${home} [data-testid="collaboration-issue-project-trigger"]`,
+      { value: 'aria-label' }
+    ),
+    target
+  )
+  if (participating === 'true')
+    await control.command('click', `${home} [data-testid="personal-home-scope-participating"]`)
+  await control.command('fill', record, { value: previous })
+
+  const strip = '[data-testid="workspace-tab-strip"]'
+  const selected = `${strip} [role="tab"][aria-selected="true"]`
+  const [viewport, active] = JSON.parse(
+    await control.command('getElementMetrics', `${strip}, ${selected}`)
+  )
+  assert.ok(
+    active.left >= viewport.left - 1 && active.right <= viewport.right + 1,
+    'The selected workspace tab must remain fully visible in a narrow window'
+  )
+  const current = await control.command('getAttribute', selected, { value: 'data-testid' })
+  await control.command('nativePress', selected, { key: 'ArrowLeft' })
+  assert.notEqual(await control.command('getActiveElementTestId', 'body'), current)
+  assert.equal(
+    await control.command('getAttribute', selected, { value: 'data-testid' }),
+    current,
+    'Arrow navigation must move focus without activating another workspace'
+  )
+  await control.command('nativePress', ':focus', { key: 'ArrowRight' })
+  assert.equal(await control.command('getActiveElementTestId', 'body'), current)
+}
+
 /** Reuse the checkpoint's real services; no additional model turn. */
 export async function verifyCollaborationHomeUsability(
   control,
@@ -275,6 +343,7 @@ export async function verifyCollaborationHomeUsability(
     await control.command('click', `${home} [data-testid="personal-home-back-to-issues"]`)
 
     await resizeHome(control, home, 390, 900, timeoutMs)
+    await verifyCompactNavigation(control, home, timeoutMs)
     const record = `${home} [data-testid="collaboration-home-issue-content"]`
     const savedRecord = await control.command('getValue', record)
     const narrowIssue = 'Narrow creation reveals the resulting Issue'
