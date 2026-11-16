@@ -1,6 +1,11 @@
-interface DomWrite {
+interface ElementLocation {
+  elementId: number
+  domDepth: number
   tag: string
   testId: string | null
+}
+
+interface DomWrite extends ElementLocation {
   attribute: string | null
 }
 
@@ -15,7 +20,7 @@ interface ResizeDelivery {
   callbackName: string
   creationStack: string | undefined
   atMs: number
-  targets: Array<{ tag: string; testId: string | null; width: number; height: number }>
+  targets: Array<ElementLocation & { width: number; height: number }>
   writeCount: number
   writes: DomWrite[]
 }
@@ -27,7 +32,7 @@ interface ObservationChange {
   duringObserverId: number | null
   atMs: number
   succeeded: boolean
-  target: { tag: string; testId: string | null } | null
+  target: ElementLocation | null
 }
 
 function appendRecent<T>(entries: T[], entry: T) {
@@ -35,13 +40,15 @@ function appendRecent<T>(entries: T[], entry: T) {
   if (entries.length > 32) entries.shift()
 }
 
-function mutationWrites(records: MutationRecord[]): DomWrite[] {
+function mutationWrites(
+  records: MutationRecord[],
+  describeElement: (element: Element) => ElementLocation
+): DomWrite[] {
   return records.slice(0, 8).flatMap(record => {
     if (!(record.target instanceof Element)) return []
     return [
       {
-        tag: record.target.tagName,
-        testId: record.target.closest('[data-testid]')?.getAttribute('data-testid') ?? null,
+        ...describeElement(record.target),
         attribute: record.attributeName,
       },
     ]
@@ -55,18 +62,47 @@ export function installResizeObserverDiagnostics(target: Window) {
   const recent: ResizeDelivery[] = []
   const betweenCallbacks: MutationBatch[] = []
   const observationChanges: ObservationChange[] = []
+  const elementIds = new WeakMap<Element, number>()
+  let nextElementId = 0
+  const describeElement = (element: Element): ElementLocation => {
+    let elementId = elementIds.get(element)
+    if (elementId === undefined) {
+      elementId = ++nextElementId
+      elementIds.set(element, elementId)
+    }
+    let domDepth = 0
+    const parentElement = Object.getOwnPropertyDescriptor(Node.prototype, 'parentElement')?.get
+    if (!parentElement) throw new Error('Native node ancestry is unavailable')
+    for (let parent: Element | null = element; parent; parent = parentElement.call(parent))
+      domDepth += 1
+    return {
+      elementId,
+      domDepth,
+      tag: element.tagName,
+      testId: element.closest('[data-testid]')?.getAttribute('data-testid') ?? null,
+    }
+  }
   let activeObserverId: number | null = null
   let nextId = 0
   let failed = false
   if (typeof NativeObserver !== 'function')
-    return { snapshot: () => ({ recent, betweenCallbacks, observationChanges, failed }), stop() {} }
+    return {
+      snapshot: () => ({
+        capturedAtMs: performance.now(),
+        recent,
+        betweenCallbacks,
+        observationChanges,
+        failed,
+      }),
+      stop() {},
+    }
   const recordBetweenCallbacks = (records: MutationRecord[]) => {
     if (!records.length) return
     try {
       appendRecent(betweenCallbacks, {
         atMs: performance.now(),
         writeCount: records.length,
-        writes: mutationWrites(records),
+        writes: mutationWrites(records, describeElement),
       })
     } catch {
       failed = true
@@ -98,8 +134,7 @@ export function installResizeObserverDiagnostics(target: Window) {
             creationStack,
             atMs: performance.now(),
             targets: entries.slice(0, 4).map(entry => ({
-              tag: entry.target.tagName,
-              testId: entry.target.closest('[data-testid]')?.getAttribute('data-testid') ?? null,
+              ...describeElement(entry.target),
               width: entry.contentRect.width,
               height: entry.contentRect.height,
             })),
@@ -120,7 +155,7 @@ export function installResizeObserverDiagnostics(target: Window) {
             const mutations = writes?.takeRecords() ?? []
             if (delivery) {
               delivery.writeCount = mutations.length
-              delivery.writes = mutationWrites(mutations)
+              delivery.writes = mutationWrites(mutations, describeElement)
             }
           } catch {
             failed = true
@@ -144,12 +179,7 @@ export function installResizeObserverDiagnostics(target: Window) {
           duringObserverId: activeObserverId,
           atMs: performance.now(),
           succeeded,
-          target: target
-            ? {
-                tag: target.tagName,
-                testId: target.closest('[data-testid]')?.getAttribute('data-testid') ?? null,
-              }
-            : null,
+          target: target ? describeElement(target) : null,
         })
       } catch {
         failed = true
@@ -185,6 +215,7 @@ export function installResizeObserverDiagnostics(target: Window) {
   scope.ResizeObserver = ObservedResizeObserver
   return {
     snapshot: () => ({
+      capturedAtMs: performance.now(),
       recent: [...recent],
       betweenCallbacks: [...betweenCallbacks],
       observationChanges: [...observationChanges],

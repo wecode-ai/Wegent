@@ -24,7 +24,14 @@ test('preserves native callback timing, identity and exceptions while recording 
   expect(callback).toHaveBeenCalledExactlyOnceWith([entry], observer)
   expect(callback.mock.contexts[0]).toBe(observer)
   expect(diagnostics.snapshot().recent[0].targets).toEqual([
-    { tag: 'DIV', testId: 'conversation-viewport', width: 300, height: 200 },
+    {
+      elementId: 1,
+      domDepth: 1,
+      tag: 'DIV',
+      testId: 'conversation-viewport',
+      width: 300,
+      height: 200,
+    },
   ])
   expect(JSON.stringify(diagnostics.snapshot())).not.toContain('private text')
   const failure = new Error('Original callback failed')
@@ -115,11 +122,9 @@ test('retains deferred DOM commits between native deliveries without attributing
   deliver([{ target, contentRect: { width: 100, height: 20 } } as ResizeObserverEntry], observer)
   expect(diagnostics.snapshot().recent[0].writeCount).toBe(0)
   await new Promise<void>(resolve => queueMicrotask(resolve))
-  expect(diagnostics.snapshot().betweenCallbacks.flatMap(batch => batch.writes)).toContainEqual({
-    tag: 'DIV',
-    testId: 'deferred-layout',
-    attribute: 'style',
-  })
+  expect(diagnostics.snapshot().betweenCallbacks.flatMap(batch => batch.writes)).toContainEqual(
+    expect.objectContaining({ tag: 'DIV', testId: 'deferred-layout', attribute: 'style' })
+  )
   expect(JSON.stringify(diagnostics.snapshot())).not.toContain('43px')
   diagnostics.stop()
   target.remove()
@@ -192,4 +197,63 @@ test('preserves a native observation failure even when diagnostic target reading
   expect(() => observer.observe({} as Element)).toThrow(failure)
   expect(diagnostics.snapshot().failed).toBe(true)
   diagnostics.stop()
+})
+
+test('distinguishes nodes sharing a test ID and correlates delivery, writes and registration', () => {
+  let deliver!: ResizeObserverCallback
+  class NativeObserver {
+    constructor(callback: ResizeObserverCallback) {
+      deliver = callback
+    }
+    observe() {}
+    disconnect() {}
+  }
+  const scope = {
+    ResizeObserver: NativeObserver,
+    MutationObserver,
+    document,
+  } as unknown as Window & typeof globalThis
+  const diagnostics = installResizeObserverDiagnostics(scope)
+  const parent = document.createElement('section')
+  parent.dataset.testid = 'shared-boundary'
+  const first = document.createElement('span')
+  const second = document.createElement('span')
+  first.textContent = 'private content'
+  parent.append(first, second)
+  document.body.append(parent)
+  const observer = new scope.ResizeObserver(() => {
+    first.style.width = '43px'
+  })
+  try {
+    observer.observe(first)
+    observer.observe(second)
+    observer.observe(parent)
+    deliver(
+      [first, second].map(
+        target => ({ target, contentRect: { width: 100, height: 20 } }) as ResizeObserverEntry
+      ),
+      observer
+    )
+    const snapshot = diagnostics.snapshot()
+    const delivery = snapshot.recent[0]
+    const [firstTarget, secondTarget] = delivery.targets
+    expect(firstTarget.testId).toBe(secondTarget.testId)
+    expect(firstTarget.elementId).not.toBe(secondTarget.elementId)
+    expect(firstTarget.domDepth).toBe(snapshot.observationChanges[2].target!.domDepth + 1)
+    expect(delivery.writes[0].elementId).toBe(firstTarget.elementId)
+    expect(snapshot.observationChanges[0].target?.elementId).toBe(firstTarget.elementId)
+    expect(snapshot.capturedAtMs).toBeGreaterThanOrEqual(delivery.atMs)
+
+    first.remove()
+    Object.defineProperty(first, 'parentElement', { get: () => first })
+    observer.observe(first)
+    expect(diagnostics.snapshot().observationChanges.at(-1)?.target).toMatchObject({
+      elementId: firstTarget.elementId,
+      domDepth: 1,
+    })
+    expect(JSON.stringify(snapshot)).not.toMatch(/private content|43px/)
+  } finally {
+    diagnostics.stop()
+    parent.remove()
+  }
 })
