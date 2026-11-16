@@ -18,7 +18,8 @@ import { useUser } from '@/features/common/UserContext'
 import { useTranslation } from '@/hooks/useTranslation'
 import { isManager } from '@/types/base-role'
 import type { MyPermissionSourcesResponse } from '@/types/knowledge'
-import { PermissionManagementTab } from '../../permission/components/PermissionManagementTab'
+import { KnowledgePermissionSources } from './KnowledgePermissionSources'
+import { KnowledgeAuthorizationObjects } from '@/features/knowledge/permission/components/KnowledgeAuthorizationObjects'
 
 interface KnowledgeAccessDialogProps {
   restoreFocus?: () => void
@@ -116,7 +117,7 @@ function KnowledgeAccessSession(props: KnowledgeAccessDialogProps) {
       <DialogContent
         onCloseAutoFocus={event => {
           event.preventDefault()
-          if (props.resourceCreated && props.restoreFocus) {
+          if (props.restoreFocus) {
             props.restoreFocus()
             return
           }
@@ -130,7 +131,7 @@ function KnowledgeAccessSession(props: KnowledgeAccessDialogProps) {
         }}
       >
         <DialogHeader className="pr-10 text-left">
-          <DialogTitle>
+          <DialogTitle className="text-lg font-semibold">
             {t(
               props.resourceCreated
                 ? 'document.creation.created'
@@ -138,7 +139,7 @@ function KnowledgeAccessSession(props: KnowledgeAccessDialogProps) {
             )}
           </DialogTitle>
         </DialogHeader>
-        <DialogDescription>
+        <DialogDescription className="text-xs leading-relaxed text-text-muted">
           {t(
             props.resourceCreated
               ? 'document.creation.createdDescription'
@@ -180,31 +181,12 @@ function KnowledgeAccessSession(props: KnowledgeAccessDialogProps) {
           </div>
         )}
         {!sources && !failed && <p role="status">{t('loading')}</p>}
-        {sources && (
-          <div>
-            <p>
-              {t('document.navigation.effectivePermission')}:{' '}
-              {sources.effective_role
-                ? t(`document.permission.role.${sources.effective_role}`)
-                : '—'}
-            </p>
-            <ul className="space-y-2" data-testid="knowledge-permission-sources">
-              {sources.sources.map((source, index) => (
-                <li
-                  key={`${source.source_type}-${source.entity_id ?? index}`}
-                  className="flex flex-wrap justify-between gap-2 break-words text-sm"
-                >
-                  <span>{source.display_name || t('document.navigation.permissionSource')}</span>
-                  <span>{t(`document.permission.role.${source.role}`)}</span>
-                </li>
-              ))}
-            </ul>
-          </div>
-        )}
-        {canManage && (
-          <PermissionManagementTab
+        {sources && <KnowledgePermissionSources permission={sources} />}
+        {sources?.has_access && (
+          <KnowledgeAuthorizationObjects
             kbId={props.kbId}
             kbNamespace={props.kbNamespace}
+            canManage={Boolean(canManage)}
             onChanged={changed}
             onAccessDenied={() => {
               if (alive.current) setBlocked(true)

@@ -4,26 +4,21 @@
 
 //! Share-token and share-URL generation for the task share endpoint.
 //!
-//! Mirrors `SharedTaskService.generate_share_token` / `generate_share_url`
-//! (`app/services/shared_task.py`): AES-CBC (PKCS#7) over
-//! `"{user_id}#{task_id}"`, base64, then `urllib.parse.quote` with its default
-//! `safe="/"`, and `"{TASK_SHARE_BASE_URL}/shared/task?token={token}"`.
+//! Secure share-token and share-URL generation for the task share endpoint.
 //!
-//! The settings resolve through the source precedence: the process
-//! environment, then the active dotenv file (`config::init_env` exports it),
-//! then the pydantic field default.
+//! `SharedTaskService.generate_share_token` now issues 32 random bytes. The
+//! caller persists the URL-safe token in `share_links` with its SHA-256 hash;
+//! `GET /api/tasks/share/public` resolves only that hash.
 
 use base64::Engine as _;
-use base64::engine::general_purpose::STANDARD;
+use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 
 use crate::config::env_or_dotenv;
 
-/// `settings.SHARE_TOKEN_AES_KEY` default (`app/core/config.py`).
-const DEFAULT_SHARE_TOKEN_AES_KEY: &str = "12345678901234567890123456789012";
-/// `settings.SHARE_TOKEN_AES_IV` default (`app/core/config.py`).
-const DEFAULT_SHARE_TOKEN_AES_IV: &str = "1234567890123456";
 /// `settings.TASK_SHARE_BASE_URL` default (`app/core/config.py`).
 const DEFAULT_TASK_SHARE_BASE_URL: &str = "http://localhost:3000";
+/// The generated raw token size: 32 random bytes (256 bits).
+const SHARE_TOKEN_BYTES: usize = 32;
 
 /// `generate_share_url(share_token)`: the public read-only share link.
 ///
@@ -34,18 +29,16 @@ pub(crate) fn generate_share_url(share_token: &str) -> String {
     build_share_url(&task_share_base_url(), share_token)
 }
 
-/// `generate_share_token(user_id, task_id)`:
-/// `quote(AES-CBC-base64(f"{user_id}#{task_id}"))`.
-///
-/// Returns `Err(())` when the configured key/IV length is one the source's
-/// `cryptography` `Cipher` construction rejects; the route maps that to the
-/// application's unhandled error body, exactly as a source `ValueError` would.
-pub(crate) fn generate_share_token(user_id: i64, task_id: i64) -> Result<String, ()> {
-    let key = env_or_dotenv("SHARE_TOKEN_AES_KEY")
-        .unwrap_or_else(|| DEFAULT_SHARE_TOKEN_AES_KEY.to_string());
-    let iv = env_or_dotenv("SHARE_TOKEN_AES_IV")
-        .unwrap_or_else(|| DEFAULT_SHARE_TOKEN_AES_IV.to_string());
-    encode_share_token(key.as_bytes(), iv.as_bytes(), user_id, task_id)
+/// Generate a 256-bit opaque token. The caller persists it before returning it.
+pub(crate) fn generate_share_token() -> Result<String, ()> {
+    let mut bytes = [0u8; SHARE_TOKEN_BYTES];
+    getrandom::getrandom(&mut bytes).map_err(|_| ())?;
+    Ok(URL_SAFE_NO_PAD.encode(bytes))
+}
+
+/// SHA-256(token) as lowercase hex, the `share_links.token_hash` value.
+pub(crate) fn token_hash(token: &str) -> String {
+    crate::share_access::token_hash(token)
 }
 
 /// The `"{base_url}/shared/task?token={token}"` link.
@@ -58,74 +51,28 @@ fn task_share_base_url() -> String {
     env_or_dotenv("TASK_SHARE_BASE_URL").unwrap_or_else(|| DEFAULT_TASK_SHARE_BASE_URL.to_string())
 }
 
-/// The crypto half of `generate_share_token`, independent of configuration.
-fn encode_share_token(key: &[u8], iv: &[u8], user_id: i64, task_id: i64) -> Result<String, ()> {
-    let plaintext = format!("{user_id}#{task_id}");
-    let encrypted = encrypt_cbc(key, iv, plaintext.as_bytes()).ok_or(())?;
-    Ok(python_quote(&STANDARD.encode(encrypted)))
-}
-
-/// `AES(key)` + `CBC(iv)` + PKCS#7: the variant follows the configured key
-/// length (16/24/32 bytes -> AES-128/192/256), like the source's
-/// `algorithms.AES(key)`.
-fn encrypt_cbc(key: &[u8], iv: &[u8], plaintext: &[u8]) -> Option<Vec<u8>> {
-    wegent_crypto::encrypt_cbc(key, iv, plaintext).ok()
-}
-
-/// `urllib.parse.quote(text, safe="/")`: keep the RFC 3986 unreserved set plus
-/// `/`, percent-encode every other byte with uppercase hex. The source's
-/// default `safe` keeps `/` literal, unlike a plain path-segment encoder.
-fn python_quote(text: &str) -> String {
-    const HEX: &[u8; 16] = b"0123456789ABCDEF";
-    let mut out = String::with_capacity(text.len());
-    for byte in text.bytes() {
-        if byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'.' | b'-' | b'~' | b'/') {
-            out.push(char::from(byte));
-        } else {
-            out.push('%');
-            out.push(char::from(HEX[usize::from(byte >> 4)]));
-            out.push(char::from(HEX[usize::from(byte & 0x0f)]));
-        }
-    }
-    out
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    /// Known-answer vector: `{user_id}#{task_id}` under the default key/IV
-    /// produces this token, and the base URL produces the share link shape.
+    /// A generated token is URL-safe and has 256 bits of entropy.
     #[test]
-    fn reproduces_the_recorded_token_and_url() {
-        let token = encode_share_token(
-            DEFAULT_SHARE_TOKEN_AES_KEY.as_bytes(),
-            DEFAULT_SHARE_TOKEN_AES_IV.as_bytes(),
-            157,
-            21577915845323,
-        )
-        .expect("token");
-        assert_eq!(token, "TzpvmMe3/jzEwJ1kKuLLOQC80qp9TFzueEXxlnm%2Bj7k%3D");
-        assert_eq!(
-            build_share_url("https://share.example.test", &token),
-            "https://share.example.test/shared/task?token=TzpvmMe3/jzEwJ1kKuLLOQC80qp9TFzueEXxlnm%2Bj7k%3D"
+    fn generates_a_url_safe_256_bit_token() {
+        let token = generate_share_token().expect("token");
+        assert_eq!(token.len(), 43);
+        assert!(
+            token
+                .bytes()
+                .all(|byte| { byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_') })
         );
     }
 
-    /// `urllib.parse.quote(safe="/")` keeps `/`, encodes `+`/`=`, and leaves
-    /// the unreserved set intact.
+    /// Token lookup uses the SHA-256 digest of the raw token.
     #[test]
-    fn quotes_like_python_quote() {
-        assert_eq!(python_quote("a/b+c="), "a/b%2Bc%3D");
-        assert_eq!(python_quote("A-Z_a.z~9"), "A-Z_a.z~9");
-        assert_eq!(python_quote("\u{4e2d}"), "%E4%B8%AD");
-    }
-
-    /// A wrong-length key or IV is rejected, mirroring the source `Cipher`
-    /// construction error.
-    #[test]
-    fn rejects_a_malformed_key_or_iv() {
-        assert!(encrypt_cbc(&[0u8; 32], &[0u8; 8], b"x").is_none());
-        assert!(encrypt_cbc(&[0u8; 20], &[0u8; 16], b"x").is_none());
+    fn hashes_the_raw_token_with_sha256() {
+        assert_eq!(
+            token_hash("abc"),
+            "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
+        );
     }
 }

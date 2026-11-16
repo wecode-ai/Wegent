@@ -5,15 +5,25 @@ use super::*;
 
 #[tokio::test]
 async fn cold_compaction_restores_api_inference_context() {
-    verify_compaction_context(false).await;
+    verify_compaction_context(false, false).await;
 }
 
 #[tokio::test]
 async fn cold_compaction_preserves_native_account_context() {
-    verify_compaction_context(true).await;
+    verify_compaction_context(true, false).await;
 }
 
-async fn verify_compaction_context(native: bool) {
+#[tokio::test]
+async fn loaded_compaction_replaces_the_process_profile_with_native_account_context() {
+    verify_compaction_context(true, true).await;
+}
+
+#[tokio::test]
+async fn loaded_compaction_replaces_the_process_profile_with_api_inference_context() {
+    verify_compaction_context(false, true).await;
+}
+
+async fn verify_compaction_context(native: bool, loaded: bool) {
     let _lock = env_lock().await;
     let binary = temp_path("cold-compaction-codex", "sh");
     write_executable(
@@ -22,6 +32,9 @@ async fn verify_compaction_context(native: bool) {
             "../fixtures/codex_cold_compaction.sh"
         )),
     );
+    if loaded {
+        fs::write(format!("{}.loaded", binary.display()), "loaded").unwrap();
+    }
     let model = if native {
         json!({"model":"openai","model_id":"gpt-4.1","protocol":"openai-responses"})
     } else {
@@ -63,6 +76,13 @@ async fn verify_compaction_context(native: bool) {
         .position(|call| call["method"] == "thread/compact/start")
         .unwrap();
     assert!(resume < compact);
+    if loaded {
+        let unsubscribe = calls
+            .iter()
+            .position(|call| call["method"] == "thread/unsubscribe")
+            .expect("loaded inference profiles must be unloaded before resume");
+        assert!(unsubscribe < resume);
+    }
     let params = &calls[resume]["params"];
     assert_eq!(params["path"], "/tmp/legacy-thread.jsonl");
     assert_eq!(params["excludeTurns"], true);

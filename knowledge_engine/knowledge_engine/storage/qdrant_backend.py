@@ -40,6 +40,7 @@ from knowledge_engine.storage.chunk_metadata import ChunkMetadata
 from knowledge_engine.storage.qdrant_vector_store import (
     ReadyQdrantVectorStore as QdrantVectorStore,
 )
+from shared.event_reporting.operations import storage_fact
 from shared.knowledge_contracts import RetrievalScope
 
 logger = logging.getLogger(__name__)
@@ -69,6 +70,7 @@ class QdrantBackend(BaseStorageBackend):
         STORAGE_BACKEND_SPECS["qdrant"].retrieval_methods
     )
     supports_retrieval_scope: ClassVar[bool] = True
+    event_storage_type: ClassVar[str] = "qdrant"
 
     # Override INDEX_PREFIX for Qdrant collections
     INDEX_PREFIX: ClassVar[str] = "collection"
@@ -96,10 +98,22 @@ class QdrantBackend(BaseStorageBackend):
             self.client = QdrantClient(
                 url=self.url,
                 api_key=self.api_key,
+                **(
+                    {"timeout": config["request_timeout"]}
+                    if "request_timeout" in config
+                    else {}
+                ),
             )
         else:
             # Local Qdrant connection
-            self.client = QdrantClient(url=self.url)
+            self.client = QdrantClient(
+                url=self.url,
+                **(
+                    {"timeout": config["request_timeout"]}
+                    if "request_timeout" in config
+                    else {}
+                ),
+            )
 
     def create_vector_store(self, collection_name: str):
         """
@@ -119,6 +133,7 @@ class QdrantBackend(BaseStorageBackend):
             collection_name=collection_name,
         )
 
+    @storage_fact("qdrant", "index")
     def index_with_metadata(
         self,
         nodes: List[BaseNode],
@@ -162,6 +177,7 @@ class QdrantBackend(BaseStorageBackend):
             "status": "success",
         }
 
+    @storage_fact("qdrant", "retrieve")
     def retrieve(
         self,
         knowledge_id: str,
@@ -330,6 +346,7 @@ class QdrantBackend(BaseStorageBackend):
 
         return {"records": results}
 
+    @storage_fact("qdrant", "delete_document")
     def delete_document(self, knowledge_id: str, doc_ref: str, **kwargs) -> Dict:
         """
         Delete document from Qdrant using LlamaIndex API.
@@ -351,6 +368,7 @@ class QdrantBackend(BaseStorageBackend):
         # repeated delete finds nothing left. Both mean "no chunks to remove",
         # so report the idempotent result instead of a missing-collection error.
         if not self.client.collection_exists(collection_name):
+            self.delete_parent_nodes(knowledge_id, doc_ref, **kwargs)
             return {
                 "doc_ref": doc_ref,
                 "knowledge_id": knowledge_id,
@@ -659,6 +677,7 @@ class QdrantBackend(BaseStorageBackend):
         knowledge_id: str,
         max_chunks: int = 10000,
         metadata_condition: Optional[Dict[str, Any]] = None,
+        scope: Optional[RetrievalScope] = None,
         **kwargs,
     ) -> List[Dict[str, Any]]:
         """
@@ -677,14 +696,27 @@ class QdrantBackend(BaseStorageBackend):
         collection_name = self.get_index_name(knowledge_id, **kwargs)
 
         # Build filter for knowledge_id
-        scroll_filter = qdrant_models.Filter(
-            must=[
+        must: List[Any] = [
+            qdrant_models.FieldCondition(
+                key="knowledge_id",
+                match=qdrant_models.MatchValue(value=knowledge_id),
+            )
+        ]
+        if scope is not None and scope.document_ids is not None:
+            must.append(
                 qdrant_models.FieldCondition(
-                    key="knowledge_id",
-                    match=qdrant_models.MatchValue(value=knowledge_id),
+                    key="doc_ref",
+                    match=qdrant_models.MatchAny(
+                        any=[
+                            reference
+                            for document_id in scope.document_ids
+                            for reference in (str(document_id), f"doc_{document_id}")
+                        ]
+                    ),
                 )
-            ]
-        )
+            )
+
+        scroll_filter = qdrant_models.Filter(must=must)
 
         try:
             # Check if collection exists

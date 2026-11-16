@@ -22,6 +22,7 @@ from app.services.device.plugin_sync_protocol import (
 from app.services.plugin_local_sync import _guard_intent_order
 from app.services.plugin_local_sync import _lookup_operation as lookup_operation
 from app.services.plugin_write_coordination import configure_plugin_session
+from tests.integration.secure_share_tokens_mysql import create_legacy_share_links
 
 
 def verify_ordering(engine):
@@ -79,9 +80,11 @@ def verify(engine, url):
     with patch.object(
         settings, "DATABASE_URL", url.render_as_string(hide_password=False)
     ):
-        # Model a preexisting deployment with the unchanged migration head.
+        # Include the historical table consumed by later share-token migrations;
+        # a two-table fixture stamped at an old head is not a valid upgrade input.
         User.__table__.create(engine)
         Kind.__table__.create(engine)
+        create_legacy_share_links(engine)
         command.stamp(config, "f3a7c9e1b2d4")
         tables = set(inspect(engine).get_table_names())
         command.upgrade(config, "head")

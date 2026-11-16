@@ -11,11 +11,62 @@ import type { CollaborationMember } from "../types";
 import { parseComposerMentions } from "../composer/composerMentions";
 
 describe("Issue creation through the task composer port", () => {
+  it("clears attachments only after the submission is accepted", async () => {
+    globalThis.IS_REACT_ACT_ENVIRONMENT = true;
+    const root = createRoot(document.createElement("div"));
+    const onSubmit = vi
+      .fn()
+      .mockResolvedValueOnce(false)
+      .mockResolvedValueOnce(true);
+    const onChange = vi.fn();
+    let port: IssueHomeTaskComposerProps | undefined;
+    try {
+      await act(async () =>
+        root.render(
+          <IssueHomeComposer
+            ref={createRef()}
+            value="Work"
+            onChange={onChange}
+            onSubmit={onSubmit}
+            pending={false}
+            members={[]}
+            projects={[]}
+            projectId="project"
+            onSelectProject={vi.fn()}
+            translate={createCollaborationTranslator("zh-CN")}
+            placeholder="Work"
+            projectLabel="Project"
+            memberLabel="Member"
+            error={null}
+            renderTaskComposer={(props) => {
+              port = props;
+              return null;
+            }}
+          />,
+        ),
+      );
+      const file = new File(["notes"], "notes.txt", { type: "text/plain" });
+      await act(async () => port!.onFileSelect(file));
+      await act(async () => {
+        expect(await port!.onSubmit("Work")).toBe(false);
+      });
+      expect(port!.pendingFiles).toEqual([file]);
+      await act(async () => {
+        expect(await port!.onSubmit("Work")).toBe(true);
+      });
+      expect(onSubmit).toHaveBeenLastCalledWith("Work", null, [file]);
+      expect(port!.pendingFiles).toEqual([]);
+      expect(onChange).toHaveBeenCalledWith("");
+    } finally {
+      await act(async () => root.unmount());
+    }
+  });
   it("assigns only retained member references belonging to the selected project", async () => {
     globalThis.IS_REACT_ACT_ENVIRONMENT = true;
     const container = document.createElement("div");
     const root = createRoot(container);
-    const onSubmit = vi.fn(async () => true);
+    // Exercise one retained draft; accepted submissions clear its attachments.
+    const onSubmit = vi.fn(async () => false);
     let port: IssueHomeTaskComposerProps | undefined;
     const members = [
       { user_id: 7, user_name: "李明" },
@@ -58,13 +109,17 @@ describe("Issue creation through the task composer port", () => {
       );
       const reference = port!.members[0].reference!;
       expect(parseComposerMentions(reference)[0].label).toBe("@李明");
-      await port!.onSubmit(`${reference} 请评审\n${reference} 并补充测试`);
+      await act(async () => {
+        await port!.onSubmit(`${reference} 请评审\n${reference} 并补充测试`);
+      });
       expect(onSubmit).toHaveBeenLastCalledWith(
         "@李明 请评审\n@李明 并补充测试",
         { kind: "user", id: "7" },
         [],
       );
-      await port!.onSubmit("已删除引用，只保留工作说明");
+      await act(async () => {
+        await port!.onSubmit("已删除引用，只保留工作说明");
+      });
       expect(onSubmit).toHaveBeenLastCalledWith(
         "已删除引用，只保留工作说明",
         null,
@@ -82,7 +137,9 @@ describe("Issue creation through the task composer port", () => {
       expect(port!.error).toContain("重新 @");
       const file = new File(["notes"], "notes.txt", { type: "text/plain" });
       await act(async () => port!.onFileSelect(file));
-      await port!.onSubmit("请参考附件");
+      await act(async () => {
+        await port!.onSubmit("请参考附件");
+      });
       expect(onSubmit).toHaveBeenLastCalledWith("请参考附件", null, [file]);
       const secondReference = port!.members[1].reference!;
       const draft = `${secondReference} 负责，${reference} 参与`;
@@ -92,7 +149,9 @@ describe("Issue creation through the task composer port", () => {
       )!;
       expect(owner.textContent).toBe("王芳");
       expect(container.querySelector("select")).toBeNull();
-      await port!.onSubmit(draft);
+      await act(async () => {
+        await port!.onSubmit(draft);
+      });
       expect(onSubmit).toHaveBeenLastCalledWith(
         "@王芳 负责，@李明 参与",
         { kind: "user", id: "8" },
@@ -108,7 +167,9 @@ describe("Issue creation through the task composer port", () => {
       );
       await act(async () => port!.onDraftChange!(draft));
       expect(owner.textContent).toBe("李明");
-      await port!.onSubmit(draft);
+      await act(async () => {
+        await port!.onSubmit(draft);
+      });
       expect(onSubmit).toHaveBeenLastCalledWith(
         "@王芳 负责，@李明 参与",
         { kind: "user", id: "7" },
@@ -122,8 +183,10 @@ describe("Issue creation through the task composer port", () => {
           )!
           .click(),
       );
-      expect(owner.textContent).toBe("");
-      await port!.onSubmit(draft);
+      expect(owner.textContent).toBe("分配给");
+      await act(async () => {
+        await port!.onSubmit(draft);
+      });
       expect(onSubmit).toHaveBeenLastCalledWith(
         "@王芳 负责，@李明 参与",
         null,
@@ -146,7 +209,9 @@ describe("Issue creation through the task composer port", () => {
             .click(),
         );
         expect(owner.textContent).toBe(title);
-        await port!.onSubmit(`${candidate.reference} 请处理`);
+        await act(async () => {
+          await port!.onSubmit(`${candidate.reference} 请处理`);
+        });
         expect(onSubmit).toHaveBeenLastCalledWith(
           `@${title} 请处理`,
           { kind, id },

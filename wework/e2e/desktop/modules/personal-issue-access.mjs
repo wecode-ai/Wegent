@@ -330,14 +330,14 @@ export function createPersonalIssueAccessRegression({ uiTimeoutMs, modelResponse
       })
       await control.command(
         'waitFor',
-        `${CONTENT} [data-testid="cloud-todo-personal-task-start"]`,
+        `${CONTENT} [data-testid="cloud-todo-create-task"]`,
         {
           visible: true,
         }
       )
       await control.command(
         'clickWhenEnabled',
-        `${CONTENT} [data-testid="cloud-todo-personal-task-start"]`
+        `${CONTENT} [data-testid="cloud-todo-create-task"]`
       )
       const composer = `${PANEL} [data-testid="chat-message-input"]`
       await control.command('waitFor', composer, { visible: true })

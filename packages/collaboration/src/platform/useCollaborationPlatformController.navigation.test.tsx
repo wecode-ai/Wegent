@@ -549,6 +549,28 @@ it('opens an authorized project from its detail before global catalogs arrive', 
   expect(currentState().projects).toEqual([target])
 })
 
+it('opens a standalone project immediately and fills the cold navigation independently', async () => {
+  const target = { ...project, workspace_id: undefined }
+  const cloudApi = apiFor(cloudWorkspace, [])
+  cloudApi.projects.get = vi.fn(async () => target)
+  let finish!: (projects: CollaborationProject[]) => void
+  vi.mocked(cloudApi.projects.list).mockReturnValue(
+    new Promise(resolve => {
+      finish = resolve
+    })
+  )
+  await render([cloudApi], { ...location, workspaceId: null })
+  expect(currentState().loading).toBe(false)
+  expect(currentState().projects).toEqual([target])
+  expect(cloudApi.projects.list).toHaveBeenCalledOnce()
+  const sibling = { ...project, id: 'sibling' }
+  await act(async () => finish([sibling]))
+  expect(currentState().workspaces).toEqual([cloudWorkspace])
+  expect(currentState().navigationProjects).toEqual([sibling, target])
+  expect(currentState().projects).toEqual([target])
+  expect(currentState().error).toBeNull()
+})
+
 it.each([false, true])(
   'removes a cached project after refresh excludes it, with an unrelated failure=%s',
   async unrelatedFailure => {
@@ -632,7 +654,6 @@ it.each(['agents', 'members', 'collaboration-participants', 'collaboration-group
   }
 )
 
-
 it('finishes pending navigation after opening a newly created workspace', async () => {
   let resolveLocal!: (workspaces: CollaborationWorkspace[]) => void
   const localApi = apiFor(localWorkspace, [])
@@ -660,7 +681,10 @@ it('finishes pending navigation after opening a newly created workspace', async 
   await render(sources, { ...location, projectId: null })
   await act(async () => resolveLocal([localWorkspace]))
 
-  expect(currentState().workspaces.map(workspace => workspace.id).sort())
-    .toEqual(['cloud', 'local'])
+  expect(
+    currentState()
+      .workspaces.map(workspace => workspace.id)
+      .sort()
+  ).toEqual(['cloud', 'local'])
   expect(currentState().navigationIncomplete).toBe(false)
 })

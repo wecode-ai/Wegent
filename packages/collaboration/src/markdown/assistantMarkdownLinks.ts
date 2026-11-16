@@ -1,6 +1,8 @@
 const isWindowsDriveAbsolutePath = (path: string) => /^[a-zA-Z]:[\\/]/.test(path)
 
 const ATTACHMENT_DOWNLOAD_PATH_PATTERN = /\/(?:api\/)?attachments\/(\d+)\/download(?:[?#].*)?$/
+const ISSUE_ATTACHMENT_CONTENT_PATH_PATTERN =
+  /\/(?:api\/v1\/)?loop-item-attachments\/([A-Za-z0-9_-]+)\/content(?:[?#].*)?$/
 
 export type MarkdownLinkTarget =
   | { kind: 'external' }
@@ -217,14 +219,27 @@ export function localPathFromMarkdownImageSrc(src: string): string {
 }
 
 export function getAuthenticatedAttachmentId(src: string): number | null {
+  const id = markdownResourcePath(src).match(ATTACHMENT_DOWNLOAD_PATH_PATTERN)?.[1]
+  return id ? Number(id) : null
+}
+
+function markdownResourcePath(src: string): string {
   try {
-    const url = new URL(src)
-    const match = url.pathname.match(ATTACHMENT_DOWNLOAD_PATH_PATTERN)
-    return match ? Number(match[1]) : null
+    return new URL(src).pathname
   } catch {
-    const match = src.match(ATTACHMENT_DOWNLOAD_PATH_PATTERN)
-    return match ? Number(match[1]) : null
+    return src
   }
+}
+
+export function getMarkdownAttachmentId(src: string): string | null {
+  const attachment = src.match(/^wegent:\/\/attachments\/([A-Za-z0-9_-]+)$/)?.[1]
+  if (attachment) return attachment
+  const path = markdownResourcePath(src)
+  return (
+    path.match(ATTACHMENT_DOWNLOAD_PATH_PATTERN)?.[1] ??
+    path.match(ISSUE_ATTACHMENT_CONTENT_PATH_PATTERN)?.[1] ??
+    null
+  )
 }
 
 export function isAuthenticatedAttachmentImageSrc(src: string): boolean {

@@ -310,7 +310,7 @@ describe('notification inline handling', () => {
     )
     fireEvent.click(screen.getByTestId('notification-stand-in-start-assignment'))
     expect(await screen.findByRole('alert')).toHaveTextContent(
-      '分身暂不可用，请检查分身是否已启用并关联此项目。'
+      '助理暂不可用，请检查助理是否已启用并关联此项目。'
     )
     expect(screen.queryByTestId('notification-stand-in-status-assignment')).toBeNull()
     expect(onChanged).not.toHaveBeenCalled()
@@ -588,6 +588,6 @@ it('localizes the persisted failed-task summary before transcript loading', asyn
       onChanged={onChanged}
     />
   )
-  expect(await screen.findByText('该分身角色已被删除，请重新选择角色。')).toBeVisible()
+  expect(await screen.findByText('该助理角色已被删除，请重新选择角色。')).toBeVisible()
   expect(screen.queryByText('Stand-in role no longer exists')).not.toBeInTheDocument()
 })

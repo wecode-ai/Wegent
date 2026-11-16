@@ -3,7 +3,7 @@
 # SPDX-License-Identifier: Apache-2.0
 
 from enum import Enum
-from typing import Dict, List, Optional
+from typing import Dict, List, Literal, Optional
 
 from pydantic import BaseModel, Field, field_validator
 
@@ -135,11 +135,14 @@ class RagChunkRecord(BaseModel):
 
 
 class RagChunkListResponse(BaseModel):
-    """Paginated chunk list response for index inspection."""
+    """Visible records in a bounded index inspection, not a KB inventory."""
 
     items: List[RagChunkRecord] = Field(
-        ..., description="Paginated chunk records from the index engine"
+        ..., description="Visible chunk records within the inspected candidate window"
     )
-    total: int = Field(..., description="Total chunk count available")
+    total: int = Field(
+        ...,
+        description="Visible count within this inspection window, not a whole-KB total",
+    )
     page: int = Field(..., ge=1, description="Current page number")
     page_size: int = Field(..., ge=1, description="Current page size")

@@ -599,12 +599,6 @@ class Settings(BaseSettings):
     TASK_SHARE_BASE_URL: str = "http://localhost:3000"
     TEAM_SHARE_QUERY_PARAM: str = "teamShare"
 
-    # AES encryption configuration for share tokens
-    SHARE_TOKEN_AES_KEY: str = (
-        "12345678901234567890123456789012"  # 32 bytes for AES-256
-    )
-    SHARE_TOKEN_AES_IV: str = "1234567890123456"  # 16 bytes for AES IV
-
     # Webhook notification configuration
     WEBHOOK_ENABLED: bool = False
     WEBHOOK_ENDPOINT_URL: str = ""

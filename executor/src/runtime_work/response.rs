@@ -905,6 +905,18 @@ pub(crate) fn runtime_handle_list_summary_map(runtime_handle: &Value) -> Map<Str
             }
         }
     }
+    if let Some(transcript) = runtime_handle["cloudTranscript"].as_object() {
+        summary.insert(
+            "cloudTranscript".into(),
+            Value::Object(
+                transcript
+                    .iter()
+                    .filter(|(key, _)| key.as_str() != "messages")
+                    .map(|(key, value)| (key.clone(), value.clone()))
+                    .collect(),
+            ),
+        );
+    }
     summary
 }
 
@@ -912,6 +924,7 @@ fn runtime_handle_list_payload_key(key: &str) -> bool {
     matches!(
         key,
         "message"
+            | "cloudTranscript"
             | "collaborationMemberRuntimeProfiles"
             | "messages"
             | "userMessagePresentations"

@@ -12,7 +12,7 @@ use super::{
 };
 use crate::AppState;
 
-pub(super) async fn cancel(
+pub(crate) async fn cancel(
     state: &AppState,
     row: &Execution,
     note: &str,
@@ -43,6 +43,18 @@ pub(super) async fn cancel(
             (row.id,),
         )
         .await?)
+}
+
+/// Preserve a queued execution when its immutable calendar cannot classify today.
+pub(crate) async fn defer_workday(state: &AppState, row: &Execution, error: &str) -> Result<()> {
+    if row.error_message == error {
+        return Ok(());
+    }
+    state.mysql.execute(
+        "UPDATE loop_item_executions SET error_message=?,execution_note='workday_calendar_unavailable',updated_at=UTC_TIMESTAMP(6) WHERE id=? AND status=? AND version=?",
+        (error,row.id,row.status.as_str(),row.version),
+    ).await?;
+    Ok(())
 }
 
 pub(crate) async fn fail_preparation(state: &AppState, row: &Execution, error: &str) -> Result<()> {
@@ -185,7 +197,9 @@ pub(super) async fn prepared_on(
             message.metadata.0 = json!({});
         }
         message.metadata.0["run_status"] = json!(status);
-        tx.execute("UPDATE project_chat_messages SET runtime_device_id=?,runtime_task_id=?,metadata=?,updated_at=UTC_TIMESTAMP(6) WHERE id=?",(row.runtime_device_id.as_str(),row.runtime_task_id.as_str(),brz_mysql::Json(&message.metadata.0),message.id)).await?;
+        message.updated_at =
+            crate::socketio::project_chat_messages::database_timestamp(Utc::now().naive_utc());
+        tx.execute("UPDATE project_chat_messages SET runtime_device_id=?,runtime_task_id=?,metadata=?,updated_at=? WHERE id=?",(row.runtime_device_id.as_str(),row.runtime_task_id.as_str(),brz_mysql::Json(&message.metadata.0),message.updated_at,message.id)).await?;
         effects.messages.push(message);
     }
     if matches!(status, "pending_approval" | "waiting_runtime")

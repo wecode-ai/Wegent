@@ -335,6 +335,7 @@ async def test_query_executor_merges_hierarchical_child_hits_into_parent_content
                 "score": 0.92,
                 "title": "Doc",
                 "metadata": {
+                    "knowledge_id": "1",
                     "chunk_strategy": "hierarchical",
                     "parent_node_id": "parent-1",
                     "doc_ref": "doc_1",
@@ -347,6 +348,7 @@ async def test_query_executor_merges_hierarchical_child_hits_into_parent_content
             "content": "parent context",
             "title": "Doc",
             "metadata": {
+                "knowledge_id": "1",
                 "chunk_strategy": "hierarchical",
                 "doc_ref": "doc_1",
             },
@@ -367,6 +369,7 @@ async def test_query_executor_merges_hierarchical_child_hits_into_parent_content
                 "score": 0.92,
                 "title": "Doc",
                 "metadata": {
+                    "knowledge_id": "1",
                     "chunk_strategy": "hierarchical",
                     "doc_ref": "doc_1",
                     "parent_node_id": "parent-1",
@@ -394,6 +397,7 @@ async def test_query_executor_only_merges_hierarchical_hits_and_preserves_record
                 "score": 0.95,
                 "title": "Hierarchical Doc",
                 "metadata": {
+                    "knowledge_id": "1",
                     "chunk_strategy": "hierarchical",
                     "parent_node_id": "parent-1",
                     "doc_ref": "doc_1",
@@ -415,6 +419,7 @@ async def test_query_executor_only_merges_hierarchical_hits_and_preserves_record
             "content": "resolved parent",
             "title": "Hierarchical Doc",
             "metadata": {
+                "knowledge_id": "1",
                 "chunk_strategy": "hierarchical",
                 "doc_ref": "doc_1",
             },
@@ -436,6 +441,7 @@ async def test_query_executor_only_merges_hierarchical_hits_and_preserves_record
                 "score": 0.95,
                 "title": "Hierarchical Doc",
                 "metadata": {
+                    "knowledge_id": "1",
                     "chunk_strategy": "hierarchical",
                     "doc_ref": "doc_1",
                     "parent_node_id": "parent-1",
@@ -473,6 +479,7 @@ async def test_query_executor_deduplicates_child_hits_that_resolve_to_same_paren
                 "score": 0.83,
                 "title": "Hierarchical Doc",
                 "metadata": {
+                    "knowledge_id": "1",
                     "chunk_strategy": "hierarchical",
                     "parent_node_id": "parent-1",
                     "doc_ref": "doc_1",
@@ -492,6 +499,7 @@ async def test_query_executor_deduplicates_child_hits_that_resolve_to_same_paren
                 "score": 0.91,
                 "title": "Hierarchical Doc",
                 "metadata": {
+                    "knowledge_id": "1",
                     "chunk_strategy": "hierarchical",
                     "parent_node_id": "parent-1",
                     "doc_ref": "doc_1",
@@ -504,6 +512,7 @@ async def test_query_executor_deduplicates_child_hits_that_resolve_to_same_paren
             "content": "resolved parent",
             "title": "Hierarchical Doc",
             "metadata": {
+                "knowledge_id": "1",
                 "chunk_strategy": "hierarchical",
                 "doc_ref": "doc_1",
             },
@@ -524,6 +533,7 @@ async def test_query_executor_deduplicates_child_hits_that_resolve_to_same_paren
                 "score": 0.91,
                 "title": "Hierarchical Doc",
                 "metadata": {
+                    "knowledge_id": "1",
                     "chunk_strategy": "hierarchical",
                     "doc_ref": "doc_1",
                     "parent_node_id": "parent-1",

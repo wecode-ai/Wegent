@@ -374,7 +374,7 @@ describe('core DSH runtime', () => {
 
     const profileRoot = join(second.dshHome, 'profiles', 'wework-core')
     expect(await readFile(join(profileRoot, 'cordis.patch.yml'), 'utf8')).toBe(
-      '- id: client-hmr\n  disabled: true\n'
+      '- id: client-hmr\n  disabled: true\n- id: hmr\n  disabled: true\n'
     )
     const manifest = JSON.parse(await readFile(join(profileRoot, 'package.json'), 'utf8'))
     expect(manifest.dependencies['@wegent/dsh-app-wework']).toBe(
@@ -429,7 +429,9 @@ describe('core DSH runtime', () => {
     })
 
     await expect(readFile(join(pluginCopyRoot, 'local-helper.js'), 'utf8')).resolves.toBe('local')
-    await expect(readFile(patchPath, 'utf8')).resolves.toBe('- id: client-hmr\n  disabled: true\n')
+    await expect(readFile(patchPath, 'utf8')).resolves.toBe(
+      '- id: client-hmr\n  disabled: true\n- id: hmr\n  disabled: true\n'
+    )
     await root.remove()
   })
 

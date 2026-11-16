@@ -108,9 +108,8 @@ classify_wework_path() {
     wework/src/components/chat/composer/Drawing* | \
       wework/src/components/chat/composer/useComposerDrawing* | \
       wework/src/components/chat/composer/drawing-canvas.css | \
-      wework/vite/excalidrawAssets* | \
-      wework/e2e/desktop/scenarios/drawing-attachment.scenario.mjs)
-      select_target "core:drawing-attachment"
+      wework/vite/excalidrawAssets*)
+      select_target "core:task-attachments"
       return
       ;;
     # System proxy resolution spans Electron, local runtime request routing,
@@ -405,7 +404,6 @@ classify_wework_path() {
       wework/src/components/layout/DesktopWindowsTitlebar.tsx)
       select_target "core:window-lifecycle"
       select_target "core:tray-lifecycle"
-      select_target "core:native-window-chrome"
       return
       ;;
 
@@ -552,16 +550,11 @@ classify_wework_path() {
       select_target "core:collaboration-parent-board"
       return
       ;;
-    wework/e2e/desktop/scenarios/collaboration-board-sorting.scenario.mjs)
-      select_target "core:collaboration-board-sorting"
-      return
-      ;;
     wework/e2e/desktop/scenarios/collaboration-board-move-recovery.scenario.mjs)
       select_target "core:collaboration-board-move-recovery"
       return
       ;;
     wework/e2e/desktop/modules/collaboration-board-flows.mjs)
-      select_target "core:collaboration-board-sorting"
       select_target "core:collaboration-board-backlog"
       select_target "core:collaboration-board-move-recovery"
       return

@@ -2,9 +2,10 @@ use super::*;
 
 pub(crate) async fn handle_token_route(
     Path(token): Path<String>,
-    headers: HeaderMap,
+    mut headers: HeaderMap,
     body: Bytes,
 ) -> Result<Response, HttpError> {
+    let body = request_body::decode(&mut headers, body)?;
     let token = token_route_token(token, &body)?;
     handle_for_token(token, headers, body).await
 }
@@ -163,7 +164,7 @@ pub(super) async fn handle_harness_messages(
 }
 
 pub(super) async fn handle_bound_thread(
-    headers: HeaderMap,
+    mut headers: HeaderMap,
     body: Bytes,
 ) -> Result<Response, HttpError> {
     if bearer_token(&headers).as_deref() != Some(API_KEY) {
@@ -172,6 +173,7 @@ pub(super) async fn handle_bound_thread(
             detail: "invalid local model proxy authorization".to_owned(),
         });
     }
+    let body = request_body::decode(&mut headers, body)?;
     let token = bound_thread_token(&body)?;
     handle_for_token(token, headers, body).await
 }

@@ -217,14 +217,25 @@ where
 
     pub(super) fn runtime_rpc_handler(&self) -> EventHandler {
         let runtime_work_handler = self.runtime_work_handler.clone();
+        let config = self.client.config.clone();
+        let remote_task_access = self.client.remote_task_access.clone();
         Arc::new(move |payload| {
             let runtime_work_handler = runtime_work_handler.clone();
+            let config = config.clone();
+            let remote_task_access = remote_task_access.clone();
             Box::pin(async move {
                 let method = payload
                     .get("method")
                     .and_then(Value::as_str)
                     .unwrap_or("<missing>")
                     .to_owned();
+                if config.device_type == "app" {
+                    // Scoped grants are issued by the Backend after validating the caller.
+                    let access_scope = payload.get("appTaskAccessScope").and_then(Value::as_str);
+                    if let Err(error) = remote_task_access.authorize(&method, access_scope) {
+                        return Some(runtime_error_response(error));
+                    }
+                }
                 let request_id = payload
                     .get("request_id")
                     .and_then(Value::as_str)

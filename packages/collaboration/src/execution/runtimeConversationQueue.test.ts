@@ -258,6 +258,38 @@ describe("shared PC and Web conversation queue", () => {
     }
   });
 
+  it.each([undefined, "private_discussion"] as const)(
+    "preserves queued conversation scope %s even when the active pane has the opposite scope",
+    (conversationContext) => {
+      const request = runtimeQueuedMessageRequest(
+        {
+          address: { deviceId: "device", taskId: "task" },
+          conversationContext: conversationContext
+            ? undefined
+            : "private_discussion",
+        },
+        {
+          ...message("source-context"),
+          conversationContext,
+          origin: { source: "manual", external_id: "source-intent" },
+          cloudProjectId: "source-project",
+          additionalContext: {
+            source: { value: "source-intent", kind: "application" },
+          },
+        },
+      );
+      expect(request.conversationContext).toBe(conversationContext);
+      expect(request).toMatchObject({
+        clientUserMessageId: "source-context",
+        cloudProjectId: "source-project",
+        origin: { source: "manual", external_id: "source-intent" },
+        additionalContext: {
+          source: { value: "source-intent", kind: "application" },
+        },
+      });
+    },
+  );
+
   it("addresses remote and local attachments correctly and freezes the submitted model selection", () => {
     const request = runtimeQueuedMessageRequest(
       {

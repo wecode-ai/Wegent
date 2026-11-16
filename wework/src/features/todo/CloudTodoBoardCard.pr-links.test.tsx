@@ -54,6 +54,7 @@ describe('Issue board metadata badges', () => {
     const monitor = new ChangeRequestMonitor({ executeCommand })
     render(
       <CloudTodoBoardCard
+        projectStore="backend"
         item={{ ...item, can_view_detail: false }}
         onClick={vi.fn()}
         onArchive={vi.fn()}

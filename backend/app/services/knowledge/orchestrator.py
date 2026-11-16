@@ -68,9 +68,8 @@ from app.services.knowledge.external_refresh_snapshot import (
     stage_external_refresh_attachment,
 )
 from app.services.knowledge.knowledge_service import KnowledgeService
-from app.services.knowledge.retrieval_profile import (
-    load_profile,
-)
+from app.services.knowledge.read_reporting import report_single_read
+from app.services.knowledge.retrieval_profile import load_profile
 from app.services.knowledge.retrieval_resource_resolver import (
     resolve_embedding_model_resource,
     resolve_retriever_resource,
@@ -920,6 +919,7 @@ class KnowledgeOrchestrator:
         if not document.attachment_id:
             raise ValueError("Document content is not ready for preview")
 
+    @report_single_read
     def read_document_content(
         self,
         db: Session,
@@ -927,6 +927,7 @@ class KnowledgeOrchestrator:
         document_id: int,
         offset: int = 0,
         limit: int = MAX_DOCUMENT_READ_LIMIT,
+        entrypoint: str | None = None,
     ) -> DocumentContentReadResponse:
         """
         Read raw document content with offset/limit pagination.
@@ -937,6 +938,7 @@ class KnowledgeOrchestrator:
             document_id: Document ID
             offset: Read start offset
             limit: Maximum number of characters to return
+            entrypoint: Existing caller identity used only for event attribution
 
         Returns:
             DocumentContentReadResponse
@@ -959,6 +961,7 @@ class KnowledgeOrchestrator:
             offset=offset,
             limit=limit,
             knowledge_base_ids=[document.kind_id],
+            entrypoint=entrypoint,
             searchable_only=False,
         )
         result = results[0] if results else None
@@ -1015,6 +1018,7 @@ class KnowledgeOrchestrator:
                 document_id=document_id,
                 offset=offset,
                 limit=limit,
+                entrypoint="knowledge_api",
             )
             content = paged.content
             content_length = paged.total_length
@@ -1452,6 +1456,15 @@ class KnowledgeOrchestrator:
             multimodal_analysis_image_prompt=multimodal_analysis_image_prompt,
         )
         db.commit()
+        from shared.event_reporting.catalogs.knowledge import (
+            emit_knowledge_base_created,
+        )
+
+        emit_knowledge_base_created(
+            kb_id=kb_id,
+            kb_type=kb_type,
+            source_type="native",
+        )
         return self._created(db, user, kb_id)
 
     def create_code_wiki(
@@ -1530,6 +1543,15 @@ class KnowledgeOrchestrator:
         )
         claim_repository(db, source, kb_id)
         db.commit()
+        from shared.event_reporting.catalogs.knowledge import (
+            emit_knowledge_base_created,
+        )
+
+        emit_knowledge_base_created(
+            kb_id=kb_id,
+            kb_type=KnowledgeBaseType.CODE_WIKI.value,
+            source_type="code_wiki",
+        )
         return self._created(db, user, kb_id)
 
     def create_document_with_content(
@@ -1548,6 +1570,7 @@ class KnowledgeOrchestrator:
         trigger_indexing: bool = True,
         trigger_summary: bool = True,
         splitter_config: Optional[Dict[str, Any]] = None,
+        trigger: str = "openapi",
     ) -> KnowledgeDocumentResponse:
         """
         Create a document with complete workflow.
@@ -1646,6 +1669,7 @@ class KnowledgeOrchestrator:
                 data=doc_data,
                 trigger_indexing=trigger_indexing,
                 trigger_summary=trigger_summary,
+                trigger=trigger,
             )
 
         else:
@@ -1680,6 +1704,7 @@ class KnowledgeOrchestrator:
             trigger_indexing=trigger_indexing,
             trigger_summary=trigger_summary,
             splitter_config=splitter_config,
+            trigger=trigger,
         )
 
     def create_document_from_attachment(
@@ -1690,6 +1715,7 @@ class KnowledgeOrchestrator:
         data: KnowledgeDocumentCreate,
         trigger_indexing: bool = True,
         trigger_summary: bool = True,
+        trigger: str = "upload",
     ) -> KnowledgeDocumentResponse:
         """
         Create a document from an already uploaded attachment.
@@ -1758,6 +1784,7 @@ class KnowledgeOrchestrator:
             trigger_indexing=trigger_indexing,
             trigger_summary=trigger_summary,
             splitter_config=splitter_config_dict,
+            trigger=trigger,
         )
 
     @staticmethod
@@ -1906,6 +1933,7 @@ class KnowledgeOrchestrator:
             trigger_summary=True,
             replace_active=True,
             expected_generation=generation,
+            trigger="external_refresh",
         )
         if not result["scheduled"]:
             from app.schemas.knowledge import DocumentProcessingStage
@@ -1949,6 +1977,7 @@ class KnowledgeOrchestrator:
         """
         document_id = document.id
 
+        had_body = bool(document.attachment_id)
         existing_external = document.external_source_config
         incoming_external = dict(content.metadata or {})
         existing_sync = existing_external.get("sync")
@@ -2005,7 +2034,39 @@ class KnowledgeOrchestrator:
             )
             .update(update_fields, synchronize_session=False)
         )
+        committed_facts = []
+        if updated:
+            from app.services.knowledge.event_logging import emit_fact_snapshots
+            from shared.event_reporting.catalogs.knowledge import loaded_scalar
+
+            event_data = {
+                "generation": generation,
+                "content_bytes": update_fields[KnowledgeDocument.file_size],
+                "provider": loaded_scalar(
+                    loaded_scalar(document, "external_source"), "external_provider"
+                ),
+            }
+            event_fields = {
+                "kb_id": loaded_scalar(document, "kind_id"),
+                "document_id": document_id,
+                "status": "success",
+                "fact_key_parts": (document_id, generation),
+                "data": event_data,
+            }
+            committed_facts.append(("knowledge.external.body.landed", event_fields))
+            if had_body:
+                committed_facts.append(
+                    (
+                        "knowledge.document.content.updated",
+                        {
+                            **event_fields,
+                            "data": {**event_data, "trigger": "external_refresh"},
+                        },
+                    )
+                )
         db.commit()
+        if updated:
+            emit_fact_snapshots(committed_facts)
 
         if not updated:
             raise ExternalImportLostWriteError(
@@ -2023,6 +2084,7 @@ class KnowledgeOrchestrator:
         trigger_indexing: bool = True,
         trigger_summary: bool = True,
         splitter_config: Optional[Dict[str, Any]] = None,
+        trigger: str = "upload",
     ) -> KnowledgeDocumentResponse:
         """
         Shared helper to create document and schedule indexing.
@@ -2046,9 +2108,7 @@ class KnowledgeOrchestrator:
         """
         from app.schemas.knowledge import DocumentSourceType
         from app.services.knowledge.indexing import get_rag_indexing_skip_reason
-        from app.services.knowledge.multimodal_pipeline import (
-            resolve_dispatch_or_none,
-        )
+        from app.services.knowledge.multimodal_pipeline import resolve_dispatch_or_none
 
         attachment_id = data.attachment_id
         attachment_owner_id = user.id
@@ -2075,6 +2135,7 @@ class KnowledgeOrchestrator:
                 knowledge_base_id=knowledge_base_id,
                 user_id=user.id,
                 data=data,
+                trigger=trigger,
             )
         except Exception:
             # Creation may commit before refresh fails. Only remove an unlinked
@@ -2109,11 +2170,25 @@ class KnowledgeOrchestrator:
                 trigger_summary=trigger_summary,
                 splitter_config=splitter_config,
                 multimodal_dispatch_ctx=multimodal_dispatch_ctx,
+                trigger=trigger,
             )
         elif trigger_indexing and skip_reason:
             logger.info(
                 f"[Orchestrator] Skipping indexing for document {document.id}: "
                 f"{skip_reason}"
+            )
+            from shared.event_reporting.catalogs.knowledge import (
+                emit_index_event,
+                loaded_scalar,
+            )
+
+            emit_index_event(
+                "knowledge.index.dispatch.skipped",
+                kb_id=knowledge_base_id,
+                document_id=loaded_scalar(document, "id"),
+                status="skipped",
+                operation_id=loaded_scalar(document, "updated_at"),
+                data={"trigger": trigger, "reason": skip_reason},
             )
 
         return KnowledgeDocumentResponse.model_validate(document)
@@ -2154,6 +2229,22 @@ class KnowledgeOrchestrator:
             raise ValueError("Document not found or access denied")
 
         logger.info(f"[Orchestrator] Updated document {document_id} content")
+
+        from shared.event_reporting.catalogs.knowledge import loaded_scalar, observe
+
+        observe(
+            "knowledge.document.content.updated",
+            lambda: {
+                "kb_id": loaded_scalar(document, "kind_id"),
+                "document_id": document_id,
+                "data": {
+                    "source_type": loaded_scalar(document, "source_type"),
+                    "trigger": "content_update",
+                    "content_bytes": loaded_scalar(document, "file_size"),
+                    "reindex_requested": trigger_reindex,
+                },
+            },
+        )
 
         # If the document has a converted attachment, clean it up.
         # Content has been modified so the conversion result is stale.
@@ -2224,6 +2315,7 @@ class KnowledgeOrchestrator:
                 allow_if_success=True,
                 replace_active=True,
                 multimodal_dispatch_ctx=multimodal_dispatch_ctx,
+                trigger="content_update",
             )
 
         return {
@@ -2281,6 +2373,7 @@ class KnowledgeOrchestrator:
         multimodal_dispatch_ctx: Optional[Any] = None,
         force_reconvert: bool = False,
         caller_user_id: int | None = None,
+        trigger: str = "upload",
     ) -> Dict[str, Any]:
         """
         Schedule RAG indexing for a document via Celery.
@@ -2315,6 +2408,12 @@ class KnowledgeOrchestrator:
             prepare_document_index_enqueue,
         )
         from app.tasks.knowledge_tasks import index_document_task
+        from shared.event_reporting.catalogs.knowledge import (
+            emit_conversion_event,
+            emit_index_event,
+            error_code_for,
+            loaded_scalar,
+        )
 
         spec = (knowledge_base.json or {}).get("spec", {})
         retrieval_config = spec.get("retrievalConfig")
@@ -2323,10 +2422,19 @@ class KnowledgeOrchestrator:
             logger.info(
                 f"[Orchestrator] Skipping indexing for document {document.id}: no retrieval_config"
             )
-            return {
+            result = {
                 "scheduled": False,
                 "reason": "missing_retrieval_config",
             }
+            emit_index_event(
+                "knowledge.index.dispatch.skipped",
+                kb_id=loaded_scalar(knowledge_base, "id"),
+                document_id=loaded_scalar(document, "id"),
+                status="skipped",
+                operation_id=loaded_scalar(document, "updated_at"),
+                data={"trigger": trigger, "reason": result["reason"]},
+            )
+            return result
 
         retriever_name = retrieval_config.get("retriever_name")
         retriever_namespace = retrieval_config.get("retriever_namespace", "default")
@@ -2337,10 +2445,19 @@ class KnowledgeOrchestrator:
                 f"[Orchestrator] Incomplete retrieval_config for KB {knowledge_base.id}: "
                 f"retriever_name={retriever_name}, embedding_config={embedding_config}"
             )
-            return {
+            result = {
                 "scheduled": False,
                 "reason": "incomplete_retrieval_config",
             }
+            emit_index_event(
+                "knowledge.index.dispatch.skipped",
+                kb_id=loaded_scalar(knowledge_base, "id"),
+                document_id=loaded_scalar(document, "id"),
+                status="skipped",
+                operation_id=loaded_scalar(document, "updated_at"),
+                data={"trigger": trigger, "reason": result["reason"]},
+            )
+            return result
 
         embedding_model_name = embedding_config.get("model_name")
         embedding_model_namespace = embedding_config.get("model_namespace", "default")
@@ -2349,10 +2466,19 @@ class KnowledgeOrchestrator:
             logger.warning(
                 f"[Orchestrator] Missing embedding model_name in KB {knowledge_base.id}"
             )
-            return {
+            result = {
                 "scheduled": False,
                 "reason": "missing_embedding_model",
             }
+            emit_index_event(
+                "knowledge.index.dispatch.skipped",
+                kb_id=loaded_scalar(knowledge_base, "id"),
+                document_id=loaded_scalar(document, "id"),
+                status="skipped",
+                operation_id=loaded_scalar(document, "updated_at"),
+                data={"trigger": trigger, "reason": result["reason"]},
+            )
+            return result
 
         kb_index_info = get_kb_index_info_by_record(
             db=db,
@@ -2367,6 +2493,8 @@ class KnowledgeOrchestrator:
             f"index_owner_user_id={index_owner_user_id}"
         )
 
+        event_kb_id = knowledge_base.id
+        event_document_id = document.id
         enqueue_decision = prepare_document_index_enqueue(
             db=db,
             document_id=document.id,
@@ -2379,11 +2507,26 @@ class KnowledgeOrchestrator:
                 f"[Orchestrator] Skipping Celery enqueue for document {document.id}: "
                 f"reason={enqueue_decision.reason}, previous_status={enqueue_decision.previous_status}"
             )
-            return {
+            result = {
                 "scheduled": False,
                 "reason": enqueue_decision.reason,
                 "index_generation": enqueue_decision.generation,
             }
+            emit_index_event(
+                "knowledge.index.dispatch.skipped",
+                kb_id=loaded_scalar(knowledge_base, "id"),
+                document_id=loaded_scalar(document, "id"),
+                status="skipped",
+                operation_id=(
+                    enqueue_decision.generation or loaded_scalar(document, "updated_at")
+                ),
+                data={
+                    "trigger": trigger,
+                    "reason": enqueue_decision.reason,
+                    "previous_status": enqueue_decision.previous_status,
+                },
+            )
+            return result
 
         generation = enqueue_decision.generation
         if generation is None:
@@ -2394,10 +2537,10 @@ class KnowledgeOrchestrator:
             logger.error(message)
             raise RuntimeError(message)
 
+        dispatch_event_type = "knowledge.index.dispatch.finished"
+        pipeline = None
         try:
-            from app.services.knowledge.multimodal_pipeline import (
-                conversion_pipeline,
-            )
+            from app.services.knowledge.multimodal_pipeline import conversion_pipeline
 
             normalized_extension = _normalize_file_extension(document.file_extension)
             converted_id = document.converted_attachment_id
@@ -2430,10 +2573,12 @@ class KnowledgeOrchestrator:
                     index_generation=generation,
                     splitter_config_dict=splitter_config,
                     trigger_summary=trigger_summary,
+                    trigger=trigger,
                 )
                 dispatched_attachment_id = converted_id
 
             elif pipeline == "multimodal":
+                dispatch_event_type = "knowledge.conversion.dispatch.finished"
                 # Multimodal (video/image → Gemini) conversion dispatch. The
                 # dispatch context is pre-resolved by the caller (create_document
                 # resolves before persist; reindex_document resolves before
@@ -2456,6 +2601,7 @@ class KnowledgeOrchestrator:
                     "index_generation": generation,
                     "splitter_config_dict": splitter_config,
                     "trigger_summary": trigger_summary,
+                    "trigger": trigger,
                 }
                 async_result = _schedule_mm(
                     db=db,
@@ -2471,6 +2617,7 @@ class KnowledgeOrchestrator:
                 dispatched_attachment_id = document.attachment_id
 
             elif settings.needs_conversion(normalized_extension):
+                dispatch_event_type = "knowledge.conversion.dispatch.finished"
                 # File type requires conversion before indexing
                 # Task is dispatched to knowledge_doc_converter microservice
                 # via the shared Celery broker (knowledge_conversion queue)
@@ -2523,6 +2670,7 @@ class KnowledgeOrchestrator:
                             "index_generation": generation,
                             "splitter_config_dict": splitter_config,
                             "trigger_summary": trigger_summary,
+                            "trigger": trigger,
                         },
                     },
                     queue=settings.KNOWLEDGE_CONVERSION_QUEUE,
@@ -2549,12 +2697,11 @@ class KnowledgeOrchestrator:
                     index_generation=generation,
                     splitter_config_dict=splitter_config,
                     trigger_summary=trigger_summary,
+                    trigger=trigger,
                 )
         except Exception as exc:
             from app.schemas.knowledge import DocumentProcessingStage
-            from app.services.knowledge.processing_errors import (
-                build_processing_error,
-            )
+            from app.services.knowledge.processing_errors import build_processing_error
 
             mark_document_index_enqueue_failed(
                 db=db,
@@ -2575,6 +2722,26 @@ class KnowledgeOrchestrator:
                 f"[Orchestrator] Failed to enqueue RAG indexing task for document {document.id}: {exc}",
                 exc_info=True,
             )
+            emitter = (
+                emit_conversion_event
+                if dispatch_event_type == "knowledge.conversion.dispatch.finished"
+                else emit_index_event
+            )
+            emitter(
+                dispatch_event_type,
+                kb_id=event_kb_id,
+                document_id=event_document_id,
+                status="failure",
+                operation_id=generation,
+                data={
+                    "trigger": trigger,
+                    "generation": generation,
+                    # pipeline is "mineru"/"multimodal" for conversion dispatch;
+                    # direct indexing keeps the index.dispatch event without it.
+                    "converter": pipeline,
+                },
+                error_code=error_code_for(exc),
+            )
             raise
 
         logger.info(
@@ -2582,6 +2749,26 @@ class KnowledgeOrchestrator:
             f"document_id={document.id}, attachment_id={dispatched_attachment_id}, "
             f"kb_id={knowledge_base.id}, index_generation={generation}, "
             f"celery_task_id={async_result.id}"
+        )
+        emitter = (
+            emit_conversion_event
+            if dispatch_event_type == "knowledge.conversion.dispatch.finished"
+            else emit_index_event
+        )
+        emitter(
+            dispatch_event_type,
+            kb_id=event_kb_id,
+            document_id=event_document_id,
+            status="success",
+            operation_id=async_result.id,
+            data={
+                "trigger": trigger,
+                "generation": generation,
+                "task_id": async_result.id,
+                # "mineru"/"multimodal" for conversion dispatch; direct
+                # indexing dispatches index.dispatch without a converter.
+                "converter": pipeline,
+            },
         )
         return {
             "scheduled": True,
@@ -2604,6 +2791,7 @@ class KnowledgeOrchestrator:
         # the stored prompt (the prompt is only persisted once management access
         # is confirmed).
         multimodal_prompt_override: Optional[str] = None,
+        trigger: str | None = None,
     ) -> Dict[str, Any]:
         """
         Trigger re-indexing for a document via Celery.
@@ -2726,6 +2914,12 @@ class KnowledgeOrchestrator:
             # A multimodal re-index always re-analyzes via Gemini (e.g. after a
             # prompt change) rather than re-indexing the stale converted Markdown.
             force_reconvert=multimodal_dispatch_ctx is not None,
+            trigger=trigger
+            or (
+                "multimodal_reanalysis"
+                if multimodal_dispatch_ctx is not None
+                else "manual_reindex"
+            ),
         )
         if not schedule_result["scheduled"]:
             reason = schedule_result["reason"]
@@ -2761,6 +2955,7 @@ class KnowledgeOrchestrator:
         folder_id: int = 0,
         trigger_indexing: bool = True,
         trigger_summary: bool = True,
+        trigger: str = "web_create",
     ) -> Dict[str, Any]:
         """
         Create a document from a web page by scraping the URL.
@@ -2875,6 +3070,7 @@ class KnowledgeOrchestrator:
                 knowledge_base_id=knowledge_base_id,
                 user_id=user.id,
                 data=doc_data,
+                trigger=trigger,
             )
 
             logger.info(
@@ -2892,6 +3088,7 @@ class KnowledgeOrchestrator:
                     trigger_summary=trigger_summary,
                     allow_if_success=True,
                     replace_active=True,
+                    trigger=trigger,
                 )
 
             return {
@@ -3091,6 +3288,21 @@ class KnowledgeOrchestrator:
             db.refresh(document)
             logger.info(f"[Orchestrator] Updated web document {document.id} metadata")
 
+            from shared.event_reporting.catalogs.knowledge import loaded_scalar, observe
+
+            observe(
+                "knowledge.document.content.updated",
+                lambda: {
+                    "kb_id": loaded_scalar(document, "kind_id"),
+                    "document_id": document_id,
+                    "data": {
+                        "trigger": "web_refresh",
+                        "content_bytes": content_size,
+                        "reindex_requested": trigger_indexing,
+                    },
+                },
+            )
+
             # Trigger RAG re-indexing via Celery if enabled
             if trigger_indexing:
                 knowledge_base, has_access = KnowledgeService.get_knowledge_base(
@@ -3108,6 +3320,7 @@ class KnowledgeOrchestrator:
                         trigger_summary=trigger_summary,
                         allow_if_success=True,
                         replace_active=True,
+                        trigger="web_refresh",
                     )
 
             return {
@@ -3146,6 +3359,8 @@ class KnowledgeOrchestrator:
         context_buffer_ratio: float = 0.1,
         max_direct_chunks: int = 500,
         search_hints: SearchHints | None = None,
+        entrypoint: Literal["chat", "openapi", "mcp"] = "chat",
+        client_surface: str | None = None,
     ) -> Dict[str, Any]:
         """Retrieve knowledge with automatic routing and gateway support.
 
@@ -3183,28 +3398,38 @@ class KnowledgeOrchestrator:
             ValueError: If knowledge base not found, access denied, or config invalid.
         """
         from app.services.knowledge.search_execution import knowledge_search_runner
+        from app.services.rag.reporting import report_retrieval_request
 
         if max_results < 1:
             max_results = 10
         if max_results > 50:
             max_results = 50
 
-        return await knowledge_search_runner.retrieve(
-            user_id=user_id,
-            task_id=task_id,
-            knowledge_base_id=knowledge_base_id,
-            query=query,
-            max_results=max_results,
-            document_ids=document_ids,
-            folder_ids=folder_ids,
-            include_subfolders=include_subfolders,
+        return await report_retrieval_request(
+            entrypoint=entrypoint,
+            client_surface=client_surface,
+            requested_kb_ids=[knowledge_base_id],
+            effective_kb_ids=[knowledge_base_id],
             route_mode=route_mode,
-            context_window=context_window,
-            used_context_tokens=used_context_tokens,
-            reserved_output_tokens=reserved_output_tokens,
-            context_buffer_ratio=context_buffer_ratio,
-            max_direct_chunks=max_direct_chunks,
-            search_hints=search_hints,
+            actor_user_id=user_id,
+            task_id=task_id,
+            execute=lambda: knowledge_search_runner.retrieve(
+                user_id=user_id,
+                task_id=task_id,
+                knowledge_base_id=knowledge_base_id,
+                query=query,
+                max_results=max_results,
+                document_ids=document_ids,
+                folder_ids=folder_ids,
+                include_subfolders=include_subfolders,
+                route_mode=route_mode,
+                context_window=context_window,
+                used_context_tokens=used_context_tokens,
+                reserved_output_tokens=reserved_output_tokens,
+                context_buffer_ratio=context_buffer_ratio,
+                max_direct_chunks=max_direct_chunks,
+                search_hints=search_hints,
+            ),
         )
 
 

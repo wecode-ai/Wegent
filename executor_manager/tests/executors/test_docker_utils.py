@@ -12,9 +12,7 @@ from executor_manager.executors.docker.utils import (
     check_container_ownership,
     count_running_containers,
     delete_container,
-    find_available_port,
     get_container_ports,
-    get_docker_used_ports,
     get_running_task_details,
 )
 
@@ -64,13 +62,6 @@ class TestDockerUtils:
         url = build_callback_url(task)
         assert "example.com" in url
         assert "/executor-manager/callback" in url
-
-    @patch("subprocess.run")
-    def test_get_docker_used_ports_empty(self, mock_run):
-        """Test getting Docker used ports when no containers running"""
-        mock_run.return_value = MagicMock(stdout="", returncode=0)
-        ports = get_docker_used_ports()
-        assert len(ports) == 0
 
     @patch("subprocess.run")
     def test_check_container_ownership_true(self, mock_run):

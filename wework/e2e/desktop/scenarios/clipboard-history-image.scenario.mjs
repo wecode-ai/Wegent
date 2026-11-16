@@ -76,6 +76,9 @@ function pngDimensions(bytes) {
 }
 
 export function createDesktopScenario({ executorHome, uiTimeoutMs, workbenchReadyTimeoutMs }) {
+  // The isolated app environment is created after the scenario is loaded.
+  // Capture the slow native catalog phase without logging project contents.
+  if (process.platform === 'darwin') process.env.WEWORK_PROJECT_INDEX_DIAGNOSTICS = '1'
   return {
     async verify(control) {
       if (process.platform !== 'darwin') {

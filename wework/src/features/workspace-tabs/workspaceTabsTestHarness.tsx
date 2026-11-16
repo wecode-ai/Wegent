@@ -109,6 +109,8 @@ export function RoutingHarness({
   startupTabId,
   fixedTabs,
   restoreSessionTabs,
+  hiddenTabPaths,
+  retainedTabPaths,
   labels: routingLabels = labels,
   onContextValue,
   onActivity,
@@ -117,6 +119,8 @@ export function RoutingHarness({
   startupTabId?: string
   fixedTabs?: Parameters<typeof WorkspaceTabsProvider>[0]['fixedTabs']
   restoreSessionTabs?: boolean
+  hiddenTabPaths?: readonly string[]
+  retainedTabPaths?: readonly string[]
   labels?: Parameters<typeof WorkspaceTabsProvider>[0]['labels']
   onContextValue?: (value: WorkspaceTabsContextValue) => void
   onActivity?: (isActive: WorkspaceTabActivity | null) => void
@@ -146,6 +150,8 @@ export function RoutingHarness({
       startupTabId={startupTabId}
       startupTabKind={startupTabKind}
       restoreSessionTabs={restoreSessionTabs}
+      hiddenTabPaths={hiddenTabPaths}
+      retainedTabPaths={retainedTabPaths}
     >
       <TabsState />
       {onContextValue && <ContextValueProbe onChange={onContextValue} />}

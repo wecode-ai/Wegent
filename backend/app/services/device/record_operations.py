@@ -14,11 +14,13 @@ from sqlalchemy.orm import Session
 
 from app.core.cache import cache_manager
 from app.models.kind import Kind
+from app.models.loop_item_execution import LoopItemExecution
 from app.services.device.identity import (
     DeviceIdentityConflictError,
     device_connection_route_id,
     lock_device_owner,
 )
+from app.services.device.runtime_route import runtime_device_route_id
 from app.stores.tasks import subtask_store
 from shared.telemetry.decorators import trace_async
 
@@ -91,8 +93,27 @@ async def _require_offline_and_idle(
         online
         or running
         or (legacy and (not runtime or legacy.get("runtime_instance_id") == runtime))
+        or _has_active_project_execution(db, user_id, device)
     ):
         db.rollback()
         raise DeviceIdentityConflictError(
             "Device is online or busy; disconnect it before removal"
         )
+
+
+def _has_active_project_execution(db: Session, user_id: int, device: Kind) -> bool:
+    from app.services.loop_item_executions.service import CAPACITY_STATUSES
+
+    execution = LoopItemExecution
+    query = db.query(execution.id).filter(
+        execution.executor_owner_user_id == user_id,
+        execution.runtime_device_id.in_(
+            {device_connection_route_id(device), runtime_device_route_id(device)}
+        ),
+        execution.runtime_device_id != "",
+        execution.status.in_(CAPACITY_STATUSES),
+    )
+    runtime = device.json.get("spec", {}).get("runtimeInstanceId")
+    if runtime:
+        query = query.filter(execution.runtime_instance_id.in_(["", runtime]))
+    return query.first() is not None

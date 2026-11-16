@@ -10,7 +10,18 @@ import { beforeEach, onTestFinished, test, vi } from 'vitest'
 const state = vi.hoisted(() => ({
   fetchJson: vi.fn(),
   existingVerify: vi.fn(),
+  notificationCleanup: vi.fn(),
+  proxyStop: vi.fn(),
+  existingCleanup: vi.fn(),
   disconnected: false,
+}))
+
+vi.mock('../e2e/desktop/modules/runtime-notification-reconnect.mjs', () => ({
+  createRuntimeNotificationReconnect: () => ({
+    handleHttp: async () => false,
+    verify: async () => {},
+    cleanup: state.notificationCleanup,
+  }),
 }))
 
 vi.mock('../e2e/desktop/modules/shared.mjs', async importOriginal => ({
@@ -22,6 +33,7 @@ vi.mock('../e2e/desktop/scenarios/cloud-model-recovery.scenario.mjs', () => ({
     prepareCloud: async () => {},
     setCloudEnvironment: () => {},
     verify: state.existingVerify,
+    cleanup: state.existingCleanup,
   }),
 }))
 vi.mock('../e2e/desktop/modules/transport-fault-proxy.mjs', () => ({
@@ -34,7 +46,7 @@ vi.mock('../e2e/desktop/modules/transport-fault-proxy.mjs', () => ({
     disconnectWebSockets(value) {
       state.disconnected = value
     }
-    async stop() {}
+    stop = state.proxyStop
   },
 }))
 
@@ -42,10 +54,41 @@ import { createDesktopScenario } from '../e2e/desktop/scenarios/cloud-runtime-re
 
 beforeEach(() => {
   vi.clearAllMocks()
+  for (const cleanup of [state.notificationCleanup, state.proxyStop, state.existingCleanup]) {
+    cleanup.mockReset()
+  }
   state.disconnected = false
 })
 
-async function fixture(summary, { assistantCount = 1, completedCopies = 1, userMessageCount = 1 } = {}) {
+test('cleanup releases every owner and preserves each cleanup failure', async () => {
+  const scenario = createDesktopScenario({ modelResponseTimeoutMs: 1000, uiTimeoutMs: 1000 })
+  await scenario.prepareCloud({ backendUrl: 'http://backend' })
+  const errors = [
+    new Error('notification cleanup'),
+    new Error('proxy cleanup'),
+    new Error('base cleanup'),
+  ]
+  for (const [index, cleanup] of [
+    state.notificationCleanup,
+    state.proxyStop,
+    state.existingCleanup,
+  ].entries()) {
+    cleanup.mockRejectedValue(errors[index])
+  }
+  await assert.rejects(scenario.cleanup(), error => {
+    assert.ok(error instanceof AggregateError)
+    assert.deepEqual(error.errors, errors)
+    return true
+  })
+  for (const cleanup of [state.notificationCleanup, state.proxyStop, state.existingCleanup]) {
+    assert.equal(cleanup.mock.calls.length, 1)
+  }
+})
+
+async function fixture(
+  summary,
+  { assistantCount = 1, completedCopies = 1, userMessageCount = 1 } = {}
+) {
   const root = await mkdtemp(join(tmpdir(), 'cloud-recovery-scenario-'))
   onTestFinished(() => rm(root, { recursive: true, force: true }))
   const scenario = createDesktopScenario({ modelResponseTimeoutMs: 1000, uiTimeoutMs: 1000 })
@@ -154,7 +197,10 @@ test.each([
 })
 
 test.each([0, 2])('rejects recovery with %i original user messages', async count => {
-  const { scenario, control } = await fixture({ status: 'done', running: false }, { userMessageCount: count })
+  const { scenario, control } = await fixture(
+    { status: 'done', running: false },
+    { userMessageCount: count }
+  )
   await assert.rejects(scenario.verify(control), /Recovery duplicated the original user message/)
   assert.equal(state.disconnected, false, 'Failure cleanup must restore the proxy')
 })

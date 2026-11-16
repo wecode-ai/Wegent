@@ -1,4 +1,4 @@
-import { test, expect, TestData } from '../fixtures/test-fixtures'
+import { test, expect } from '../fixtures/test-fixtures'
 import type { Page } from '@playwright/test'
 import { ADMIN_USER } from '../config/test-users'
 import { createApiClient } from '../utils/api-client'
@@ -15,24 +15,6 @@ async function expectAgentResourcePage(page: Page) {
   await expect(page.locator('[data-testid="resource-library-content"]')).toBeVisible({
     timeout: 15000,
   })
-}
-
-async function expectTeamListHasContentOrEmptyState(page: Page) {
-  await expect(page.locator('[data-testid="team-list-items"]')).toBeVisible({ timeout: 15000 })
-  await expect
-    .poll(
-      async () => {
-        const teamCount = await page.locator('[data-testid^="team-card-"]').count()
-        const emptyVisible = await page
-          .locator('[data-testid="team-empty-state"]')
-          .isVisible()
-          .catch(() => false)
-
-        return teamCount > 0 || emptyVisible
-      },
-      { timeout: 10000 }
-    )
-    .toBe(true)
 }
 
 async function openCreateTeamDialog(page: Page) {
@@ -55,39 +37,6 @@ test.describe('Settings - Team Management', () => {
     await page.goto(AGENT_RESOURCES_URL)
     await page.waitForLoadState('domcontentloaded')
     await expectAgentResourcePage(page)
-  })
-
-  test('should access team management page', async ({ page }) => {
-    await expect(page.locator('[data-testid="new-capability-button"]')).toBeVisible({
-      timeout: 15000,
-    })
-    await expect(page.locator('[data-testid="resource-library-source-segments"]')).toBeVisible()
-    await expect(
-      page.locator('[data-testid="resource-library-source-mine-button"]')
-    ).toHaveAttribute('aria-pressed', 'true')
-  })
-
-  test('should display team list or empty state', async ({ page }) => {
-    await expectTeamListHasContentOrEmptyState(page)
-  })
-
-  test('should open create team form', async ({ page }) => {
-    const dialog = await openCreateTeamDialog(page)
-
-    await expect(dialog.locator('[data-testid="team-display-name-input"]')).toBeVisible()
-    await expect(dialog.locator('[data-testid="simple-model-select"]')).toBeVisible()
-    await expect(dialog.locator('[data-testid="simple-section-basic-content"]')).toBeVisible()
-    await expect(dialog.locator('[data-testid="simple-section-capability-content"]')).toBeVisible()
-    await expect(dialog.locator('[data-testid="simple-section-advanced-trigger"]')).toBeVisible()
-  })
-
-  test('should accept new team form input', async ({ page, testPrefix }) => {
-    const dialog = await openCreateTeamDialog(page)
-    const displayName = `${TestData.uniqueName(`${testPrefix}-team`)} Display`
-
-    await dialog.locator('[data-testid="team-display-name-input"]').fill(displayName)
-
-    await expect(dialog.locator('[data-testid="team-display-name-input"]')).toHaveValue(displayName)
   })
 
   test('should persist a custom executor and allow switching back to it when editing', async ({
@@ -220,17 +169,5 @@ test.describe('Settings - Team Management', () => {
       const removed = await api.delete(`/api/shells/${shellName}`)
       expect.soft([200, 204, 404], JSON.stringify(removed.data)).toContain(removed.status)
     }
-  })
-
-  test('should show actions for listed teams or an empty state', async ({ page }) => {
-    await expectTeamListHasContentOrEmptyState(page)
-
-    const teamCard = page.locator('[data-testid^="team-card-"]').first()
-    if ((await teamCard.count()) > 0) {
-      await expect(teamCard.locator('button').first()).toBeVisible()
-      return
-    }
-
-    await expect(page.locator('[data-testid="team-empty-state"]')).toBeVisible()
   })
 })

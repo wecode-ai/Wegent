@@ -43,6 +43,7 @@ from app.services.knowledge.code_wiki.projection_plan import (
     PageSource,
     ProjectionPlan,
 )
+from app.services.knowledge.event_logging import FactSnapshot
 
 logger = logging.getLogger(__name__)
 
@@ -84,6 +85,7 @@ class ProjectionOutcome:
     created_document_ids: tuple[int, ...] = ()
     updated_document_ids: tuple[int, ...] = ()
     deleted_document_ids: tuple[int, ...] = ()
+    committed_facts: tuple[FactSnapshot, ...] = ()
     # doc_refs whose RAG deletion did not succeed and must be retried.
     unfinished_index_cleanup: tuple[str, ...] = field(default=())
 
@@ -189,6 +191,29 @@ def apply_projection_plan(
             content=source.content,
         )
 
+    committed_facts: list[FactSnapshot] = []
+
+    def remember_document(event_type: str, document: KnowledgeDocument) -> None:
+        from shared.event_reporting import is_event_reporting_enabled
+        from shared.event_reporting.catalogs.knowledge import loaded_scalar
+
+        if not is_event_reporting_enabled():
+            return
+        committed_facts.append(
+            (
+                event_type,
+                {
+                    "kb_id": kind_id,
+                    "document_id": loaded_scalar(document, "id"),
+                    "data": {
+                        "source_type": "code_wiki",
+                        "file_extension": loaded_scalar(document, "file_extension"),
+                        "content_bytes": loaded_scalar(document, "file_size"),
+                    },
+                },
+            )
+        )
+
     def add_document(source: PageSource) -> int:
         """Create the row for a page that is not in the knowledge base."""
         folders, _ = split_page_path(source.path)
@@ -208,6 +233,7 @@ def apply_projection_plan(
         _stamp(document, source)
         db.add(document)
         db.flush()
+        remember_document("knowledge.document.created", document)
         return document.id
 
     # --- inside the transaction: rows only --------------------------------------
@@ -238,6 +264,7 @@ def apply_projection_plan(
         document.name = _display_name(update.source)
         _stamp(document, update.source)
         updated.append(document.id)
+        remember_document("knowledge.document.content.updated", document)
 
     removed_refs: list[str] = []
     deleted: list[int] = []
@@ -254,6 +281,7 @@ def apply_projection_plan(
         # row is gone, because after the commit there is nothing left to derive it from.
         removed_refs.append(str(document.id))
         deleted.append(document.id)
+        remember_document("knowledge.document.deleted", document)
         db.delete(document)
 
     db.flush()
@@ -265,6 +293,7 @@ def apply_projection_plan(
         created_document_ids=tuple(created),
         updated_document_ids=tuple(updated),
         deleted_document_ids=tuple(deleted),
+        committed_facts=tuple(committed_facts),
         unfinished_index_cleanup=tuple(removed_refs),
     )
 

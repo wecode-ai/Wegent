@@ -231,7 +231,7 @@ fn execution_runtime_selection(row: &ExecutionRow) -> Value {
 }
 
 /// `LoopItemExecution.executor_type`.
-fn execution_executor_type(row: &ExecutionRow) -> &'static str {
+pub(super) fn execution_executor_type(row: &ExecutionRow) -> &'static str {
     let selection = execution_runtime_selection(row);
     if let Some(configured) = selection.get("executor_kind").and_then(Value::as_str)
         && matches!(configured, "generic_robot" | "collaboration_group_dispatch")
@@ -719,14 +719,14 @@ async fn project_runtime_event<T: MysqlTransaction>(
             metadata.insert("run_status".into(), json!("running"));
             message.content = content.clone();
             message.metadata = brz_mysql::Json(Value::Object(metadata));
-            message.updated_at = now;
+            message.updated_at = super::project_chat_messages::database_timestamp(now);
             transaction
                 .execute(
                     "UPDATE project_chat_messages SET content=?, metadata=?, updated_at=? WHERE id=?",
                     (
                         message.content.as_str(),
                         brz_mysql::Json(message.metadata.0.clone()),
-                        now,
+                        message.updated_at,
                         message.id,
                     ),
                 )
@@ -813,7 +813,7 @@ async fn project_runtime_event<T: MysqlTransaction>(
     message.status = status;
     message.message_type = message_type;
     message.metadata = brz_mysql::Json(Value::Object(metadata));
-    message.updated_at = now;
+    message.updated_at = super::project_chat_messages::database_timestamp(now);
     transaction
         .execute(
             "UPDATE project_chat_messages SET content=?, status=?, message_type=?, metadata=?, updated_at=? WHERE id=?",
@@ -822,7 +822,7 @@ async fn project_runtime_event<T: MysqlTransaction>(
                 message.status.as_str(),
                 message.message_type.as_str(),
                 brz_mysql::Json(message.metadata.0.clone()),
-                now,
+                message.updated_at,
                 message.id,
             ),
         )
@@ -982,6 +982,8 @@ use execution_lookup::{
     execution_args, execution_matches_runtime_task, execution_statement, runtime_task_ids,
 };
 mod human_reply;
+#[cfg(test)]
+pub(super) use activity::verify_restored_activity_timestamp;
 #[cfg(test)]
 pub(crate) use human_reply::verify_late_human_reply_projection;
 pub(super) mod lifecycle;

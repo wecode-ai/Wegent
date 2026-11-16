@@ -1,4 +1,3 @@
-import assert from 'node:assert/strict'
 import { DEFAULT_STEP_TIMEOUT_MS } from './shared.mjs'
 
 export const COLLABORATION_SIDEBAR_SELECTOR = '[data-testid="collaboration-platform-sidebar"]'
@@ -14,38 +13,31 @@ export async function revealCollaborationSidebarElement(
   selector,
   timeoutMs = DEFAULT_STEP_TIMEOUT_MS
 ) {
+  const management = selector.match(
+    /\[data-testid="collaboration-primary-(?:agents|teams|devices|templates)"\]/
+  )
+  if (management) {
+    const toggle = `${selector.slice(0, management.index)}[data-testid="collaboration-management-toggle"]`
+    await control.command('waitFor', toggle, { visible: true, timeoutMs })
+    if ((await control.command('getAttribute', toggle, { value: 'aria-expanded' })) === 'false') {
+      await control.command('click', toggle)
+      await control.command('waitFor', `${toggle}[aria-expanded="true"]`, { timeoutMs })
+    }
+  }
   await control.command('waitFor', selector, { timeoutMs })
   await control.command('scrollIntoView', selector, { visible: true })
   await control.command('waitFor', selector, { visible: true, timeoutMs })
 }
 
-/** Open optional space management before interacting with workspace controls. */
+/** Wait for the project groups that now display their spaces directly. */
 export async function expandCollaborationSpaces(
   control,
   contentSelector = '[data-workspace-tab-content][aria-hidden="false"]',
   timeoutMs = DEFAULT_STEP_TIMEOUT_MS
 ) {
-  const toggle = inCollaborationSidebar(
-    '[data-testid="collaboration-workspaces-section-toggle"]',
-    contentSelector
+  await control.command(
+    'waitFor',
+    inCollaborationSidebar('[data-testid="collaboration-project-tree"]', contentSelector),
+    { timeoutMs }
   )
-  await expandCollaborationToggle(control, toggle, timeoutMs)
-}
-
-async function expandCollaborationToggle(control, toggleSelector, timeoutMs) {
-  await revealCollaborationSidebarElement(control, toggleSelector, timeoutMs)
-  const expandedSelector = `${toggleSelector}[aria-expanded="true"]`
-  const expanded = await control.command('getAttribute', toggleSelector, {
-    value: 'aria-expanded',
-  })
-  assert.ok(
-    expanded === 'true' || expanded === 'false',
-    'A workspace toggle must expose its expanded state'
-  )
-  if (expanded === 'true') return
-  await control.command('click', toggleSelector)
-  await control.command('waitFor', expandedSelector, {
-    visible: true,
-    timeoutMs,
-  })
 }

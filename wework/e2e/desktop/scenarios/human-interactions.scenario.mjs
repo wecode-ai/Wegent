@@ -740,43 +740,39 @@ export function createDesktopScenario({
         '[data-testid="workspace-tab-select-pending-interactions"][data-pending-question-count="0"]',
         { timeoutMs: modelResponseTimeoutMs }
       )
-      await verifyPendingInteractionsTab(control, 0, { expectedProjectCount: issueFixture ? 1 : 0 })
+      await verifyPendingInteractionsTab(control, 0, { expectedProjectCount: 0 })
       await control.command('waitFor', `${page} [data-testid="interactions-pending-count"]`, {
-        text: issueFixture ? '1' : '0',
+        text: '0',
         timeoutMs: modelResponseTimeoutMs,
       })
       assert.equal(
         await control.command('getText', `${page} [data-testid="interactions-pending-count"]`),
-        issueFixture ? '1' : '0'
+        '0'
       )
       if (issueFixture) {
         const ordinary = `${page} [data-testid="interaction-list-item"][data-project-issue="true"]`
-        await control.command('waitFor', ordinary, { visible: true })
-        assert.equal(Number(await control.command('getElementCount', ordinary)), 1)
-        await control.command(
-          'waitFor',
-          '[data-testid="workspace-tab-select-pending-interactions"][data-project-count-state="known"][data-project-pending-count="1"]'
-        )
         assert.equal(
-          await control.command('getAttribute', ordinary, { value: 'data-interaction-id' }),
-          `project-issue:backend:${issueFixture.projectId}:${issueFixture.issueId}`
+          Number(await control.command('getElementCount', ordinary)),
+          0,
+          'An answered Issue must not return as ordinary pending work'
         )
-        assert.equal(
-          await control.command(
-            'getAttribute',
-            '[data-testid="workspace-tab-select-pending-interactions"]',
-            { value: 'data-project-pending-count' }
-          ),
-          '1'
-        )
-      } else {
-        await control.command('waitFor', `${page} [data-testid="interactions-empty"]`, {
-          visible: true,
-          timeoutMs: modelResponseTimeoutMs,
-        })
       }
+      await control.command('waitFor', `${page} [data-testid="interactions-empty"]`, {
+        visible: true,
+        timeoutMs: modelResponseTimeoutMs,
+      })
+      assert.equal(
+        Number(
+          await control.command(
+            'getElementCount',
+            `${page} [data-testid="interaction-question-heading"]`
+          )
+        ),
+        0,
+        'Handled questions must leave the pending detail as well as its list'
+      )
       await captureScreenshot(control, '07-accepted-response-clears-pending.png')
-      await verifyPendingInteractionsTab(control, 0, { expectedProjectCount: issueFixture ? 1 : 0 })
+      await verifyPendingInteractionsTab(control, 0, { expectedProjectCount: 0 })
       await control.command('click', `${page} [data-testid="interactions-history"]`)
       await control.command('waitFor', `${page} [data-testid="interactions-history-count"]`, {
         visible: true,
@@ -843,7 +839,11 @@ export function createDesktopScenario({
         // The comment deep link scrolls the original context into view first.
         // Verify the heading through a real scroll after checking that landing.
         const originalTitle = `${ORIGINAL} [data-testid="cloud-todo-detail-title"]`
-        await control.command('scrollIntoView', originalTitle)
+        await control.command(
+          'scrollToRatioAsUser',
+          `${ORIGINAL} [data-testid="cloud-todo-detail-scroll"]`,
+          { value: '0' }
+        )
         await control.command('waitFor', originalTitle, {
           text: '判断旧客户订单兼容策略',
           visible: true,

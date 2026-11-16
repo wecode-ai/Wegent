@@ -10,6 +10,49 @@ from app.schemas.device import DeviceType
 
 REMOTE_CONTROL_DISABLED_MESSAGE = "Remote control is disabled for this app device"
 
+APP_REMOTE_TASK_METHODS = frozenset(
+    {
+        "runtime.tasks.create",
+        "runtime.tasks.list",
+        "runtime.tasks.search",
+        "runtime.tasks.transcript",
+        "runtime.tasks.transcript.search",
+        "runtime.tasks.send",
+        "runtime.tasks.guidance",
+        "runtime.tasks.cancel",
+        "runtime.tasks.goal.get",
+        "runtime.tasks.goal.set",
+    }
+)
+
+
+def app_remote_task_access_enabled(online_info: dict[str, Any]) -> bool:
+    """Trust only explicit consent reported by the target's current Runtime."""
+    features = online_info.get("runtime_features")
+    access = features.get("remoteTaskAccess") if isinstance(features, dict) else None
+    return (
+        isinstance(access, dict)
+        and type(access.get("version")) is int
+        and access.get("version") == 1
+        and access.get("enabled") is True
+    )
+
+
+def personal_task_devices(devices: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Use record-scoped routes for opted-in App installations in task views."""
+    return [
+        (
+            {**device, "device_id": device["execution_target_id"]}
+            if device.get("device_type") == DeviceType.APP.value
+            else device
+        )
+        for device in devices
+        if device.get("device_type") != DeviceType.APP.value
+        or (
+            device.get("execution_target_id") and app_remote_task_access_enabled(device)
+        )
+    ]
+
 
 def device_kind_type(device_kind: Any) -> Optional[DeviceType]:
     """Read a persisted device type without inventing an unknown type."""

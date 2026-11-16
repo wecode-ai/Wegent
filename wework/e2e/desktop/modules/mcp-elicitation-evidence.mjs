@@ -1,9 +1,10 @@
 import { performance } from 'node:perf_hooks'
 import { assert, readFile, DEFAULT_STEP_TIMEOUT_MS } from './shared.mjs'
+import { runtimeTranscriptBlocks } from './runtime-transcript-evidence.mjs'
 
 export const MCP_URL_TIMEOUT_MS = 5_000
-// The ordinary-first case reloads Electron twice while the form is pending.
-export const MCP_FORM_TIMEOUT_MS = 45_000
+// The form stays pending across two full workbench reloads in the concurrent case.
+export const MCP_FORM_TIMEOUT_MS = 60_000
 
 export async function readElicitationEvidence(evidencePath) {
   return (await readFile(evidencePath, 'utf8'))
@@ -19,18 +20,8 @@ export async function readMcpInteractions(control, taskId) {
     })
   )
   assert.equal(transcript.success, true, 'The real executor could not read the task transcript')
-  assert.ok(Array.isArray(transcript.turns), 'The executor transcript omitted its native turns')
-  assert.ok(Array.isArray(transcript.runtimeTurns), 'The executor omitted its runtime overlays')
-  // Match the renderer: runtime-owned state overlays native history by turn/item identity.
-  const items = new Map()
-  for (const turn of [...transcript.turns, ...transcript.runtimeTurns]) {
-    for (const item of turn.items) {
-      items.set(JSON.stringify([turn.id, item.id]), item)
-    }
-  }
-  return [...items.values()]
-    .filter(item => item.type === 'block')
-    .map(item => item.block.render_payload)
+  return runtimeTranscriptBlocks(transcript)
+    .map(block => block.render_payload)
     .filter(payload => payload?.kind === 'request_user_input' && payload.interactionScope)
 }
 

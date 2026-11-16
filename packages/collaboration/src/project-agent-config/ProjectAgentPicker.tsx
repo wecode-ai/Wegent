@@ -40,21 +40,15 @@ export function ProjectAgentPicker({
   const normalizedQuery = query.trim().toLocaleLowerCase()
   const visibleAgents = useMemo(
     () =>
-      agents.filter((agent) =>
-        `${agent.name} ${agent.owner_name}`
-          .toLocaleLowerCase()
-          .includes(normalizedQuery),
+      agents.filter(agent =>
+        `${agent.name} ${agent.owner_name}`.toLocaleLowerCase().includes(normalizedQuery)
       ),
-    [agents, normalizedQuery],
+    [agents, normalizedQuery]
   )
-  const selected = agents.find(
-    (agent) => String(agent.team_id ?? agent.id) === selectedId,
-  )
+  const selected = agents.find(agent => String(agent.team_id ?? agent.id) === selectedId)
   const alreadyAdded = (agent: CollaborationOwnedAgent) =>
     agent.team_id != null && addedTeamIds.has(agent.team_id)
-  const canAdd = Boolean(
-    selected && !alreadyAdded(selected) && !loading && !loadError && !busy,
-  )
+  const canAdd = Boolean(selected && !alreadyAdded(selected) && !loading && !loadError && !busy)
 
   return (
     <div className="flex min-h-0 flex-col">
@@ -68,7 +62,7 @@ export function ProjectAgentPicker({
             aria-label={t('todo.agent_picker_search', '搜索智能体')}
             placeholder={t('todo.agent_picker_search', '搜索智能体')}
             value={query}
-            onChange={(event) => setQuery(event.target.value)}
+            onChange={event => setQuery(event.target.value)}
             disabled={busy}
             className="min-w-0 flex-1 bg-transparent text-sm text-text-primary outline-none placeholder:text-text-muted"
           />
@@ -103,9 +97,7 @@ export function ProjectAgentPicker({
       >
         {loading ? (
           <div role="status" data-testid="project-agent-candidates-loading">
-            <span className="sr-only">
-              {t('todo.agent_picker_loading', '正在加载智能体…')}
-            </span>
+            <span className="sr-only">{t('todo.agent_picker_loading', '正在加载智能体…')}</span>
             {Array.from({ length: 4 }, (_, index) => (
               <div
                 key={index}
@@ -130,9 +122,7 @@ export function ProjectAgentPicker({
             <p className="text-sm font-medium text-text-primary">
               {t('todo.agent_picker_load_failed', '无法加载智能体')}
             </p>
-            <p className="max-w-full break-words text-xs text-text-muted">
-              {loadError}
-            </p>
+            <p className="max-w-full break-words text-xs text-text-muted">{loadError}</p>
             <Button
               type="button"
               variant="outline"
@@ -154,7 +144,7 @@ export function ProjectAgentPicker({
             data-testid="project-agent-wegent-team"
             className="space-y-1"
           >
-            {visibleAgents.map((agent) => {
+            {visibleAgents.map(agent => {
               const id = String(agent.team_id ?? agent.id)
               const added = alreadyAdded(agent)
               const checked = id === selectedId
@@ -167,9 +157,7 @@ export function ProjectAgentPicker({
                     aria-hidden="true"
                     className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-muted text-sm font-medium text-text-secondary"
                   >
-                    {agent.name.trim().slice(0, 1).toUpperCase() || (
-                      <Bot className="h-4 w-4" />
-                    )}
+                    {agent.name.trim().slice(0, 1).toUpperCase() || <Bot className="h-4 w-4" />}
                   </span>
                   <span className="min-w-0 flex-1">
                     <span
@@ -183,7 +171,7 @@ export function ProjectAgentPicker({
                       className="mt-0.5 block truncate text-xs text-text-muted"
                     >
                       {agent.owner_type === 'workspace'
-                        ? t('todo.agent_picker_shared', '空间共享')
+                        ? t('todo.agent_picker_shared', '分组共享')
                         : t('todo.agent_picker_personal', '我的智能体')}
                       {agent.owner_name ? ` · ${agent.owner_name}` : ''}
                     </span>
@@ -196,9 +184,7 @@ export function ProjectAgentPicker({
                     <span
                       className={`flex h-4 w-4 shrink-0 items-center justify-center rounded-full border ${checked ? 'border-text-primary bg-text-primary text-background' : 'border-border'}`}
                     >
-                      {checked ? (
-                        <Check aria-hidden="true" className="h-3 w-3" />
-                      ) : null}
+                      {checked ? <Check aria-hidden="true" className="h-3 w-3" /> : null}
                     </span>
                   )}
                   <input
@@ -222,15 +208,9 @@ export function ProjectAgentPicker({
             className="flex h-full flex-col items-center justify-center gap-2 px-5 text-center"
           >
             {normalizedQuery ? (
-              <SearchX
-                aria-hidden="true"
-                className="mb-1 h-6 w-6 text-text-muted"
-              />
+              <SearchX aria-hidden="true" className="mb-1 h-6 w-6 text-text-muted" />
             ) : (
-              <Bot
-                aria-hidden="true"
-                className="mb-1 h-6 w-6 text-text-muted"
-              />
+              <Bot aria-hidden="true" className="mb-1 h-6 w-6 text-text-muted" />
             )}
             <p className="text-sm font-medium text-text-primary">
               {normalizedQuery
@@ -239,19 +219,10 @@ export function ProjectAgentPicker({
             </p>
             <p className="text-xs text-text-muted">
               {normalizedQuery
-                ? t(
-                    'todo.agent_picker_try_search',
-                    '试试其他名称，或清除搜索。',
-                  )
+                ? t('todo.agent_picker_try_search', '试试其他名称，或清除搜索。')
                 : onCreate
-                  ? t(
-                      'todo.agent_picker_create_hint',
-                      '新建一个智能体，让它协助处理任务。',
-                    )
-                  : t(
-                      'todo.agent_picker_share_hint',
-                      '请让空间管理员共享智能体后再添加。',
-                    )}
+                  ? t('todo.agent_picker_create_hint', '新建一个智能体，让它协助处理任务。')
+                  : t('todo.agent_picker_share_hint', '请让分组管理员共享智能体后再添加。')}
             </p>
             {normalizedQuery ? (
               <Button
@@ -287,11 +258,11 @@ export function ProjectAgentPicker({
             {scope === 'workspace'
               ? t(
                   'todo.agent_picker_workspace_share',
-                  '添加后空间内项目可复用此智能体。原定义和私人凭据仍按原权限管理。',
+                  '添加后分组内项目可复用此智能体。原定义和私人凭据仍按原权限管理。'
                 )
               : t(
                   'todo.add_project_agent_description',
-                  '添加后会共享到父空间并向项目成员开放使用。原定义和私人凭据仍按原权限管理。',
+                  '添加后会共享到父分组并向项目成员开放使用。原定义和私人凭据仍按原权限管理。'
                 )}
           </span>
         </p>
@@ -328,8 +299,7 @@ export function ProjectAgentPicker({
             onClick={onAdd}
             className="h-11 shrink-0 rounded-lg px-4 hover:opacity-90 disabled:opacity-40 md:h-9"
             style={{
-              color:
-                'var(--collaboration-primary-foreground, rgb(var(--color-bg-base)))',
+              color: 'var(--collaboration-primary-foreground, rgb(var(--color-bg-base)))',
               backgroundColor:
                 'var(--collaboration-primary-background, rgb(var(--color-text-primary)))',
             }}
@@ -337,7 +307,7 @@ export function ProjectAgentPicker({
             {busy
               ? t('todo.agent_picker_adding', '添加中…')
               : scope === 'workspace'
-                ? t('todo.add_to_workspace', '加入空间')
+                ? t('todo.add_to_workspace', '加入分组')
                 : t('todo.add_to_project', '加入项目')}
           </Button>
         </div>

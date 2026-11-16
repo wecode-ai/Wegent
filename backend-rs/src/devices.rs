@@ -98,20 +98,6 @@ impl DeviceType {
     }
 }
 
-impl DeviceSpecInput {
-    /// `spec.deviceType` as persisted, before the `DeviceType` normalization
-    /// the identity helpers apply.
-    pub(crate) fn device_type_value(&self) -> Option<&str> {
-        self.device_type.as_deref()
-    }
-
-    /// `spec.runtimeInstanceId` as the raw JSON the identity checks compare
-    /// against the online-state document's `runtime_instance_id`.
-    pub(crate) fn runtime_instance_id_value(&self) -> Option<serde_json::Value> {
-        self.runtime_instance_id.as_ref().map(OpaqueJson::to_value)
-    }
-}
-
 /// The source `kinds` query for one provider's listing (`Kind` model filter).
 /// The projection mirrors the source SQLAlchemy labeled rendering
 /// (`kinds.<column> AS kinds_<column>`) so the prepared statement matches the
@@ -209,6 +195,8 @@ pub struct RuntimeFeatures {
     pub project_editing: Option<RuntimeProjectEditingFeatures>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub plugin_sync: Option<RuntimePluginSyncFeatures>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub remote_task_access: Option<RuntimeRemoteTaskAccessFeatures>,
     #[serde(flatten)]
     pub extensions: serde_json::Map<String, serde_json::Value>,
 }
@@ -236,6 +224,32 @@ impl RuntimePluginSyncFeatures {
             .as_i64()
             .filter(|version| *version >= 1)
             .map(|protocol_version| Self { protocol_version })
+    }
+}
+
+#[derive(Debug, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RuntimeRemoteTaskAccessFeatures {
+    pub version: i64,
+    pub enabled: bool,
+    pub task_creation: bool,
+}
+
+impl RuntimeRemoteTaskAccessFeatures {
+    /// Project only the explicitly typed consent advertised by the runtime.
+    pub fn from_value(value: &serde_json::Value) -> Option<Self> {
+        let version = value
+            .get("version")?
+            .as_i64()
+            .filter(|version| *version == 1)?;
+        Some(Self {
+            version,
+            enabled: value.get("enabled")?.as_bool()?,
+            task_creation: match value.get("taskCreation") {
+                Some(value) => value.as_bool()?,
+                None => false,
+            },
+        })
     }
 }
 
@@ -345,6 +359,8 @@ struct RuntimeFeatureInput {
     project_editing: Option<OpaqueJson>,
     #[serde(rename = "pluginSync")]
     plugin_sync: Option<OpaqueJson>,
+    #[serde(rename = "remoteTaskAccess")]
+    remote_task_access: Option<OpaqueJson>,
 }
 
 fn present_project_editing<'de, D>(deserializer: D) -> Result<Option<OpaqueJson>, D::Error>
@@ -793,6 +809,11 @@ fn project_runtime_features(info: &OnlineStateInput) -> Option<RuntimeFeatures> 
             .filter(|_| valid_header)
             .and_then(|value| RuntimePluginSyncFeatures::from_value(&value.to_value())),
         extensions: serde_json::Map::new(),
+        remote_task_access: features
+            .remote_task_access
+            .as_ref()
+            .filter(|_| valid_header)
+            .and_then(|value| RuntimeRemoteTaskAccessFeatures::from_value(&value.to_value())),
     })
 }
 

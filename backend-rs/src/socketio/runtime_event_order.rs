@@ -127,7 +127,7 @@ impl<K: Clone + Eq + Hash> RuntimeEventOrder<K> {
     /// Streams that still have frames in flight. Test-only observability for
     /// the map bound.
     #[cfg(test)]
-    fn tracked_sessions(&self) -> usize {
+    pub(super) fn tracked_sessions(&self) -> usize {
         self.queues.lock().expect("runtime event order").len()
     }
 }

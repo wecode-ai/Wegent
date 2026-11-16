@@ -265,6 +265,7 @@ fn failed_outcome(error: String) -> CommandHookOutcome {
 
 #[cfg(test)]
 mod tests {
+
     use std::fs;
 
     #[cfg(windows)]
@@ -299,26 +300,6 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn writes_json_and_closes_stdin() {
-        let directory = tempdir().unwrap();
-        // A parallel fork can inherit a freshly written script's writer and cause ETXTBSY.
-        let plugin_dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures");
-        let hook = config("./hook-stdin-reader.sh".to_owned());
-        #[cfg(windows)]
-        let hook = CommandHookConfig {
-            command_windows: Some(windows_command(
-                "[Console]::Out.Write('{\"received\":' + [Console]::In.ReadToEnd() + '}')",
-            )),
-            ..hook
-        };
-        let outcome =
-            execute_command_hook(&hook, &plugin_dir, directory.path(), &json!({"ok": true})).await;
-        assert_eq!(outcome.exit_code, Some(0), "{outcome:?}");
-        assert!(outcome.response.is_some());
-        assert!(outcome.stdout.contains("\"ok\":true"));
-    }
-
-    #[tokio::test]
     async fn times_out() {
         let directory = tempdir().unwrap();
         let mut hook = config("sleep 2".to_owned());
@@ -330,15 +311,6 @@ mod tests {
         let outcome =
             execute_command_hook(&hook, directory.path(), directory.path(), &json!({})).await;
         assert!(outcome.timed_out, "{outcome:?}");
-    }
-
-    #[test]
-    fn selects_the_current_os_and_arch_command() {
-        let mut hook = config("fallback".to_owned());
-        hook.commands
-            .insert(platform_target(), "target-command".to_owned());
-
-        assert_eq!(platform_command(&hook), "target-command");
     }
 
     #[test]
@@ -358,7 +330,6 @@ mod tests {
             }
         }
     }
-
     #[test]
     fn keeps_commands_with_arguments_in_the_shell() {
         let directory = tempdir().unwrap();

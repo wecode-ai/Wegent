@@ -152,6 +152,8 @@ fn default_issue_security(project: &members::ProjectEntityRow) -> &'static str {
 #[derive(serde::Serialize)]
 struct BindingResponse {
     #[serde(skip_serializing_if = "Option::is_none")]
+    stand_in_pending: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     stand_in_conversation_id: Option<String>,
     id: String,
     cloud_project_id: String,
@@ -178,6 +180,7 @@ struct BindingResponse {
 
 fn binding_response(binding: &BindingRow) -> BindingResponse {
     BindingResponse {
+        stand_in_pending: binding.stand_in_pending(),
         stand_in_conversation_id: binding.stand_in_conversation_id(),
         id: binding.id.clone(),
         cloud_project_id: binding.cloud_project_id.clone(),
@@ -321,10 +324,15 @@ mod tests {
     fn exposes_an_issue_conversation_reservation_without_changing_ordinary_bindings() {
         let ordinary = binding_response(&binding(serde_json::json!({})));
         assert!(ordinary.get("stand_in_conversation_id").is_none());
+        assert!(ordinary.get("stand_in_pending").is_none());
         let reserved = binding_response(&binding(
             serde_json::json!({"stand_in_conversation_id":"issue-role-one"}),
         ));
         assert_eq!(reserved["stand_in_conversation_id"], "issue-role-one");
+        let pending = binding_response(&binding(serde_json::json!({"stand_in_pending":true})));
+        assert_eq!(pending["stand_in_pending"], true);
+        let started = binding_response(&binding(serde_json::json!({"stand_in_pending":false})));
+        assert_eq!(started["stand_in_pending"], false);
     }
 
     #[test]

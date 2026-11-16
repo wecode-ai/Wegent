@@ -170,6 +170,7 @@ pub(crate) use home::{
 };
 use home::{read_wework_codex_user_instructions, CODEX_HOME_ENV};
 use plugin_skills::PluginSkillResolver;
+mod collaboration;
 mod effective_instructions;
 #[cfg(test)]
 pub(crate) use effective_instructions::turn_context_for_test;
@@ -859,14 +860,9 @@ impl CodexAppServerClient {
         String,
     > {
         ensure_codex_mcp_endpoints().await?;
-        let mut state = self.state.lock().await;
-        if state
-            .process
-            .as_mut()
-            .is_some_and(|process| process.has_exited())
-        {
-            stop_codex_app_server_process(&mut state, None).await;
-        }
+        let mut state = self
+            .state_for_auth_mode(launch_config.and_then(|config| config.auth_mode))
+            .await?;
         let empty_launch_environment = BTreeMap::new();
         let launch_environment = launch_config
             .map(|config| &config.env)
@@ -877,12 +873,6 @@ impl CodexAppServerClient {
             Some(process) => process.pending.lock().await.len(),
             None => 0,
         };
-        auth_mode::apply_auth_mode(
-            &mut state,
-            launch_config.and_then(|config| config.auth_mode),
-            pending_request_count,
-        )
-        .await?;
         let active_threads = state.active_threads_snapshot();
         // Control and live-reload requests belong to the existing process.
         // Apply launch-environment changes only when a request may start a process.
@@ -930,6 +920,7 @@ impl CodexAppServerClient {
         handle.pending.lock().await.insert(
             request_id,
             PendingCodexResponse {
+                method: method.to_owned(),
                 sender: tx,
                 native_request: handle
                     .notifications
@@ -1049,12 +1040,7 @@ impl CodexAppServerClient {
 
     async fn mark_thread_active_under_admission(&self, thread_id: &str) {
         let mut state = self.state.lock().await;
-        let generation = state.next_thread_generation;
-        state.next_thread_generation += 1;
-        state
-            .thread_generations
-            .insert(thread_id.to_owned(), generation);
-        state.idle_thread_generations.remove(thread_id);
+        state.renew_thread_generation(thread_id);
         *state
             .active_threads
             .entry(thread_id.to_owned())
@@ -1373,22 +1359,13 @@ impl CodexAppServerClient {
         &self,
         launch_config: &CodexLaunchConfig,
     ) -> Result<CodexAppServerHandle, String> {
-        let mut state = self.state.lock().await;
-        if state
-            .process
-            .as_mut()
-            .is_some_and(|process| process.has_exited())
-        {
-            stop_codex_app_server_process(&mut state, None).await;
-        }
+        let mut state = self.state_for_auth_mode(launch_config.auth_mode).await?;
         let process_environment =
             self.process_environment(&state.runtime_proxy_env, &launch_config.env);
         let pending_request_count = match state.process.as_ref() {
             Some(process) => process.pending.lock().await.len(),
             None => 0,
         };
-        auth_mode::apply_auth_mode(&mut state, launch_config.auth_mode, pending_request_count)
-            .await?;
         let active_threads = state.active_threads_snapshot();
         if state.process.is_some()
             && codex_process_environment_requires_restart(
@@ -1547,14 +1524,6 @@ pub(crate) async fn terminate_shared_codex_app_servers() -> usize {
     terminated
 }
 
-#[allow(dead_code)]
-fn codex_app_server_request_is_retryable(method: &str) -> bool {
-    matches!(
-        method,
-        "thread/list" | "thread/read" | "config/read" | "model/list"
-    )
-}
-
 fn is_codex_cloud_config_error(error: &str) -> bool {
     error.contains("cloud config bundle")
 }
@@ -1615,6 +1584,7 @@ async fn stop_codex_app_server_process(
     checkpoint("exit_notified");
     terminate_codex_app_server_child(&mut process.child).await;
     checkpoint("child_terminated");
+    state.thread_activity_changed.notify_waiters();
     true
 }
 
@@ -1642,6 +1612,7 @@ impl Default for CodexAppServerSharedState {
 }
 
 struct PendingCodexResponse {
+    method: String,
     sender: oneshot::Sender<Result<Value, String>>,
     native_request: Option<CodexNativeRequest>,
 }
@@ -1848,6 +1819,7 @@ impl CodexAppServerHandle {
 
     async fn remove_pending(&self, request_id: u64) {
         self.pending.lock().await.remove(&request_id);
+        self.notifications.thread_activity_changed.notify_waiters();
     }
 }
 
@@ -2075,6 +2047,7 @@ async fn read_persistent_codex_app_server_stdout(
                         });
                     }
                     let _ = request.sender.send(result);
+                    notifications.thread_activity_changed.notify_waiters();
                     continue;
                 }
             }
@@ -2086,6 +2059,7 @@ async fn read_persistent_codex_app_server_stdout(
             .send(external_work::project_review_notification(message))
             .await;
     }
+    notifications.thread_activity_changed.notify_waiters();
 }
 
 fn log_codex_mcp_startup_status(message: &Value, process_generation: u64) {
@@ -4301,7 +4275,7 @@ fn codex_app_server_command(
 }
 
 const WEWORK_HUMAN_INPUT_INSTRUCTIONS: &str = r#"Wework human participation:
-When a task needs a business judgment, missing requirement, or choice that only the user can provide, raise a structured question using request_user_input_async when available, otherwise request_user_input. Include the task-specific uncertainty, relevant evidence, clear choices and their consequences. Do not rely on a prose question in the conversation alone: the user may not have this conversation open. Continue independent authorized work while an asynchronous question is pending, and wait before work that depends on its answer. Do not create repeated questions for the same unresolved decision. A business answer never grants execution permission; keep native tool approvals and connector authentication on their original authorization paths."#;
+For connected-source work, use the current scoped provider assistance to distinguish questions for the source participant from decisions for the Wework owner and to choose the participant's reply channel. Provider guidance may route an owner's self-conversation back to that source. It never grants permission or changes approval requirements. Otherwise, when a task needs a business judgment, missing requirement, or choice that only the Wework owner can provide, raise a structured question using request_user_input_async when available, otherwise request_user_input. Include the task-specific uncertainty, relevant evidence, clear choices and their consequences. Do not rely on a prose question in the conversation alone: the user may not have this conversation open. Continue independent authorized work while an asynchronous question is pending, and wait before work that depends on its answer. Do not create repeated questions for the same unresolved decision. A business answer never grants execution permission; keep native tool approvals and connector authentication on their original authorization paths."#;
 
 fn codex_thread_developer_instructions(user_instructions: &str, task_instructions: &str) -> String {
     [
@@ -6795,6 +6769,7 @@ fn thread_start_params(request: &ExecutionRequest, launch_config: &CodexLaunchCo
     }
     insert_codex_developer_instructions(&mut params, request, launch_config);
     append_thread_launch_params(&mut params, launch_config);
+    collaboration::apply_thread_config(&mut params, request);
     if let Some(cwd) = request.cwd() {
         params.insert("cwd".to_owned(), Value::String(cwd.to_owned()));
     }
@@ -6830,6 +6805,7 @@ fn thread_fork_params(
     }
     insert_codex_developer_instructions(&mut params, request, launch_config);
     append_thread_launch_params(&mut params, launch_config);
+    collaboration::apply_thread_config(&mut params, request);
     if let Some(cwd) = request.cwd() {
         params.insert("cwd".to_owned(), Value::String(cwd.to_owned()));
     }
@@ -6898,6 +6874,7 @@ fn thread_resume_params(
     }
     insert_codex_developer_instructions(&mut params, request, launch_config);
     append_thread_launch_params(&mut params, launch_config);
+    collaboration::apply_thread_config(&mut params, request);
     if let Some(cwd) = request.cwd() {
         params.insert("cwd".to_owned(), Value::String(cwd.to_owned()));
     }

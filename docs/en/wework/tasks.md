@@ -38,6 +38,8 @@ Click **Cancel automatic recovery** beside the composer countdown to stop recove
 
 ### Sidebar task management
 
+During the initial task load, the desktop sidebar shows **Loading tasks…** below the **Tasks** heading. A failed load shows an error and **Retry** in the same position. In priority view, the status appears above the priority list. Background refreshes do not show a loading indicator.
+
 | Feature                          | Steps and limits                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
 | -------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Search                           | Click the magnifying glass, enter keywords, select with arrow keys and Enter or click a result; close with X                                                                                                                                                                                                                                                                                                                                                              |
@@ -65,8 +67,8 @@ In the **Codex conversation composer**, describe an operation such as “Create 
 1. Open **left sidebar → Scheduled**, search existing schedules or create one.
 2. Enter a name and instructions. Choose a new task per run or an existing pinned task; enable a persistent goal only when intended and specify it.
 3. Choose local/cloud location, device, project, model and available reasoning effort. Directory, accounts and plugins belong to that device.
-4. Choose weekdays, daily, weekly, custom or once; set execution time and custom intervals. Notifications support every run, attention-only or none.
-5. Save and inspect schedule status; save again after editing. Open work from run history to inspect results: a saved schedule does not prove a successful run.
+4. Choose Monday–Friday, daily, weekly, custom or once; set execution time and custom intervals. Recurring Cron schedules offer **Run only on mainland China statutory workdays**. It uses Beijing dates to exclude statutory days off and include make-up working weekends. Choose Daily to cover every make-up workday; Monday–Friday, weekly and custom Cron schedules retain their existing date constraints. Interval and once-only schedules do not offer this option. Notifications support every run, attention-only or none.
+5. The workday filter defaults to off, preserving existing Monday–Friday schedules. It works on local and cloud devices without changing execution location. Save and inspect schedule status; save again after editing. Open work from run history to inspect results: a saved schedule does not prove a successful run.
 6. Disable to suspend future scheduling or delete after confirmation. Personal schedules, project-board automation and stand-in calendars are separate flows.
 
 Personal schedules using a cloud model revalidate model access and read the current cloud connection credentials on each trigger, including manual runs. Renewing your login token does not require recreating a schedule; both new tasks and existing-task continuations use current credentials. If login has expired, the model was removed or access was revoked, the run fails. Check your cloud connection and model access before retrying.
@@ -121,7 +123,7 @@ After selecting **Let AI handle it** in an issue detail, use the task composer t
 
 When an issue already has linked tasks, the **Linked tasks** section directly shows every running task and the two most recent tasks. If more history is available, use **Expand** and **Collapse** instead of opening a separate task-list view. The action for creating another task appears beside the section heading.
 
-After a task is linked to a board, select **Change board link** from the task summary above the composer, then choose the destination project space. Wework offers two choices:
+After a task is linked to a board, select **Change board link** from the task summary above the composer, then choose the destination project space. When changing the link is supported, the entry remains available while project options refresh or are temporarily empty; you can select a destination once the options load. Wework offers two choices:
 
 - **Create board task** creates and links a card using the current task title and execution status.
 - **Link an existing board task** searches editable cards in the destination board by task ID or title and links the current task to the selected card without changing that card's status.

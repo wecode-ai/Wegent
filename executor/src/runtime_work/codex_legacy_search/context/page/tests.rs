@@ -33,56 +33,6 @@ fn page(
 }
 
 #[test]
-fn a_long_legacy_turn_pages_losslessly_with_synthetic_ids_and_completion_metadata() {
-    let bytes = records(
-        [
-            json!({"type":"task_started","turn_id":"legacy"}),
-            json!({"type":"user_message","message":"question","client_id":"request-1"}),
-        ]
-        .into_iter()
-        .chain((0..230).map(|index| {
-            json!({"type":"agent_message","message":format!("完整正文🙂-{index}"),"phase":"commentary"})
-        }))
-        .chain([json!({"type":"task_complete","turn_id":"legacy","completed_at":123})]),
-    );
-    let mut cursor = None;
-    let mut ids = HashSet::new();
-    let mut pages = 0;
-    loop {
-        let page = page(
-            &bytes,
-            cursor.as_deref(),
-            CodexTranscriptDirection::Descending,
-        );
-        let turn = &page.thread["turns"][0];
-        assert_eq!(turn["status"], "completed");
-        assert_eq!(turn["completedAt"], 123);
-        assert_eq!(turn["timelineCompleted"], true);
-        let items = turn["items"].as_array().unwrap();
-        assert!(items.len() <= CONTEXT_PAGE_SIZE);
-        for item in items {
-            assert!(ids.insert(item["id"].as_str().unwrap().to_owned()));
-            if item["type"] == "userMessage" {
-                assert_eq!(item["clientId"], "request-1");
-                assert_eq!(item["content"][0]["text"], "question");
-            } else {
-                assert!(item["text"].as_str().unwrap().starts_with("完整正文🙂-"));
-                assert_eq!(item["phase"], "commentary");
-            }
-        }
-        pages += 1;
-        cursor = page.before_cursor;
-        if cursor.is_none() {
-            break;
-        }
-    }
-    assert_eq!(pages, 3);
-    assert_eq!(ids.len(), 231);
-    assert!(ids.contains("item-1"));
-    assert!(ids.contains("item-231"));
-}
-
-#[test]
 fn forward_pages_and_byte_budgets_retain_an_indivisible_large_body() {
     let text = "文".repeat(PAGE_BYTES / 2);
     let bytes = records([

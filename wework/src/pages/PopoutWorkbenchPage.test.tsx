@@ -21,7 +21,7 @@ const workbenchMock = vi.hoisted(() => ({
     devices: [
       {
         device_id: 'local-device',
-        device_type: 'app',
+        device_type: 'local',
         status: 'online',
         executor_version: '1.8.5',
       },
@@ -79,7 +79,7 @@ describe('PopoutWorkbenchPage', () => {
     workbenchMock.state.devices = [
       {
         device_id: 'local-device',
-        device_type: 'app',
+        device_type: 'local',
         status: 'online',
         executor_version: '1.8.5',
       },
@@ -109,5 +109,40 @@ describe('PopoutWorkbenchPage', () => {
         presentation: 'popout',
       })
     )
+  })
+
+  test('selects the local IPC device when another computer is listed first', async () => {
+    workbenchMock.state.devices.unshift({
+      device_id: 'another-computer',
+      device_type: 'app',
+      status: 'online',
+      executor_version: '1.8.5',
+    })
+
+    render(<PopoutWorkbenchPage />)
+
+    await waitFor(() => expect(selectStandaloneDeviceMock).toHaveBeenCalledWith('local-device'))
+    expect(selectStandaloneDeviceMock).toHaveBeenCalledTimes(1)
+    expect(setWorkbenchErrorMock).not.toHaveBeenCalled()
+  })
+
+  test('requires the local IPC device even when another computer is online', async () => {
+    workbenchMock.state.devices = [
+      {
+        device_id: 'another-computer',
+        device_type: 'app',
+        status: 'online',
+        executor_version: '1.8.5',
+      },
+    ]
+
+    render(<PopoutWorkbenchPage />)
+
+    await waitFor(() =>
+      expect(setWorkbenchErrorMock).toHaveBeenCalledWith(
+        'workbench.popout_window_local_device_required'
+      )
+    )
+    expect(selectStandaloneDeviceMock).not.toHaveBeenCalled()
   })
 })

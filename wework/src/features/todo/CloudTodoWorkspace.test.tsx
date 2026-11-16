@@ -28,7 +28,7 @@ import {
   loadProjectSpaceCodeWorkspacePreference,
   saveProjectSpaceCodeWorkspacePreference,
 } from './projectSpaceCodeWorkspacePreference'
-import { workItemStartedUpdate, workItemTaskInput } from './workItemTaskInput'
+import { workItemTaskInput } from './workItemTaskInput'
 
 vi.mock('@/api/dsh/desktopHost', () => ({
   invokeDesktopHost: vi.fn(async (capability: string, params: Record<string, unknown> = {}) => {
@@ -386,15 +386,6 @@ describe('workItemTaskInput', () => {
       'Use the shared workspace'
     )
   })
-
-  it('marks a pending Issue in progress when its personal task starts', () => {
-    expect(workItemStartedUpdate({ status: 'pending', tags: [], version: 3 } as never, [])).toEqual(
-      {
-        version: 3,
-        status: 'in_progress',
-      }
-    )
-  })
 })
 
 function services(overrides: Partial<WorkbenchServices> = {}): WorkbenchServices {
@@ -746,6 +737,14 @@ describe('CloudTodoWorkspace', () => {
     HTMLElement.prototype.scrollTo = vi.fn()
     clearRuntimeConversationCacheForTests()
     telemetryMocks.track.mockClear()
+    vi.stubGlobal(
+      'IntersectionObserver',
+      class {
+        observe() {}
+        unobserve() {}
+        disconnect() {}
+      }
+    )
     vi.stubGlobal(
       'ResizeObserver',
       class {
@@ -1962,10 +1961,10 @@ describe('CloudTodoWorkspace', () => {
     await screen.findByTestId('cloud-todo-card-WEG-1')
     await openIssueFromBoard()
     subscribe.mockRejectedValueOnce(new Error('offline'))
-    await userEvent.click(screen.getByTestId('cloud-todo-personal-task-start'))
+    await userEvent.click(screen.getByTestId('cloud-todo-create-task'))
     expect(await screen.findByTestId('transient-notice')).toHaveTextContent('offline')
     expect(screen.queryByTestId('ai-chat-modal')).not.toBeInTheDocument()
-    await userEvent.click(screen.getByTestId('cloud-todo-personal-task-start'))
+    await userEvent.click(screen.getByTestId('cloud-todo-create-task'))
     expect(await screen.findByTestId('ai-chat-modal')).toBeInTheDocument()
     expect(screen.queryByTestId('transient-notice')).not.toBeInTheDocument()
   })
@@ -1991,14 +1990,14 @@ describe('CloudTodoWorkspace', () => {
 
     await screen.findByTestId('cloud-todo-card-WEG-1')
     await openIssueFromBoard()
-    await user.click(screen.getByTestId('cloud-todo-personal-task-start'))
+    await user.click(screen.getByTestId('cloud-todo-create-task'))
     await user.click(screen.getByTestId('mock-create-runtime-task'))
     await waitFor(() => expect(workbenchServices.deliveryApi!.bindTask).toHaveBeenCalledTimes(1))
 
     await user.click(screen.getByTestId('ai-chat-modal-close'))
     expect(screen.queryByTestId('ai-chat-modal')).not.toBeInTheDocument()
     await openIssueFromBoard()
-    await user.click(screen.getByTestId('cloud-todo-personal-task-start'))
+    await user.click(screen.getByTestId('cloud-todo-create-task'))
     expect(screen.getByTestId('cloud-todo-panel-stack')).toHaveAttribute(
       'data-conversation-open',
       'true'
@@ -2026,17 +2025,21 @@ describe('CloudTodoWorkspace', () => {
     )
   })
 
-  it('finishes the Issue start before creating its runtime task without a later Issue write', async () => {
+  it('binds a task without overwriting the executor Issue status', async () => {
     const workbenchServices = services()
-    const pendingItem = { ...item, tags: [], status: 'pending' as const }
-    const startedItem = { ...item, tags: [], version: item.version + 1 }
-    let finishUpdate!: (value: typeof startedItem) => void
-    const update = new Promise<typeof startedItem>(resolve => {
-      finishUpdate = resolve
-    })
-    workbenchServices.deliveryApi!.getLoopItem = vi.fn(async () => pendingItem)
-    workbenchServices.deliveryApi!.listLoopItems = vi.fn(async () => ({ items: [pendingItem] }))
-    workbenchServices.deliveryApi!.updateLoopItem = vi.fn(() => update)
+    const reviewedItem = {
+      ...item,
+      tags: [],
+      status: 'in_review' as const,
+      human_task_binding: {
+        humanAssignmentId: 'human',
+        dispatchId: 'dispatch',
+        dispatchRoundId: 'round',
+        assignmentId: 'assignment',
+      },
+    }
+    workbenchServices.deliveryApi!.getLoopItem = vi.fn(async () => reviewedItem)
+    workbenchServices.deliveryApi!.listLoopItems = vi.fn(async () => ({ items: [reviewedItem] }))
     render(
       <CloudTodoWorkspace
         user={{ id: 1, user_name: 'local', email: 'local@example.com' } as User}
@@ -2048,26 +2051,16 @@ describe('CloudTodoWorkspace', () => {
     )
     await screen.findByTestId('cloud-todo-card-WEG-1')
     await openIssueFromBoard()
-    await userEvent.click(screen.getByTestId('cloud-todo-personal-task-start'))
+    await userEvent.click(screen.getByTestId('cloud-todo-create-task'))
     await userEvent.click(screen.getByTestId('mock-create-runtime-task'))
-    await waitFor(() =>
-      expect(workbenchServices.deliveryApi!.updateLoopItem).toHaveBeenCalledWith(item.id, {
-        version: item.version,
-        status: 'in_progress',
-      })
-    )
-    expect(screen.getByTestId('ai-chat-modal')).not.toHaveAttribute('data-runtime-task-id')
-    await act(async () => {
-      finishUpdate(startedItem)
-      await update
-    })
     await waitFor(() =>
       expect(screen.getByTestId('ai-chat-modal')).toHaveAttribute(
         'data-runtime-task-id',
         'runtime-created'
       )
     )
-    expect(workbenchServices.deliveryApi!.updateLoopItem).toHaveBeenCalledOnce()
+    expect(workbenchServices.deliveryApi!.bindTask).toHaveBeenCalledOnce()
+    expect(workbenchServices.deliveryApi!.updateLoopItem).not.toHaveBeenCalled()
   })
 
   it('preserves the selected model when a new runtime task becomes the task conversation', async () => {
@@ -2084,7 +2077,7 @@ describe('CloudTodoWorkspace', () => {
     await userEvent.click((await screen.findAllByText('Wegent V4'))[0])
     await screen.findByTestId('cloud-todo-card-WEG-1')
     await openIssueFromBoard()
-    await userEvent.click(screen.getByTestId('cloud-todo-personal-task-start'))
+    await userEvent.click(screen.getByTestId('cloud-todo-create-task'))
     await userEvent.click(screen.getByTestId('mock-create-runtime-task-with-model'))
 
     await waitFor(() =>
@@ -2162,7 +2155,7 @@ describe('CloudTodoWorkspace', () => {
     expect(tasks).toHaveTextContent('开发修改')
     expect(tasks).toHaveTextContent('测试修改')
 
-    await userEvent.click(screen.getByTestId('cloud-todo-personal-task-start'))
+    await userEvent.click(screen.getByTestId('cloud-todo-create-task'))
 
     expect(screen.getByTestId('cloud-todo-detail')).toBeInTheDocument()
     expect(screen.getByTestId('ai-chat-modal')).toHaveAttribute('data-task-id', item.id)
@@ -2187,7 +2180,7 @@ describe('CloudTodoWorkspace', () => {
     await userEvent.click((await screen.findAllByText('Wegent V4'))[0])
     await screen.findByTestId('cloud-todo-card-WEG-1')
     await openIssueFromBoard()
-    await userEvent.click(screen.getByTestId('cloud-todo-personal-task-start'))
+    await userEvent.click(screen.getByTestId('cloud-todo-create-task'))
 
     expect(await screen.findByTestId('cloud-todo-detail')).toBeInTheDocument()
     expect(screen.getByTestId('cloud-todo-panel-stack')).toHaveAttribute(
@@ -2232,7 +2225,7 @@ describe('CloudTodoWorkspace', () => {
 
     await userEvent.click((await screen.findAllByText('Wegent V4'))[0])
     await userEvent.click(await screen.findByTestId('cloud-todo-card-WEG-1'))
-    await userEvent.click(await screen.findByTestId('cloud-todo-personal-task-start'))
+    await userEvent.click(await screen.findByTestId('cloud-todo-create-task'))
 
     expect(await screen.findByTestId('ai-chat-modal')).not.toHaveAttribute('data-task-device-id')
     expect(await screen.findByTestId('ai-chat-modal')).not.toHaveAttribute(
@@ -2265,7 +2258,7 @@ describe('CloudTodoWorkspace', () => {
 
     await userEvent.click((await screen.findAllByText('Wegent V4'))[0])
     await userEvent.click(await screen.findByTestId('cloud-todo-card-WEG-1'))
-    await userEvent.click(screen.getByTestId('cloud-todo-personal-task-start'))
+    await userEvent.click(screen.getByTestId('cloud-todo-create-task'))
 
     expect(screen.getByTestId('ai-chat-modal')).toHaveAttribute(
       'data-initial-local-project-id',

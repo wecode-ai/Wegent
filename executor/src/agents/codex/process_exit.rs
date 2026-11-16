@@ -165,14 +165,7 @@ fn live_descendant(group: u32) -> io::Result<Option<(u32, ProcessStat)>> {
         let member = match process_stat(pid) {
             Ok(Some(member)) => member,
             Ok(None) => continue,
-            Err(error)
-                if matches!(
-                    error.kind(),
-                    io::ErrorKind::NotFound | io::ErrorKind::PermissionDenied
-                ) =>
-            {
-                continue
-            }
+            Err(error) if process_is_unavailable(&error) => continue,
             Err(error) => return Err(error),
         };
         if member.process_group == group && member.has_live_threads() {
@@ -180,6 +173,17 @@ fn live_descendant(group: u32) -> io::Result<Option<(u32, ProcessStat)>> {
         }
     }
     Ok(None)
+}
+
+#[cfg(any(target_os = "linux", test))]
+fn process_is_unavailable(error: &io::Error) -> bool {
+    // Linux proc_single_show returns ESRCH if the task exits after its procfs
+    // file was opened. This is the same disappearance race as ENOENT, not a
+    // failure to drain the owned process group.
+    matches!(
+        error.kind(),
+        io::ErrorKind::NotFound | io::ErrorKind::PermissionDenied
+    ) || error.raw_os_error() == Some(libc::ESRCH)
 }
 
 #[cfg(all(target_os = "linux", test))]
@@ -223,6 +227,20 @@ fn parse_process_stat(source: &str) -> Option<ProcessStat> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn procfs_exit_races_do_not_hide_unrelated_read_failures() {
+        for code in [libc::ENOENT, libc::ESRCH, libc::EACCES] {
+            assert!(super::process_is_unavailable(
+                &std::io::Error::from_raw_os_error(code)
+            ));
+        }
+        for code in [libc::EIO, libc::ENOMEM, libc::EINVAL] {
+            assert!(!super::process_is_unavailable(
+                &std::io::Error::from_raw_os_error(code)
+            ));
+        }
+    }
+
     #[test]
     fn a_zombie_main_thread_does_not_prove_the_shared_file_table_is_closed() {
         for (state, threads, live) in [

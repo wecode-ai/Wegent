@@ -11,26 +11,33 @@ from typing import List
 from llama_index.embeddings.openai import OpenAIEmbedding
 
 from knowledge_engine.embedding.contract import ensure_vector_contract
+from shared.event_reporting.operations import embedding_fact
 
 
 class DimensionCheckedOpenAIEmbedding(OpenAIEmbedding):
     """OpenAI embedding that rejects vectors breaking the declared dimension."""
 
+    @embedding_fact("text")
     def _get_text_embedding(self, text: str) -> List[float]:
         return self._check_vector(super()._get_text_embedding(text))
 
+    @embedding_fact("text")
     async def _aget_text_embedding(self, text: str) -> List[float]:
         return self._check_vector(await super()._aget_text_embedding(text))
 
+    @embedding_fact("text_batch")
     def _get_text_embeddings(self, texts: List[str]) -> List[List[float]]:
         return self._check_vectors(super()._get_text_embeddings(texts))
 
+    @embedding_fact("text_batch")
     async def _aget_text_embeddings(self, texts: List[str]) -> List[List[float]]:
         return self._check_vectors(await super()._aget_text_embeddings(texts))
 
+    @embedding_fact("query")
     def _get_query_embedding(self, query: str) -> List[float]:
         return self._check_vector(super()._get_query_embedding(query))
 
+    @embedding_fact("query")
     async def _aget_query_embedding(self, query: str) -> List[float]:
         return self._check_vector(await super()._aget_query_embedding(query))
 

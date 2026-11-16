@@ -322,3 +322,45 @@ pub(super) fn matching_personal_roles<'a>(configs: &'a [Value], issue: &Value) -
         })
         .collect()
 }
+
+pub(super) fn automatic_assignment_roles<'a>(
+    configs: &'a [Value],
+    issue: &Value,
+) -> Vec<&'a Value> {
+    matching_personal_roles(configs, issue)
+        .into_iter()
+        // One automatic assignment selects one role; explicit role dispatch is separate.
+        .min_by_key(|role| {
+            if role["tags"].as_array().is_some_and(|tags| !tags.is_empty()) {
+                0
+            } else {
+                1
+            }
+        })
+        .into_iter()
+        .collect()
+}
+
+#[cfg(test)]
+mod automatic_role_selection_tests {
+    use super::*;
+
+    #[test]
+    fn one_assignment_selects_one_role_with_specific_tags_before_general_roles() {
+        let roles = vec![
+            json!({"id":"general"}),
+            json!({"id":"review","tags":["review"]}),
+            json!({"id":"second","tags":["review"]}),
+        ];
+        assert_eq!(
+            automatic_assignment_roles(&roles, &json!({"tags":["review"]}))[0]["id"],
+            "review"
+        );
+        assert_eq!(automatic_assignment_roles(&roles, &json!({})).len(), 1);
+        assert_eq!(
+            automatic_assignment_roles(&roles, &json!({}))[0]["id"],
+            "general"
+        );
+        assert!(automatic_assignment_roles(&roles[1..], &json!({"tags":["other"]})).is_empty());
+    }
+}

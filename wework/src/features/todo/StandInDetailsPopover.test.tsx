@@ -51,13 +51,13 @@ function fixture(overrides: Partial<ComponentProps<typeof StandInDetailsPopover>
 
 it('shows device, empty activity and outputs without exposing configuration controls', async () => {
   const props = fixture()
-  expect(await screen.findByRole('dialog', { name: '分身详情' })).toBeVisible()
+  expect(await screen.findByRole('dialog', { name: '助理详情' })).toBeVisible()
   expect(screen.getByText('工作电脑')).toBeVisible()
   expect(screen.getByText('在线')).toBeVisible()
   expect(screen.getByText('最近暂无活动')).toBeVisible()
   expect(screen.queryByText('输出内容')).not.toBeInTheDocument()
   expect(screen.queryByRole('switch')).not.toBeInTheDocument()
-  expect(screen.queryByText('停止分身')).not.toBeInTheDocument()
+  expect(screen.queryByText('停止助理')).not.toBeInTheDocument()
   expect(props.onOpenTask).not.toHaveBeenCalled()
   expect(screen.getByTestId('stand-in-details-identity').querySelector('svg')).toBeNull()
   await userEvent.setup().click(screen.getByTestId('stand-in-settings-open'))

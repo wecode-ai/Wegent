@@ -28,10 +28,75 @@ from knowledge_remote_index_support import (
     _internal_retrieve,
     _login,
     _require_remote_services,
+    _retriever_payload,
     _runtime_list_chunks,
     _upload_attachment,
     _wait_for_index_status,
 )
+
+
+def run_payload_scenarios(
+    client: httpx.Client,
+    token: str,
+    user_id: int,
+    knowledge_base_id: int,
+    name: str,
+    milvus_url: str,
+) -> None:
+    """Use real storage and workers for bounded writes and final error state."""
+    document_ids: list[int] = []
+
+    def set_budget(max_bytes: int, headroom: int) -> None:
+        payload = _retriever_payload(name, milvus_url, storage_type="milvus")
+        payload["spec"]["storageConfig"]["ext"] = {
+            "max_batch_bytes": max_bytes,
+            "batch_headroom_bytes": headroom,
+            "batch_size": 3,
+        }
+        response = client.put(
+            f"/api/retrievers/{name}", headers=_auth_headers(token), json=payload
+        )
+        _check(response.status_code < 300, f"setting write budget: {response.text}")
+
+    def upload(body: str) -> int:
+        attachment_id, _ = _upload_attachment(client, token, body)
+        row = _create_document(client, token, knowledge_base_id, attachment_id)
+        document_id = int(row["id"])
+        document_ids.append(document_id)
+        return document_id
+
+    try:
+        set_budget(24000, 2000)
+        markers = [f"bounded{uuid.uuid4().hex}" for _ in range(24)]
+        body = "\n\n".join(marker + " payload" * 150 for marker in markers)
+        document_id = upload(body)
+        _wait_for_index_status(
+            client, token, knowledge_base_id, document_id, "success", generation=1
+        )
+        chunks = _runtime_list_chunks(knowledge_base_id, user_id)
+        _check(chunks.status_code == 200, f"reading bounded writes: {chunks.text}")
+        for marker in markers:
+            _check(marker in chunks.text, f"bounded writes lost content: {marker}")
+
+        # The configured budget is below one complete encoded row, even for a
+        # small file. Nothing except the model endpoint is simulated here.
+        set_budget(128, 0)
+        failed_id = upload(f"oversized{uuid.uuid4().hex}")
+        failed = _wait_for_index_status(
+            client, token, knowledge_base_id, failed_id, "failed", generation=1
+        )
+        error = failed.get("processing_error") or {}
+        _check(error.get("code") == "milvus_row_too_large", str(failed))
+        _check(error.get("retryable") is False, str(failed))
+        _check("not truncated" in error.get("message", ""), str(failed))
+        chunks = _runtime_list_chunks(knowledge_base_id, user_id)
+        _check(chunks.status_code == 200, f"reading after failed write: {chunks.text}")
+        for marker in markers:
+            _check(marker in chunks.text, "failed write damaged an indexed document")
+    finally:
+        for document_id in reversed(document_ids):
+            _delete_document(client, token, document_id)
+        set_budget(1024 * 1024, 64 * 1024)
 
 
 def run() -> None:
@@ -174,6 +239,9 @@ def run() -> None:
         _check(markers[1] not in content, "deleted document remains in Milvus")
         for marker in (new_marker, *markers[2:]):
             _check(marker in content, f"surviving document missing: {marker}")
+        run_payload_scenarios(
+            client, token, user_id, knowledge_base_id, name, milvus_url
+        )
     print("Milvus concurrent creation, retrieval, rebuild and deletion E2E passed")
 
 

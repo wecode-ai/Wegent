@@ -307,6 +307,7 @@ def test_read_tools_return_real_subscription_state(
     assert fetched["subscription"]["trigger_config"] == {
         "expression": "0 9 * * *",
         "timezone": "Asia/Shanghai",
+        "workday_only": False,
     }
 
     subscription_service.toggle_subscription(

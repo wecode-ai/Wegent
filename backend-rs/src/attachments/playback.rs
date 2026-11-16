@@ -65,9 +65,13 @@ pub(super) async fn attachment_playback(
     // parameter is falsy in the source and falls through to the session JWT.
     let context = match share_token.filter(|token| !token.is_empty()) {
         Some(token) => {
-            let has_access =
-                super::share_token::validate_share_token_access(state, attachment_id, token)
-                    .await?;
+            let has_access = super::share_token::validate_share_token_access(
+                state,
+                attachment_id,
+                token,
+                user.map(|user| i64::from(user.users_id)),
+            )
+            .await?;
             if !has_access {
                 return Err(error_response(
                     StatusCode::FORBIDDEN,

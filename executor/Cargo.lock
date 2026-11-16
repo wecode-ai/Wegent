@@ -2908,6 +2908,7 @@ dependencies = [
  "serde_json",
  "tempfile",
  "uuid",
+ "wegent-protocol",
 ]
 
 [[package]]
@@ -3121,6 +3122,7 @@ dependencies = [
  "wegent-protocol",
  "wegent-runtime-config",
  "wegent-runtime-logging",
+ "zstd",
 ]
 
 [[package]]

@@ -186,8 +186,7 @@ async fn insert_with_conflict_clause(
     let columns: Vec<Column> = tx.fetch_all(
         "SELECT CAST(COLUMN_NAME AS CHAR) AS column_name, CAST(IS_NULLABLE AS CHAR) AS is_nullable, CAST(DATA_TYPE AS CHAR) AS data_type FROM information_schema.COLUMNS WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='loop_items' AND GENERATION_EXPRESSION='' ORDER BY ORDINAL_POSITION", ()
     ).await?;
-    let now = Utc::now()
-        .naive_utc()
+    let now = crate::socketio::project_chat_messages::database_timestamp(Utc::now().naive_utc())
         .format("%Y-%m-%d %H:%M:%S%.f")
         .to_string();
     let mut row = BTreeMap::from([
@@ -252,7 +251,7 @@ pub(crate) fn new_run(
         "assignee_agent_id":rule.assignee_agent_id,"source":trigger,"status":"pending",
         "created_by_user_id":rule.created_by_user_id,"metadata":{"trigger":trigger,
         "timezone":rule.metadata.0["timezone"].as_str().unwrap_or("Asia/Shanghai"),
-        "scheduled_for":iso(scheduled_for),"error":null}})
+        "scheduled_for":iso(scheduled_for),"workday_only":trigger=="scheduled" && rule.metadata.0["workday_only"]==true,"error":null}})
 }
 
 #[cfg(test)]

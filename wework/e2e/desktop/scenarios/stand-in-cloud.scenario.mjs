@@ -382,7 +382,7 @@ export function createDesktopScenario({
           { text: '处理完毕' }
         )
         assert.equal(await control.command('getElementCount', processing), '1')
-        await control.command('waitFor', processing, { text: '分身处理' })
+        await control.command('waitFor', processing, { text: '助理处理' })
         assert.ok(
           (await control.command('getText', processing)).includes('云端设备自动接手'),
           'Completed stand-in notification must preserve its assignment title'

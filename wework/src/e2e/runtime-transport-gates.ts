@@ -10,6 +10,7 @@ export interface RuntimeTransportGateRule {
   where?: Match[]
   hold?: boolean
   holdFollowing?: boolean
+  drop?: boolean
 }
 
 interface Capture {
@@ -17,6 +18,7 @@ interface Capture {
   capturedAt: number
   deliveredAt?: number
   deliveries: number
+  dropped?: boolean
   deliver: () => void
 }
 
@@ -49,16 +51,20 @@ function valuesAt(value: unknown, path: string[]): unknown[] {
 
 export function armRuntimeTransportGate(rule: RuntimeTransportGateRule): void {
   requireE2E()
+  if (rule.drop && rule.kind !== 'response') {
+    throw new Error('Dropped runtime transport gates must target responses')
+  }
   if (gates.has(rule.id)) throw new Error(`Duplicate runtime gate: ${rule.id}`)
   gates.set(rule.id, { rule, following: [] })
 }
 
-// Only postpone or repeat an original transport delivery. Never fabricate runtime state.
+// Only postpone, drop, or repeat an original transport delivery. Never fabricate runtime state.
 export function deliverRuntimeTransport(
   kind: RuntimeTransportGateRule['kind'],
   name: string,
   value: unknown,
-  deliver: () => void
+  deliver: () => void,
+  drop?: () => void
 ): void {
   const gate = [...gates.values()].find(
     candidate =>
@@ -86,16 +92,29 @@ export function deliverRuntimeTransport(
     },
   }
   gate.capture = capture
+  if (gate.rule.drop) {
+    if (!drop) throw new Error(`Runtime gate ${gate.rule.id} requires a drop handler`)
+    capture.dropped = true
+    drop()
+    return
+  }
   if (gate.rule.hold === false) capture.deliver()
 }
 
 export function gateRuntimeResponse<T>(
   method: string,
   params: Record<string, unknown>,
-  result: T
+  result: T,
+  dropError?: () => Error
 ): Promise<T> {
-  return new Promise(resolve =>
-    deliverRuntimeTransport('response', method, { params, result }, () => resolve(result))
+  return new Promise((resolve, reject) =>
+    deliverRuntimeTransport(
+      'response',
+      method,
+      { params, result },
+      () => resolve(result),
+      dropError ? () => reject(dropError()) : undefined
+    )
   )
 }
 
@@ -108,6 +127,7 @@ export function readRuntimeTransportGate(id: string): Omit<Capture, 'deliver'> |
     capturedAt: capture.capturedAt,
     deliveredAt: capture.deliveredAt,
     deliveries: capture.deliveries,
+    dropped: capture.dropped,
   }
 }
 
@@ -122,7 +142,7 @@ export function resetRuntimeTransportGates(keep: string[] = []): void {
   requireE2E()
   for (const [id, { capture, following }] of gates) {
     if (keep.includes(id)) continue
-    if (capture && !capture.deliveries) capture.deliver()
+    if (capture && !capture.dropped && !capture.deliveries) capture.deliver()
     following.forEach(deliver => deliver())
     gates.delete(id)
   }

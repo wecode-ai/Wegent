@@ -1,3 +1,8 @@
+import {
+  COLLABORATION_EXP_TAB_ID,
+  isCollaborationExpPath,
+} from '@/features/collaboration-exp/collaborationExpFeature'
+
 export type WorkspaceTabKind = 'task' | 'board' | 'agent' | 'auxiliary'
 
 export interface WorkspaceTab {
@@ -52,6 +57,7 @@ export function defaultContentRoute(kind: WorkspaceTabKind): string {
 }
 
 export function resolveWorkspaceTabKind(pathname: string): WorkspaceTabKind | null {
+  if (isCollaborationExpPath(pathname)) return 'auxiliary'
   if (pathname === '/pending-interactions') return 'auxiliary'
   const route = resolveDshRoute(pathname)
   if (route?.workspaceTabKind) return route.workspaceTabKind
@@ -95,7 +101,9 @@ export function createWorkspaceTab(
 ): WorkspaceTab {
   const contentRoute = overrides.contentRoute ?? defaultContentRoute(kind)
   return {
-    id: overrides.id ?? newTabId(kind),
+    id: isCollaborationExpPath(contentRoute)
+      ? COLLABORATION_EXP_TAB_ID
+      : (overrides.id ?? newTabId(kind)),
     kind,
     title: overrides.title ?? workspaceTabTitle(kind, contentRoute, labels),
     contentRoute,

@@ -206,7 +206,6 @@ classify_workbench_path() {
       fi
       if [[ "$path" == wework/src/features/todo/CloudTodoWorkspace* ]]; then
         select_target "core:collaboration-parent-board"
-        select_target "core:collaboration-board-sorting"
         select_target "core:collaboration-board-backlog"
         select_target "core:collaboration-board-move-recovery"
       fi
@@ -389,8 +388,6 @@ classify_workbench_path() {
       select_target "core:embedded-browser"
       select_target "core:browser-toolbar-actions"
       select_target "core:browser-annotation-core"
-      select_target "core:browser-annotation-anchors"
-      select_target "core:browser-annotation-design"
       macos_inspector_e2e=true
       return
       ;;
@@ -462,8 +459,7 @@ classify_workbench_path() {
       return
       ;;
 
-    # File editing, Cloud HTML links, and Office previews have independently
-    # bootstrapped checkpoints.
+    # File workspace changes retain shared rendering and Cloud link coverage.
     wework/electron/src/host/local-workspace-files* | \
       wework/src/desktop/localWorkspaceFiles* | \
       wework/src/components/layout/workspace-panels/FileWorkspacePanel* | \
@@ -472,10 +468,8 @@ classify_workbench_path() {
       wework/src/components/layout/workspace-panels/WorkspaceTextFileEditor* | \
       wework/src/components/layout/workspace-panels/workspaceFileTypes* | \
       wework/src/components/chat/useDesktopMarkdownServices* | \
-      wework/src/components/chat/FileChangesReviewPanel* | \
-      wework/e2e/desktop/scenarios/local-file-preview.scenario.mjs)
-      select_target "core:local-file-preview"
-      select_target "core:office-file-preview"
+      wework/src/components/chat/FileChangesReviewPanel*)
+      select_target "core:rendering-extensions"
       if [[ "$path" == wework/src/components/layout/workspace-panels/FileWorkspacePanel* || \
         "$path" == wework/src/components/layout/workspace-panels/WorkspaceFilePreview* || \
         "$path" == wework/src/components/layout/workspace-panels/workspaceFileTypes* || \
@@ -484,10 +478,8 @@ classify_workbench_path() {
       fi
       return
       ;;
-    wework/e2e/desktop/scenarios/office-file-preview.scenario.mjs | \
-      wework/e2e/desktop/modules/office-preview-fixtures.mjs | \
-      wework/src/e2e/desktop-control-wheel*)
-      select_target "core:office-file-preview"
+    wework/src/e2e/desktop-control-wheel*)
+      select_target "core:rendering-extensions"
       return
       ;;
 
@@ -535,10 +527,9 @@ classify_workbench_path() {
       return
       ;;
 
-    wework/e2e/desktop/scenarios/collaboration-issue-badges.scenario.mjs | \
-      wework/src/features/todo/IssueBadges* | \
+    wework/src/features/todo/IssueBadges* | \
       wework/src/features/change-requests/*)
-      select_target "core:collaboration-issue-badges"
+      select_target "core:collaboration-first-use"
       return
       ;;
 
@@ -599,7 +590,7 @@ classify_workbench_path() {
       if [[ "$path" == wework/src/components/chat/composer/ComposerToolbar* || \
         "$path" == wework/src/components/chat/composer/ComposerTextarea* || \
         "$path" == wework/src/components/chat/composer/CompactChatComposer* ]]; then
-        select_target "core:drawing-attachment"
+        select_target "core:task-attachments"
       fi
       return
       ;;

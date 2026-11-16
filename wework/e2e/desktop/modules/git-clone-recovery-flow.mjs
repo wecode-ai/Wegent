@@ -150,6 +150,12 @@ export async function verifyGitCloneRecovery(control, cloud, setPhase) {
     await control.command('waitFor', '[data-testid="remote-project-git-error"]', {
       text: fixture.domain,
     })
+    // The configuration action depends on the cloud connection that the
+    // executor restart above can transiently drop, so wait for the rendered
+    // entry instead of snapshotting immediately after the error text.
+    await control.command('waitFor', '[data-testid="remote-project-git-configure"]', {
+      visible: true,
+    })
     const snapshot = JSON.parse(await control.command('snapshot', 'body'))
     assert.ok(
       snapshot.testIds.includes('standalone-folder-project-dialog'),

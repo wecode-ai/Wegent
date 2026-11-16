@@ -218,6 +218,20 @@ impl RuntimeWorkRpcHandler {
             );
             return Ok(json!({"success": true, "skipped": true}));
         }
+        if let Err(error) = self.sync_generated_issue_title(&latest_link, &title).await {
+            log_executor_event(
+                "generated Issue title update failed",
+                &[
+                    ("local_task_id", local_task_id.clone()),
+                    ("error", error.message),
+                ],
+            );
+        }
+        let latest_link =
+            self.commit_runtime_task_title(latest_link, title.clone(), Some(&source_title))?;
+        if latest_link.title != title {
+            return Ok(json!({"success": true, "skipped": true}));
+        }
         if let Some(thread_id) = latest_link.thread_id.as_deref() {
             if let Err(error) = self
                 .call_codex_thread_method(
@@ -234,10 +248,11 @@ impl RuntimeWorkRpcHandler {
                         ("error", error.clone()),
                     ],
                 );
-                return Ok(json!({"success": false, "error": error}));
+                return Ok(
+                    json!({"success": false, "error": error, "titleApplied":true, "title":title}),
+                );
             }
         }
-        self.commit_runtime_task_title(latest_link, title.clone());
         log_executor_event(
             "friendly task title generation completed",
             &[("local_task_id", local_task_id)],
@@ -247,12 +262,28 @@ impl RuntimeWorkRpcHandler {
 
     pub(super) fn commit_runtime_task_title(
         &self,
-        mut link: RuntimeTaskLink,
+        link: RuntimeTaskLink,
         title: String,
-    ) -> RuntimeTaskLink {
-        link.title = title.clone();
-        link.updated_at = now_ms();
-        self.upsert_local_task(link.clone());
+        expected_title: Option<&str>,
+    ) -> Result<RuntimeTaskLink, AppIpcError> {
+        let mut applied = false;
+        let link = self
+            .store
+            .update_task(&link.local_task_id, |current| {
+                if expected_title.is_some_and(|expected| current.title != expected) {
+                    return;
+                }
+                current.title = title.clone();
+                current.updated_at = now_ms();
+                applied = true;
+            })
+            .ok_or_else(|| {
+                AppIpcError::new("task_not_found", "Task was removed before its title update")
+            })?;
+        if !applied {
+            return Ok(link);
+        }
+        self.project_runtime_link_status(&link);
         let request = runtime_event_request_from_link(&link);
         emit_response_event(
             &self.event_tx,
@@ -262,7 +293,7 @@ impl RuntimeWorkRpcHandler {
             &request,
             json!({"title": title}),
         );
-        link
+        Ok(link)
     }
 
     pub(super) async fn fork_task_at_turn(&self, payload: Value) -> Result<Value, AppIpcError> {
@@ -863,16 +894,11 @@ impl RuntimeWorkRpcHandler {
         {
             runtime_handle.insert("queuePosition".to_owned(), json!(queue_position));
         }
-        if !self
-            .local_task_link(&local_task_id)
-            .is_some_and(|link| link.ephemeral)
-        {
-            self.track_default_work_item_async(
-                local_task_id.clone(),
-                title.clone(),
-                string_field(&payload, "message").unwrap_or_default(),
-            );
-        }
+        let _ = self.track_default_work_item_async(
+            local_task_id.clone(),
+            title.clone(),
+            string_field(&payload, "message").unwrap_or_default(),
+        );
         match payload
             .get("friendlyTitleExecutionRequest")
             .cloned()
@@ -1417,7 +1443,7 @@ impl RuntimeWorkRpcHandler {
             initial_thread_goal,
         };
         if was_busy && !completed_native_turn {
-            self.queue_turn(turn).await?;
+            self.submit_continuation(turn).await?;
         } else {
             self.spawn_turn(turn).await?;
         }
@@ -1949,6 +1975,10 @@ impl RuntimeWorkRpcHandler {
             }));
         };
 
+        if let Some(failure) = self.guidance_conversation_context_failure(&local_task_id, &payload)
+        {
+            return Ok(failure);
+        }
         let guidance_id = string_field(&payload, "client_guidance_id")
             .or_else(|| string_field(&payload, "clientGuidanceId"))
             .unwrap_or_else(|| format!("guidance-{}", now_ms()));
@@ -1984,6 +2014,11 @@ impl RuntimeWorkRpcHandler {
                         &turn_id,
                         error,
                     ));
+                }
+                if let Some(failure) =
+                    self.guidance_conversation_context_failure(&local_task_id, &payload)
+                {
+                    return Ok(failure);
                 }
                 log_executor_event(
                     "runtime guidance active turn corrected",
@@ -2035,6 +2070,17 @@ impl RuntimeWorkRpcHandler {
                 error,
             )),
         }
+    }
+
+    fn guidance_conversation_context_failure(&self, task: &str, payload: &Value) -> Option<Value> {
+        let private = self.runtime_task_is_private_discussion(task);
+        (private != (payload["conversationContext"] == "private_discussion")).then(|| {
+            json!({
+                "success":false,"accepted":false,"taskId":task,"runtime":"codex",
+                "code":"conversation_context_mismatch",
+                "error":"This message has a different conversation context from the active turn. Queue it or interrupt to start a new turn."
+            })
+        })
     }
 
     pub(super) async fn compact_task(&self, payload: Value) -> Result<Value, AppIpcError> {
@@ -3053,14 +3099,6 @@ mod tests {
         );
         assert_eq!(handle["overloadRecoveryTurnIds"], json!(["turn-live"]));
         assert_eq!(handle["supersededTranscriptTurnIds"], json!(["turn-live"]));
-    }
-
-    #[test]
-    fn normalizes_model_title_to_one_short_line() {
-        assert_eq!(
-            normalize_friendly_title("  “为任务创建友好标题。”\n这是解释"),
-            Some("为任务创建友好标题".to_owned())
-        );
     }
 
     #[test]

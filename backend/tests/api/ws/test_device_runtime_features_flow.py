@@ -40,6 +40,13 @@ class _MemoryDeviceCache:
     ) -> bool:
         return await self.set(key, value, expire)
 
+    async def update_json_if_present(self, key, update, *, expire):
+        current = copy.deepcopy(self.values.get(key))
+        if current is None or not update(current):
+            return False
+        self.values[key] = current
+        return True
+
     async def mget(self, keys: list[str]) -> dict[str, dict]:
         return {
             key: copy.deepcopy(self.values[key]) for key in keys if key in self.values

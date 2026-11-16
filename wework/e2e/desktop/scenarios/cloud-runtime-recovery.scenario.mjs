@@ -17,6 +17,7 @@ import {
 } from '../modules/response-protocol.mjs'
 import { TransportFaultProxy } from '../modules/transport-fault-proxy.mjs'
 import { waitForTranscriptState } from '../modules/transcript-restoration.mjs'
+import { createRuntimeNotificationReconnect } from '../modules/runtime-notification-reconnect.mjs'
 
 const PROMPT = 'WEWORK_E2E_CLOUD_STREAM_RECOVERY'
 const PARTIAL = 'CLOUD_STREAM_PARTIAL'
@@ -33,6 +34,7 @@ export async function assertSingleRecoveredCloudAnswer(control) {
 // Only the model is scripted; the relay, history, task state and Electron stay real.
 export function createDesktopScenario(options) {
   const existing = createCloudModelRecovery(options)
+  const notifications = createRuntimeNotificationReconnect(options)
   const appEnvironment = { ...existing.appEnvironment }
   let cloud
   let proxy
@@ -54,6 +56,7 @@ export function createDesktopScenario(options) {
       existing.setCloudEnvironment(value)
     },
     async handleHttp(request, response, url) {
+      if (await notifications.handleHttp(request, response, url)) return true
       if (!active) return existing.handleHttp?.(request, response, url) ?? false
       if (request.method !== 'POST' || !['/responses', '/v1/responses'].includes(url.pathname))
         return false
@@ -171,11 +174,23 @@ export function createDesktopScenario(options) {
         proxy.disconnectWebSockets(false)
         active = false
       }
+      await notifications.verify(cloud, control)
     },
     async cleanup() {
-      finishModel?.()
-      await proxy?.stop()
-      await existing.cleanup?.()
+      const errors = []
+      for (const cleanup of [
+        () => finishModel?.(),
+        () => notifications.cleanup(),
+        () => proxy?.stop(),
+        () => existing.cleanup?.(),
+      ]) {
+        try {
+          await cleanup()
+        } catch (error) {
+          errors.push(error)
+        }
+      }
+      if (errors.length) throw new AggregateError(errors, 'Cloud recovery cleanup failed')
     },
   }
 }

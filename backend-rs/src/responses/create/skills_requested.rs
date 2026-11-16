@@ -418,11 +418,17 @@ pub(crate) async fn resolve_request_preload_skills<
     // are replaced.
     if coding_coordinate(request) {
         extend_resolved_skills_from_bot_configs(
-            mysql,
-            request,
+            reads.cache,
+            request
+                .bot
+                .as_array()
+                .map(Vec::as_slice)
+                .unwrap_or_default(),
             &mut skills,
             user_preferences,
             tokens,
+            reads.owner_user_id,
+            team_namespace,
         )
         .await?;
     }
@@ -525,8 +531,8 @@ pub(crate) async fn resolve_request_preload_skills<
 /// `_sync_skill_refs_to_bot_configs` for one bot config (`:2312-2333`): a bot
 /// whose filtered string skill names are empty is skipped entirely, preserving
 /// its `skill_refs` field presence; otherwise each of its skills receives the
-/// resolved ref unless a truthy stored ref disagrees on `skill_id`/`namespace`.
-fn sync_bot_skill_refs(bot: &mut Value, resolved: &serde_json::Map<String, Value>) {
+/// resolved ref unless a stored identity disagrees on `skill_id`/`namespace`.
+pub(crate) fn sync_bot_skill_refs(bot: &mut Value, resolved: &serde_json::Map<String, Value>) {
     let bot_skills: Vec<String> = bot
         .get("skills")
         .and_then(Value::as_array)
@@ -554,7 +560,8 @@ fn sync_bot_skill_refs(bot: &mut Value, resolved: &serde_json::Map<String, Value
         let replace = match bot_refs.get(&name) {
             None => true,
             Some(current) => {
-                !brz_json::adapters::python_truthy(current) || skill_refs_match(current, reference)
+                current.get("skill_id").is_none_or(Value::is_null)
+                    || skill_refs_match(current, reference)
             }
         };
         if replace {
@@ -601,13 +608,19 @@ fn coding_coordinate(request: &crate::responses::create::dispatch::ExecutionRequ
 
 /// `_extend_resolved_skills_from_bot_configs` (`request_builder.py:2746-2787`):
 /// resolve every skill a member bot config declares but the resolution has not
-/// produced yet, through the shared attached/public Skill read.
-async fn extend_resolved_skills_from_bot_configs<M: Mysql, T: UserMcpAccessTokens>(
-    mysql: &M,
-    request: &crate::responses::create::dispatch::ExecutionRequest,
+/// produced yet. An unpinned Skill follows the Team's runtime lookup scope.
+pub(crate) async fn extend_resolved_skills_from_bot_configs<
+    M: Mysql,
+    R: brz_redis::Redis,
+    T: UserMcpAccessTokens,
+>(
+    cache: &crate::task_skills::kinds::KindCacheStore<'_, M, R>,
+    bot_configs: &[Value],
     skills: &mut BotSkills,
     user_preferences: Option<&str>,
     tokens: &T,
+    team_owner_id: i64,
+    team_namespace: &str,
 ) -> Result<(), FastApiError> {
     let mut existing: Vec<String> = skills
         .skills
@@ -619,8 +632,7 @@ async fn extend_resolved_skills_from_bot_configs<M: Mysql, T: UserMcpAccessToken
                 .map(str::to_string)
         })
         .collect();
-    let bot_configs: Vec<Value> = request.bot.as_array().cloned().unwrap_or_default();
-    for bot in &bot_configs {
+    for bot in bot_configs {
         let Some(names) = bot.get("skills").and_then(Value::as_array) else {
             continue;
         };
@@ -633,9 +645,19 @@ async fn extend_resolved_skills_from_bot_configs<M: Mysql, T: UserMcpAccessToken
                 .and_then(|refs| refs.get(name))
                 .and_then(|reference| reference.get("skill_id"))
                 .and_then(Value::as_i64);
-            let skill = super::resolve_binding_ref_skill(mysql, skill_id, name)
+            let skill = if let Some(id) = skill_id {
+                super::resolve_binding_ref_skill(cache.mysql, Some(id), name).await
+            } else {
+                crate::task_skills::resolver::find_skill_by_name(
+                    cache,
+                    name,
+                    team_owner_id,
+                    team_namespace,
+                )
                 .await
-                .map_err(super::dependency)?;
+                .map(|row| row.map(SkillKindRow::from))
+            }
+            .map_err(super::dependency)?;
             let Some(skill) = skill else {
                 continue;
             };

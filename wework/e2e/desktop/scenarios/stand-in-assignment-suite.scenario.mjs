@@ -2,12 +2,14 @@ import { createDesktopScenario as createNotifications } from './stand-in-assignm
 import { createDesktopScenario as createRecovery } from './stand-in-assignment-recovery.scenario.mjs'
 import { createDesktopScenario as createAutomation } from './stand-in-automation-assignment.scenario.mjs'
 import { createDesktopScenario as createConversations } from './stand-in-issue-conversations.scenario.mjs'
+import { createDesktopScenario as createDelegation } from './stand-in-issue-delegation.scenario.mjs'
 
 export function createDesktopScenario(options) {
   const notifications = createNotifications(options)
   const recovery = createRecovery(options)
   const automation = createAutomation(options)
   const conversations = createConversations(options)
+  const delegation = createDelegation(options)
   let active = conversations
   return {
     requiresCloudEnvironment: true,
@@ -16,18 +18,22 @@ export function createDesktopScenario(options) {
       await recovery.prepareCloud(cloud)
       await automation.prepareCloud(cloud)
       await conversations.prepareCloud(cloud)
+      await delegation.prepareCloud(cloud)
     },
     setCloudEnvironment(environment) {
       notifications.setCloudEnvironment(environment)
       recovery.setCloudEnvironment(environment)
       automation.setCloudEnvironment(environment)
       conversations.setCloudEnvironment(environment)
+      delegation.setCloudEnvironment(environment)
     },
     handleHttp(...args) {
       return active.handleHttp(...args)
     },
     async verify(control) {
       await conversations.verify(control)
+      active = delegation
+      await delegation.verify(control)
       active = notifications
       await notifications.verify(control)
       const popover = '[data-testid="wework-notifications-popover"]'
@@ -50,6 +56,7 @@ export function createDesktopScenario(options) {
         recovery: recovery.diagnostics(),
         automation: automation.diagnostics(),
         conversations: conversations.diagnostics(),
+        delegation: delegation.diagnostics(),
       }
     },
     cleanup() {

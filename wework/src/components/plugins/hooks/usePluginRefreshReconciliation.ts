@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import {
   beginPluginDeviceSync,
   pluginDeviceSyncDiagnostic,
@@ -23,7 +23,15 @@ export function usePluginRefreshReconciliation(options: {
   onError: (error: unknown) => void
 }) {
   const latest = useRef(options)
-  useEffect(() => {
+  const scopeEpoch = useRef(0)
+  useLayoutEffect(() => {
+    const previous = latest.current
+    if (
+      previous.accountKey !== options.accountKey ||
+      previous.deviceId !== options.deviceId ||
+      previous.request !== options.request
+    )
+      scopeEpoch.current += 1
     latest.current = options
   })
   const handled = useRef(0)
@@ -32,6 +40,7 @@ export function usePluginRefreshReconciliation(options: {
     accountKey: string
     deviceId: string
     startedAt: number
+    epoch: number
   } | null>(null)
   const [stage, setStage] = useState<PluginReconciliationStage>('waiting')
   useEffect(() => {
@@ -42,11 +51,15 @@ export function usePluginRefreshReconciliation(options: {
   }, [])
   useEffect(() => {
     const options = latest.current
-    if (!options.request || handled.current === options.request) return
+    if (!options.request || handled.current === options.request) {
+      setActive(current => (current && current.epoch !== scopeEpoch.current ? null : current))
+      return
+    }
     const owner = {
       accountKey: options.accountKey,
       deviceId: options.deviceId,
       startedAt: Date.now(),
+      epoch: scopeEpoch.current,
     }
     const clearActive = () => {
       if (mounted.current) setActive(current => (current === owner ? null : current))
@@ -71,6 +84,7 @@ export function usePluginRefreshReconciliation(options: {
     const isCurrent = () =>
       !cancelled &&
       mounted.current &&
+      scopeEpoch.current === owner.epoch &&
       latest.current.accountKey === accountKey &&
       latest.current.deviceId === deviceId &&
       latest.current.request === request
@@ -122,6 +136,18 @@ export function usePluginRefreshReconciliation(options: {
     }
     start()
     return () => {
+      // Availability and busy flags gate admission. Once acquired, the request
+      // still owns its result until its account, device or request changes.
+      if (
+        acquired &&
+        mounted.current &&
+        latest.current.accountKey === accountKey &&
+        latest.current.deviceId === deviceId &&
+        latest.current.request === request
+      ) {
+        logPluginRefreshPhase('reconcile-gates-changed', { request, current: true })
+        return
+      }
       cancelled = true
       if (timer) clearTimeout(timer)
       if (!acquired) clearActive()

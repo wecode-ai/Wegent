@@ -242,7 +242,7 @@ pub(super) fn scoped_provider_catalog(catalog: &Value, source: &Value) -> Value 
         .filter(|provider| provider["id"] == source["providerId"])
         .map(|provider| {
             let mut item = json!({"id":provider["id"]});
-            for key in ["name", "label", "read", "actions"] {
+            for key in ["name", "label", "read", "actions", "assistance"] {
                 if let Some(value) = provider.get(key) {
                     item[key] = value.clone();
                 }
@@ -308,6 +308,7 @@ fn delegated_provider_catalog(catalog: &Value, sources: &[Value]) -> Value {
             .unwrap_or_default()
         {
             provider.as_object_mut().unwrap().remove("actions");
+            provider.as_object_mut().unwrap().remove("assistance");
             items.push(provider);
         }
     }
@@ -614,12 +615,14 @@ mod tests {
     #[test]
     fn bound_work_catalog_exposes_only_its_provider_capabilities() {
         let read = json!({"inputSchema":{"type":"object","properties":{"state":{"type":"string"}}},"itemSchema":{"type":"object"},"pagination":"cursor"});
-        let catalog = json!({"items":[{"id":"@third-party/builds","read":read,"actions":[],"authTarget":{"private":"not needed"},"resourceQuerySchema":{"discovery":true}},{"id":"@other/mail","read":{"pagination":"none"}}]});
+        let assistance =
+            json!({"prepare":["Reply through this provider's original source operation"]});
+        let catalog = json!({"items":[{"id":"@third-party/builds","read":read,"actions":[],"assistance":assistance,"authTarget":{"private":"not needed"},"resourceQuerySchema":{"discovery":true}},{"id":"@other/mail","read":{"pagination":"none"},"assistance":{"prepare":["Unrelated private guidance"]}}]});
         let scoped =
             scoped_provider_catalog(&catalog, &json!({"providerId":"@third-party/builds"}));
         assert_eq!(
             scoped,
-            json!({"items":[{"id":"@third-party/builds","read":read,"actions":[]}]})
+            json!({"items":[{"id":"@third-party/builds","read":read,"actions":[],"assistance":assistance}]})
         );
         assert_eq!(
             scoped_provider_catalog(&catalog, &json!({"providerId":"missing"})),

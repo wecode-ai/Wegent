@@ -27,6 +27,30 @@ const MIN_RECONCILE_DELAY_MS = Number(RECONCILE_ENV.LOCAL_PLUGIN_RECONCILE_INTER
 const MAX_RECONCILE_DELAY_MS =
   MIN_RECONCILE_DELAY_MS + Number(RECONCILE_ENV.LOCAL_PLUGIN_RECONCILE_JITTER) * 1_000
 const REGISTRATION_ACK_TIMEOUT_MS = 10_000
+const SETUP_RECONCILE_MARGIN_MS = 30_000
+
+function latestReconcileAt(observation, beforeAt) {
+  return observation.reconciliations.filter(value => value.at < beforeAt).at(-1)?.at
+}
+
+// Fixture setup can cross a production timer tick on a loaded runner. Align the
+// fault injection before the next tick instead of changing the timer interval.
+async function waitForSafeReconcileWindow(target) {
+  const { observation, baseline } = target
+  while (true) {
+    const scheduledAt = latestReconcileAt(observation, Date.now()) ?? baseline.registeredAt
+    if (scheduledAt + MIN_RECONCILE_DELAY_MS - Date.now() > SETUP_RECONCILE_MARGIN_MS) {
+      return scheduledAt
+    }
+    const reconciliationCount = observation.reconciliations.length
+    await until(
+      () => observation.reconciliations.length > reconciliationCount,
+      Boolean,
+      `${target.kind} did not reach the next production reconcile window`,
+      MAX_RECONCILE_DELAY_MS + REGISTRATION_ACK_TIMEOUT_MS
+    )
+  }
+}
 
 // A complete reconciliation advances ordering metadata for all managed plugins.
 // Compare the unrelated plugin's actual identity, content, state and runtime.
@@ -197,7 +221,7 @@ export async function createDesktopScenario({
 
   async function waitForAutomaticRecovery({ target, item, baseline, retained }) {
     const { observation, home, deviceRouteId } = target
-    const deadline = baseline.registeredAt + MAX_RECONCILE_DELAY_MS + workbenchReadyTimeoutMs
+    const deadline = baseline.scheduledAt + MAX_RECONCILE_DELAY_MS + workbenchReadyTimeoutMs
     let lastProgressAt = 0
     while (Date.now() < deadline) {
       if (observation.gate.error) throw observation.gate.error
@@ -206,7 +230,9 @@ export async function createDesktopScenario({
         baseline.registrationCount,
         'A reconnect replaced the periodic recovery path'
       )
-      const requests = observation.reconciliations.slice(baseline.reconciliationCount)
+      const requests = observation.reconciliations.filter(
+        value => value.at >= target.recoveryStartedAt
+      )
       assert.ok(requests.length <= 1, 'Recovery issued duplicate reconcile requests')
       const current = await materializedPlugin(home, item.installedId)
       if (
@@ -217,7 +243,7 @@ export async function createDesktopScenario({
         const request = requests[0]
         assert.equal(request.reconcile, true)
         assert.equal(request.deviceId, deviceRouteId, 'Periodic pull used a stale device route')
-        const elapsedMs = request.at - baseline.registeredAt
+        const elapsedMs = request.at - baseline.scheduledAt
         assert.ok(
           elapsedMs >= MIN_RECONCILE_DELAY_MS &&
             elapsedMs <= MAX_RECONCILE_DELAY_MS + REGISTRATION_ACK_TIMEOUT_MS,
@@ -408,14 +434,10 @@ export async function createDesktopScenario({
         registeredDeviceId: registered.deviceId,
         registrationCount: target.observation.registrations.length,
         heartbeatCount: target.observation.heartbeats.length,
-        reconciliationCount: target.observation.reconciliations.length,
         retained: target.retainedBefore,
         capturedAt: Date.now(),
       }
-      assert.ok(
-        Date.now() - registered.at < MIN_RECONCILE_DELAY_MS - 30_000,
-        `${target.kind} fixture setup consumed the first production timer period`
-      )
+      target.baseline.scheduledAt = await waitForSafeReconcileWindow(target)
     }
     missedInstalledId = item.installedId
     const componentStates = { [`skill:${item.slug}`]: false }
@@ -442,6 +464,10 @@ export async function createDesktopScenario({
       assert.deepEqual(target.missed.mcps, [])
       target.observation.gate.discard()
       assert.equal((await materializedPlugin(target.home, item.installedId)).enabled, true)
+      target.recoveryStartedAt = Date.now()
+      target.baseline.scheduledAt =
+        latestReconcileAt(target.observation, target.recoveryStartedAt) ??
+        target.baseline.registeredAt
       evidence.push({
         case: 'real-runtime-state-change-notification-lost',
         target: target.kind,

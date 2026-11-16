@@ -123,6 +123,13 @@ function personalBoardFixture(overrides: Partial<CollaborationProject> = {}) {
   return { api, host, updateProject, notify }
 }
 
+function showAllIssues() {
+  const filter = screen.getByTestId('project-needs-my-input-filter')
+  expect(filter).toHaveAttribute('aria-pressed', 'true')
+  fireEvent.click(filter)
+  expect(filter).toHaveAttribute('aria-pressed', 'false')
+}
+
 function selectBoardGroup(groupBy: GroupBy) {
   fireEvent.click(screen.getByTestId('cloud-board-group-by'))
   fireEvent.click(screen.getByTestId(`cloud-board-group-option-${groupBy}`))
@@ -344,6 +351,8 @@ describe('CollaborationApp shared project board', () => {
       const { api, host, updateProject, notify } = personalBoardFixture({ access_role: role })
       render(<CollaborationApp api={api} host={host} locale="zh-CN" pollIntervalMs={0} />)
       expect(await screen.findByTestId('collaboration-issue-issue-1')).toBeInTheDocument()
+
+      showAllIssues()
 
       selectBoardGroup('assignee')
 
@@ -867,6 +876,8 @@ describe('CollaborationApp shared project board', () => {
         navigate: jest.fn(),
       }
       render(<CollaborationApp api={api} host={host} locale="zh-CN" pollIntervalMs={0} />)
+      await screen.findByTestId('collaboration-issue-issue-1')
+      showAllIssues()
       const lane =
         groupBy === 'priority'
           ? 'priority-high'
@@ -979,6 +990,7 @@ describe('CollaborationApp shared project board', () => {
     render(<CollaborationApp api={api} host={host} locale="zh-CN" pollIntervalMs={0} />)
 
     expect(await screen.findByText('GitHub 第一页 Issue')).toBeInTheDocument()
+    showAllIssues()
     expect(screen.getByText('GitHub 第二页 Issue')).toBeInTheDocument()
     expect(screen.getByText('GitHub 已完成 Issue')).toBeInTheDocument()
     expect(listPage).toHaveBeenCalledTimes(6)

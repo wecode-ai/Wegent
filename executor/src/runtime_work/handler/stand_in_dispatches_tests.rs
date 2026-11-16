@@ -3,6 +3,107 @@ use axum::{routing::get, Json, Router};
 use std::sync::atomic::AtomicUsize;
 
 #[tokio::test]
+async fn pending_cloud_binding_is_finalized_without_replaying_an_accepted_task() {
+    let root = tempfile::tempdir().unwrap();
+    let issue = json!({"id":"issue","title":"Accepted work","cloud_project_id":"project","assignee_user_id":7,"human_task_binding":{"humanAssignmentId":"human","assignmentId":"assignment"}});
+    let current_issue = issue.clone();
+    let row = Arc::new(Mutex::new(json!({})));
+    let current_row = row.clone();
+    let writes = Arc::new(Mutex::new(Vec::<Value>::new()));
+    let written = writes.clone();
+    let router = Router::new()
+        .route("/api/users/me", get(|| async { Json(json!({"id":7})) }))
+        .route(
+            "/api/v1/loop-items/issue",
+            get(move || {
+                let value = current_issue.clone();
+                async { Json(value) }
+            }),
+        )
+        .route(
+            "/api/v1/loop-items/issue/tasks",
+            get(move || {
+                let value = current_row.lock().unwrap().clone();
+                async move { Json(json!([value])) }
+            })
+            .post(move |Json(body): Json<Value>| {
+                written.lock().unwrap().push(body);
+                async { Json(json!({"id":"binding"})) }
+            }),
+        );
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let url = format!("http://{}", listener.local_addr().unwrap());
+    let server = tokio::spawn(async { axum::serve(listener, router).await.unwrap() });
+    let mut handler = RuntimeWorkRpcHandler::new("mac", "unused");
+    handler.store = RuntimeWorkStore::new(root.path().join("runtime.json"));
+    handler.task_store_path = Arc::new(root.path().join("tasks.sqlite"));
+    handler.backend_connection = Arc::new(Mutex::new(Some(ConnectionConfig {
+        backend_url: url,
+        auth_token: "test".into(),
+        ..Default::default()
+    })));
+    let store = LocalTaskStore::open(handler.task_store_path.as_ref()).unwrap();
+    store.save_stand_in_settings("project", 7, json!({"id":"review","projectStore":"cloud","executionDeviceId":"mac","version":0,"enabled":true,"prompt":"Review"})).unwrap();
+    let settings = store.personal_stand_in(7, "mac").unwrap();
+    let config = handler
+        .stand_in_project_configs(&[settings], "project", "cloud")
+        .into_iter()
+        .find(|config| config["id"] == "review")
+        .unwrap();
+    let task_id = handler.stand_in_task_id(&config, &issue);
+    *row.lock().unwrap() =
+        json!({"task_id":task_id,"device_id":"mac","task_user_id":7,"stand_in_pending":true});
+    let ids = handler
+        .queue_stand_in_dispatches(&[config], &issue)
+        .unwrap();
+    assert_eq!(ids.len(), 1);
+    let intent = store.pending_stand_in_dispatches().unwrap().remove(0).1;
+    let origin = json!({"type":"issue_dispatch","initiatedBy":"stand_in","standInId":"review","userId":7,"projectStore":"cloud","cloudProjectId":"project","loopItemId":"issue","humanAssignmentId":"human"});
+    for changed in [
+        json!({"userId":8}),
+        json!({"cloudProjectId":"other"}),
+        json!({"standInId":"other"}),
+    ] {
+        let mut foreign = origin.clone();
+        foreign
+            .as_object_mut()
+            .unwrap()
+            .extend(changed.as_object().unwrap().clone());
+        handler.upsert_local_task(RuntimeTaskLink {
+            local_task_id: task_id.clone(),
+            status: "done".into(),
+            runtime_handle: json!({"origin":foreign}),
+            ..Default::default()
+        });
+        handler
+            .reconcile_stand_in_dispatch(&store, &intent)
+            .await
+            .unwrap();
+        assert!(
+            writes.lock().unwrap().is_empty(),
+            "A foreign task must not authorize a binding repair"
+        );
+    }
+    handler.upsert_local_task(RuntimeTaskLink {
+        local_task_id: task_id.clone(),
+        status: "done".into(),
+        runtime_handle: json!({"origin":origin}),
+        ..Default::default()
+    });
+    handler
+        .reconcile_stand_in_dispatch(&store, &intent)
+        .await
+        .unwrap();
+    assert_eq!(writes.lock().unwrap().len(), 1);
+    let written = writes.lock().unwrap()[0].clone();
+    assert_eq!(written["standInPending"], false);
+    assert_eq!(written["taskId"], task_id);
+    assert_eq!(handler.local_task_links(true).len(), 1);
+    assert_eq!(handler.local_task_link(&task_id).unwrap().status, "done");
+    server.abort();
+}
+
+#[tokio::test]
 async fn automatic_intent_keeps_its_device_before_cloud_reservation_exists() {
     let root = tempfile::tempdir().unwrap();
     let issue = json!({"id":"issue","cloud_project_id":"project","assignee_user_id":7,"human_task_binding":{"humanAssignmentId":"human","assignmentId":"assignment"}});
