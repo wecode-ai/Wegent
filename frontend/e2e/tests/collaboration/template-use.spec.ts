@@ -7,8 +7,12 @@ import { expect, test } from '../../fixtures/executor-test'
 import { REGULAR_USER } from '../../config/test-users'
 
 const API_BASE_URL = process.env.E2E_API_URL || 'http://localhost:8000'
+// The web application defaults to English; persistence follows the localized builtin document.
 const definitions = JSON.parse(
-  readFileSync(resolve(__dirname, '../../../../shared/data/collaboration-templates.json'), 'utf8')
+  readFileSync(
+    resolve(__dirname, '../../../../packages/collaboration/src/templates/builtins.en.json'),
+    'utf8'
+  )
 )
 
 for (const destination of ['existing', 'new'] as const) {

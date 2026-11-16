@@ -154,6 +154,13 @@ async function verifyTemplateRoleValidation(control, scoped) {
     'getValue',
     scoped(testId('collaboration-project-name-input'))
   )
+  const advanced = scoped(testId('collaboration-project-create-advanced'))
+  const description = scoped(testId('collaboration-project-description-input'))
+  await control.command('click', advanced)
+  await control.command('waitFor', `${advanced}[aria-expanded="true"]`, { visible: true })
+  const originalDescription = await control.command('getValue', description)
+  const draftDescription = `用户编写的项目说明 ${process.pid}\n保留独立验收要求与边界。😀`
+  await control.command('fill', description, { value: draftDescription })
   await control.command('click', scoped(testId('project-create-choose-template')))
   await control.command('clickWhenEnabled', testId('template-details-product-lifecycle'))
   await control.command('clickWhenEnabled', testId('template-use'))
@@ -180,10 +187,16 @@ async function verifyTemplateRoleValidation(control, scoped) {
   })
   await control.command('clickWhenEnabled', apply)
   await control.command('waitFor', configuration, { visible: false })
+  assert.equal(
+    await control.command('getValue', description),
+    draftDescription,
+    'Selecting a template must preserve the user-written project description'
+  )
   const selected = scoped(testId('project-create-template-summary'))
   const summary = await control.command('getText', selected)
   await keepDraft(control, selected, 'header')
   assert.equal(await control.command('getText', selected), summary)
+  assert.equal(await control.command('getValue', description), draftDescription)
   await control.command(
     'waitFor',
     scoped(`${testId('collaboration-project-create-confirm')}:not(:disabled)`),
@@ -195,6 +208,14 @@ async function verifyTemplateRoleValidation(control, scoped) {
   )
   await control.command('click', scoped(testId('project-create-clear-template')))
   await control.command('waitFor', role, { visible: false })
+  assert.equal(
+    await control.command('getValue', description),
+    draftDescription,
+    'Removing a template must retain the original description and its line breaks'
+  )
+  await control.command('fill', description, { value: originalDescription })
+  await control.command('click', advanced)
+  await control.command('waitFor', `${advanced}[aria-expanded="false"]`, { visible: true })
 }
 
 async function withProjectCreationAgents(request, workspace, verify) {
@@ -427,9 +448,7 @@ async function verifyGeneratedGroupDraft(control, scoped, configuration, agents,
     const cloudModel = `${menu} ${testId(`model-option-${CLOUD_PUBLIC_MODEL_NAME}`)}`
     await control.command('scrollIntoView', cloudModel)
     await control.command('clickWhenEnabled', cloudModel)
-    await control.command('waitFor', modelTrigger, {
-      text: CLOUD_PUBLIC_MODEL_NAME,
-    })
+    await control.command('waitFor', `${cloudModel}[aria-checked="true"]`, {})
     // Desktop model selection retains the menu for options; dismiss it explicitly.
     await control.command('nativePress', modelTrigger, { key: 'Escape' })
     await control.command('waitFor', menu, { visible: false })

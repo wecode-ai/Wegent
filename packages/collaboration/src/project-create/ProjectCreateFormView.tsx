@@ -328,7 +328,8 @@ export function ProjectCreateFormView({
               if (document) {
                 if (!state.name.trim())
                   commands.setName(document.spec.resources.collaboration.project.name)
-                commands.setDescription(document.spec.resources.collaboration.project.description)
+                if (!state.description.trim())
+                  commands.setDescription(document.spec.resources.collaboration.project.description)
               }
             }}
             onChange={(drafts, selected, document) => {

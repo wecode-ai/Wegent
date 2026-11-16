@@ -29,6 +29,8 @@ When creating a cloud project, open **Project collaborators → Add collaborator
 
 Start with the project name, then confirm its group, visibility and collaborators. Template discovery, member configuration and Team responsibilities use views within the same creation window. **Back to project** or Escape returns to the previous configuration level while preserving the project draft. After selecting a template, the main form shows a template and role-count summary; use **Configure members** to adjust roles. Missing members are identified beside their fields. Complete and confirm the configuration before creating the project.
 
+Templates supply defaults only for empty project names and descriptions. Existing content remains intact when you select, leave or remove a template.
+
 If the model list fails to load while configuring Team responsibilities, select **Reload models**. Your instructions and participants remain intact. You can also return to the project and create it without that Team configuration.
 
 Use Tab to move between controls in the model picker and arrow keys to select a model. Escape closes the picker and restores the previous focus. Responsibility generation announces preparation, progress and completion. In the English interface, built-in template names, roles and default project content appear in English; personal and third-party templates retain their authors' original content.
