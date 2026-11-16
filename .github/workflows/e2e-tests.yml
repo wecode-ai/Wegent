@@ -2038,16 +2038,6 @@ jobs:
           PYTHONPATH: ${{ github.workspace }}
         run: uv run pytest tests/models/test_wework_file_delivery_migration.py -n 0 --no-cov
 
-      - name: Prepare code-server for Device IDE E2E
-        run: |
-          version="$(sed -n 's/^ARG CODE_SERVER_VERSION=//p' docker/device/Dockerfile)"
-          test -n "$version"
-          mkdir -p .ci-artifacts/code-server
-          curl --fail --silent --show-error --location --retry 2 --max-time 60 \
-            "https://github.com/coder/code-server/releases/download/v${version}/code-server-${version}-linux-amd64.tar.gz" \
-            | tar -xz --strip-components=1 -C .ci-artifacts/code-server
-          test -x .ci-artifacts/code-server/bin/code-server
-
       - name: Run Executor E2E tests
         env:
           DATABASE_URL: mysql+pymysql://root:test123@localhost:3306/wegent_test
@@ -2093,7 +2083,6 @@ jobs:
             --env E2E_DEVICE_ID \
             --env E2E_EXECUTOR_RECOVERY_URL \
             --env E2E_EXECUTOR_RECOVERY_GATEWAY_LOG="$container_workspace/logs/backend/rust/info.log" \
-            --env E2E_CODE_SERVER_BINARY="$container_workspace/.ci-artifacts/code-server/bin/code-server" \
             --env GITHUB_RUN_ID \
             --env GITHUB_RUN_ATTEMPT \
             --env CI \

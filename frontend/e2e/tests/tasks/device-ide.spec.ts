@@ -2,11 +2,12 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-import { spawn } from 'node:child_process'
+import { execFile, spawn } from 'node:child_process'
 import { createWriteStream } from 'node:fs'
-import { mkdtemp, rm } from 'node:fs/promises'
+import { mkdtemp, readFile, rm, unlink } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { join, resolve } from 'node:path'
+import { promisify } from 'node:util'
 import { expect, test } from '@playwright/test'
 import {
   startIdeDevice,
@@ -14,19 +15,59 @@ import {
   type ArtifactDevice,
 } from '../../utils/artifact-device-fixture'
 
+const run = promisify(execFile)
+
+async function codeServerBinary(root: string): Promise<string> {
+  if (process.env.E2E_CODE_SERVER_BINARY || !process.env.CI) {
+    return process.env.E2E_CODE_SERVER_BINARY || 'code-server'
+  }
+
+  // Match the real device image without rebuilding an image for this test.
+  const dockerfile = await readFile(
+    resolve(__dirname, '../../../../docker/device/Dockerfile'),
+    'utf8'
+  )
+  const version = dockerfile.match(/^ARG CODE_SERVER_VERSION=(\d+\.\d+\.\d+)$/m)?.[1]
+  if (!version) throw new Error('Could not read the device image code-server version')
+
+  const archive = join(root, 'code-server.tar.gz')
+  await run('curl', [
+    '--fail',
+    '--silent',
+    '--show-error',
+    '--location',
+    '--retry',
+    '2',
+    '--max-time',
+    '45',
+    '--retry-max-time',
+    '45',
+    '--output',
+    archive,
+    `https://github.com/coder/code-server/releases/download/v${version}/code-server-${version}-linux-amd64.tar.gz`,
+  ])
+  await run('tar', ['-xzf', archive, '--strip-components=1', '-C', root])
+  await unlink(archive)
+  return join(root, 'bin', 'code-server')
+}
+
 test('opens a remote Executor IDE from the device card', async ({ page, request }, testInfo) => {
-  test.setTimeout(90_000)
+  test.setTimeout(120_000)
   await page.addInitScript(() => localStorage.setItem('user_onboarding_completed', 'true'))
   await page.goto('/devices', { waitUntil: 'domcontentloaded' })
   const token = await page.evaluate(() => localStorage.getItem('auth_token'))
   if (!token) throw new Error('The browser has no authenticated Wegent session')
 
   const root = await mkdtemp(join(tmpdir(), 'wegent-code-server-e2e-'))
+  const binary = await codeServerBinary(root).catch(async error => {
+    await rm(root, { recursive: true })
+    throw error
+  })
   const port = 18080
   const password = crypto.randomUUID()
   const log = createWriteStream(testInfo.outputPath('code-server.log'))
   const server = spawn(
-    process.env.E2E_CODE_SERVER_BINARY || 'code-server',
+    binary,
     [
       '--bind-addr',
       `127.0.0.1:${port}`,
