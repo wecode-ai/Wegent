@@ -1,0 +1,36 @@
+{
+  "synthetic": true,
+  "issue": {
+    "id": "issue-example",
+    "assignee": { "type": "user", "id": "57" },
+    "status": "in_progress"
+  },
+  "human_assistant_dispatch": {
+    "dispatchId": "dispatch-example",
+    "projectId": "project-example",
+    "issueId": "issue-example",
+    "assignmentId": "assignment-example",
+    "assignmentVersion": 3,
+    "ownerUserId": 57,
+    "endpointRef": "wework-local:device-example:@primary",
+    "dispatchState": "waiting_device",
+    "executionId": "123456789",
+    "reasonCode": "waiting_device",
+    "idempotencyKey": "project-example:issue-example:assignment-example:3",
+    "createdAt": "2026-11-16T08:00:00Z",
+    "updatedAt": "2026-11-16T08:00:00Z"
+  },
+  "recovery": {
+    "onDeviceReady": "claim_existing_execution_once",
+    "onReassign": "cancel_old_execution_and_reject_stale_results",
+    "onCompletion": "publish_summary_and_evidence_with_provenance",
+    "issueStatus": "unchanged",
+    "privateTranscript": "owner_only"
+  },
+  "unavailable": {
+    "dispatchState": "no_authorized_assistant",
+    "endpointRef": null,
+    "executionId": null,
+    "reasonCode": "no_authorized_assistant"
+  }
+}

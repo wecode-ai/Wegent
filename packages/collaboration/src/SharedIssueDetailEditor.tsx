@@ -97,6 +97,7 @@ import {
   IssueDeliveries,
 } from "./issue-detail/IssueExecutionLists";
 import { taskDeviceLabel } from "./issue-detail/taskBindingPresentation";
+import { HumanAssistantDispatchStatus } from './issue-detail/HumanAssistantDispatchStatus'
 
 function cn(...values: Array<string | false | null | undefined>): string {
   return values.filter(Boolean).join(" ");
@@ -655,6 +656,7 @@ export type TodoEditorProps = {
    */
   canStartWork?: boolean;
   defaultAssistant?: CollaborationDefaultAssistant;
+  onConfigureAssistant?: () => void
   taskRefreshKey?: string | number;
   initialTaskBindings?: SharedIssueDetailTaskBinding[];
   /** Live execution states keyed by the stable task-binding id. */
@@ -929,6 +931,16 @@ export function TodoEditor(props: TodoEditorProps) {
       ...tasks.filter((task) => !initialTaskIds.has(String(task.id))),
     ];
   }, [props.initialTaskBindings, tasks]);
+  const ownsAssistantDispatch =
+    item?.human_assistant_dispatch != null &&
+    String(props.currentUserId) === String(item.human_assistant_dispatch.ownerUserId)
+  const assistantTask = ownsAssistantDispatch
+    ? effectiveTasks.find(
+        task =>
+          task.execution_id != null &&
+          task.execution_id === String(item.human_assistant_dispatch?.executionId)
+      )
+    : undefined
   const refreshTaskBindings = useCallback(async () => {
     if (editItemId == null) return;
     const requestId = ++taskBindingsRequestIdRef.current;
@@ -3294,6 +3306,22 @@ export function TodoEditor(props: TodoEditorProps) {
                         onCreateTask: props.onCreateTask,
                       })
                     : null}
+
+                  <HumanAssistantDispatchStatus
+                    itemId={item.id}
+                    dispatch={item.human_assistant_dispatch}
+                    translate={t}
+                    onOpenExecution={
+                      assistantTask && props.onOpenTaskConversation
+                        ? () => props.onOpenTaskConversation?.(assistantTask)
+                        : undefined
+                    }
+                    onConfigure={
+                      ownsAssistantDispatch
+                        ? props.onConfigureAssistant
+                        : undefined
+                    }
+                  />
 
                   <ExecutionConfigurationNotice
                     key={item.id}

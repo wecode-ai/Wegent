@@ -1122,6 +1122,10 @@ export function WeworkSharedProject({
                     project.task_provider === 'dingtalk_aitable' ? services.aitableApi : undefined
                   }
                   onCreateTask={onCreateTask}
+                  onConfigureAssistant={() => {
+                    setTaskComposer(null)
+                    setLocation(current => ({ ...current, rootView: 'stand-in', issueId: null }))
+                  }}
                   onDelete={onDelete}
                   deleteLabel={createCollaborationTranslator(locale)('todo.archive_issue')}
                   onStartHumanTaskFromReply={({ issueId, dispatch }) =>

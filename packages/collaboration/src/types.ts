@@ -120,6 +120,26 @@ export type BackendCollaborationProject = CollaborationProject & {
   access_role: CollaborationRole;
 };
 
+export interface HumanAssistantDispatch {
+  ownerUserId: number
+  endpointRef: string | null
+  dispatchState:
+    | 'queued'
+    | 'waiting_device'
+    | 'no_authorized_assistant'
+    | 'running'
+    | 'completed'
+    | 'failed'
+    | 'cancelling'
+    | 'cancelled'
+  executionId: string | number | null
+  reasonCode: string | null
+  assignmentId: string
+  assignmentVersion: number
+  createdAt: string
+  updatedAt: string
+}
+
 export interface CollaborationIssue {
   id: string;
   cloud_project_id: CollaborationProjectId;
@@ -145,6 +165,7 @@ export interface CollaborationIssue {
     dispatchRoundId: string;
     assignmentId: string;
   } | null;
+  human_assistant_dispatch?: HumanAssistantDispatch | null
   ai_state?: {
     status?: string | null;
     last_error?: string | null;

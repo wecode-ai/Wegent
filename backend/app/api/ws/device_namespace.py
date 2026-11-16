@@ -84,6 +84,7 @@ from app.schemas.device import (
     DeviceStatusPayload,
     DeviceType,
 )
+from app.schemas.personal_assistant_dispatch import PersonalAssistantDispatchFeatures
 from app.schemas.runtime_work import RuntimeModelSelection
 from app.services.channels.callback import (
     forward_event_to_channel_callbacks,
@@ -94,6 +95,9 @@ from app.services.chat.storage.db import get_db_session, run_sync_in_executor
 from app.services.chat.webpage_ws_chat_emitter import get_extended_emitter
 from app.services.device.capability_sync_service import device_capability_sync_service
 from app.services.device.identity import record_route_id
+from app.services.device.personal_assistant_dispatch import (
+    persist_personal_assistant_dispatch,
+)
 from app.services.device.record_operations import app_identity_lock
 from app.services.device.terminal_metrics import record_terminal_event
 from app.services.device.terminal_protocol import (
@@ -429,6 +433,21 @@ def _update_device_heartbeat(user_id: int, device_id: str) -> None:
     """
     # Heartbeat is managed via Redis in the async handler
     pass
+
+
+def _store_personal_assistant_declaration(
+    user_id: int,
+    device_id: str,
+    advertisement: PersonalAssistantDispatchFeatures,
+) -> None:
+    """Persist consent separately from short-lived online state."""
+    from app.services.human_assistant_dispatch import refresh_owner_dispatches
+
+    with _db_session() as db:
+        persist_personal_assistant_dispatch(
+            db, user_id=user_id, device_id=device_id, advertisement=advertisement
+        )
+        refresh_owner_dispatches(db, user_id=user_id)
 
 
 def _update_device_status(user_id: int, device_id: str, status: str) -> None:
@@ -827,6 +846,7 @@ def _publish_execution_item_change(
     *,
     execution: object,
     previous_version: int | None,
+    execution_status_changed: bool = False,
 ) -> None:
     if previous_version is None:
         return
@@ -836,7 +856,13 @@ def _publish_execution_item_change(
     from app.models.delivery import LoopItem
 
     item = db.get(LoopItem, loop_item_id, populate_existing=True)
-    if item is None or item.version == previous_version:
+    personal_status_changed = (
+        getattr(execution, "executor_type", None) == "human_assistant"
+        and execution_status_changed
+    )
+    if item is None or (
+        item.version == previous_version and not personal_status_changed
+    ):
         return
     publish_loop_item_changed(
         db,
@@ -930,6 +956,7 @@ def _project_chat_runtime_event_sync(
         previous_item_version = (
             _execution_item_version(db, execution) if execution is not None else None
         )
+        previous_execution_status = execution.status if execution is not None else None
         matched_execution = loop_item_execution_service.handle_runtime_event(
             db,
             device_id=device_id,
@@ -979,6 +1006,8 @@ def _project_chat_runtime_event_sync(
                 db,
                 execution=matched_execution,
                 previous_version=previous_item_version,
+                execution_status_changed=matched_execution.status
+                != previous_execution_status,
             )
         else:
             workflow_continuation = None
@@ -1027,6 +1056,9 @@ def _execution_runtime_event_sync(
                 if execution is not None
                 else None
             )
+            previous_execution_status = (
+                execution.status if execution is not None else None
+            )
             matched = loop_item_execution_service.handle_runtime_event(
                 db,
                 device_id=device_id,
@@ -1041,6 +1073,8 @@ def _execution_runtime_event_sync(
                     db,
                     execution=matched,
                     previous_version=previous_item_version,
+                    execution_status_changed=matched.status
+                    != previous_execution_status,
                 )
             return None
     except Exception:
@@ -1807,6 +1841,18 @@ class DeviceNamespace(socketio.AsyncNamespace):
         )
 
         # Broadcast device online event to user room (via chat namespace)
+        if (
+            payload.runtime_features is not None
+            and payload.runtime_features.personal_assistant_dispatch is not None
+        ):
+            await run_sync_in_executor(
+                partial(
+                    _store_personal_assistant_declaration,
+                    user_id=user_id,
+                    device_id=route_id,
+                    advertisement=payload.runtime_features.personal_assistant_dispatch,
+                )
+            )
         await self._broadcast_device_online(user_id, route_id, effective_device_name)
         self._schedule_background_task(
             self._sync_global_capabilities_to_registered_device(
@@ -2139,6 +2185,19 @@ class DeviceNamespace(socketio.AsyncNamespace):
             )
             # Re-broadcast device online event
             await self._broadcast_device_online(user_id, payload.device_id, device_name)
+
+        if (
+            payload.runtime_features is not None
+            and payload.runtime_features.personal_assistant_dispatch is not None
+        ):
+            await run_sync_in_executor(
+                partial(
+                    _store_personal_assistant_declaration,
+                    user_id=user_id,
+                    device_id=payload.device_id,
+                    advertisement=payload.runtime_features.personal_assistant_dispatch,
+                )
+            )
 
         if payload.capabilities:
             try:

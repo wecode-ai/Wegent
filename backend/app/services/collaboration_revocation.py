@@ -138,6 +138,25 @@ def _require_group(
 
 
 def _device_authorized(db: Session, execution: LoopItemExecution) -> bool:
+    if execution.executor_type == "human_assistant":
+        from app.services.device.identity import resolve_owned_device_alias
+        from app.services.human_assistant_dispatch import _endpoint, execution_current
+
+        item = db.get(LoopItem, execution.loop_item_id)
+        endpoint = (
+            _endpoint(db, execution.executor_owner_user_id, item) if item else None
+        )
+        device = resolve_owned_device_alias(
+            db,
+            user_id=execution.executor_owner_user_id,
+            device_id=execution.runtime_device_id or execution.execution_device_id,
+        )
+        return bool(
+            endpoint
+            and device
+            and endpoint[0].id == device.id
+            and execution_current(db, execution)
+        )
     if execution.execution_environment == "wegent":
         return True
     device_id = execution.runtime_device_id or execution.execution_device_id

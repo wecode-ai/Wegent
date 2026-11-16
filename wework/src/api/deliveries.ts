@@ -114,6 +114,7 @@ export interface DeliveryFinalizeInput {
 export interface CloudLoopItem {
   runner_binding?: { environment_id: string } | null
   human_task_binding?: CollaborationIssue['human_task_binding']
+  human_assistant_dispatch?: CollaborationIssue['human_assistant_dispatch']
   assignee_group_id?: string | null
   assignee_group_name?: string | null
   id: string
@@ -577,6 +578,7 @@ export interface LoopItemTaskBinding {
   dispatch_id?: string | null
   dispatch_round_id?: string | null
   assignment_id?: string | null
+  execution_id?: string | null
   linked_at: string
 }
 

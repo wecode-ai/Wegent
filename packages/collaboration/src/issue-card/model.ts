@@ -2,7 +2,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-import type { CollaborationPriority } from '../types'
+import type { CollaborationPriority, HumanAssistantDispatch } from '../types'
 
 export interface CollaborationIssueCardItem {
   id: string
@@ -19,6 +19,7 @@ export interface CollaborationIssueCardItem {
   assignee_team_id?: number | null
   assignee_team_name?: string | null
   execution_state?: string | null
+  human_assistant_dispatch?: HumanAssistantDispatch | null
 }
 
 /**

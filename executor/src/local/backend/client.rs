@@ -14,7 +14,7 @@ use std::{
 use serde_json::Map;
 use serde_json::{json, Value};
 
-use crate::{emitter::EventEnvelope, runner::EventSink, runtime_work::runtime_features};
+use crate::{emitter::EventEnvelope, runner::EventSink, runtime_work::runtime_features_for_device};
 
 use super::{
     capability::{CapabilityReportProvider, DefaultCapabilityReporter},
@@ -357,7 +357,7 @@ where
             "runtime_transfer_host": self.config.runtime_transfer_host,
             "runtime_transfer_port": runtime_transfer_port,
             "app_device_id": self.config.app_device_id,
-            "runtime_features": runtime_features(),
+            "runtime_features": runtime_features_for_device(&self.config.device_id),
         })
     }
 
@@ -373,7 +373,7 @@ where
             "running_task_ids": running_task_ids,
             "executor_version": self.config.executor_version,
             "capabilities": self.capability_reporter.build_report(),
-            "runtime_features": runtime_features(),
+            "runtime_features": runtime_features_for_device(&self.config.device_id),
             "runtime_auth_files": build_runtime_auth_file_report(
                 &crate::agents::wework_codex_home()
             ),

@@ -174,6 +174,7 @@ class LoopItemResponse(BaseModel):
     status_history: list[dict[str, Any]] = Field(default_factory=list)
     approval: dict[str, Any] | None = None
     human_task_binding: dict[str, str] | None = None
+    human_assistant_dispatch: dict[str, Any] | None = None
     queued_at: str | None = None
     execution_note: str | None = None
     execution_error: str | None = None
@@ -483,6 +484,9 @@ class LoopItemTaskBind(BaseModel):
         min_length=1,
         max_length=128,
     )
+    human_assistant_dispatch_id: str | None = Field(
+        default=None, alias="humanAssistantDispatchId", min_length=1, max_length=64
+    )
 
 
 class LoopItemTaskBindingResponse(BaseModel):
@@ -509,6 +513,7 @@ class LoopItemTaskBindingResponse(BaseModel):
     dispatch_id: str | None = None
     dispatch_round_id: str | None = None
     assignment_id: str | None = None
+    execution_id: str | None = None
     change_requests: list[dict[str, Any]] = Field(default_factory=list)
     linked_by_user_id: int
     linked_at: datetime

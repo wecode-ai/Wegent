@@ -136,6 +136,10 @@ class IssueAssignmentService:
         replace_root_assignments: bool = False,
     ) -> tuple[AssignmentEvent, bool]:
         del workspace_id
+        # Assignment and assistant admission serialize on the existing Issue row.
+        db.query(LoopItem).filter(
+            LoopItem.id == issue_id
+        ).populate_existing().with_for_update().first()
         normalized_type = self._member_type(member_type)
         normalized_id = member_id.strip()
         existing = self.active(
@@ -152,6 +156,9 @@ class IssueAssignmentService:
                 existing.metadata.get("trigger") == "default" and trigger != "default"
             )
         ):
+            from app.services.human_assistant_dispatch import ensure_dispatch
+
+            ensure_dispatch(db, existing)
             return existing, False
         if (
             normalized_type == "human" or replace_root_assignments
@@ -159,6 +166,11 @@ class IssueAssignmentService:
             for previous in self._active_events(db, issue_id).values():
                 if previous.workflow_step:
                     continue
+                from app.services.human_assistant_dispatch import (
+                    cancel_assignment_dispatch,
+                )
+
+                cancel_assignment_dispatch(db, previous)
                 db.add(
                     LoopItemComment(
                         cloud_project_id=str(project_id),
@@ -189,6 +201,7 @@ class IssueAssignmentService:
             "workflow_step": self._workflow_step(workflow_step),
             "notify": bool(notify),
             "trigger": trigger,
+            "assignment_version": int((db.get(LoopItem, issue_id).version or 0) + 1),
         }
         comment = db.get(LoopItemComment, comment_id) if comment_id else None
         if comment is None:
@@ -205,7 +218,11 @@ class IssueAssignmentService:
         else:
             comment.metadata_json = metadata
         db.flush()
-        return AssignmentEvent(comment=comment, metadata=metadata), True
+        event = AssignmentEvent(comment=comment, metadata=metadata)
+        from app.services.human_assistant_dispatch import ensure_dispatch
+
+        ensure_dispatch(db, event)
+        return event, True
 
     def remove(
         self,
@@ -234,6 +251,9 @@ class IssueAssignmentService:
         )
         if assignment is None:
             raise HTTPException(status.HTTP_404_NOT_FOUND, "Assignment not found")
+        from app.services.human_assistant_dispatch import cancel_assignment_dispatch
+
+        cancel_assignment_dispatch(db, assignment)
         metadata = {
             "event_type": ASSIGNMENT_EVENT_TYPE,
             "action": "unassign",

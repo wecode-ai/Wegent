@@ -92,6 +92,7 @@ export type TodoEditorProps = TodoEditorApiProps & {
   showChildren?: boolean
   showCurrentTaskOnly?: boolean
   defaultAssistant?: import('@wegent/collaboration').CollaborationDefaultAssistant
+  onConfigureAssistant?: () => void
   taskRefreshKey?: string | number
   initialTaskBindings?: LoopItemTaskBinding[]
   taskExecutionStates?: Readonly<Record<string, SharedIssueDetailTaskExecutionState>>
@@ -282,6 +283,7 @@ export function TodoEditor(props: TodoEditorProps) {
     },
     loadTeams,
     allItems: props.allItems as SharedEditorIssue[],
+    currentUserId: props.currentUserId,
     onClose: props.onClose,
     onEscape: props.onEscape,
     presentation: props.presentation,
@@ -292,6 +294,7 @@ export function TodoEditor(props: TodoEditorProps) {
     showChildren: props.showChildren,
     showCurrentTaskOnly: props.showCurrentTaskOnly,
     defaultAssistant: props.defaultAssistant,
+    onConfigureAssistant: props.onConfigureAssistant,
     taskRefreshKey: props.taskRefreshKey,
     initialTaskBindings: props.initialTaskBindings as SharedIssueDetailTaskBinding[] | undefined,
     taskExecutionStates: props.taskExecutionStates,

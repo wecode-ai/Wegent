@@ -476,6 +476,26 @@ impl LocalTaskStore {
             .map(|user| self.personal_stand_in(user, device))
             .collect()
     }
+
+    pub(crate) fn declared_personal_stand_ins(
+        &self,
+        device: &str,
+    ) -> Result<Vec<Value>, TaskRuntimeError> {
+        // Heartbeat reads must never migrate settings or move their owning device.
+        let connection = self.connection()?;
+        let mut statement = connection.prepare(
+            "SELECT metadata FROM loop_items WHERE resource_type='personal_stand_in' AND json_extract(metadata,'$.executionDeviceId')=?1",
+        )?;
+        let rows = statement
+            .query_map(params![device], |row| row.get::<_, String>(0))?
+            .collect::<Result<Vec<_>, _>>()?;
+        rows.into_iter()
+            .map(|row| {
+                serde_json::from_str(&row)
+                    .map_err(|error| TaskRuntimeError::Invalid(error.to_string()))
+            })
+            .collect()
+    }
 }
 
 fn stamp_stand_in_connections(identity: &mut Value, previous: &Value) {

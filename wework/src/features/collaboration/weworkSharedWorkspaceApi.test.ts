@@ -238,6 +238,33 @@ function createMockDeliveryApi() {
 }
 
 describe('createWeworkDeliverySharedWorkspaceApi', () => {
+  it('preserves the human assignee and assistant dispatch across issue responses', async () => {
+    const deliveryApi = createMockDeliveryApi()
+    const dispatched: CloudLoopItem = {
+      ...issue,
+      assignee_user_id: 7,
+      assignee_name: 'Ada',
+      human_assistant_dispatch: {
+        ownerUserId: 7,
+        endpointRef: null,
+        dispatchState: 'no_authorized_assistant',
+        executionId: null,
+        reasonCode: 'no_authorized_assistant',
+        assignmentId: 'assignment-1',
+        assignmentVersion: 1,
+        createdAt: '2026-11-16T00:00:00Z',
+        updatedAt: '2026-11-16T00:00:00Z',
+      },
+    }
+    vi.mocked(deliveryApi.getLoopItem).mockResolvedValue(dispatched)
+    const api = createWeworkDeliverySharedWorkspaceApi(deliveryApi)
+    await expect(api.issues.get(issue.id)).resolves.toMatchObject({
+      assignee_user_id: 7,
+      assignee_name: 'Ada',
+      human_assistant_dispatch: dispatched.human_assistant_dispatch,
+    })
+  })
+
   it('preserves current project authority and member override provenance', async () => {
     const deliveryApi = createMockDeliveryApi()
     const authoritative: CloudProject = {

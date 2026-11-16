@@ -76,6 +76,8 @@ def _parse_json_object_setting(value: Any, setting_name: str) -> dict[str, Any]:
 
 
 class Settings(BaseSettings):
+    # collab.humanAssignmentAssistantDispatch.v1
+    HUMAN_ASSIGNMENT_ASSISTANT_DISPATCH_ENABLED: bool = False
     # Project configuration
     PROJECT_NAME: str = "Task Manager Backend"
     VERSION: str = "1.0.0"

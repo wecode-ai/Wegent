@@ -78,6 +78,50 @@ function editorElement(item: CloudLoopItem) {
 }
 
 describe('TodoEditor external item sync', () => {
+  it('keeps human ownership and opens assistant settings only for that owner', async () => {
+    const user = userEvent.setup()
+    const configure = vi.fn()
+    const item: CloudLoopItem = {
+      ...baseItem,
+      assignee_agent_id: null,
+      assignee_user_id: 1,
+      assignee_name: 'Ada',
+      human_assistant_dispatch: {
+        ownerUserId: 1,
+        endpointRef: null,
+        dispatchState: 'no_authorized_assistant',
+        executionId: null,
+        reasonCode: 'no_authorized_assistant',
+        assignmentId: 'assignment-1',
+        assignmentVersion: 1,
+        createdAt: '2026-11-16T00:00:00Z',
+        updatedAt: '2026-11-16T00:00:00Z',
+      },
+    }
+    const props = {
+      mode: 'edit' as const,
+      presentation: 'workspace-panel' as const,
+      item,
+      project,
+      allItems: [item],
+      onUpdated: vi.fn(),
+      onClose: vi.fn(),
+      api,
+      onConfigureAssistant: configure,
+    }
+    const { rerender } = render(<TodoEditor {...props} currentUserId={1} />)
+    expect(screen.getByTestId('cloud-todo-state-assignee')).toHaveTextContent('Ada')
+    expect(screen.getByTestId(`human-assistant-dispatch-${item.id}`)).toHaveAttribute(
+      'data-dispatch-state',
+      'no_authorized_assistant'
+    )
+    await user.click(screen.getByTestId(`human-assistant-configure-${item.id}`))
+    expect(configure).toHaveBeenCalledOnce()
+    rerender(<TodoEditor {...props} currentUserId={2} />)
+    expect(screen.queryByTestId(`human-assistant-configure-${item.id}`)).not.toBeInTheDocument()
+    expect(screen.getByTestId(`human-assistant-dispatch-${item.id}`)).toBeInTheDocument()
+  })
+
   it('saves the status of a human assignment without a submission form', async () => {
     const user = userEvent.setup()
     const item = { ...baseItem, assignee_agent_id: '', assignee_user_id: 1 }

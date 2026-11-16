@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 mod api_context;
+mod assistant_dispatch;
 pub(crate) mod automations;
 mod codex_global_state;
 mod codex_legacy_search;
@@ -83,6 +84,12 @@ pub(crate) fn runtime_features() -> serde_json::Value {
         },
         "worktrees": worktrees::WorktreeManager::capabilities_from_env(),
     })
+}
+
+pub(crate) fn runtime_features_for_device(device: &str) -> serde_json::Value {
+    let mut features = runtime_features();
+    features["personalAssistantDispatch"] = assistant_dispatch::declaration(device);
+    features
 }
 
 fn env_enabled(name: &str, default: bool) -> bool {

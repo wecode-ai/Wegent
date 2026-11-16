@@ -494,6 +494,7 @@ export function createDesktopScenario({
 
   return {
     requiresCloudEnvironment: true,
+    backendEnv: { HUMAN_ASSIGNMENT_ASSISTANT_DISPATCH_ENABLED: 'true' },
 
     async prepareCloud(cloud) {
       backendUrl = cloud.backendUrl
@@ -596,9 +597,40 @@ export function createDesktopScenario({
       assert.equal(Object.keys(project.execution_environment?.devices ?? {}).length, 0)
       issue = await createIssue(control, project.id, ownerRequest, owner, uiTimeoutMs)
       assert.equal(String(issue.assignee_user_id), String(owner.id))
+      const assistantDispatch = issue.human_assistant_dispatch
+      assert.ok(assistantDispatch, 'Human assignment must persist an assistant dispatch intent')
+      assert.equal(String(assistantDispatch.ownerUserId), String(owner.id))
+      assert.equal(assistantDispatch.dispatchState, 'no_authorized_assistant')
+      assert.equal(assistantDispatch.reasonCode, 'no_authorized_assistant')
+      assert.equal(assistantDispatch.executionId, null)
+      assert.equal(assistantDispatch.endpointRef, null)
+      assert.ok(assistantDispatch.assignmentId)
+      const dispatchNotice = scoped(
+        `[data-testid="cloud-todo-detail"] [data-testid="human-assistant-dispatch-${issue.id}"]`
+      )
+      await control.command('waitFor', dispatchNotice, { text: '待授权', visible: true })
+      await control.command(
+        'waitFor',
+        scoped(`[data-testid="human-assistant-configure-${issue.id}"]`),
+        { text: '配置我的助理', visible: true }
+      )
       issue = await verifyIssueTags(control, ownerRequest, issue, uiTimeoutMs)
+      assert.equal(issue.human_assistant_dispatch.assignmentId, assistantDispatch.assignmentId)
+      assert.equal(
+        issue.human_assistant_dispatch.assignmentVersion,
+        assistantDispatch.assignmentVersion
+      )
+      assert.equal(issue.human_assistant_dispatch.executionId, null)
+      assert.equal(String(issue.assignee_user_id), String(owner.id))
       await captureScreenshot(control, 'assignment-00-created-without-environment.png', CONTENT)
       await control.command('click', '[data-testid="cloud-todo-detail-close"]')
+      await control.command(
+        'waitFor',
+        scoped(
+          `[data-testid="cloud-todo-card-${issue.id}"] [data-testid="human-assistant-dispatch-${issue.id}"]`
+        ),
+        { text: '待授权', visible: true }
+      )
       const remoteDevice = await cloudEnvironment.waitForDeviceType(
         REMOTE_DOCKER_DEVICE_ID,
         'remote'

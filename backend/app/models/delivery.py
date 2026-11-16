@@ -425,6 +425,10 @@ class LoopItemTaskBinding(LoopNode):
         return self._metadata_text("assignment_id")
 
     @property
+    def execution_id(self) -> str | None:
+        return self._metadata_text("execution_id")
+
+    @property
     def change_requests(self) -> list[dict[str, object]]:
         metadata = self.metadata_json
         if not isinstance(metadata, dict):

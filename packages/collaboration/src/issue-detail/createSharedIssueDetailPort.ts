@@ -37,6 +37,7 @@ export interface SharedIssueDetailTaskBinding {
   binding_type?: "system" | "user";
   human_assignment_id?: string | null;
   dispatch_id?: string | null;
+  execution_id?: string | null
   linked_at: string;
 }
 
@@ -226,6 +227,7 @@ export function toSharedIssueDetailTaskBinding(
     binding_type: binding.bindingType,
     human_assignment_id: binding.humanAssignmentId,
     dispatch_id: binding.dispatchId,
+    execution_id: binding.executionId,
     linked_at: binding.linkedAt,
   };
 }

@@ -17,6 +17,7 @@ import {
 import { IssueCardGoalSummary } from "./IssueCardTaskSummary";
 import { IssueExecutionConfigurationBadge } from "./IssueBoardCardContent";
 import { issueNeedsExecutionConfiguration } from "./model";
+import { HumanAssistantDispatchStatus } from '../issue-detail/HumanAssistantDispatchStatus'
 import { Tooltip } from "../issue-detail/Tooltip";
 import type { CollaborationTranslate } from "../i18n";
 import { activityClassNames as cn } from "../issue-detail/activityClassNames";
@@ -162,9 +163,17 @@ export function IssueBoardCard<T extends IssueBoardCardTask>({
         ) : null
       }
       afterContent={
-        needsExecutionConfiguration ? (
-          <IssueExecutionConfigurationBadge itemId={item.id} translate={t} />
-        ) : null
+        <>
+          {needsExecutionConfiguration ? (
+            <IssueExecutionConfigurationBadge itemId={item.id} translate={t} />
+          ) : null}
+          <HumanAssistantDispatchStatus
+            itemId={item.id}
+            dispatch={item.human_assistant_dispatch}
+            translate={t}
+            compact
+          />
+        </>
       }
       summary={
         summary || hasProgress ? (

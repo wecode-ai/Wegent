@@ -18,6 +18,7 @@ import { activityMessages } from "./issue-detail/activityMessages";
 
 import { runtimeProfileMessages } from "./runtime-profile/messages";
 import { executionEnvironmentMessages } from "./execution-environment/messages";
+import { humanAssistantDispatchMessages } from './issue-detail/humanAssistantDispatchMessages'
 
 export type CollaborationLocale = "zh-CN" | "en";
 
@@ -1319,6 +1320,7 @@ export function createCollaborationTranslator(
       markdownMessages[locale][key as keyof typeof markdownMessages.en] ??
       runtimeProfileMessages[locale][key] ??
       executionEnvironmentMessages[locale][key] ??
+      humanAssistantDispatchMessages[locale][key] ??
       messages[key] ??
       fallback ??
       key;

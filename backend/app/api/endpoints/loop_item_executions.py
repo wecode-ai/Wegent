@@ -267,6 +267,7 @@ def _execution_view(
             "can_select_runtime": (
                 viewer_user_id is not None
                 and row.executor_owner_user_id == viewer_user_id
+                and row.executor_type != "human_assistant"
                 and not row.uses_runner_routing
                 and row.status in {"waiting_runtime", "queued"}
             ),

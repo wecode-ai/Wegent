@@ -1020,6 +1020,31 @@ export function TaskActivityView({
           item => item.device_id === address.deviceId && item.task_id === address.taskId
         )
       : undefined
+    const assistantBinding =
+      message.metadata.activity_type === 'human_assistant_result' &&
+      String(message.sender.id) === String(chatCurrentUserId ?? currentUserId ?? '')
+        ? taskBindings.find(
+            item =>
+              item.execution_id != null &&
+              item.execution_id === String(message.metadata.execution_id)
+          )
+        : undefined
+    const executionTask = assistantBinding ?? (issueTimeline ? binding : undefined)
+    const openExecution =
+      executionTask && onOpenTask
+        ? () => onOpenTask(executionTask)
+        : !issueTimeline && address
+          ? () =>
+              setExecutionDetail({
+                address,
+                messageId: message.messageId,
+                senderName: message.sender.name,
+                runId: typeof message.metadata.run_id === 'string' ? message.metadata.run_id : null,
+                modelName:
+                  typeof message.metadata.model === 'string' ? message.metadata.model : null,
+                runStatus: resolveMessageRunStatus(task.ai_state, message),
+              })
+          : undefined
     return (
       <ChatMessage
         key={message.messageId}
@@ -1040,25 +1065,7 @@ export function TaskActivityView({
         executionDeviceName={deviceNameForMessage(message)}
         taskSummary={taskSummaryForMessage(message)}
         hideTime={hideTime}
-        onOpenExecution={
-          issueTimeline
-            ? binding && onOpenTask
-              ? () => onOpenTask(binding)
-              : undefined
-            : address
-              ? () =>
-                  setExecutionDetail({
-                    address,
-                    messageId: message.messageId,
-                    senderName: message.sender.name,
-                    runId:
-                      typeof message.metadata.run_id === 'string' ? message.metadata.run_id : null,
-                    modelName:
-                      typeof message.metadata.model === 'string' ? message.metadata.model : null,
-                    runStatus: resolveMessageRunStatus(task.ai_state, message),
-                  })
-              : undefined
-        }
+        onOpenExecution={openExecution}
         onStopExecution={address ? () => void stopRuntimeTask(message) : undefined}
         stopping={cancellingMessageId === message.messageId}
       />

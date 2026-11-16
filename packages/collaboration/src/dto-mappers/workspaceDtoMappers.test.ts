@@ -102,6 +102,7 @@ describe("workspace DTO mappers", () => {
           task_id: "task-1",
           task_title: "Task",
           backend_task_id: "99",
+          execution_id: '101',
           modelSelection: {
             modelName: "gpt-5.6-sol",
             modelType: "runtime",
@@ -128,6 +129,7 @@ describe("workspace DTO mappers", () => {
       dispatchId: null,
       dispatchRoundId: null,
       assignmentId: null,
+      executionId: '101',
       modelSelection: {
         modelName: "gpt-5.6-sol",
         modelType: "runtime",

@@ -204,7 +204,9 @@ impl RuntimeWorkRpcHandler {
                     if local { "local" } else { "cloud" },
                 )
                 .into_iter()
-                .next()
+                .find(|config| {
+                    !issue["human_assistant_dispatch"].is_object() || config["id"] == "@primary"
+                })
                 .ok_or_else(|| {
                     AppIpcError::new(
                         "stand_in_unavailable",
@@ -283,11 +285,21 @@ impl RuntimeWorkRpcHandler {
         runtime.spawn(async move {
             let mut interval = tokio::time::interval(Duration::from_secs(5));
             interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+            let mut ticks = 0u64;
             loop {
                 interval.tick().await;
                 if let Err(error) = handler.poll_local_stand_ins().await {
                     log_executor_event("stand-in polling failed", &[("error", error.message)]);
                 }
+                if ticks % 6 == 0 {
+                    if let Err(error) = handler.recover_cloud_assistant_dispatches().await {
+                        log_executor_event(
+                            "assistant dispatch recovery failed",
+                            &[("error", error.message)],
+                        );
+                    }
+                }
+                ticks = ticks.wrapping_add(1);
             }
         });
     }
@@ -406,6 +418,26 @@ impl RuntimeWorkRpcHandler {
         configs: &[Value],
         issue: &Value,
     ) -> Result<(), AppIpcError> {
+        let dispatch = &issue["human_assistant_dispatch"];
+        let configs = if dispatch.is_object() {
+            if !matches!(
+                dispatch["dispatchState"].as_str(),
+                Some("queued" | "waiting_device")
+            ) {
+                return Ok(());
+            }
+            configs
+                .iter()
+                .filter(|config| config["id"] == "@primary")
+                .cloned()
+                .collect::<Vec<_>>()
+        } else {
+            configs.to_vec()
+        };
+        if configs.is_empty() {
+            return Ok(());
+        }
+        let configs = configs.as_slice();
         let config = &configs[0];
         let gate = self.task_send_gate(&format!(
             "stand-in-issue:{}:{}",
@@ -463,7 +495,9 @@ impl RuntimeWorkRpcHandler {
         let eligible: Vec<&Value> = matching
             .into_iter()
             .filter(|config| {
-                config["manual"] == true || assignment_after_enable(assignment, config)
+                config["manual"] == true
+                    || issue["human_assistant_dispatch"].is_object()
+                    || assignment_after_enable(assignment, config)
             })
             .collect();
         if eligible.is_empty() {
@@ -520,11 +554,22 @@ impl RuntimeWorkRpcHandler {
             && self
                 .local_task_link(&task_id)
                 .is_some_and(|task| task.status == "failed");
-        if bound.is_some_and(|row| row["device_id"] != self.device_id || !retry) {
+        let resume_claim = issue["human_assistant_dispatch"].is_object()
+            && issue["human_assistant_dispatch"]["dispatchState"] == "queued"
+            && self.local_task_link(&task_id).is_none();
+        if bound.is_some_and(|row| row["device_id"] != self.device_id || (!retry && !resume_claim))
+        {
             return Ok(());
         }
-        let payload = self.prepare_stand_in_task(config, issue, binding).await?;
-        if bound.is_some() {
+        let payload = match self.prepare_stand_in_task(config, issue, binding).await {
+            Ok(payload) => payload,
+            Err(error) => {
+                self.report_assistant_preflight_failure(config, issue, &error)
+                    .await;
+                return Err(error);
+            }
+        };
+        if bound.is_some() && !resume_claim {
             self.dispatch_stand_in_task(payload, true).await.map(|_| ())
         } else {
             self.create_stand_in_task(config, issue, binding, payload)
@@ -537,7 +582,7 @@ impl RuntimeWorkRpcHandler {
         config: &Value,
         issue: &Value,
         binding: &Value,
-        payload: Value,
+        mut payload: Value,
     ) -> Result<(), AppIpcError> {
         if config["projectStore"] == "cloud" {
             self.verify_stand_in_user(config).await?;
@@ -558,6 +603,9 @@ impl RuntimeWorkRpcHandler {
         binding["deviceId"] = json!(self.device_id);
         binding["taskId"] = json!(task_id);
         binding["taskTitle"] = issue["title"].clone();
+        if let Some(dispatch_id) = issue["human_assistant_dispatch"]["dispatchId"].as_str() {
+            binding["humanAssistantDispatchId"] = json!(dispatch_id);
+        }
         let local = config["projectStore"] == "local";
         if local {
             LocalTaskStore::open(self.task_store_path.as_ref())
@@ -572,15 +620,27 @@ impl RuntimeWorkRpcHandler {
                 )
                 .map_err(settings_error)?;
         } else {
-            self.stand_in_http(
-                reqwest::Method::POST,
-                &format!("/v1/loop-items/{issue_id}/tasks"),
-                Some(&binding),
-            )
-            .await?;
+            let admitted = self
+                .stand_in_http(
+                    reqwest::Method::POST,
+                    &format!("/v1/loop-items/{issue_id}/tasks"),
+                    Some(&binding),
+                )
+                .await?;
+            if let Some(execution_id) = admitted.get("execution_id").filter(|id| !id.is_null()) {
+                payload["origin"]["executionId"] = execution_id.clone();
+            }
         }
         let result = self.dispatch_stand_in_task(payload, retry).await;
         if let Err(error) = result {
+            let may_have_started = self.is_active_local_task(&task_id)
+                || self.local_task_link(&task_id).is_some_and(|link| {
+                    link.running || runtime_session_id_from_link(&link).is_some()
+                });
+            if !local && !may_have_started {
+                self.report_assistant_preflight_failure(config, issue, &error)
+                    .await;
+            }
             let cleanup = if local {
                 LocalTaskStore::open(self.task_store_path.as_ref())
                     .and_then(|store| store.unbind_task(&self.device_id, &task_id, Some(issue_id)))
@@ -695,12 +755,15 @@ impl RuntimeWorkRpcHandler {
         } else {
             "cloud"
         };
-        let prompt = format!(
+        let mut prompt = format!(
             "[项目空间 Issue] {protocol}://projects/{project}/todos/{issue_id}\n\n{}\n\n{}\n\n{}",
             issue["title"].as_str().unwrap_or_default(),
             issue["description"].as_str().unwrap_or_default(),
             config["prompt"].as_str().unwrap_or_default()
         );
+        if issue["human_assistant_dispatch"].is_object() {
+            prompt.push_str("\n\n[共享结果约束]\n最终回复将回写到共享 Issue。仅提供简洁的工作摘要、可核验的证据引用和仍需确认的事项；不要包含私人偏好、工作区私密信息、工具调用过程或内部推理。执行完成不代表 Issue 自动完成，状态变更、审批、合并、部署和外部发布继续遵守项目授权与门禁。");
+        }
         let origin = json!({"type":"issue_dispatch","initiatedBy":"stand_in","trigger":if config["manual"] == true { "manual" } else { "assignment" },"standInId":config["id"],"roleName":config["name"],"userId":config["userId"],"deviceId":self.device_id,"askBeforeAct":config["handlingPolicy"]["askBeforeAct"] == true,"projectStore":config["projectStore"],"cloudProjectId":project,"loopItemId":issue_id,"humanAssignmentId":human_id,"assignmentId":binding["assignmentId"],"dispatchId":binding["dispatchId"],"roundId":binding["dispatchRoundId"]});
         let mut payload = json!({"taskId":task_id,"title":issue["title"],"message":prompt,"cloudProjectId":project,"origin":origin});
         if config["goalMode"] == true {

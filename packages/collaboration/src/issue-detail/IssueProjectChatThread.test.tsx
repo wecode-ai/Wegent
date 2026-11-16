@@ -4,6 +4,7 @@ import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ProjectChatClient, ProjectChatMessage } from "@wegent/chat-core";
 import { createCollaborationTranslator } from "../i18n";
+import type { CollaborationExecution } from "../types";
 import {
   groupIssueActivityThreads,
   groupIssueTimelineThreads,
@@ -463,6 +464,92 @@ describe("shared Issue threads", () => {
     );
     expect(container.textContent).toContain("@Codex please review");
     expect(container.textContent).not.toContain("机器人已接收");
+  });
+
+  it("shows user attribution, AI provenance and an owner-only private execution link", () => {
+    const open = vi.fn();
+    const legacyOpen = vi.fn();
+    const summary: ProjectChatMessage = {
+      ...message,
+      sender: { type: "user", id: "7", name: "Ada" },
+      content: "Summary and evidence",
+      metadata: {
+        activity_type: "human_assistant_result",
+        execution_id: "42",
+        assignment_id: "assignment-1",
+        provenance: {
+          origin: "ai_generated",
+          owner_user_id: 7,
+          publisher_user_id: 7,
+          confirmation_status: "unconfirmed",
+        },
+      },
+    };
+    const binding = {
+      id: "binding-1",
+      cloud_project_id: "project",
+      loop_item_id: "issue",
+      task_user_id: 7,
+      device_id: "private-device",
+      task_id: "private-task",
+      task_title: "Assistant work",
+      backend_task_id: null,
+      execution_id: "42",
+      linked_at: "",
+    };
+    const manualBinding = {
+      ...binding,
+      id: "manual-binding",
+      execution_id: null,
+    };
+    const render = (currentUserId: number, withBinding = true) =>
+      root.render(
+        <IssueProjectChatThread
+          thread={{ root: summary, replies: [] }}
+          canComment={false}
+          send={vi.fn()}
+          translate={translate}
+          executions={[
+            {
+              id: 42,
+              runtime_device_id: "private-device",
+              runtime_task_id: "private-task",
+            } as CollaborationExecution,
+          ]}
+          currentUserId={currentUserId}
+          taskBindings={
+            withBinding ? [manualBinding, binding] : [manualBinding]
+          }
+          onOpenTaskConversation={open}
+          onOpenExecution={legacyOpen}
+        />,
+      );
+    act(() => render(7));
+    expect(container.textContent).toContain("Ada");
+    expect(container.textContent).toContain("AI 生成");
+    expect(container.textContent).toContain("发布者：Ada");
+    expect(container.textContent).toContain("待确认");
+    const link = container.querySelector<HTMLButtonElement>(
+      '[data-testid="human-assistant-result-execution-root"]',
+    )!;
+    act(() => link.click());
+    expect(open).toHaveBeenCalledExactlyOnceWith(binding);
+    act(() => render(7, false));
+    expect(
+      container.querySelector(
+        '[data-testid="human-assistant-result-execution-root"]',
+      ),
+    ).toBeNull();
+    act(() => render(8));
+    expect(
+      container.querySelector(
+        '[data-testid="human-assistant-result-execution-root"]',
+      ),
+    ).toBeNull();
+    expect(container.textContent).toContain("执行 #42");
+    expect(container.textContent).not.toContain("private-device");
+    expect(container.textContent).not.toContain("private-task");
+    expect(legacyOpen).not.toHaveBeenCalled();
   });
 
   it("uses the desktop run disclosure and execution action for web messages", () => {

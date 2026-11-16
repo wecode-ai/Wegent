@@ -25,6 +25,22 @@ const execution = {
 } as CollaborationExecution
 
 describe('execution conversation identity', () => {
+  it('never adds a private runtime address to shared personal assistant results', () => {
+    const summary: ProjectChatMessage = {
+      ...message,
+      sender: { type: 'user', id: '7', name: 'Ada' },
+      metadata: { activity_type: 'human_assistant_result', execution_id: '42' },
+    }
+    expect(messageRuntimeExecutionTarget(summary, execution)).toBeNull()
+    expect(summary.runtimeAddress).toBeUndefined()
+    expect(
+      messageRuntimeExecutionTarget(
+        { ...summary, runtimeAddress: { deviceId: 'private-device', taskId: 'private-task' } },
+        execution
+      )
+    ).toBeNull()
+  })
+
   it('opens directly from the message address without an execution record', () => {
     const address = { deviceId: 'actual-device', taskId: 'actual-task' }
     expect(messageRuntimeExecutionTarget({ ...message, runtimeAddress: address })).toMatchObject({

@@ -551,6 +551,155 @@ async fn executor_rejects_settings_for_a_different_device() {
 }
 
 #[tokio::test]
+async fn queued_assistant_claim_recovers_a_start_gap_without_restarting_existing_work() {
+    let router = Router::new().route("/api/users/me", get(|| async { Json(json!({"id":7})) }));
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let url = format!("http://{}", listener.local_addr().unwrap());
+    let server = tokio::spawn(async { axum::serve(listener, router).await.unwrap() });
+    let root = tempfile::tempdir().unwrap();
+    let mut handler = RuntimeWorkRpcHandler::new("mac", "unused");
+    handler.task_store_path = Arc::new(root.path().join("tasks.sqlite"));
+    handler.store = RuntimeWorkStore::new(root.path().join("runtime-index.json"));
+    handler.backend_connection = Arc::new(Mutex::new(Some(ConnectionConfig {
+        backend_url: url,
+        auth_token: "test".into(),
+        ..Default::default()
+    })));
+    let config = json!({"id":"@primary","userId":7,"projectId":"project","projectStore":"cloud",
+        "workspace":{"projectKey":"missing","workspacePath":"/not-present","executionMode":"current_workspace"}});
+    let issue = json!({"id":"issue","human_assistant_dispatch":{"dispatchId":"dispatch","dispatchState":"queued"}});
+    let binding = json!({"humanAssignmentId":"human","assignmentId":"assignment"});
+    let existing = json!([{"human_assignment_id":"human","device_id":"mac","task_id":"stand-in-human-@primary"}]);
+    assert_eq!(
+        handler
+            .dispatch_cloud_stand_in_role(&config, &issue, &binding, &existing)
+            .await
+            .unwrap_err()
+            .code,
+        "workspace_unavailable"
+    );
+    handler.upsert_local_task(RuntimeTaskLink {
+        local_task_id: "stand-in-human-@primary".into(),
+        status: "done".into(),
+        ..Default::default()
+    });
+    handler
+        .dispatch_cloud_stand_in_role(&config, &issue, &binding, &existing)
+        .await
+        .unwrap();
+    assert_eq!(
+        handler
+            .local_task_link("stand-in-human-@primary")
+            .unwrap()
+            .status,
+        "done"
+    );
+    server.abort();
+}
+
+#[tokio::test]
+async fn durable_primary_claim_creates_one_queued_private_task_with_execution_identity() {
+    let admitted = Arc::new(Mutex::new(Vec::<Value>::new()));
+    let requests = admitted.clone();
+    let router = Router::new()
+        .route("/api/users/me", get(|| async { Json(json!({"id":7})) }))
+        .route(
+            "/api/v1/loop-items/issue/tasks",
+            axum::routing::post(move |Json(body): Json<Value>| {
+                requests.lock().unwrap().push(body);
+                async { Json(json!({"id":"binding","execution_id":"42"})) }
+            }),
+        );
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let url = format!("http://{}", listener.local_addr().unwrap());
+    let server = tokio::spawn(async { axum::serve(listener, router).await.unwrap() });
+    let root = tempfile::tempdir().unwrap();
+    let mut handler = RuntimeWorkRpcHandler::new("mac", "unused");
+    handler.task_store_path = Arc::new(root.path().join("tasks.sqlite"));
+    handler.turn_queue_path = Arc::new(root.path().join("turn-queue.json"));
+    handler.store = RuntimeWorkStore::new(root.path().join("runtime-index.json"));
+    handler.worktrees = WorktreeManager::new(root.path().join("worktrees.json"));
+    handler.backend_connection = Arc::new(Mutex::new(Some(ConnectionConfig {
+        backend_url: url,
+        auth_token: "test".into(),
+        ..Default::default()
+    })));
+    {
+        let mut scheduler = handler.turn_scheduler.lock().unwrap();
+        scheduler.queued_turns.clear();
+        scheduler.max_concurrent_tasks = 1;
+        scheduler.active_tasks = 1;
+    }
+    let config = json!({"id":"@primary","userId":7,"projectId":"project","projectStore":"cloud"});
+    let issue = json!({"id":"issue","title":"Private work","human_assistant_dispatch":{"dispatchId":"dispatch","executionId":"42","dispatchState":"waiting_device"}});
+    let binding = json!({"humanAssignmentId":"human","assignmentId":"assignment"});
+    let task_id = "stand-in-human-@primary";
+    let payload = json!({"taskId":task_id,"title":"Private work","runtime":"codex",
+        "workspacePath":root.path(),"origin":{"type":"issue_dispatch","initiatedBy":"stand_in","userId":7},
+        "executionRequest":{"task_id":task_id,"subtask_id":"initial","prompt":"Work privately"}});
+    for _ in 0..2 {
+        handler
+            .create_stand_in_task(&config, &issue, &binding, payload.clone())
+            .await
+            .unwrap();
+    }
+    let requests = admitted.lock().unwrap();
+    assert_eq!(requests.len(), 1);
+    assert_eq!(requests[0]["humanAssistantDispatchId"], "dispatch");
+    assert_eq!(requests[0]["assignmentId"], "assignment");
+    let task = handler.local_task_link(task_id).unwrap();
+    assert_eq!(task.runtime_handle["origin"]["executionId"], "42");
+    assert_eq!(task.runtime_handle["origin"]["userId"], 7);
+    assert_eq!(handler.queued_local_task_position(task_id), Some(0));
+    assert!(handler.turn_queue_path.exists());
+    server.abort();
+}
+
+#[tokio::test]
+async fn assistant_preflight_failure_is_durable_before_any_task_binding_or_start() {
+    let reported = Arc::new(Mutex::new(Value::Null));
+    let captured = reported.clone();
+    let router = Router::new()
+        .route("/api/users/me", get(|| async { Json(json!({"id":7})) }))
+        .route(
+            "/api/v1/cloud-projects/project/executions/42/dispatch-failed",
+            axum::routing::post(move |Json(body): Json<Value>| {
+                *captured.lock().unwrap() = body;
+                async { Json(json!({"status":"failed"})) }
+            }),
+        );
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let url = format!("http://{}", listener.local_addr().unwrap());
+    let server = tokio::spawn(async { axum::serve(listener, router).await.unwrap() });
+    let root = tempfile::tempdir().unwrap();
+    let mut handler = RuntimeWorkRpcHandler::new("mac", "unused");
+    handler.task_store_path = Arc::new(root.path().join("tasks.sqlite"));
+    handler.store = RuntimeWorkStore::new(root.path().join("runtime-index.json"));
+    handler.worktrees = WorktreeManager::new(root.path().join("worktrees.json"));
+    handler.backend_connection = Arc::new(Mutex::new(Some(ConnectionConfig {
+        backend_url: url,
+        auth_token: "test".into(),
+        ..Default::default()
+    })));
+    let config = json!({"id":"@primary","userId":7,"projectId":"project","projectStore":"cloud",
+        "workspace":{"projectKey":"missing","workspacePath":"/not-present","executionMode":"current_workspace"}});
+    let issue = json!({"id":"issue","human_assistant_dispatch":{"dispatchId":"dispatch","executionId":"42","dispatchState":"waiting_device"}});
+    let error = handler
+        .dispatch_cloud_stand_in_role(
+            &config,
+            &issue,
+            &json!({"humanAssignmentId":"human"}),
+            &json!([]),
+        )
+        .await
+        .unwrap_err();
+    assert_eq!(error.code, "workspace_unavailable");
+    assert_eq!(reported.lock().unwrap()["note"], "workspace_unavailable");
+    assert!(handler.local_task_links(true).is_empty());
+    server.abort();
+}
+
+#[tokio::test]
 async fn explicit_retry_reuses_failed_task_and_rolls_back_a_rejected_restart() {
     let root = tempfile::tempdir().unwrap();
     let mut handler = RuntimeWorkRpcHandler::new("mac", "unused");
@@ -694,6 +843,38 @@ async fn default_personal_task_needs_no_project_environment() {
     assert!(payload.get("workspacePath").is_none());
     let request = execution_request(&payload).unwrap();
     assert!(is_standalone_chat_workspace(&request));
+}
+
+#[tokio::test]
+async fn durable_assignment_brief_limits_the_shared_final_result() {
+    let router = Router::new().route("/api/users/me", get(|| async { Json(json!({"id":7})) }));
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let url = format!("http://{}", listener.local_addr().unwrap());
+    let server = tokio::spawn(async { axum::serve(listener, router).await.unwrap() });
+    let root = tempfile::tempdir().unwrap();
+    let mut handler = RuntimeWorkRpcHandler::new("mac", "unused");
+    handler.task_store_path = Arc::new(root.path().join("tasks.sqlite"));
+    handler.backend_connection = Arc::new(Mutex::new(Some(ConnectionConfig {
+        backend_url: url,
+        auth_token: "test".into(),
+        ..Default::default()
+    })));
+    let config = json!({"id":"@primary","projectStore":"cloud","projectId":"project","userId":7});
+    for durable in [false, true] {
+        let mut issue = json!({"id":"issue","title":"Work"});
+        if durable {
+            issue["human_assistant_dispatch"] = json!({"dispatchId":"dispatch"});
+        }
+        let payload = handler
+            .prepare_stand_in_task(&config, &issue, &json!({"humanAssignmentId":"human"}))
+            .await
+            .unwrap();
+        let prompt = payload["message"].as_str().unwrap();
+        assert_eq!(prompt.contains("[共享结果约束]"), durable);
+        assert_eq!(prompt.contains("可核验的证据引用"), durable);
+        assert_eq!(payload["executionRequest"]["prompt"], payload["message"]);
+    }
+    server.abort();
 }
 
 #[tokio::test]

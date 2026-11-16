@@ -77,6 +77,9 @@ export function mapWorkspaceTaskBindingDto(
       row.dispatch_round_id ?? row.dispatchRoundId,
     ),
     assignmentId: nullableString(row.assignment_id ?? row.assignmentId),
+    ...(row.execution_id == null && row.executionId == null
+      ? {}
+      : { executionId: nullableString(row.execution_id ?? row.executionId) }),
     modelSelection:
       (row.modelSelection as ModelSelectionConfig | null | undefined) ??
       (row.model_selection as ModelSelectionConfig | null | undefined) ??
