@@ -113,13 +113,16 @@ window.__ModuleLoader__.load({
         }, [])
         const preparation = h(
           'div',
-          { className: 'space-y-3' },
+          {
+            'data-testid': 'voice-input-preparation',
+            className: 'wework-voice-preparation space-y-3',
+          },
           h(OfficialPreparation, props),
           h(
             'div',
             {
               'data-testid': 'voice-input-model-help',
-              className: 'space-y-1 text-sm text-muted-foreground',
+              className: 'space-y-1 text-sm text-text-secondary',
             },
             ...modelHelp.map((text, index) => h('p', { key: index }, text))
           )
@@ -138,6 +141,8 @@ window.__ModuleLoader__.load({
             open,
             title,
             closeLabel: close,
+            className: 'wework-voice-setup-modal',
+            contentClassName: 'wework-voice-setup-content',
             onClose: () => setOpen(false),
             footer: h(
               Button,
