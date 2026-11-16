@@ -294,7 +294,7 @@ function AutomationSuggestions({
         'todo.automation_daily_brief_prompt',
         '给我一份晨间简报，包含我的日程安排、重要未读邮件，以及今天需要我关注的事项。'
       ),
-      schedule: t('todo.automation_daily_brief_schedule', '工作日 8:00'),
+      schedule: t('todo.automation_daily_brief_schedule', '周一至周五 8:00'),
       cronExpression: '0 8 * * 1-5',
       cronTime: '08:00',
       icon: Bell,
@@ -318,7 +318,7 @@ function AutomationSuggestions({
         'todo.automation_follow_up_prompt',
         '查看最近的电子邮箱和日历活动，并标记需要你关注的事项'
       ),
-      schedule: t('todo.automation_follow_up_schedule', '工作日 9:00'),
+      schedule: t('todo.automation_follow_up_schedule', '周一至周五 9:00'),
       cronExpression: '0 9 * * 1-5',
       cronTime: '09:00',
       icon: FileSearch,

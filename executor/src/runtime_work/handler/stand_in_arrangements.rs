@@ -220,6 +220,15 @@ impl RuntimeWorkRpcHandler {
             .automation_store
             .get(&run.automation_id)
             .ok_or_else(|| arrangement_error("The arrangement was cancelled"))?;
+        if !self
+            .automation_store
+            .allow_dispatch(&automation, run, chrono::Utc::now())
+            .map_err(arrangement_error)?
+        {
+            return Err(arrangement_error(
+                "Scheduled execution skipped on a China non-workday",
+            ));
+        }
         if automation.version != binding.automation_version
             || automation.task_request["standInOwner"]["userId"] != binding.user_id
             || automation.task_request["standInOwner"]["roleId"] != binding.role_id

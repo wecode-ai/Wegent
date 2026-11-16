@@ -295,7 +295,7 @@ export function ProjectAutomaticProcessing({
           ? statusTriggerLabel(draft)
           : draft.trigger === 'schedule'
             ? draft.cronExpression.trim()
-              ? `${translate('todo.trigger_schedule', '按时间定期处理')} · ${scheduleLabel(draft.cronExpression, locale)}`
+              ? `${translate('todo.trigger_schedule', '按时间定期处理')} · ${scheduleLabel(draft.cronExpression, locale, draft.workdayOnly)}`
               : translate('todo.trigger_schedule', '按时间定期处理')
             : draft.eventType
               ? eventLabel(draft.eventType, locale)
@@ -409,7 +409,8 @@ export function ProjectAutomaticProcessing({
       eventType,
       eventConfig,
       cronExpression: isSchedule ? value.cronExpression.trim() : null,
-      timezone: 'Asia/Shanghai',
+      workdayOnly: isSchedule && value.workdayOnly,
+      timezone: value.timezone,
       targetKind: value.targetKind,
       targetId: value.targetId,
       executionDeviceId: null,
@@ -543,7 +544,7 @@ export function ProjectAutomaticProcessing({
                         : ruleDraft.trigger === 'status_changed'
                           ? statusTriggerLabel(ruleDraft)
                           : ruleDraft.trigger === 'schedule'
-                            ? `${translate('todo.trigger_schedule', '按时间定期处理')} · ${scheduleLabel(ruleDraft.cronExpression, locale)}`
+                            ? `${translate('todo.trigger_schedule', '按时间定期处理')} · ${scheduleLabel(ruleDraft.cronExpression, locale, ruleDraft.workdayOnly)}`
                             : eventLabel(ruleDraft.eventType, locale)
                   const targetName = rule.targetName
                   return (
