@@ -527,7 +527,7 @@ async fn send_executor(
         .timeout(DISPATCH_TIMEOUT)
         .send()
         .await
-        .map_err(|error| error.to_string())?;
+        .map_err(|error| format!("{error:?}"))?;
     if !response.status().is_success() {
         return Err(format!("Executor returned HTTP {}", response.status()));
     }
