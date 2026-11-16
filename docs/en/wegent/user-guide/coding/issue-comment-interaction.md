@@ -12,7 +12,8 @@ This contract covers the main composer in issue activity. Timeline replies reuse
 Descriptions initially preview up to `240px`, preserving goal text and acceptance context, with expansion for longer content.
 When the editable title scrolls out of view while reading activity, the header retains a compact Issue title and current status.
 When the linked-task entry scrolls away, Create task becomes a compact header action without consuming another row of reading space.
-In short, narrow windows, an open detail dialog uses the full collaboration area. Closing it restores project navigation, preserving room for reading and full-size controls.
+In narrow windows, an open detail dialog uses the full collaboration area. Closing it restores project navigation, preserving room for reading and full-size controls.
+During the current app session, unsent comment text and its reply destination are retained separately by account, project store, project, and Issue. Return from settings to continue editing. A successful send clears the draft; cancelling a reply retains the text while leaving that reply destination.
 Descriptions expose a keyboard-accessible Edit description action that focuses the editor. Loading and normalizing Markdown alone does not mark the content as unsaved.
 Titles and properties save immediately; description edits use Save. A shared header indicator reports unsaved changes, saving, saved, or failure. Failed changes remain available for retry.
 Replies to ordinary human discussions say they continue the discussion. Only discussions with execution records promise execution continuation; stand-in conversations and human work assignments retain their own reply explanations.

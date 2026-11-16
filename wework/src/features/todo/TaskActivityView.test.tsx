@@ -26,6 +26,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { IssueAssignmentReceiptState } from './IssueAssignmentReceipts'
 import { issueAssignmentRevision } from './issueAssignmentReceiptScope'
 import { TaskActivityView } from './TaskActivityView'
+import { clearIssueCommentDraftsForTests } from './useIssueCommentDraft'
 
 const createProjectRuntimeTask = vi.fn()
 const sendRuntimePaneMessage = vi.fn()
@@ -395,6 +396,7 @@ describe('TaskActivityView', () => {
     )
   })
   beforeEach(() => {
+    clearIssueCommentDraftsForTests()
     HTMLElement.prototype.scrollTo = vi.fn()
     paneExecution.running = false
     clearRuntimeConversationCacheForTests()

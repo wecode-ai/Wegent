@@ -17,6 +17,7 @@ import { notificationCommentFocus } from '@/features/notifications/notificationC
 import { useIssueActivityScroll } from '@wegent/collaboration/issue-detail/useIssueActivityScroll'
 import { useTaskActivityRefresh } from './useTaskActivityRefresh'
 import { useFocusedComment } from './useFocusedComment'
+import { useIssueCommentDraft } from './useIssueCommentDraft'
 import {
   dispatchTaskCardReply,
   commentAgentMentions,
@@ -446,8 +447,19 @@ export function TaskActivityView({
     [issueTimeline, threadMessages]
   )
   const [chatCurrentUserId, setChatCurrentUserId] = useState<string | null>(null)
-  const [newCommentDraft, setNewCommentDraft] = useState('')
-  const [selectedReplyTarget, setReplyTarget] = useState<TaskReplyCard | null>(null)
+  const {
+    text: newCommentDraft,
+    setText: setNewCommentDraft,
+    replyTarget: selectedReplyTarget,
+    setReplyTarget,
+  } = useIssueCommentDraft(
+    JSON.stringify([
+      state.user?.id ?? currentUserId ?? LOCAL_USER.id,
+      projectLocation,
+      project.id,
+      task.id,
+    ])
+  )
   const replyTarget = selectedReplyTarget
     ? (commentCards.find(card => card.root.messageId === selectedReplyTarget.root.messageId) ??
       selectedReplyTarget)

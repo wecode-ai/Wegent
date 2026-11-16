@@ -71,6 +71,17 @@ async function verifyConstrainedDiscussion(control, captureScreenshot, replySele
     const action = scope('[data-testid="issue-persistent-task-action"]')
     await control.command('waitFor', action, { visible: true, stableMs: 300 })
     await verifyComposerVisible(control)
+    for (const selector of [
+      scope('[data-testid="cloud-task-activity-composer"]'),
+      scope('[data-testid="cloud-todo-detail-title"]'),
+      scope('[data-testid="issue-reply-cancel"]'),
+    ]) {
+      const [target] = JSON.parse(await control.command('getElementMetrics', selector))
+      assert.ok(
+        target.width >= 44 && target.height >= 44,
+        `Narrow input and reply targets must remain at least 44px: ${JSON.stringify(target)}`
+      )
+    }
     const selectors = [
       scope('[data-testid="cloud-todo-detail"] > header'),
       action,
@@ -239,5 +250,37 @@ export async function verifyIssueDetailReading(control, { captureScreenshot, uiT
   )
   await captureScreenshot(control, 'issue-detail-reading-02-reply.png')
   await verifyConstrainedDiscussion(control, captureScreenshot, replySelector)
+  const routeDraft = '设置往返后保留这段回复草稿。'
+  await control.command('fill', composer, { value: routeDraft })
+  const activityId = await control.command('getAttribute', scope('.task-detail-comments'), {
+    value: 'data-testid',
+  })
+  const issueId = activityId.replace('cloud-task-activity-', '')
+  await control.command('click', '[data-testid="settings-button"]')
+  await control.command('click', '[data-testid="settings-menu-button"]')
+  await control.command('waitFor', '[data-testid="settings-back-button"]', { visible: true })
+  await control.command('click', '[data-testid="settings-back-button"]')
+  const details = JSON.parse(await control.command('getElementMetrics', detail))
+  if (!details.some(row => row.visibleIntersection)) {
+    await control.command('click', scope(`[data-testid="cloud-todo-card-${issueId}"]`))
+  }
+  await control.command('waitFor', composer, { text: routeDraft, visible: true })
+  await control.command('waitFor', replyComposer, { text: '继续此讨论', visible: true })
+  assert.ok((await control.command('getText', replyComposer)).includes(body))
+  await captureScreenshot(control, 'issue-detail-reading-04-restored-reply-draft.png')
+  await control.command('fill', composer, { value: '' })
   await control.command('click', scope('[data-testid="issue-reply-cancel"]'))
+  const [beforeExpansion] = JSON.parse(await control.command('getElementMetrics', detail))
+  const expand = scope('[data-testid="cloud-todo-detail-fullscreen"]')
+  await control.command('click', expand)
+  await control.command('waitFor', scope('.task-detail-workspace-panel-shell.is-expanded'), {
+    visible: true,
+    stableMs: 300,
+  })
+  const [expanded] = JSON.parse(await control.command('getElementMetrics', detail))
+  assert.ok(
+    expanded.width >= beforeExpansion.width,
+    `Expanding details must not shrink the reading column: ${JSON.stringify({ beforeExpansion, expanded })}`
+  )
+  await control.command('click', expand)
 }

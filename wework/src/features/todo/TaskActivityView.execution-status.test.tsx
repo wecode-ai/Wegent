@@ -14,6 +14,7 @@ import { act, cleanup, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { TaskActivityView } from './TaskActivityView'
+import { clearIssueCommentDraftsForTests } from './useIssueCommentDraft'
 
 vi.mock('@/api/plugins', () => ({
   createPluginApi: () => ({ listInstalledPlugins: vi.fn().mockResolvedValue({ items: [] }) }),
@@ -181,6 +182,7 @@ async function openExecution() {
 
 describe('opening an activity execution with the real pane session', () => {
   beforeEach(async () => {
+    clearIssueCommentDraftsForTests()
     localStorage.clear()
     sessionStorage.clear()
     clearRuntimeConversationCacheForTests()

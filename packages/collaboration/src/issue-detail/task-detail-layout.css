@@ -3069,20 +3069,39 @@
     padding: 6px 10px;
   }
 
-  .task-detail-workspace-panel .task-detail-comment-editor {
-    min-height: 24px;
-    max-height: 48px;
-  }
-
   .task-detail-workspace-panel .task-detail-comment-reply-context-row {
     min-height: 28px;
   }
 }
 
 @media (min-width: 768px) and (max-height: 600px) and (pointer: fine) {
+  .task-detail-workspace-panel .task-detail-comment-editor {
+    min-height: 24px;
+    max-height: 48px;
+  }
+
   .task-detail-workspace-panel .task-detail-new-comment-actions > button {
     min-width: 28px;
     min-height: 28px;
+  }
+}
+
+@media (max-width: 767px) {
+  .task-detail-workspace-panel .task-detail-title,
+  .task-detail-workspace-panel .task-detail-title.task-detail-content-readonly,
+  .task-detail-workspace-panel .task-detail-comment-editor {
+    min-height: 44px;
+  }
+
+  .task-detail-comment-reply-context-row > button {
+    min-width: 44px;
+    min-height: 44px;
+  }
+}
+
+@media (max-width: 767px) and (max-height: 600px) {
+  .task-detail-workspace-panel .task-detail-comment-editor {
+    max-height: 44px;
   }
 }
 

@@ -324,7 +324,7 @@ export function IssueDetailSearchableSelect<TValue extends string>({
               );
             })}
             {visibleOptions.length === 0 ? (
-              <p className="px-3 py-6 text-center text-xs text-text-muted">
+              <p className="px-3 py-6 text-center text-xs text-text-secondary">
                 {emptyLabel}
               </p>
             ) : null}
