@@ -95,7 +95,11 @@ async fn has_active_project_execution(
     user_id: i64,
     device: &DeviceKindRow,
 ) -> Result<bool, MysqlError> {
-    let statuses = crate::socketio::execution_aggregate::CAPACITY_STATUSES;
+    let statuses = crate::loop_item_executions::ACTIVE_STATUSES
+        .iter()
+        .map(|status| format!("'{status}'"))
+        .collect::<Vec<_>>()
+        .join(", ");
     let route = runtime_device_id(device);
     let connection = device_connection_route_id(device);
     let instance = device.json["spec"]["runtimeInstanceId"]

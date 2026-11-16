@@ -29,7 +29,7 @@ async fn verify(mysql: &MysqlService, redis: &RedisService, user: i64) {
         mysql
             .execute(
                 "INSERT INTO kinds VALUES (?,?,'Device',?,'default',?,true,NOW(),NOW())",
-                (id, user, &name, Json(document)),
+                (id, user, name, Json(document)),
             )
             .await
             .unwrap();
@@ -58,7 +58,7 @@ async fn verify(mysql: &MysqlService, redis: &RedisService, user: i64) {
         .unwrap();
     mysql
         .execute(
-            "INSERT INTO loop_item_executions VALUES (1,?,'app-record-6','fixture','running')",
+            "INSERT INTO loop_item_executions VALUES (1,?,'app-record-6','fixture','queued')",
             (user,),
         )
         .await
