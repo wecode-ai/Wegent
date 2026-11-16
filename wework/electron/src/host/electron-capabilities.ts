@@ -1729,7 +1729,7 @@ export function registerPluginDevelopmentCapabilities(
   router.register('pluginDevelopment.list', () => requiredPluginDevelopmentService(services).list())
   router.register('pluginDevelopment.observe', params =>
     requiredPluginDevelopmentService(services).observe(
-      optionalStringParam(params, 'sourceRoot') ?? null
+      nullableStringParam(params, 'sourceRoot') ?? null
     )
   )
   router.register('pluginDevelopment.validate', params =>
