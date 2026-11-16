@@ -50,7 +50,7 @@ NODE
 managed_codex_version="$(node -p 'require(process.argv[1]).codexVersion' "$repository/wework/codex-binaries.lock.json")"
 if [ "$device_codex_version" != "$managed_codex_version" ]; then
     npm install --prefix "$stage/device" --no-save --package-lock=false --ignore-scripts "@openai/codex@$device_codex_version"
-    device_native_binary="$(rg --files --hidden --no-ignore "$stage/device/node_modules" | rg '/bin/codex(\.exe)?$')"
+    device_native_binary="$(find "$stage/device/node_modules" -type f \( -path '*/bin/codex' -o -path '*/bin/codex.exe' \))"
     test -f "$device_native_binary"
     WEWORK_GOAL_TEST_CODEX_BINARY="$device_native_binary" cargo test -p wegent-executor --all-features --lib native_event_goal -- --ignored --nocapture
 fi

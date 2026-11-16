@@ -470,11 +470,13 @@ fn remote_model_subscription_recovers_lost_registration_without_reinitializing_o
         assert_eq!(repeated["subscription"]["status"], "armed");
         handler.control_operation(&context("task"), "cancel_connection_event_subscription", json!({"subscription_key":"wait"})).await.unwrap();
         assert_eq!(read()["status"], "cancelled");
-        let calls = calls.lock().unwrap();
-        assert_eq!(calls.iter().filter(|call| call["method"] == "initializeObservation").count(), 1);
-        assert_eq!(calls.iter().filter(|call| call["action"] == "attach").count(), 2);
-        assert_eq!(calls.iter().filter(|call| call["action"] == "cancel_registration").count(), 1);
-        assert_eq!(calls.iter().filter(|call| call["action"] == "ack_projection").count(), 1);
+        {
+            let calls = calls.lock().unwrap();
+            assert_eq!(calls.iter().filter(|call| call["method"] == "initializeObservation").count(), 1);
+            assert_eq!(calls.iter().filter(|call| call["action"] == "attach").count(), 2);
+            assert_eq!(calls.iter().filter(|call| call["action"] == "cancel_registration").count(), 1);
+            assert_eq!(calls.iter().filter(|call| call["action"] == "ack_projection").count(), 1);
+        }
         assert_eq!(read()["cloud_cancel_pending"], false);
         assert!(handler.command_journal.lock().unwrap().is_empty());
         server.abort();

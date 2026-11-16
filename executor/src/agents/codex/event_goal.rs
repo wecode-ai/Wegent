@@ -5,6 +5,8 @@ use tokio::sync::OwnedMutexGuard;
 
 use super::{event_receipt, CodexAppServerClient, CodexLaunchConfig, CodexTurnRequestContext};
 
+type PersistEventPhase = Box<dyn Fn(&str) -> Result<(), String> + Send + Sync>;
+
 pub struct EventGoalAdmission {
     thread: String,
     expected_goal: Value,
@@ -12,7 +14,7 @@ pub struct EventGoalAdmission {
     input: Value,
     phase: Option<String>,
     guard: Option<OwnedMutexGuard<()>>,
-    persist: Box<dyn Fn(&str) -> Result<(), String> + Send + Sync>,
+    persist: PersistEventPhase,
 }
 
 enum Activation {
@@ -52,7 +54,7 @@ impl EventGoalAdmission {
         input: Value,
         phase: Option<String>,
         guard: OwnedMutexGuard<()>,
-        persist: Box<dyn Fn(&str) -> Result<(), String> + Send + Sync>,
+        persist: PersistEventPhase,
     ) -> Self {
         Self {
             thread,

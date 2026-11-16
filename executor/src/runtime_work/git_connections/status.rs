@@ -32,7 +32,7 @@ pub(super) async fn read(instance: &str, input: &Value) -> Result<ApiReply, AppI
         .filter(|_| {
             response.data["errors"]
                 .as_array()
-                .is_none_or(|errors| errors.is_empty())
+                .map_or(true, |errors| errors.is_empty())
         })
         .cloned()
         .ok_or_else(|| {

@@ -249,7 +249,7 @@ impl RuntimeWorkRpcHandler {
             let owner = self
                 .runtime_http(reqwest::Method::GET, "/users/me", None)
                 .await?;
-            if owner["id"].as_i64().is_none_or(|id| id <= 0) {
+            if owner["id"].as_i64().map_or(true, |id| id <= 0) {
                 return Err(invalid("Connected account is unavailable"));
             }
             let device = self.cloud_device_id()?;

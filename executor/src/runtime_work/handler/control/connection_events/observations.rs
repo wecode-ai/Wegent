@@ -48,83 +48,6 @@ fn capture_consumers(state: &mut Value, id: &str, observation: &Value) -> bool {
     wakeup
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn every_consumer_captures_before_shared_history_is_compacted() {
-        let source = json!({"providerId":"documents","enabledAfter":"2026-11-15T00:00:00Z"});
-        let record = json!({"observation_id":"shared","status":"armed","source":source,"after_sequence":0,"initial_sequence":0,"match":{"/version":1}});
-        let mut state = json!({"operations":{"first":record,"second":record,"cancelled":record,"pending":record,"other":record,"cloud":record}});
-        state["operations"]["cancelled"]["status"] = json!("cancelled");
-        state["operations"]["pending"]["status"] = json!("pending");
-        state["operations"]["pending"]["events"] = json!([{"id":"original"}]);
-        state["operations"]["other"]["observation_id"] = json!("other-source");
-        state["operations"]["cloud"]["cloud_subscription"] = json!({"id":"cloud"});
-        let protected: Vec<_> = ["cancelled", "pending", "other", "cloud"]
-            .iter()
-            .map(|id| state["operations"][id].clone())
-            .collect();
-        let events: Vec<_> = (1..=1001).map(|sequence| json!({"sequence":sequence,"key":format!("key-{sequence}"),"event":{"id":format!("event-{sequence}"),"version":sequence,"at":"2026-11-15T00:00:01Z"}})).collect();
-        let mut observation = json!({"sequence":1001,"events":events});
-        capture_consumers(&mut state, "shared", &observation);
-        observation["events"].as_array_mut().unwrap().remove(0);
-        assert_eq!(observation["events"].as_array().unwrap().len(), 1000);
-        for id in ["first", "second"] {
-            assert_eq!(state["operations"][id]["status"], "pending");
-            assert_eq!(state["operations"][id]["events"][0]["id"], "event-1");
-            assert_eq!(
-                state["operations"][id]["resource_event_keys"],
-                json!(["key-1"])
-            );
-            assert_eq!(state["operations"][id]["after_sequence"], 1001);
-        }
-        for (id, original) in ["cancelled", "pending", "other", "cloud"]
-            .iter()
-            .zip(protected)
-        {
-            assert_eq!(state["operations"][id], original);
-        }
-        let captured = state.clone();
-        capture_consumers(&mut state, "shared", &observation);
-        assert_eq!(state, captured);
-    }
-
-    #[test]
-    fn stale_health_save_cannot_replace_a_captured_batch() {
-        use crate::runtime_work::handler::control::tests::EnvGuard;
-        let _guard = crate::test_env::lock();
-        let root = tempfile::tempdir().unwrap();
-        let _env = EnvGuard::home(root.path().to_str().unwrap());
-        let handler = RuntimeWorkRpcHandler::new("device", "/bin/false");
-        let armed = json!({"status":"armed","task_id":"task","after_sequence":0});
-        handler.save_event_subscription("consumer", &armed).unwrap();
-        let mut pending = armed.clone();
-        pending["status"] = json!("pending");
-        pending["events"] = json!([{"id":"captured"}]);
-        pending["after_sequence"] = json!(1001);
-        handler
-            .save_event_subscription("consumer", &pending)
-            .unwrap();
-        handler.save_event_subscription("consumer", &armed).unwrap();
-        let read = || {
-            workbench_control::journal::transact(&handler.event_subscription_path(), |state| {
-                Ok(state["operations"]["consumer"].clone())
-            })
-            .unwrap()
-        };
-        assert_eq!(read(), pending);
-        let mut cancelled = pending;
-        cancelled["status"] = json!("cancelled");
-        handler
-            .save_event_subscription("consumer", &cancelled)
-            .unwrap();
-        assert!(handler.save_event_subscription("consumer", &armed).is_err());
-        assert_eq!(read()["status"], "cancelled");
-    }
-}
-
 impl RuntimeWorkRpcHandler {
     pub(super) async fn attach_event_observation(
         &self,
@@ -272,5 +195,82 @@ impl RuntimeWorkRpcHandler {
             }
         }
         Ok(observation)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn every_consumer_captures_before_shared_history_is_compacted() {
+        let source = json!({"providerId":"documents","enabledAfter":"2026-11-15T00:00:00Z"});
+        let record = json!({"observation_id":"shared","status":"armed","source":source,"after_sequence":0,"initial_sequence":0,"match":{"/version":1}});
+        let mut state = json!({"operations":{"first":record,"second":record,"cancelled":record,"pending":record,"other":record,"cloud":record}});
+        state["operations"]["cancelled"]["status"] = json!("cancelled");
+        state["operations"]["pending"]["status"] = json!("pending");
+        state["operations"]["pending"]["events"] = json!([{"id":"original"}]);
+        state["operations"]["other"]["observation_id"] = json!("other-source");
+        state["operations"]["cloud"]["cloud_subscription"] = json!({"id":"cloud"});
+        let protected: Vec<_> = ["cancelled", "pending", "other", "cloud"]
+            .iter()
+            .map(|id| state["operations"][id].clone())
+            .collect();
+        let events: Vec<_> = (1..=1001).map(|sequence| json!({"sequence":sequence,"key":format!("key-{sequence}"),"event":{"id":format!("event-{sequence}"),"version":sequence,"at":"2026-11-15T00:00:01Z"}})).collect();
+        let mut observation = json!({"sequence":1001,"events":events});
+        capture_consumers(&mut state, "shared", &observation);
+        observation["events"].as_array_mut().unwrap().remove(0);
+        assert_eq!(observation["events"].as_array().unwrap().len(), 1000);
+        for id in ["first", "second"] {
+            assert_eq!(state["operations"][id]["status"], "pending");
+            assert_eq!(state["operations"][id]["events"][0]["id"], "event-1");
+            assert_eq!(
+                state["operations"][id]["resource_event_keys"],
+                json!(["key-1"])
+            );
+            assert_eq!(state["operations"][id]["after_sequence"], 1001);
+        }
+        for (id, original) in ["cancelled", "pending", "other", "cloud"]
+            .iter()
+            .zip(protected)
+        {
+            assert_eq!(state["operations"][id], original);
+        }
+        let captured = state.clone();
+        capture_consumers(&mut state, "shared", &observation);
+        assert_eq!(state, captured);
+    }
+
+    #[test]
+    fn stale_health_save_cannot_replace_a_captured_batch() {
+        use crate::runtime_work::handler::control::tests::EnvGuard;
+        let _guard = crate::test_env::lock();
+        let root = tempfile::tempdir().unwrap();
+        let _env = EnvGuard::home(root.path().to_str().unwrap());
+        let handler = RuntimeWorkRpcHandler::new("device", "/bin/false");
+        let armed = json!({"status":"armed","task_id":"task","after_sequence":0});
+        handler.save_event_subscription("consumer", &armed).unwrap();
+        let mut pending = armed.clone();
+        pending["status"] = json!("pending");
+        pending["events"] = json!([{"id":"captured"}]);
+        pending["after_sequence"] = json!(1001);
+        handler
+            .save_event_subscription("consumer", &pending)
+            .unwrap();
+        handler.save_event_subscription("consumer", &armed).unwrap();
+        let read = || {
+            workbench_control::journal::transact(&handler.event_subscription_path(), |state| {
+                Ok(state["operations"]["consumer"].clone())
+            })
+            .unwrap()
+        };
+        assert_eq!(read(), pending);
+        let mut cancelled = pending;
+        cancelled["status"] = json!("cancelled");
+        handler
+            .save_event_subscription("consumer", &cancelled)
+            .unwrap();
+        assert!(handler.save_event_subscription("consumer", &armed).is_err());
+        assert_eq!(read()["status"], "cancelled");
     }
 }

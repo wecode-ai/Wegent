@@ -187,7 +187,7 @@ impl RuntimeWorkRpcHandler {
             let owner = self
                 .runtime_http(reqwest::Method::GET, "/users/me", None)
                 .await?;
-            if owner["id"].as_i64().is_none_or(|id| id <= 0)
+            if owner["id"].as_i64().map_or(true, |id| id <= 0)
                 || self.backend_connection_snapshot()?.as_ref() != Some(&connection)
             {
                 return Err(invalid("Connection account changed"));

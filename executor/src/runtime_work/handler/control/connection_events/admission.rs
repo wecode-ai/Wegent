@@ -8,156 +8,6 @@ struct GoalClaim {
     guard: tokio::sync::OwnedMutexGuard<()>,
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::runtime_work::handler::control::tests::{seed, EnvGuard};
-
-    #[test]
-    fn native_goal_admission_accepts_the_canonical_source_message_presentation() {
-        let _lock = crate::test_env::lock();
-        tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap().block_on(async {
-            let root = tempfile::tempdir().unwrap();
-            let _env = EnvGuard::home(root.path().to_str().unwrap());
-            let handler = RuntimeWorkRpcHandler::new("control-test-device", "/bin/false");
-            let mut link = seed(&handler, "caller");
-            link.thread_id = Some("11111111-1111-4111-8111-111111111111".into());
-            handler.store.upsert_task(link.clone());
-            let record = json!({"task_id":"caller","status":"resuming_goal","operation_id":"event-operation",
-                "session":session::binding(&link).unwrap(),"continuation":"Process the review","resource_event_keys":["a".repeat(64)],
-                "waiting_goal":{"objective":"Finish work","createdAt":1,"tokenBudget":500},
-                "source":{"name":"Review"},"events":[{"id":"new-review","text":"Untrusted review facts"}]});
-            handler.save_event_subscription("review", &record).unwrap();
-            let mut payload = json!({"commandId":"event-operation","clientUserMessageId":"event-operation",
-                "message":"Process the review","resourceEventKeys":record["resource_event_keys"],
-                "userMessagePresentation":{"content":"Review · Process the review","source":{"source":"connection_event"}}});
-            normalize_user_message_presentation(&mut payload).unwrap();
-            assert_eq!(payload["message"], "Review · Process the review");
-            let mut request = ExecutionRequest {prompt:record["continuation"].clone(), ..Default::default()};
-            request.extra.insert("client_user_message_id".into(), json!("event-operation"));
-            apply_runtime_payload_metadata(&mut request, &payload);
-            handler.prepare_resource_event_request("caller", &mut request).unwrap();
-            assert_eq!(request.extra["runtime_command_input"]["prompt"], "Process the review");
-            assert!(request.prompt.as_str().unwrap().contains("Untrusted review facts"));
-            for (field, value) in [
-                ("prompt", json!("Unrelated execution")),
-                ("message", json!("Forged source · Process the review")),
-                ("resourceEventKeys", json!(["b".repeat(64)])),
-            ] {
-                let mut changed = request.clone();
-                changed.extra.get_mut("runtime_command_input").unwrap()[field] = value;
-                assert!(handler.event_goal_admission("caller", &changed).await.is_err(), "{field} must retain its distinct accepted identity");
-            }
-            drop(handler.event_goal_admission("caller", &request).await.unwrap().unwrap());
-        });
-    }
-
-    #[test]
-    fn deferred_event_pins_the_original_input_across_fresh_runtime_context() {
-        let _lock = crate::test_env::lock();
-        tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap().block_on(async {
-            let root=tempfile::tempdir().unwrap();
-            let _env=EnvGuard::home(root.path().to_str().unwrap());
-            let handler=RuntimeWorkRpcHandler::new("control-test-device","/bin/false");
-            let mut link=seed(&handler,"caller");
-            link.thread_id=Some("11111111-1111-4111-8111-111111111111".into());
-            handler.store.upsert_task(link.clone());
-            let mut record=json!({"task_id":"caller","status":"resuming_goal","operation_id":"event-operation","continuation":"Process the event","resource_event_keys":["a".repeat(64)],"waiting_goal":{"objective":"Finish work","createdAt":1,"tokenBudget":500},"source":{"name":"Review"}});
-            record["session"]=session::binding(&link).unwrap();
-            handler.save_event_subscription("review",&record).unwrap();
-            let mut request=ExecutionRequest{prompt:record["continuation"].clone(),..Default::default()};
-            request.extra.insert("client_user_message_id".into(),json!("event-operation"));
-            apply_runtime_payload_metadata(&mut request,&json!({"commandId":"event-operation","message":event_user_message_presentation(&record)["content"],"resourceEventKeys":record["resource_event_keys"]}));
-            request.prompt=json!("Process the event. Original source facts and recalled context.");
-            drop(handler.event_goal_admission("caller",&request).await.unwrap().unwrap());
-            record=workbench_control::journal::transact(&handler.event_subscription_path(),|state|Ok(state["operations"]["review"].clone())).unwrap();
-            let original=record["native_event_input"].clone();
-            record["native_event_phase"]=json!("injected");
-            handler.save_event_subscription("review",&record).unwrap();
-            request.prompt=json!("Process the event. Original source facts and newer recalled context.");
-            drop(handler.event_goal_admission("caller",&request).await.unwrap().unwrap());
-            let saved=workbench_control::journal::transact(&handler.event_subscription_path(),|state|Ok(state["operations"]["review"].clone())).unwrap();
-            assert_eq!(saved["native_event_input"],original);
-            assert_eq!(saved["native_event_phase"],"injected");
-        });
-    }
-
-    #[test]
-    fn source_admission_preserves_questions_during_runtime_preparation() {
-        let _lock = crate::test_env::lock();
-        let root = tempfile::tempdir().unwrap();
-        let _env = EnvGuard::home(root.path().to_str().unwrap());
-        let handler = RuntimeWorkRpcHandler::new("control-test-device", "/bin/false");
-        let link = seed(&handler, "caller");
-        handler.save_event_subscription("review",&json!({"task_id":"caller","status":"resuming_goal","operation_id":"event-operation","source":{"name":"Review"}})).unwrap();
-        let mut event = ExecutionRequest::default();
-        event
-            .extra
-            .insert("resource_event_keys".into(), json!(["a".repeat(64)]));
-        // A question can arrive after the last scheduler check but before the
-        // running projection is committed. Automatic input must not clear it.
-        handler.set_interaction_status("caller", Some("waitingForApproval"));
-        handler.mark_task_running_for_send(
-            "caller",
-            link.thread_id.as_deref().unwrap(),
-            &link.workspace_path,
-            &event,
-            &json!({}),
-        );
-        assert_eq!(
-            handler
-                .store
-                .get_task_summary("caller")
-                .unwrap()
-                .interaction_status
-                .as_deref(),
-            Some("waitingForApproval")
-        );
-        assert_eq!(
-            handler
-                .update_event_goal_phase("review", "event-operation", "injection_requested")
-                .unwrap_err()
-                .code,
-            "user_input_pending"
-        );
-        handler.set_interaction_status("caller", None);
-        handler
-            .update_event_goal_phase("review", "event-operation", "injection_requested")
-            .unwrap();
-        handler
-            .update_event_goal_phase("review", "event-operation", "injected")
-            .unwrap();
-        handler.set_interaction_status("caller", Some("awaitingUserReply"));
-        assert_eq!(
-            handler
-                .update_event_goal_phase("review", "event-operation", "activation_requested")
-                .unwrap_err()
-                .code,
-            "user_input_pending"
-        );
-        let saved =
-            workbench_control::journal::transact(&handler.event_subscription_path(), |state| {
-                Ok(state["operations"]["review"].clone())
-            })
-            .unwrap();
-        assert_eq!(saved["native_event_phase"], "injected");
-        // An explicit owner reply retains the ordinary path for answering it.
-        handler.mark_task_running_for_send(
-            "caller",
-            link.thread_id.as_deref().unwrap(),
-            &link.workspace_path,
-            &ExecutionRequest::default(),
-            &json!({}),
-        );
-        assert!(handler
-            .store
-            .get_task_summary("caller")
-            .unwrap()
-            .interaction_status
-            .is_none());
-    }
-}
-
 impl RuntimeWorkRpcHandler {
     async fn claim_event_goal(
         &self,
@@ -369,7 +219,7 @@ impl RuntimeWorkRpcHandler {
                         .as_str()
                         .ok_or_else(|| invalid("Event conversation is missing"))?,
                 )
-                .is_none_or(|link| {
+                .map_or(true, |link| {
                     link.interaction_status
                         .as_deref()
                         .is_some_and(|status| !status.is_empty())
@@ -469,5 +319,155 @@ impl RuntimeWorkRpcHandler {
                 &[("task_id", task.into()), ("error_code", error.code)],
             );
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::runtime_work::handler::control::tests::{seed, EnvGuard};
+
+    #[test]
+    fn native_goal_admission_accepts_the_canonical_source_message_presentation() {
+        let _lock = crate::test_env::lock();
+        tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap().block_on(async {
+            let root = tempfile::tempdir().unwrap();
+            let _env = EnvGuard::home(root.path().to_str().unwrap());
+            let handler = RuntimeWorkRpcHandler::new("control-test-device", "/bin/false");
+            let mut link = seed(&handler, "caller");
+            link.thread_id = Some("11111111-1111-4111-8111-111111111111".into());
+            handler.store.upsert_task(link.clone());
+            let record = json!({"task_id":"caller","status":"resuming_goal","operation_id":"event-operation",
+                "session":session::binding(&link).unwrap(),"continuation":"Process the review","resource_event_keys":["a".repeat(64)],
+                "waiting_goal":{"objective":"Finish work","createdAt":1,"tokenBudget":500},
+                "source":{"name":"Review"},"events":[{"id":"new-review","text":"Untrusted review facts"}]});
+            handler.save_event_subscription("review", &record).unwrap();
+            let mut payload = json!({"commandId":"event-operation","clientUserMessageId":"event-operation",
+                "message":"Process the review","resourceEventKeys":record["resource_event_keys"],
+                "userMessagePresentation":{"content":"Review · Process the review","source":{"source":"connection_event"}}});
+            normalize_user_message_presentation(&mut payload).unwrap();
+            assert_eq!(payload["message"], "Review · Process the review");
+            let mut request = ExecutionRequest {prompt:record["continuation"].clone(), ..Default::default()};
+            request.extra.insert("client_user_message_id".into(), json!("event-operation"));
+            apply_runtime_payload_metadata(&mut request, &payload);
+            handler.prepare_resource_event_request("caller", &mut request).unwrap();
+            assert_eq!(request.extra["runtime_command_input"]["prompt"], "Process the review");
+            assert!(request.prompt.as_str().unwrap().contains("Untrusted review facts"));
+            for (field, value) in [
+                ("prompt", json!("Unrelated execution")),
+                ("message", json!("Forged source · Process the review")),
+                ("resourceEventKeys", json!(["b".repeat(64)])),
+            ] {
+                let mut changed = request.clone();
+                changed.extra.get_mut("runtime_command_input").unwrap()[field] = value;
+                assert!(handler.event_goal_admission("caller", &changed).await.is_err(), "{field} must retain its distinct accepted identity");
+            }
+            drop(handler.event_goal_admission("caller", &request).await.unwrap().unwrap());
+        });
+    }
+
+    #[test]
+    fn deferred_event_pins_the_original_input_across_fresh_runtime_context() {
+        let _lock = crate::test_env::lock();
+        tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap().block_on(async {
+            let root=tempfile::tempdir().unwrap();
+            let _env=EnvGuard::home(root.path().to_str().unwrap());
+            let handler=RuntimeWorkRpcHandler::new("control-test-device","/bin/false");
+            let mut link=seed(&handler,"caller");
+            link.thread_id=Some("11111111-1111-4111-8111-111111111111".into());
+            handler.store.upsert_task(link.clone());
+            let mut record=json!({"task_id":"caller","status":"resuming_goal","operation_id":"event-operation","continuation":"Process the event","resource_event_keys":["a".repeat(64)],"waiting_goal":{"objective":"Finish work","createdAt":1,"tokenBudget":500},"source":{"name":"Review"}});
+            record["session"]=session::binding(&link).unwrap();
+            handler.save_event_subscription("review",&record).unwrap();
+            let mut request=ExecutionRequest{prompt:record["continuation"].clone(),..Default::default()};
+            request.extra.insert("client_user_message_id".into(),json!("event-operation"));
+            apply_runtime_payload_metadata(&mut request,&json!({"commandId":"event-operation","message":event_user_message_presentation(&record)["content"],"resourceEventKeys":record["resource_event_keys"]}));
+            request.prompt=json!("Process the event. Original source facts and recalled context.");
+            drop(handler.event_goal_admission("caller",&request).await.unwrap().unwrap());
+            record=workbench_control::journal::transact(&handler.event_subscription_path(),|state|Ok(state["operations"]["review"].clone())).unwrap();
+            let original=record["native_event_input"].clone();
+            record["native_event_phase"]=json!("injected");
+            handler.save_event_subscription("review",&record).unwrap();
+            request.prompt=json!("Process the event. Original source facts and newer recalled context.");
+            drop(handler.event_goal_admission("caller",&request).await.unwrap().unwrap());
+            let saved=workbench_control::journal::transact(&handler.event_subscription_path(),|state|Ok(state["operations"]["review"].clone())).unwrap();
+            assert_eq!(saved["native_event_input"],original);
+            assert_eq!(saved["native_event_phase"],"injected");
+        });
+    }
+
+    #[test]
+    fn source_admission_preserves_questions_during_runtime_preparation() {
+        let _lock = crate::test_env::lock();
+        let root = tempfile::tempdir().unwrap();
+        let _env = EnvGuard::home(root.path().to_str().unwrap());
+        let handler = RuntimeWorkRpcHandler::new("control-test-device", "/bin/false");
+        let link = seed(&handler, "caller");
+        handler.save_event_subscription("review",&json!({"task_id":"caller","status":"resuming_goal","operation_id":"event-operation","source":{"name":"Review"}})).unwrap();
+        let mut event = ExecutionRequest::default();
+        event
+            .extra
+            .insert("resource_event_keys".into(), json!(["a".repeat(64)]));
+        // A question can arrive after the last scheduler check but before the
+        // running projection is committed. Automatic input must not clear it.
+        handler.set_interaction_status("caller", Some("waitingForApproval"));
+        handler.mark_task_running_for_send(
+            "caller",
+            link.thread_id.as_deref().unwrap(),
+            &link.workspace_path,
+            &event,
+            &json!({}),
+        );
+        assert_eq!(
+            handler
+                .store
+                .get_task_summary("caller")
+                .unwrap()
+                .interaction_status
+                .as_deref(),
+            Some("waitingForApproval")
+        );
+        assert_eq!(
+            handler
+                .update_event_goal_phase("review", "event-operation", "injection_requested")
+                .unwrap_err()
+                .code,
+            "user_input_pending"
+        );
+        handler.set_interaction_status("caller", None);
+        handler
+            .update_event_goal_phase("review", "event-operation", "injection_requested")
+            .unwrap();
+        handler
+            .update_event_goal_phase("review", "event-operation", "injected")
+            .unwrap();
+        handler.set_interaction_status("caller", Some("awaitingUserReply"));
+        assert_eq!(
+            handler
+                .update_event_goal_phase("review", "event-operation", "activation_requested")
+                .unwrap_err()
+                .code,
+            "user_input_pending"
+        );
+        let saved =
+            workbench_control::journal::transact(&handler.event_subscription_path(), |state| {
+                Ok(state["operations"]["review"].clone())
+            })
+            .unwrap();
+        assert_eq!(saved["native_event_phase"], "injected");
+        // An explicit owner reply retains the ordinary path for answering it.
+        handler.mark_task_running_for_send(
+            "caller",
+            link.thread_id.as_deref().unwrap(),
+            &link.workspace_path,
+            &ExecutionRequest::default(),
+            &json!({}),
+        );
+        assert!(handler
+            .store
+            .get_task_summary("caller")
+            .unwrap()
+            .interaction_status
+            .is_none());
     }
 }

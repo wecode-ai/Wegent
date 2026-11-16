@@ -59,10 +59,10 @@ impl Delivery {
         {
             let root = path(root)?;
             let package = read(&root.join("package.json"))?;
-            if package["name"] == "@wegent/dsh-connection-host" {
-                if entry.replace(root.join("remote-service.js")).is_some() {
-                    return Err("Connection runtime host is duplicated".to_owned());
-                }
+            if package["name"] == "@wegent/dsh-connection-host"
+                && entry.replace(root.join("remote-service.js")).is_some()
+            {
+                return Err("Connection runtime host is duplicated".to_owned());
             }
             if package["wework"]["connections"].is_object() {
                 providers.push(package);
