@@ -20,6 +20,7 @@ export function ProjectSettingsShell({
   sections,
   testId = 'project-settings-shell',
   pageRenderer: Pages = ActiveProjectSettingsPages,
+  scopeKey,
 }: {
   ariaLabel: string
   onSectionChange?(sectionId: string): void
@@ -27,6 +28,7 @@ export function ProjectSettingsShell({
   sections: ProjectSettingsSection[]
   testId?: string
   pageRenderer?: ComponentType<ProjectSettingsPagesProps>
+  scopeKey?: string
 }) {
   const [internalSelectedId, setInternalSelectedId] = useState(sections[0]?.id ?? '')
   const selectedId = selectedSectionId ?? internalSelectedId
@@ -87,7 +89,7 @@ export function ProjectSettingsShell({
         className="h-full min-h-0 min-w-0 flex-1 overflow-y-auto overscroll-y-contain [scrollbar-gutter:stable]"
         data-testid={`${testId}-content`}
       >
-        <Pages sections={sections} selectedSectionId={selected.id} testId={testId} />
+        <Pages key={scopeKey} sections={sections} selectedSectionId={selected.id} testId={testId} />
       </main>
     </div>
   )

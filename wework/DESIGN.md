@@ -1022,6 +1022,11 @@ component-level validation outlines to override the native-outline reset.
 - The desktop host supplies its retained-page lifecycle through the collaboration
   host adapter. The shared settings shell owns layout and navigation; Web uses
   active-page rendering with its framework-owned React runtime.
+- Keep the settings frame mounted across project navigation and reset the
+  project-owned page drafts inside it by resource identity.
+- In narrow project settings, collapse collaboration navigation behind an
+  explicit disclosure while keeping project context and settings entries visible.
+  Preserve every navigation entry and clear its expanded state after navigation.
 - Keep group identity compact above independently expandable configuration
   rows for members, rules, environment and sharing. Collapsed rows summarize
   their current draft values. Keep save status and discard/save actions together.

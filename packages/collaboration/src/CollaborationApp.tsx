@@ -1114,7 +1114,7 @@ export function CollaborationApp({
                 manage: (
                   <ProjectSettingsShell
                     pageRenderer={host.settingsPages}
-                    key={project.id}
+                    scopeKey={`${project.project_store}:${project.id}`}
                     ariaLabel={messages.settings}
                     onSectionChange={(sectionId) => {
                       const nextSectionId =

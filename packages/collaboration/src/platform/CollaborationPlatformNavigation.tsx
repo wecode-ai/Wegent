@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Weibo, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-import { useMemo, useState } from "react";
+import { useId, useMemo, useState } from "react";
 import {
   CloudOff,
   ChevronRight,
@@ -102,6 +102,19 @@ export function CollaborationPlatformNavigation({
   const [workspacesExpanded, setWorkspacesExpanded] = useState(true);
   const [retryingNavigation, setRetryingNavigation] = useState(false);
   const fullSidebar = host.capabilities.sidebarPresentation !== "context";
+  const navigationId = useId();
+  const locationKey = JSON.stringify(host.location);
+  const [mobileNavigation, setMobileNavigation] = useState({
+    locationKey,
+    expanded: false,
+  });
+  const navigationExpanded =
+    mobileNavigation.locationKey === locationKey && mobileNavigation.expanded;
+  if (mobileNavigation.locationKey !== locationKey)
+    setMobileNavigation({ locationKey, expanded: false });
+  const projectSettings = Boolean(
+    host.location.projectId && host.location.projectView === "manage",
+  );
   // Expansion follows the selected workspace during render so it cannot land
   // after the user has already clicked the toggle that was just rendered.
   if (autoExpandedWorkspaceSelection !== autoExpandedWorkspaceId) {
@@ -365,110 +378,132 @@ export function CollaborationPlatformNavigation({
   };
   return (
     <aside
-      className={`collaboration-platform-sidebar collaboration-platform-sidebar-${host.capabilities.sidebarPresentation ?? "full"}`}
+      className={`collaboration-platform-sidebar collaboration-platform-sidebar-${host.capabilities.sidebarPresentation ?? "full"}${projectSettings ? " collaboration-platform-sidebar-settings" : ""}`}
       data-testid="collaboration-platform-sidebar"
+      data-navigation-expanded={navigationExpanded}
     >
-      {fullSidebar ? (
-        <>
-          <div className="collaboration-platform-brand">
-            {messages.collaborationHome}
-          </div>
-          <CollaborationPrimaryNavigation
-            domain={domain}
-            host={host}
-            messages={messages}
-          />
-        </>
-      ) : null}
-      <div
-        className="collaboration-projects-scroll"
-        data-testid="collaboration-projects-scroll"
+      <button
+        type="button"
+        className="collaboration-settings-navigation-toggle focus-visible:outline-none keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-inset keyboard:focus-visible:ring-focus"
+        data-testid="collaboration-settings-navigation-toggle"
+        aria-expanded={navigationExpanded}
+        aria-controls={navigationId}
+        onClick={() =>
+          setMobileNavigation({ locationKey, expanded: !navigationExpanded })
+        }
       >
-        {!projectFirst ? (
-          <div className="collaboration-workspace-section-heading">
-            {fullSidebar ? (
-              <span
-                className="collaboration-workspace-section-title"
-                data-testid="collaboration-workspaces-section-title"
-              >
-                {messages.collaborationSpaces}
-              </span>
-            ) : (
-              <button
-                type="button"
-                className="collaboration-workspace-section-toggle"
-                aria-expanded={workspacesExpanded}
-                data-testid="collaboration-workspaces-section-toggle"
-                onClick={() => setWorkspacesExpanded((expanded) => !expanded)}
-              >
-                <span>{messages.collaborationSpaces}</span>
-                <ChevronRight aria-hidden="true" />
-              </button>
-            )}
-            <div className="collaboration-workspace-section-actions">
-              {createWorkspaceButton}
-            </div>
-          </div>
-        ) : null}
-        {navigationIncomplete ? (
-          <div
-            className="collaboration-navigation-error"
-            role="alert"
-            data-testid="collaboration-navigation-error"
-          >
-            <span>{messages.navigationLoadFailed}</span>
-            <button
-              type="button"
-              className="collaboration-link-button"
-              data-testid="collaboration-navigation-retry"
-              disabled={retryingNavigation}
-              onClick={async () => {
-                setRetryingNavigation(true);
-                try {
-                  await onRetryNavigation();
-                } finally {
-                  setRetryingNavigation(false);
-                }
-              }}
-            >
-              {messages.retryNavigation}
-            </button>
-          </div>
-        ) : null}
-        {projectFirst ? (
+        <span>{messages.settingsNavigation}</span>
+        <ChevronRight
+          aria-hidden="true"
+          className={navigationExpanded ? "rotate-90" : ""}
+        />
+      </button>
+      <div
+        id={navigationId}
+        className="collaboration-settings-navigation-content"
+      >
+        {fullSidebar ? (
           <>
+            <div className="collaboration-platform-brand">
+              {messages.collaborationHome}
+            </div>
+            <CollaborationPrimaryNavigation
+              domain={domain}
+              host={host}
+              messages={messages}
+            />
+          </>
+        ) : null}
+        <div
+          className="collaboration-projects-scroll"
+          data-testid="collaboration-projects-scroll"
+        >
+          {!projectFirst ? (
             <div className="collaboration-workspace-section-heading">
-              <span className="collaboration-workspace-section-title">
-                {messages.projects}
-              </span>
+              {fullSidebar ? (
+                <span
+                  className="collaboration-workspace-section-title"
+                  data-testid="collaboration-workspaces-section-title"
+                >
+                  {messages.collaborationSpaces}
+                </span>
+              ) : (
+                <button
+                  type="button"
+                  className="collaboration-workspace-section-toggle"
+                  aria-expanded={workspacesExpanded}
+                  data-testid="collaboration-workspaces-section-toggle"
+                  onClick={() => setWorkspacesExpanded((expanded) => !expanded)}
+                >
+                  <span>{messages.collaborationSpaces}</span>
+                  <ChevronRight aria-hidden="true" />
+                </button>
+              )}
               <div className="collaboration-workspace-section-actions">
                 {createWorkspaceButton}
               </div>
             </div>
+          ) : null}
+          {navigationIncomplete ? (
             <div
-              className="collaboration-workspace-tree"
-              data-testid="collaboration-project-tree"
+              className="collaboration-navigation-error"
+              role="alert"
+              data-testid="collaboration-navigation-error"
             >
+              <span>{messages.navigationLoadFailed}</span>
+              <button
+                type="button"
+                className="collaboration-link-button"
+                data-testid="collaboration-navigation-retry"
+                disabled={retryingNavigation}
+                onClick={async () => {
+                  setRetryingNavigation(true);
+                  try {
+                    await onRetryNavigation();
+                  } finally {
+                    setRetryingNavigation(false);
+                  }
+                }}
+              >
+                {messages.retryNavigation}
+              </button>
+            </div>
+          ) : null}
+          {projectFirst ? (
+            <>
+              <div className="collaboration-workspace-section-heading">
+                <span className="collaboration-workspace-section-title">
+                  {messages.projects}
+                </span>
+                <div className="collaboration-workspace-section-actions">
+                  {createWorkspaceButton}
+                </div>
+              </div>
+              <div
+                className="collaboration-workspace-tree"
+                data-testid="collaboration-project-tree"
+              >
+                {navigationWorkspaces.map(renderWorkspaceGroup)}
+              </div>
+            </>
+          ) : null}
+          {!projectFirst && (fullSidebar || workspacesExpanded) ? (
+            <div className="collaboration-workspace-tree">
               {navigationWorkspaces.map(renderWorkspaceGroup)}
             </div>
-          </>
+          ) : null}
+        </div>
+        {fullSidebar ? (
+          <CollaborationManagementNavigation
+            domain={domain}
+            host={host}
+            messages={messages}
+          />
         ) : null}
-        {!projectFirst && (fullSidebar || workspacesExpanded) ? (
-          <div className="collaboration-workspace-tree">
-            {navigationWorkspaces.map(renderWorkspaceGroup)}
-          </div>
+        {footer ? (
+          <div className="collaboration-platform-sidebar-footer">{footer}</div>
         ) : null}
       </div>
-      {fullSidebar ? (
-        <CollaborationManagementNavigation
-          domain={domain}
-          host={host}
-          messages={messages}
-        />
-      ) : null}
-      {footer ? (
-        <div className="collaboration-platform-sidebar-footer">{footer}</div>
-      ) : null}
     </aside>
   );
 }

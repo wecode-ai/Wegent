@@ -261,7 +261,7 @@ describe('CollaborationApp project collaboration groups', () => {
     expect(settings).toHaveTextContent('执行环境')
     expect(settings).toHaveTextContent('自动处理')
     expect(screen.getByTestId('collaboration-project-settings-groups')).toHaveTextContent(
-      '协作团队'
+      '协作小组'
     )
 
     await act(async () => {

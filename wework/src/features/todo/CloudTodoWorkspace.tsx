@@ -4506,6 +4506,7 @@ export function CloudTodoWorkspace({
                   ) ? (
                     <ProjectSettingsShell
                       pageRenderer={DesktopProjectSettingsPages}
+                      scopeKey={`${selectedProject.location}:${selectedProject.id}`}
                       ariaLabel={t('todo.project_settings', '项目设置')}
                       selectedSectionId={projectSettingsSectionId}
                       onSectionChange={setProjectSettingsSectionId}

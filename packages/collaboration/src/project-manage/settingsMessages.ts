@@ -28,9 +28,9 @@ export const settingsMessages: Record<'en' | 'zh-CN', Record<string, string>> = 
     'todo.automatic_processing_unavailable': 'Automatic rules are unavailable for this project.',
     'todo.target_agent': 'Agent',
     'todo.target_collaboration_group': 'Collaboration group',
-    'todo.trigger_issue_created': 'After an Issue is created',
-    'todo.trigger_schedule': 'On a schedule',
-    'todo.trigger_external_event': 'After an external event',
+    'todo.trigger_issue_created': 'Issue created',
+    'todo.trigger_schedule': 'Scheduled',
+    'todo.trigger_external_event': 'External event',
     'todo.unavailable_target': 'Target unavailable',
     'todo.automatic_processing_default_instruction':
       'Handle the Issue according to the target’s responsibilities and record clear results.',

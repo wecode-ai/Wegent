@@ -52,7 +52,7 @@ it('retains drafts while pausing hidden-page effects and never mounts unvisited 
       root.render(
         <ProjectSettingsShell
           pageRenderer={RetainedPages}
-          key={scope}
+          scopeKey={scope}
           ariaLabel="Settings"
           selectedSectionId={selected}
           sections={['environment', 'groups', 'members'].map(id => ({
@@ -65,6 +65,7 @@ it('retains drafts while pausing hidden-page effects and never mounts unvisited 
       )
     })
   await render()
+  const frame = container.querySelector('[data-testid="project-settings-shell-content"]')!
   const input = container.querySelector<HTMLInputElement>('[data-testid="draft-environment"]')!
   await act(async () => {
     Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!.call(
@@ -84,6 +85,8 @@ it('retains drafts while pausing hidden-page effects and never mounts unvisited 
   expect(container.querySelector('[data-testid="draft-environment"]')).toBe(input)
   expect(input.value).toBe('pnpm install')
   await render('environment', 'project-b')
+  expect(frame.isConnected).toBe(true)
+  expect(container.querySelector('[data-testid="project-settings-shell-content"]')).toBe(frame)
   expect(
     container.querySelector<HTMLInputElement>('[data-testid="draft-environment"]')!.value
   ).toBe('')

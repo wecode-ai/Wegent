@@ -975,6 +975,29 @@ afterEach(async () => {
 });
 
 describe("CollaborationPlatformApp real component flow", () => {
+  it("keeps settings navigation reachable and collapses it after a navigation round trip", async () => {
+    const { api } = createApi();
+    await render(
+      <PlatformHarness
+        api={api}
+        start={{
+          ...initialLocation,
+          platformView: "spaces",
+          projectId: project.id,
+          projectView: "manage",
+        }}
+      />,
+    );
+    const toggle = () => byTestId("collaboration-settings-navigation-toggle");
+    expect(toggle().getAttribute("aria-expanded")).toBe("false");
+    await click(toggle());
+    expect(toggle().getAttribute("aria-expanded")).toBe("true");
+    await click(byTestId(`collaboration-workspace-project-${project.id}`));
+    await click(byTestId("collaboration-tab-manage"));
+    expect(byTestId("project-settings-shell")).toBeTruthy();
+    expect(toggle().getAttribute("aria-expanded")).toBe("false");
+  });
+
   it.each(["workspaces", "projects"] as const)(
     "keeps the contextual section toggle only in %s navigation",
     async (projectNavigation) => {

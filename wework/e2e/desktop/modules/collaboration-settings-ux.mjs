@@ -154,16 +154,16 @@ async function createDisabledSchedule(control, scoped) {
   const first = await control.command('getAttribute', options + ':first-child', {
     value: 'data-testid',
   })
-  const last = await control.command('getAttribute', options + ':last-child', {
+  const second = await control.command('getAttribute', options + ':nth-child(2)', {
     value: 'data-testid',
   })
   await control.command('nativePress', find('automatic-processing-target-search'), {
     key: 'ArrowDown',
   })
   await assertKeyboardFocus(control, first)
-  await control.command('nativePress', find(first), { key: 'End' })
-  await assertKeyboardFocus(control, last)
-  await control.command('nativePress', find(last), { key: 'Home' })
+  await control.command('nativePress', find(first), { key: 'ArrowDown' })
+  await assertKeyboardFocus(control, second)
+  await control.command('nativePress', find(second), { key: 'ArrowUp' })
   await assertKeyboardFocus(control, first)
   await control.command('nativePress', find(first), { key: 'Escape' })
   await assertKeyboardFocus(control, 'automatic-processing-target')
@@ -247,6 +247,41 @@ async function verifyGroupInlineMaintenance(control, scoped) {
   await control.command('click', find('collaboration-group-manage-' + groupId))
 }
 
+async function verifyNarrowSettingsNavigation(control, scoped, projectId) {
+  const find = id => scoped(`[data-testid="${id}"]`)
+  const original = await control.command('setMainWindowSize', 'body', {
+    value: JSON.stringify({ width: 560, height: 740 }),
+  })
+  try {
+    const toggle = find('collaboration-settings-navigation-toggle')
+    await control.command('waitFor', toggle, { visible: true })
+    assert.equal(await control.command('getAttribute', toggle, { value: 'aria-expanded' }), 'false')
+    const [sidebar] = JSON.parse(
+      await control.command('getElementMetrics', find('collaboration-platform-sidebar'))
+    )
+    assert.ok(sidebar.height <= 64, 'Collapsed navigation must leave room for project maintenance')
+    await control.command('click', toggle)
+    assert.equal(await control.command('getAttribute', toggle, { value: 'aria-expanded' }), 'true')
+    const project = find(`collaboration-workspace-project-${projectId}`)
+    await control.command('scrollIntoView', project)
+    await control.command('waitFor', project, { visible: true })
+    await control.command('clickWhenEnabled', project)
+    await selectCollaborationProjectView(control, scoped('').trim(), 'board')
+  } finally {
+    await control.command('setMainWindowSize', 'body', { value: original })
+    const expected = JSON.parse(original)
+    await waitForBoardValue(
+      async () => {
+        const [body] = JSON.parse(await control.command('getElementMetrics', 'body'))
+        return { width: body.viewportWidth, height: body.viewportHeight }
+      },
+      { width: expected.width, height: expected.height },
+      'The original viewport must be restored before the owning scenario continues',
+      DEFAULT_STEP_TIMEOUT_MS
+    )
+  }
+}
+
 export async function verifyLocalSettingsProjectVersion(control, { scoped, projectName }) {
   const projects = await requestExecutor(control, 'projects.list', {}, DEFAULT_STEP_TIMEOUT_MS)
   const project = projects.find(candidate => candidate.name === projectName)
@@ -291,5 +326,5 @@ export async function verifyLocalSettingsProjectVersion(control, { scoped, proje
   await control.command('clickWhenEnabled', find('automatic-processing-delete-confirm'))
   await control.command('waitFor', find(`automatic-processing-rule-${ruleId}`), { visible: false })
   await addProjectTag(control, scoped, 'settings-rule-delete')
-  await selectCollaborationProjectView(control, scoped('').trim(), 'board')
+  await verifyNarrowSettingsNavigation(control, scoped, project.id)
 }
