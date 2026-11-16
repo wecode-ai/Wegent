@@ -242,6 +242,7 @@ jobs:
         run: |
           set -o pipefail
           cargo test --locked --test device_heartbeat_redis -- --ignored --nocapture 2>&1 | tee ../.ci-artifacts/backend-rs-tests/device-heartbeat-redis.log
+          cargo test --locked --lib im_callback_redis_tests -- --ignored --nocapture 2>&1 | tee ../.ci-artifacts/backend-rs-tests/im-callback-redis.log
 
       - name: Verify streaming activity recovery with Redis
         working-directory: backend-rs

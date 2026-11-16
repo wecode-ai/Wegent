@@ -85,6 +85,32 @@ class _CompactOnSecond:
         return {}
 
 
+class _EmptySnapshot:
+    """Minimal state snapshot used by the recording agent."""
+
+    values: dict = {"messages": []}
+
+
+class _RecordingAgent:
+    """Fake agent capturing the config passed to ``astream_events``."""
+
+    checkpointer = object()
+
+    def __init__(self, captured: list[dict]) -> None:
+        """Keep a shared list for configs observed during streaming."""
+        self._captured = captured
+
+    async def astream_events(self, _input, config=None, version=None, durability=None):
+        """Record the invocation settings and emit no events."""
+        self._captured.append({"config": config, "durability": durability})
+        for _ in []:  # empty async generator
+            yield
+
+    async def aget_state(self, _config):
+        """Return an empty conversation state for cleanup paths."""
+        return _EmptySnapshot()
+
+
 @pytest.mark.asyncio
 async def test_exit_durability_yields_post_compaction_state_after_recursion():
     saver = InMemorySaver()
@@ -121,6 +147,64 @@ async def test_exit_durability_yields_post_compaction_state_after_recursion():
     assert len(list(saver.list(config))) == 1
 
 
+@pytest.mark.asyncio
+async def test_recursion_limit_allows_one_round_per_configured_iteration():
+    """A ReAct round costs 3 super-steps because _build_agent always adds a hook."""
+    from chat_shell.agents.graph_builder import _recursion_limit_for
+
+    rounds = 5
+
+    async def _count_model_calls(recursion_limit: int) -> int:
+        """Count completed model rounds before the recursion limit is reached."""
+        model = _LoopingModel()
+        agent = create_react_agent(
+            model=model,
+            tools=[_probe],
+            pre_model_hook=lambda _state: {},
+        )
+        with pytest.raises(GraphRecursionError):
+            await agent.ainvoke(
+                {"messages": [HumanMessage(content="q0", id="u1")]},
+                config={"recursion_limit": recursion_limit},
+            )
+        return model.call_count
+
+    # The shared helper delivers exactly the configured number of model rounds.
+    assert await _count_model_calls(_recursion_limit_for(rounds)) == rounds
+    # Remainder 0 ends with langgraph's "need more steps", not GraphRecursionError.
+    assert (rounds * 2 + 1) % 3 != 0
+    # Regression: the old 2-steps-per-round formula stopped early (20 of 30
+    # rounds, because the pre_model_hook node is a third step per round).
+    assert await _count_model_calls(rounds * 2 + 1) < rounds
+
+
+@pytest.mark.asyncio
+async def test_build_agent_recursion_limit_runs_exactly_max_iterations_rounds():
+    """The graph from _build_agent, not a hand-built one, stops after max_iterations."""
+    from chat_shell.agents.graph_builder import (
+        LangGraphAgentBuilder,
+        _recursion_limit_for,
+    )
+    from chat_shell.tools.base import ToolRegistry
+
+    registry = ToolRegistry()
+    registry.register(_probe)
+    model = _LoopingModel()
+    builder = LangGraphAgentBuilder(llm=model, tool_registry=registry, max_iterations=5)
+    agent = builder._build_agent()
+    config = {
+        "configurable": {"thread_id": str(uuid4())},
+        "recursion_limit": _recursion_limit_for(5),
+    }
+
+    with pytest.raises(GraphRecursionError):
+        await agent.ainvoke(
+            {"messages": [HumanMessage(content="q0", id="u1")]}, config=config
+        )
+
+    assert model.call_count == 5
+
+
 def test_build_agent_attaches_request_local_checkpointer():
     from chat_shell.agents.graph_builder import LangGraphAgentBuilder
 
@@ -133,28 +217,12 @@ def test_build_agent_attaches_request_local_checkpointer():
 
 @pytest.mark.asyncio
 async def test_stream_tokens_injects_unique_thread_and_exit_durability(monkeypatch):
+    """Each turn receives a fresh thread id and sends exit durability."""
     from chat_shell.agents.graph_builder import LangGraphAgentBuilder
 
     captured: list[dict] = []
-
-    class _EmptySnap:
-        values: dict = {"messages": []}
-
-    class _FakeAgent:
-        checkpointer = object()
-
-        async def astream_events(
-            self, _input, config=None, version=None, durability=None
-        ):
-            captured.append({"config": config, "durability": durability})
-            for _ in []:  # empty async generator
-                yield
-
-        async def aget_state(self, _config):
-            return _EmptySnap()
-
     builder = LangGraphAgentBuilder(llm=_LoopingModel())
-    monkeypatch.setattr(builder, "_build_agent", lambda: _FakeAgent())
+    monkeypatch.setattr(builder, "_build_agent", lambda: _RecordingAgent(captured))
 
     for _ in range(2):
         async for _token in builder.stream_tokens(
@@ -167,6 +235,25 @@ async def test_stream_tokens_injects_unique_thread_and_exit_durability(monkeypat
     t0 = captured[0]["config"]["configurable"]["thread_id"]
     t1 = captured[1]["config"]["configurable"]["thread_id"]
     assert t0 and t1 and t0 != t1  # present and unique per turn
+
+
+@pytest.mark.asyncio
+async def test_stream_tokens_passes_hook_aware_recursion_limit(monkeypatch):
+    """Streaming forwards the recursion limit that accounts for the hook node."""
+    from chat_shell.agents.graph_builder import LangGraphAgentBuilder
+
+    captured: list[dict] = []
+
+    builder = LangGraphAgentBuilder(llm=_LoopingModel(), max_iterations=7)
+    monkeypatch.setattr(builder, "_build_agent", lambda: _RecordingAgent(captured))
+
+    async for _token in builder.stream_tokens(
+        messages=[{"role": "user", "content": "hi"}]
+    ):
+        pass
+
+    assert len(captured) == 1
+    assert captured[0]["config"]["recursion_limit"] == 22
 
 
 def test_finalize_turn_history_sets_all_three_fields_atomically():
