@@ -12,14 +12,14 @@
 //! archives), the known text formats, and finally the source's documented
 //! error codes — the legacy `.doc`/`.xls`/`.ppt` containers and
 //! `unsupported_type`. Formats whose Python parser is a third-party engine
-//! this port has not migrated (XMind, CSV, and image codecs other than
+//! this port has not migrated (XMind and image codecs other than
 //! PNG/JPEG) report `unsupported_type` rather than inventing content: the
 //! source library's message would otherwise have to be fabricated.
-use super::model_image;
 use super::model_jpeg;
 use super::office;
 use super::pdf;
 use super::truncation;
+use super::{csv, model_image};
 
 /// `DocumentParser.SUPPORTED_EXTENSIONS`: extension -> MIME type.
 pub fn supported_mime_type(extension: &str) -> Option<&'static str> {
@@ -183,6 +183,7 @@ pub fn parse(binary_data: &[u8], extension: &str) -> Result<ParseResult, Documen
         ".docx" => word_result(binary_data, max_length),
         ".xls" => Err(DocumentParseError::legacy(".xls", "legacy_xls")),
         ".xlsx" => excel_result(binary_data, max_length),
+        ".csv" => csv_result(binary_data, max_length),
         ".ppt" => Err(DocumentParseError::legacy(".ppt", "legacy_ppt")),
         ".pptx" => powerpoint_result(binary_data, max_length),
         ".pdf" => pdf_result(binary_data, max_length),
@@ -216,20 +217,11 @@ pub fn parse(binary_data: &[u8], extension: &str) -> Result<ParseResult, Documen
                 });
             }
             // The remaining special formats still need a third-party engine this
-            // port has not migrated: XMind, CSV, and the non-PNG/JPEG image
+            // port has not migrated: XMind and the non-PNG/JPEG image
             // codecs.
             if matches!(
                 extension,
-                ".xmind"
-                    | ".csv"
-                    | ".jpg"
-                    | ".jpeg"
-                    | ".png"
-                    | ".gif"
-                    | ".bmp"
-                    | ".webp"
-                    | ".tif"
-                    | ".tiff"
+                ".xmind" | ".jpg" | ".jpeg" | ".png" | ".gif" | ".bmp" | ".webp" | ".tif" | ".tiff"
             ) {
                 return Err(DocumentParseError::unsupported(format!(
                     "Unsupported file type: {extension}"
@@ -365,6 +357,19 @@ fn excel_result(binary_data: &[u8], max_length: usize) -> Result<ParseResult, Do
         text_length,
         image_base64: None,
         truncation_info: truncated_info(&truncated),
+    })
+}
+
+/// Match Python's CSV row formatting and structural truncation.
+fn csv_result(binary_data: &[u8], max_length: usize) -> Result<ParseResult, DocumentParseError> {
+    let rows =
+        csv::parse(binary_data).map_err(|error| DocumentParseError::parse_failed("CSV", &error))?;
+    let truncated = csv::truncate(&rows, max_length);
+    Ok(ParseResult {
+        text_length: truncated.text.chars().count() as i64,
+        truncation_info: truncated_info(&truncated),
+        text: truncated.text,
+        image_base64: None,
     })
 }
 
@@ -533,6 +538,18 @@ fn png_has_exif_chunk(binary_data: &[u8]) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn csv_dispatch_returns_parsed_text_and_its_character_count() {
+        let parsed = parse("名称,数量\n中文,42\n".as_bytes(), ".csv").unwrap();
+        assert_eq!(
+            parsed.text,
+            "--- Sheet: CSV Data ---\n名称 | 数量\n中文 | 42"
+        );
+        assert_eq!(parsed.text_length, parsed.text.chars().count() as i64);
+        assert!(parsed.truncation_info.is_none());
+        assert!(parsed.image_base64.is_none());
+    }
 
     #[test]
     fn text_extensions_keep_their_length() {

@@ -114,7 +114,7 @@ export function SmartAppPluginDialog({
                 'workbench.smart_app_plugin_source_placeholder',
                 '@scope/dsh-plugin、https://… 或本地目录'
               )}
-              className="mt-2 h-10 w-full rounded-xl border border-border/50 bg-background px-3 text-sm text-text-primary outline-none transition-colors focus:border-focus focus:ring-2 focus:ring-focus/15"
+              className="mt-2 h-10 w-full rounded-xl border border-border/50 bg-background px-3 text-sm text-text-primary outline-none transition-colors keyboard:focus:border-focus keyboard:focus:ring-2 keyboard:focus:ring-focus/15"
               onChange={event => setPluginSpec(event.target.value)}
               onKeyDown={event => {
                 if (event.key === 'Enter') void install()

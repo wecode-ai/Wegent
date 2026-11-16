@@ -59,7 +59,8 @@ pub(super) fn configure(
 }
 
 pub(super) fn needs_preparation(turn: &SpawnTurnRequest) -> bool {
-    turn.request.extra.contains_key(DEFERRED_ENVIRONMENT)
+    turn.request.extra.contains_key("creation_branch")
+        || turn.request.extra.contains_key(DEFERRED_ENVIRONMENT)
         || turn
             .request
             .extra
@@ -124,7 +125,7 @@ impl RuntimeWorkRpcHandler {
         tokio::pin!(prepare);
         let prepared = loop {
             let cancelled = self
-                .preparing_worktree_turns
+                .preparing_turns
                 .lock()
                 .expect("preparation map poisoned")
                 .get(&turn.local_task_id)

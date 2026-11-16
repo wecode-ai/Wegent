@@ -3,6 +3,7 @@ import { ensureLocalExecutorStarted, requestLocalExecutor } from '@/desktop/loca
 import type { InstalledPluginComponents, PluginLocalAuthDefinition } from '@/types/api'
 import { isOpenAiOfficialMarketplaceId } from '@/features/plugins/marketplaceIdentity'
 import { GITHUB_CLI_TARGET, isGithubCliTarget } from './githubCli'
+import { notifyLocalConnectorAuthChanged } from './localConnectorAuthEvents'
 
 export type LocalConnectorAuthStatus =
   | 'ok'
@@ -51,10 +52,21 @@ export class LocalConnectorAuthLogoutError extends Error {
 }
 
 export interface LocalConnectorAuthTarget {
+  /** Instance binding for host-owned GitLab CLI device authorization. */
+  instance?: string
   pluginKey: string
   connectorSlug: string
   localAuth?: PluginLocalAuthDefinition | null
   pluginRoot?: string | null
+}
+
+export interface LocalConnectorAuthTransport {
+  start(target: LocalConnectorAuthTarget): Promise<LocalConnectorAuthResult>
+  poll(
+    target: LocalConnectorAuthTarget,
+    sessionId?: string | null
+  ): Promise<LocalConnectorAuthResult>
+  cancel(target: LocalConnectorAuthTarget, sessionId: string): Promise<unknown>
 }
 
 /** Resolve host-owned authentication without changing the cached plugin manifest. */
@@ -77,6 +89,11 @@ export function pluginLocalConnectorAuthTarget(
 
 interface LocalConnectorAuthHealthOptions {
   bypassCache?: boolean
+  prepareRuntime?: boolean
+}
+
+export function isPythonRuntimeUnavailableError(error: unknown): boolean {
+  return error instanceof Error && 'code' in error && error.code === 'python_runtime_unavailable'
 }
 
 /** Reuse recent success for management views; runtime authorization recovery bypasses it. */
@@ -91,20 +108,31 @@ function healthCacheKey(target: LocalConnectorAuthTarget): string {
 export function clearLocalConnectorAuthHealthCache(): void {
   healthCacheRevision += 1
   okHealthCache.clear()
+  notifyLocalConnectorAuthChanged()
 }
 
 async function callLocalConnectorAuth(
   method: 'health' | 'start' | 'poll' | 'cancel' | 'logout',
   target: LocalConnectorAuthTarget,
-  sessionId?: string | null
+  sessionId?: string | null,
+  prepareRuntime = false
 ): Promise<LocalConnectorAuthResult> {
   await ensureLocalExecutorStarted()
-  return requestLocalExecutor<LocalConnectorAuthResult>(`runtime.local_connector_auth.${method}`, {
-    pluginKey: target.pluginKey,
-    connectorSlug: target.connectorSlug,
-    pluginRoot: target.pluginRoot ?? undefined,
-    sessionId: sessionId ?? undefined,
-  })
+  const result = await requestLocalExecutor<LocalConnectorAuthResult>(
+    `runtime.local_connector_auth.${method}`,
+    {
+      pluginKey: target.pluginKey,
+      connectorSlug: target.connectorSlug,
+      pluginRoot: target.pluginRoot ?? undefined,
+      sessionId: sessionId ?? undefined,
+      ...(prepareRuntime ? { prepareRuntime: true } : {}),
+      ...(target.instance ? { instance: target.instance } : {}),
+    }
+  )
+  if (result?.status === 'ok' && ['start', 'poll', 'logout'].includes(method)) {
+    notifyLocalConnectorAuthChanged()
+  }
+  return result
 }
 
 export function localConnectorAuthHealth(
@@ -117,18 +145,21 @@ export function localConnectorAuthHealth(
   if (
     !isGithubCliTarget(target) &&
     !options.bypassCache &&
+    !options.prepareRuntime &&
     cachedAt != null &&
     Date.now() - cachedAt < OK_HEALTH_TTL_MS
   ) {
     return Promise.resolve({ status: 'ok' as const satisfies LocalConnectorAuthStatus })
   }
-  return callLocalConnectorAuth('health', target).then(result => {
-    if (revision === healthCacheRevision) {
-      if (result.status === 'ok' && !isGithubCliTarget(target)) okHealthCache.set(key, Date.now())
-      else okHealthCache.delete(key)
+  return callLocalConnectorAuth('health', target, undefined, options.prepareRuntime).then(
+    result => {
+      if (revision === healthCacheRevision) {
+        if (result.status === 'ok' && !isGithubCliTarget(target)) okHealthCache.set(key, Date.now())
+        else okHealthCache.delete(key)
+      }
+      return result
     }
-    return result
-  })
+  )
 }
 
 export function localConnectorAuthStart(target: LocalConnectorAuthTarget) {

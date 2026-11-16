@@ -15,6 +15,7 @@ import {
 import { useTranslation } from '@/hooks/useTranslation'
 import { cn } from '@/lib/utils'
 import type { TodoDetailItem, TodoViewState } from './TodoDetailPanel'
+import { todoStateColors } from './todoStateColors'
 import {
   countActiveTodoFilters,
   DEFAULT_TODO_FILTERS,
@@ -45,11 +46,15 @@ interface TodoWorkItemsProps {
 
 const STATES: TodoViewState[] = ['inbox', 'backlog', 'started', 'review', 'completed']
 const STATE_META: Record<TodoViewState, { labelKey: string; fallback: string; color: string }> = {
-  inbox: { labelKey: 'todo.state_inbox', fallback: '收集箱', color: '#858E97' },
-  backlog: { labelKey: 'todo.state_backlog', fallback: '待处理', color: '#858E97' },
-  started: { labelKey: 'todo.state_started', fallback: '进行中', color: '#F59E0B' },
-  review: { labelKey: 'todo.state_review', fallback: '待确认', color: '#8B5CF6' },
-  completed: { labelKey: 'todo.state_completed', fallback: '已完成', color: '#10B981' },
+  inbox: { labelKey: 'todo.state_inbox', fallback: '收集箱', color: todoStateColors.inbox },
+  backlog: { labelKey: 'todo.state_backlog', fallback: '待处理', color: todoStateColors.backlog },
+  started: { labelKey: 'todo.state_started', fallback: '进行中', color: todoStateColors.started },
+  review: { labelKey: 'todo.state_review', fallback: '待确认', color: todoStateColors.review },
+  completed: {
+    labelKey: 'todo.state_completed',
+    fallback: '已完成',
+    color: todoStateColors.completed,
+  },
 }
 
 const PRIORITY_RANK: Record<Exclude<TodoPriorityFilter, 'all'>, number> = {
@@ -511,7 +516,7 @@ function TodoColumn({
             type="button"
             data-testid={`todo-column-add-${state}`}
             onClick={() => setQuickCreateOpen(true)}
-            className="flex h-6 w-6 items-center justify-center rounded hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/30"
+            className="flex h-6 w-6 items-center justify-center rounded hover:bg-muted focus-visible:outline-none keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-primary/30"
             aria-label={t('todo.create_action', '新建任务')}
           >
             <Plus className="h-3.5 w-3.5" />

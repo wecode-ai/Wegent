@@ -84,6 +84,21 @@ pub async fn loop_item<M: Mysql>(mysql: &M, item_id: &str) -> MysqlResult<Option
         .await
 }
 
+/// Permission checks need only identity and security, never the Issue's history or body.
+pub async fn loop_item_access<M: Mysql>(
+    mysql: &M,
+    item_id: &str,
+) -> MysqlResult<Option<LoopItemGetRow>> {
+    mysql
+        .fetch_optional(
+            "SELECT id, cloud_project_id, created_by_user_id, status, \
+         JSON_OBJECT('security_level', JSON_EXTRACT(metadata, '$.security_level')) AS metadata \
+         FROM loop_items WHERE id = ? AND resource_type = 'task'",
+            (item_id,),
+        )
+        .await
+}
+
 /// `db.get(CloudProject, item.cloud_project_id)`: the project row selected with
 /// the source's unlabeled projection.
 pub async fn project<M: Mysql>(mysql: &M, project_id: &str) -> MysqlResult<Option<ProjectGetRow>> {
@@ -118,6 +133,20 @@ pub async fn user_by_id<M: Mysql>(mysql: &M, user_id: i64) -> MysqlResult<Option
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn receipt_permission_probe_projects_only_security_metadata() {
+        let mysql = crate::sql_test_support::KindQueryCapture::default();
+        let _ = loop_item_access(&mysql, "EXAMPLE-5")
+            .await
+            .expect("captured");
+        let queries = mysql.queries();
+        assert_eq!(queries.len(), 1);
+        assert!(queries[0].sql.contains("WHERE id = ?"));
+        assert!(queries[0].sql.contains("JSON_OBJECT('security_level'"));
+        assert!(!queries[0].sql.contains("description"));
+        assert!(!queries[0].sql.contains("assignment_history"));
+    }
 
     fn normalize(sql: &str) -> String {
         sql.split_whitespace().collect::<Vec<_>>().join(" ")

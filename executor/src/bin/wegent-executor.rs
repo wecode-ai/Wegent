@@ -92,6 +92,30 @@ fn macos_max_files_per_process() -> Option<libc::rlim_t> {
 fn raise_open_files_soft_limit() {}
 
 fn main() {
+    if env::args().nth(1).as_deref() == Some("--workbench-codex-providers-migrate") {
+        wegent_executor::logging::reserve_executor_stdout_for_protocol();
+        let args: Vec<_> = env::args().skip(2).collect();
+        let result = match args.as_slice() {
+            [request, stopped, version]
+                if stopped == "--executor-stopped" && version == "--version" =>
+            {
+                wegent_executor::local::codex_provider_migration::run(request)
+            }
+            _ => Err("Codex provider migration requires a request and --executor-stopped".into()),
+        };
+        match result {
+            Ok(response) => println!("{response}"),
+            Err(error) => {
+                eprintln!("{error}");
+                std::process::exit(1);
+            }
+        }
+        return;
+    }
+    let app_startup = env::var_os("WEGENT_APP_IPC_ENDPOINT").is_some();
+    if app_startup {
+        eprintln!("executor startup: process entered");
+    }
     if env::args().nth(1).as_deref() == Some("--workbench-project-state") {
         if let Err(error) = wegent_executor::runtime_work::run_project_state_query() {
             eprintln!("{error}");
@@ -154,6 +178,22 @@ fn main() {
         return;
     }
     raise_open_files_soft_limit();
+    if wegent_executor::plugin_python::is_plugin_python_command() {
+        match runtime().block_on(wegent_executor::plugin_python::run()) {
+            Ok(code) => std::process::exit(code),
+            Err(error) => {
+                eprintln!("plugin Python execution failed: {error}");
+                std::process::exit(1);
+            }
+        }
+    }
+    if wegent_executor::artifact_cli::is_artifact_command() {
+        if let Err(error) = runtime().block_on(wegent_executor::artifact_cli::run()) {
+            eprintln!("artifact command failed: {error}");
+            std::process::exit(1);
+        }
+        return;
+    }
     if wegent_executor::plugin_workspace_cli::is_plugin_workspace_command() {
         if let Err(error) = runtime().block_on(wegent_executor::plugin_workspace_cli::run()) {
             eprintln!("plugin workspace command failed: {error}");
@@ -197,16 +237,27 @@ fn main() {
             std::process::exit(2);
         }
     };
-    install_app_sidecar_lifecycle_watchdog();
+    if !args.help && !args.version {
+        install_app_sidecar_lifecycle_watchdog();
+    }
+    if app_startup {
+        eprintln!("executor startup: loading shell environment");
+    }
     let shell_environment = if should_hydrate_shell_environment(&args) {
         Some(wegent_executor::process_environment::hydrate_process_environment())
     } else {
         None
     };
+    if app_startup {
+        eprintln!("executor startup: shell environment loaded");
+    }
     // Loopback backend sockets must bypass system HTTP proxies. Set this before
     // Tokio starts: POSIX environment mutation can race with TLS and DNS readers.
     env::set_var("NO_PROXY", "localhost,127.0.0.1,::1");
     let runtime_instance = runtime();
+    if app_startup {
+        eprintln!("executor startup: async runtime initialized");
+    }
     let outcome = runtime_instance.block_on(wegent_executor::app::run_with_shell_environment(
         args,
         shell_environment,
@@ -249,9 +300,7 @@ fn install_app_sidecar_lifecycle_watchdog() {
     else {
         return;
     };
-    wegent_executor::logging::write_executor_log_line(&format!(
-        "app sidecar lifecycle watchdog armed fd={lifecycle_fd}"
-    ));
+    eprintln!("app sidecar lifecycle watchdog armed fd={lifecycle_fd}");
     thread::spawn(move || {
         let mut byte = 0_u8;
         loop {

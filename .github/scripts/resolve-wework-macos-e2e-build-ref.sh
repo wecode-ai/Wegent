@@ -14,12 +14,24 @@ manifest="$(mktemp)"
 trap 'rm -f "$manifest"' EXIT
 
 git -c "safe.directory=$PWD" ls-files -s -- \
+  .github/actions/build-wework-macos-e2e \
+  .github/actions/setup-rust-cache \
+  .github/ci/rust-toolchain \
   .github/scripts/archive-wework-macos-e2e-build.sh \
   .github/scripts/build-macos-e2e-runtimes.sh \
+  .github/scripts/macos-e2e-build.mjs \
+  .github/scripts/verified-build-oci.mjs \
+  .github/scripts/restore-wework-macos-e2e-build.sh \
   .github/scripts/resolve-wework-macos-e2e-build-ref.sh \
+  .npmrc \
   package.json \
-  packages/chat-core \
-  packages/collaboration \
+  packages \
+  patches \
+  scripts \
+  sdk \
+  shared/assets \
+  shared/data \
+  LICENSES \
   pnpm-lock.yaml \
   pnpm-workspace.yaml \
   wework \
@@ -34,6 +46,6 @@ git -c "safe.directory=$PWD" ls-files -s -- \
 } >>"$manifest"
 
 source_digest="$(shasum -a 256 "$manifest" | cut -d ' ' -f 1)"
-reference="ghcr.io/$repository_owner/wegent-wework-macos-e2e-build:v1-$source_digest"
+reference="ghcr.io/$repository_owner/wegent-wework-macos-e2e-runtime:app-v1-$source_digest"
 output_file="${GITHUB_OUTPUT:-/dev/stdout}"
 printf 'reference=%s\n' "$reference" >>"$output_file"

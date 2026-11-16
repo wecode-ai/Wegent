@@ -183,7 +183,7 @@ function PluginPublicationRiskStep({
             type="checkbox"
             checked={riskDeclaration.externalNetworkAccess}
             data-testid="plugin-publication-risk-network"
-            className="mt-1 h-4 w-4 accent-neutral-900"
+            className="mt-1 h-4 w-4 accent-[rgb(var(--color-text-primary))] wework:accent-neutral-900"
             onChange={event =>
               setRiskDeclaration(current => ({
                 ...current,
@@ -200,7 +200,7 @@ function PluginPublicationRiskStep({
             <input
               value={domainsText}
               data-testid="plugin-publication-external-domains"
-              className="mt-2 h-10 w-full rounded-lg border border-border bg-background px-3 text-sm outline-none focus:border-focus/70 focus:ring-2 focus:ring-focus/15"
+              className="mt-2 h-10 w-full rounded-lg border border-border bg-background px-3 text-sm outline-none keyboard:focus:border-focus/70 keyboard:focus:ring-2 keyboard:focus:ring-focus/15"
               placeholder="api.example.com"
               onChange={event => setDomainsText(event.target.value)}
             />
@@ -228,7 +228,7 @@ function PluginPublicationRiskStep({
                   type="checkbox"
                   checked={riskDeclaration[row.key]}
                   data-testid={testId}
-                  className="mt-1 h-4 w-4 accent-neutral-900"
+                  className="mt-1 h-4 w-4 accent-[rgb(var(--color-text-primary))] wework:accent-neutral-900"
                   onChange={event =>
                     setRiskDeclaration(current => ({
                       ...current,
@@ -246,7 +246,7 @@ function PluginPublicationRiskStep({
                     value={commandExamplesText}
                     rows={3}
                     data-testid="plugin-publication-command-examples"
-                    className="mt-2 w-full resize-none rounded-lg border border-border bg-background px-3 py-2 text-sm outline-none focus:border-focus/70 focus:ring-2 focus:ring-focus/15"
+                    className="mt-2 w-full resize-none rounded-lg border border-border bg-background px-3 py-2 text-sm outline-none keyboard:focus:border-focus/70 keyboard:focus:ring-2 keyboard:focus:ring-focus/15"
                     placeholder="node scripts/check.js"
                     onChange={event => setCommandExamplesText(event.target.value)}
                   />
@@ -272,7 +272,7 @@ function PluginPublicationRiskStep({
               type="checkbox"
               checked={applicationAuthorization}
               data-testid="plugin-publication-risk-application"
-              className="mt-1 h-4 w-4 accent-neutral-900"
+              className="mt-1 h-4 w-4 accent-[rgb(var(--color-text-primary))] wework:accent-neutral-900"
               onChange={event => setApplicationAuthorization(event.target.checked)}
             />
           </label>
@@ -285,7 +285,7 @@ function PluginPublicationRiskStep({
                 value={applicationPermissionsText}
                 rows={3}
                 data-testid="plugin-publication-application-permissions"
-                className="mt-2 w-full resize-none rounded-lg border border-border bg-background px-3 py-2 text-sm outline-none focus:border-focus/70 focus:ring-2 focus:ring-focus/15"
+                className="mt-2 w-full resize-none rounded-lg border border-border bg-background px-3 py-2 text-sm outline-none keyboard:focus:border-focus/70 keyboard:focus:ring-2 keyboard:focus:ring-focus/15"
                 placeholder="GitLab OAuth: read_api"
                 onChange={event => setApplicationPermissionsText(event.target.value)}
               />
@@ -306,10 +306,10 @@ function PluginPublicationRiskStep({
           aria-invalid={testNotesAreBlank}
           aria-describedby="plugin-publication-test-notes-help"
           className={cn(
-            'w-full resize-none rounded-xl border bg-background px-3 py-2 text-sm outline-none focus:ring-2',
+            'w-full resize-none rounded-xl border bg-background px-3 py-2 text-sm outline-none',
             testNotesAreBlank
-              ? 'border-red-500/50 focus:border-red-500/70 focus:ring-red-500/15'
-              : 'border-border focus:border-focus/70 focus:ring-focus/15'
+              ? 'border-destructive/50 focus:border-destructive/70 focus:ring-2 focus:ring-destructive/15 wework:border-red-500/50 wework:focus:border-red-500/70 wework:focus:ring-red-500/15'
+              : 'border-border keyboard:focus:border-focus/70 keyboard:focus:ring-2 keyboard:focus:ring-focus/15'
           )}
           placeholder={t(
             'workbench.plugins_publication_test_notes_placeholder',
@@ -320,7 +320,10 @@ function PluginPublicationRiskStep({
         <span
           id="plugin-publication-test-notes-help"
           data-testid="plugin-publication-test-notes-help"
-          className={cn('block text-xs', testNotesAreBlank ? 'text-red-600' : 'text-text-muted')}
+          className={cn(
+            'block text-xs',
+            testNotesAreBlank ? 'text-destructive wework:text-red-600' : 'text-text-muted'
+          )}
         >
           {testNotesAreBlank
             ? t('workbench.plugins_publication_test_notes_required', '测试说明不能为空')
@@ -339,7 +342,7 @@ function PluginPublicationRiskStep({
           data-testid="plugin-publication-additional-notes"
           rows={3}
           maxLength={2000}
-          className="w-full resize-none rounded-xl border border-border bg-background px-3 py-2 text-sm outline-none focus:border-focus/70 focus:ring-2 focus:ring-focus/15"
+          className="w-full resize-none rounded-xl border border-border bg-background px-3 py-2 text-sm outline-none keyboard:focus:border-focus/70 keyboard:focus:ring-2 keyboard:focus:ring-focus/15"
           onChange={event =>
             setRiskDeclaration(current => ({
               ...current,
@@ -474,7 +477,10 @@ export function PluginPublishDialog({
     : ''
 
   const errorContent = error ? (
-    <div role="alert" className="space-y-2 rounded-xl bg-red-500/5 px-3 py-2 text-sm text-red-600">
+    <div
+      role="alert"
+      className="space-y-2 rounded-xl bg-destructive/5 px-3 py-2 text-sm text-destructive wework:bg-red-500/5 wework:text-red-600"
+    >
       <p>{error}</p>
       {shareRecoveryLabel && onShareRecovery ? (
         <Button
@@ -546,7 +552,7 @@ export function PluginPublishDialog({
                     <div
                       className={cn(
                         'h-1 rounded-full',
-                        current || completed ? 'bg-blue-500' : 'bg-border/60'
+                        current || completed ? 'bg-focus wework:bg-blue-500' : 'bg-border/60'
                       )}
                     />
                     <p
@@ -590,7 +596,7 @@ export function PluginPublishDialog({
                     data-testid="plugin-publication-release-notes"
                     rows={6}
                     maxLength={2000}
-                    className="w-full resize-none rounded-xl border border-border bg-background px-3 py-2 text-sm outline-none focus:border-focus/70 focus:ring-2 focus:ring-focus/15"
+                    className="w-full resize-none rounded-xl border border-border bg-background px-3 py-2 text-sm outline-none keyboard:focus:border-focus/70 keyboard:focus:ring-2 keyboard:focus:ring-focus/15"
                     placeholder={t(
                       'workbench.plugins_publication_release_notes_placeholder',
                       '说明本版本解决的问题、主要能力和测试结果'
@@ -598,8 +604,8 @@ export function PluginPublishDialog({
                     onChange={event => setReleaseNotes(event.target.value)}
                   />
                 </label>
-                <div className="flex gap-3 rounded-xl bg-blue-500/5 px-3 py-3 text-sm text-text-secondary">
-                  <ShieldCheck className="mt-0.5 h-4 w-4 shrink-0 text-blue-600" />
+                <div className="flex gap-3 rounded-xl bg-focus/5 px-3 py-3 text-sm text-text-secondary wework:bg-blue-500/5">
+                  <ShieldCheck className="mt-0.5 h-4 w-4 shrink-0 text-focus wework:text-blue-600" />
                   <p>
                     {t(
                       'workbench.plugins_publication_snapshot_hint',
@@ -710,7 +716,7 @@ export function PluginPublishDialog({
                     type="checkbox"
                     checked={declarationAccepted}
                     data-testid="plugin-publication-declaration"
-                    className="mt-1 h-4 w-4 accent-neutral-900"
+                    className="mt-1 h-4 w-4 accent-[rgb(var(--color-text-primary))] wework:accent-neutral-900"
                     onChange={event => setDeclarationAccepted(event.target.checked)}
                   />
                   <span className="text-sm leading-5 text-text-secondary">
@@ -852,7 +858,7 @@ export function PluginPublishDialog({
               className={cn(
                 'flex w-full items-start gap-3 rounded-xl border px-4 py-4 text-left transition-colors',
                 intent === 'restricted'
-                  ? 'border-blue-500/50 bg-blue-500/5'
+                  ? 'border-focus/50 bg-focus/5 wework:border-blue-500/50 wework:bg-blue-500/5'
                   : 'border-border/30 hover:bg-surface'
               )}
               onClick={() => setIntent('restricted')}
@@ -882,7 +888,7 @@ export function PluginPublishDialog({
                 className={cn(
                   'mt-1 flex h-4 w-4 items-center justify-center rounded-full border',
                   intent === 'restricted'
-                    ? 'border-blue-500 bg-blue-500 text-white'
+                    ? 'border-text-primary bg-text-primary text-background wework:border-blue-500 wework:bg-blue-500 wework:text-white'
                     : 'border-border'
                 )}
               >
@@ -900,7 +906,7 @@ export function PluginPublishDialog({
               className={cn(
                 'flex w-full items-start gap-3 rounded-xl border px-4 py-4 text-left transition-colors',
                 intent === 'enterprise'
-                  ? 'border-blue-500/50 bg-blue-500/5'
+                  ? 'border-focus/50 bg-focus/5 wework:border-blue-500/50 wework:bg-blue-500/5'
                   : 'border-border/30 hover:bg-surface'
               )}
               onClick={() => setIntent('enterprise')}
@@ -939,7 +945,7 @@ export function PluginPublishDialog({
                 className={cn(
                   'mt-1 flex h-4 w-4 items-center justify-center rounded-full border',
                   intent === 'enterprise'
-                    ? 'border-blue-500 bg-blue-500 text-white'
+                    ? 'border-text-primary bg-text-primary text-background wework:border-blue-500 wework:bg-blue-500 wework:text-white'
                     : 'border-border'
                 )}
               >
@@ -1036,7 +1042,7 @@ export function PluginPublishDialog({
                 type="checkbox"
                 checked={allowCopy}
                 data-testid="plugin-share-allow-copy"
-                className="h-4 w-4 accent-neutral-900"
+                className="h-4 w-4 accent-[rgb(var(--color-text-primary))] wework:accent-neutral-900"
                 onChange={event => setAllowCopy(event.target.checked)}
               />
             </label>

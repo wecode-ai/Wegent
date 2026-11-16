@@ -318,6 +318,7 @@ export function ChatInputControls({
       isModelSelectionRequired,
       isAttachmentReadyToSend,
       hasNoTeams,
+      hasSelectedTeam: selectedTeam !== null,
       shouldHideChatInput,
       taskInputMessage,
       hasAttachments: attachmentState.attachments.length > 0,

@@ -22,6 +22,7 @@ export interface LoadedTranscriptRange {
   end: number;
 }
 export interface RuntimePaneTranscript {
+  acceptedClientUserMessageIds?: string[];
   supersededTurnIds?: string[];
   threadId?: string | null;
   historyUnavailable?: boolean;
@@ -56,12 +57,14 @@ export function projectRuntimePaneTranscript(
     turns.length === 0 &&
     messages.every((message) => message.role === "user")
   ) {
-    turns = seedRuntimeConversationTurns(messages, []).map((turn) => ({
-      ...turn,
-      status: "done",
-    }));
+    turns = seedRuntimeConversationTurns(messages, []);
   }
   return {
+    ...(transcript.acceptedClientUserMessageIds !== undefined
+      ? {
+          acceptedClientUserMessageIds: transcript.acceptedClientUserMessageIds,
+        }
+      : {}),
     supersededTurnIds: transcript.supersededTurnIds ?? [],
     threadId: transcript.threadId,
     historyUnavailable: transcript.historyUnavailable,

@@ -59,3 +59,35 @@ test('saves bounded CPU samples and stops when the renderer is destroyed', async
   expect(contentTracing.stopRecording).toHaveBeenCalledTimes(2)
   expect(contentTracing.startRecording).toHaveBeenCalledTimes(2)
 })
+
+test('caps the total profiles across reloads while the renderer remains alive', async () => {
+  vi.useFakeTimers()
+  const f = fixture()
+  installE2ERendererCpuProfiling(f.contents, {
+    VITE_WEWORK_E2E: 'true',
+    WEWORK_E2E_CONTROL_URL: 'http://localhost',
+    WEWORK_E2E_RENDERER_CPU_PROFILE_DIRECTORY: join(tmpdir(), 'bounded-cpu-evidence'),
+    WEWORK_E2E_RENDERER_CPU_PROFILE_LIMIT: '2',
+  })
+  f.load()
+  await vi.advanceTimersByTimeAsync(60_000)
+  f.load()
+  await vi.advanceTimersByTimeAsync(60_000)
+  expect(contentTracing.startRecording).toHaveBeenCalledTimes(2)
+  expect(contentTracing.stopRecording).toHaveBeenCalledTimes(2)
+})
+
+test('saves short diagnostic windows before a failed checkpoint closes the renderer', async () => {
+  vi.useFakeTimers()
+  const f = fixture()
+  installE2ERendererCpuProfiling(f.contents, {
+    VITE_WEWORK_E2E: 'true',
+    WEWORK_E2E_CONTROL_URL: 'http://localhost',
+    WEWORK_E2E_RENDERER_CPU_PROFILE_DIRECTORY: join(tmpdir(), 'short-cpu-evidence'),
+    WEWORK_E2E_RENDERER_CPU_PROFILE_INTERVAL_MS: '5000',
+    WEWORK_E2E_RENDERER_CPU_PROFILE_LIMIT: '2',
+  })
+  f.load()
+  await vi.advanceTimersByTimeAsync(10_000)
+  expect(contentTracing.stopRecording).toHaveBeenCalledTimes(2)
+})

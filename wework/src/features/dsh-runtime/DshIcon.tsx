@@ -1,4 +1,12 @@
-import { AlarmClock, Cloud, Grid3X3, Plug, type LucideIcon, type LucideProps } from 'lucide-react'
+import {
+  AlarmClock,
+  Cloud,
+  Download,
+  Grid3X3,
+  Plug,
+  type LucideIcon,
+  type LucideProps,
+} from 'lucide-react'
 import { DynamicIcon, iconNames, type IconName } from 'lucide-react/dynamic.js'
 
 const DSH_ICON_NAMES = new Set<string>(iconNames)
@@ -6,6 +14,7 @@ const DSH_ICON_ALIASES: Record<string, LucideIcon> = {
   'alarm-clock': AlarmClock,
   applications: Grid3X3,
   cloud: Cloud,
+  download: Download,
   plug: Plug,
 }
 

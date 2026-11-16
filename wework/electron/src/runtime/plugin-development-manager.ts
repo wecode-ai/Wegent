@@ -377,14 +377,19 @@ export class PluginDevelopmentManager {
     await this.command('open-devtools')
   }
 
+  async resumePythonAfterLogin(): Promise<void> {
+    if (!this.session || this.isStoppingOrStopped() || !this.isRunning()) return
+    await this.command('python-login')
+  }
+
   async stop(): Promise<void> {
     const child = this.child
     if (!child) return
+    this.stopPolling()
     this.updateSession({ status: 'stopping' })
     await this.command('stop').catch(() => {})
     await terminateProcessTree(child, 5_000).catch(() => {})
     if (this.child === child) this.child = null
-    this.stopPolling()
     this.updateSession({
       status: 'stopped',
       electronPid: null,
@@ -436,6 +441,10 @@ export class PluginDevelopmentManager {
     return Boolean(this.child && this.child.exitCode === null)
   }
 
+  private isStoppingOrStopped(): boolean {
+    return this.session?.status === 'stopping' || this.session?.status === 'stopped'
+  }
+
   private startPolling(): void {
     this.stopPolling()
     const generation = this.statePollGeneration
@@ -450,7 +459,7 @@ export class PluginDevelopmentManager {
   }
 
   private async refreshChildState(generation = this.statePollGeneration): Promise<void> {
-    if (!this.session || !this.isRunning()) return
+    if (!this.session || this.isStoppingOrStopped() || !this.isRunning()) return
     const statePath = join(resolve(this.session.userDataDirectory, '..'), 'state.json')
     let state: ChildState
     try {
@@ -458,7 +467,8 @@ export class PluginDevelopmentManager {
     } catch {
       return
     }
-    if (generation !== this.statePollGeneration || !this.isRunning()) return
+    if (generation !== this.statePollGeneration || this.isStoppingOrStopped() || !this.isRunning())
+      return
     this.updateSession({
       status: state.status ?? this.session.status,
       coreDshPid: state.coreDshPid ?? null,
@@ -605,6 +615,9 @@ export function pluginDevelopmentEnvironment(
   delete environment.WEWORK_NODE_PATH
   delete environment.WEWORK_NODE_RUNTIME_KIND
   delete environment.WEWORK_RUNTIME_BIN
+  delete environment.WEGENT_PYTHON_PATH
+  delete environment.WEWORK_PYTHON_RUNTIME_URL
+  delete environment.WEWORK_PYTHON_RUNTIME_TOKEN
   for (const key of Object.keys(environment)) {
     if (
       key.startsWith('WEWORK_E2E_') ||
@@ -616,6 +629,15 @@ export function pluginDevelopmentEnvironment(
   }
   return {
     ...environment,
+    ...(base.WEWORK_PYTHON_RUNTIME_URL && base.WEWORK_PYTHON_RUNTIME_TOKEN
+      ? {
+          WEWORK_PARENT_PYTHON_DOWNLOADS_URL: new URL(
+            '/runtime/python/downloads',
+            base.WEWORK_PYTHON_RUNTIME_URL
+          ).href,
+          WEWORK_PARENT_PYTHON_DOWNLOADS_TOKEN: base.WEWORK_PYTHON_RUNTIME_TOKEN,
+        }
+      : {}),
     WEWORK_INSTANCE_MODE: 'core-dsh-plugin-development',
     ...(e2eEnabled
       ? {
@@ -623,6 +645,9 @@ export function pluginDevelopmentEnvironment(
           ...(e2eControlToken ? { WEWORK_E2E_CONTROL_TOKEN: e2eControlToken } : {}),
           WEWORK_PLUGIN_DEVELOPMENT_E2E: '1',
           WEWORK_PLUGIN_DEVELOPMENT_E2E_WINDOW_LABEL: `plugin-development-${id}`,
+          ...(base.WEWORK_E2E_DISABLE_PYTHON_BOOTSTRAP === '1'
+            ? { WEWORK_E2E_DISABLE_PYTHON_BOOTSTRAP: '1' }
+            : {}),
         }
       : {}),
     WEWORK_PLUGIN_DEVELOPMENT_ROOT: plugin.sourceRoot,

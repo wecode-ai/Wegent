@@ -54,6 +54,21 @@ const document: KnowledgeDocument = {
 describe('KnowledgeSourcePreview', () => {
   const onDownload = jest.fn()
 
+  beforeAll(() => {
+    // JSDOM has no Canvas implementation; provide the browser drawing surface.
+    jest.spyOn(HTMLCanvasElement.prototype, 'getContext').mockReturnValue({
+      scale: jest.fn(),
+      translate: jest.fn(),
+      rotate: jest.fn(),
+      fillText: jest.fn(),
+    } as unknown as CanvasRenderingContext2D)
+    jest
+      .spyOn(HTMLCanvasElement.prototype, 'toDataURL')
+      .mockReturnValue('data:image/png;base64,watermark')
+  })
+
+  afterAll(() => jest.restoreAllMocks())
+
   beforeEach(() => {
     jest.clearAllMocks()
     ;(fetchAttachmentFile as jest.Mock).mockResolvedValue(

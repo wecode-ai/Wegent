@@ -1,0 +1,5 @@
+{
+  "order": 41000,
+  "scenario": "./scenarios/project-coordination.scenario.mjs",
+  "scenarioOnly": true
+}

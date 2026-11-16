@@ -11,13 +11,19 @@ from app.models.cloud_project import CloudProject
 from app.models.resource_member import ResourceMember
 from app.models.user import User
 from app.schemas.base_role import BaseRole
-from app.services.cloud_project_visibility import project_participant_ids
+from app.schemas.cloud_project import CloudProjectMemberResponse
+from app.services.cloud_project_visibility import (
+    project_membership_rows,
+    project_participant_ids,
+)
 from app.services.cloud_projects.responses import (
     list_project_responses,
     project_response,
 )
 from app.services.cloud_projects.service import cloud_project_service
 from app.services.collaboration_permissions import collaboration_permission_service
+from app.services.workspaces.responses import list_workspace_responses
+from tests.service_results import service_result
 
 
 def read_project(test_db, project_id, user):
@@ -172,8 +178,12 @@ def test_cp02_cp03_cp05_role_precedence_and_restricted_projects(
     assert (pid in projects) == (expected is not None)
     if expected:
         assert projects[pid].access_role.value == expected
-    roster = test_client.get(
-        f"/api/v1/cloud-projects/{pid}/members", headers=scope["owner"]
+    roster = service_result(
+        cloud_project_service.list_members,
+        test_db,
+        int(pid),
+        scope["space"]["owner_user_id"],
+        response_model=list[CloudProjectMemberResponse],
     )
     assert roster.status_code == 200, roster.text
     rows = [row for row in roster.json() if row["user_id"] == scope["user"].id]
@@ -208,8 +218,8 @@ def test_cp04_project_guest_does_not_inherit_upward(test_client, test_db, scope,
     assert detail["workspace_context"]["id"] == wid
     workspace_ids = {
         row["id"]
-        for row in test_client.get(
-            "/api/v1/workspaces", headers=scope["member"]
+        for row in service_result(
+            lambda: {"items": list_workspace_responses(test_db, scope["user"].id)}
         ).json()["items"]
     }
     assert wid not in workspace_ids
@@ -234,7 +244,7 @@ def test_cp04_project_guest_does_not_inherit_upward(test_client, test_db, scope,
     assert sibling["id"] not in {row["id"] for row in listed_projects}
 
 
-def test_cp07_cp08_cp20_viewer_and_membership_provenance(test_client, scope):
+def test_cp07_cp08_cp20_viewer_and_membership_provenance(test_db, test_client, scope):
     invite(test_client, scope, "Viewer")
     pid, wid = scope["project"]["id"], scope["space"]["id"]
     assert (
@@ -245,12 +255,16 @@ def test_cp07_cp08_cp20_viewer_and_membership_provenance(test_client, scope):
     )
     assert wid in {
         row["id"]
-        for row in test_client.get(
-            "/api/v1/workspaces", headers=scope["member"]
+        for row in service_result(
+            lambda: {"items": list_workspace_responses(test_db, scope["user"].id)}
         ).json()["items"]
     }
-    roster = test_client.get(
-        f"/api/v1/cloud-projects/{pid}/members", headers=scope["member"]
+    roster = service_result(
+        cloud_project_service.list_members,
+        test_db,
+        int(pid),
+        scope["user"].id,
+        response_model=list[CloudProjectMemberResponse],
     ).json()
     row = next(row for row in roster if row["user_id"] == scope["user"].id)
     assert row["role"] == "Viewer"
@@ -300,14 +314,68 @@ def test_cp07_viewer_cannot_change_issue_status(test_client, scope, target_statu
     )
 
 
+@pytest.mark.parametrize("membership_mode", ["inherit", "restricted"])
+def test_cp05_cp08_batch_sources_keep_role_precedence_and_rejected_grants(
+    test_client, test_db, scope, membership_mode
+):
+    invite(test_client, scope, "Developer")
+    invite(test_client, scope, "Viewer", project=True)
+    project = test_db.get(CloudProject, scope["project"]["id"])
+    project.membership_mode = membership_mode
+    test_db.flush()
+    owner_id, member_id = scope["space"]["owner_user_id"], scope["user"].id
+    workspace, grants = project_membership_rows(test_db, project)
+
+    sources = collaboration_permission_service.project_sources_many(
+        project,
+        [test_db.get(User, owner_id), scope["user"]],
+        workspace=workspace,
+        grants=grants,
+    )
+
+    for user_id in (owner_id, member_id):
+        assert sources[user_id] == collaboration_permission_service.project_sources(
+            test_db, project, user_id
+        )
+    assert sources[owner_id][0]["role"] == "Maintainer"
+    assert sources[member_id][-1] == {"type": "direct", "role": "Viewer"}
+    rows = cloud_project_service.list_members(test_db, project.id, owner_id)
+    row = next(row for row in rows if row["user_id"] == member_id)
+    assert row["role"] == "Viewer"
+    assert row["inherited_role"] == (
+        "Developer" if membership_mode == "inherit" else None
+    )
+    grant = (
+        test_db.query(ResourceMember)
+        .filter_by(
+            resource_type="CloudProject",
+            resource_id=int(project.id),
+            entity_type="user",
+            entity_id=str(member_id),
+        )
+        .one()
+    )
+    grant.status = "rejected"
+    test_db.flush()
+    sources = collaboration_permission_service.project_sources_many(
+        project, [scope["user"]], workspace=workspace, grants=grants
+    )
+    assert all(source["type"] != "direct" for source in sources[member_id])
+    assert bool(sources[member_id]) == (membership_mode == "inherit")
+
+
 def test_cp08_lower_direct_role_never_masks_space_administration(
     test_client, test_db, scope
 ):
     invite(test_client, scope, "Maintainer")
     invite(test_client, scope, "Viewer", project=True)
     pid = scope["project"]["id"]
-    rows = test_client.get(
-        f"/api/v1/cloud-projects/{pid}/members", headers=scope["member"]
+    rows = service_result(
+        cloud_project_service.list_members,
+        test_db,
+        int(pid),
+        scope["user"].id,
+        response_model=list[CloudProjectMemberResponse],
     ).json()
     row = next(row for row in rows if row["user_id"] == scope["user"].id)
     assert (row["role"], row["direct_role"], row["inherited_role"]) == (
@@ -441,10 +509,108 @@ def test_cp09_cp13_enabled_agents_and_assignment_entry_points(test_client, scope
         )
 
 
-@pytest.fixture
-def test_client(test_client):
-    """Exercise retained Python HTTP components in an isolated application."""
-    from tests.retained_python_handlers import component_client
+@pytest.mark.parametrize(
+    ("project_security", "parent_security", "expected_security"),
+    [
+        ("open", "related", "related"),
+        ("related", "open", "related"),
+        ("open", "open", "open"),
+        ("related", "related", "related"),
+    ],
+)
+def test_cp14_child_creation_never_widens_parent_or_project_visibility(
+    test_client, test_db, scope, project_security, parent_security, expected_security
+):
+    invite(test_client, scope, "Developer")
+    project_id = scope["project"]["id"]
+    project = test_db.get(CloudProject, int(project_id))
+    project.metadata_json = {
+        **project.metadata_json,
+        "default_issue_security": project_security,
+    }
+    test_db.commit()
+    parent = test_client.post(
+        f"/api/v1/cloud-projects/{project_id}/loop-items",
+        headers=scope["owner"],
+        json={"title": "Source discussion", "notify_assignee": False},
+    )
+    assert parent.status_code == 201, parent.text
+    source = parent.json()
+    updated = test_client.patch(
+        f"/api/v1/loop-items/{source['id']}",
+        headers=scope["owner"],
+        json={"version": source["version"], "security_level": parent_security},
+    )
+    assert updated.status_code == 200, updated.text
+    child = test_client.post(
+        f"/api/v1/cloud-projects/{project_id}/loop-items",
+        headers=scope["owner"],
+        json={
+            "title": "Child from comment",
+            "description": "Private source comment",
+            "parent_id": source["id"],
+            "notify_assignee": False,
+        },
+    )
+    assert child.status_code == 201, child.text
+    result = child.json()
+    assert result["security_level"] == expected_security
+    outsider = test_client.get(
+        f"/api/v1/loop-items/{result['id']}", headers=scope["member"]
+    )
+    assert outsider.status_code == (404 if expected_security == "related" else 200)
+    if parent_security == "related":
+        denied = test_client.post(
+            f"/api/v1/cloud-projects/{project_id}/loop-items",
+            headers=scope["member"],
+            json={"title": "Hidden parent", "parent_id": source["id"]},
+        )
+        assert denied.status_code == 404
 
-    with component_client(test_client, ("project_members", "workspaces")) as client:
-        yield client
+
+def test_comment_child_creation_request_is_idempotent_and_checks_current_access(
+    test_client, scope
+):
+    invite(test_client, scope, "Developer")
+    url = f"/api/v1/cloud-projects/{scope['project']['id']}/loop-items"
+    parent = test_client.post(
+        url, headers=scope["owner"], json={"title": "Parent"}
+    ).json()
+    payload = {
+        "title": "Child",
+        "parent_id": parent["id"],
+        "request_id": "comment-child-operation",
+    }
+    first = test_client.post(url, headers=scope["owner"], json=payload)
+    assert first.status_code == 201, first.text
+    repeated = test_client.post(url, headers=scope["owner"], json=payload)
+    assert repeated.status_code == 201, repeated.text
+    assert repeated.json()["id"] == first.json()["id"]
+    next_issue = test_client.post(url, headers=scope["owner"], json={"title": "Next"})
+    assert next_issue.json()["sequence_number"] == first.json()["sequence_number"] + 1
+    restricted = test_client.patch(
+        f"/api/v1/loop-items/{parent['id']}",
+        headers=scope["owner"],
+        json={"version": parent["version"], "security_level": "related"},
+    )
+    assert restricted.status_code == 200, restricted.text
+    denied = test_client.post(url, headers=scope["member"], json=payload)
+    assert denied.status_code == 404, denied.text
+
+
+def test_comment_child_replay_rejects_archived_result(test_client, scope):
+    url = f"/api/v1/cloud-projects/{scope['project']['id']}/loop-items"
+    payload = {"title": "Child", "request_id": "archived-comment-child"}
+    first = test_client.post(url, headers=scope["owner"], json=payload)
+    assert first.status_code == 201, first.text
+    item_id = first.json()["id"]
+    archived = test_client.delete(
+        f"/api/v1/loop-items/{item_id}", headers=scope["owner"]
+    )
+    assert archived.status_code == 204, archived.text
+    repeated = test_client.post(url, headers=scope["owner"], json=payload)
+    assert repeated.status_code == 409, repeated.text
+    missing = test_client.get(f"/api/v1/loop-items/{item_id}", headers=scope["owner"])
+    assert missing.status_code == 404
+    next_item = test_client.post(url, headers=scope["owner"], json={"title": "Next"})
+    assert next_item.json()["sequence_number"] == first.json()["sequence_number"] + 1

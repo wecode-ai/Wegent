@@ -1,0 +1,20 @@
+{
+  "order": 33000,
+  "groupOrder": 3000,
+  "members": [
+    "stand-in-profile-settings",
+    "stand-in-model-catalog",
+    "stand-in-processing",
+    "coordination-runtime",
+    "coordination-arrangements",
+    "project-coordinator-publication",
+    "project-coordination"
+  ],
+  "ci": {
+    "core": {
+      "order": 40000,
+      "shard": 3,
+      "position": 11000
+    }
+  }
+}

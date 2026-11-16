@@ -45,6 +45,7 @@ import {
   buildPublicTeamJson,
   buildPublicTeamUpdateData,
   type PublicTeamModeSpec,
+  resolvePublicTeamBaseJson,
   resolvePublicTeamName,
   syncPublicTeamVideoModeSpec,
 } from '../utils/publicTeamPayload'
@@ -201,6 +202,14 @@ export default function PublicTeamEditDialog({
   const [jsonConfig, setJsonConfig] = useState('{}')
   const [jsonError, setJsonError] = useState('')
   const [namespace, setNamespace] = useState('default')
+
+  // The JSON editor can carry changes the basic form cannot represent, member roles
+  // among them. Rebuild from it rather than from the team as it was opened, so
+  // toggling tabs or saving from the basic tab keeps those changes.
+  const currentTeamJson = useMemo(
+    () => resolvePublicTeamBaseJson(jsonConfig, editingTeam?.json),
+    [jsonConfig, editingTeam?.json]
+  )
 
   // Shared state
   const [saving, setSaving] = useState(false)
@@ -598,7 +607,7 @@ export default function PublicTeamEditDialog({
     })
 
     const json = buildPublicTeamJson({
-      baseJson: editingTeam?.json,
+      baseJson: currentTeamJson,
       name,
       displayName,
       description,
@@ -629,7 +638,7 @@ export default function PublicTeamEditDialog({
     requireConfirmationMap,
     contextPassingMap,
     bots,
-    editingTeam?.json,
+    currentTeamJson,
   ])
 
   // Sync JSON to basic form when switching to basic tab
@@ -783,7 +792,7 @@ export default function PublicTeamEditDialog({
           }
 
           teamJson = buildPublicTeamJson({
-            baseJson: editingTeam?.json,
+            baseJson: currentTeamJson,
             name,
             displayName,
             description,
@@ -861,7 +870,7 @@ export default function PublicTeamEditDialog({
           }
 
           teamJson = buildPublicTeamJson({
-            baseJson: editingTeam?.json,
+            baseJson: currentTeamJson,
             name,
             displayName,
             description,

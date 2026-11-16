@@ -1,0 +1,12 @@
+{
+  "order": 150000,
+  "scenario": "./scenarios/executor-retry-status.scenario.mjs",
+  "scenarioOnly": true,
+  "ci": {
+    "core": {
+      "order": 104000,
+      "shard": 6,
+      "position": 13000
+    }
+  }
+}

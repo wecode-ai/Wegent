@@ -12,7 +12,7 @@ sidebar_position: 2
 | 部分成员失败 | 2 添加成功，3 返回权限错误；修复权限后重试         | 显示 3 与原因，草稿和选择保留，仍只有一个项目，仅重试 3                             |
 | 搜索失败     | 选择两人，下一次查询失败，再点击重试               | 错误可恢复，已选成员和项目草稿不变                                                  |
 | 服务端确认   | add 返回成功但名单没有成员；或添加已落库但响应丢失 | 前者不能误报成功；后者以重读名单为准，不重复添加                                    |
-| 协作模板     | 选择成员、智能体、设备与小组，后续配置失败后重试   | 保留已完成配置，统一成员选择，不重复创建成功的资源绑定                              |
+| 协作模板     | 选择成员、智能体、设备与多个小组；成员失败后重试   | 成员验证通过后才进入原有模板配置链，保留多小组、执行环境、智能体及更新后的项目结果  |
 | 本地项目     | 切换本地位置，宿主仅提供云端目录                   | 隐藏云端成员选择，并解释限制                                                        |
 | 开关关闭     | 构建配置为 false，再打开普通创建入口               | 返回创建后管理成员的原有流程；不删除任何已有成员关系                                |
 
@@ -22,7 +22,9 @@ E2E 覆盖加入现有 `collaboration-shared-core` checkpoint，通过原有 Cor
 
 当前桌面外壳以 `embedded=true` 挂载普通任务工作区，隐藏该组件的创建侧栏，因此普通入口使用组件测试覆盖；没有为测试新增产品导航。
 
-## 已执行检查
+## 初始基准已执行检查
+
+以下记录基于 `a451b8183`，保留首次复现和验证事实。PR 集成最新主线后的检查另行记录。
 
 - `pnpm --filter @wegent/collaboration build`：通过。
 - `pnpm --filter wework typecheck`：通过。
@@ -38,6 +40,18 @@ E2E 覆盖加入现有 `collaboration-shared-core` checkpoint，通过原有 Cor
 pnpm --filter wework test src/features/todo/CloudTodoWorkspace.test.tsx src/features/collaboration/createProjectResourceSetup.test.ts src/features/collaboration/weworkSharedWorkspaceApi.test.ts --maxWorkers=1
 ```
 
+## 最新主线集成验证
+
+已整合 `c2fdb7266`。主线已有的人员选择器、`searchUsers`、模板预校验、多小组草稿、智能体物化、执行环境和模板看板流程继续复用；成员失败在任何模板资源写入之前停止，重试同一项目。其他资源失败沿用主线的“打开已创建项目”流程。
+
+- 共享创建目录与完整协作平台：10 个文件、211 项测试通过，20.29 秒。
+- 普通入口、资源工厂和共享 API 适配器：3 个文件、86 项测试通过，14.92 秒。
+- 共享包构建、Wework TypeScript 检查通过；Wework 完整 lint 通过，0 个错误、4 个既有警告。
+- 双语导航及文档打包契约：7 项测试通过。
+- E2E 文件语法和 ESLint 检查通过；本地未执行 E2E 或真实 Electron 验证。
+
+最初同时执行完整 lint、两个类型检查和两个 jsdom 套件时，5 个用例触发 5 秒超时，另有人员搜索错误缺少本地化前缀。前缀已修复并保留后端原因。对普通入口超时用例加入临时 Profiler 和请求计数后，3 条完整交互分别在 109、133、123 毫秒完成，每项仅读取项目和看板各一次；没有观测到循环加载。诊断代码随后移除。按同一原有超时和断言串行执行上述两个完整套件，297 项全部通过；此前并行失败不记为通过，也没有提高超时或跳过测试。
+
 # Verification and rollback
 
-The unit plan covers cloud member creation, partial failures, search recovery, authoritative server-roster checks, template-resource retries, local-source hiding and the disabled flag. The existing CI-covered `collaboration-shared-core` scenario now includes real-account member persistence and reload checks. E2E and real Electron verification were not run, as instructed. Set `VITE_COLLAB_PROJECT_CREATE_MEMBERS_V1=false` in the Wework build environment and rebuild to disable ordinary-entry member creation without deleting existing memberships.
+The unit plan covers cloud member creation, partial failures, search recovery, authoritative server-roster checks, the existing template pipeline, local-source hiding and the disabled flag. The existing CI-covered `collaboration-shared-core` scenario now includes real-account member persistence and reload checks. Local E2E and real Electron verification were not run, as instructed. The initial test results above were recorded before integration with the latest main branch. Set `VITE_COLLAB_PROJECT_CREATE_MEMBERS_V1=false` in the Wework build environment and rebuild to disable ordinary-entry member creation without deleting existing memberships.

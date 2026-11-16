@@ -15,7 +15,7 @@ Note: Requires Milvus 2.5+ for keyword and hybrid search support.
 
 import json
 import logging
-from typing import Any, ClassVar, Dict, List, Optional
+from typing import Any, ClassVar, Dict, List, Optional, cast
 
 from llama_index.core import StorageContext, VectorStoreIndex
 from llama_index.core.base.embeddings.base import BaseEmbedding
@@ -27,7 +27,11 @@ from llama_index.core.vector_stores.types import (
     VectorStoreQueryMode,
 )
 from llama_index.vector_stores.milvus import MilvusVectorStore
-from llama_index.vector_stores.milvus.base import IndexManagement, _to_milvus_filter
+from llama_index.vector_stores.milvus.base import (
+    DEFAULT_BATCH_SIZE,
+    _to_milvus_filter,
+)
+from pydantic import PrivateAttr
 from pymilvus import AsyncMilvusClient, MilvusClient
 
 from knowledge_engine.embedding.contract import (
@@ -44,6 +48,13 @@ from knowledge_engine.retrieval.search_hints import resolve_search_queries
 from knowledge_engine.storage.base import BaseStorageBackend
 from knowledge_engine.storage.capabilities import STORAGE_BACKEND_SPECS
 from knowledge_engine.storage.chunk_metadata import ChunkMetadata
+from knowledge_engine.storage.cleanup_timeout import CleanupTimeoutClient
+from knowledge_engine.storage.milvus_batching import (
+    DEFAULT_BATCH_HEADROOM_BYTES,
+    DEFAULT_MAX_BATCH_BYTES,
+    MilvusWriteClient,
+    validate_batch_limits,
+)
 from knowledge_engine.storage.milvus_dimension import (
     CollectionSnapshot,
     embedding_model_name,
@@ -51,6 +62,7 @@ from knowledge_engine.storage.milvus_dimension import (
     read_collection_snapshot,
 )
 from knowledge_engine.storage.milvus_readiness import load_for_document_cleanup
+from shared.event_reporting.operations import storage_fact
 from shared.knowledge_contracts import RetrievalScope
 
 logger = logging.getLogger(__name__)
@@ -101,8 +113,15 @@ class LazyAsyncMilvusVectorStore(MilvusVectorStore):
 
     # Store config for lazy async client creation
     _milvusclient_config: Dict[str, Any] = {}
+    _bounded_client: Optional[MilvusWriteClient] = PrivateAttr(default=None)
 
-    def __init__(self, **kwargs: Any) -> None:
+    def __init__(
+        self,
+        *,
+        max_batch_bytes: int = DEFAULT_MAX_BATCH_BYTES,
+        batch_headroom_bytes: int = DEFAULT_BATCH_HEADROOM_BYTES,
+        **kwargs: Any,
+    ) -> None:
         """
         Initialize without creating AsyncMilvusClient.
 
@@ -110,6 +129,12 @@ class LazyAsyncMilvusVectorStore(MilvusVectorStore):
         the parent class to skip AsyncMilvusClient creation.
         """
         import llama_index.vector_stores.milvus.base as milvus_base
+
+        validate_batch_limits(
+            max_batch_bytes,
+            batch_headroom_bytes,
+            kwargs.get("batch_size", DEFAULT_BATCH_SIZE),
+        )
 
         # Store the original AsyncMilvusClient class
         original_async_client = milvus_base.AsyncMilvusClient
@@ -124,6 +149,13 @@ class LazyAsyncMilvusVectorStore(MilvusVectorStore):
         finally:
             # Restore the original AsyncMilvusClient
             milvus_base.AsyncMilvusClient = original_async_client
+
+        self._bounded_client = MilvusWriteClient(
+            self._milvusclient,
+            max_batch_bytes=max_batch_bytes,
+            batch_headroom_bytes=batch_headroom_bytes,
+            max_rows=self.batch_size,
+        )
 
         # Store connection params for lazy async client creation
         # Following the pattern from PR #20695
@@ -140,6 +172,11 @@ class LazyAsyncMilvusVectorStore(MilvusVectorStore):
 
         # Set _async_milvusclient to None for lazy initialization
         self._async_milvusclient = None  # type: ignore
+
+    @property
+    def client(self) -> MilvusClient:
+        # Parent initialization uses the raw client before the write guard exists.
+        return cast(MilvusClient, self._bounded_client or self._milvusclient)
 
     @property
     def aclient(self) -> AsyncMilvusClient:
@@ -177,6 +214,7 @@ class MilvusBackend(BaseStorageBackend):
         STORAGE_BACKEND_SPECS["milvus"].retrieval_methods
     )
     supports_retrieval_scope: ClassVar[bool] = True
+    event_storage_type: ClassVar[str] = "milvus"
 
     # Override INDEX_PREFIX for Milvus collections
     INDEX_PREFIX: ClassVar[str] = "collection"
@@ -192,7 +230,9 @@ class MilvusBackend(BaseStorageBackend):
                 - username: Optional username for authentication
                 - password: Optional password for authentication
                 - indexStrategy: Index/collection naming strategy
-                - ext: Additional config (e.g., dim for vector dimension, db_name)
+                - ext: Additional config (e.g., dim for vector dimension, db_name).
+                  max_batch_bytes defaults to 1 MiB, batch_headroom_bytes to 64 KiB,
+                  and batch_size retains the SDK's row limit (currently 100).
 
         Authentication:
             If both username and password are provided, they are concatenated
@@ -208,6 +248,18 @@ class MilvusBackend(BaseStorageBackend):
 
         # Get vector dimension from ext (default: 1536 for OpenAI embeddings)
         self.dim = self.ext.get("dim", DEFAULT_EMBEDDING_DIM)
+        self._write_options = {
+            key: self.ext[key]
+            for key in ("batch_size", "max_batch_bytes", "batch_headroom_bytes")
+            if key in self.ext
+        }
+        validate_batch_limits(
+            self._write_options.get("max_batch_bytes", DEFAULT_MAX_BATCH_BYTES),
+            self._write_options.get(
+                "batch_headroom_bytes", DEFAULT_BATCH_HEADROOM_BYTES
+            ),
+            self._write_options.get("batch_size", DEFAULT_BATCH_SIZE),
+        )
 
         # Build token for authentication: username:password
         if self.username and self.password:
@@ -293,7 +345,14 @@ class MilvusBackend(BaseStorageBackend):
         Returns:
             MilvusClient instance for direct Milvus operations
         """
-        return MilvusClient(uri=self.base_url, token=self.token, db_name=self.db_name)
+        timeout = self.config.get("request_timeout")
+        client = MilvusClient(
+            uri=self.base_url,
+            token=self.token,
+            db_name=self.db_name,
+            **({"timeout": timeout} if timeout else {}),
+        )
+        return CleanupTimeoutClient(client, timeout) if timeout else client
 
     def _resolve_hybrid_ranker(self) -> str:
         """
@@ -391,8 +450,10 @@ class MilvusBackend(BaseStorageBackend):
             enable_sparse=True,  # Enable sparse vector for keyword/hybrid search
             hybrid_ranker=hybrid_ranker,
             hybrid_ranker_params=hybrid_ranker_params,
+            **self._write_options,
         )
 
+    @storage_fact("milvus", "index")
     def index_with_metadata(
         self,
         nodes: List[BaseNode],
@@ -566,7 +627,7 @@ class MilvusBackend(BaseStorageBackend):
         """Return how many nodes belong to the first provider batch."""
         batch_size = getattr(embed_model, "embed_batch_size", None)
         if is_positive_int(batch_size):
-            return batch_size
+            return cast(int, batch_size)
         return len(nodes)
 
     @staticmethod
@@ -653,6 +714,7 @@ class MilvusBackend(BaseStorageBackend):
             doc_ref,
         )
 
+    @storage_fact("milvus", "retrieve")
     def retrieve(
         self,
         knowledge_id: str,
@@ -921,6 +983,7 @@ class MilvusBackend(BaseStorageBackend):
 
         return {"records": results}
 
+    @storage_fact("milvus", "delete_document")
     def delete_document(
         self,
         knowledge_id: str,
@@ -928,10 +991,9 @@ class MilvusBackend(BaseStorageBackend):
         **kwargs,
     ) -> Dict:
         """
-        Delete document from Milvus using LlamaIndex API.
+        Delete document through bounded native SDK calls.
 
-        Uses delete_nodes with metadata filters to remove all chunks
-        with matching doc_ref.
+        The purge helper scopes both knowledge and document identity.
 
         Args:
             knowledge_id: Knowledge base ID
@@ -942,36 +1004,11 @@ class MilvusBackend(BaseStorageBackend):
             Deletion result dict
         """
         collection_name = self.get_index_name(knowledge_id, **kwargs)
-        if not self._collection_snapshot(collection_name).exists:
-            # Constructing a vector store would create the collection with the
-            # configured default dimension, so a missing collection only has
-            # parent nodes left to delete.
-            self.delete_parent_nodes(knowledge_id, doc_ref, **kwargs)
-            return {
-                "doc_ref": doc_ref,
-                "knowledge_id": knowledge_id,
-                "deleted_chunks": 0,
-                "status": "deleted",
-            }
-
-        vector_store = self.create_vector_store(collection_name)
-
-        load_for_document_cleanup(vector_store.client, collection_name)
-
-        # Build filters to match the document
-        filters = self._build_doc_ref_filters(knowledge_id, doc_ref)
-
-        # Get nodes first to count them
-        try:
-            nodes = vector_store.get_nodes(filters=filters)
-            deleted_count = len(nodes)
-        except Exception:
-            deleted_count = 0
-
-        # Delete nodes using LlamaIndex API
-        vector_store.delete_nodes(filters=filters)
+        client = self._get_client()
+        deleted_count = self._delete_collection_by_knowledge_id(
+            client, collection_name, knowledge_id, doc_ref=doc_ref
+        )
         self.delete_parent_nodes(knowledge_id, doc_ref, **kwargs)
-
         return {
             "doc_ref": doc_ref,
             "knowledge_id": knowledge_id,
@@ -1218,37 +1255,46 @@ class MilvusBackend(BaseStorageBackend):
         collection_name = self.get_parent_store_name(knowledge_id, **kwargs)
         client = self._get_client()
 
-        if not client.has_collection(collection_name):
+        existed = client.has_collection(collection_name)
+        if not existed:
             client.create_collection(
                 collection_name=collection_name,
                 dimension=1,
                 auto_id=True,
                 enable_dynamic_field=True,
             )
-        else:
+        rows = [
+            {
+                "vector": [0.0],
+                "parent_node_id": node.node_id,
+                "knowledge_id": knowledge_id,
+                "doc_ref": node.metadata.get("doc_ref"),
+                "source_file": node.metadata.get("source_file"),
+                "content": self.get_node_display_text(node),
+                "title": node.metadata.get("source_file", ""),
+                "metadata_json": json.dumps(node.metadata),
+            }
+            for node in parent_nodes
+        ]
+        writer = MilvusWriteClient(
+            client,
+            max_batch_bytes=self._write_options.get(
+                "max_batch_bytes", DEFAULT_MAX_BATCH_BYTES
+            ),
+            batch_headroom_bytes=self._write_options.get(
+                "batch_headroom_bytes", DEFAULT_BATCH_HEADROOM_BYTES
+            ),
+            max_rows=self._write_options.get("batch_size", DEFAULT_BATCH_SIZE),
+        )
+        writer.validate_insert_rows(collection_name, rows)
+        if existed:
             self._delete_parent_nodes_with_client(
                 client,
                 collection_name,
                 knowledge_id,
                 parent_nodes[0].metadata.get("doc_ref", ""),
             )
-
-        client.insert(
-            collection_name=collection_name,
-            data=[
-                {
-                    "vector": [0.0],
-                    "parent_node_id": node.node_id,
-                    "knowledge_id": knowledge_id,
-                    "doc_ref": node.metadata.get("doc_ref"),
-                    "source_file": node.metadata.get("source_file"),
-                    "content": self.get_node_display_text(node),
-                    "title": node.metadata.get("source_file", ""),
-                    "metadata_json": json.dumps(node.metadata),
-                }
-                for node in parent_nodes
-            ],
-        )
+        writer.insert(collection_name=collection_name, data=rows)
         return {"stored_count": len(parent_nodes)}
 
     def _delete_collection_by_knowledge_id(
@@ -1256,20 +1302,29 @@ class MilvusBackend(BaseStorageBackend):
         client: MilvusClient,
         collection_name: str,
         knowledge_id: str,
+        doc_ref: str | None = None,
     ) -> int:
         if not client.has_collection(collection_name):
             return 0
 
+        if doc_ref is not None:
+            load_for_document_cleanup(client, collection_name)
+
         safe_knowledge_id = self._sanitize_filter_value(knowledge_id)
+        filter_expr = (
+            self._build_parent_node_filter_expr(knowledge_id, doc_ref)
+            if doc_ref is not None
+            else f'knowledge_id == "{safe_knowledge_id}"'
+        )
         results = client.query(
             collection_name=collection_name,
-            filter=f'knowledge_id == "{safe_knowledge_id}"',
+            filter=filter_expr,
             output_fields=["doc_ref"],
             limit=MAX_QUERY_LIMIT,
         )
         client.delete(
             collection_name=collection_name,
-            filter=f'knowledge_id == "{safe_knowledge_id}"',
+            filter=filter_expr,
         )
         return len(results)
 
@@ -1335,6 +1390,7 @@ class MilvusBackend(BaseStorageBackend):
         knowledge_id: str,
         max_chunks: int = MAX_QUERY_LIMIT,
         metadata_condition: Optional[Dict[str, Any]] = None,
+        scope: Optional[RetrievalScope] = None,
         **kwargs,
     ) -> List[Dict[str, Any]]:
         """
@@ -1364,12 +1420,20 @@ class MilvusBackend(BaseStorageBackend):
             # Sanitize knowledge_id to prevent expression injection
             safe_knowledge_id = self._sanitize_filter_value(knowledge_id)
             filter_expr = f'knowledge_id == "{safe_knowledge_id}"'
+            if scope is not None and scope.document_ids is not None:
+                doc_refs = [
+                    reference
+                    for document_id in scope.document_ids
+                    for reference in (str(document_id), f"doc_{document_id}")
+                ]
+                filter_expr += f" and doc_ref in {json.dumps(doc_refs)}"
 
             # Query all records with matching knowledge_id
             results = client.query(
                 collection_name=collection_name,
                 filter=filter_expr,
                 output_fields=[
+                    "knowledge_id",
                     "doc_ref",
                     "source_file",
                     "created_at",

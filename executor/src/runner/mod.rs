@@ -11,53 +11,20 @@ use std::{
 
 use tokio::{sync::oneshot, task::JoinHandle};
 
-pub(crate) mod streaming;
+pub(crate) use wegent_execution_stream as streaming;
 
 use crate::{
     agent_session,
-    emitter::{EventEnvelope, ResponsesEventBuilder},
+    emitter::ResponsesEventBuilder,
     logging::{log_executor_event, task_fields},
     protocol::{ExecutionRequest, TaskStatus},
-    server::{RunnerResult, TaskRunner},
 };
 
-pub trait AgentEngine: Clone + Send + Sync + 'static {
-    type RunFuture: Future<Output = ExecutionOutcome> + Send + 'static;
+#[cfg(test)]
+use crate::emitter::EventEnvelope;
+use wegent_execution_contracts::{RunnerResult, TaskRunner};
 
-    fn run(&self, request: ExecutionRequest) -> Self::RunFuture;
-
-    /// Release a suspended interaction after its execution callback has completed.
-    fn cancel_pending(&self, _task_id: &str, _subtask_id: Option<&str>) -> Option<EventEnvelope> {
-        None
-    }
-
-    fn run_with_events<S>(
-        &self,
-        request: ExecutionRequest,
-        _sink: S,
-        _builder: ResponsesEventBuilder,
-    ) -> Pin<Box<dyn Future<Output = ExecutionOutcome> + Send>>
-    where
-        S: EventSink,
-    {
-        Box::pin(self.run(request))
-    }
-}
-
-pub trait EventSink: Clone + Send + Sync + 'static {
-    type SendFuture: Future<Output = Result<(), String>> + Send + 'static;
-
-    fn send(&self, event: EventEnvelope) -> Self::SendFuture;
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum ExecutionOutcome {
-    Completed { content: String },
-    WaitingForUserInput { stop_reason: String },
-    Failed { message: String },
-    Running,
-    Cancelled { message: String },
-}
+pub use wegent_execution_contracts::{AgentEngine, EventSink, ExecutionOutcome};
 
 #[derive(Debug, Clone)]
 pub struct BackgroundTaskRunner<E, S> {

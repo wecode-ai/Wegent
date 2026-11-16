@@ -60,7 +60,7 @@ class ProjectTaskResponse(BaseModel):
 class ProjectTaskListResponse(BaseModel):
     """Paginated active tasks in a project."""
 
-    total: int = Field(..., description="Total number of active project tasks")
+    total: int | None = Field(..., description="Total matching tasks when requested")
     items: list[ProjectTaskResponse] = Field(default_factory=list)
     has_more: bool = Field(..., description="Whether another task page exists")
     next_cursor: Optional[str] = Field(None, description="Cursor for the next page")

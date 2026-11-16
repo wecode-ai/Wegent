@@ -36,12 +36,10 @@ class BotInfo(BaseModel):
     bot: Optional[BotSummary] = None
 
 
-class BotDetailInfo(BaseModel):
+class BotDetailInfo(BotInfo):
     """Bot detail information model with bot object"""
 
     bot: BotInDB
-    bot_prompt: Optional[str] = None
-    role: Optional[str] = None
 
 
 class TeamBase(QuickPhraseMixin):
@@ -114,23 +112,20 @@ class TeamInDB(TeamBase):
         from_attributes = True
 
 
-class TeamDetail(BaseModel):
+class TeamDetail(TeamBase):
     """Detailed team model with related entities"""
 
     id: int
-    name: str
-    displayName: Optional[str] = None  # Human-readable display name
-    description: Optional[str] = None  # Team description
+    namespace: str = "default"
+    user_id: int
+    agent_type: Optional[str] = None
+    recommended_mode: Optional[str] = None
+    publication_status: Optional[str] = None
     bots: List[BotDetailInfo]
-    workflow: Optional[dict[str, Any]] = None
-    quick_phrases: List[str] = []
-    is_active: bool = True
     created_at: datetime
     updated_at: datetime
     user: Optional[UserInDB] = None
     share_status: int = 0  # 0-private, 1-sharing, 2-shared from others
-    display_config: Optional[TeamDisplayConfig] = None
-    inputPlaceholder: Optional[TeamInputPlaceholder] = None
 
     class Config:
         from_attributes = True

@@ -6,16 +6,18 @@ import multiprocessing
 import os
 import threading
 import time
+import uuid
 from concurrent.futures import ThreadPoolExecutor
 from copy import deepcopy
 from typing import Callable
 from zipfile import ZipFile
 
 import pytest
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, event
 from sqlalchemy.orm import Session
 
 from app.models.kind import Kind
+from app.models.plugin_marketplace import Plugin
 from app.models.skill_binary import SkillBinary
 from app.schemas.plugin_account_auth import (
     PluginCredentialWrite,
@@ -30,6 +32,7 @@ from app.services.plugin_account_connections import (
 )
 from app.services.plugin_auth_automation import PluginAuthAutomationService
 from app.services.plugin_auth_local_lifecycle import PluginAuthLocalLifecycleService
+from app.services.plugin_catalog_identity import ensure_catalog_plugin
 from app.services.plugin_credential_cipher import PluginCredentialCipher
 from app.services.plugin_write_coordination import (
     PluginWriteError,
@@ -45,6 +48,109 @@ from integration_checks.plugin_auth_fixtures import (
     race,
     sessions,
 )
+
+
+@pytest.mark.parametrize("same_slug", [False, True])
+def test_catalog_first_publish_does_not_lock_missing_identity_gaps(sessions, same_slug):
+    """Distinct first publishes must coexist; identical identities serialize."""
+    engine = sessions.kw["bind"].execution_options(isolation_level="REPEATABLE READ")
+    Plugin.__table__.create(engine, checkfirst=True)
+    prefix = f"catalog-race-{uuid.uuid4().hex}"
+    slugs = [f"{prefix}-a", f"{prefix}-a" if same_slug else f"{prefix}-b"]
+    start = threading.Barrier(2)
+    probed = threading.Barrier(2)
+    locked = threading.Barrier(2)
+
+    def synchronize_identity_reads(
+        _connection, _cursor, statement, _parameters, _context, _many
+    ):
+        if statement.startswith("SELECT plugins.id ") and "FOR UPDATE" not in statement:
+            # Both RR snapshots miss the identities, including the loser of a
+            # same-slug race that must later read the committed winner's row.
+            probed.wait(timeout=5)
+        if (
+            not same_slug
+            and statement.startswith("SELECT plugins.")
+            and "FOR UPDATE" in statement
+        ):
+            # Both transactions have selected their identity before committing.
+            # A missing-row lock here used to make their subsequent inserts deadlock.
+            locked.wait(timeout=5)
+
+    def publish_identity(slug):
+        start.wait(timeout=5)
+        # The CLI uses ordinary sessions; plugin request sessions switch to READ COMMITTED.
+        with Session(engine) as db, db.begin():
+            assert db.connection().get_isolation_level() == "REPEATABLE READ"
+            return ensure_catalog_plugin(
+                db, {"catalog_namespace": "enterprise", "slug": slug}
+            ).id
+
+    event.listen(engine, "after_cursor_execute", synchronize_identity_reads)
+    try:
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            pending = [pool.submit(publish_identity, slug) for slug in slugs]
+            ids = [future.result(timeout=10) for future in pending]
+        assert (ids[0] == ids[1]) is same_slug
+        with sessions() as db:
+            assert db.query(Plugin).filter(Plugin.slug.in_(slugs)).count() == (
+                1 if same_slug else 2
+            )
+    finally:
+        event.remove(engine, "after_cursor_execute", synchronize_identity_reads)
+        with sessions.begin() as db:
+            db.query(Plugin).filter(Plugin.slug.in_(slugs)).delete(
+                synchronize_session=False
+            )
+
+
+def test_catalog_republish_does_not_block_first_publish_in_preceding_gap(sessions):
+    """A slow existing publisher must not block a different identity's insert."""
+    engine = sessions.kw["bind"].execution_options(isolation_level="REPEATABLE READ")
+    Plugin.__table__.create(engine, checkfirst=True)
+    prefix = f"catalog-gap-{uuid.uuid4().hex}"
+    lower_slug, new_slug, existing_slug = (f"{prefix}-{suffix}" for suffix in "abc")
+    with Session(engine) as db, db.begin():
+        existing = Plugin(catalog_namespace="enterprise", slug=existing_slug)
+        db.add_all([Plugin(catalog_namespace="enterprise", slug=lower_slug), existing])
+        db.flush()
+        existing_id = existing.id
+
+    def publish_new_identity():
+        with Session(engine) as db, db.begin():
+            assert db.connection().get_isolation_level() == "REPEATABLE READ"
+            return ensure_catalog_plugin(
+                db, {"catalog_namespace": "enterprise", "slug": new_slug}
+            ).id
+
+    try:
+        with Session(engine) as holder, ThreadPoolExecutor(max_workers=1) as pool:
+            assert holder.connection().get_isolation_level() == "REPEATABLE READ"
+            actual = ensure_catalog_plugin(
+                holder, {"catalog_namespace": "enterprise", "slug": existing_slug}
+            )
+            assert actual.id == existing_id
+            try:
+                # Keep the existing identity locked as it is during package upload.
+                # The neighboring first publish must commit before that lock releases.
+                created_id = pool.submit(publish_new_identity).result(timeout=5)
+                assert created_id != existing_id
+            finally:
+                holder.rollback()
+        with sessions() as db:
+            assert (
+                db.query(Plugin)
+                .filter_by(catalog_namespace="enterprise", slug=new_slug)
+                .one()
+                .id
+                == created_id
+            )
+    finally:
+        with sessions.begin() as db:
+            db.query(Plugin).filter(
+                Plugin.catalog_namespace == "enterprise",
+                Plugin.slug.in_([lower_slug, new_slug, existing_slug]),
+            ).delete(synchronize_session=False)
 
 
 def lock_key(context: Context) -> str:

@@ -69,7 +69,7 @@ function DimensionInput({
       onKeyDown={event => {
         if (event.key === 'Enter') event.currentTarget.blur()
       }}
-      className="h-6 w-[72px] rounded-lg border border-transparent bg-foreground/5 px-2 text-center text-sm font-semibold tabular-nums text-text-primary outline-none hover:bg-muted focus:border-primary focus:bg-background"
+      className="h-6 w-[72px] rounded-lg border border-transparent bg-foreground/5 px-2 text-center text-sm font-semibold tabular-nums text-text-primary outline-none hover:bg-muted keyboard:focus:border-primary focus:bg-background"
     />
   )
 }

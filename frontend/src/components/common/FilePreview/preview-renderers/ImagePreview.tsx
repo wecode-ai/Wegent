@@ -14,6 +14,8 @@ interface ImagePreviewProps {
   onDownload?: () => void
   onClose?: () => void
   showToolbar?: boolean
+  restricted?: boolean
+  onError?: () => void
 }
 
 export function ImagePreview({
@@ -22,6 +24,8 @@ export function ImagePreview({
   onDownload,
   onClose,
   showToolbar = true,
+  restricted = false,
+  onError,
 }: ImagePreviewProps) {
   const [scale, setScale] = useState(1)
   const [rotation, setRotation] = useState(0)
@@ -101,6 +105,9 @@ export function ImagePreview({
         <img
           src={url}
           alt={filename}
+          draggable={!restricted}
+          onContextMenu={restricted ? event => event.preventDefault() : undefined}
+          onError={onError}
           className="max-w-full max-h-full object-contain transition-transform duration-200"
           style={{
             transform: `scale(${scale}) rotate(${rotation}deg)`,

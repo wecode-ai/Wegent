@@ -22,6 +22,7 @@ from app.core.config import settings
 from app.core.distributed_lock import distributed_lock
 from app.db.session import AsyncSessionLocal
 from app.services.adapters.executor_job import job_service
+from app.services.execution.stalled_tasks import sweep_stalled_subtasks
 from app.services.executor_cleanup_cursor_service import EXECUTOR_CLEANUP_CURSOR_KEY
 from app.services.repository_job import repository_job_service
 
@@ -34,6 +35,7 @@ if REPO_UPDATE_LOCK_KEY_INTERVAL < 10:
     REPO_UPDATE_LOCK_KEY_INTERVAL = 10
 
 EXECUTOR_CLEANUP_LOCK_KEY = "executor_cleanup_lock"
+STALLED_TASK_SWEEP_LOCK_KEY = "stalled_task_sweep_lock"
 
 
 async def acquire_repo_update_lock() -> bool:
@@ -134,6 +136,53 @@ async def cleanup_worker(stop_event: asyncio.Event):
             pass
 
 
+async def stalled_task_worker(stop_event: asyncio.Event):
+    """Fail RUNNING subtasks whose executor vanished or stopped reporting."""
+    while not stop_event.is_set():
+        try:
+            async with distributed_lock.acquire_watchdog_context_async(
+                STALLED_TASK_SWEEP_LOCK_KEY,
+                expire_seconds=300,
+                extend_interval_seconds=60,
+            ) as acquired:
+                if not acquired:
+                    logger.debug(
+                        "[job] Another instance is running the stalled task sweep"
+                    )
+                else:
+                    async with AsyncSessionLocal() as db:
+                        failed = await sweep_stalled_subtasks(
+                            db,
+                            silent_timeout_seconds=settings.TASK_STALLED_TIMEOUT_SECONDS,
+                            max_age_seconds=(
+                                settings.TASK_STALLED_MAX_AGE_HOURS * 3600
+                            ),
+                            heartbeat_timeout_seconds=(
+                                settings.TASK_STALLED_HEARTBEAT_TIMEOUT_SECONDS
+                            ),
+                            limit=settings.TASK_STALLED_SCAN_LIMIT,
+                            heartbeat_check_enabled=(
+                                settings.TASK_STALLED_HEARTBEAT_CHECK_ENABLED
+                            ),
+                        )
+                    if failed:
+                        logger.warning(
+                            "[job] Failed %d stalled subtasks: %s",
+                            len(failed),
+                            failed,
+                        )
+        except Exception as e:
+            logger.error(f"[job] stalled task sweep error: {e}")
+
+        try:
+            await asyncio.wait_for(
+                stop_event.wait(),
+                timeout=settings.TASK_STALLED_SWEEP_INTERVAL_SECONDS,
+            )
+        except asyncio.TimeoutError:
+            pass
+
+
 def repo_update_worker(stop_event: threading.Event):
     """
     Background worker for updating git repositories cache
@@ -206,6 +255,13 @@ def start_background_jobs(app):
     )
     logger.info("[job] cleanup stale executors worker started (async)")
 
+    # Sweep RUNNING subtasks whose executor vanished or stopped reporting
+    app.state.stalled_task_stop_event = asyncio.Event()
+    app.state.stalled_task_task = asyncio.create_task(
+        stalled_task_worker(app.state.stalled_task_stop_event)
+    )
+    logger.info("[job] stalled task sweep worker started (async)")
+
     # Start repository update thread
     app.state.repo_update_stop_event = threading.Event()
     app.state.repo_update_thread = threading.Thread(
@@ -242,6 +298,19 @@ async def stop_background_jobs(app):
         except asyncio.CancelledError:
             pass
     logger.info("[job] cleanup stale executors worker stopped")
+
+    # Stop the stalled task sweep
+    stalled_stop_event = getattr(app.state, "stalled_task_stop_event", None)
+    stalled_task = getattr(app.state, "stalled_task_task", None)
+    if stalled_stop_event:
+        stalled_stop_event.set()
+    if stalled_task:
+        stalled_task.cancel()
+        try:
+            await stalled_task
+        except asyncio.CancelledError:
+            pass
+    logger.info("[job] stalled task sweep worker stopped")
 
     # Stop repository update thread gracefully
     repo_stop_event = getattr(app.state, "repo_update_stop_event", None)

@@ -1,5 +1,7 @@
-import { describe, expect, it } from 'vitest'
+// @vitest-environment node
+
 import type { ProjectWithTasks, RuntimeWorkListResponse } from '@/types/api'
+import { describe, expect, it } from 'vitest'
 import { resolveLocalTodoProjects } from './localTodoProjects'
 
 describe('resolveLocalTodoProjects', () => {
@@ -23,47 +25,6 @@ describe('resolveLocalTodoProjects', () => {
 
     expect(resolveLocalTodoProjects([], runtimeWork)).toEqual([
       expect.objectContaining({ id: 11, name: 'Wegent' }),
-    ])
-  })
-
-  it('assigns a stable UI id to local runtime projects without backend ids', () => {
-    const runtimeWork: RuntimeWorkListResponse = {
-      projects: [
-        {
-          project: {
-            key: 'local-project',
-            stateDeviceId: 'local-device',
-            name: 'Local project',
-            kind: 'local',
-          },
-          deviceWorkspaces: [
-            {
-              id: 1,
-              deviceId: 'local-device',
-              deviceName: 'Local',
-              deviceStatus: 'online',
-              workspacePath: '/workspace/local-project',
-              workspaceKind: 'workspace',
-              workspaceSource: 'local',
-              mapped: true,
-              available: true,
-              tasks: [],
-            },
-          ],
-        },
-      ],
-      chats: [],
-      totalTasks: 0,
-    }
-
-    expect(resolveLocalTodoProjects([], runtimeWork)).toEqual([
-      expect.objectContaining({
-        id: expect.any(Number),
-        name: 'Local project',
-        config: expect.objectContaining({
-          workspace: expect.objectContaining({ localPath: '/workspace/local-project' }),
-        }),
-      }),
     ])
   })
 

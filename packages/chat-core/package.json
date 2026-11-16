@@ -4,6 +4,10 @@
   "private": true,
   "type": "module",
   "exports": {
+    "./git-access": {
+      "types": "./src/git-access.ts",
+      "import": "./src/git-access.ts"
+    },
     "./request-cache": {
       "types": "./src/request-cache.ts",
       "import": "./src/request-cache.ts"
@@ -29,8 +33,8 @@
       "import": "./src/runtime.ts"
     },
     "./runtime-user-message": {
-      "types": "./src/runtime-user-message.ts",
-      "import": "./src/runtime-user-message.ts"
+      "types": "./src/runtime-user-message.d.ts",
+      "import": "./src/runtime-user-message.js"
     },
     "./runtime-user-input": {
       "types": "./src/runtime-user-input.ts",
@@ -343,6 +347,38 @@
     "./conversation-search": {
       "types": "./src/conversation-search.ts",
       "import": "./src/conversation-search.ts"
+    },
+    "./runtime-device-identity": {
+      "types": "./src/runtime-device-identity.ts",
+      "import": "./src/runtime-device-identity.ts"
+    },
+    "./workspace-file-types": {
+      "types": "./src/workspace-file-types.ts",
+      "import": "./src/workspace-file-types.ts"
+    },
+    "./workspace-file-paths": {
+      "types": "./src/workspace-file-paths.ts",
+      "import": "./src/workspace-file-paths.ts"
+    },
+    "./generated-images": {
+      "types": "./src/generated-images.ts",
+      "import": "./src/generated-images.ts"
+    },
+    "./workspace-git": {
+      "types": "./src/workspace-git.ts",
+      "import": "./src/workspace-git.ts"
+    },
+    "./local-runtime-execution": {
+      "types": "./src/local-runtime-execution.ts",
+      "import": "./src/local-runtime-execution.ts"
+    },
+    "./local-runtime-model": {
+      "types": "./src/local-runtime-model.ts",
+      "import": "./src/local-runtime-model.ts"
+    },
+    "./runtime-composer-references": {
+      "types": "./src/runtime-composer-references.ts",
+      "import": "./src/runtime-composer-references.ts"
     }
   },
   "scripts": {

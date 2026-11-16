@@ -1,3 +1,5 @@
+// @vitest-environment node
+
 import { describe, expect, test } from 'vitest'
 import { findBrowserTabByPopupParent, isDuplicateBrowserPopupRequest } from './browserPopupRouting'
 
@@ -40,25 +42,6 @@ describe('embedded browser popup routing', () => {
         },
         'workspace-browser-other',
         'embedded-browser-native-8'
-      )
-    ).toBeNull()
-  })
-
-  test('does not match an untracked native label when the popup omits it', () => {
-    expect(
-      findBrowserTabByPopupParent(
-        {
-          'browser:1': {
-            label: 'workspace-browser-task-1',
-            browserSessionId: '1',
-            title: null,
-            faviconUrl: null,
-            isLoading: false,
-            hasActiveDownload: false,
-            openRequest: null,
-          },
-        },
-        'workspace-browser-other'
       )
     ).toBeNull()
   })

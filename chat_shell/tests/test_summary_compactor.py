@@ -417,6 +417,40 @@ def test_is_context_too_long_error_matches_status_and_chinese():
     assert not _is_context_too_long_error(Boom("top_p 超过最大允许值", status=400))
 
 
+def test_is_context_too_long_error_matches_wecode_gateway_overflow_shapes():
+    """The wecode gateway reports overflow as 400 or a custom 460.
+
+    Both bodies were observed in production; a compact task that hits either
+    must be retried with less history instead of failing the compaction.
+    """
+    from chat_shell.compression.summary_compactor import _is_context_too_long_error
+
+    class Boom(Exception):
+        def __init__(self, msg, status=None):
+            super().__init__(msg)
+            self.status_code = status
+
+    bad_request = Boom(
+        'API Error: 400 {"type":"error","request_id":"02179276425878227e5de6a850b1317ff60",'
+        '"error":{"code":"InvalidParameter","message":"Input exceeds the context limit '
+        '(1048568 tokens). Please shorten the input.","param":"","type":"BadRequest"}}',
+        status=400,
+    )
+    assert _is_context_too_long_error(bad_request)
+
+    compact_failed = Boom(
+        "Prompt is too long · automatic compaction failed: API Error: 460 "
+        "对话内容太长，已超出当前模型的处理能力。请新建对话，或换用支持更长上下文的模型继续。",
+        status=460,
+    )
+    assert _is_context_too_long_error(compact_failed)
+
+    # A 400 that only mentions a model parameter stays a non-overflow error.
+    assert not _is_context_too_long_error(
+        Boom('{"error":{"message":"model not found"}}', status=400)
+    )
+
+
 @pytest.mark.asyncio
 async def test_generate_summary_times_out():
     class HangingLLM:

@@ -45,6 +45,30 @@ describe("useIssueAssignmentsByIssueId", () => {
     container.remove();
   });
 
+  it("loads on demand and ignores a pending response after leaving the table", async () => {
+    const pending = deferred<CollaborationAssignment[]>();
+    const assignmentsApi = {
+      list: vi.fn().mockReturnValue(pending.promise),
+    } as unknown as SharedWorkspaceAssignmentsApi;
+    let current: ReturnType<typeof useIssueAssignmentsByIssueId> | undefined;
+    function Harness({ enabled }: { enabled: boolean }) {
+      current = useIssueAssignmentsByIssueId({
+        assignmentsApi,
+        issues,
+        enabled,
+      });
+      return null;
+    }
+
+    await act(async () => root.render(<Harness enabled={false} />));
+    expect(assignmentsApi.list).not.toHaveBeenCalled();
+    await act(async () => root.render(<Harness enabled />));
+    expect(assignmentsApi.list).toHaveBeenCalledExactlyOnceWith(issue.id);
+    await act(async () => root.render(<Harness enabled={false} />));
+    await act(async () => pending.resolve([assignment]));
+    expect(current?.assignmentsByIssueId).toEqual({});
+  });
+
   it("does not let an older load overwrite a committed assignment mutation", async () => {
     const pending = deferred<CollaborationAssignment[]>();
     const assignmentsApi = {

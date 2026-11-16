@@ -43,7 +43,7 @@ pub(crate) struct ModelConfig {
 
 /// The shared wire protocol a Model CRD maps to.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(super) enum Protocol {
+pub(crate) enum Protocol {
     OpenAiResponses,
     OpenAiChatCompletions,
     AnthropicMessages,
@@ -151,7 +151,7 @@ fn decrypt_model_api_key(raw: &str) -> Result<String, FastApiError> {
     if resolved.contains("${") {
         return Ok(resolved);
     }
-    crate::git_repositories::crypto::decrypt_git_token(&resolved)
+    wegent_identity::repository_credentials::decrypt_git_token(&resolved)
         .map_err(|_| credentials_unavailable())
 }
 
@@ -414,7 +414,7 @@ fn encode_wegent_header_value(value: &str) -> String {
 }
 
 /// `resolve_llm_proxy_protocol`.
-pub(super) fn resolve_llm_proxy_protocol(
+pub(crate) fn resolve_llm_proxy_protocol(
     model_name: &str,
     config: &ModelConfig,
 ) -> Result<Protocol, FastApiError> {
@@ -571,18 +571,33 @@ pub(super) async fn validate_model_access(
     Ok(())
 }
 
+/// Whether the resolved Model row is visible to the requesting user.
+///
+/// `_validate_model_access` only proves the requested identity shape (public
+/// models live in `default` with owner `0`, and so on); the public
+/// `allowedUsers` whitelist is stored on the row and must gate the gateway too.
+pub(super) fn model_row_access_allowed(
+    model_type: &str,
+    model_json: &brz_json::OpaqueJson,
+    user_name: &str,
+) -> bool {
+    model_type != "public"
+        || wegent_access::public_models::allowed_for_user_name(model_json, Some(user_name))
+}
+
 /// `get_user_groups` for the group-model access check.
 async fn user_groups(state: &AppState, user: &UserRow) -> Result<Vec<String>, FastApiError> {
-    let erp = crate::teams::group_membership::ErpContext {
-        erp: state.erp.as_ref(),
-        redis: state.redis.as_ref(),
-    };
-    crate::skills::skills_unified::get_user_groups(&state.mysql, &erp, user.id)
-        .await
-        .map_err(|error| {
-            tracing::error!(%error, "LLM proxy group membership resolution failed");
-            FastApiError::unhandled()
-        })
+    crate::permissions::user_groups(
+        &state.mysql,
+        &state.entity_resolvers.for_execution(),
+        state.redis.as_ref(),
+        i64::from(user.id),
+    )
+    .await
+    .map_err(|error| {
+        tracing::error!(%error, "LLM proxy group membership resolution failed");
+        FastApiError::unhandled()
+    })
 }
 
 /// `str(env.get("api_key") or "")`: an absent or `null` key renders empty.
@@ -617,6 +632,26 @@ mod tests {
             api_format: api_format.map(str::to_string),
             ..ModelConfig::default()
         }
+    }
+
+    #[test]
+    fn public_model_row_access_keeps_the_allowed_users_gate() {
+        let restricted = brz_json::OpaqueJson::from(json!({
+            "spec": {"allowedUsersEnabled": true, "allowedUsers": ["allowed-user"]}
+        }));
+        assert!(model_row_access_allowed(
+            "public",
+            &restricted,
+            "allowed-user"
+        ));
+        assert!(!model_row_access_allowed(
+            "public",
+            &restricted,
+            "other-user"
+        ));
+        let open = brz_json::OpaqueJson::from(json!({"spec": {}}));
+        assert!(model_row_access_allowed("public", &open, "other-user"));
+        assert!(model_row_access_allowed("user", &restricted, "other-user"));
     }
 
     #[test]

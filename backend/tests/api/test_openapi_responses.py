@@ -14,6 +14,7 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from fastapi.routing import APIRoute
 from fastapi.testclient import TestClient
 from sqlalchemy.orm import Session
 
@@ -25,6 +26,7 @@ from app.api.endpoints.openapi_responses import (
     _model_category_from_kind,
     _resolve_requested_model,
     _task_to_response_object,
+    create_response,
 )
 from app.core.security import get_password_hash
 from app.models.api_key import KEY_TYPE_PERSONAL, APIKey
@@ -35,6 +37,24 @@ from app.models.share_link import ResourceType
 from app.models.subtask import SenderType, Subtask, SubtaskRole, SubtaskStatus
 from app.models.task import TaskResource
 from app.models.user import User
+
+
+@pytest.fixture
+def test_client(test_client: TestClient, monkeypatch: pytest.MonkeyPatch) -> TestClient:
+    """Expose the Python reference handler only inside compatibility tests."""
+    app = test_client.app
+    monkeypatch.setattr(app.router, "routes", list(app.router.routes))
+    app.add_api_route("/api/v1/responses", create_response, methods=["POST"])
+    return test_client
+
+
+def test_create_response_is_owned_by_rust(test_app) -> None:
+    assert not any(
+        isinstance(route, APIRoute)
+        and route.path == "/api/v1/responses"
+        and "POST" in route.methods
+        for route in test_app.routes
+    )
 
 
 @pytest.mark.asyncio
@@ -2243,7 +2263,8 @@ class TestOpenAPIResponsesCancel:
         mock_session_manager.get_streaming_content = AsyncMock(
             return_value="Partial content"
         )
-        mock_session_manager.cancel_stream = AsyncMock()
+        mock_session_manager.response_cancel.prepare.return_value = "intent"
+        mock_session_manager.finish_response_cancel = AsyncMock(return_value=True)
 
         response = test_client.post(
             f"/api/v1/responses/resp_{task.id}/cancel",
@@ -2253,6 +2274,12 @@ class TestOpenAPIResponsesCancel:
         assert response.status_code == 200
         data = response.json()
         assert data["id"] == f"resp_{task.id}"
+        mock_session_manager.response_cancel.prepare.assert_called_once_with(
+            running_subtask.id
+        )
+        mock_session_manager.finish_response_cancel.assert_awaited_once_with(
+            running_subtask.id, "intent"
+        )
 
     @patch("app.services.chat.storage.session_manager")
     def test_cancel_response_chat_shell_group_member_success(
@@ -2359,7 +2386,8 @@ class TestOpenAPIResponsesCancel:
         mock_session_manager.get_streaming_content = AsyncMock(
             return_value="Partial content"
         )
-        mock_session_manager.cancel_stream = AsyncMock()
+        mock_session_manager.response_cancel.prepare.return_value = "intent"
+        mock_session_manager.finish_response_cancel = AsyncMock(return_value=True)
 
         response = test_client.post(
             f"/api/v1/responses/resp_{task.id}/cancel",

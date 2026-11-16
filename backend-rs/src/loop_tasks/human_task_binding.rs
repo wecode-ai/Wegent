@@ -48,12 +48,16 @@ pub(crate) async fn human_task_binding(
             .item_activity_metadata(&item.cloud_project_id, &item.id)
             .await
             .map_err(HttpError::internal)?;
-        return Ok(round_task_binding(
+        let mut binding = round_task_binding(
             activities
                 .iter()
                 .filter_map(|row| row.metadata.as_ref().map(|json| &json.0)),
             current_user_id,
-        ));
+        );
+        if let Some(value) = binding.as_mut() {
+            value["issueAssignmentId"] = json!(assignment.comment.id);
+        }
+        return Ok(binding);
     }
     Ok(Some(direct_task_binding(&item.id, &assignment.comment.id)))
 }

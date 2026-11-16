@@ -1,0 +1,41 @@
+{
+  "revision": "d2e3f4a5b6c7",
+  "parents": [
+    "a1f4c8d9e2b7"
+  ],
+  "source": "20260805_d2e3f4a5b6c7_add_loop_item_executions.py",
+  "upgrade": [
+    {
+      "sql": [
+        "CREATE TABLE loop_item_executions (\n    id BIGINT NOT NULL COMMENT 'Primary key' AUTO_INCREMENT, \n    loop_item_id VARCHAR(64) NOT NULL COMMENT 'Owning loop item id' DEFAULT '', \n    cloud_project_id VARCHAR(64) NOT NULL COMMENT 'Owning cloud project id' DEFAULT '', \n    agent_id VARCHAR(64) NOT NULL COMMENT 'Executing robot id' DEFAULT '', \n    execution_environment VARCHAR(16) NOT NULL COMMENT 'Execution environment: local/cloud' DEFAULT '', \n    execution_device_id VARCHAR(100) NOT NULL COMMENT 'Bound execution device id; empty when unbound' DEFAULT '', \n    assigner_user_id INTEGER NOT NULL COMMENT 'User id that assigned the run' DEFAULT '0', \n    status VARCHAR(24) NOT NULL COMMENT 'Run status (pending_approval/queued/claimed/running/completed/failed/cancelled)' DEFAULT 'queued', \n    priority_weight INTEGER NOT NULL COMMENT 'Queue priority weight' DEFAULT '0', \n    queued_at DATETIME NOT NULL COMMENT 'Queue entry time; 1970-01-01 00:00:00 means unset' DEFAULT '1970-01-01 00:00:00', \n    started_at DATETIME NOT NULL COMMENT 'Run start time; 1970-01-01 00:00:00 means unset' DEFAULT '1970-01-01 00:00:00', \n    completed_at DATETIME NOT NULL COMMENT 'Terminal time; 1970-01-01 00:00:00 means unset' DEFAULT '1970-01-01 00:00:00', \n    lease_expires_at DATETIME NOT NULL COMMENT 'Claim lease expiry; 1970-01-01 00:00:00 means unset' DEFAULT '1970-01-01 00:00:00', \n    heartbeat_at DATETIME NOT NULL COMMENT 'Last heartbeat; 1970-01-01 00:00:00 means unset' DEFAULT '1970-01-01 00:00:00', \n    retry_attempt INTEGER NOT NULL COMMENT 'Current retry attempt' DEFAULT '0', \n    max_retries INTEGER NOT NULL COMMENT 'Maximum retry attempts' DEFAULT '1', \n    error_message TEXT NOT NULL COMMENT 'Last error message; empty when none' DEFAULT (''), \n    execution_note VARCHAR(500) NOT NULL COMMENT 'Human-readable run note' DEFAULT '', \n    approval_status VARCHAR(16) NOT NULL COMMENT 'Manual approval status (pending/approved/rejected); empty when none' DEFAULT '', \n    approved_by_user_id INTEGER NOT NULL COMMENT 'Approving user id; 0 means none' DEFAULT '0', \n    approved_at DATETIME NOT NULL COMMENT 'Approval time; 1970-01-01 00:00:00 means unset' DEFAULT '1970-01-01 00:00:00', \n    rejected_reason VARCHAR(500) NOT NULL COMMENT 'Rejection reason; empty when none' DEFAULT '', \n    runtime_device_id VARCHAR(255) NOT NULL COMMENT 'Executor device id; empty when unset' DEFAULT '', \n    runtime_task_id VARCHAR(255) NOT NULL COMMENT 'Executor runtime task id; empty when unset' DEFAULT '', \n    execution_payload TEXT NOT NULL COMMENT 'Prebuilt runtime.tasks.create payload' DEFAULT (''), \n    version INTEGER NOT NULL COMMENT 'Optimistic lock version' DEFAULT '1', \n    created_at DATETIME NOT NULL COMMENT 'Creation time' DEFAULT now(), \n    updated_at DATETIME NOT NULL COMMENT 'Last update time' DEFAULT now(), \n    PRIMARY KEY (id)\n)CHARSET=utf8mb4 ENGINE=InnoDB"
+      ]
+    },
+    {
+      "sql": [
+        "CREATE INDEX idx_exec_device_status_order ON loop_item_executions (execution_device_id, status, priority_weight, queued_at)"
+      ]
+    },
+    {
+      "sql": [
+        "CREATE INDEX idx_exec_assigner_status ON loop_item_executions (assigner_user_id, status)"
+      ]
+    },
+    {
+      "sql": [
+        "CREATE INDEX idx_exec_agent_status ON loop_item_executions (agent_id, status)"
+      ]
+    },
+    {
+      "sql": [
+        "CREATE INDEX idx_exec_item_status ON loop_item_executions (loop_item_id, status)"
+      ]
+    }
+  ],
+  "downgrade": [
+    {
+      "sql": [
+        "DROP TABLE loop_item_executions"
+      ]
+    }
+  ]
+}

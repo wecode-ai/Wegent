@@ -70,6 +70,85 @@ class TestCrossLoopExecution:
         # Restore original state
         async_utils._main_loop = original_main_loop
 
+    def test_run_in_main_loop_waits_for_cross_loop_result(self) -> None:
+        """Callers must not observe completion before Socket.IO is emitted."""
+        import app.core.async_utils as async_utils
+
+        main_loop = asyncio.new_event_loop()
+        loop_ready = threading.Event()
+        original_main_loop = async_utils._main_loop
+
+        def run_main_loop() -> None:
+            asyncio.set_event_loop(main_loop)
+            loop_ready.set()
+            main_loop.run_forever()
+
+        thread = threading.Thread(target=run_main_loop, daemon=True)
+        thread.start()
+        assert loop_ready.wait(timeout=5)
+        async_utils._main_loop = main_loop
+        try:
+            result = async_utils.execute_async_safely(
+                run_in_main_loop, self._cross_loop_result, timeout=5
+            )
+            assert result == "delivered"
+        finally:
+            async_utils._main_loop = original_main_loop
+            main_loop.call_soon_threadsafe(main_loop.stop)
+            thread.join(timeout=5)
+            main_loop.close()
+
+    @staticmethod
+    async def _cross_loop_result() -> str:
+        await asyncio.sleep(0.01)
+        return "delivered"
+
+    def test_run_in_main_loop_propagates_cross_loop_error(self) -> None:
+        """A failed main-loop operation must fail the dispatching caller."""
+        import app.core.async_utils as async_utils
+
+        main_loop = asyncio.new_event_loop()
+        loop_ready = threading.Event()
+        original_main_loop = async_utils._main_loop
+
+        def run_main_loop() -> None:
+            asyncio.set_event_loop(main_loop)
+            loop_ready.set()
+            main_loop.run_forever()
+
+        thread = threading.Thread(target=run_main_loop, daemon=True)
+        thread.start()
+        assert loop_ready.wait(timeout=5)
+        async_utils._main_loop = main_loop
+        try:
+            outcome: dict[str, BaseException | None] = {"error": None}
+
+            def capture_error() -> None:
+                caller_loop = asyncio.new_event_loop()
+                try:
+                    caller_loop.run_until_complete(
+                        run_in_main_loop(self._cross_loop_error)
+                    )
+                except BaseException as error:
+                    outcome["error"] = error
+                finally:
+                    caller_loop.close()
+
+            caller = threading.Thread(target=capture_error)
+            caller.start()
+            caller.join(timeout=5)
+            assert isinstance(outcome["error"], RuntimeError)
+            assert str(outcome["error"]) == "emit failed"
+        finally:
+            async_utils._main_loop = original_main_loop
+            main_loop.call_soon_threadsafe(main_loop.stop)
+            thread.join(timeout=5)
+            main_loop.close()
+
+    @staticmethod
+    async def _cross_loop_error() -> None:
+        raise RuntimeError("emit failed")
+
     def test_execute_async_safely_creates_new_loop(self) -> None:
         """Test that execute_async_safely creates a new event loop.
 

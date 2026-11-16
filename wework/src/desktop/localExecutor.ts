@@ -5,9 +5,11 @@ import {
   describeDshExecutor,
   requestDshExecutor,
   subscribeDshExecutorEvents,
+  type DshExecutorRequestOptions,
 } from '@/api/dsh/executorTransport'
 import { resolveLocalCodexProxyUrl } from './systemProxy'
 import { createModelLoadingTrace, traceModelLoading } from '@/lib/model-loading-diagnostics'
+import { gateRuntimeResponse } from '@/e2e/runtime-transport-gates'
 
 export type UnlistenFn = () => void
 
@@ -29,6 +31,7 @@ export interface LocalExecutorStatus {
   running: boolean
   ready?: boolean
   deviceId?: string
+  deviceRouteId?: string
   runtimeInstanceId?: string
   codexInitializeElapsedMs?: number
   version?: string
@@ -87,6 +90,8 @@ export interface BundledPluginMarketplace {
 }
 
 let ensureLocalExecutorAvailablePromise: Promise<LocalExecutorStatus> | null = null
+let scheduledLocalExecutorAvailability: Promise<LocalExecutorStatus> | null = null
+let ensureLocalExecutorConfiguredPromise: Promise<LocalExecutorStatus> | null = null
 let ensureLocalExecutorStartedPromise: Promise<LocalExecutorStatus> | null = null
 let localExecutorIdentityEpoch = 0
 let availableLocalExecutorStatus: LocalExecutorStatus | null = null
@@ -221,13 +226,86 @@ let nextLocalExecutorRequestFailure: {
   resolve: () => void
 } | null = null
 
+type LocalExecutorRequestHold = {
+  method: string
+  phase: 'before-dispatch' | 'after-response'
+  heldCount: number
+  completedCount: number
+  enteredWaiters: Array<() => void>
+  releaseWaiters: Array<() => void>
+  released: boolean
+}
+
+let localExecutorRequestHold: LocalExecutorRequestHold | null = null
+
+function isLocalExecutorE2EMode(): boolean {
+  return import.meta.env.MODE === 'e2e' || import.meta.env.VITE_WEWORK_E2E === 'true'
+}
+
 export function failNextLocalExecutorRequestForE2E(method: string, message: string): Promise<void> {
-  if (import.meta.env.MODE !== 'e2e' && import.meta.env.VITE_WEWORK_E2E !== 'true') {
+  if (!isLocalExecutorE2EMode()) {
     throw new Error('Local executor request failure injection is only available in E2E mode')
   }
   return new Promise(resolve => {
     nextLocalExecutorRequestFailure = { method, message, resolve }
   })
+}
+
+/**
+ * Holds E2E requests either before dispatch or after the real executor replied.
+ * The caller observes the response only after the ordering gate opens.
+ */
+export function holdLocalExecutorRequestsForE2E(
+  method: string,
+  phase: LocalExecutorRequestHold['phase'] = 'after-response'
+): void {
+  if (!isLocalExecutorE2EMode()) {
+    throw new Error('Local executor request holds are only available in E2E mode')
+  }
+  localExecutorRequestHold = {
+    method,
+    phase,
+    heldCount: 0,
+    completedCount: 0,
+    enteredWaiters: [],
+    releaseWaiters: [],
+    released: false,
+  }
+}
+
+export function awaitLocalExecutorRequestHoldForE2E(): Promise<number> {
+  const hold = localExecutorRequestHold
+  if (!hold) return Promise.resolve(0)
+  if (hold.heldCount > 0 || hold.released) return Promise.resolve(hold.heldCount)
+  return new Promise(resolve => {
+    hold.enteredWaiters.push(() => resolve(hold.heldCount))
+  })
+}
+
+export function releaseLocalExecutorRequestHoldForE2E(): boolean {
+  const hold = localExecutorRequestHold
+  if (!hold || hold.released) return false
+  hold.released = true
+  for (const release of hold.releaseWaiters.splice(0)) release()
+  return true
+}
+
+export function getLocalExecutorRequestHoldSnapshotForE2E(): {
+  method: string
+  phase: LocalExecutorRequestHold['phase']
+  heldCount: number
+  completedCount: number
+  released: boolean
+} | null {
+  const hold = localExecutorRequestHold
+  if (!hold) return null
+  return {
+    method: hold.method,
+    phase: hold.phase,
+    heldCount: hold.heldCount,
+    completedCount: hold.completedCount,
+    released: hold.released,
+  }
 }
 
 function isExecutorHealthy(status: LocalExecutorStatus): boolean {
@@ -255,6 +333,7 @@ function markLocalExecutorUnavailable(cause: unknown): void {
       error: cause instanceof Error ? cause.message : String(cause),
     }
   }
+  ensureLocalExecutorConfiguredPromise = null
   initializedLocalExecutorStatus = null
 }
 
@@ -378,6 +457,7 @@ export function getInitializedBundledPluginMarketplace(): BundledPluginMarketpla
   return initializedBundledPluginMarketplace
 }
 
+/** Stable Executor-home identity used by local state and caches. */
 export function getKnownLocalExecutorDeviceId(): string | null {
   return (
     initializedLocalExecutorStatus?.deviceId?.trim() ||
@@ -396,9 +476,20 @@ export function ensureLocalExecutorAvailable(
   ) {
     return Promise.resolve(availableLocalExecutorStatus)
   }
+  // A fresh read may join only before dispatch, so post-operation identity
+  // checks never reuse a description requested before the operation completed.
+  if (options.refresh && scheduledLocalExecutorAvailability) {
+    return scheduledLocalExecutorAvailability
+  }
   if (options.refresh || !ensureLocalExecutorAvailablePromise) {
     const epoch = localExecutorIdentityEpoch
-    const availability = describeDshExecutor()
+    const availability = Promise.resolve()
+      .then(() => {
+        if (scheduledLocalExecutorAvailability === availability)
+          scheduledLocalExecutorAvailability = null
+        ensureLocalExecutorIdentityUnchanged(epoch)
+        return describeDshExecutor()
+      })
       .then(description => {
         ensureLocalExecutorIdentityUnchanged(epoch)
         if (
@@ -407,6 +498,7 @@ export function ensureLocalExecutorAvailable(
             availableLocalExecutorStatus.deviceId !== description.device_id)
         ) {
           localExecutorIdentityEpoch += 1
+          ensureLocalExecutorConfiguredPromise = null
           initializedLocalExecutorStatus = null
           ensureLocalExecutorStartedPromise = null
         }
@@ -414,6 +506,7 @@ export function ensureLocalExecutorAvailable(
           running: true,
           ready: true,
           deviceId: description.device_id,
+          deviceRouteId: description.device_route_id?.trim() || undefined,
           runtimeInstanceId: description.runtime_instance_id,
           version: description.version,
         }
@@ -429,6 +522,7 @@ export function ensureLocalExecutorAvailable(
           ensureLocalExecutorAvailablePromise = null
       })
     ensureLocalExecutorAvailablePromise = availability
+    scheduledLocalExecutorAvailability = availability
   }
   return ensureLocalExecutorAvailablePromise
 }
@@ -464,6 +558,36 @@ export function initializeBundledPluginMarketplace(): Promise<BundledPluginMarke
   return initializeBundledPluginMarketplacePromise
 }
 
+function ensureLocalExecutorConfigured(traceId?: string): Promise<LocalExecutorStatus> {
+  if (!ensureLocalExecutorConfiguredPromise) {
+    const epoch = localExecutorIdentityEpoch
+    const configurationTraceId = traceId ?? createModelLoadingTrace()
+    const configuration = (async () => {
+      const available = await traceModelLoading(
+        configurationTraceId,
+        'executor.available',
+        ensureLocalExecutorAvailable
+      )
+      const proxyUrl = await traceModelLoading(
+        configurationTraceId,
+        'executor.proxy',
+        resolveLocalCodexProxyUrl
+      )
+      await traceModelLoading(configurationTraceId, 'executor.runtime_config', () =>
+        requestDshExecutor('runtime.codex.runtime_config.update', { proxyUrl })
+      )
+      ensureLocalExecutorIdentityUnchanged(epoch)
+      return available
+    })().catch((cause: unknown) => {
+      if (ensureLocalExecutorConfiguredPromise === configuration)
+        ensureLocalExecutorConfiguredPromise = null
+      throw cause
+    })
+    ensureLocalExecutorConfiguredPromise = configuration
+  }
+  return ensureLocalExecutorConfiguredPromise
+}
+
 export function ensureLocalExecutorStarted(): Promise<LocalExecutorStatus> {
   if (initializedLocalExecutorStatus && isExecutorHealthy(initializedLocalExecutorStatus)) {
     return Promise.resolve(initializedLocalExecutorStatus)
@@ -472,15 +596,7 @@ export function ensureLocalExecutorStarted(): Promise<LocalExecutorStatus> {
     const epoch = localExecutorIdentityEpoch
     const traceId = createModelLoadingTrace()
     const startup = (async () => {
-      const available = await traceModelLoading(
-        traceId,
-        'executor.available',
-        ensureLocalExecutorAvailable
-      )
-      const proxyUrl = await traceModelLoading(traceId, 'executor.proxy', resolveLocalCodexProxyUrl)
-      await traceModelLoading(traceId, 'executor.runtime_config', () =>
-        requestDshExecutor('runtime.codex.runtime_config.update', { proxyUrl })
-      )
+      const available = await ensureLocalExecutorConfigured(traceId)
       const codexStartup = await traceModelLoading(traceId, 'executor.codex_start', () =>
         requestDshExecutor<CodexStartupStatus>('runtime.codex.ensure_started')
       )
@@ -522,6 +638,8 @@ export function resetLocalExecutorStateForTests(): void {
   bundledPluginUpdateTasks.clear()
   pausedBundledPluginUpdates.clear()
   ensureLocalExecutorAvailablePromise = null
+  scheduledLocalExecutorAvailability = null
+  ensureLocalExecutorConfiguredPromise = null
   ensureLocalExecutorStartedPromise = null
   availableLocalExecutorStatus = null
   initializedLocalExecutorStatus = null
@@ -530,6 +648,8 @@ export function resetLocalExecutorStateForTests(): void {
   reconciledBundledPluginMarketplaceKey = ''
   reconcilingBundledPluginMarketplaceKey = ''
   reconcileBundledPluginMarketplacePromise = null
+  localExecutorRequestHold = null
+  nextLocalExecutorRequestFailure = null
 }
 
 export function getLocalExecutorStatus(): Promise<LocalExecutorStatus> {
@@ -592,44 +712,93 @@ export function disconnectLocalExecutorFromBackend(): Promise<LocalExecutorStatu
 
 export function requestLocalExecutor<T = unknown>(
   method: string,
-  params: Record<string, unknown> = {}
+  params: Record<string, unknown> = {},
+  _deviceId?: string,
+  requestOptions?: DshExecutorRequestOptions
 ): Promise<T> {
-  if (nextLocalExecutorRequestFailure?.method === method) {
-    const failure = nextLocalExecutorRequestFailure
-    nextLocalExecutorRequestFailure = null
-    failure.resolve()
-    return Promise.reject(new Error(failure.message))
-  }
-  const request =
-    method === 'runtime.tasks.transcript' && params.transcriptProtocolVersion === undefined
-      ? readRuntimeTranscript<T>(params, query => requestDshExecutor(method, query))
-      : requestDshExecutor<T>(method, params)
-  return request.catch((cause: unknown) => {
-    if (isExecutorTransportFailure(cause)) {
-      bundledPluginUpdateEpoch += 1
-      bundledPluginUpdateTasks.clear()
-      bundledPluginUpdates.clear()
-      markLocalExecutorUnavailable(cause)
-      initializedBundledPluginMarketplace = null
-      initializeBundledPluginMarketplacePromise = null
-      reconciledBundledPluginMarketplaceKey = ''
+  const dispatch = async (): Promise<T> => {
+    if (
+      method === 'runtime.tasks.transcript' ||
+      method === 'runtime.tasks.transcript.search' ||
+      method.startsWith('runtime.tasks.goal.')
+    ) {
+      await ensureLocalExecutorConfigured()
     }
-    console.error(
-      '[local-ipc] request failed',
-      JSON.stringify({
-        method,
-        paramsKeys: Object.keys(params ?? {}),
-        error: String(cause),
-        message: (cause as { message?: unknown } | null)?.message ?? null,
-        stack: (cause as { stack?: unknown } | null)?.stack ?? null,
+    if (nextLocalExecutorRequestFailure?.method === method) {
+      const failure = nextLocalExecutorRequestFailure
+      nextLocalExecutorRequestFailure = null
+      failure.resolve()
+      return Promise.reject(new Error(failure.message))
+    }
+    const send = (query: Record<string, unknown>) =>
+      requestOptions
+        ? requestDshExecutor<T>(method, query, requestOptions)
+        : requestDshExecutor<T>(method, query)
+    const request =
+      method === 'runtime.tasks.transcript' && params.transcriptProtocolVersion === undefined
+        ? readRuntimeTranscript<T>(params, send)
+        : send(params)
+    const delivery = isLocalExecutorE2EMode()
+      ? request.then(result => gateRuntimeResponse(method, params, result))
+      : request
+    return delivery.catch((cause: unknown) => {
+      const signal = requestOptions?.signal
+      const cancelledTranscriptRead =
+        method === 'runtime.tasks.transcript' &&
+        signal?.aborted &&
+        (cause === signal.reason ||
+          (typeof cause === 'object' &&
+            cause !== null &&
+            'name' in cause &&
+            cause.name === 'AbortError'))
+      if (!cancelledTranscriptRead && isExecutorTransportFailure(cause)) {
+        bundledPluginUpdateEpoch += 1
+        bundledPluginUpdateTasks.clear()
+        bundledPluginUpdates.clear()
+        markLocalExecutorUnavailable(cause)
+        initializedBundledPluginMarketplace = null
+        initializeBundledPluginMarketplacePromise = null
+        reconciledBundledPluginMarketplaceKey = ''
+      }
+      console.error(
+        '[local-ipc] request failed',
+        JSON.stringify({
+          method,
+          paramsKeys: Object.keys(params ?? {}),
+          error: String(cause),
+          message: (cause as { message?: unknown } | null)?.message ?? null,
+          stack: (cause as { stack?: unknown } | null)?.stack ?? null,
+        })
+      )
+      throw cause
+    })
+  }
+  const hold = localExecutorRequestHold
+  if (!hold || hold.method !== method || hold.released) return dispatch()
+  const enterHold = () => {
+    hold.heldCount += 1
+    for (const notify of hold.enteredWaiters.splice(0)) notify()
+    if (hold.released) return Promise.resolve()
+    return new Promise<void>(resolve => hold.releaseWaiters.push(resolve))
+  }
+  if (hold.phase === 'before-dispatch') {
+    return enterHold()
+      .then(dispatch)
+      .finally(() => {
+        hold.completedCount += 1
       })
-    )
-    throw cause
+  }
+  return dispatch().then(async value => {
+    await enterHold()
+    hold.completedCount += 1
+    return value
   })
 }
 
 function isExecutorTransportFailure(cause: unknown): boolean {
   if (!(cause instanceof DshExecutorTransportError)) return true
+  if (['request_timeout', 'request_cancelled', 'runtime_read_busy'].includes(cause.code))
+    return false
   return cause.retryable || cause.code === 'protocol_mismatch' || /^http_\d+$/.test(cause.code)
 }
 

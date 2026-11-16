@@ -131,29 +131,14 @@ function refreshMutableFileBridge(options: EntryMigration, journal: Journal): bo
   return true
 }
 
-// Recover aliases before Electron creates its single-instance files or log directory.
+// Recover aliases before Electron creates its single-instance files.
 // symlink is exclusive: concurrent startup cannot overwrite an existing entry.
-export function recoverWorkbenchDataBridge(
-  options: EntryMigration,
-  recovery: { replaceEmptyDirectory?: boolean } = {}
-): void {
+export function recoverWorkbenchDataBridge(options: EntryMigration): void {
   const journal = readJournal(options)
   if (!journal || (!owns(options.target, journal) && !(journal.completed && !journal.directory)))
     return
   const original = stat(options.source)
-  if (original) {
-    if (
-      !recovery.replaceEmptyDirectory ||
-      !journal.directory ||
-      !original.isDirectory() ||
-      fs.readdirSync(options.source).length
-    )
-      return
-    validateMigrationPaths(options)
-    // Only an explicitly opted-in log directory may be recreated after cleanup.
-    // rmdir also refuses a concurrent write; never recursively remove user data.
-    fs.rmdirSync(options.source)
-  }
+  if (original) return
   if (process.platform === 'win32' && !journal.directory) {
     if (!stat(options.target)) return
     if (refreshMutableFileBridge(options, journal)) return
@@ -217,6 +202,20 @@ function validateMigrationPaths(options: EntryMigration): void {
   ) {
     throw new Error('Application data migration paths must be absolute and disjoint')
   }
+}
+
+// Remove only a dangling desktop bridge; the normal startup path creates the directory.
+export function resetMissingWorkbenchDirectory(options: EntryMigration): void {
+  if (!stat(options.source)?.isSymbolicLink()) return
+  const destination = resolve(dirname(options.source), fs.readlinkSync(options.source))
+  if (destination !== resolve(options.target) || stat(options.target)) return
+  validateMigrationPaths(options)
+  const journal = readJournal(options)
+  if (journal && !journal.directory)
+    throw new Error('Application data migration directory journal required')
+  // Clear the stale identity first so interruption can safely retry the same path.
+  if (journal) fs.unlinkSync(options.journal)
+  fs.unlinkSync(options.source)
 }
 
 // Synchronous by design: userData/sessionData must move before Electron's ready event.

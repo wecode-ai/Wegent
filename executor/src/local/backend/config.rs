@@ -140,7 +140,7 @@ fn is_unusable_ip(address: IpAddr) -> bool {
     }
 }
 
-fn normalize_token(token: &str) -> String {
+pub(super) fn normalize_token(token: &str) -> String {
     let token = token.trim();
     if let Some(separator) = token.find(char::is_whitespace) {
         let (scheme, value) = token.split_at(separator);
@@ -168,7 +168,7 @@ fn normalize_optional_env(name: &str) -> String {
         .unwrap_or_default()
 }
 
-fn duration_from_env(name: &str, default_seconds: u64) -> Duration {
+pub(super) fn duration_from_env(name: &str, default_seconds: u64) -> Duration {
     env::var(name)
         .ok()
         .and_then(|value| value.trim().parse::<u64>().ok())
@@ -216,7 +216,7 @@ fn default_device_name() -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{detect_client_ip, normalize_token};
+    use super::normalize_token;
 
     #[test]
     fn normalize_token_strips_bearer_scheme_case_insensitively() {
@@ -224,10 +224,5 @@ mod tests {
         assert_eq!(normalize_token("bEaReR\t  wg-token  "), "wg-token");
         assert_eq!(normalize_token("Token wg-token"), "Token wg-token");
         assert_eq!(normalize_token("wg-token"), "wg-token");
-    }
-
-    #[test]
-    fn detect_client_ip_uses_backend_route_source_address() {
-        assert_eq!(detect_client_ip("http://127.0.0.1:8000"), "127.0.0.1");
     }
 }

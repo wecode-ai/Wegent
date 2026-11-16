@@ -1,3 +1,5 @@
+// @vitest-environment node
+
 import { beforeEach, describe, expect, test, vi } from 'vitest'
 import {
   clearLocalCodexPluginsReadStateCache,
@@ -17,6 +19,7 @@ vi.mock('@/lib/runtime-environment', () => ({
 vi.mock('@/desktop/localExecutor', () => ({
   ensureLocalExecutorStarted: vi.fn(),
   ensureBundledPluginMarketplaceRegistered: vi.fn(),
+  getKnownLocalExecutorDeviceId: () => 'test-device',
   getInitializedBundledPluginMarketplace: vi.fn(),
   requestLocalExecutor: (...args: unknown[]) => mocks.requestLocalExecutor(...args),
   resetLocalExecutorStateForTests: vi.fn(),
@@ -166,9 +169,13 @@ describe('listWegentStorePluginsFromDisk', () => {
     })
   })
 
-  test('treats a missing disk listing as empty membership', async () => {
-    mocks.requestLocalExecutor.mockResolvedValue(undefined)
+  test('rejects a missing disk listing and accepts an authoritative empty recovery', async () => {
+    mocks.requestLocalExecutor
+      .mockResolvedValueOnce(undefined)
+      .mockResolvedValueOnce({ storePath: '/store', plugins: [] })
 
+    await expect(listWegentStorePluginsFromDisk()).rejects.toThrow('Invalid local plugin inventory')
     await expect(listWegentStorePluginsFromDisk()).resolves.toEqual([])
+    expect(mocks.requestLocalExecutor).toHaveBeenCalledTimes(2)
   })
 })

@@ -169,4 +169,29 @@ describe("configureProjectMembers", () => {
       }),
     ).rejects.toThrow("Roster unavailable");
   });
+
+  it("keeps an initial roster failure retryable without writing until membership is known", async () => {
+    const { api, list, add } = createMembersApi([member(1)]);
+    list.mockRejectedValueOnce(new Error("Permission denied"));
+    const input = {
+      api,
+      projectId: "project-1",
+      currentUserId: 1,
+      memberUserIds: [2],
+      members: [member(2)],
+    };
+
+    await expect(configureProjectMembers(input)).rejects.toMatchObject({
+      name: "ProjectCreateMembersError",
+      failures: [
+        { userId: 2, userName: "User 2", reason: "Permission denied" },
+      ],
+    });
+    expect(add).not.toHaveBeenCalled();
+    await expect(configureProjectMembers(input)).resolves.toEqual([
+      member(1),
+      member(2),
+    ]);
+    expect(add).toHaveBeenCalledExactlyOnceWith("project-1", 2, "Developer");
+  });
 });

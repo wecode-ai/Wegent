@@ -238,6 +238,47 @@ function createMockDeliveryApi() {
 }
 
 describe('createWeworkDeliverySharedWorkspaceApi', () => {
+  it('reads every my-work page and surfaces provider failures instead of empty success', async () => {
+    const deliveryApi = createMockDeliveryApi()
+    const list = vi.mocked(deliveryApi.listMyWork)
+    list
+      .mockResolvedValueOnce({ items: [issue], next_cursor: 'page-2' })
+      .mockResolvedValueOnce({ items: [{ ...issue, id: 'issue-2' }] })
+    const api = createWeworkDeliverySharedWorkspaceApi(deliveryApi)
+    await expect(api.myWork.list()).resolves.toEqual([
+      { ...issue, task_bindings: [] },
+      { ...issue, id: 'issue-2', task_bindings: [] },
+    ])
+    expect(list).toHaveBeenNthCalledWith(2, { cursor: 'page-2' })
+    list.mockResolvedValueOnce({ items: [], errors: ['Project unavailable'] })
+    await expect(api.myWork.list()).rejects.toThrow('Project unavailable')
+  })
+
+  it('rejects a repeated my-work cursor instead of looping forever', async () => {
+    const deliveryApi = createMockDeliveryApi()
+    vi.mocked(deliveryApi.listMyWork).mockResolvedValue({ items: [issue], next_cursor: 'same' })
+    const api = createWeworkDeliverySharedWorkspaceApi(deliveryApi)
+    await expect(api.myWork.list()).rejects.toThrow('pagination did not advance')
+    expect(deliveryApi.listMyWork).toHaveBeenCalledTimes(2)
+  })
+  it.each(['renamed', null])(
+    'maps atomic tag change target %s to the delivery API',
+    async target => {
+      const deliveryApi = createMockDeliveryApi()
+      const api = createWeworkDeliverySharedWorkspaceApi(deliveryApi)
+
+      await api.projects.update('project-1', {
+        version: 2,
+        tagChange: { source: 'old', target },
+      })
+
+      expect(deliveryApi.updateCloudProject).toHaveBeenCalledExactlyOnceWith('project-1', {
+        version: 2,
+        tag_change: { source: 'old', target },
+      })
+    }
+  )
+
   it('preserves current project authority and member override provenance', async () => {
     const deliveryApi = createMockDeliveryApi()
     const authoritative: CloudProject = {
@@ -355,7 +396,7 @@ describe('createWeworkDeliverySharedWorkspaceApi', () => {
       },
     })
     await api.projects.archive('project-1', 2)
-    await expect(api.myWork.list()).resolves.toEqual([issue])
+    await expect(api.myWork.list()).resolves.toEqual([{ ...issue, task_bindings: [] }])
 
     await api.issues.list('project-1', { assigneeType: 'user', assigneeId: 8 })
     await expect(
@@ -667,7 +708,7 @@ describe('createWeworkDeliverySharedWorkspaceApi', () => {
       'update',
       'archive',
     ])
-    expect(WEWORK_DELIVERY_SHARED_WORKSPACE_METHODS.myWork).toEqual(['list'])
+    expect(WEWORK_DELIVERY_SHARED_WORKSPACE_METHODS.myWork).toEqual(['list', 'page'])
     expect(WEWORK_DELIVERY_SHARED_WORKSPACE_MISSING_METHODS).toEqual({
       projects: ['importMessages'],
       comments: ['list', 'create'],
@@ -753,7 +794,7 @@ describe('createWeworkDeliverySharedWorkspaceApi', () => {
             ],
           }
         }
-        if (endpoint === '/v1/workspaces/workspace-1/agents') {
+        if (endpoint === '/v1/workspaces/workspace-1/agents?include_readiness=false') {
           return {
             items: [
               {
@@ -763,7 +804,7 @@ describe('createWeworkDeliverySharedWorkspaceApi', () => {
                 owner_type: 'workspace',
                 owner_id: 'workspace-1',
                 owner_name: 'Workspace',
-                status: 'available',
+                status: 'unchecked',
               },
             ],
           }
@@ -786,7 +827,7 @@ describe('createWeworkDeliverySharedWorkspaceApi', () => {
         if (endpoint === '/v1/workspaces/workspace-1/projects') {
           return { items: [project] }
         }
-        if (endpoint === '/v1/resources') {
+        if (endpoint === '/v1/resources?include_readiness=false') {
           return {
             agents: [
               {
@@ -992,9 +1033,11 @@ describe('createWeworkDeliverySharedWorkspaceApi', () => {
         'gitRepositories',
         'projects',
         'myWork',
+        'milestones',
         'issues',
         'comments',
         'assignments',
+        'assignmentReceipts',
         'attachments',
         'collaborators',
         'taskBindings',
@@ -1047,8 +1090,11 @@ describe('createWeworkDeliverySharedWorkspaceApi', () => {
     await api.workspaces?.removeMember('workspace-1', 2)
     expect(client.delete).toHaveBeenCalledWith('/v1/workspaces/workspace-1/members/2')
     await expect(api.workspaces?.listAgents('workspace-1')).resolves.toMatchObject([
-      { id: '12', team_id: 12 },
+      { id: '12', team_id: 12, status: 'unchecked' },
     ])
+    expect(client.get).toHaveBeenCalledWith(
+      '/v1/workspaces/workspace-1/agents?include_readiness=false'
+    )
     await expect(api.workspaces?.addAgent('workspace-1', { teamId: 13 })).resolves.toMatchObject({
       id: '13',
       team_id: 13,

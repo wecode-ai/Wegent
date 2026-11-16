@@ -3,7 +3,13 @@ import { createHash } from 'node:crypto'
 import { mkdir, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { runChecked } from './shared.mjs'
-import { createLocalCollaborationProject, inCollaborationSidebar } from './workspace-flows.mjs'
+import {
+  createLocalCollaborationProject,
+  inCollaborationSidebar,
+  reloadMainWindow,
+  expandCollaborationSpaces,
+  revealCollaborationSidebarElement,
+} from './workspace-flows.mjs'
 
 async function waitForLocalProject(control, projectId, timeoutMs) {
   const deadline = Date.now() + timeoutMs
@@ -73,34 +79,23 @@ export async function verifyCollaborationLocalProjectImport(
   })
   const row = inCollaborationSidebar(`[data-testid="collaboration-workspace-project-${projectId}"]`)
   for (let pass = 0; pass < 2; pass += 1) {
-    const readyCount = control.readyCount
-    await control.command('reloadApp', 'body')
-    await control.awaitReadyAfter(readyCount)
+    await reloadMainWindow(control, 'The imported local project renderer did not reconnect')
     await control.command('waitFor', '[data-testid="workspace-tab-select-fixed-board"]', {
       timeoutMs: workbenchReadyTimeoutMs,
     })
     await control.command('click', '[data-testid="workspace-tab-select-fixed-board"]')
-    const toggle = inCollaborationSidebar(
-      '[data-testid="collaboration-workspace-toggle-wework-local-workspace"]'
-    )
     const localWorkspace = inCollaborationSidebar(
-      '[data-testid="collaboration-workspace-wework-local-workspace"]'
-    )
-    const localWorkspaceTree = inCollaborationSidebar(
-      '[data-testid="collaboration-workspace-tree-wework-local-workspace"]'
+      '[data-testid="collaboration-project-tree"] > .collaboration-workspace-group:first-child [data-testid^="collaboration-workspace-actions"]'
     )
     const cloudWorkspace = inCollaborationSidebar(
       `[data-testid="collaboration-workspace-${cloudWorkspaceId}"]`
     )
-    const cloudToggle = inCollaborationSidebar(
-      `[data-testid="collaboration-workspace-toggle-${cloudWorkspaceId}"]`
-    )
     const cloudProject = inCollaborationSidebar(
       `[data-testid="collaboration-workspace-project-${cloudProjectId}"]`
     )
-    await control.command('waitFor', toggle)
-    await control.command('waitFor', cloudWorkspace)
-    await control.command('waitFor', cloudToggle)
+    await expandCollaborationSpaces(control, scoped('').trim())
+    await revealCollaborationSidebarElement(control, localWorkspace)
+    await revealCollaborationSidebarElement(control, cloudWorkspace)
     assert.equal(
       Number(
         await control.command(
@@ -114,22 +109,14 @@ export async function verifyCollaborationLocalProjectImport(
       'The unified board still exposed local/cloud mode selectors'
     )
     assert.ok(
-      (await control.command('getText', localWorkspace)).trim(),
-      'The local Workspace name must remain visible on the unified board'
+      await control.command('getAttribute', localWorkspace, { value: 'aria-label' }),
+      'The local project management action must remain available on the unified board'
     )
-    if ((await control.command('getAttribute', toggle, { value: 'aria-expanded' })) !== 'true') {
-      await control.command('click', toggle)
-    }
 
     assert.ok(
       (await control.command('getText', cloudWorkspace)).trim(),
       'The cloud Workspace name must remain visible on the unified board'
     )
-    if (
-      (await control.command('getAttribute', cloudToggle, { value: 'aria-expanded' })) !== 'true'
-    ) {
-      await control.command('click', cloudToggle)
-    }
     await control.command('waitFor', cloudProject)
 
     const [sidebarMetrics] = JSON.parse(
@@ -149,10 +136,6 @@ export async function verifyCollaborationLocalProjectImport(
         'An archived Task project must remain absent before explicit import'
       )
       await control.command('click', localWorkspace)
-      await control.command(
-        'click',
-        `${localWorkspaceTree} [data-testid="collaboration-workspace-actions"]`
-      )
       await control.command('click', '[data-testid="collaboration-workspace-nav-create-project"]')
       await control.command(
         'click',
@@ -206,32 +189,35 @@ export async function verifyCollaborationLocalProjectImport(
       text: importedProjectName,
       timeoutMs: workbenchReadyTimeoutMs,
     })
-    await control.command('hover', row)
-    await control.command(
-      'click',
-      inCollaborationSidebar(`[data-testid="collaboration-project-new-conversation-${projectId}"]`)
-    )
-    await control.command(
-      'waitFor',
-      scoped('[data-testid="collaboration-issue-project-trigger"]'),
-      { text: projectName }
-    )
+    await control.command('clickWhenEnabled', row)
+    await control.command('waitFor', scoped('[data-testid="cloud-project-header-title"]'), {
+      text: projectName,
+    })
+    await control.command('clickWhenEnabled', scoped('[data-testid="project-space-chat-open"]'))
+    await control.command('waitFor', scoped('[data-testid="project-space-chat-sidebar"]'), {
+      text: projectName,
+    })
     assert.equal(
       Number(await control.command('getElementCount', scoped('.collaboration-loading'))),
       0,
-      'Opening the local Issue composer must not restart the global Collaboration loading state'
+      'Opening the local project conversation must not restart global Collaboration loading'
     )
     assert.equal(
       Number(await control.command('getElementCount', scoped('[role="alert"]'))),
       0,
-      'Opening the local Issue composer must not report a cloud member or Issue loading error'
+      'Opening the local project conversation must not report a cloud member or Issue loading error'
+    )
+    assert.equal(
+      Number(
+        await control.command(
+          'getElementCount',
+          scoped('[data-testid="collaboration-issue-project-trigger"]')
+        )
+      ),
+      0,
+      'The project conversation action must not open the Issue creation form'
     )
     await control.command('waitFor', cloudWorkspace)
-    if (
-      (await control.command('getAttribute', cloudToggle, { value: 'aria-expanded' })) !== 'true'
-    ) {
-      await control.command('click', cloudToggle)
-    }
     await control.command('waitFor', cloudProject)
   }
 }

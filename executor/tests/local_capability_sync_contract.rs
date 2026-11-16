@@ -261,7 +261,11 @@ async fn skill_and_mcp_updates_do_not_trigger_plugin_store_migration() {
             "namespace": "default",
         }))
         .unwrap();
-    let handler = CapabilitySyncHandler::new("token", store);
+    let handler = CapabilitySyncHandler::new(
+        "token",
+        store,
+        std::sync::Arc::new(wegent_executor::agents::CodexSkillConfigurationReloader),
+    );
 
     handler
         .apply_sync(json!({
@@ -327,7 +331,11 @@ async fn plugin_sync_migrates_authoritative_legacy_package_before_reconciliation
     .unwrap();
     let store =
         GlobalCapabilityStore::new(manifest_path.clone(), temp.path().join(".claude/skills"));
-    let handler = CapabilitySyncHandler::new("token", store);
+    let handler = CapabilitySyncHandler::new(
+        "token",
+        store,
+        std::sync::Arc::new(wegent_executor::agents::CodexSkillConfigurationReloader),
+    );
 
     let result = handler
         .apply_sync(json!({
@@ -436,7 +444,12 @@ async fn replace_sync_records_skill_and_mcp_and_removes_only_stale_managed_skill
     let store = GlobalCapabilityStore::new(manifest_path.clone(), skills_dir.clone())
         .with_codex_skills_dir(codex_skills_dir.clone())
         .with_store_dir(store_dir.clone());
-    let handler = CapabilitySyncHandler::with_package_provider("token", store, provider);
+    let handler = CapabilitySyncHandler::with_package_provider(
+        "token",
+        store,
+        provider,
+        std::sync::Arc::new(wegent_executor::agents::CodexSkillConfigurationReloader),
+    );
 
     let result = handler
         .apply_sync(json!({
@@ -497,7 +510,10 @@ async fn concurrent_syncs_serialize_manifest_updates() {
         .with_codex_skills_dir(codex_skills_dir)
         .with_store_dir(store_dir);
     let handler = Arc::new(CapabilitySyncHandler::with_package_provider(
-        "token", store, provider,
+        "token",
+        store,
+        provider,
+        std::sync::Arc::new(wegent_executor::agents::CodexSkillConfigurationReloader),
     ));
 
     let first = {
@@ -579,7 +595,12 @@ async fn sync_redownloads_broken_managed_skill_and_reports_local_user_conflicts(
     let store = GlobalCapabilityStore::new(manifest_path.clone(), skills_dir.clone())
         .with_codex_skills_dir(codex_skills_dir)
         .with_store_dir(store_dir);
-    let handler = CapabilitySyncHandler::with_package_provider("token", store, provider);
+    let handler = CapabilitySyncHandler::with_package_provider(
+        "token",
+        store,
+        provider,
+        std::sync::Arc::new(wegent_executor::agents::CodexSkillConfigurationReloader),
+    );
 
     let result = handler
         .apply_sync(json!({
@@ -668,7 +689,12 @@ async fn plugin_sync_accepts_claude_package_and_installs_both_runtimes() {
         .with_plugins_dir(plugins_dir.clone())
         .with_codex_plugins_dir(codex_plugins_dir.clone())
         .with_store_dir(store_dir.clone());
-    let handler = CapabilitySyncHandler::with_package_provider("token", store, provider);
+    let handler = CapabilitySyncHandler::with_package_provider(
+        "token",
+        store,
+        provider,
+        std::sync::Arc::new(wegent_executor::agents::CodexSkillConfigurationReloader),
+    );
 
     let result = handler
         .apply_sync(json!({
@@ -796,7 +822,12 @@ async fn plugin_sync_accepts_a_pure_codex_plugin_package() {
         .with_plugins_dir(plugins_dir)
         .with_codex_plugins_dir(codex_plugins_dir.clone())
         .with_store_dir(store_dir.clone());
-    let handler = CapabilitySyncHandler::with_package_provider("token", store, provider);
+    let handler = CapabilitySyncHandler::with_package_provider(
+        "token",
+        store,
+        provider,
+        std::sync::Arc::new(wegent_executor::agents::CodexSkillConfigurationReloader),
+    );
 
     let result = handler
         .apply_sync(json!({
@@ -870,7 +901,12 @@ enabled = true
         .with_plugins_dir(plugins_dir.clone())
         .with_codex_plugins_dir(codex_plugins_dir.clone())
         .with_store_dir(store_dir);
-    let handler = CapabilitySyncHandler::with_package_provider("token", store.clone(), provider);
+    let handler = CapabilitySyncHandler::with_package_provider(
+        "token",
+        store.clone(),
+        provider,
+        std::sync::Arc::new(wegent_executor::agents::CodexSkillConfigurationReloader),
+    );
 
     let installed = handler
         .apply_sync(json!({
@@ -951,6 +987,7 @@ enabled = true
             "/api/plugins/installed/20/download",
             enterprise_update_package,
         ),
+        std::sync::Arc::new(wegent_executor::agents::CodexSkillConfigurationReloader),
     );
     let updated = update_handler
         .apply_sync(json!({
@@ -1058,6 +1095,7 @@ async fn cloud_plugin_update_and_removal_restore_local_state_when_codex_config_i
         store.clone(),
         StaticPackageProvider::default()
             .with_plugin("/api/plugins/installed/20/download", version_one),
+        std::sync::Arc::new(wegent_executor::agents::CodexSkillConfigurationReloader),
     );
     handler
         .apply_sync(json!({
@@ -1098,6 +1136,7 @@ async fn cloud_plugin_update_and_removal_restore_local_state_when_codex_config_i
         store,
         StaticPackageProvider::default()
             .with_plugin("/api/plugins/installed/20/download", replacement),
+        std::sync::Arc::new(wegent_executor::agents::CodexSkillConfigurationReloader),
     );
     let update = failing_handler
         .apply_sync(json!({
@@ -1212,7 +1251,12 @@ async fn plugin_sync_links_existing_package_and_downloads_uploaded_plugin_to_weg
         .with_plugins_dir(plugins_dir.clone())
         .with_codex_plugins_dir(codex_plugins_dir.clone())
         .with_store_dir(store_dir.clone());
-    let handler = CapabilitySyncHandler::with_package_provider("token", store, provider);
+    let handler = CapabilitySyncHandler::with_package_provider(
+        "token",
+        store,
+        provider,
+        std::sync::Arc::new(wegent_executor::agents::CodexSkillConfigurationReloader),
+    );
 
     let result = handler
         .apply_sync(json!({
@@ -1296,7 +1340,11 @@ fn extract_plugin_zip_normalizes_roots_ignores_macos_metadata_and_keeps_existing
         temp.path().join("manifest.json"),
         temp.path().join("skills"),
     );
-    let handler = CapabilitySyncHandler::new("token", store);
+    let handler = CapabilitySyncHandler::new(
+        "token",
+        store,
+        std::sync::Arc::new(wegent_executor::agents::CodexSkillConfigurationReloader),
+    );
 
     let invalid = zip_bytes(&[("README.md", "missing manifest")]);
     let error = handler
@@ -1391,7 +1439,11 @@ fn extract_plugin_zip_rejects_duplicate_paths() {
         temp.path().join("manifest.json"),
         temp.path().join("skills"),
     );
-    let handler = CapabilitySyncHandler::new("token", store);
+    let handler = CapabilitySyncHandler::new(
+        "token",
+        store,
+        std::sync::Arc::new(wegent_executor::agents::CodexSkillConfigurationReloader),
+    );
     let duplicate = zip_bytes(&[
         (
             "duplicate/.claude-plugin/plugin.json",
@@ -1597,7 +1649,11 @@ async fn replace_sync_removes_stale_managed_plugin_but_keeps_local_user_plugin()
     let store = GlobalCapabilityStore::new(manifest_path, skills_dir)
         .with_plugins_dir(plugins_dir.clone())
         .with_codex_plugins_dir(codex_plugins_dir);
-    let handler = CapabilitySyncHandler::new("token", store);
+    let handler = CapabilitySyncHandler::new(
+        "token",
+        store,
+        std::sync::Arc::new(wegent_executor::agents::CodexSkillConfigurationReloader),
+    );
 
     let result = handler
         .apply_sync(json!({
@@ -2169,7 +2225,11 @@ fn global_capability_helpers_match_project_and_device_config_contract() {
         temp.path().join("manifest.json"),
         temp.path().join("skills"),
     );
-    let handler = CapabilitySyncHandler::from_device_config(&device, store);
+    let handler = CapabilitySyncHandler::from_device_config(
+        &device,
+        store,
+        std::sync::Arc::new(wegent_executor::agents::CodexSkillConfigurationReloader),
+    );
     assert_eq!(handler.auth_token(), "device-config-token");
 }
 
@@ -2435,6 +2495,7 @@ async fn plugin_reconciliation_preserves_skills_mcps_and_personal_packages() {
         "token",
         store,
         StaticPackageProvider::default(),
+        std::sync::Arc::new(wegent_executor::agents::CodexSkillConfigurationReloader),
     );
     let invalid = handler
         .apply_sync(json!({"scope":"plugins","mode":"merge"}))
@@ -2484,7 +2545,12 @@ async fn personal_cloud_sync_does_not_overwrite_a_bundled_or_local_plugin() {
         .with_plugins_dir(temp.path().join("claude/plugins"))
         .with_codex_plugins_dir(temp.path().join("codex/plugins"))
         .with_store_dir(store_dir);
-    let handler = CapabilitySyncHandler::with_package_provider("token", store, provider);
+    let handler = CapabilitySyncHandler::with_package_provider(
+        "token",
+        store,
+        provider,
+        std::sync::Arc::new(wegent_executor::agents::CodexSkillConfigurationReloader),
+    );
 
     let result = handler
         .apply_sync(json!({"scope":"plugins","mode":"merge","plugins":[{
@@ -2533,7 +2599,12 @@ async fn plugin_reconciliation_removes_only_identified_cloud_installations() {
         .with_plugins_dir(temp.path().join("claude/plugins"))
         .with_codex_plugins_dir(codex_plugins_dir.clone())
         .with_store_dir(store_dir.clone());
-    let handler = CapabilitySyncHandler::with_package_provider("token", store, provider);
+    let handler = CapabilitySyncHandler::with_package_provider(
+        "token",
+        store,
+        provider,
+        std::sync::Arc::new(wegent_executor::agents::CodexSkillConfigurationReloader),
+    );
     let installed = handler
         .apply_sync(json!({"scope":"plugins","mode":"merge","plugins":[
             {

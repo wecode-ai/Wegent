@@ -158,6 +158,14 @@ test('allows runtime preparation past the ordinary request deadline', async t =>
   t.mock.timers.enable({ apis: ['setTimeout'] })
   const hostToDsh = new PassThrough()
   const dshToHost = new PassThrough()
+  const preparationCapabilities = [
+    'smartApps.start',
+    'smartApps.verify',
+    'runtime.installCoreDshPlugin',
+    'runtime.updateCoreDshPlugin',
+    'runtime.setCoreDshPluginEnabled',
+    'runtime.uninstallCoreDshPlugin',
+  ]
   const client = new ElectronHostClient({
     token: 'test-token',
     input: hostToDsh,
@@ -169,13 +177,13 @@ test('allows runtime preparation past the ordinary request deadline', async t =>
         type: 'hello',
         ok: true,
         protocolVersion: 1,
-        capabilities: ['smartApps.start', 'smartApps.verify', 'window.getState'],
+        capabilities: [...preparationCapabilities, 'window.getState'],
       })}\n`
     )
   )
   await client.start()
   try {
-    for (const capability of ['smartApps.start', 'smartApps.verify']) {
+    for (const capability of preparationCapabilities) {
       let request
       dshToHost.once('data', chunk => {
         request = JSON.parse(chunk.toString())
@@ -188,6 +196,28 @@ test('allows runtime preparation past the ordinary request deadline', async t =>
       )
       assert.equal(await pending, 'ready')
     }
+    let failedRequest
+    dshToHost.once('data', chunk => {
+      failedRequest = JSON.parse(chunk.toString())
+    })
+    const failure = assert.rejects(client.invoke('runtime.installCoreDshPlugin'), {
+      code: 'plugin_install_failed',
+      message: 'Package manager failed and the profile was restored',
+    })
+    await new Promise(setImmediate)
+    t.mock.timers.tick(240_001)
+    hostToDsh.write(
+      `${JSON.stringify({
+        type: 'response',
+        id: failedRequest.id,
+        ok: false,
+        error: {
+          code: 'plugin_install_failed',
+          message: 'Package manager failed and the profile was restored',
+        },
+      })}\n`
+    )
+    await failure
     const ordinary = assert.rejects(client.invoke('window.getState'), { code: 'host_timeout' })
     await new Promise(setImmediate)
     t.mock.timers.tick(120_001)

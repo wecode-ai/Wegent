@@ -38,6 +38,7 @@ def _rpc(
     params: dict[str, object],
     token: str | None = None,
 ) -> dict[str, object]:
+    """Send one MCP JSON-RPC request and require a successful HTTP response."""
     headers = dict(MCP_HEADERS)
     if token:
         headers["Authorization"] = f"Bearer {token}"
@@ -79,6 +80,7 @@ def test_mounted_wework_space_streamable_http_uses_parent_asgi_lifespan(
     test_task_token: str,
     monkeypatch,
 ) -> None:
+    """Mount MCP apps with their shared ASGI lifecycle and exercise transports."""
     project = _create_project(test_db, test_user)
     tool_session_factory = sessionmaker(bind=test_db.get_bind())
     monkeypatch.setattr(wework_space, "SessionLocal", tool_session_factory)
@@ -126,12 +128,44 @@ def test_mounted_wework_space_streamable_http_uses_parent_asgi_lifespan(
             assert tools
             if name == "interactive-form-question":
                 assert {tool["name"] for tool in tools} == {"interactive_form_question"}
-            removed = client.post(
+            api_response = client.post(
                 f"/api{path}",
                 headers=MCP_HEADERS,
                 json={"jsonrpc": "2.0", "id": 31, "method": "tools/list"},
             )
-            assert removed.status_code == 405
+            if name == "subscription":
+                assert api_response.status_code == 200
+                assert api_response.json()["result"]["tools"] == tools
+                assert {tool["name"] for tool in tools} == {
+                    "preview_subscription",
+                    "create_subscription",
+                    "list_subscriptions",
+                    "get_subscription",
+                }
+                for tool in tools:
+                    arguments = {
+                        "display_name": "Authentication regression",
+                        "trigger_type": "one_time",
+                        "prompt_template": "Reminder",
+                    }
+                    if tool["name"] == "create_subscription":
+                        arguments["preview_id"] = "unused-unauthenticated-preview"
+                    elif tool["name"] == "list_subscriptions":
+                        arguments = {}
+                    elif tool["name"] == "get_subscription":
+                        arguments = {"subscription_id": 1}
+                    result = _rpc(
+                        client,
+                        request_id=32,
+                        path=f"/api{path}",
+                        method="tools/call",
+                        params={"name": tool["name"], "arguments": arguments},
+                    )
+                    assert json.loads(result["result"]["content"][0]["text"]) == {
+                        "error": "Authentication required"
+                    }
+            else:
+                assert api_response.status_code == 405
 
         listed = _rpc(
             client,

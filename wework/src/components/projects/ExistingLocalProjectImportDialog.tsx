@@ -72,7 +72,7 @@ export function ExistingLocalProjectImportDialog({
             <p className="mt-1 text-sm text-text-secondary">
               {t(
                 'workbench.import_existing_local_project_description',
-                '选择任务中已有、但尚未加入本地协作空间的项目。'
+                '选择任务中已有、尚未加入项目列表的本地项目。'
               )}
             </p>
           </div>
@@ -132,12 +132,14 @@ export function ExistingLocalProjectImportDialog({
           >
             {t(
               'workbench.no_existing_local_projects_to_import',
-              '任务中的本地项目都已加入协作空间。'
+              '任务中的本地项目都已加入项目列表。'
             )}
           </div>
         )}
 
-        {error ? <p className="mt-3 text-sm text-red-500">{error}</p> : null}
+        {error ? (
+          <p className="mt-3 text-sm text-destructive wework:text-red-500">{error}</p>
+        ) : null}
 
         <div className="mt-5 flex justify-end gap-3">
           <button

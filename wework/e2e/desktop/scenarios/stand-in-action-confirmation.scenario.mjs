@@ -1,3 +1,4 @@
+import { openStandInActivity } from '../modules/stand-in-profile-navigation.mjs'
 import assert from 'node:assert/strict'
 import { access } from 'node:fs/promises'
 import { join } from 'node:path'
@@ -6,14 +7,16 @@ import { ensureExperimentalFeaturesEnabled } from '../modules/preferences-automa
 import {
   assistantMessage,
   createSse,
-  functionCall,
   isReplyPredictionRequest,
   readRequestBody,
   requestContainsToolOutput,
   responseCompleted,
   responseCreated,
-  selectShellToolCommand,
 } from '../modules/response-protocol.mjs'
+import {
+  shellCommandResponse,
+  shellCommandRequestDiagnostic,
+} from '../modules/shell-command-response.mjs'
 
 const TASK = 'stand-in-confirmation-work'
 const PROMPT = 'STAND_IN_VERIFY_EXPLICIT_WRITE_CONFIRMATION'
@@ -28,6 +31,7 @@ export function createDesktopScenario({
 }) {
   const file = join(workspacePath, 'stand-in-approved.txt')
   let requested = false
+  let failedShellRequest = null
   return {
     async handleHttp(req, response, url) {
       if (req.method !== 'POST' || !['/responses', '/v1/responses'].includes(url.pathname))
@@ -40,14 +44,21 @@ export function createDesktopScenario({
       if (requestContainsToolOutput(body, 'stand-in-file-write'))
         events = [assistantMessage('已按你的单次确认完成操作。')]
       else {
-        const tool = selectShellToolCommand(
-          body,
-          `touch '${file.replaceAll("'", "'\\''")}'`,
-          workspacePath
-        )
-        tool.arguments.sandbox_permissions = 'require_escalated'
-        tool.arguments.justification = '确认后创建隔离测试工作区中的验证文件。'
-        events = functionCall('stand-in-file-write', tool.name, tool.arguments)
+        try {
+          events = shellCommandResponse(
+            body,
+            'stand-in-file-write',
+            `touch '${file.replaceAll("'", "'\\''")}'`,
+            workspacePath,
+            {
+              sandbox_permissions: 'require_escalated',
+              justification: '确认后创建隔离测试工作区中的验证文件。',
+            }
+          )
+        } catch (error) {
+          failedShellRequest = shellCommandRequestDiagnostic(body)
+          throw error
+        }
         requested = true
       }
       response.writeHead(200, { 'content-type': 'text/event-stream; charset=utf-8' })
@@ -57,7 +68,8 @@ export function createDesktopScenario({
     async verify(control) {
       await ensureExperimentalFeaturesEnabled(control)
       await control.command('click', '[data-testid="workspace-tab-select-fixed-board"]')
-      await control.command('click', '[data-testid="collaboration-primary-stand-in"]')
+      await control.command('click', '[data-testid="workspace-tab-select-fixed-task"]')
+      await control.command('clickWhenEnabled', '[data-testid="personal-stand-in-button"]')
       await control.command('waitFor', ROOT)
       const settings = await requestExecutor(
         control,
@@ -110,6 +122,7 @@ export function createDesktopScenario({
         'click',
         `[data-testid="stand-in-overview-role-${settings.roles[0].id}"]`
       )
+      await openStandInActivity(control)
       await control.command('waitFor', `[data-testid="stand-in-activity-task-${TASK}"]`, {
         timeoutMs: modelResponseTimeoutMs,
       })
@@ -158,7 +171,7 @@ export function createDesktopScenario({
       await captureScreenshot(control, '03-confirmed-operation-completed.png')
     },
     diagnostics() {
-      return { requested }
+      return { requested, failedShellRequest }
     },
   }
 }

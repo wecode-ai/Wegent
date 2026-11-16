@@ -5,8 +5,27 @@ export const ELECTRON_HOST_PROTOCOL_VERSION = 1
 const MAX_FRAME_BYTES = 64 * 1024 * 1024
 const DEFAULT_TIMEOUT_MS = 120_000
 const RUNTIME_PREPARATION_TIMEOUT_MS = 15 * 60_000
-const RUNTIME_PREPARATION_CAPABILITIES = new Set(['smartApps.start', 'smartApps.verify'])
+const RUNTIME_PREPARATION_CAPABILITIES = new Set([
+  'smartApps.start',
+  'smartApps.verify',
+  'runtime.installCoreDshPlugin',
+  'runtime.updateCoreDshPlugin',
+  'runtime.setCoreDshPluginEnabled',
+  'runtime.uninstallCoreDshPlugin',
+])
 const DEFAULT_PRINCIPAL = '@wegent/dsh-app-wework'
+
+function traceHostRequest(phase, requestId, capability) {
+  if (
+    process.env.VITE_WEWORK_E2E !== 'true' ||
+    process.env.WEWORK_E2E_HOST_PIPE_DIAGNOSTICS !== '1'
+  )
+    return
+  console.debug(
+    '[host-pipe-client]',
+    JSON.stringify({ at: new Date().toISOString(), phase, requestId, capability })
+  )
+}
 
 export class ElectronHostError extends Error {
   constructor(code, message, details = {}) {
@@ -132,6 +151,7 @@ export class ElectronHostClient {
     const id = `dsh-${++this.sequence}`
     const response = deferred()
     this.pending.set(id, response)
+    traceHostRequest('sent', id, capability)
     this.write({ type: 'request', id, capability, params })
     try {
       return await withTimeout(
@@ -214,6 +234,7 @@ export class ElectronHostClient {
     }
     const pending = this.pending.get(message.id)
     if (!pending) return
+    traceHostRequest('received', message.id)
     if (message.ok === true) {
       pending.resolve(message.result)
       return

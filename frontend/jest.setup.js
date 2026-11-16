@@ -3,6 +3,10 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import '@testing-library/jest-dom'
+import { TextEncoder } from 'node:util'
+
+// JSDOM omits this browser API; use the native implementation for byte-size validation.
+global.TextEncoder = TextEncoder
 
 if (typeof Element !== 'undefined' && !Element.prototype.hasPointerCapture) {
   Element.prototype.hasPointerCapture = () => false

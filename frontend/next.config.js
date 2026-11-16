@@ -6,6 +6,8 @@
 const path = require('path')
 // eslint-disable-next-line @typescript-eslint/no-require-imports
 const fs = require('fs')
+// eslint-disable-next-line @typescript-eslint/no-require-imports
+const PdfJsExportsPlugin = require('./scripts/pdfjs-exports-plugin.cjs')
 const extensionsDir = fs.existsSync(path.resolve(__dirname, 'wecode/extensions'))
   ? path.resolve(__dirname, 'wecode/extensions')
   : path.resolve(__dirname, 'src/extensions')
@@ -48,7 +50,7 @@ const nextConfig = {
   ...(isTurbopack
     ? {}
     : {
-        webpack: (config, { isServer, _dev }) => {
+        webpack: (config, { isServer, dev }) => {
           // Force replace remark-gfm with our iOS 16 compatible version
           // This is needed because @uiw/react-md-editor depends on remark-gfm
           // which uses lookbehind regex not supported by iOS 16
@@ -62,12 +64,15 @@ const nextConfig = {
           // chunk makes every route download dependencies it does not use.
           config.optimization = {
             ...config.optimization,
-            // Enable module concatenation to reduce bundle size
-            concatenateModules: true,
+            // PDF.js ships its own webpack runtime. Concatenating it into an
+            // eval-based development module shadows webpack's exports object.
+            // Keep production scope hoisting without breaking dev previews.
+            concatenateModules: !dev,
           }
 
           // Handle dynamic imports more gracefully
           if (!isServer) {
+            if (dev) config.plugins.push(new PdfJsExportsPlugin())
             config.resolve.fallback = {
               ...config.resolve.fallback,
               fs: false,

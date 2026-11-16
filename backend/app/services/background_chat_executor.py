@@ -21,6 +21,7 @@ Features:
 import json
 import logging
 import re
+import time
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Any, Callable, Dict, Optional
@@ -31,6 +32,7 @@ from app.db.session import SessionLocal
 from app.models.subtask import Subtask, SubtaskRole, SubtaskStatus
 from app.models.task import TaskResource
 from app.services.execution import execution_dispatcher
+from app.services.knowledge.generation_reporting import report_generation
 from app.stores.tasks import subtask_store, task_store
 from shared.models import ExecutionRequest
 
@@ -104,6 +106,7 @@ class BackgroundChatExecutor:
         Returns:
             BackgroundTaskResult containing task result
         """
+        started_perf = time.monotonic()
         logger.info(
             f"[BackgroundChatExecutor] Starting background task: "
             f"type={config.task_type}, summary_type={config.summary_type}, "
@@ -128,6 +131,7 @@ class BackgroundChatExecutor:
             f"task_id={task.id}, subtask_id={assistant_subtask.id}"
         )
 
+        model_config = None
         try:
             # 2. Update status to RUNNING
             assistant_subtask.status = SubtaskStatus.RUNNING
@@ -240,12 +244,17 @@ class BackgroundChatExecutor:
                 f"has_parsed_content={parsed_content is not None}"
             )
 
-            return BackgroundTaskResult(
-                success=True,
-                task_id=task.id,
-                subtask_id=assistant_subtask.id,
-                raw_content=accumulated_content,
-                parsed_content=parsed_content,
+            return report_generation(
+                BackgroundTaskResult(
+                    success=True,
+                    task_id=task.id,
+                    subtask_id=assistant_subtask.id,
+                    raw_content=accumulated_content,
+                    parsed_content=parsed_content,
+                ),
+                config=config,
+                model_config=model_config,
+                duration_ms=round((time.monotonic() - started_perf) * 1000),
             )
 
         except Exception as e:
@@ -262,12 +271,17 @@ class BackgroundChatExecutor:
                 error=str(e),
             )
 
-            return BackgroundTaskResult(
-                success=False,
-                task_id=task.id,
-                subtask_id=assistant_subtask.id,
-                raw_content="",
-                error=str(e),
+            return report_generation(
+                BackgroundTaskResult(
+                    success=False,
+                    task_id=task.id,
+                    subtask_id=assistant_subtask.id,
+                    raw_content="",
+                    error=str(e),
+                ),
+                config=config,
+                model_config=model_config,
+                duration_ms=round((time.monotonic() - started_perf) * 1000),
             )
 
     async def _execute_with_managed_sessions(
@@ -280,6 +294,7 @@ class BackgroundChatExecutor:
     ) -> BackgroundTaskResult:
         task_id = 0
         assistant_subtask_id = 0
+        model_config = None
 
         try:
             db = self.session_factory()
@@ -335,12 +350,16 @@ class BackgroundChatExecutor:
             finally:
                 db.close()
 
-            return BackgroundTaskResult(
-                success=True,
-                task_id=task_id,
-                subtask_id=assistant_subtask_id,
-                raw_content=accumulated_content,
-                parsed_content=parsed_content,
+            return report_generation(
+                BackgroundTaskResult(
+                    success=True,
+                    task_id=task_id,
+                    subtask_id=assistant_subtask_id,
+                    raw_content=accumulated_content,
+                    parsed_content=parsed_content,
+                ),
+                config=config,
+                model_config=model_config,
             )
 
         except Exception as exc:
@@ -363,12 +382,16 @@ class BackgroundChatExecutor:
                 finally:
                     db.close()
 
-            return BackgroundTaskResult(
-                success=False,
-                task_id=task_id,
-                subtask_id=assistant_subtask_id,
-                raw_content="",
-                error=str(exc),
+            return report_generation(
+                BackgroundTaskResult(
+                    success=False,
+                    task_id=task_id,
+                    subtask_id=assistant_subtask_id,
+                    raw_content="",
+                    error=str(exc),
+                ),
+                config=config,
+                model_config=model_config,
             )
 
     async def _dispatch_and_collect(self, execution_request: ExecutionRequest) -> str:

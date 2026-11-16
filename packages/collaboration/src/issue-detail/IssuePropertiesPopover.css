@@ -13,15 +13,22 @@
 }
 
 .task-detail-more-menu-trigger:hover,
-.task-detail-more-menu-trigger[data-state='open'] {
+.task-detail-more-menu-trigger[data-state="open"] {
   color: rgb(var(--color-text-primary));
   background: rgb(var(--color-bg-muted));
 }
 
 .task-detail-more-menu-popover {
   width: 280px;
-  max-width: min(calc(100vw - 16px), var(--radix-popover-content-available-width));
-  max-height: min(520px, calc(100dvh - 16px), var(--radix-popover-content-available-height));
+  max-width: min(
+    calc(100vw - 16px),
+    var(--radix-popover-content-available-width)
+  );
+  max-height: min(
+    520px,
+    calc(100dvh - 16px),
+    var(--radix-popover-content-available-height)
+  );
   overflow-y: auto;
   border: 0.5px solid rgb(var(--color-border));
   border-radius: 12px;
@@ -114,7 +121,10 @@
   border-radius: 50%;
 }
 
-.task-detail-more-menu-popover .task-detail-property-collaborators > button > span {
+.task-detail-more-menu-popover
+  .task-detail-property-collaborators
+  > button
+  > span {
   font-weight: 500;
 }
 
@@ -140,9 +150,14 @@
   background: rgb(var(--color-destructive) / 6%);
 }
 
-.task-detail-more-menu-trigger:focus-visible,
-.task-detail-more-menu-popover button:focus-visible,
-.task-detail-more-menu-popover select:focus-visible {
+:where(html:not([data-input-modality="pointer"]))
+  .task-detail-more-menu-trigger:focus-visible,
+:where(html:not([data-input-modality="pointer"]))
+  .task-detail-more-menu-popover
+  button:focus-visible,
+:where(html:not([data-input-modality="pointer"]))
+  .task-detail-more-menu-popover
+  select:focus-visible {
   outline: 2px solid rgb(var(--color-focus) / 70%);
   outline-offset: 2px;
 }

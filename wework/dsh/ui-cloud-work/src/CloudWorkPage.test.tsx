@@ -1,9 +1,16 @@
-import { render, screen, waitFor } from '@testing-library/react'
+import {
+  RuntimeTaskLifecycleProvider,
+  RuntimeTaskLifecycleStore,
+} from '@/features/workbench/runtimeTaskLifecycle'
+import { preloadDefaultDshUiTestModules } from '@/test/setup.dom'
+import { act, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, test, vi } from 'vitest'
+import { installGitUiTestContributions } from '../../ui-git/test-support'
 import { CloudWorkPage } from './CloudWorkPage'
-import { navigateTo } from '@/lib/navigation'
-import { requestProjectCreateMode } from '@/components/layout/workbenchShellEvents'
+
+const sidebarMock = vi.hoisted(() => ({ renderReal: false }))
+const runtimeMock = vi.hoisted(() => ({ desktop: false }))
 
 const workbenchMock = vi.hoisted(() => ({
   value: {
@@ -24,6 +31,8 @@ const workbenchMock = vi.hoisted(() => ({
           name: 'Cloud Box',
           status: 'online',
           device_type: 'cloud',
+          bind_shell: 'claudecode',
+          executor_version: '1.8.5',
         },
       ],
       runtimeWork: {
@@ -41,6 +50,7 @@ const workbenchMock = vi.hoisted(() => ({
                 deviceName: 'Cloud Box',
                 available: true,
                 workspacePath: '/workspace/cloud-project',
+                tasks: [],
               },
             ],
           },
@@ -57,6 +67,7 @@ const workbenchMock = vi.hoisted(() => ({
                 deviceName: 'Local',
                 available: true,
                 workspacePath: '/workspace/local-project',
+                tasks: [],
               },
             ],
           },
@@ -91,7 +102,6 @@ const workbenchMock = vi.hoisted(() => ({
     archiveChatConversations: vi.fn(),
     selectStandaloneDevice: vi.fn(),
     openStandaloneWorkspace: vi.fn(),
-    getRemoteDeviceStartupCommand: vi.fn(),
     refreshDevices: vi.fn().mockResolvedValue(undefined),
     createProject: vi.fn(),
     createGitWorkspaceProject: vi.fn(),
@@ -106,6 +116,7 @@ const workbenchMock = vi.hoisted(() => ({
     getProjectWorkspaceRoot: vi.fn(),
     listDeviceDirectories: vi.fn(),
     createDeviceDirectory: vi.fn(),
+    cloneGitRepository: vi.fn(),
   },
 }))
 
@@ -121,6 +132,14 @@ vi.mock('@/hooks/useIsMobile', () => ({
   useIsMobile: () => false,
 }))
 
+vi.mock('@/lib/runtime-environment', async importOriginal => {
+  const original = await importOriginal<typeof import('@/lib/runtime-environment')>()
+  return {
+    ...original,
+    isElectronRuntime: () => runtimeMock.desktop,
+  }
+})
+
 vi.mock('@/components/layout/useDesktopSidebarCollapsed', () => ({
   useDesktopSidebarCollapsed: () => ({
     sidebarCollapsed: false,
@@ -128,9 +147,18 @@ vi.mock('@/components/layout/useDesktopSidebarCollapsed', () => ({
   }),
 }))
 
-vi.mock('@/components/layout/DesktopSidebar', () => ({
-  DesktopSidebar: () => <aside data-testid="desktop-sidebar" />,
-}))
+vi.mock('@/components/layout/DesktopSidebar', async importOriginal => {
+  const { DesktopSidebar } =
+    await importOriginal<typeof import('@/components/layout/DesktopSidebar')>()
+  return {
+    DesktopSidebar: (props: Parameters<typeof DesktopSidebar>[0]) =>
+      sidebarMock.renderReal ? (
+        <DesktopSidebar {...props} />
+      ) : (
+        <aside data-testid="desktop-sidebar" />
+      ),
+  }
+})
 
 vi.mock('@/components/layout/WorkbenchSearchDialog', () => ({
   WorkbenchSearchDialog: () => null,
@@ -158,53 +186,119 @@ vi.mock('@/components/layout/workbenchShellEvents', () => ({
   requestProjectCreateMode: vi.fn(),
 }))
 
+await preloadDefaultDshUiTestModules()
+
 describe('CloudWorkPage', () => {
-  beforeEach(() => {
+  beforeEach(async () => {
     vi.clearAllMocks()
+    sidebarMock.renderReal = false
+    runtimeMock.desktop = false
+    await preloadDefaultDshUiTestModules()
+    await installGitUiTestContributions()
+  }, 60_000)
+
+  test('keeps local recovery available on desktop even with no cloud devices', async () => {
+    runtimeMock.desktop = true
+    const originalDevices = workbenchMock.value.state.devices
+    workbenchMock.value.state.devices = []
+    try {
+      const { navigateTo } = await import('@/lib/navigation')
+      render(<CloudWorkPage />)
+      expect(screen.getByTestId('cloud-work-devices-empty')).toBeVisible()
+      expect(screen.getByTestId('cloud-work-local-device-guidance')).toHaveTextContent(
+        '本机执行环境由当前 Wework 管理'
+      )
+      const localVersion = screen.getByRole('button', { name: '查看本机版本' })
+      expect(navigateTo).not.toHaveBeenCalled()
+      localVersion.focus()
+      await userEvent.keyboard('{Enter}')
+      expect(navigateTo).toHaveBeenCalledExactlyOnceWith('/settings/about')
+    } finally {
+      workbenchMock.value.state.devices = originalDevices
+    }
   })
 
-  test('refreshes devices when the cloud work page opens', async () => {
+  test('keeps local guidance separate from cloud device management', () => {
+    runtimeMock.desktop = true
     render(<CloudWorkPage />)
-
-    await waitFor(() => expect(workbenchMock.value.refreshDevices).toHaveBeenCalledOnce())
-  })
-
-  test('shows cloud devices and cloud projects without local resources', () => {
-    render(<CloudWorkPage />)
-
-    expect(screen.getByTestId('cloud-work-page')).toBeInTheDocument()
+    expect(screen.getByTestId('cloud-work-local-device-guidance')).toBeVisible()
     expect(screen.getByTestId('cloud-device-section')).toHaveTextContent('cloud-device')
     expect(screen.getByTestId('cloud-device-section')).not.toHaveTextContent('local-device')
-    expect(screen.getByText('Cloud Project')).toBeInTheDocument()
-    expect(screen.queryByText('Local Project')).not.toBeInTheDocument()
-    expect(screen.getByText('Cloud Box · /workspace/cloud-project')).toBeInTheDocument()
   })
 
-  test('opens a cloud project in the standard workbench', async () => {
+  test('lets desktop users return to their stand-in from the real sidebar', async () => {
+    runtimeMock.desktop = true
+    sidebarMock.renderReal = true
+    const { navigateTo } = await import('@/lib/navigation')
+    render(
+      <RuntimeTaskLifecycleProvider
+        store={new RuntimeTaskLifecycleStore('cloud-work-stand-in-return')}
+      >
+        <CloudWorkPage />
+      </RuntimeTaskLifecycleProvider>
+    )
+    await userEvent.click(await screen.findByTestId('personal-stand-in-button'))
+    expect(navigateTo).toHaveBeenCalledExactlyOnceWith('/stand-in')
+  })
+
+  test('does not offer local Wework recovery in a web browser', () => {
     render(<CloudWorkPage />)
-
-    await userEvent.click(screen.getByTestId('cloud-work-project-21'))
-
-    expect(navigateTo).toHaveBeenCalledWith('/')
-    expect(workbenchMock.value.selectProject).toHaveBeenCalledWith(21)
+    expect(screen.queryByTestId('cloud-work-local-device-guidance')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('cloud-work-local-version-button')).not.toBeInTheDocument()
+    expect(screen.getByTestId('cloud-device-section')).toHaveTextContent('cloud-device')
   })
 
-  test('keeps device setup and project creation in their existing flows', async () => {
-    render(<CloudWorkPage />)
+  test('clones from the cloud work sidebar and recovers from a clone failure', async () => {
+    sidebarMock.renderReal = true
+    let rejectClone!: (error: Error) => void
+    const clonePending = new Promise<void>((_resolve, reject) => {
+      rejectClone = reject
+    })
+    workbenchMock.value.getDeviceHomeDirectory.mockResolvedValue('/home/ubuntu')
+    workbenchMock.value.cloneGitRepository
+      .mockReturnValueOnce(clonePending)
+      .mockResolvedValueOnce(undefined)
+    const store = new RuntimeTaskLifecycleStore('cloud-work-project-clone')
+    render(
+      <RuntimeTaskLifecycleProvider store={store}>
+        <CloudWorkPage />
+      </RuntimeTaskLifecycleProvider>
+    )
 
-    await userEvent.click(screen.getByTestId('cloud-work-add-device-button'))
-    expect(navigateTo).toHaveBeenCalledWith('/settings/connections?addDevice=1')
+    await userEvent.click(screen.getByTestId('projects-create-button'))
+    await userEvent.click(screen.getByTestId('project-create-remote-option'))
+    await userEvent.click(screen.getByTestId('remote-project-source-git'))
+    await waitFor(() =>
+      expect(screen.getByTestId('remote-project-git-parent-input')).toHaveValue('/home/ubuntu')
+    )
+    const url = 'ssh://git@git.example.com:2222/team/repository.git'
+    await userEvent.type(screen.getByTestId('remote-project-git-url-input'), url)
+    await userEvent.click(screen.getByTestId('remote-project-git-submit'))
 
-    await userEvent.click(screen.getByTestId('cloud-work-create-project-button'))
-    expect(navigateTo).toHaveBeenCalledWith('/')
-    expect(requestProjectCreateMode).toHaveBeenCalledWith('git')
-  })
+    expect(workbenchMock.value.cloneGitRepository).toHaveBeenCalledWith('cloud-device', {
+      url,
+      targetPath: '/home/ubuntu/repository',
+    })
+    expect(screen.getByTestId('remote-project-git-submit')).toBeDisabled()
+    expect(workbenchMock.value.openStandaloneWorkspace).not.toHaveBeenCalled()
 
-  test('opens cloud connection settings only from the explicit settings action', async () => {
-    render(<CloudWorkPage />)
+    await act(async () => rejectClone(new Error('SSH authentication failed')))
+    expect(await screen.findByTestId('remote-project-git-error')).toHaveTextContent(
+      'SSH authentication failed'
+    )
+    expect(screen.getByTestId('remote-project-git-url-input')).toHaveValue(url)
+    expect(screen.getByTestId('remote-project-git-submit')).toBeEnabled()
+    expect(workbenchMock.value.openStandaloneWorkspace).not.toHaveBeenCalled()
 
-    await userEvent.click(screen.getByTestId('cloud-work-settings-button'))
-
-    expect(navigateTo).toHaveBeenCalledWith('/settings/connections')
-  })
+    await userEvent.click(screen.getByTestId('remote-project-git-submit'))
+    await waitFor(() =>
+      expect(workbenchMock.value.openStandaloneWorkspace).toHaveBeenCalledWith(
+        'cloud-device',
+        '/home/ubuntu/repository',
+        'repository'
+      )
+    )
+    expect(workbenchMock.value.cloneGitRepository).toHaveBeenCalledTimes(2)
+    expect(screen.queryByTestId('standalone-folder-project-dialog')).not.toBeInTheDocument()
+  }, 15_000)
 })

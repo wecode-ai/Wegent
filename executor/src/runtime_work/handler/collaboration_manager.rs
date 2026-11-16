@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use super::*;
+use sha2::{Digest, Sha256};
 
 impl RuntimeWorkRpcHandler {
     pub(super) async fn launch_fresh_cloud_manager(
@@ -16,6 +17,8 @@ impl RuntimeWorkRpcHandler {
                 .local_task_link(&fresh_task_id)
                 .is_some_and(|link| fresh_cloud_manager_task_started(&link))
             {
+                self.publish_fresh_cloud_manager(command, &fresh_task_id)
+                    .await?;
                 self.clear_cloud_collaboration_round(&command.manager_runtime_task_id);
                 return Ok(());
             }
@@ -28,6 +31,10 @@ impl RuntimeWorkRpcHandler {
                 return Err("Collaboration manager Runtime task was not found".to_owned());
             };
             let payload = self.prepare_fresh_cloud_manager(&source_link, command, &outcomes)?;
+            // Publish ownership and transcript access before the new turn can
+            // ask a blocking question or submit its next round.
+            self.publish_fresh_cloud_manager(command, &fresh_task_id)
+                .await?;
 
             match self.create_task(payload).await {
                 Ok(value)
@@ -67,6 +74,42 @@ impl RuntimeWorkRpcHandler {
         }
     }
 
+    async fn publish_fresh_cloud_manager(
+        &self,
+        command: &CloudCollaborationRoundCommand,
+        task_id: &str,
+    ) -> Result<(), String> {
+        let payload = json!({
+            "role": "manager",
+            "loop_item_id": command.item_id,
+            "dispatch_id": command.dispatch_id,
+            "round_id": command.round_id,
+            "runtime_device_id": self.device_id,
+            "runtime_task_id": task_id,
+        });
+        loop {
+            match self
+                .report_cloud_collaboration_activity(command, &payload)
+                .await
+            {
+                Ok(()) => return Ok(()),
+                Err(error) => {
+                    log_executor_event(
+                        "cloud collaboration manager publication failed",
+                        &[
+                            ("manager_task_id", task_id.to_owned()),
+                            ("error", error.message.clone()),
+                        ],
+                    );
+                    if !error.retryable {
+                        return Err(error.message);
+                    }
+                }
+            }
+            sleep(CLOUD_COLLABORATION_LAUNCH_RETRY_INTERVAL).await;
+        }
+    }
+
     pub(super) fn prepare_fresh_cloud_manager(
         &self,
         source: &RuntimeTaskLink,
@@ -74,6 +117,10 @@ impl RuntimeWorkRpcHandler {
         outcomes: &[Value],
     ) -> Result<Value, String> {
         let (mut request, mut payload) = fresh_cloud_manager_payload(source, command, outcomes)?;
+        super::super::project_coordination_execution::restore_identity(
+            &mut request,
+            &source.runtime_handle,
+        )?;
         if let Some(config) = self.runtime_model_config(&source.local_task_id) {
             request.model_config = config;
         } else if !request.model_config.is_null()
@@ -94,9 +141,18 @@ impl RuntimeWorkRpcHandler {
 }
 
 pub(super) fn fresh_cloud_manager_task_id(command: &CloudCollaborationRoundCommand) -> String {
+    resumed_manager_task_id(&command.manager_runtime_task_id, &command.round_id)
+}
+
+fn resumed_manager_task_id(manager_task_id: &str, round_id: &str) -> String {
+    let candidate = format!("{manager_task_id}-manager-after-{round_id}");
+    if candidate.chars().count() <= 255 {
+        return candidate;
+    }
+    let identity = json!([manager_task_id, round_id]).to_string();
     format!(
-        "{}-manager-after-{}",
-        command.manager_runtime_task_id, command.round_id
+        "collaboration-manager-{:x}",
+        Sha256::digest(identity.as_bytes())
     )
 }
 
@@ -176,5 +232,44 @@ pub(super) fn fresh_cloud_manager_payload(
     if let Some(origin) = request.extra.get("origin") {
         payload["origin"] = origin.clone();
     }
+    let identity_key = super::super::project_coordination_execution::IDENTITY_KEY;
+    if let Some(identity) = source_link.runtime_handle.get(identity_key) {
+        payload["runtimeHandle"][identity_key] = identity.clone();
+    }
     Ok((request, payload))
+}
+
+#[cfg(test)]
+mod task_id_tests {
+    use super::resumed_manager_task_id;
+
+    #[test]
+    fn manager_lineage_stays_within_the_persisted_id_limit() {
+        assert_eq!(
+            resumed_manager_task_id("manager-task-1", "round-1"),
+            "manager-task-1-manager-after-round-1"
+        );
+        assert_eq!(
+            resumed_manager_task_id(&"m".repeat(239), "r"),
+            format!("{}-manager-after-r", "m".repeat(239))
+        );
+        assert_eq!(
+            resumed_manager_task_id(&"m".repeat(255), &"r".repeat(128)),
+            "collaboration-manager-b3b830da1c050c0d6d371db96a2b2820336ee1574eb99ebd3c9dc86413358186"
+        );
+        assert_eq!(
+            resumed_manager_task_id(&"m".repeat(240), &"澄清".repeat(20)),
+            "collaboration-manager-46bd8b428e70c1a5915f224e44ca0ea4cb3ec5ac484d1e3a9c6ed06caf07b0de"
+        );
+        let unicode = "澄".repeat(200);
+        assert_eq!(
+            resumed_manager_task_id(&unicode, "r"),
+            format!("{unicode}-manager-after-r")
+        );
+        let mut current = "manager-task-1".to_owned();
+        for index in 0..100 {
+            current = resumed_manager_task_id(&current, &format!("{index}-{}", "r".repeat(120)));
+            assert!(current.chars().count() <= 255);
+        }
+    }
 }

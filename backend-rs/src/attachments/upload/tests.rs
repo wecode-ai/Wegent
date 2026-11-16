@@ -6,13 +6,290 @@
 //! (`src/attachments/upload/mod.rs`).
 
 use super::*;
-use brz_mysql::{
-    FromMysqlRow, MysqlArgs, MysqlExecution, MysqlResult, MysqlTransaction, MysqlTransactionService,
-};
+use brz_mysql::{FromMysqlRow, MysqlArgs, MysqlExecution, MysqlResult, MysqlTransaction};
+
+#[test]
+fn empty_uploads_are_rejected_before_the_upload_pipeline() {
+    for filename in ["image.png", "empty.csv", "empty.txt"] {
+        let multipart = Multipart {
+            fields: vec![brz_http_server::Upload {
+                name: "file".to_owned(),
+                filename: Some(filename.to_owned()),
+                content_type: None,
+                bytes: bytes::Bytes::new(),
+            }],
+        };
+        let error = bind_upload_file(&multipart, None).unwrap_err();
+        assert_eq!(error.status(), StatusCode::BAD_REQUEST);
+        assert_eq!(error.validation_detail(), "\"File is empty\"");
+    }
+}
+
+#[test]
+fn binding_keeps_missing_filename_and_nonempty_file_contracts() {
+    let missing = bind_upload_file(&Multipart { fields: vec![] }, None).unwrap_err();
+    assert_eq!(missing.status(), StatusCode::UNPROCESSABLE_ENTITY);
+    let multipart = Multipart {
+        fields: vec![brz_http_server::Upload {
+            name: "file".to_owned(),
+            filename: Some("document.csv".to_owned()),
+            content_type: None,
+            bytes: bytes::Bytes::from_static(b"name,value\na,42"),
+        }],
+    };
+    assert_eq!(
+        bind_upload_file(&multipart, None).unwrap(),
+        ("document.csv", b"name,value\na,42".as_slice())
+    );
+    let mut missing_filename = multipart;
+    missing_filename.fields[0].filename = None;
+    let error = bind_upload_file(&missing_filename, None).unwrap_err();
+    assert_eq!(error.status(), StatusCode::BAD_REQUEST);
+    assert_eq!(error.validation_detail(), "\"Filename is required\"");
+}
+
+#[test]
+fn empty_overwrites_keep_the_text_document_clearing_contract() {
+    for filename in ["document.txt", "document.md"] {
+        let multipart = Multipart {
+            fields: vec![brz_http_server::Upload {
+                name: "file".to_owned(),
+                filename: Some(filename.to_owned()),
+                content_type: None,
+                bytes: bytes::Bytes::new(),
+            }],
+        };
+        let (name, bytes) = bind_upload_file(&multipart, Some(42)).unwrap();
+        assert_eq!(name, filename);
+        assert!(bytes.is_empty());
+        let parsed = document::parse(bytes, &document::extension_of(name)).unwrap();
+        assert!(parsed.text.is_empty());
+        assert_eq!(parsed.text_length, 0);
+    }
+}
 
 /// An object store whose write always fails, like the source `save`
 /// raising when `put_object` fails.
 struct FailingStorageBackend;
+
+struct HostingBackend {
+    fail: bool,
+    invalid: bool,
+}
+
+#[async_trait::async_trait]
+impl AttachmentUploadBackend for HostingBackend {
+    fn external_storage_backend(&self, mime_type: &str, purpose: &str) -> Option<&str> {
+        (matches!(mime_type, "video/mp4" | "audio/mpeg")
+            && matches!(purpose, "default" | "video_reference"))
+        .then_some("media_hosting")
+    }
+
+    async fn store_external_attachment(
+        &self,
+        request: ExternalAttachmentUploadRequest<'_>,
+    ) -> Result<ExternalAttachmentStorageResult, ExternalAttachmentUploadError> {
+        assert_eq!(request.content, b"original media");
+        assert_eq!(request.user_id, 7);
+        if self.fail {
+            return Err(ExternalAttachmentUploadError::Unavailable);
+        }
+        if self.invalid {
+            return Err(ExternalAttachmentUploadError::InvalidInput(
+                "provider rejected the material".to_owned(),
+            ));
+        }
+        Ok(ExternalAttachmentStorageResult {
+            backend_type: "media_hosting".to_owned(),
+            storage_key: String::new(),
+            type_data: Map::from_iter([(
+                "provider_reference".to_owned(),
+                serde_json::json!({
+                    "media_id": "media-123", "upload_id": "upload-456"
+                }),
+            )]),
+        })
+    }
+
+    fn backend_type(&self) -> &str {
+        "unused_object_store"
+    }
+    async fn ensure_ready(&self) -> Result<(), UploadBackendError> {
+        panic!("hosted attachments must not probe the object store")
+    }
+    async fn store_object(&self, _: StoreObjectRequest<'_>) -> Result<bool, UploadBackendError> {
+        panic!("hosted attachments must not write to the object store")
+    }
+    async fn upload_image_pid(&self, _: ImageUploadRequest<'_>) -> Option<ImagePid> {
+        None
+    }
+    async fn delete_object(&self, _: &str) -> Result<bool, UploadBackendError> {
+        Ok(true)
+    }
+}
+
+#[tokio::test]
+async fn hosted_materials_persist_ready_references_without_binary_storage_or_parsing() {
+    for (filename, extension, mime_type) in [
+        ("reference.mp4", ".mp4", "video/mp4"),
+        ("reference.mp3", ".mp3", "audio/mpeg"),
+    ] {
+        for purpose in ["default", "video_reference"] {
+            let backend = HostingBackend {
+                fail: false,
+                invalid: false,
+            };
+            assert_eq!(
+                external_storage::prepare_backend(&backend, mime_type, purpose)
+                    .await
+                    .unwrap(),
+                "media_hosting"
+            );
+            let mut transaction = StatementLog::default();
+            let mut metadata = build_type_data(
+                filename,
+                extension,
+                14,
+                mime_type,
+                "media_hosting",
+                "temporary-key",
+            );
+            metadata.insert("lifecycle_owner".to_owned(), Value::from("upload-test"));
+            let outcome = store_and_parse(
+                &mut transaction,
+                &backend,
+                73,
+                7,
+                filename,
+                extension,
+                b"original media",
+                "temporary-key".to_owned(),
+                metadata,
+                purpose,
+                &mut None,
+            )
+            .await
+            .unwrap();
+            assert!(matches!(
+                outcome,
+                UploadOutcome::Parsed {
+                    context_id: 73,
+                    truncation_info: None
+                }
+            ));
+            assert_eq!(transaction.statements.len(), 1);
+            assert!(transaction.statements[0].contains("status='ready', binary_data=X''"));
+            let persisted: Value =
+                serde_json::from_str(transaction.first_parameters[0].as_ref().unwrap()).unwrap();
+            assert_eq!(
+                persisted["provider_reference"],
+                serde_json::json!({"media_id":"media-123", "upload_id":"upload-456"})
+            );
+            assert_eq!(persisted["storage_backend"], "media_hosting");
+            assert_eq!(persisted["storage_key"], "");
+            assert_eq!(persisted["is_encrypted"], false);
+            assert_eq!(persisted["encryption_version"], 0);
+            assert_eq!(persisted["mime_type"], mime_type);
+            assert_eq!(persisted["original_filename"], filename);
+            assert_eq!(persisted["lifecycle_owner"], "upload-test");
+        }
+    }
+}
+
+#[tokio::test]
+async fn hosting_failure_propagates_before_any_ready_or_binary_write() {
+    let mut transaction = StatementLog::default();
+    let result = store_and_parse(
+        &mut transaction,
+        &HostingBackend {
+            fail: true,
+            invalid: false,
+        },
+        73,
+        7,
+        "reference.mp4",
+        ".mp4",
+        b"original media",
+        "key".to_owned(),
+        Map::new(),
+        "video_reference",
+        &mut None,
+    )
+    .await;
+    assert!(
+        result.is_err(),
+        "the caller must roll back its upload transaction"
+    );
+    assert!(transaction.statements.is_empty());
+}
+
+#[tokio::test]
+async fn hosting_validation_is_rolled_back_and_keeps_the_upload_bad_request_contract() {
+    let mut transaction = StatementLog::default();
+    let mut validation_error = None;
+    let error = store_and_parse(
+        &mut transaction,
+        &HostingBackend {
+            fail: false,
+            invalid: true,
+        },
+        73,
+        7,
+        "reference.mp4",
+        ".mp4",
+        b"original media",
+        "key".to_owned(),
+        Map::new(),
+        "video_reference",
+        &mut validation_error,
+    )
+    .await
+    .err()
+    .expect("validation must abort the transaction");
+    assert!(transaction.statements.is_empty());
+    assert_eq!(
+        validation_error.as_deref(),
+        Some("provider rejected the material")
+    );
+    assert_eq!(
+        upload_dependency_error(error, validation_error).status(),
+        StatusCode::BAD_REQUEST
+    );
+    let dependency = brz_mysql::MysqlError::InvalidQuery {
+        reason: "unavailable".to_owned(),
+    };
+    assert_eq!(
+        upload_dependency_error(dependency, None).status(),
+        StatusCode::INTERNAL_SERVER_ERROR
+    );
+}
+
+#[tokio::test]
+async fn public_default_keeps_media_in_the_configured_binary_backend() {
+    assert_eq!(
+        external_storage::prepare_backend(&MySqlStorageBackend, "video/mp4", "video_reference")
+            .await
+            .unwrap(),
+        "mysql"
+    );
+    let mut transaction = StatementLog::default();
+    let result = store_and_parse(
+        &mut transaction,
+        &FailingStorageBackend,
+        73,
+        7,
+        "reference.mp4",
+        ".mp4",
+        b"original media",
+        "key".to_owned(),
+        Map::new(),
+        "video_reference",
+        &mut None,
+    )
+    .await;
+    assert!(result.is_err());
+    assert!(transaction.statements.is_empty());
+}
 
 #[async_trait::async_trait]
 impl AttachmentUploadBackend for FailingStorageBackend {
@@ -41,10 +318,11 @@ impl AttachmentUploadBackend for FailingStorageBackend {
 #[derive(Default)]
 struct StatementLog {
     statements: Vec<String>,
+    first_parameters: Vec<Option<String>>,
 }
 
 impl MysqlTransaction for StatementLog {
-    async fn execute<S, A>(&mut self, sql: S, _: A) -> MysqlResult<MysqlExecution>
+    async fn execute<S, A>(&mut self, sql: S, args: A) -> MysqlResult<MysqlExecution>
     where
         S: AsRef<str> + Send,
         A: MysqlArgs + Send,
@@ -55,18 +333,28 @@ impl MysqlTransaction for StatementLog {
             .collect::<Vec<_>>()
             .join(" ");
         self.statements.push(collapsed);
+        self.first_parameters.push(match args.first_route_value() {
+            Some(brz_mysql::MysqlRouteValue::String(value)) => Some(value.to_owned()),
+            _ => None,
+        });
         Ok(MysqlExecution {
             rows_affected: 0,
             last_insert_id: 0,
         })
     }
 
-    async fn fetch_optional<S, A, T>(&mut self, _: S, _: A) -> MysqlResult<Option<T>>
+    async fn fetch_optional<S, A, T>(&mut self, sql: S, _: A) -> MysqlResult<Option<T>>
     where
         S: AsRef<str> + Send,
         A: MysqlArgs + Send,
         T: FromMysqlRow + Send,
     {
+        self.statements.push(
+            sql.as_ref()
+                .split_whitespace()
+                .collect::<Vec<_>>()
+                .join(" "),
+        );
         Ok(None)
     }
 
@@ -154,6 +442,8 @@ async fn a_failed_storage_write_aborts_before_any_column_write() {
         b"## title\n\nbody",
         "attachments/0123456789ab_20261009000000_157_1364828".to_string(),
         Map::new(),
+        "default",
+        &mut None,
     )
     .await;
 
@@ -164,16 +454,14 @@ async fn a_failed_storage_write_aborts_before_any_column_write() {
     assert!(transaction.statements.is_empty());
 }
 
-/// A `Mysql` double that records every non-transactional statement, so
-/// tests can assert the service's post-commit `db.refresh(context)` ran
-/// outside the upload transaction.
+/// Capture ordinary statements and primary transactions used by the upload tail.
 #[derive(Default, Clone)]
 struct StatementCapture {
     statements: std::sync::Arc<std::sync::Mutex<Vec<String>>>,
 }
 
 impl brz_mysql::Mysql for StatementCapture {
-    type Transaction = MysqlTransactionService;
+    type Transaction = StatementLog;
 
     fn with_route<R: brz_mysql::MysqlRouting + 'static>(&self, _: R) -> brz_mysql::MysqlService {
         panic!("plain queries must reuse the configured service")
@@ -183,12 +471,18 @@ impl brz_mysql::Mysql for StatementCapture {
         self.clone()
     }
 
-    async fn with_transaction<T, F>(&self, _: F) -> MysqlResult<T>
+    async fn with_transaction<T, F>(&self, operation: F) -> MysqlResult<T>
     where
         T: Send,
         F: for<'a> AsyncFnOnce(&'a mut Self::Transaction) -> MysqlResult<T> + Send,
     {
-        panic!("unexpected transaction in the upload tail")
+        let mut transaction = StatementLog::default();
+        let result = operation(&mut transaction).await;
+        self.statements
+            .lock()
+            .unwrap()
+            .extend(transaction.statements);
+        result
     }
 
     async fn fetch_optional<S, A, T>(&self, sql: S, _: A) -> MysqlResult<Option<T>>

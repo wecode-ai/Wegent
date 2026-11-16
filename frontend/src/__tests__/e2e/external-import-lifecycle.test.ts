@@ -22,6 +22,7 @@ jest.mock('@playwright/test', () => ({
     describe: Object.assign((_name: string, body: () => void) => body(), {
       configure: jest.fn(),
     }),
+    use: jest.fn(),
     beforeAll: (body: Callback) => mockBeforeAll.push(body),
     afterAll: jest.fn(),
     afterEach: (body: Callback) => mockAfterEach.push(body),

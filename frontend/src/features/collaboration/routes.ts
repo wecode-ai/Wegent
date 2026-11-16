@@ -9,6 +9,7 @@ import type {
 } from '@wegent/collaboration'
 
 const ROOT_PATHS: Record<CollaborationPlatformRootView, string> = {
+  templates: '/resource-library?type=template',
   home: '/collaboration',
   agents: '/collaboration/agents',
   teams: '/collaboration/teams',
@@ -16,6 +17,10 @@ const ROOT_PATHS: Record<CollaborationPlatformRootView, string> = {
   inbox: '/collaboration/inbox',
   // Stand-in management is provided only by the desktop host.
   'stand-in': '/collaboration',
+  // Personal Issue lists are provided only by the desktop host.
+  'issues-assigned': '/collaboration',
+  'issues-created': '/collaboration',
+  'issues-participating': '/collaboration',
 }
 
 export function collaborationRootViewForPath(

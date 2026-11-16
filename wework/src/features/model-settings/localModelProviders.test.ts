@@ -74,7 +74,7 @@ describe('localModelProviders', () => {
         group: 'DeepSeek',
         apiFormat: 'openai-responses',
         requestPath: '/responses',
-        toolProfile: 'custom',
+        toolProfile: 'function',
         allowedModelIds: ['deepseek-flash', 'deepseek-v4-flash', 'deepseek-v4-pro'],
         contextWindow: 1_048_576,
         webSearchMode: 'live',

@@ -19,7 +19,6 @@ from app.models.namespace import Namespace
 from app.models.resource_member import MemberStatus, ResourceMember
 from app.models.user import User
 from app.schemas.group_entity_member import (
-    BatchFailedItem,
     GroupEntityMemberBatchCreate,
     GroupEntityMemberBatchResponse,
     GroupEntityMemberCreate,
@@ -59,44 +58,6 @@ from app.services.group_permission import get_view_role_in_group
 from shared.telemetry.decorators import trace_sync
 
 router = APIRouter()
-
-
-# MIGRATION-CANDIDATE(api="GET /api/groups"): remove after final confirmation.
-# @router.get("", response_model=GroupListResponse)
-def list_groups(
-    page: int = Query(1, ge=1, description="Page number"),
-    limit: int = Query(100, ge=1, le=100, description="Items per page"),
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
-):
-    """
-    List all groups where the current user is a member (created or joined).
-    Returns paginated results.
-    """
-    skip = (page - 1) * limit
-    groups = group_service.list_user_groups(
-        db=db,
-        user_id=current_user.id,
-        skip=skip,
-        limit=limit,
-        user_role=current_user.role,
-    )
-
-    # Calculate total count
-    if page == 1 and len(groups) < limit:
-        total = len(groups)
-    else:
-        # Get total count of user's groups
-        all_groups = group_service.list_user_groups(
-            db=db,
-            user_id=current_user.id,
-            skip=0,
-            limit=1000,
-            user_role=current_user.role,
-        )
-        total = len(all_groups)
-
-    return GroupListResponse(total=total, items=groups)
 
 
 @router.get("/search", response_model=GroupListResponse)

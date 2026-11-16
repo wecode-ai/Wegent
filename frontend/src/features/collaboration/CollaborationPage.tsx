@@ -22,6 +22,7 @@ import {
 } from '@wegent/collaboration'
 import { toast } from 'sonner'
 import { CollaborationTheme, useDocumentTheme } from '@wegent/collaboration/theme'
+import { GitAccountConfigurationProvider } from '@wegent/collaboration/controls'
 
 import {
   createProjectChatClient,
@@ -47,6 +48,13 @@ import { CollaborationContextSidebar } from '@/features/collaboration/Collaborat
 import { createWebSharedWorkspaceApi } from '@/features/collaboration/shared-api'
 import { webProjectAgentConfigurationHost } from '@/features/collaboration/ProjectAgentConfigurationHost'
 import { useUser } from '@/features/common/UserContext'
+import LoadingState from '@/features/common/LoadingState'
+import { useCollaborationTemplates } from '@/features/resource-library/useCollaborationTemplates'
+import {
+  templateIdentity,
+  templateMessages,
+  type CollaborationTemplate,
+} from '@wegent/collaboration/templates'
 import {
   collaborationLocationPath,
   collaborationRootViewForPath,
@@ -123,11 +131,50 @@ function CollaborationWebShell({ main, sidebar }: { main: ReactNode; sidebar: Re
 
 export function CollaborationPage() {
   const theme = useDocumentTheme()
-  const { user } = useUser()
+  const { user, isLoading: userLoading } = useUser()
+  const accountScope = String(apiClient.getCacheScope())
+  const templateStore = useCollaborationTemplates()
   const router = useRouter()
   const pathname = usePathname()
   const searchParams = useSearchParams()
-  const { getCurrentLanguage } = useTranslation()
+  const { getCurrentLanguage, t } = useTranslation('common')
+  const templateLocale = getCurrentLanguage().startsWith('zh') ? 'zh-CN' : 'en'
+  const requestedTemplate = searchParams.get('template')
+  const [templateRequest, setTemplateRequest] = useState<{
+    key: string
+    scope: string
+    document: CollaborationTemplate
+  } | null>(null)
+  const [templateRequestError, setTemplateRequestError] = useState(false)
+  const [templateRequestAttempt, setTemplateRequestAttempt] = useState(0)
+  useEffect(() => {
+    setTemplateRequest(null)
+    setTemplateRequestError(false)
+    if (!requestedTemplate || !templateStore) return
+    let active = true
+    void templateStore
+      .load()
+      .then(() => {
+        const record = templateStore
+          .getSnapshot()
+          .records.find(record => templateIdentity(record) === requestedTemplate)
+        if (!record) throw new Error('template_unavailable')
+        if (active)
+          setTemplateRequest({
+            key: requestedTemplate,
+            scope: templateStore.library.scope,
+            document: record.document,
+          })
+      })
+      .catch(() => {
+        if (active) setTemplateRequestError(true)
+      })
+    return () => {
+      active = false
+    }
+  }, [requestedTemplate, templateStore, templateLocale, templateRequestAttempt])
+  // accountScope keys the lifecycle of clients that read credentials lazily.
+  // Scope changes must replace and dispose the previous clients.
   const api = useMemo(() => {
     const socketOptions = {
       socketBaseUrl: async () => {
@@ -175,7 +222,8 @@ export function CollaborationPage() {
         readWorkspaceFile: readRuntimeWorkspaceFile,
       },
     }
-  }, [user?.id])
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [accountScope])
   useEffect(
     () => () => {
       api.activity.dispose()
@@ -241,9 +289,15 @@ export function CollaborationPage() {
   const projectSettingsSection =
     projectView === 'manage' &&
     section &&
-    ['project', 'agents', 'members', 'groups', 'environments', 'automatic-processing'].includes(
-      section
-    )
+    [
+      'project',
+      'agents',
+      'members',
+      'groups',
+      'environments',
+      'automatic-processing',
+      'configuration-sharing',
+    ].includes(section)
       ? (section as ProjectSettingsSectionId)
       : null
   useEffect(() => {
@@ -285,6 +339,21 @@ export function CollaborationPage() {
 
   const platformHost = useMemo<CollaborationPlatformHostAdapter>(
     () => ({
+      accountScope,
+      templateStore: templateStore ?? undefined,
+      projectTemplateRequest:
+        templateRequest &&
+        templateStore?.library.scope === templateRequest.scope &&
+        requestedTemplate === templateRequest.key
+          ? {
+              ...templateRequest,
+              onHandled() {
+                const params = new URLSearchParams(searchParams.toString())
+                params.delete('template')
+                router.replace(`${pathname}${params.size ? `?${params}` : ''}`, { scroll: false })
+              },
+            }
+          : undefined,
       ...(user
         ? {
             currentUser: {
@@ -345,6 +414,7 @@ export function CollaborationPage() {
       projectAgentConfiguration: webProjectAgentConfigurationHost,
     }),
     [
+      accountScope,
       issueId,
       pathname,
       projectId,
@@ -355,8 +425,39 @@ export function CollaborationPage() {
       user,
       workspaceId,
       workspaceOwnerOptions,
+      templateStore,
+      templateRequest,
+      requestedTemplate,
+      searchParams,
     ]
   )
+
+  if (userLoading && !user) {
+    return (
+      <CollaborationWebShell sidebar={<div />} main={<LoadingState message={t('loading')} />} />
+    )
+  }
+
+  if (requestedTemplate && templateRequestError) {
+    const m = templateMessages[templateLocale]
+    return (
+      <CollaborationWebShell
+        sidebar={<div />}
+        main={
+          <div role="alert" className="p-6">
+            {m.failed}{' '}
+            <button
+              type="button"
+              data-testid="template-request-retry"
+              onClick={() => setTemplateRequestAttempt(value => value + 1)}
+            >
+              {m.retry}
+            </button>
+          </div>
+        }
+      />
+    )
+  }
 
   if (legacyProjectId) {
     return (
@@ -373,12 +474,23 @@ export function CollaborationPage() {
 
   return (
     <CollaborationTheme mode={theme}>
-      <CollaborationPlatformApp
-        api={api}
-        host={platformHost}
-        locale={locale}
-        renderShell={({ main, sidebar }) => <CollaborationWebShell main={main} sidebar={sidebar} />}
-      />
+      <GitAccountConfigurationProvider
+        value={{
+          baseUrl: typeof window === 'undefined' ? undefined : window.location.origin,
+          openUrl: url => {
+            window.open(url, '_blank', 'noopener,noreferrer')
+          },
+        }}
+      >
+        <CollaborationPlatformApp
+          api={api}
+          host={platformHost}
+          locale={locale}
+          renderShell={({ main, sidebar }) => (
+            <CollaborationWebShell main={main} sidebar={sidebar} />
+          )}
+        />
+      </GitAccountConfigurationProvider>
     </CollaborationTheme>
   )
 }

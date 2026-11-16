@@ -1,10 +1,15 @@
+// @vitest-environment node
+
 import assert from 'node:assert/strict'
 import { afterEach, beforeEach, test, vi } from 'vitest'
 
 const { requestExecutor } = vi.hoisted(() => ({ requestExecutor: vi.fn() }))
 vi.mock('../e2e/desktop/modules/executor-rpc.mjs', () => ({ requestExecutor }))
 
-import { verifyIssueRuntimeTitleIsolation } from '../e2e/desktop/modules/issue-runtime-title-isolation.mjs'
+import {
+  verifyIssueRuntimeReply,
+  verifyIssueRuntimeTitleIsolation,
+} from '../e2e/desktop/modules/issue-runtime-title-isolation.mjs'
 import {
   CHECKPOINT_TASK_COMPLETION_TEXT,
   DEFAULT_STEP_TIMEOUT_MS,
@@ -17,13 +22,11 @@ const content = '[data-testid="workspace-tab-content-task-1"]'
 
 beforeEach(() => {
   vi.useFakeTimers()
-  requestExecutor
-    .mockReset()
-    .mockImplementation(async (_control, method) => {
-      if (method === 'runtime.tasks.rename') return { accepted: true }
-      if (method === 'todos.get') return issue
-      throw new Error(`Unexpected RPC: ${method}`)
-    })
+  requestExecutor.mockReset().mockImplementation(async (_control, method) => {
+    if (method === 'runtime.tasks.rename') return { accepted: true }
+    if (method === 'todos.get') return issue
+    throw new Error(`Unexpected RPC: ${method}`)
+  })
 })
 
 afterEach(() => {
@@ -80,6 +83,73 @@ function createControl({
       throw new Error(`Unexpected action: ${action}`)
     },
   }
+}
+
+test('initial submission waits for its native completion before starting the exact reply check', async () => {
+  let completed = false
+  const commands = []
+  const control = {
+    async command(action, selector, options = {}) {
+      commands.push({ action, selector, options })
+      if (action === 'getWorkbenchDebugSnapshot') {
+        return JSON.stringify({
+          workbench: {
+            activeTask: { taskId: binding.task_id },
+            lifecycleCurrentTaskRunning: !completed,
+            activeLifecycle: {
+              turn: { latestId: 'initial-turn', outcome: completed ? 'succeeded' : 'running' },
+            },
+          },
+        })
+      }
+      assert.equal(action, 'waitFor')
+      assert.equal(completed, true, 'The UI deadline started before native completion')
+      assert.ok(selector.includes('runtime-view:initial-turn:assistant'))
+      assert.equal(options.text, CHECKPOINT_TASK_COMPLETION_TEXT)
+      assert.equal(options.visible, true)
+      assert.equal(options.timeoutMs, undefined, 'The existing UI deadline was changed')
+    },
+  }
+  const verification = verifyIssueRuntimeReply(control, content, binding)
+  await vi.advanceTimersByTimeAsync(7000)
+  assert.equal(
+    commands.some(command => command.action === 'waitFor'),
+    false
+  )
+  completed = true
+  await vi.advanceTimersByTimeAsync(100)
+  await verification
+})
+
+for (const [description, taskId, turn] of [
+  ['another task', 'other-task', { latestId: 'turn', outcome: 'succeeded' }],
+  ['a failed turn', binding.task_id, { latestId: 'turn', outcome: 'failed' }],
+  ['a missing native turn', binding.task_id, undefined],
+]) {
+  test(`initial submission does not accept ${description} as completion`, async () => {
+    const control = {
+      command: vi.fn(async action => {
+        assert.equal(action, 'getWorkbenchDebugSnapshot')
+        return JSON.stringify({
+          workbench: {
+            activeTask: { taskId },
+            activeLifecycle: { turn },
+            lifecycleCurrentTaskRunning: false,
+          },
+        })
+      }),
+    }
+    const verification = verifyIssueRuntimeReply(control, content, binding).then(
+      () => null,
+      error => error
+    )
+    await vi.advanceTimersByTimeAsync(DEFAULT_STEP_TIMEOUT_MS + 100)
+    assert.match(String(await verification), /did not finish its initial turn/)
+    assert.equal(
+      control.command.mock.calls.some(([action]) => action === 'waitFor'),
+      false
+    )
+  })
 }
 
 test('recognizes a new completed turn even when assistant DOM row count does not grow', async () => {

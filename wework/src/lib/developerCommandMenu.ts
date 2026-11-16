@@ -301,8 +301,8 @@ function renderDebugPanelShell(root: HTMLElement, expanded: boolean) {
   root.innerHTML = ''
   if (expanded) root.removeAttribute('style')
   root.className = expanded
-    ? 'fixed inset-0 z-[2147483647] flex items-stretch justify-center bg-black/30 p-4'
-    : 'fixed z-[2147483647]'
+    ? 'electron-titlebar-interactive-region fixed inset-0 z-[2147483647] flex items-stretch justify-center bg-black/30 p-4'
+    : 'electron-titlebar-interactive-region fixed z-[2147483647]'
   root.setAttribute('role', 'presentation')
 
   if (!expanded) {
@@ -598,6 +598,7 @@ function createMessageStyleSampleCard(
 function createDebugPanelButton(label: string, onClick: () => void): HTMLButtonElement {
   const button = document.createElement('button')
   button.type = 'button'
+  button.dataset.testid = `debug-panel-${label.toLowerCase().replaceAll(' ', '-')}`
   button.className =
     'h-8 rounded-md border border-border px-3 text-xs transition-colors hover:bg-muted focus:bg-muted focus:outline-none'
   button.textContent = label

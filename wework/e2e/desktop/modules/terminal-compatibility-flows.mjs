@@ -157,6 +157,7 @@ export async function verifyTerminalWireCompatibility(
   let outputEvents = 0
   let ackEvents = 0
   let lastSequence = 0
+  const wireTrace = []
   let ackChain = Promise.resolve()
   let closed = false
   const controlPayload = () => ({
@@ -180,6 +181,16 @@ export async function verifyTerminalWireCompatibility(
       })
   }
   socket.on('terminal:output', payload => {
+    if (wireTrace.length < 128) {
+      wireTrace.push({
+        at: new Date().toISOString(),
+        sequence: payload.sequence,
+        previousSequence: lastSequence,
+        sessionVersion,
+        consumerMatches: payload.consumer_id === consumerId,
+        bytes: typeof payload.data === 'string' ? Buffer.byteLength(payload.data) : null,
+      })
+    }
     try {
       assert.equal(payload.session_id, sessionId, 'Output leaked from a different terminal')
       assert.equal(typeof payload.data, 'string')
@@ -331,6 +342,23 @@ export async function verifyTerminalWireCompatibility(
       closedSessionRejected: true,
       forcedEndDelivered,
     })
+  } catch (error) {
+    await recordEvidence(`${name}-failure`, {
+      status: 'failed',
+      requestedVersion: requestedVersion ?? 'absent',
+      sessionVersion,
+      lastSequence,
+      outputEvents,
+      ackEvents,
+      wireTrace,
+      error: error instanceof Error ? { name: error.name, message: error.message } : String(error),
+    }).catch(diagnosticError => {
+      console.warn(
+        '[desktop-e2e] Terminal sequence diagnostics could not be saved',
+        diagnosticError
+      )
+    })
+    throw error
   } finally {
     try {
       if (!closed && socket.connected && sessionVersion !== null) {

@@ -8,6 +8,8 @@ import { promisify } from 'node:util'
 import { resolveElectronLaunchArguments } from './electron-launch-arguments.mjs'
 
 // Called by the CI-covered workbench-mode checkpoint with real macOS Electron APIs.
+// Cleanup tools may remove legacy aliases. No legacy log conflict may block
+// startup or modify independently recreated logs.
 export async function verifyMacosLogStartup({ resources, executor, environment, root }) {
   await mkdir(root, { recursive: true })
   const scriptPath = join(root, 'startup.mjs')
@@ -38,6 +40,7 @@ export async function verifyMacosLogStartup({ resources, executor, environment, 
       const { initializeWorkbenchDesktopData } = await load('workbench-desktop-startup');
       const { migrateWorkbenchDesktopData } = await load('workbench-desktop-data');
       const { executorMigrationLock } = await load('workbench-migration-lock');
+      const { migrateWorkbenchDataEntry } = await load('workbench-data-migration');
       const logs = path.join(input.root, 'Library', 'Logs', app.getName());
       const target = path.join(desktop, 'electron-logs');
       const journalPath = path.join(desktop, 'migrations', 'desktop-electron-logs-v1.json');
@@ -48,13 +51,14 @@ export async function verifyMacosLogStartup({ resources, executor, environment, 
         acquireLock: executorMigrationLock(input.executor) };
       // Seed migration without getPath('logs'), retaining its fresh-process side effect.
       assert.equal(app.requestSingleInstanceLock({}), true);
+      migrateWorkbenchDataEntry({ source: logs, target, journal: journalPath });
       const initial = migrateWorkbenchDesktopData({ source, desktop, logs });
       assert.equal(initial.logs, target);
       assert.equal(fs.lstatSync(logs).isSymbolicLink(), true);
       app.releaseSingleInstanceLock();
       fs.unlinkSync(logs);
       let retainedTarget = target;
-      if (input.state === 'empty-source' || input.state === 'nonempty-source') {
+      if (input.state === 'empty-source' || input.state === 'nonempty-source' || input.state === 'stale-device') {
         fs.mkdirSync(logs);
         if (input.state === 'nonempty-source')
           fs.writeFileSync(path.join(logs, 'new.log'), 'new-logs');
@@ -62,41 +66,42 @@ export async function verifyMacosLogStartup({ resources, executor, environment, 
         const journal = JSON.parse(fs.readFileSync(journalPath, 'utf8'));
         journal.source += '-unexpected';
         fs.writeFileSync(journalPath, JSON.stringify(journal));
+      } else if (input.state === 'malformed-journal') {
+        fs.writeFileSync(journalPath, 'invalid JSON');
       } else if (input.state === 'replaced-target') {
         retainedTarget += '.backup';
         fs.renameSync(target, retainedTarget);
         fs.mkdirSync(target);
         fs.writeFileSync(path.join(target, 'replacement.log'), 'replacement-logs');
       }
-      const journalBefore = fs.readFileSync(journalPath, 'utf8');
-      const identityBefore = fs.statSync(retainedTarget, { bigint: true });
-      const recovers = input.state === 'missing-bridge' || input.state === 'empty-source';
-      if (recovers) {
-        const recovered = await initializeWorkbenchDesktopData(options);
-        assert.deepEqual(recovered, initial);
-        assert.equal(app.isReady(), false, 'Log recovery must finish before Electron ready');
-        assert.equal(fs.lstatSync(logs).isSymbolicLink(), true);
-        assert.equal(fs.realpathSync(logs), fs.realpathSync(target));
-        // Exercise Electron only after recovery: this API recreates missing log directories.
-        assert.equal(app.getPath('logs'), logs);
-        assert.equal(fs.readFileSync(path.join(app.getPath('logs'), 'retained.log'), 'utf8'), 'original-logs');
-        app.releaseSingleInstanceLock();
-      } else {
-        await assert.rejects(initializeWorkbenchDesktopData(options));
-        if (input.state === 'nonempty-source') {
-          assert.equal(fs.lstatSync(logs).isDirectory(), true);
-          assert.equal(fs.readFileSync(path.join(logs, 'new.log'), 'utf8'), 'new-logs');
-        }
-        if (input.state === 'replaced-target')
-          assert.equal(fs.readFileSync(path.join(target, 'replacement.log'), 'utf8'), 'replacement-logs');
+      if (input.state === 'stale-device' || input.state === 'stale-device-missing') {
+        const journal = JSON.parse(fs.readFileSync(journalPath, 'utf8'));
+        journal.device = (BigInt(journal.device) + 1n).toString();
+        fs.writeFileSync(journalPath, JSON.stringify(journal));
       }
+      const journalBefore = fs.readFileSync(journalPath, 'utf8');
+      const legacyIdentity = fs.existsSync(logs) ? fs.lstatSync(logs, { bigint: true }).ino : undefined;
+      const identityBefore = fs.statSync(retainedTarget, { bigint: true });
+      const recovered = await initializeWorkbenchDesktopData(options);
+      assert.deepEqual(recovered, initial);
+      assert.equal(app.isReady(), false, 'Log selection must finish before Electron ready');
+      assert.equal(fs.existsSync(logs) ? fs.lstatSync(logs, { bigint: true }).ino : undefined, legacyIdentity);
+      app.setAppLogsPath(recovered.logs);
+      assert.equal(app.getPath('logs'), target);
+      fs.writeFileSync(path.join(app.getPath('logs'), 'new-startup.log'), 'startup-log');
+      assert.equal(fs.readFileSync(path.join(target, 'new-startup.log'), 'utf8'), 'startup-log');
+      app.releaseSingleInstanceLock();
+      if (input.state === 'nonempty-source')
+        assert.equal(fs.readFileSync(path.join(logs, 'new.log'), 'utf8'), 'new-logs');
+      if (input.state === 'replaced-target')
+        assert.equal(fs.readFileSync(path.join(target, 'replacement.log'), 'utf8'), 'replacement-logs');
       assert.equal(fs.readFileSync(path.join(retainedTarget, 'retained.log'), 'utf8'), 'original-logs');
       const identityAfter = fs.statSync(retainedTarget, { bigint: true });
       assert.equal(identityAfter.dev, identityBefore.dev);
       assert.equal(identityAfter.ino, identityBefore.ino);
       assert.equal(fs.readFileSync(journalPath, 'utf8'), journalBefore);
       assert.equal(fs.readFileSync(path.join(initial.userData, 'preferences.json'), 'utf8'), 'original-preferences');
-      process.stdout.write(JSON.stringify({ state: input.state, recovered: recovers,
+      process.stdout.write(JSON.stringify({ state: input.state, started: true,
         journalPreserved: true, logIdentityPreserved: true, logsPreserved: true }), () => app.exit(0));
     } catch (error) { console.error(error.stack); app.exit(1); }
   `
@@ -106,6 +111,9 @@ export async function verifyMacosLogStartup({ resources, executor, environment, 
   const states = [
     'missing-bridge',
     'empty-source',
+    'stale-device',
+    'stale-device-missing',
+    'malformed-journal',
     'nonempty-source',
     'invalid-journal',
     'replaced-target',
@@ -127,7 +135,7 @@ export async function verifyMacosLogStartup({ resources, executor, environment, 
     )
     const result = JSON.parse(stdout)
     assert.equal(result.state, state)
-    assert.equal(result.recovered, state === 'missing-bridge' || state === 'empty-source')
+    assert.equal(result.started, true)
     assert.equal(result.journalPreserved, true)
     assert.equal(result.logIdentityPreserved, true)
     assert.equal(result.logsPreserved, true)

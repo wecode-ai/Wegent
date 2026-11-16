@@ -52,7 +52,7 @@ The provider `base_url` may be a service root, a versioned API base, or a comple
 
 | Value             | Behavior                                                                                                                                                                                                                                  |
 | ----------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `auto` or omitted | Keep the existing protocol adaptation. Existing switches can still configure individual native Responses tool capabilities.                                                                                                               |
+| `auto` or omitted | Bridge custom tools, namespaces and `tool_search` to ordinary functions by default. Native capabilities require explicit configuration; provider IDs, model names and the Responses protocol do not imply support.                        |
 | `standard`        | Use ordinary function tools, bridging `tool_search`, namespace and custom tools, and restoring tool identities on the return path to Codex. Use this for Kimi Responses and other services that do not support Codex's native tool types. |
 | `passthrough`     | Replace only the model ID and authentication needed for routing. Preserve all other request business fields and stream responses without protocol rewriting. Requires an OpenAI Responses upstream.                                       |
 
@@ -83,6 +83,30 @@ Passthrough preserves the original bytes of normal upstream chunks. A read error
 
 `standard` mode advertises only client-executable function tools. It omits provider-hosted tools such as `web_search` and `image_generation`. If `tool_choice` forces a hosted tool, the proxy returns HTTP 400. `auto` and `passthrough` continue to preserve these tools.
 
+#### Portable Responses Tools
+
+All model streams share the executor's SSE framing and payload parser, including Responses tool bridging, ordinary Responses, passthrough inspection, Chat Completions, Anthropic Messages, tool history, and Harness adapters. The parser consumes LF, CRLF, and CR boundaries in stream order, keeping a split CRLF pair as one line ending. It joins every `data:` line within an event and preserves incomplete UTF-8 characters between network chunks. Responses tool dispatch and terminal detection use the JSON `type`, independently of the optional SSE `event:` field. Rewriting replaces all previous data lines while preserving event metadata. Passthrough inspection and history recording do not modify forwarded chunks.
+
+The `model-sse-parsing` desktop E2E checkpoint runs real Electron, executor, and Codex components with only the model service simulated. It covers Responses function bridging, native Responses, Chat Completions, and Anthropic Messages using multiline JSON, mixed line endings, split Chinese characters, and misleading event headers. Real Code Mode tools must write and read a file, and the successful result must reach the next model request's history. Responses tool streams stay open until the real tool result arrives, proving that complete CR-terminated frames dispatch without waiting for EOF. This is model protocol regression coverage; compatibility with real provider services remains unverified.
+
+Local model interfaces, cloud models, stand-ins, and configured Codex providers default to `tool_profile: "function"`, with native `tool_search` and namespaces disabled. Existing configurations without profile or capability fields use the same defaults without recreating models. An explicit `tool_profile: "custom"` preserves native custom tools. Local `codex_tool_compatibility: "native"` or cloud capability switches enable native namespaces and tool search. Cloud `codex_request_mode: "passthrough"` preserves the complete native request; `standard` always bridges tools to functions. Defaults do not depend on provider IDs, model names, or a Responses endpoint claiming Codex-specific capabilities.
+
+`tool_profile: "function"` also applies to custom tools inside native namespaces. With `native_namespace_tools` enabled, the proxy preserves the namespace and its description while converting custom tools such as `exec` into function tools with a string `input` parameter. Historical calls, outputs, and forced tool choices use the same protocol. When native namespaces are disabled, the proxy flattens namespaces and keeps the same input wrapper for their custom tools. SSE responses restore the original tool name, namespace, and raw input so tools sharing a name remain distinct.
+
+Built-in tool types inside namespaces return a request validation error instead of crashing the proxy. Existing function definitions with an omitted type retain their previous conversion behavior.
+
+The `responses-tool-compatibility` desktop E2E checkpoint runs real Electron, Backend, executor, and Codex components with only the model service simulated. The simulator rejects unconverted custom `exec`, checks function arguments, and requires local and cloud models to execute real commands, read a file after reload, and preserve tool history. It also verifies explicit native configuration. This is model protocol regression coverage; compatibility with real provider services remains unverified.
+
+#### Legacy DeepSeek configurations
+
+Changing defaults alone cannot fix rejected `exec` calls when a legacy configuration already
+stores `tool_profile: "custom"`. Direct `api.deepseek.com` Responses requests in `auto` mode
+still follow its supported tool capabilities: preserve native `apply_patch` and reversibly adapt
+other custom tools, namespaces, and client tool search to function tools. Configurations without
+a legacy profile use the shared function default above. Match the actual endpoint, without
+guessing model names or retrying failed requests. Explicit `standard` and `passthrough` modes
+retain precedence; other gateways use the shared policy.
+
 #### Kimi K3 Chat Completions Compatibility
 
 When a cloud Model CRD uses OpenAI Chat Completions and its provider model name contains the case-insensitive substring `kimi-k3`, such as `moonshot-kimi-k3`, Wework automatically selects the `wework-kimi-k3` Codex model catalog with a 1,048,576-token context window if the Model CRD does not configure `codex_catalog_model_id` or `codexCatalogModelId`. An explicitly configured catalog always takes precedence over automatic Kimi K3 selection. Codex continues to use the Responses protocol internally, while the executor translates requests to Chat Completions at the boundary and applies the following Kimi K3 compatibility behavior:
@@ -96,13 +120,26 @@ An explicit Anthropic Messages configuration is never overridden. Operators must
 
 When a task runs on a cloud or remote device, the model selector also shows local models configured on the current desktop. On first use or after a configuration change, Wework asks for confirmation, synchronizes the custom Codex model catalog to the target Executor, restarts its Codex app-server while the device is idle, verifies that the model was loaded, and only then sends the task. Built-in Codex models and cloud Model CRDs continue to work directly with either local or cloud execution.
 
-Generic cloud models can reuse the Wework GPT 5.6 compatibility catalog as a capability baseline while cloud model metadata overrides the context window. Compatibility entries must not impose a fixed `max_context_window` on the cloud model; the field remains unset so the runtime uses the cloud-provided window configuration. Official Codex GPT 5.6 catalog entries retain their explicit maximum window.
+Generic cloud models use the `wework-gpt-6.1-sol` shared compatibility catalog through the same catalog and cloud-model flow previously used by `wework-gpt-5.6-sol`, without requiring an official account. The shared profile preserves the previous protocol capabilities without forcing reasoning levels or enabling official-only code mode or Responses Lite. Cloud model metadata can override the context window; `max_context_window` stays unset so the compatibility profile does not cap it. Official Codex models retain their own capabilities and window limits.
 
 ### Model Rate-Limit Retries
 
 When the upstream has not started a response stream and the model service returns HTTP `429 Too Many Requests`, the executor Codex compatibility proxy automatically resends the same model request. It retries at most five times, waiting 1, 5, 10, 30, and 60 seconds between attempts.
 
 If the upstream returns a standard `Retry-After` header, the proxy uses that delay instead, capped at 60 seconds for one wait. Non-429 responses do not activate this policy. After the retry budget is exhausted, the proxy returns the final 429 status and error body to Codex. A stream that has already started is never replayed by this mechanism, preventing duplicate generation or tool execution.
+
+### Retry Status
+
+When Codex or the model proxy reports a retry event, the conversation immediately
+shows “Retrying automatically…” in its processing header instead of showing only
+thinking status. Rate-limit waits retain their dedicated “Model rate limited.
+Waiting to retry…” message. Output recovery or task completion clears the retry
+status. Sustained interruptions still show detailed reconnecting guidance, with
+a proxy settings action for ChatGPT models.
+
+This status depends on runtime events. Request-level retries that Codex does not
+report, including its hidden first WebSocket retry, cannot yet be identified by
+the UI.
 
 ### Codex Direct-Provider Overload Recovery
 
@@ -115,10 +152,12 @@ seconds.
 Recovery submits an empty native `turn/start` input against the saved history. It
 does not replay the original task, attachments, user-message identity, or already
 merged additional context. Completed tool results remain in history. The task
-stays running and exposes reconnecting status during recovery; cancellation stops
-the wait immediately, and exhausted recovery returns the final failure. Quota,
-authentication, context-window, and subagent errors, as well as errors already
-being retried by Codex, do not trigger this policy.
+stays running and exposes reconnecting status during recovery. Before the retry
+request starts, the executor emits a recovery event so open views clear that
+turn's terminal error state instead of showing a stale failure card. Cancellation
+stops the wait immediately, and exhausted recovery returns the final failure.
+Quota, authentication, context-window, and subagent errors, as well as errors
+already being retried by Codex, do not trigger this policy.
 
 The executor persists the IDs of failed turns that entered recovery. Native and
 cached transcript reads clear only those turns' terminal error state while

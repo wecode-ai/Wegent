@@ -1,8 +1,11 @@
+// @vitest-environment node
+
 import { describe, expect, test } from 'vitest'
 import type { RuntimeTaskSummary } from '@/types/api'
 import {
   isRuntimePaneTranscriptConfirmedIdle,
   isRuntimeTaskExecutionRunning,
+  isRuntimeTurnRunningStatus,
   normalizeRuntimeTaskSummary,
   projectRuntimePaneTranscript,
   runtimeTaskReconciliationSnapshot,
@@ -20,6 +23,18 @@ function task(overrides: Partial<RuntimeTaskSummary> = {}): RuntimeTaskSummary {
 }
 
 describe('runtimeTaskProjection', () => {
+  test.each(['active', 'running', 'in_progress', 'pending', 'streaming'])(
+    'recognizes %s as a live turn instead of a completed reply',
+    status => {
+      expect(isRuntimeTurnRunningStatus(status)).toBe(true)
+    }
+  )
+  test.each(['done', 'failed', 'cancelled', null, undefined])(
+    'does not treat %s as a live turn',
+    status => {
+      expect(isRuntimeTurnRunningStatus(status)).toBe(false)
+    }
+  )
   test('accepts completion when its timestamp cannot establish snapshot ordering', () => {
     const active = task({ running: true, updatedAt: 1_786_676_410_200 })
     expect(

@@ -65,7 +65,7 @@ class TestResolveBindModelPointer:
         kind = _model_kind("direct-model", spec)
 
         with patch(
-            "app.services.chat.config.model_resolver._find_model_with_namespace"
+            "app.services.chat.config.model_lookup._find_model_with_namespace"
         ) as mock_find:
             result_kind, result_spec = _resolve_bind_model_pointer(
                 db=MagicMock(), user_id=1, model_kind=kind, model_spec=spec
@@ -122,7 +122,7 @@ class TestResolveBindModelPointer:
         db = MagicMock()
 
         with patch(
-            "app.services.chat.config.model_resolver._find_model_with_namespace"
+            "app.services.chat.config.model_lookup._find_model_with_namespace"
         ) as mock_find:
             mock_find.return_value = (target_kind, target_spec)
             result_kind, result_spec = _resolve_bind_model_pointer(
@@ -146,7 +146,7 @@ class TestResolveBindModelPointer:
         kind_c = _model_kind("model-c", spec_c)
 
         with patch(
-            "app.services.chat.config.model_resolver._find_model_with_namespace"
+            "app.services.chat.config.model_lookup._find_model_with_namespace"
         ) as mock_find:
             mock_find.side_effect = [(kind_b, spec_b), (kind_c, spec_c)]
             result_kind, result_spec = _resolve_bind_model_pointer(
@@ -163,7 +163,7 @@ class TestResolveBindModelPointer:
         pointer_kind = _model_kind("leader-editor-model", pointer_spec)
 
         with patch(
-            "app.services.chat.config.model_resolver._find_model_with_namespace"
+            "app.services.chat.config.model_lookup._find_model_with_namespace"
         ) as mock_find:
             mock_find.return_value = (None, None)
             with pytest.raises(ValueError) as exc_info:
@@ -185,7 +185,7 @@ class TestResolveBindModelPointer:
         kind_b = _model_kind("model-b", spec_b)
 
         with patch(
-            "app.services.chat.config.model_resolver._find_model_with_namespace"
+            "app.services.chat.config.model_lookup._find_model_with_namespace"
         ) as mock_find:
             mock_find.side_effect = [(kind_b, spec_b), (kind_a, spec_a)]
             with pytest.raises(ValueError):
@@ -199,7 +199,7 @@ class TestResolveBindModelPointer:
         kinds = [_model_kind(f"model-{i}", specs[i]) for i in range(10)]
 
         with patch(
-            "app.services.chat.config.model_resolver._find_model_with_namespace"
+            "app.services.chat.config.model_lookup._find_model_with_namespace"
         ) as mock_find:
             mock_find.side_effect = [(kinds[i], specs[i]) for i in range(1, 10)]
             with pytest.raises(ValueError):
@@ -331,6 +331,7 @@ class TestResolveModelForBotWithPointer:
     """End-to-end (mocked DB) reproduction of the qiqi10-style incident."""
 
     def test_pointer_model_whitelist_blocks_disallowed_override(self):
+        """Reject a bound model override outside the configured model whitelist."""
         bot = _make_bot(model_ref_name="test-pointer-model")
         pointer_spec = {
             "modelConfig": {
@@ -349,7 +350,7 @@ class TestResolveModelForBotWithPointer:
         pointer_kind = _model_kind("test-pointer-model", pointer_spec)
 
         with patch(
-            "app.services.chat.config.model_resolver._find_model_with_namespace"
+            "app.services.chat.config.model_lookup._find_model_with_namespace"
         ) as mock_find:
             mock_find.return_value = (pointer_kind, pointer_spec)
             with pytest.raises(ValueError, match="disallowed-test-model"):
@@ -393,7 +394,7 @@ class TestResolveModelForBotWithPointer:
         target_kind = _model_kind("wecode-claude-weibo", target_spec)
 
         with patch(
-            "app.services.chat.config.model_resolver._find_model_with_namespace"
+            "app.services.chat.config.model_lookup._find_model_with_namespace"
         ) as mock_find:
             mock_find.side_effect = [
                 (pointer_kind, pointer_spec),
@@ -441,7 +442,7 @@ class TestResolveModelForBotWithPointer:
         target_kind = _model_kind("wecode-claude-weibo", target_spec)
 
         with patch(
-            "app.services.chat.config.model_resolver._find_model_with_namespace"
+            "app.services.chat.config.model_lookup._find_model_with_namespace"
         ) as mock_find:
             mock_find.side_effect = [
                 (pointer_kind, pointer_spec),
@@ -464,7 +465,7 @@ class TestResolveModelForBotWithPointer:
         pointer_kind = _model_kind("leader-editor-model", pointer_spec)
 
         with patch(
-            "app.services.chat.config.model_resolver._find_model_with_namespace"
+            "app.services.chat.config.model_lookup._find_model_with_namespace"
         ) as mock_find:
             mock_find.side_effect = [(pointer_kind, pointer_spec), (None, None)]
             with pytest.raises(ValueError):
@@ -478,7 +479,7 @@ class TestResolveModelForBotWithPointer:
         empty_kind = _model_kind("empty-model", empty_spec)
 
         with patch(
-            "app.services.chat.config.model_resolver._find_model_with_namespace"
+            "app.services.chat.config.model_lookup._find_model_with_namespace"
         ) as mock_find:
             mock_find.return_value = (empty_kind, empty_spec)
             with pytest.raises(ValueError):

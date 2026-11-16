@@ -26,6 +26,31 @@ def stable_plugin(plugin: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def current_legacy_plugin_ids(
+    db: Session, user_id: int, result: DeviceCapabilitySyncResult
+) -> set[int]:
+    """Fence legacy acknowledgements with the exact payload sent before the RPC."""
+    from app.services.device.capability_sync_service import (
+        device_capability_sync_service,
+    )
+
+    expected = {
+        item["installed_plugin_id"]: stable_plugin(item)
+        for item in (result.desired_plugin_snapshot or {}).get("plugins", [])
+    }
+    current = device_capability_sync_service._load_installed_plugins(
+        db,
+        user_id=user_id,
+        device_id=result.device_id,
+        only_ids=sorted(expected),
+    )
+    return {
+        item["installed_plugin_id"]
+        for item in current
+        if stable_plugin(item) == expected.get(item["installed_plugin_id"])
+    }
+
+
 def record_versioned_result(
     recorder: Any, db: Session, user_id: int, result: DeviceCapabilitySyncResult
 ) -> None:

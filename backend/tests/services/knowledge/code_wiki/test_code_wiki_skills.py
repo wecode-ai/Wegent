@@ -15,7 +15,9 @@ from threading import Thread
 
 import yaml
 
-SKILLS = Path(__file__).resolve().parents[4] / "init_data" / "skills"
+SKILLS = (
+    Path(__file__).resolve().parents[4].parent / "backend-rs" / "init_data" / "skills"
+)
 
 
 def _skill(name: str) -> tuple[dict, str]:

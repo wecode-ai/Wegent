@@ -6,6 +6,7 @@ import { MobileDrawer } from '@/components/layout/MobileDrawer'
 import { WorkbenchSearchDialog } from '@/components/layout/WorkbenchSearchDialog'
 import { requestProjectCreateMode } from '@/components/layout/workbenchShellEvents'
 import { DeviceSection } from '@/components/settings/ConnectionsSettingsPage'
+import { Button } from '@/components/ui/button'
 import { useDesktopSidebarCollapsed } from '@/components/layout/useDesktopSidebarCollapsed'
 import { isElectronRuntime } from '@/lib/runtime-environment'
 import { useAuth } from '@/features/auth/useAuth'
@@ -41,6 +42,7 @@ function getCloudProjectWorkspace(
   )
 }
 
+/** Keep remote device management separate from the desktop app's local recovery. */
 export function CloudWorkPage() {
   const { t } = useTranslation('common')
   const { logout } = useAuth()
@@ -64,7 +66,6 @@ export function CloudWorkPage() {
     archiveChatConversations,
     selectStandaloneDevice,
     openStandaloneWorkspace,
-    getRemoteDeviceStartupCommand,
     refreshDevices,
     createProject,
     createGitWorkspaceProject,
@@ -79,6 +80,7 @@ export function CloudWorkPage() {
     getProjectWorkspaceRoot,
     listDeviceDirectories,
     createDeviceDirectory,
+    cloneGitRepository,
   } = useWorkbench()
 
   useEffect(() => {
@@ -163,6 +165,7 @@ export function CloudWorkPage() {
             collapsed={sidebarCollapsed}
             onToggleSidebar={() => setSidebarCollapsed(!sidebarCollapsed)}
             onNewChat={handleNewChat}
+            onOpenStandIn={isDesktop ? () => navigateTo('/stand-in') : undefined}
             onStartStandaloneChat={handleStartStandaloneChat}
             onOpenSearch={() => setSearchOpen(true)}
             onSelectProject={handleSelectProject}
@@ -175,13 +178,13 @@ export function CloudWorkPage() {
             onArchiveChatConversations={archiveChatConversations}
             onOpenStandaloneWorkspace={openStandaloneWorkspace}
             onSelectStandaloneDevice={selectStandaloneDevice}
-            onGetRemoteDeviceStartupCommand={getRemoteDeviceStartupCommand}
             onRefreshDevices={refreshDevices}
             onUpdateProjectName={updateProjectName}
             onRemoveProject={removeProject}
             onGetDeviceHomeDirectory={getDeviceHomeDirectory}
             onListDeviceDirectories={listDeviceDirectories}
             onCreateDeviceDirectory={createDeviceDirectory}
+            onCloneGitRepository={cloneGitRepository}
             onOpenSettings={options =>
               navigateTo(options?.settingsPage ? `/settings/${options.settingsPage}` : '/settings')
             }
@@ -276,6 +279,26 @@ export function CloudWorkPage() {
                     {t('workbench.cloud_work_add_device', '添加设备')}
                   </button>
                 </div>
+                {isDesktop && (
+                  <div
+                    data-testid="cloud-work-local-device-guidance"
+                    className="mb-4 flex flex-col items-start gap-2 md:flex-row md:items-center md:gap-3"
+                  >
+                    <p className="min-w-0 text-sm text-text-secondary md:flex-1">
+                      {t('workbench.cloud_work_local_device_guidance')}
+                    </p>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      className="min-h-11 md:min-h-8"
+                      data-testid="cloud-work-local-version-button"
+                      onClick={() => navigateTo('/settings/about')}
+                    >
+                      {t('workbench.cloud_work_local_version')}
+                    </Button>
+                  </div>
+                )}
                 {cloudDevices.length > 0 ? (
                   <DeviceSection
                     title={t('workbench.cloud_work_available_devices', '云端与远程设备')}
@@ -326,7 +349,7 @@ export function CloudWorkPage() {
                           type="button"
                           data-testid={`cloud-work-project-${projectId}`}
                           onClick={() => handleSelectProject(projectId)}
-                          className="flex min-h-12 w-full items-center gap-3 rounded-lg px-3 py-2 text-left hover:bg-muted focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-blue-500"
+                          className="flex min-h-12 w-full items-center gap-3 rounded-lg px-3 py-2 text-left hover:bg-muted focus-visible:outline-none keyboard:focus-visible:ring-1 keyboard:focus-visible:ring-blue-500"
                         >
                           <FolderGit2 className="h-4 w-4 shrink-0 text-text-secondary" />
                           <span className="min-w-0 flex-1">

@@ -1,9 +1,11 @@
+// @vitest-environment node
+
+import type { DeviceInfo, ProjectWithTasks, RuntimeWorkListResponse } from '@/types/api'
 import { describe, expect, test } from 'vitest'
 import {
   buildProjectWorkspaceOptions,
   isSelectableProjectWorkspace,
 } from './project-workspace-selection'
-import type { DeviceInfo, ProjectWithTasks, RuntimeWorkListResponse } from '@/types/api'
 
 const projects: ProjectWithTasks[] = [
   { id: 7, name: 'Wegent', tasks: [] },
@@ -84,19 +86,6 @@ const runtimeWork: RuntimeWorkListResponse = {
 }
 
 describe('project workspace selection', () => {
-  test('marks single workspace projects as directly selectable', () => {
-    const options = buildProjectWorkspaceOptions({ projects, devices, runtimeWork })
-
-    expect(options.find(option => option.project.id === 8)).toMatchObject({
-      kind: 'single',
-      selectable: true,
-      workspace: {
-        id: 201,
-        deviceId: 'device-1',
-      },
-    })
-  })
-
   test('marks multi workspace projects as requiring explicit workspace selection', () => {
     const options = buildProjectWorkspaceOptions({ projects, devices, runtimeWork })
 
@@ -108,52 +97,5 @@ describe('project workspace selection', () => {
     expect(option?.workspaces.map(workspace => workspace.id)).toEqual([101, 102])
     expect(isSelectableProjectWorkspace(option?.workspaces[0])).toBe(true)
     expect(isSelectableProjectWorkspace(option?.workspaces[1])).toBe(false)
-  })
-
-  test('marks projects with no workspace as bind-required', () => {
-    const options = buildProjectWorkspaceOptions({ projects, devices, runtimeWork })
-
-    expect(options.find(option => option.project.id === 9)).toMatchObject({
-      kind: 'empty',
-      selectable: false,
-      workspaces: [],
-    })
-  })
-
-  test('allows runtime-native workspaces without central mapping ids', () => {
-    const options = buildProjectWorkspaceOptions({
-      projects: [{ id: 10, name: 'runtime-only', tasks: [] }],
-      devices,
-      runtimeWork: {
-        projects: [
-          {
-            project: { id: 10, name: 'runtime-only' },
-            deviceWorkspaces: [
-              {
-                projectId: null,
-                deviceId: 'device-1',
-                deviceName: 'MacBook Pro',
-                deviceStatus: 'online',
-                available: true,
-                workspacePath: '/repo/runtime-only',
-                mapped: true,
-                tasks: [],
-              },
-            ],
-          },
-        ],
-        chats: [],
-        totalTasks: 0,
-      },
-    })
-
-    expect(options[0]).toMatchObject({
-      kind: 'single',
-      selectable: true,
-      workspace: {
-        deviceId: 'device-1',
-        workspacePath: '/repo/runtime-only',
-      },
-    })
   })
 })

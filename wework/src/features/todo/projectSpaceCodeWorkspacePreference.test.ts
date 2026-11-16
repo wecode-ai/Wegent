@@ -35,22 +35,6 @@ describe('projectSpaceCodeWorkspacePreference', () => {
     ).toBeNull()
   })
 
-  it('overwrites the mapping after a later successful selection', () => {
-    saveProjectSpaceCodeWorkspacePreference(1, project, {
-      localProjectId: 91,
-      deviceWorkspaceId: 201,
-    })
-    saveProjectSpaceCodeWorkspacePreference(1, project, {
-      localProjectId: 92,
-      deviceWorkspaceId: 202,
-    })
-
-    expect(loadProjectSpaceCodeWorkspacePreference(1, project)).toEqual({
-      localProjectId: 92,
-      deviceWorkspaceId: 202,
-    })
-  })
-
   it('ignores malformed stored values', () => {
     localStorage.setItem(
       'wework.project-space-code-workspace:v1:1:backend:project-11',

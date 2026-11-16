@@ -24,7 +24,7 @@ const KEY_TYPE_SERVICE: &str = "service";
 /// The source `get_admin_user` runs after `get_current_user`; a session that
 /// is not an administrator is rejected with `403`. Authentication failures
 /// keep the standard session 401 mapping.
-struct AdminUser(UserRow);
+pub(crate) struct AdminUser(pub(crate) UserRow);
 
 /// The challenge marker that distinguishes the admin rejection from a session
 /// authentication failure inside `reject`.

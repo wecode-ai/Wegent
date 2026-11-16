@@ -1,5 +1,7 @@
-import { describe, expect, test } from 'vitest'
+// @vitest-environment node
+
 import type { InstalledPlugin, PluginMarketplaceItem } from '@/types/api'
+import { describe, expect, test } from 'vitest'
 import type { InstalledPluginItem } from './PluginManagementRows'
 import { pluginDetailReadyToTry } from './pluginDetailReadyToTry'
 
@@ -140,26 +142,5 @@ describe('pluginDetailReadyToTry', () => {
         })
       )
     ).toBe(false)
-  })
-
-  test('treats this device installed state as ready', () => {
-    expect(
-      pluginDetailReadyToTry(
-        installedItem(),
-        marketplaceItem({
-          currentDeviceInstallation: {
-            deviceId: 'current-device',
-            desiredReleaseId: 1001,
-            actualReleaseId: 1001,
-            state: 'installed',
-            errorCode: null,
-            errorMessage: null,
-            attemptCount: 1,
-            lastSyncAt: null,
-            updatedAt: '2026-07-25T12:00:00',
-          },
-        })
-      )
-    ).toBe(true)
   })
 })

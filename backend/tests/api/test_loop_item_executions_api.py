@@ -18,7 +18,6 @@ from app.models.delivery import (
     CloudProject,
     Delivery,
     LoopItem,
-    LoopItemTaskBinding,
     ProjectChatAgent,
 )
 from app.models.kind import Kind
@@ -30,7 +29,9 @@ from app.schemas.project_chat import (
     LoopItemExecutionAssignmentStatus,
     LoopItemExecutionBatchCreate,
     LoopItemExecutionBatchItem,
-    LoopItemExecutionStatusQuery,
+)
+from app.services.collaboration_human_assignments import (
+    collaboration_human_assignment_status,
 )
 from tests.utils.collaboration import authorize_project, authorize_project_agent
 
@@ -347,9 +348,9 @@ def test_collaboration_batch_records_activity_and_persists_human_fact(
     assignments = assignment_activity.metadata_json["dispatch_assignments"]
     assert assignments[0]["agent_name"] == "Worker"
     assert assignments[1]["human_user_name"] == test_user.user_name
-    from app.services.collaboration_human_assignments import _round_human_task_binding
+    from app.services.collaboration_human_assignments import _round_human_task_bindings
 
-    round_binding = _round_human_task_binding(test_db, parent)
+    round_binding = _round_human_task_bindings(test_db, [parent]).get(parent.id)
     assert round_binding == {
         "humanAssignmentId": human_assignment_id,
         "dispatchId": "dispatch-1",
@@ -460,21 +461,20 @@ def test_collaboration_batch_records_activity_and_persists_human_fact(
     test_db.add(delivery)
     test_db.commit()
     monkeypatch.setattr(
-        loop_item_executions.collaboration_human_assignment_status.__globals__[
-            "delivery_service"
-        ],
+        collaboration_human_assignment_status.__globals__["delivery_service"],
         "read_markdown",
         lambda _delivery: "Business evidence delivered.",
     )
-    status_result = loop_item_executions.execution_statuses(
-        project.id,
-        LoopItemExecutionStatusQuery(
-            loop_item_id=parent.id,
-            human_assignment_ids=[human_assignment_id],
-        ),
-        test_db,
-        test_user,
-    )
+    status_result = {
+        "items": [
+            collaboration_human_assignment_status(
+                test_db,
+                project_id=project.id,
+                issue_id=parent.id,
+                human_assignment_id=human_assignment_id,
+            )
+        ]
+    }
 
     assert status_result["items"][0]["assignee_type"] == "human"
     assert status_result["items"][0]["work_id"] == (

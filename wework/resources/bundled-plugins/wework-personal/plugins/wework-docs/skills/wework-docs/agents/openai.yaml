@@ -1,0 +1,4 @@
+interface:
+  display_name: 'Wework Docs'
+  short_description: '查询 Wework 的使用方法、配置、插件、设备与故障排查文档。'
+  default_prompt: '使用 $wework-docs 根据随应用提供的文档回答我的 Wework 使用问题。'

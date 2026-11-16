@@ -1,4 +1,6 @@
+import { selectedToolCall } from './model-tool-calls.mjs'
 import {
+  codexRequestMetadata,
   customToolCall,
   functionCall,
   requestAdvertisesProgrammaticExec,
@@ -21,21 +23,39 @@ function programmaticCommand(request, callId, method, args) {
     'text(result.output)',
   ].join('\n')
   const exec = selectProgrammaticExec(request, program)
-  const event = customToolCall(callId, exec.name, exec.input)
-  event.item.namespace = 'functions'
-  return [event]
+  return selectedToolCall(callId, { codeMode: exec })
 }
 
-export function shellCommandResponse(request, callId, command, workspacePath) {
+export function shellCommandResponse(request, callId, command, workspacePath, options = {}) {
   if (requestAdvertisesProgrammaticExec(request)) {
     return programmaticCommand(request, callId, 'exec_command', {
       cmd: command,
       workdir: workspacePath,
       yield_time_ms: 1000,
+      ...options,
     })
   }
   const tool = selectShellToolCommand(request, command, workspacePath)
-  return functionCall(callId, tool.name, tool.arguments)
+  Object.assign(tool.arguments, options)
+  return selectedToolCall(callId, tool)
+}
+
+export function shellCommandRequestDiagnostic(body) {
+  const metadata = codexRequestMetadata(body)
+  return {
+    model: body.model ?? null,
+    requestKind: metadata?.request_kind ?? null,
+    threadSource: metadata?.thread_source ?? null,
+    toolChoice: body.tool_choice ?? null,
+    tools: body.tools ?? null,
+    input: Array.isArray(body.input)
+      ? body.input.map(item => ({
+          type: item?.type ?? null,
+          role: item?.role ?? null,
+          ...(item?.type === 'additional_tools' ? { tools: item.tools } : {}),
+        }))
+      : { type: typeof body.input },
+  }
 }
 
 export function shellCommandPollResponse(request, callId, sessionId) {
@@ -44,5 +64,5 @@ export function shellCommandPollResponse(request, callId, sessionId) {
     return programmaticCommand(request, callId, 'write_stdin', args)
   }
   const tool = selectTool(request, 'write_stdin', args)
-  return functionCall(callId, tool.name, tool.arguments)
+  return selectedToolCall(callId, tool)
 }

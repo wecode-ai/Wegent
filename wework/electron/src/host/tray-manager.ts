@@ -41,6 +41,15 @@ export type TrayActivation =
   | { type: 'double-click' }
   | { type: 'menu-item'; menuItemId: string }
 
+export async function activateTrayAction(
+  action: Exclude<TrayAction, { type: 'quit-app' }>,
+  activateMainWindow: () => Promise<void>,
+  publishAction: (action: TrayAction) => void
+): Promise<void> {
+  await activateMainWindow()
+  if (action.type === 'open-settings' || action.type === 'open-task') publishAction(action)
+}
+
 export interface TrayMenuTemplateItem {
   id?: string
   label?: string

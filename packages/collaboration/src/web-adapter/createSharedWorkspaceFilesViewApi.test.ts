@@ -64,6 +64,27 @@ function createSource() {
 }
 
 describe("createSharedWorkspaceFilesViewApi", () => {
+  it("forwards attachment ownership from the Files view to native access and preview", async () => {
+    const source = createSource();
+    const api = createSharedWorkspaceFilesViewApi(source, {
+      readAccess: vi.fn(async () => new Blob(["demo"])),
+      saveTaskAttachment: vi.fn(async () => undefined),
+    });
+    const context = { projectId: "project-1", issueId: "DEMO-1" };
+
+    await api.previewTaskAttachment!("attachment-1", context);
+    await api.openTaskAttachment!("attachment-1", "demo.html", context);
+
+    expect(source.attachments.read).toHaveBeenCalledWith(
+      "attachment-1",
+      context,
+    );
+    expect(source.attachments.access).toHaveBeenCalledWith(
+      "attachment-1",
+      context,
+    );
+  });
+
   it("maps shared workspace files, deliveries, and task attachments once", async () => {
     const source = createSource();
     const api = createSharedWorkspaceFilesViewApi(source);

@@ -29,6 +29,39 @@ beforeEach(() => {
 })
 
 describe('automatic stand-in assignment notifications', () => {
+  it('retries failed delivery with backoff and stops after Executor acceptance', async () => {
+    vi.useFakeTimers()
+    const log = vi.spyOn(console, 'error').mockImplementation(() => {})
+    const { notifyAssignment, source, inbox } = fixture()
+    notifyAssignment.mockRejectedValueOnce(new Error('Executor restarting'))
+    const hook = renderHook(
+      ({ inbox }) => useStandInAssignmentNotifications(inbox, source, 'account', 7),
+      { initialProps: { inbox } }
+    )
+    try {
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(0)
+      })
+      expect(notifyAssignment).toHaveBeenCalledTimes(1)
+      hook.rerender({ inbox: { ...inbox } })
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(4_999)
+      })
+      expect(notifyAssignment).toHaveBeenCalledTimes(1)
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(1)
+      })
+      expect(notifyAssignment).toHaveBeenCalledTimes(2)
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(60_000)
+      })
+      expect(notifyAssignment).toHaveBeenCalledTimes(2)
+    } finally {
+      hook.unmount()
+      log.mockRestore()
+      vi.useRealTimers()
+    }
+  })
   it('uses the already loaded inbox and ignores repeated refreshes and read markers', async () => {
     const { notifyAssignment, source, inbox } = fixture()
     const hook = renderHook(

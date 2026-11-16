@@ -61,6 +61,7 @@ interface ChatInputProps {
   mentionTasks?: Task[]
   currentTaskId?: number | null
   enableTaskMentions?: boolean
+  onMentionMenuOpen?: () => void
   onSelectConversation?: (task: Task) => void
   // Callback when file(s) are pasted (e.g., images from clipboard)
   onPasteFile?: (files: File | File[]) => void
@@ -109,6 +110,7 @@ export default function ChatInput({
   mentionTasks = [],
   currentTaskId,
   enableTaskMentions = false,
+  onMentionMenuOpen,
   onSelectConversation,
   onPasteFile,
   hasNoTeams = false,
@@ -783,6 +785,7 @@ export default function ChatInput({
           currentTaskId={currentTaskId}
           showTeamMention={isGroupChat && Boolean(team)}
           enableTaskMentions={enableTaskMentions}
+          onOpen={onMentionMenuOpen}
           onSelect={handleMentionSelect}
           onSelectTask={handleConversationSelect}
           onClose={() => {

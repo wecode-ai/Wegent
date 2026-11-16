@@ -1,0 +1,19 @@
+Source: https://crates.io/crates/tf-rust-socketio/0.9.2
+Repository: https://github.com/A2C-SMCP/tf-rust-socketio
+License: MIT (see LICENSE)
+
+The published source is retained with a shared monotonic acknowledgement ID
+allocator replacing random IDs in both clients. IDs are never reused by cloned
+clients; exhaustion fails closed.
+The Executor library test concurrent_calls_keep_unique_ack_ids_and_receive_their_own_response
+checks 1,000 outstanding requests and reverse-order replies in GitHub CI.
+
+Cargo.toml omits upstream example targets, whose files are not vendored.
+No registry credentials, generated outputs, or local configuration are included.
+
+Original crates.io SHA-256: a0ea53b568f32be34b573db31e16afad8b2613b2d3134ebdec505776fde5b59e
+One upstream documentation line also has trailing whitespace removed.
+
+ACK registration also prunes expired callbacks and releases failed sends in
+both clients. The asynchronous binary reader returns IncompletePacket at EOF.
+Executor transport tests cover captured-state release and transport-close delivery.

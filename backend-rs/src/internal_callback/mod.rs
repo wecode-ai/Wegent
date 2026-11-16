@@ -14,17 +14,27 @@
 //! streaming state up and publishes `TaskCompletedEvent`. [`completion`] owns
 //! that subsystem; the wrapped emitter's `chat:done` and `task:status` frames
 //! are emitted from here, in the source's order.
-mod channel;
+pub(crate) mod block_frames;
+pub(crate) mod channel;
 pub(crate) mod completion;
+pub(crate) mod dingtalk_card;
+pub(crate) mod dingtalk_stream;
 pub(crate) mod emitter;
 pub(crate) mod event;
 pub(crate) mod parser;
-mod pipeline;
-pub(crate) mod py_json;
+pub(crate) mod pipeline;
+pub(crate) mod recovery;
+pub(crate) use wegent_python_compat::py_json;
 pub(crate) mod session;
 mod socketio;
+pub(crate) use session::publish_terminal_callback;
+pub(crate) use socketio::publish_terminal_emit;
+pub(crate) mod status_frames;
 
 pub(crate) use session::is_cancelled;
+pub(crate) use socketio::{
+    publish_chat_start, publish_emit_in_room, publish_emit_in_room_skipping, publish_task_created,
+};
 
 #[cfg(test)]
 mod tests;
@@ -82,7 +92,7 @@ async fn handle_callback(
     let request = parse_request(&body)?;
 
     let parser = parser::shared();
-    let Some(mut event) = parser
+    let Some(event) = parser
         .parse(
             request.task_id,
             request.subtask_id,
@@ -95,16 +105,68 @@ async fn handle_callback(
         return Ok(CallbackResponse::skipped());
     };
 
+    process_execution_event(
+        state,
+        event,
+        request.executor_name.as_deref(),
+        request.executor_namespace.as_deref(),
+    )
+    .await?;
+    Ok(CallbackResponse::ok())
+}
+
+/// Apply one executor event through the shared persistence and notification path.
+pub(crate) async fn process_execution_event(
+    state: &AppState,
+    event: event::ExecutionEvent,
+    executor_name: Option<&str>,
+    executor_namespace: Option<&str>,
+) -> Result<(), FastApiError> {
+    process_event(state, event, (executor_name, executor_namespace), false).await
+}
+
+pub(crate) async fn process_background_shell_event(
+    state: &AppState,
+    event: event::ExecutionEvent,
+) -> Result<(), FastApiError> {
+    process_event(
+        state,
+        event,
+        (Some("inprocess-chat"), Some("standalone")),
+        true,
+    )
+    .await
+}
+
+/// Queue a locally generated failure so a worker can retry its terminal write.
+pub(crate) async fn process_dispatch_failure(
+    state: &AppState,
+    event: event::ExecutionEvent,
+) -> Result<(), FastApiError> {
+    process_event(state, event, (None, None), true).await
+}
+
+async fn process_event(
+    state: &AppState,
+    mut event: event::ExecutionEvent,
+    executor: (Option<&str>, Option<&str>),
+    defer_advance: bool,
+) -> Result<(), FastApiError> {
+    let terminal_status = completion::terminal_status(&event.event_type);
     let Some(redis) = state.redis.as_ref() else {
-        // The source tolerates an unavailable Redis by swallowing the cache
-        // errors and still returning `ok`.
-        return Ok(CallbackResponse::ok());
+        if terminal_status.is_some() {
+            tracing::error!(
+                task_id = event.task_id,
+                subtask_id = event.subtask_id,
+                "terminal callback requires Redis"
+            );
+            return Err(FastApiError::internal());
+        }
+        return Ok(());
     };
 
-    let terminal_status = completion::terminal_status(&event.event_type);
-
-    let mut emitter =
-        StatusUpdatingEmitter::new(redis.to_owned(), request.task_id, request.subtask_id);
+    prepare_interactive_form_event(&state.interactive_form, &mut event).await;
+    let mut emitter = StatusUpdatingEmitter::new(redis.to_owned(), event.task_id, event.subtask_id);
     if terminal_status.is_none()
         && let Err(error) = emitter.emit(&mut event).await
     {
@@ -113,60 +175,188 @@ async fn handle_callback(
     emitter.close().await;
 
     if let Some(status) = terminal_status {
-        let ctx = completion::Completion {
-            mysql: &state.mysql,
+        return completion::with_delivery_lock(
             redis,
-            tables: tables(state),
-            executor_manager: &state.executor_manager,
-        };
-        let (final_result, user_id) = completion::complete_terminal(
-            &ctx,
-            request.task_id,
-            request.subtask_id,
-            status,
-            event.result.as_ref(),
-            event.error.as_deref(),
-            event.error_code.as_deref(),
-            request.executor_name.as_deref(),
-            request.executor_namespace.as_deref(),
+            event.subtask_id,
+            completion::Delivery::Callback,
+            FastApiError::internal,
+            Box::pin(deliver_terminal_callback(
+                state,
+                redis,
+                &mut event,
+                status,
+                executor,
+                defer_advance,
+            )),
         )
         .await;
-        let advance = if status == "COMPLETED" {
-            state
-                .task_store
-                .advance_pipeline_stage(&state.mysql, request.task_id, request.subtask_id)
-                .await
-                .map_err(|error| {
-                    tracing::error!(%error, "pipeline advancement failed");
-                    FastApiError::internal()
-                })?
-        } else {
-            None
-        };
-        let current_status = pipeline::task_status(state, request.task_id).await?;
-        let result = final_result
-            .or_else(|| event.result.clone())
-            .unwrap_or_else(|| serde_json::Value::Object(serde_json::Map::new()));
-        event.result = Some(result.clone());
-        // `WebSocketResultEmitter.emit`'s DONE branch: `chat:done` then
-        // `task:status`.
-        if let Err(error) =
-            emitter::emit_done_frames(redis, &event, user_id, &result, current_status.as_deref())
-                .await
-        {
-            tracing::warn!(%error, "callback done frames failed");
-        }
-        if let Some(advance) = advance {
-            pipeline::dispatch_next(state, advance).await?;
-        }
     }
 
-    if let Err(error) = session::publish_callback_event(redis, request.subtask_id, &event).await {
+    if let Err(error) = session::publish_callback_event(redis, event.subtask_id, &event).await {
         tracing::warn!(%error, "callback channel publish failed");
     }
-    channel::forward_event_to_channel_callbacks(redis, request.task_id, &event).await;
+    channel::forward_event_to_channel_callbacks(redis, event.task_id, &event).await;
+    Ok(())
+}
 
-    Ok(CallbackResponse::ok())
+async fn deliver_terminal_callback(
+    state: &AppState,
+    redis: &brz_redis::RedisService,
+    event: &mut event::ExecutionEvent,
+    status: &str,
+    executor: (Option<&str>, Option<&str>),
+    defer_advance: bool,
+) -> Result<(), FastApiError> {
+    let pending_event = defer_advance.then(|| {
+        let mut saved = event.to_value();
+        saved["executor_name"] = json!(executor.0);
+        saved["executor_namespace"] = json!(executor.1);
+        saved
+    });
+    recovery::track(
+        redis,
+        event.task_id,
+        event.subtask_id,
+        pending_event.as_ref(),
+    )
+    .await
+    .map_err(|error| {
+        tracing::warn!(%error, "could not index pending terminal delivery");
+        FastApiError::internal()
+    })?;
+    let mut source = event.to_value();
+    // The committed result is replayed from the subtask row.
+    source["result"] = Value::Null;
+    source["content"] = Value::String(String::new());
+    let ctx = completion::Completion {
+        app: Some(state),
+        mysql: &state.mysql,
+        redis,
+        tables: tables(state),
+        executor_manager: &state.executor_manager,
+    };
+    let completion = Box::pin(completion::complete_with_delivery(
+        &ctx,
+        event,
+        status,
+        executor.0,
+        executor.1,
+        completion::Delivery::Callback,
+        Some(&source),
+    ))
+    .await
+    .map_err(|_| FastApiError::internal())?;
+    let Some(completion::TerminalCompletion {
+        result: final_result,
+        user_id,
+        task,
+        replay_error,
+        replay_source,
+    }) = completion
+    else {
+        return Ok(());
+    };
+    if let Some(source) = replay_source {
+        *event = event::ExecutionEvent::from_value(&source);
+    }
+    // `_update_task_status_sync` only schedules the next turn when
+    // `get_auto_advance_info` produced an intent; every other completion,
+    // including a non-pipeline team, stops after persisting its status.
+    let advance = if task.auto_advance {
+        state
+            .task_store
+            .advance_pipeline_stage(&state.mysql, event.task_id, event.subtask_id)
+            .await
+            .map_err(|error| {
+                tracing::error!(%error, "pipeline advancement failed");
+                FastApiError::internal()
+            })?
+    } else {
+        None
+    };
+    if let Some(error) = replay_error {
+        event.error = error;
+    }
+    let result = final_result.unwrap_or_else(|| serde_json::Value::Object(serde_json::Map::new()));
+    event.result = Some(result.clone());
+    // `websocket.py:_load_context_briefs`: the DONE branch loads the
+    // completed subtask's committed briefs before `emit_chat_done`; the
+    // error/cancelled branches carry no `contexts` field.
+    let contexts = if status == "COMPLETED" {
+        match crate::responses::create::contexts::context_briefs(&state.mysql, event.subtask_id)
+            .await
+        {
+            Ok(briefs) => Some(briefs),
+            Err(error) => {
+                tracing::warn!(%error, "chat:done context briefs load failed");
+                None
+            }
+        }
+    } else {
+        None
+    };
+    // `WebSocketResultEmitter.emit`'s terminal branch: the event's frame
+    // (`chat:done` / `chat:error` / `chat:cancelled`) then `task:status`.
+    emitter::emit_terminal_frames_once(redis, event, user_id, &result, &task, contexts.as_ref())
+        .await
+        .map_err(|error| {
+            tracing::warn!(%error, "callback terminal frames failed");
+            FastApiError::internal()
+        })?;
+    let has_pending_execution = advance.is_some();
+    if let Some(advance) = advance {
+        if defer_advance {
+            // The recovery worker waits for admission outside the SSE consumer pool.
+            return Ok(());
+        }
+        Box::pin(pipeline::dispatch_next(state, advance)).await?;
+    }
+
+    session::publish_terminal_callback(redis, event)
+        .await
+        .map_err(|error| {
+            tracing::warn!(%error, "terminal callback channel publish failed");
+            FastApiError::internal()
+        })?;
+    completion::acknowledge_delivery(
+        &ctx,
+        event.task_id,
+        event.subtask_id,
+        completion::Delivery::Callback,
+    )
+    .await
+    .map_err(|error| {
+        tracing::warn!(%error, "terminal callback delivery acknowledgement failed");
+        FastApiError::internal()
+    })?;
+
+    if !has_pending_execution
+        && let Err(error) = recovery::retire(redis, event.task_id, event.subtask_id).await
+    {
+        tracing::warn!(%error, "could not retire terminal delivery from recovery index");
+    }
+    Ok(())
+}
+
+async fn prepare_interactive_form_event(
+    registry: &crate::InteractiveFormRegistry,
+    event: &mut event::ExecutionEvent,
+) {
+    if event.event_type != "tool_result"
+        || !event
+            .tool_name
+            .as_deref()
+            .unwrap_or_default()
+            .contains("interactive_form_question")
+    {
+        return;
+    }
+    if let Some(payload) = registry
+        .render_payload_from_tool_input(event.task_id, event.subtask_id, event.tool_input.as_ref())
+        .await
+    {
+        event.data.insert("render_payload".into(), payload);
+    }
 }
 
 /// The deployment's task/subtask table templates.

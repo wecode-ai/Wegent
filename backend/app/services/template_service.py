@@ -12,6 +12,7 @@ import logging
 from typing import Any, Optional
 
 from fastapi import HTTPException
+from sqlalchemy import or_
 from sqlalchemy.orm import Session
 
 from app.models.kind import Kind
@@ -43,6 +44,10 @@ class TemplateService:
 
     def create_template(self, db: Session, data: TemplateCreate) -> TemplateResponse:
         """Create a new template (admin only)."""
+        if data.category == "collaboration":
+            raise HTTPException(
+                status_code=400, detail="Use the collaboration template API"
+            )
         # Check duplicate name
         existing = (
             db.query(Kind)
@@ -50,6 +55,7 @@ class TemplateService:
                 Kind.kind == TEMPLATE_KIND,
                 Kind.name == data.name,
                 Kind.namespace == TEMPLATE_NAMESPACE,
+                Kind.user_id == TEMPLATE_USER_ID,
                 Kind.is_active == True,
             )
             .first()
@@ -102,6 +108,11 @@ class TemplateService:
         """Update an existing template (admin only)."""
         template = self._get_template_or_404(db, template_id)
 
+        if data.category == "collaboration":
+            raise HTTPException(
+                status_code=400, detail="Use the collaboration template API"
+            )
+
         spec = dict(template.json.get("spec", {}))
         if data.displayName is not None:
             spec["displayName"] = data.displayName
@@ -142,7 +153,13 @@ class TemplateService:
         """List available templates, optionally filtered by category."""
         query = db.query(Kind).filter(
             Kind.kind == TEMPLATE_KIND,
+            Kind.user_id == TEMPLATE_USER_ID,
+            Kind.namespace == TEMPLATE_NAMESPACE,
             Kind.is_active == True,
+            or_(
+                Kind.json["spec"]["category"].as_string().is_(None),
+                Kind.json["spec"]["category"].as_string() != "collaboration",
+            ),
         )
 
         templates = query.order_by(Kind.created_at.desc()).all()
@@ -198,11 +215,15 @@ class TemplateService:
             .filter(
                 Kind.id == template_id,
                 Kind.kind == TEMPLATE_KIND,
+                Kind.user_id == TEMPLATE_USER_ID,
+                Kind.namespace == TEMPLATE_NAMESPACE,
                 Kind.is_active == True,
             )
             .first()
         )
         if not template:
+            raise HTTPException(status_code=404, detail="Template not found")
+        if template.json.get("spec", {}).get("category") == "collaboration":
             raise HTTPException(status_code=404, detail="Template not found")
         return template
 

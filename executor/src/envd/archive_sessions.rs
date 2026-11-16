@@ -19,8 +19,7 @@ pub struct SessionArchiveRoots {
 impl SessionArchiveRoots {
     pub(super) fn lock_task_homes(&self, task_id: &str) -> io::Result<Vec<fs::File>> {
         use fs2::FileExt;
-        let mut homes = Vec::new();
-        collect_agent_homes(&self.workbench.join("agents"), task_id, 0, &mut homes)?;
+        let homes = task_agent_homes(&self.workbench.join("agents"), task_id)?;
         homes
             .into_iter()
             .map(|home| {
@@ -73,8 +72,7 @@ impl SessionArchiveRoots {
     pub(super) fn collect(&self, task_id: &str) -> io::Result<BTreeMap<PathBuf, PathBuf>> {
         let mut files = BTreeMap::new();
         let markers = self.executor.join("sessions").join(task_id);
-        let mut homes = Vec::new();
-        collect_agent_homes(&self.workbench.join("agents"), task_id, 0, &mut homes)?;
+        let homes = task_agent_homes(&self.workbench.join("agents"), task_id)?;
         let mut candidates = children(&markers)?;
         if self.legacy_executor.canonicalize().ok() != self.executor.canonicalize().ok() {
             for path in children(&self.legacy_executor.join("sessions").join(task_id))? {
@@ -168,7 +166,8 @@ impl SessionArchiveRoots {
             if parts.len() < 4 {
                 return None;
             }
-            let suffix: PathBuf = parts[3..].iter().collect();
+            let home_depth = if parts[3].as_os_str() == "bots" { 5 } else { 3 };
+            let suffix: PathBuf = parts.get(home_depth..)?.iter().collect();
             if suffix == Path::new("agent.json")
                 || suffix == Path::new(&format!("runtime/tasks/{task_id}.json"))
                 || suffix.starts_with("projects")
@@ -237,24 +236,22 @@ fn regular(path: &Path) -> io::Result<bool> {
     }
 }
 
-fn collect_agent_homes(
-    root: &Path,
-    task: &str,
-    depth: usize,
-    found: &mut Vec<PathBuf>,
-) -> io::Result<()> {
-    if depth == 3 {
-        if regular(&root.join(format!("runtime/tasks/{task}.json")))? {
-            found.push(root.to_owned());
+fn task_agent_homes(root: &Path, task: &str) -> io::Result<Vec<PathBuf>> {
+    match fs::symlink_metadata(root) {
+        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(Vec::new()),
+        Err(error) => return Err(error),
+        Ok(metadata) if !metadata.is_dir() => {
+            return Err(io::Error::other("Agent archive root is not a directory"));
         }
-        return Ok(());
+        _ => {}
     }
-    for child in children(root)? {
-        if fs::symlink_metadata(&child)?.is_dir() {
-            collect_agent_homes(&child, task, depth + 1, found)?;
+    let mut homes = Vec::new();
+    for home in crate::agents::agent_homes(root).map_err(io::Error::other)? {
+        if regular(&home.join(format!("runtime/tasks/{task}.json")))? {
+            homes.push(home);
         }
     }
-    Ok(())
+    Ok(homes)
 }
 
 fn collect_session(

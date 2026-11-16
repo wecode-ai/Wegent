@@ -4,7 +4,7 @@ sidebar_position: 28
 
 # Collaboration runner routing
 
-Agents store environment and model requirements. Executors claim eligible work from a durable queue. The first successful claim binds the entire Issue to one environment; comments, replies, retries, and automations retain that binding. Changing a personal default or Agent configuration never moves an existing Issue.
+Agents store environment and model requirements. Executors claim eligible work from a durable queue. The first successful claim binds the entire Issue to one environment; comments, replies, retries, and automations retain that binding. Changing a personal default or Agent configuration never moves an existing Issue. After a runner-binding rejection, users can explicitly confirm failed-assignment recovery in the environment selector; ordinary assignments never switch devices automatically. Recovery requires no prepared queued, pending-approval or running execution, and the claim transaction rechecks both occupancy and the expected original binding. Historical sessions, workspaces and credentials remain on their original devices; replying to an old thread does not restore its old Issue binding.
 
 ```mermaid
 flowchart TD
@@ -83,7 +83,11 @@ flowchart TD
 
 At execution time, `preferences.default_execution_target` applies only to unbound Issues manually invoking a `user_select` Agent without an explicit environment. Automations must persist all deferred choices in `runnerSelection` before being enabled. A collaboration group requires one runner satisfying every member's requirements, while members may use different fixed models.
 
-Sharing a personal environment preserves its owner and model account. Project pools intersect workspace and project Device grants. Revoking workspace sharing invalidates project access. Authorization always uses the triggering user; the creator's access is insufficient.
+Manual execution on the triggering user's specifically selected, active device uses current device ownership and requires no workspace sharing or project Device grant. This includes a fixed Agent policy and a fixed choice resolved from `user_select` or the personal default. Configuration does not share the device. Queue admission, notifications, claims and running permission checks retain the same owner-only boundary. Ownership changes, device deactivation and Issue execution permission revocation invalidate this authority; a saved routing snapshot grants nothing by itself.
+
+Device addresses written during a claim establish runtime affinity, not the caller's fixed selection. Unrouted legacy executions retain existing shared or valid legacy installation authorization.
+
+Other users' devices, project pools and automations still intersect workspace and project Device grants. Sharing a personal environment preserves its owner and model account. Revoking workspace sharing invalidates shared project use while retaining the owner's independent manual use. Authorization always uses the triggering user; the creator's access is insufficient.
 
 Cloud project device pickers distinguish **Add** from **Share and add**. Before sharing a personal environment, the UI explains workspace access and account/quota ownership. Clicking the action shares with the workspace before authorizing the project. Submission waits for known sharing status; already shared devices go directly to project authorization. Sharing failures stop the flow. If project authorization fails after sharing succeeds, the UI retains the actual sharing state and retries only project authorization.
 
@@ -235,25 +239,34 @@ WEGENT_AUTH_TOKEN=<returned token>
 
 `local` is the existing Executor transport mode. The environment's `deploymentLocation=cloud` denotes server deployment; `workspaceOwnerId` denotes ownership independently.
 
-The runner uses an independent machine identity, not the administrator's login. The token authorizes only its registered device; only its digest is stored. Project actions inside a task use the triggering user's authorization. Model credentials remain on the server. Codex reports its native model catalog. Claude reports explicitly configured models from `WEGENT_CLAUDE_HOME/settings.json` (default `~/.claude/settings.json`); a custom Claude endpoint requires `env.WEGENT_CLAUDE_PROVIDER_ID` and account configuration on that environment.
+The runner uses an independent machine identity, not the administrator's login. The token authorizes only its registered device; only its digest is stored. Project actions inside a task use the triggering user's authorization. Model credentials remain on the server. Codex reports its native model catalog. Claude reports explicitly configured models from `WEGENT_CLAUDE_HOME/settings.json` (default `~/.claude/settings.json`). Custom Claude services automatically derive a provider identity from the SHA-256 digest of the normalized endpoint, without additional configuration. Existing `env.WEGENT_CLAUDE_PROVIDER_ID` values remain explicit identities. Normalization removes URL usernames, passwords, and fragments while keeping protocol, port, path, and query differences distinct. Changing URL userinfo does not change the provider identity; endpoint addresses and credentials are not included in catalog reports. Account configuration still belongs to the execution environment.
 
 Revoke with `DELETE /api/v1/workspaces/{workspace_id}/runners/{environment_id}`. This disables the environment and disconnects its socket. Subsequent events and connections reject the old token. Registering again creates a new environment without migrating bound Issues.
 
 ## Queue and recovery
 
-| Condition                                     | Behavior                                                               |
-| --------------------------------------------- | ---------------------------------------------------------------------- |
-| Offline or busy                               | Remain queued with a reason; resume when available; allow cancellation |
-| Project or sharing permission revoked         | Block claiming with an authorization error                             |
-| Model removed or provider changed             | Require model/environment configuration repair                         |
-| Bound Issue conflicts with a new fixed policy | `ISSUE_RUNNER_CONFLICT`; never switch runners                          |
-| Missing manual choice                         | Return a structured selection request and replay after selection       |
-| Missing automation choice                     | Reject enabling; never read personal defaults                          |
-| Invalid local queued configuration            | Show `waiting_runtime`; repair, cancel the old execution, and resubmit |
+| Condition                                     | Behavior                                                                                                            |
+| --------------------------------------------- | ------------------------------------------------------------------------------------------------------------------- |
+| Offline or busy                               | Remain queued with a reason; resume when available; allow cancellation                                              |
+| Project or sharing permission revoked         | Block claiming with an authorization error                                                                          |
+| Model removed or provider changed             | Require model/environment configuration repair                                                                      |
+| Bound Issue conflicts with a new fixed policy | `ISSUE_RUNNER_CONFLICT` by default; explicit failure recovery may select another runner when no execution is active |
+| Missing manual choice                         | Return a structured selection request and replay after selection                                                    |
+| Missing automation choice                     | Reject enabling; never read personal defaults                                                                       |
+| Invalid local queued configuration            | Show `waiting_runtime`; repair, cancel the old execution, and resubmit                                              |
 
 Backend binds and claims within one transaction using an Issue row lock and conditional update. Local queues use SQLite `IMMEDIATE` transactions. Execution records retain the final runner, native model, account label, and configuration sources without credentials.
 
 Starting a direct local execution atomically marks its comment as running and its Issue as in progress, including continued threads. Queued replies keep the Issue in progress until the last turn finishes and moves it to review. Group manager and member executions leave Issue state to their workflow.
+
+### Recovering a failed assignment
+
+1. A rejected assignment or failed-run restart preserves the saved owner, execution history and binding, and returns an explicit recovery selection when eligible.
+2. Confirm the new environment and model, or cancel without changing the saved state. Fixed Agent/group policies and resource authorization still apply.
+3. The new execution queues for its target. Claiming locks the Issue and rechecks the expected old device, current access, model support and execution occupancy before updating the binding and claiming in one transaction.
+4. Successful work never moves automatically. Active executions, stale bindings, automation, disjoint group policies and incompatible models still prevent recovery. Replies continue on their original session devices.
+
+The existing selection carries `runner_selection.recovery_from_environment_id`, also retained in the routing snapshot. This expected-binding field grants no project or device permission.
 
 ## Storage, historical data, and verification
 

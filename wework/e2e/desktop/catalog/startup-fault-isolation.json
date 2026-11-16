@@ -1,0 +1,12 @@
+{
+  "order": 159001,
+  "scenario": "./scenarios/startup-fault-isolation.scenario.mjs",
+  "scenarioOnly": true,
+  "ci": {
+    "core": {
+      "order": 109001,
+      "shard": 1,
+      "position": 2001
+    }
+  }
+}

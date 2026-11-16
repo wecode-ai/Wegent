@@ -3,6 +3,8 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { DialogForm } from "../controls/DialogForm";
+import { TemplateCreateSection } from "../templates/TemplateCreateSection";
+import { TemplateEnvironmentSelection } from "../templates/TemplateEnvironmentSelection";
 
 import * as Popover from "@radix-ui/react-popover";
 import {
@@ -44,12 +46,6 @@ import { ModelSelector } from "../controls/ModelSelector";
 import { createCollaborationTranslator } from "../i18n";
 import { CollaborationGroupRoster } from "../platform/CollaborationGroupRoster";
 import { changeCollaborationGroupLeader } from "./collaborationGroupDraft";
-import {
-  ProjectCreateMemberPicker,
-  cacheDiscoveredMembers,
-  mergeProjectCreateMembers,
-} from "./ProjectCreateMemberPicker";
-import type { CollaborationUser } from "../types";
 import { useCollaborationPortalTheme } from "../theme";
 import type {
   ProjectCreateCollaborationGroupDraft,
@@ -60,6 +56,8 @@ import type {
   ProjectCreateModalProps,
 } from "./types";
 import { useProjectCreateController } from "./useProjectCreateController";
+import { ProjectPeoplePicker } from "./ProjectPeoplePicker";
+import type { CollaborationWorkspaceMember } from "../types";
 
 function DefaultModal({ title, children, onClose }: ProjectCreateModalProps) {
   return (
@@ -135,12 +133,7 @@ function CollaboratorToken({
       {icon}
       <span>{label}</span>
       {onRemove ? (
-        <button
-          type="button"
-          onClick={onRemove}
-          aria-label={removeLabel}
-          data-testid={testId ? `${testId}-remove` : undefined}
-        >
+        <button type="button" onClick={onRemove} aria-label={removeLabel}>
           <X aria-hidden="true" />
         </button>
       ) : null}
@@ -288,6 +281,7 @@ function CollaborationGroupWorkflow({
   );
 }
 
+/** Show template resource loading and recovery alongside the controller's submission boundary. */
 export function ProjectCreateDialog(props: ProjectCreateDialogProps) {
   const {
     targets,
@@ -300,39 +294,30 @@ export function ProjectCreateDialog(props: ProjectCreateDialogProps) {
     workspaceContext,
   } = props;
   const { state, commands } = useProjectCreateController(props);
-  const [discoveredMembers, setDiscoveredMembers] = useState<
-    CollaborationUser[]
-  >([]);
-  useEffect(() => {
-    const users =
-      suppliedResourceSetup?.members.map((member) => ({
-        id: member.user_id,
-        user_name: member.user_name,
-        email: member.email,
-      })) ?? [];
-    setDiscoveredMembers((current) => cacheDiscoveredMembers(current, users));
-  }, [suppliedResourceSetup?.members]);
-  const matchingResourceSetup =
+  const resourceSetup =
     suppliedResourceSetup?.location === state.location
       ? suppliedResourceSetup
       : undefined;
-  const resourceSetup = matchingResourceSetup
-    ? {
-        ...matchingResourceSetup,
-        members: mergeProjectCreateMembers(
-          matchingResourceSetup.members,
-          discoveredMembers,
-        ),
-      }
-    : undefined;
   const portalTheme = useCollaborationPortalTheme();
   const translate = createCollaborationTranslator(labels.locale);
   const generationComposerRef = useRef<ComposerInputHandle>(null);
   const [collaboratorPickerOpen, setCollaboratorPickerOpen] = useState(false);
+  const [addedPeople, setAddedPeople] = useState<
+    CollaborationWorkspaceMember[]
+  >([]);
   useEffect(() => {
-    if (state.projectCreated || state.saving) setCollaboratorPickerOpen(false);
-  }, [state.projectCreated, state.saving]);
+    const directory = resourceSetup?.members ?? [];
+    setAddedPeople((current) => {
+      const additions = directory.filter(
+        (member) => !current.some((known) => known.user_id === member.user_id),
+      );
+      return additions.length ? [...current, ...additions] : current;
+    });
+  }, [resourceSetup?.members]);
   const [advancedSettingsOpen, setAdvancedSettingsOpen] = useState(false);
+  const [templateSelected, setTemplateSelected] = useState(
+    Boolean(props.initialTemplate),
+  );
   const [groupRecommendationDismissed, setGroupRecommendationDismissed] =
     useState(false);
   const [groupEditorDraft, setGroupEditorDraft] =
@@ -444,12 +429,17 @@ export function ProjectCreateDialog(props: ProjectCreateDialogProps) {
     },
     [],
   );
-  const selectedMembers =
-    resourceSetup?.members.filter(
-      (member) =>
-        member.user_id !== resourceSetup.currentUser.id &&
-        state.memberUserIds.includes(member.user_id),
-    ) ?? [];
+  const collaboratorsLocked = state.saving || Boolean(state.createdProject);
+  const people = [...(resourceSetup?.members ?? []), ...addedPeople].filter(
+    (member, index, all) =>
+      all.findIndex((candidate) => candidate.user_id === member.user_id) ===
+      index,
+  );
+  const selectedMembers = people.filter(
+    (member) =>
+      member.user_id !== resourceSetup?.currentUser.id &&
+      state.memberUserIds.includes(member.user_id),
+  );
   const selectedGenerationHumans = resourceSetup
     ? [
         {
@@ -476,31 +466,34 @@ export function ProjectCreateDialog(props: ProjectCreateDialogProps) {
         return labels.currentUser;
       }
       return (
-        resourceSetup?.members.find((member) => String(member.user_id) === id)
-          ?.user_name ?? id
+        people.find((member) => String(member.user_id) === id)?.user_name ?? id
       );
     }
     return resourceSetup?.agents.find((agent) => agent.id === id)?.name ?? id;
   };
   const removeMember = (userId: number) => {
+    if (collaboratorsLocked) return;
     commands.setMemberUserIds(
       state.memberUserIds.filter((candidate) => candidate !== userId),
     );
     commands.setCollaborationGroupDraft(null);
   };
   const removeAgent = (resourceId: string) => {
+    if (collaboratorsLocked) return;
     commands.setAgentResourceIds(
       state.agentResourceIds.filter((candidate) => candidate !== resourceId),
     );
     commands.setCollaborationGroupDraft(null);
   };
   const addAgent = (resourceId: string) => {
+    if (collaboratorsLocked) return;
     commands.setAgentResourceIds([...state.agentResourceIds, resourceId]);
     commands.setCollaborationGroupDraft(null);
     setGroupRecommendationDismissed(false);
     setCollaboratorPickerOpen(false);
   };
   const importGroup = (groupId: string) => {
+    if (collaboratorsLocked) return;
     const group = resourceSetup?.groups.find(
       (candidate) => candidate.id === groupId,
     );
@@ -964,9 +957,120 @@ export function ProjectCreateDialog(props: ProjectCreateDialogProps) {
       >
         <fieldset
           className="collaboration-project-create-body"
-          disabled={state.saving || state.projectCreated}
+          disabled={collaboratorsLocked}
           style={{ border: 0, margin: 0, minWidth: 0 }}
         >
+          {props.importActions ? (
+            <fieldset
+              className="contents"
+              disabled={state.saving || Boolean(state.createdProject)}
+            >
+              {props.importActions}
+            </fieldset>
+          ) : null}
+          {props.workspaceSelection && (
+            <label className="collaboration-project-create-field">
+              <span>{props.workspaceSelection.label}</span>
+              <select
+                data-testid="collaboration-project-workspace-select"
+                value={props.workspaceSelection.value}
+                disabled={
+                  state.saving ||
+                  Boolean(state.createdProject) ||
+                  groupGenerating
+                }
+                onChange={(event) => {
+                  setAddedPeople([]);
+                  commands.setMemberUserIds([]);
+                  commands.setAgentResourceIds([]);
+                  commands.setExecutionEnvironmentDeviceIds(null);
+                  commands.setCollaborationGroupDrafts([]);
+                  commands.setTemplateDocument(null);
+                  commands.setTemplatePending(false);
+                  commands.clearError();
+                  setTemplateSelected(false);
+                  setCollaboratorPickerOpen(false);
+                  setGroupEditorDraft(null);
+                  props.workspaceSelection?.onChange(event.target.value);
+                }}
+              >
+                {props.workspaceSelection.options.map((option) => (
+                  <option key={option.value} value={option.value}>
+                    {option.label}
+                  </option>
+                ))}
+              </select>
+            </label>
+          )}
+          {resourceSetup && (
+            <TemplateCreateSection
+              key={props.workspaceSelection?.value}
+              setup={resourceSetup}
+              locale={labels.locale}
+              initialTemplate={props.initialTemplate}
+              disabled={state.saving || Boolean(state.createdProject)}
+              onSelect={(document) => {
+                commands.clearError();
+                commands.setTemplateDocument(document);
+                setTemplateSelected(Boolean(document));
+                if (document) {
+                  if (!state.name.trim())
+                    commands.setName(
+                      document.spec.resources.collaboration.project.name,
+                    );
+                  commands.setDescription(
+                    document.spec.resources.collaboration.project.description,
+                  );
+                }
+              }}
+              onChange={(drafts, selected, document) => {
+                if (document) commands.setTemplateDocument(document);
+                setTemplateSelected(selected);
+                commands.setTemplatePending(selected && drafts === null);
+                commands.setCollaborationGroupDrafts(drafts ?? []);
+                if (drafts) {
+                  const participants = drafts.flatMap((group) => [
+                    group.leader,
+                    ...group.members,
+                  ]);
+                  commands.setMemberUserIds([
+                    ...new Set(
+                      participants
+                        .filter(
+                          (member) =>
+                            member.kind === "human" &&
+                            member.id !== String(resourceSetup.currentUser.id),
+                        )
+                        .map((member) => Number(member.id)),
+                    ),
+                  ]);
+                  commands.setAgentResourceIds([
+                    ...new Set(
+                      participants
+                        .filter((member) => member.kind === "agent")
+                        .map((member) => member.id),
+                    ),
+                  ]);
+                }
+              }}
+            />
+          )}
+          {templateSelected &&
+            resourceSetup &&
+            (resourceSetup.requiresTemplateEnvironmentSelection ||
+              resourceSetup.executionEnvironmentLoading ||
+              resourceSetup.executionEnvironmentError) && (
+              <TemplateEnvironmentSelection
+                environments={resourceSetup.executionEnvironments ?? []}
+                selected={state.executionEnvironmentDeviceIds}
+                locale={labels.locale}
+                disabled={state.saving || Boolean(state.createdProject)}
+                onChange={commands.setExecutionEnvironmentDeviceIds}
+                loading={resourceSetup.executionEnvironmentLoading}
+                error={resourceSetup.executionEnvironmentError}
+                onRetry={resourceSetup.retryExecutionEnvironments}
+              />
+            )}
           <label className="collaboration-project-create-field">
             <span>{labels.name}</span>
             <input
@@ -1092,8 +1196,12 @@ export function ProjectCreateDialog(props: ProjectCreateDialogProps) {
             </section>
           )}
 
-          {resourceSetup ? (
-            <section className="collaboration-project-create-collaborators">
+          {resourceSetup && !templateSelected ? (
+            <fieldset
+              className="collaboration-project-create-collaborators min-w-0 border-0 p-0"
+              aria-label={labels.collaborators}
+              disabled={collaboratorsLocked}
+            >
               <h3>{labels.collaborators}</h3>
               {state.collaborationGroupDraft ? (
                 <div
@@ -1202,7 +1310,7 @@ export function ProjectCreateDialog(props: ProjectCreateDialogProps) {
                 </div>
               )}
               <Popover.Root
-                open={collaboratorPickerOpen}
+                open={collaboratorPickerOpen && !collaboratorsLocked}
                 onOpenChange={setCollaboratorPickerOpen}
               >
                 <Popover.Trigger asChild>
@@ -1226,24 +1334,51 @@ export function ProjectCreateDialog(props: ProjectCreateDialogProps) {
                     className={`${portalTheme.className ?? ""} collaboration-project-create-collaborator-menu`}
                     data-testid="collaboration-project-create-collaborator-menu"
                   >
-                    <ProjectCreateMemberPicker
-                      setup={resourceSetup}
-                      selectedIds={state.memberUserIds}
-                      labels={labels}
-                      onDiscovered={(users) =>
-                        setDiscoveredMembers((current) =>
-                          cacheDiscoveredMembers(current, users),
-                        )
-                      }
-                      onSelect={(userId) => {
-                        commands.setMemberUserIds(
-                          state.memberUserIds.includes(userId)
-                            ? state.memberUserIds.filter((id) => id !== userId)
-                            : [...state.memberUserIds, userId],
-                        );
-                        commands.setCollaborationGroupDraft(null);
-                      }}
-                    />
+                    {resourceSetup.searchUsers ||
+                    resourceSetup.membersLoading ||
+                    resourceSetup.membersError ||
+                    people.some(
+                      (member) =>
+                        member.user_id !== resourceSetup.currentUser.id,
+                    ) ? (
+                      <ProjectPeoplePicker
+                        labels={labels}
+                        people={people.map((member) => ({
+                          id: member.user_id,
+                          user_name: member.user_name,
+                          email: member.email,
+                        }))}
+                        excludedIds={[
+                          resourceSetup.currentUser.id,
+                          ...state.memberUserIds,
+                        ]}
+                        searchUsers={resourceSetup.searchUsers}
+                        directoryLoading={resourceSetup.membersLoading}
+                        directoryError={resourceSetup.membersError}
+                        onRetryDirectory={resourceSetup.reloadMembers}
+                        onSelect={(user) => {
+                          if (collaboratorsLocked) return;
+                          setAddedPeople((current) => [
+                            ...current.filter(
+                              (member) => member.user_id !== user.id,
+                            ),
+                            {
+                              id: user.id,
+                              user_id: user.id,
+                              user_name: user.user_name,
+                              email: user.email,
+                              role: "Developer",
+                            },
+                          ]);
+                          commands.setMemberUserIds([
+                            ...state.memberUserIds,
+                            user.id,
+                          ]);
+                          commands.setCollaborationGroupDraft(null);
+                          setCollaboratorPickerOpen(false);
+                        }}
+                      />
+                    ) : null}
                     {resourceSetup.groups.length > 0 ? (
                       <div>
                         <small>{labels.availableGroups}</small>
@@ -1308,11 +1443,14 @@ export function ProjectCreateDialog(props: ProjectCreateDialogProps) {
                         </button>
                       </div>
                     ) : null}
-                    {resourceSetup.location !== "local" &&
-                    !resourceSetup.searchMembers &&
-                    resourceSetup.members.length === 0 &&
-                    resourceSetup.groups.length === 0 &&
-                    availableAgents.length === 0 ? (
+                    {resourceSetup.groups.length === 0 &&
+                    availableAgents.length === 0 &&
+                    !resourceSetup.searchUsers &&
+                    !people.some(
+                      (member) =>
+                        member.user_id !== resourceSetup.currentUser.id &&
+                        !state.memberUserIds.includes(member.user_id),
+                    ) ? (
                       <p>{labels.noAvailableCollaborators}</p>
                     ) : null}
                   </Popover.Content>
@@ -1361,8 +1499,15 @@ export function ProjectCreateDialog(props: ProjectCreateDialogProps) {
                   {groupGenerationError}
                 </p>
               ) : null}
-            </section>
-          ) : state.location === "local" ? (
+            </fieldset>
+          ) : null}
+
+          {state.location === "local" &&
+          (!resourceSetup ||
+            (!resourceSetup.searchUsers &&
+              !people.some(
+                (member) => member.user_id !== resourceSetup.currentUser.id,
+              ))) ? (
             <p
               className="collaboration-project-create-hint"
               data-testid="collaboration-project-create-members-unavailable"
@@ -1934,60 +2079,64 @@ export function ProjectCreateDialog(props: ProjectCreateDialogProps) {
             ) : null}
           </section>
         </fieldset>
-        {state.error && (
-          <div className="collaboration-project-create-error" role="alert">
-            {state.projectCreated ? (
-              <p>{labels.projectCreatedSetupPending}</p>
-            ) : null}
-            {state.memberFailures.length ? (
-              <ul data-testid="collaboration-project-create-member-failures">
-                {state.memberFailures.map((failure) => (
-                  <li key={failure.userId}>
-                    {resourceSetup?.members.find(
-                      (member) => member.user_id === failure.userId,
-                    )?.user_name ?? failure.userName}
-                    : {failure.reason}
-                  </li>
-                ))}
-              </ul>
-            ) : (
-              <p>{state.error}</p>
-            )}
-            {state.confirmedMembers.length ? (
-              <div data-testid="collaboration-project-create-confirmed-members">
-                <strong>{labels.confirmedMembers}</strong>
-                <ul>
-                  {state.confirmedMembers.map((member) => (
-                    <li key={member.user_id}>{member.user_name}</li>
-                  ))}
-                </ul>
-              </div>
-            ) : null}
-          </div>
-        )}
         {!groupEditorDraft && !groupModelPickerOpen ? (
           <footer className="collaboration-project-create-footer">
-            <button
-              type="button"
-              disabled={state.saving}
-              onClick={() => {
-                if (!state.saving) onClose();
-              }}
-            >
-              {labels.cancel}
-            </button>
-            <button
-              type="submit"
-              className="collaboration-primary-button"
-              data-testid={testIds?.confirm ?? "cloud-project-create-confirm"}
-              disabled={!state.canSubmit}
-            >
-              {state.saving
-                ? labels.creating
-                : state.projectCreated
-                  ? labels.retrySetup
-                  : labels.create}
-            </button>
+            {state.error && (
+              <div className="collaboration-project-create-error" role="alert">
+                <p>
+                  {state.memberSetupFailed && state.memberFailures.length
+                    ? labels.projectCreatedSetupPending
+                    : state.error}
+                </p>
+                {state.memberFailures.length ? (
+                  <ul data-testid="collaboration-project-create-member-failures">
+                    {state.memberFailures.map((failure) => (
+                      <li key={failure.userId}>
+                        {people.find(
+                          (member) => member.user_id === failure.userId,
+                        )?.user_name ?? failure.userName}
+                        : {failure.reason}
+                      </li>
+                    ))}
+                  </ul>
+                ) : null}
+                {state.confirmedMembers.length ? (
+                  <div data-testid="collaboration-project-create-confirmed-members">
+                    <strong>{labels.confirmedMembers}</strong>
+                    <ul>
+                      {state.confirmedMembers.map((member) => (
+                        <li key={member.user_id}>{member.user_name}</li>
+                      ))}
+                    </ul>
+                  </div>
+                ) : null}
+              </div>
+            )}
+            <div className="collaboration-project-create-footer-actions">
+              <button
+                type="button"
+                disabled={state.saving}
+                onClick={() => {
+                  if (!state.saving) onClose();
+                }}
+              >
+                {labels.cancel}
+              </button>
+              <button
+                type="submit"
+                className="collaboration-primary-button"
+                data-testid={testIds?.confirm ?? "cloud-project-create-confirm"}
+                disabled={!state.canSubmit}
+              >
+                {state.saving
+                  ? labels.creating
+                  : state.memberSetupFailed
+                    ? labels.retrySetup
+                    : state.createdProject
+                      ? labels.openCreated
+                      : labels.create}
+              </button>
+            </div>
           </footer>
         ) : null}
       </DialogForm>

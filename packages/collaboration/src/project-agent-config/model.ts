@@ -27,6 +27,13 @@ export interface ProjectAgentConfigurationRecord {
   mcpServers: Record<string, unknown>;
 }
 
+/** Discovery permits selection; execution still checks current readiness. */
+export function isSelectableAgentResource(
+  agent: Pick<CollaborationOwnedAgent, "status">,
+): boolean {
+  return agent.status === "available" || agent.status === "unchecked";
+}
+
 function value(
   row: WorkspaceProjectAgent,
   camel: string,

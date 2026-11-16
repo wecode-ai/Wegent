@@ -16,10 +16,10 @@
 //! group is cached after the task commits (`after_commit`,
 //! `TASK_SOURCE_GROUP_CACHE_TTL`).
 
-use brz_mysql::{Mysql, MysqlRow, MysqlTransaction};
 use brz_redis::{SetExpiration, SetOptions};
 
 use crate::projects::PROJECT_COLUMNS;
+use crate::request_sql::{RequestSql, RouteKey};
 use crate::task_store::StatementArg;
 
 /// `TASK_SOURCE_GROUP_CACHE_TTL`.
@@ -44,15 +44,18 @@ impl From<brz_mysql::MysqlError> for SourceGroupError {
 }
 
 /// `get_or_create_task_source_group`: the owner's source group id.
-pub(crate) async fn get_or_create_task_source_group<M, R>(
-    mysql: &M,
+///
+/// [`get_or_create_task_source_group`] on the caller's request SQL handle: the
+/// cached-hint `FOR UPDATE` read and the create/reuse path join the caller's
+/// transaction, so the group row stays locked until the request commits.
+pub(crate) async fn get_or_create_task_source_group_on<R>(
+    sql: &mut dyn RequestSql,
     redis: Option<&R>,
     user_id: i64,
     client_origin: &str,
     task_source: &str,
 ) -> Result<i64, SourceGroupError>
 where
-    M: Mysql,
     R: brz_redis::Redis,
 {
     let cache_key = cache_key(task_source, client_origin, user_id);
@@ -61,31 +64,14 @@ where
         None => None,
     };
     if let Some(cached_id) = hint {
-        // The ID is only a lookup hint: groups can be deleted or reconfigured.
-        // The source takes the row lock in its request session; `brz-mysql`'s
-        // read pool rejects `FOR UPDATE`, so the locking read runs on a writer
-        // transaction.
-        let group_id = mysql
-            .with_transaction(async |transaction| {
-                source_group(
-                    transaction,
-                    user_id,
-                    client_origin,
-                    task_source,
-                    Some(cached_id),
-                )
-                .await
-            })
-            .await?;
+        let group_id =
+            source_group_on(sql, user_id, client_origin, task_source, Some(cached_id)).await?;
         if let Some(group_id) = group_id {
             return Ok(group_id);
         }
     }
-
-    let group_id = create_or_reuse_group(mysql, user_id, client_origin, task_source).await?;
+    let group_id = create_or_reuse_group_on(sql, user_id, client_origin, task_source).await?;
     if let Some(redis) = redis {
-        // `after_commit`'s `cache_manager.set_from_sync(key, group_id, expire=3600)`;
-        // cache delivery never turns a committed task into a failed request.
         let options =
             SetOptions::default().with_expiration(SetExpiration::Seconds(CACHE_TTL_SECONDS));
         if let Err(error) = redis
@@ -96,6 +82,101 @@ where
         }
     }
     Ok(group_id)
+}
+
+/// [`source_group`] on the caller's request SQL handle.
+async fn source_group_on(
+    sql: &mut dyn RequestSql,
+    user_id: i64,
+    client_origin: &str,
+    task_source: &str,
+    group_id: Option<i64>,
+) -> brz_mysql::MysqlResult<Option<i64>> {
+    let mut args = vec![
+        StatementArg::Int(user_id),
+        StatementArg::Str(client_origin.to_string()),
+        StatementArg::Str(task_source.to_string()),
+    ];
+    if let Some(group_id) = group_id {
+        args.push(StatementArg::Int(group_id));
+    }
+    let row = sql
+        .fetch_optional_row(RouteKey::None, &source_group_sql(group_id.is_some()), args)
+        .await?;
+    Ok(row.and_then(|row| row.get_required("projects_id").ok()))
+}
+
+/// [`create_or_reuse_group`] on the caller's request SQL handle.
+async fn create_or_reuse_group_on(
+    sql: &mut dyn RequestSql,
+    user_id: i64,
+    client_origin: &str,
+    task_source: &str,
+) -> Result<i64, SourceGroupError> {
+    let outcome = create_in_transaction_on(sql, user_id, client_origin, task_source).await?;
+    match outcome {
+        CreateOutcome::Reused(group_id) | CreateOutcome::Created(group_id) => Ok(group_id),
+        CreateOutcome::MissingOwner => Err(SourceGroupError::UserNotFound),
+    }
+}
+
+/// [`create_in_transaction`] on the caller's request SQL handle.
+async fn create_in_transaction_on(
+    sql: &mut dyn RequestSql,
+    user_id: i64,
+    client_origin: &str,
+    task_source: &str,
+) -> brz_mysql::MysqlResult<CreateOutcome> {
+    let owner = sql
+        .fetch_optional_row(
+            RouteKey::None,
+            "SELECT users.id AS users_id \nFROM users \nWHERE users.id = ? \n LIMIT 1 FOR UPDATE",
+            vec![StatementArg::Int(user_id)],
+        )
+        .await?;
+    if owner.is_none() {
+        return Ok(CreateOutcome::MissingOwner);
+    }
+    if let Some(group_id) = source_group_on(sql, user_id, client_origin, task_source, None).await? {
+        return Ok(CreateOutcome::Reused(group_id));
+    }
+    let max_row = sql
+        .fetch_optional_row(
+            RouteKey::None,
+            "SELECT max(projects.sort_order) AS max_1 \nFROM projects \n\
+             WHERE projects.user_id = ? AND projects.client_origin = ? \
+             AND projects.is_active = true",
+            vec![
+                StatementArg::Int(user_id),
+                StatementArg::Str(client_origin.to_string()),
+            ],
+        )
+        .await?;
+    let max_sort_order = max_row
+        .and_then(|row| row.get::<i64>("max_1").ok().flatten())
+        .unwrap_or(0)
+        + 1;
+    let config = format!("{{\"taskSource\": \"{task_source}\"}}");
+    let execution = sql
+        .execute_statement(
+            RouteKey::None,
+            "INSERT INTO projects (user_id, client_origin, name, description, color, \
+             config, sort_order, is_expanded, is_active, created_at, updated_at) \
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, now(), now())",
+            vec![
+                StatementArg::Int(user_id),
+                StatementArg::Str(client_origin.to_string()),
+                StatementArg::Str(group_name(task_source)),
+                StatementArg::Str(String::new()),
+                StatementArg::Str(String::new()),
+                StatementArg::Str(config),
+                StatementArg::Int(max_sort_order),
+                StatementArg::Int(0),
+                StatementArg::Int(1),
+            ],
+        )
+        .await?;
+    Ok(CreateOutcome::Created(execution.last_insert_id as i64))
 }
 
 /// `task_source_group:{task_source}:{client_origin}:{user_id}`.
@@ -112,26 +193,7 @@ async fn cached_id<R: brz_redis::Redis>(redis: &R, key: &str) -> Option<i64> {
 
 /// `_source_groups_query(...).with_for_update().first()`: the active source
 /// group for the owner, optionally narrowed to a cached id.
-async fn source_group<T: MysqlTransaction>(
-    transaction: &mut T,
-    user_id: i64,
-    client_origin: &str,
-    task_source: &str,
-    group_id: Option<i64>,
-) -> brz_mysql::MysqlResult<Option<i64>> {
-    let sql = source_group_sql(group_id.is_some());
-    let mut args = vec![
-        StatementArg::Int(user_id),
-        StatementArg::Str(client_origin.to_string()),
-        StatementArg::Str(task_source.to_string()),
-    ];
-    if let Some(group_id) = group_id {
-        args.push(StatementArg::Int(group_id));
-    }
-    let row: Option<MysqlRow> = transaction.fetch_optional(sql.as_str(), args).await?;
-    Ok(row.and_then(|row| row.get_required("projects_id").ok()))
-}
-
+///
 /// The recorded `_source_groups_query(...).with_for_update().first()`
 /// statement: the source-group predicate over the owner and client origin,
 /// optionally narrowed to the cached id.
@@ -157,83 +219,7 @@ enum CreateOutcome {
 
 /// `_create_or_reuse_group`: lock the owner row, reuse an existing group, or
 /// insert the source group after the owner's current maximum sort order.
-async fn create_or_reuse_group<M: Mysql>(
-    mysql: &M,
-    user_id: i64,
-    client_origin: &str,
-    task_source: &str,
-) -> Result<i64, SourceGroupError> {
-    let outcome = mysql
-        .with_transaction(async |transaction| {
-            create_in_transaction(transaction, user_id, client_origin, task_source).await
-        })
-        .await?;
-    match outcome {
-        CreateOutcome::Reused(group_id) | CreateOutcome::Created(group_id) => Ok(group_id),
-        CreateOutcome::MissingOwner => Err(SourceGroupError::UserNotFound),
-    }
-}
-
-async fn create_in_transaction<T: MysqlTransaction>(
-    transaction: &mut T,
-    user_id: i64,
-    client_origin: &str,
-    task_source: &str,
-) -> brz_mysql::MysqlResult<CreateOutcome> {
-    // Serialize creation even when no group exists yet.
-    let owner: Option<MysqlRow> = transaction
-        .fetch_optional(
-            "SELECT users.id AS users_id \nFROM users \nWHERE users.id = ? \n LIMIT 1 FOR UPDATE",
-            (user_id,),
-        )
-        .await?;
-    if owner.is_none() {
-        return Ok(CreateOutcome::MissingOwner);
-    }
-
-    if let Some(group_id) =
-        source_group(transaction, user_id, client_origin, task_source, None).await?
-    {
-        return Ok(CreateOutcome::Reused(group_id));
-    }
-
-    let max_row: Option<MysqlRow> = transaction
-        .fetch_optional(
-            "SELECT max(projects.sort_order) AS max_1 \nFROM projects \n\
-             WHERE projects.user_id = ? AND projects.client_origin = ? \
-             AND projects.is_active = true",
-            (user_id, client_origin),
-        )
-        .await?;
-    let max_sort_order = max_row
-        .and_then(|row| row.get::<i64>("max_1").ok().flatten())
-        .unwrap_or(0)
-        + 1;
-
-    // `orjson`-compatible JSON via the source's `json.dumps` rendering
-    // (`{"taskSource": "api"}`): SQLAlchemy's JSON column serializer.
-    let config = format!("{{\"taskSource\": \"{task_source}\"}}");
-    let execution = transaction
-        .execute(
-            "INSERT INTO projects (user_id, client_origin, name, description, color, \
-             config, sort_order, is_expanded, is_active, created_at, updated_at) \
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, now(), now())",
-            (
-                StatementArg::Int(user_id),
-                StatementArg::Str(client_origin.to_string()),
-                StatementArg::Str(group_name(task_source)),
-                StatementArg::Str(String::new()),
-                StatementArg::Str(String::new()),
-                StatementArg::Str(config),
-                StatementArg::Int(max_sort_order),
-                StatementArg::Int(0),
-                StatementArg::Int(1),
-            ),
-        )
-        .await?;
-    Ok(CreateOutcome::Created(execution.last_insert_id as i64))
-}
-
+///
 /// `settings.TASK_SOURCE_GROUP_NAMES[task_source]`: the deployment may override
 /// the names with a JSON object; unknown sources keep their own name.
 fn group_name(task_source: &str) -> String {

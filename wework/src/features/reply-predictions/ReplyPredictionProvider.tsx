@@ -19,7 +19,7 @@ import type { RuntimeTaskAddress } from '@/types/api'
 import {
   replyPredictionKey,
   replyPredictionService,
-  type ReplyPredictionSource,
+  runtimeReplyPredictionSource,
   type ReplyPredictionResult,
 } from './replyPredictionService'
 
@@ -50,36 +50,7 @@ export function ReplyPredictionProvider({
   const api = enabled ? workbench?.services.replyPredictionApi : undefined
   const service = useMemo(() => (api ? replyPredictionService(api) : null), [api])
   useSyncExternalStore(service?.subscribe ?? noSubscription, service?.getSnapshot ?? emptySnapshot)
-  const runtimeBusy = lifecycle?.derived.isBusy || Boolean(lifecycle?.interactionStatus)
-  const deviceId = address?.deviceId
-  const taskId = address?.taskId
-  const workspacePath = address?.workspacePath
-  const latestTurnId = lifecycle?.turn.latestId ?? undefined
-  const runtimeRevision = latestTurnId ?? ''
-  const modelSelection = lifecycle?.task?.modelSelection
-  const runtimeSource = useMemo<ReplyPredictionSource | null>(() => {
-    const workspaceBacked = address?.workspaceKind !== 'chat' && !address?.projectSession
-    if (!address || !deviceId || !taskId || !latestTurnId || (workspaceBacked && !workspacePath))
-      return null
-    return {
-      scope: JSON.stringify([deviceId, taskId, workspaceBacked ? workspacePath : null]),
-      revision: runtimeRevision,
-      busy: Boolean(runtimeBusy),
-      address,
-      modelSelection,
-      latestTurnId,
-    }
-  }, [
-    address,
-    deviceId,
-    taskId,
-    workspacePath,
-    runtimeRevision,
-    runtimeBusy,
-    latestTurnId,
-    modelSelection,
-  ])
-  const target = runtimeSource
+  const target = runtimeReplyPredictionSource(address, lifecycle)
   const scope = target?.scope
   const busy = target?.busy ?? false
   const currentSource = useEffectEvent(() => target!)
@@ -140,15 +111,6 @@ export function ReplyPredictionProvider({
         }
       >
         {children}
-        {!blocked && !busy && enabled && scope && service?.hasError(scope) && (
-          <p
-            role="status"
-            className="mt-1 text-xs text-text-secondary"
-            data-testid="reply-prediction-error"
-          >
-            {t('workbench.reply_prediction_failed')}
-          </p>
-        )}
       </ComposerPredictionPendingContext.Provider>
     </ComposerPredictionContext.Provider>
   )

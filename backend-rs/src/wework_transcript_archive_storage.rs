@@ -21,7 +21,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 
 use brz_http::Client as HttpClient;
 
-use crate::attachments::minio_client::{self, MinioConfig};
+use wegent_storage::minio_client::{self, MinioConfig};
 
 /// `settings.WEWORK_TRANSCRIPT_S3_BUCKET` default.
 const DEFAULT_BUCKET: &str = "wework-transcripts";

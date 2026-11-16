@@ -155,6 +155,10 @@ zip -r my-skill.zip .
    - Check metadata (version, author, tags)
    - New personal uploads show "Enabled by Default"
 
+### Importing from GitHub
+
+Select Git import in the upload dialog, enter the repository URL, scan, and select the skills to import. Backend uses `api.github.com` for repository metadata and ZIP archive download URLs, then follows the download redirect. Deployment networks must allow `api.github.com` and `codeload.github.com`. For private repositories, configure a GitHub token with repository contents read permission in platform integrations. Archive service failures appear as download errors.
+
 ### Upload Requirements
 
 - **File format**: Must be a `.zip` file

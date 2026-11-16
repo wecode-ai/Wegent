@@ -134,8 +134,19 @@ fn runtime_has_provider_transcript_reader(runtime: &str) -> bool {
 
 fn provider_transcript_is_unmaterialized(link: &RuntimeTaskLink) -> bool {
     if !runtime_has_provider_transcript_reader(&link.runtime)
-        || !completed_transcript_messages(link).is_empty()
-        || !transcript_snapshot_messages(link).is_empty()
+        || [
+            ("completedTranscriptThreadId", "completedTranscriptMessages"),
+            ("transcriptSnapshotThreadId", "transcriptSnapshotMessages"),
+        ]
+        .iter()
+        .any(|(thread_key, messages_key)| {
+            link.thread_id.as_deref().is_some_and(|thread_id| {
+                link.runtime_handle[*thread_key] == thread_id
+                    && link.runtime_handle[*messages_key]
+                        .as_array()
+                        .is_some_and(|messages| !messages.is_empty())
+            })
+        })
     {
         return false;
     }
@@ -151,21 +162,28 @@ fn provider_transcript_is_unmaterialized(link: &RuntimeTaskLink) -> bool {
         .or_else(|| link.runtime_handle.get("turn_ids_by_subtask"))
         .and_then(Value::as_object)
         .is_some_and(|turns| {
-            turns
-                .values()
-                .any(|turn_id| turn_id.as_str().is_some_and(|turn_id| !turn_id.trim().is_empty()))
+            turns.values().any(|turn_id| {
+                turn_id
+                    .as_str()
+                    .is_some_and(|turn_id| !turn_id.trim().is_empty())
+            })
         })
     {
         return false;
     }
 
-    let presentations = user_message_presentations(link);
-    !presentations.is_empty()
-        && presentations.iter().all(|presentation| {
-            string_field(presentation, "turnId")
-                .or_else(|| string_field(presentation, "turn_id"))
-                .is_none()
-        })
+    let presentations = link.runtime_handle["userMessagePresentations"].as_array();
+    presentations.is_some_and(|presentations| {
+        presentations.iter().any(Value::is_object)
+            && presentations
+                .iter()
+                .filter(|value| value.is_object())
+                .all(|presentation| {
+                    string_field(presentation, "turnId")
+                        .or_else(|| string_field(presentation, "turn_id"))
+                        .is_none()
+                })
+    })
 }
 
 fn source_parent_json(source: &super::fork_transfer::SourceTaskIdentity) -> Value {

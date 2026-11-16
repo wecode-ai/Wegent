@@ -8,7 +8,7 @@
 //!
 //! Split from [`super::knowledge`] to keep both files under the source-review
 //! size limit; the statements and their ordering contracts are unchanged.
-use brz_mysql::{Json, MysqlResult};
+use brz_mysql::Json;
 use brz_redis::Redis;
 use serde_json::Value;
 
@@ -16,7 +16,8 @@ use super::knowledge::{
     AclContextSource, deduplicate, get_acl_accessible_knowledge_base_ids,
     team_member_default_knowledge_base_ids,
 };
-use super::knowledge_prompt::SelectedKnowledgeRef;
+use super::knowledge_access::KnowledgeAccessError;
+use super::knowledge_prompt::{SelectedKnowledgeRef, SelectedKnowledgeResource};
 use super::resolution::{KindRow, resolve_task_ref_team};
 use super::selected_knowledge::{
     build_wegent_refs_for_ids, index_refs_by_integer_id, parse_knowledge_base_scopes,
@@ -38,7 +39,7 @@ pub async fn resolve_task_default_knowledge_bases<R: Redis>(
     task_id: i64,
     viewer_user_id: i64,
     knowledge_base_id: Option<i64>,
-) -> MysqlResult<Option<(Option<KindRow>, Vec<i64>)>> {
+) -> Result<Option<(Option<KindRow>, Vec<i64>)>, KnowledgeAccessError> {
     let mysql = acl.mysql();
     // `task_store.get_active_task`: the resolver re-reads the active task it is
     // given the id of and resolves the team from the stored CRD. The store owns
@@ -106,7 +107,7 @@ pub async fn resolve_task_default_knowledge_base_ids<R: Redis>(
     store: &dyn TaskStore,
     task_id: i64,
     viewer_user_id: i64,
-) -> MysqlResult<Vec<i64>> {
+) -> Result<Vec<i64>, KnowledgeAccessError> {
     match resolve_task_default_knowledge_bases(acl, store, task_id, viewer_user_id, None).await? {
         Some((_, ids)) => Ok(ids),
         None => Ok(Vec::new()),
@@ -124,7 +125,7 @@ pub async fn build_inherited_selected_knowledge_refs<R: Redis>(
     task_json: &Value,
     viewer_user_id: i64,
     external_refs: &[Value],
-) -> MysqlResult<Vec<SelectedKnowledgeRef>> {
+) -> Result<Vec<SelectedKnowledgeRef>, KnowledgeAccessError> {
     let mysql = acl.mysql();
     let spec = task_json.get("spec").cloned().unwrap_or(Value::Null);
     let mut persisted: Vec<i64> = index_refs_by_integer_id(
@@ -163,26 +164,45 @@ pub async fn build_inherited_selected_knowledge_refs<R: Redis>(
     Ok(super::selected_knowledge::resolve_selected_knowledge_context(&refs, &[]).refs)
 }
 
-/// `_build_external_refs_from_values`: the external refs of the task's
-/// `externalKnowledgeRefs`, each with its provider and id. The recorded create
-/// case carries an empty list, so this only passes through well-formed entries.
-fn external_refs_from_values(values: &[Value]) -> Vec<SelectedKnowledgeRef> {
+/// Project normalized task and message bindings into provider-native resources.
+pub(super) fn external_refs_from_values(values: &[Value]) -> Vec<SelectedKnowledgeRef> {
     values
         .iter()
         .filter_map(|value| {
-            let provider = value.get("provider")?.as_str()?.trim().to_string();
-            let knowledge_base_id = value.get("knowledge_base_id")?.as_str()?.trim().to_string();
-            if provider.is_empty() || knowledge_base_id.is_empty() {
-                return None;
-            }
+            let text = |key| {
+                value
+                    .get(key)
+                    .and_then(Value::as_str)
+                    .map(str::trim)
+                    .filter(|text| !text.is_empty())
+            };
+            let provider = text("provider")?.to_ascii_lowercase();
+            super::selected_knowledge::provider_skill(&provider)?;
+            let knowledge_base_id = text("id")?;
+            let scope_type = text("target_type").unwrap_or("knowledge_base");
+            let resources = match scope_type {
+                "knowledge_base" => Vec::new(),
+                "folder" | "document" => {
+                    let id = if scope_type == "folder" {
+                        text("node_id").or_else(|| text("parent_id"))
+                    } else {
+                        text("document_id").or_else(|| text("node_id"))
+                    }?;
+                    vec![SelectedKnowledgeResource {
+                        scope_type: scope_type.to_string(),
+                        resource_id: Some(id.to_string()),
+                        resource_name: text("target_name").map(str::to_string),
+                        resource_url: text("resource_url").map(str::to_string),
+                        ..Default::default()
+                    }]
+                }
+                _ => return None,
+            };
             Some(SelectedKnowledgeRef {
                 provider,
-                knowledge_base_id,
-                knowledge_base_name: value
-                    .get("knowledge_base_name")
-                    .and_then(Value::as_str)
-                    .unwrap_or_default()
-                    .to_string(),
+                knowledge_base_id: knowledge_base_id.to_string(),
+                knowledge_base_name: text("name").unwrap_or(knowledge_base_id).to_string(),
+                resources,
                 ..Default::default()
             })
         })

@@ -6,14 +6,16 @@ import hashlib
 import io
 import json
 import zipfile
+from unittest.mock import AsyncMock, Mock
 
 import pytest
-from fastapi import HTTPException
+from fastapi import BackgroundTasks, HTTPException
 
 import app.services.builtin_plugin_service as builtin_plugin_service_module
 from app.api.endpoints.installed_plugins import (
     _read_plugin_upload,
     ensure_builtin_plugin_installed,
+    update_installed_plugin,
 )
 from app.models.kind import Kind
 from app.models.skill_binary import SkillBinary
@@ -22,6 +24,7 @@ from app.schemas.installed_plugin import (
     BuiltinPluginInstallRequest,
     InstalledPluginUpdateRequest,
 )
+from app.services import plugin_write_operations
 from app.services.builtin_plugin_registry import (
     BUILTIN_MINI_PROGRAM_PLUGIN_NAME,
     BUILTIN_PLUGIN_NAMES,
@@ -30,6 +33,10 @@ from app.services.builtin_plugin_registry import (
     BuiltinPluginDefinition,
 )
 from app.services.builtin_plugin_service import BuiltinPluginService
+from app.services.device.capability_sync_service import (
+    DeviceCapabilityResolutionError,
+    DeviceCapabilitySyncError,
+)
 from app.services.installed_plugin_service import InstalledPluginService
 from app.services.plugin_package_parser import (
     MAX_PLUGIN_PACKAGE_SIZE_BYTES,
@@ -821,9 +828,11 @@ async def test_ensure_builtin_plugin_waits_for_requested_device_sync(
         fake_sync,
     )
 
+    background = BackgroundTasks()
     response = await ensure_builtin_plugin_installed(
         plugin_name,
         BuiltinPluginInstallRequest(device_id="device-1"),
+        background_tasks=background,
         db=test_db,
         current_user=test_user,
     )
@@ -835,6 +844,7 @@ async def test_ensure_builtin_plugin_waits_for_requested_device_sync(
     assert response.sync is not None
     assert response.sync.success is True
     assert response.sync.mode == "merge"
+    assert len(background.tasks) == 1
 
 
 @pytest.mark.asyncio
@@ -843,6 +853,17 @@ async def test_ensure_builtin_plugin_without_device_syncs_online_devices(
     test_user,
     monkeypatch,
 ):
+    test_db.add(
+        Kind(
+            user_id=test_user.id,
+            kind="Device",
+            namespace="default",
+            name="online-device",
+            is_active=True,
+            json={"spec": {"deviceType": "local"}},
+        )
+    )
+    test_db.commit()
     InstalledPluginService().publish_marketplace_plugin(
         db=test_db,
         user_id=BUILTIN_PLUGIN_OWNER_ID,
@@ -851,34 +872,113 @@ async def test_ensure_builtin_plugin_without_device_syncs_online_devices(
         visibility="workspace",
         featured=True,
     )
-    sync_response = DeviceCapabilitySyncResponse(
-        success=True,
-        device_id="",
-        mode="replace",
-        synced=0,
-        results=[],
-    )
 
-    async def fake_sync_changed(
-        _service, db, *, user_id, installed_plugin_id, current_device_id
-    ):
-        assert db is test_db
+    async def online_devices(db, user_id):
+        assert db is not test_db
         assert user_id == test_user.id
-        assert installed_plugin_id > 0
-        assert current_device_id is None
-        return sync_response
+        return [{"device_id": "online-device"}]
 
+    schedule = Mock()
     monkeypatch.setattr(
-        "app.services.device.plugin_change_sync.sync_changed_plugin_to_devices",
-        fake_sync_changed,
+        "app.services.plugin_device_sync.device_service.get_online_devices",
+        online_devices,
+    )
+    monkeypatch.setattr(
+        "app.services.plugin_device_sync.schedule_other_devices", schedule
+    )
+    monkeypatch.setattr(
+        "app.services.plugin_device_sync.get_db_session",
+        plugin_write_operations.get_db_session,
     )
 
+    background = BackgroundTasks()
     response = await ensure_builtin_plugin_installed(
         BUILTIN_SITES_PLUGIN_NAME,
         BuiltinPluginInstallRequest(),
+        background_tasks=background,
         db=test_db,
         current_user=test_user,
     )
 
     assert response.plugin.spec.source.pluginKey == BUILTIN_SITES_PLUGIN_NAME
-    assert response.sync == sync_response
+    assert response.sync is None
+    schedule.assert_not_called()
+    assert len(background.tasks) == 1
+
+    await background()
+
+    assert schedule.call_args.kwargs == {
+        "user_id": test_user.id,
+        "device_ids": ["online-device"],
+        "installed_plugin_ids": [int(response.plugin.metadata["labels"]["id"])],
+    }
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("operation", ["update", "ensure"])
+@pytest.mark.parametrize(
+    ("sync_error", "status_code"),
+    [
+        (DeviceCapabilitySyncError("device unavailable"), 502),
+        (DeviceCapabilityResolutionError("device not found", 404), 404),
+    ],
+)
+async def test_legacy_builtin_sync_failure_preserves_operation_error_policy(
+    test_db, test_user, monkeypatch, operation, sync_error, status_code
+):
+    service = InstalledPluginService()
+    plugin_name = BUILTIN_SITES_PLUGIN_NAME
+    service.publish_marketplace_plugin(
+        db=test_db,
+        user_id=BUILTIN_PLUGIN_OWNER_ID,
+        package_bytes=_create_plugin_zip(name=plugin_name),
+        filename=f"{plugin_name}.zip",
+        visibility="workspace",
+        featured=True,
+    )
+    dispatch = AsyncMock(side_effect=sync_error)
+    monkeypatch.setattr(
+        (
+            "app.services.plugin_device_sync.device_capability_sync_service."
+            + (
+                "sync_installed_plugin_to_device_result"
+                if operation == "update"
+                else "sync_installed_plugin_to_device"
+            )
+        ),
+        dispatch,
+    )
+    background = BackgroundTasks()
+
+    if operation == "update":
+        installed = service.install_builtin_plugin(
+            db=test_db, user_id=test_user.id, plugin_key=plugin_name
+        )
+        installed_id = int(installed.metadata["labels"]["id"])
+        response = await update_installed_plugin(
+            installed_id,
+            InstalledPluginUpdateRequest(displayName="Updated builtin"),
+            background_tasks=background,
+            device_id="device-1",
+            db=test_db,
+            current_user=test_user,
+        )
+        test_db.expire_all()
+        assert response.spec.displayName == "Updated builtin"
+        assert test_db.get(Kind, installed_id).json["spec"]["displayName"] == (
+            "Updated builtin"
+        )
+        assert len(background.tasks) == 1
+    else:
+        with pytest.raises(HTTPException) as exc_info:
+            await ensure_builtin_plugin_installed(
+                plugin_name,
+                BuiltinPluginInstallRequest(device_id="device-1"),
+                background_tasks=background,
+                db=test_db,
+                current_user=test_user,
+            )
+        assert exc_info.value.status_code == status_code
+        assert background.tasks == []
+
+    dispatch.assert_awaited_once()

@@ -64,21 +64,21 @@ export function useExternalDocumentSync() {
   )
 
   const syncDocument = useCallback(
-    async (document: KnowledgeDocument): Promise<boolean> => {
+    async (document: KnowledgeDocument): Promise<KnowledgeDocument | null> => {
       // A copy another surface is already synchronizing queues no second
       // request; the caller only skips the reload that request would trigger.
-      if (inFlightDocumentIds.has(document.id)) return false
+      if (inFlightDocumentIds.has(document.id)) return null
       markSyncing(document.id, true)
       try {
-        await synchronizeExternalDocument(document.id)
+        const synchronizedDocument = await synchronizeExternalDocument(document.id)
         toast({ description: t('document.document.syncSuccess') })
-        return true
+        return synchronizedDocument
       } catch (err) {
         toast({
           variant: 'destructive',
           description: mapKnowledgeDocumentErrorMessage(err, t, 'document.document.syncFailed'),
         })
-        return false
+        return null
       } finally {
         markSyncing(document.id, false)
       }

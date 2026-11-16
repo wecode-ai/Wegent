@@ -32,12 +32,12 @@ export function TaskDetailScrollArea({
         id={viewportId}
         ref={viewportRef}
         data-testid="desktop-workbench-content"
-        data-scroll-origin={hasConversation ? 'bottom' : 'top'}
+        data-scroll-origin="top"
         data-embedded-browser-label={defaultEmbeddedBrowserLabel}
         className={cn(
           'relative flex h-full min-w-0 flex-1',
           hasConversation
-            ? 'scrollbar-none flex-col-reverse overflow-x-hidden overflow-y-auto [overflow-anchor:none]'
+            ? 'scrollbar-none flex-col overflow-x-hidden overflow-y-auto [overflow-anchor:none]'
             : 'overflow-hidden',
           showPageTopBar && 'pt-11'
         )}

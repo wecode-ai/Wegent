@@ -1,3 +1,6 @@
+import * as Popover from "@radix-ui/react-popover";
+import { isImeComposingEvent } from "@wegent/chat-core/ime";
+import { useCollaborationPortalTheme } from "../theme";
 import {
   closestCenter,
   DndContext,
@@ -27,7 +30,7 @@ import {
   Tag,
   Trash2,
 } from "lucide-react";
-import { useEffect, useRef, useState } from "react";
+import { useState } from "react";
 import type {
   ProjectManageCardDisplay,
   ProjectManageHost,
@@ -132,13 +135,16 @@ function SortableStatus({
             defaultValue={status.name}
             onBlur={(event) => onRenameCommit(event.currentTarget.value)}
             onKeyDown={(event) => {
-              if (event.key === "Enter") event.currentTarget.blur();
-              if (event.key === "Escape") {
-                event.currentTarget.value = status.name;
+              if (isImeComposingEvent(event)) return;
+              if (event.key === "Enter" || event.key === "Escape") {
+                event.preventDefault();
+                event.stopPropagation();
+                if (event.key === "Escape")
+                  event.currentTarget.value = status.name;
                 event.currentTarget.blur();
               }
             }}
-            className="h-6 min-w-0 flex-1 rounded-md border border-border bg-background px-1.5 text-xs outline-none focus:border-focus"
+            className="h-6 min-w-0 flex-1 rounded-md border border-border bg-background px-1.5 text-xs outline-none keyboard:focus:border-focus"
             aria-label={translate("todo.status_name", "状态名称")}
           />
         ) : (
@@ -231,6 +237,8 @@ export function BoardLayoutEditor({
   displayBusy,
   canEditStatuses,
   embedded = false,
+  previewColumns,
+  portalContainer,
   onStatusesChange,
   onDisplayChange,
   renderActionMenu,
@@ -242,6 +250,8 @@ export function BoardLayoutEditor({
   displayBusy: boolean;
   canEditStatuses: boolean;
   embedded?: boolean;
+  previewColumns?: readonly BoardStatus[];
+  portalContainer?: HTMLElement | null;
   onStatusesChange: (statuses: BoardStatus[]) => void;
   onDisplayChange: (
     key: keyof BoardCardDisplaySettings,
@@ -252,24 +262,13 @@ export function BoardLayoutEditor({
 }) {
   const [activeId, setActiveId] = useState<string | null>(null);
   const [renamingId, setRenamingId] = useState<string | null>(null);
-  const [fieldsOpen, setFieldsOpen] = useState(false);
-  const fieldsRef = useRef<HTMLDivElement>(null);
+  const portalTheme = useCollaborationPortalTheme();
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 6 } }),
     useSensor(KeyboardSensor, {
       coordinateGetter: sortableKeyboardCoordinates,
     }),
   );
-
-  useEffect(() => {
-    if (!fieldsOpen) return;
-    const close = (event: PointerEvent) => {
-      if (!fieldsRef.current?.contains(event.target as Node))
-        setFieldsOpen(false);
-    };
-    document.addEventListener("pointerdown", close);
-    return () => document.removeEventListener("pointerdown", close);
-  }, [fieldsOpen]);
 
   function handleDragEnd({ active, over }: DragEndEvent) {
     setActiveId(null);
@@ -315,7 +314,7 @@ export function BoardLayoutEditor({
             {translate("todo.board_layout", "看板布局")}
           </h2>
           <p className="mt-1 text-sm text-text-muted">
-            {canEditStatuses
+            {canEditStatuses && !previewColumns
               ? translate(
                   "todo.board_layout_edit_description",
                   "拖动状态调整顺序，选择任务卡上需要显示的信息。",
@@ -326,22 +325,31 @@ export function BoardLayoutEditor({
                 )}
           </p>
         </div>
-        <div ref={fieldsRef} className="relative shrink-0">
-          <button
-            type="button"
-            data-testid="cloud-board-display-menu"
-            disabled={displayBusy}
-            aria-expanded={fieldsOpen}
-            onClick={() => setFieldsOpen((open) => !open)}
-            className="flex h-8 items-center gap-1.5 rounded-lg border border-border bg-background px-2.5 text-sm hover:bg-muted disabled:opacity-50"
-          >
-            {translate("todo.display_fields", "显示字段")}
-            <ChevronDown className="h-3.5 w-3.5 text-text-muted" />
-          </button>
-          {fieldsOpen && (
-            <div
+        <Popover.Root>
+          <Popover.Trigger asChild>
+            <button
+              type="button"
+              data-testid="cloud-board-display-menu"
+              disabled={displayBusy}
+              className="flex min-h-11 items-center gap-1.5 rounded-lg border border-border bg-background px-2.5 text-sm hover:bg-muted disabled:opacity-50 md:min-h-8"
+            >
+              {translate("todo.display_fields", "显示字段")}
+              <ChevronDown
+                className="h-4 w-4 shrink-0 text-text-muted"
+                aria-hidden="true"
+              />
+            </button>
+          </Popover.Trigger>
+          <Popover.Portal container={portalContainer}>
+            <Popover.Content
+              {...portalTheme}
+              align="end"
+              sideOffset={4}
+              collisionPadding={8}
+              onEscapeKeyDown={(event) => event.stopPropagation()}
               data-testid="cloud-project-card-display-settings"
-              className="absolute right-0 top-10 z-20 w-44 rounded-xl border border-border bg-background p-1.5 shadow-lg"
+              data-embedded-browser-occlusion
+              className={`${portalTheme.className} z-system-popover w-44 max-w-[calc(100vw-16px)] rounded-xl border border-border bg-popover p-1 text-text-primary shadow-lg outline-none`}
               role="menu"
             >
               <p className="px-2 py-1 text-xs text-text-muted">
@@ -356,7 +364,7 @@ export function BoardLayoutEditor({
                   data-testid={`cloud-board-display-${key.replace("show", "").toLowerCase()}`}
                   disabled={displayBusy}
                   onClick={() => onDisplayChange(key, !display[key])}
-                  className="flex h-8 w-full items-center gap-2 rounded-lg px-2 text-left text-sm hover:bg-muted disabled:opacity-50"
+                  className="flex min-h-11 w-full items-center gap-2 rounded-lg px-2 text-left text-sm outline-none hover:bg-muted focus:bg-muted disabled:opacity-50 md:min-h-8"
                 >
                   <span
                     className={cn(
@@ -371,100 +379,137 @@ export function BoardLayoutEditor({
                   {label}
                 </button>
               ))}
-            </div>
-          )}
-        </div>
+            </Popover.Content>
+          </Popover.Portal>
+        </Popover.Root>
       </div>
 
       <div className="mt-4 overflow-x-auto rounded-2xl bg-muted p-2.5">
-        <DndContext
-          sensors={sensors}
-          collisionDetection={closestCenter}
-          onDragStart={({ active }: DragStartEvent) =>
-            setActiveId(String(active.id))
-          }
-          onDragCancel={() => setActiveId(null)}
-          onDragEnd={handleDragEnd}
-        >
-          <div className="flex min-w-max items-start gap-2">
-            <SortableContext
-              items={statuses.map((status) => status.id)}
-              strategy={horizontalListSortingStrategy}
-            >
-              {statuses.map((status, index) => (
-                <div key={status.id} className="w-36 shrink-0">
-                  <SortableStatus
-                    status={status}
-                    previewDisplay={
-                      index === Math.min(1, statuses.length - 1)
-                        ? display
-                        : undefined
-                    }
-                    busy={statusBusy || !canEditStatuses}
-                    renaming={renamingId === status.id}
-                    onRename={() => setRenamingId(status.id)}
-                    onRenameCommit={(name) => {
-                      setRenamingId(null);
-                      const normalized = name.trim();
-                      if (!normalized || normalized === status.name) return;
-                      onStatusesChange(
-                        statuses.map((item) =>
-                          item.id === status.id
-                            ? { ...item, name: normalized }
-                            : item,
-                        ),
-                      );
-                    }}
-                    onDelete={() =>
-                      onStatusesChange(
-                        statuses.filter((item) => item.id !== status.id),
-                      )
-                    }
-                    renderActionMenu={renderActionMenu}
-                    translate={translate}
-                  />
-                </div>
-              ))}
-            </SortableContext>
-            {statuses.length === 0 && (
-              <div className="w-56 shrink-0 rounded-xl bg-background/70 p-2">
-                <p className="px-0.5 text-xs font-medium">
-                  {translate("todo.card_preview", "任务卡预览")}
-                </p>
-                <PreviewCard display={display} translate={translate} />
-              </div>
-            )}
-            {canEditStatuses && (
-              <button
-                type="button"
-                data-testid="cloud-board-status-add"
-                disabled={statusBusy}
-                onClick={addStatus}
-                className="mt-2 flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-dashed border-border text-text-muted hover:bg-background hover:text-text-primary disabled:opacity-50"
-                aria-label={translate("todo.add_status", "新增状态")}
+        {previewColumns ? (
+          <div
+            className="flex min-w-max items-start gap-2"
+            data-testid="board-view-preview"
+          >
+            {previewColumns.map((column, index) => (
+              <article
+                key={column.id}
+                data-testid={`board-view-preview-${column.id}`}
+                className="min-h-36 w-40 shrink-0 p-2"
               >
-                <Plus className="h-4 w-4" />
-              </button>
-            )}
+                <header className="flex h-7 items-center gap-2">
+                  <span
+                    className={cn(
+                      "h-2 w-2 shrink-0 rounded-full",
+                      statusDotClasses[column.color],
+                    )}
+                  />
+                  <span className="truncate text-xs font-medium">
+                    {column.name}
+                  </span>
+                </header>
+                {index === Math.min(1, previewColumns.length - 1) ? (
+                  <PreviewCard display={display} translate={translate} />
+                ) : (
+                  <>
+                    <div className="mt-3 h-1.5 rounded-full bg-border/70" />
+                    <div className="mt-2 h-1.5 w-3/5 rounded-full bg-border/70" />
+                  </>
+                )}
+              </article>
+            ))}
           </div>
-          <DragOverlay dropAnimation={null}>
-            {activeStatus ? (
-              <div className="flex h-10 w-36 items-center gap-2 rounded-xl border border-border bg-background px-3 text-xs font-medium shadow-lg">
-                <GripVertical className="h-3.5 w-3.5 text-text-muted" />
-                <span
-                  className={cn(
-                    "h-2 w-2 rounded-full",
-                    statusDotClasses[activeStatus.color],
-                  )}
-                />
-                <span className="truncate">{activeStatus.name}</span>
-              </div>
-            ) : null}
-          </DragOverlay>
-        </DndContext>
+        ) : (
+          <DndContext
+            sensors={sensors}
+            collisionDetection={closestCenter}
+            onDragStart={({ active }: DragStartEvent) =>
+              setActiveId(String(active.id))
+            }
+            onDragCancel={() => setActiveId(null)}
+            onDragEnd={handleDragEnd}
+          >
+            <div className="flex min-w-max items-start gap-2">
+              <SortableContext
+                items={statuses.map((status) => status.id)}
+                strategy={horizontalListSortingStrategy}
+              >
+                {statuses.map((status, index) => (
+                  <div key={status.id} className="w-36 shrink-0">
+                    <SortableStatus
+                      status={status}
+                      previewDisplay={
+                        index === Math.min(1, statuses.length - 1)
+                          ? display
+                          : undefined
+                      }
+                      busy={statusBusy || !canEditStatuses}
+                      renaming={renamingId === status.id}
+                      onRename={() => setRenamingId(status.id)}
+                      onRenameCommit={(name) => {
+                        setRenamingId(null);
+                        const normalized = name.trim();
+                        if (!normalized || normalized === status.name) return;
+                        onStatusesChange(
+                          statuses.map((item) =>
+                            item.id === status.id
+                              ? { ...item, name: normalized }
+                              : item,
+                          ),
+                        );
+                      }}
+                      onDelete={() =>
+                        onStatusesChange(
+                          statuses.filter((item) => item.id !== status.id),
+                        )
+                      }
+                      renderActionMenu={renderActionMenu}
+                      translate={translate}
+                    />
+                  </div>
+                ))}
+              </SortableContext>
+              {statuses.length === 0 && (
+                <div className="w-56 shrink-0 rounded-xl bg-background/70 p-2">
+                  <p className="px-0.5 text-xs font-medium">
+                    {translate("todo.card_preview", "任务卡预览")}
+                  </p>
+                  <PreviewCard display={display} translate={translate} />
+                </div>
+              )}
+              {canEditStatuses && (
+                <button
+                  type="button"
+                  data-testid="cloud-board-status-add"
+                  disabled={statusBusy}
+                  onClick={addStatus}
+                  className="mt-2 flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-dashed border-border text-text-muted hover:bg-background hover:text-text-primary disabled:opacity-50"
+                  aria-label={translate("todo.add_status", "新增状态")}
+                >
+                  <Plus className="h-4 w-4" />
+                </button>
+              )}
+            </div>
+            <DragOverlay dropAnimation={null}>
+              {activeStatus ? (
+                <div className="flex h-10 w-36 items-center gap-2 rounded-xl border border-border bg-background px-3 text-xs font-medium shadow-lg">
+                  <GripVertical className="h-3.5 w-3.5 text-text-muted" />
+                  <span
+                    className={cn(
+                      "h-2 w-2 rounded-full",
+                      statusDotClasses[activeStatus.color],
+                    )}
+                  />
+                  <span className="truncate">{activeStatus.name}</span>
+                </div>
+              ) : null}
+            </DragOverlay>
+          </DndContext>
+        )}
       </div>
       <p className="mt-2 text-xs text-text-muted">
-        {translate("todo.board_settings_sync", "设置会同步给所有项目成员。")}
+        {previewColumns
+          ? translate("todo.board_view_card_scope")
+          : translate("todo.board_settings_sync", "设置会同步给所有项目成员。")}
       </p>
     </section>
   );

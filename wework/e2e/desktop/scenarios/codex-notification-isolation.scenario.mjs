@@ -7,6 +7,7 @@ import {
 } from '../modules/codex-rollout-recovery.mjs'
 import { createSingleRootLocalProject, join, selectE2EModel } from '../modules/shared.mjs'
 import { handleEmptyReplyPrediction } from '../modules/response-protocol.mjs'
+import { reloadMainWindow } from '../modules/workspace-flows.mjs'
 
 const ACTIVE_WORKSPACE_TAB_SELECTOR = '[data-workspace-tab-content][aria-hidden="false"]'
 const ACTIVE_WORKBENCH_SELECTOR =
@@ -375,9 +376,7 @@ export function createDesktopScenario({
         await waitForUnreadBadge(control, 2, uiTimeoutMs, enabled ? 2 : 0)
       }
 
-      const readyCountBeforeReload = control.readyCount
-      await control.command('reloadApp', 'body')
-      await control.awaitReadyAfter(readyCountBeforeReload)
+      await reloadMainWindow(control, 'The Codex notifications renderer did not reconnect')
       await control.command('waitFor', COMPOSER_SELECTOR, { timeoutMs: uiTimeoutMs })
       await waitForUnreadBadge(control, 2, uiTimeoutMs)
 

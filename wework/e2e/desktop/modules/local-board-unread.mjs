@@ -86,6 +86,7 @@ export async function verifyLocalBoardUnread(control, taskTabTestId) {
   await control.command('waitFor', boardSurfaceSelector, {
     visible: true,
   })
+  await control.command('waitFor', 'body[data-board-cursor-policy="arrow"]')
   await control.command(
     'scrollIntoView',
     `${boardSurfaceSelector} [data-testid="cloud-todo-column-in_review"]`
@@ -126,6 +127,7 @@ export async function verifyLocalBoardUnread(control, taskTabTestId) {
   await control.command('waitFor', boardSurfaceSelector, {
     visible: false,
   })
+  await control.command('waitFor', 'body:not([data-board-cursor-policy])')
   await control.command('waitFor', '[data-testid="work-item-guide-summary-title"]', {
     text: 'WEWORK_DESKTOP_E2E_TASK',
     visible: true,
@@ -141,6 +143,7 @@ export async function verifyLocalBoardUnread(control, taskTabTestId) {
     visible: true,
   })
   await control.command('waitFor', cardSelector)
+  await control.command('waitFor', 'body[data-board-cursor-policy="arrow"]')
   await waitForElementCount(control, unreadSelector, 0)
   const readClasses = await control.command('getAttribute', cardSelector, { value: 'class' })
   assert.ok(readClasses.split(' ').includes('bg-background'))
@@ -152,5 +155,6 @@ export async function verifyLocalBoardUnread(control, taskTabTestId) {
     text: 'WEWORK_DESKTOP_E2E_TASK',
     visible: true,
   })
+  await control.command('waitFor', 'body:not([data-board-cursor-policy])')
   await assertLocalTerminalPreserved(control, terminalSessionId, 'after toggling back from board')
 }

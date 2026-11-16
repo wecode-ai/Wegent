@@ -134,6 +134,48 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn tool_approval_does_not_answer_a_concurrent_question_or_business_form() {
+        let (sender, receiver) = mpsc::channel(2);
+        let router = InteractionAnswerRouter::new(receiver);
+        let ordinary_router = router.clone();
+        let ordinary =
+            tokio::spawn(async move { ordinary_router.receive("ordinary".to_owned()).await });
+        let form_router = router.clone();
+        let business_form = tokio::spawn(async move {
+            shared_response(&form(), Some(form_router), "0".to_owned(), true).await
+        });
+        tokio::task::yield_now().await;
+        let approval = json!({"id": "approval", "params": {
+            "mode": "form", "serverName": "wegent-sites-interactions",
+            "requestedSchema": {"type": "object", "properties": {}},
+            "_meta": {"codex_approval_kind": "mcp_tool_call"}
+        }});
+        let approved = shared_response(&approval, Some(router), "approval".to_owned(), true)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(approved.result["action"], "accept");
+        assert!(approved.response.is_none());
+        assert!(!ordinary.is_finished());
+        assert!(!business_form.is_finished());
+
+        sender
+            .send(json!({"requestId": 0, "answers": {
+                "action": {"answers": ["preview"]}
+            }}))
+            .await
+            .unwrap();
+        let result = business_form.await.unwrap().unwrap().unwrap();
+        assert_eq!(result.result["content"]["action"], "preview");
+        assert!(!ordinary.is_finished());
+        let answer = json!({"requestId": "ordinary", "answers": {
+            "concurrent_direction": {"answers": ["Continue"]}
+        }});
+        sender.send(answer.clone()).await.unwrap();
+        assert_eq!(ordinary.await.unwrap().unwrap(), Some(answer));
+    }
+
+    #[tokio::test]
     async fn stand_in_routed_answers_cannot_grant_persistent_mcp_approval() {
         for dedicated in [false, true] {
             for (answer, action) in [

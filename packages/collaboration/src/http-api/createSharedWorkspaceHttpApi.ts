@@ -81,7 +81,9 @@ export function workspaceHttpRequestBody(value: unknown): unknown {
       // Runtime/provider option names are opaque API values.
       return [
         wireKey,
-        wireKey === "model_options" ? nested : workspaceHttpRequestBody(nested),
+        ["model_options", "board_views", "mcp_servers"].includes(wireKey)
+          ? nested
+          : workspaceHttpRequestBody(nested),
       ];
     }),
   );
@@ -109,7 +111,12 @@ function keysToCamelCase(value: unknown): unknown {
       const viewKey = camelCaseKey(key);
       return [
         viewKey,
-        ["modelOptions", "modelPolicy", "executionPolicy"].includes(viewKey)
+        [
+          "modelOptions",
+          "modelPolicy",
+          "executionPolicy",
+          "mcpServers",
+        ].includes(viewKey)
           ? nested
           : keysToCamelCase(nested),
       ];
@@ -321,7 +328,7 @@ export function createSharedWorkspaceHttpApi(
       },
       async listAgents(workspaceId, options) {
         const response = await get<{ items: unknown[] }>(
-          `/v1/workspaces/${encoded(workspaceId)}/agents`,
+          `/v1/workspaces/${encoded(workspaceId)}/agents?include_readiness=false`,
           options?.forceRefresh ? 0 : undefined,
         );
         return response.items.map((item) =>
@@ -414,7 +421,12 @@ export function createSharedWorkspaceHttpApi(
             ...(device.app_device_id
               ? { app_device_id: device.app_device_id }
               : {}),
+            ...(device.runtime_instance_id
+              ? { runtime_instance_id: device.runtime_instance_id }
+              : {}),
             name: device.name,
+            last_seen_at: device.last_seen_at ?? null,
+            workspace_ids: device.workspace_ids ?? [],
             kind:
               device.device_type === "cloud" || device.device_type === "remote"
                 ? ("cloud_host" as const)
@@ -430,8 +442,24 @@ export function createSharedWorkspaceHttpApi(
           }));
         },
       },
+      async removeDevice(device) {
+        if (
+          !Number.isSafeInteger(device.device_id) ||
+          Number(device.device_id) <= 0
+        ) {
+          throw new Error("Device registration ID is required");
+        }
+        await transport.delete(
+          `/devices/records/${device.device_id}?offline_only=true`,
+        );
+        cache.invalidate("/v1/resources");
+        cache.invalidate("/v1/workspaces/");
+        cache.invalidate("/v1/cloud-projects/");
+      },
       async list() {
-        return mapCollaborationPlatformResourcesDto(await get("/v1/resources"));
+        return mapCollaborationPlatformResourcesDto(
+          await get("/v1/resources?include_readiness=false"),
+        );
       },
       async removeAgent(agent) {
         if (agent.team_id == null) {

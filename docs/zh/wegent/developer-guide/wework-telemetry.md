@@ -10,15 +10,46 @@ Wework 将产品使用分析、桌面错误诊断和服务端可观测性分开�
 - Sentry 接收 React WebView 异常和 Electron main-process exception。
 - 服务端与 Executor 继续通过 OpenTelemetry Collector 上报 trace 和 metric。
 
+## 统一链路与采集策略
+
+所有部署共用事件定义、字段投影、用户开关和 PostHog 客户端。业务事件通过 `TelemetryAgent` 进入客户端；任务生命周期直接调用同一客户端；分身持久队列使用同一 SDK 的带 HTTP 回执传输。
+
+默认 `contextFields=[]`、`identity=anonymous`，不采集账号 ID、用户名、邮箱、邮箱前缀或应用、插件、工具的原始标识。匿名安装 ID 仍用于事件关联；匿名不意味着没有稳定标识。
+
+构建时可显式覆盖以下配置；身份是单个字符串，应用上下文字段才使用 JSON 数组，未知值会报错：
+
+| 构建变量                               | 默认值      | 允许值与作用                                                                                                                                                      |
+| -------------------------------------- | ----------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `VITE_WEWORK_TELEMETRY_IDENTITY`       | `anonymous` | `anonymous` 或 `email_prefix`；后者用登录账号邮箱前缀作为 `distinct_id`，未登录或邮箱无效时匿名                                                                   |
+| `VITE_WEWORK_TELEMETRY_CONTEXT_FIELDS` | `[]`        | `smart_app_key`、`smart_app_name`、`smart_app_version`、`smart_app_source`、`plugin_key`、`plugin_marketplace`、`plugin_version`、`tool_name`、`tool_duration_ms` |
+| `VITE_WEWORK_TELEMETRY_SOURCE`         | `wework`    | 数据来源标签，标记事件来源，便于报表筛选                                                                                                                          |
+
+接收地址和项目 Key 继续通过 `VITE_WEWORK_POSTHOG_HOST`、`VITE_WEWORK_POSTHOG_KEY` 配置。CI 构建将同名去掉 `VITE_` 前缀的 `WEWORK_*` 变量映射到构建环境，地址和 Key 沿用现有 secrets。身份配置不启用 PostHog person profiles 或 Session Replay，也不放宽 Sentry 的脱敏策略。用户拒绝或关闭遥测时，任何字段策略都不能绕过用户开关。设置和同意弹窗会显示本次部署额外采集的字段。
+
+### 用户标识与应用维度
+
+`VITE_WEWORK_TELEMETRY_IDENTITY` 只接受单个字符串，用于选择事件的 `distinct_id`：
+
+- `anonymous`：使用匿名安装标识，默认不读取账号邮箱。
+- `email_prefix`：使用当前登录账号的邮箱前缀；未登录或邮箱无效时使用匿名安装标识。切换或退出账号后更新标识，不附加完整邮箱、用户名或账号 ID。
+
+应用维度单独通过 `VITE_WEWORK_TELEMETRY_CONTEXT_FIELDS` 选择。需要统计智能工作台的标识、名称、版本和来源时，可配置四个 `smart_app_*` 字段。开启后，打开应用会读取安装目录补齐元数据，覆盖恢复页面时运行缓存尚未建立的情况；默认策略不会为遥测读取应用身份。
+
+事件包含 `platform`、`os`、`event_schema_version` 和可配置的 `telemetry_source`，可按来源标签与发布渠道筛选报表。接收服务需要支持客户端来源的跨域请求及 SDK 接收协议。
+
+分身队列记录首次交接时的标识、接收项目和采集策略，重放保留 UUID、发生时间和标识。目标或策略变化时不重放不匹配的记录，避免将积压数据发送到不同的接收目标。
+
 ## 隐私边界
 
-Wework 首次启动时会明确询问用户是否允许共享匿名使用情况和错误诊断数据。在用户作出选择前，前端和原生端遥测均保持关闭。用户之后可以在“设置 > 通用 > 隐私”中修改选择；关闭后，Wework 会停止两个客户端 SDK、清空未发送事件并重置分析身份。
+Wework 首次启动时会明确询问用户是否允许共享使用情况和错误诊断数据。在用户作出选择前，前端和原生端遥测均保持关闭。用户之后可以在“设置 > 通用 > 隐私”中修改选择；关闭后，Wework 会停止两个客户端 SDK、清空未发送事件并重置分析身份。
+
+发送边界同时检查用户开关和当前 SDK 实例，阻止已排队的批量事件、重试和关闭时刷新继续发出。重新开启遥测会创建新实例，旧实例不能恢复发送。
 
 产品分析事件不得包含聊天、提示词、模型回复、代码、文件名、文件路径、仓库名、终端内容、凭据或认证信息。业务代码只能调用 `src/telemetry/client.ts`，不得直接调用 PostHog 或 Sentry SDK。新增事件必须先加入 `AnalyticsEventMap` 和运行时属性白名单。
 
 PostHog 在发送前会再次按事件级白名单删除 SDK 自动附加的 URL、referrer、用户画像和其他非必要属性；SDK 自动生成且未登记的事件会被直接丢弃。WebView 与 Electron 原生 Sentry 事件会删除请求、用户、面包屑、附加上下文、原始异常文本、源码片段、本机文件路径和局部变量。WebView 错误栈仅保留 Wework 自身可信应用资源的文件地址、函数、行列号和 Source Map Debug ID；URL 的 query、fragment 与凭证会被删除，用户文件、外部页面和其他不可信路径会显示为 `<redacted>`。桌面 E2E 使用本地接收器验证用户选择前没有请求、明确同意后才发送，并检查真实请求体不含测试工作区路径、认证令牌、模型 Key 或用户邮箱。
 
-Wework 不向 PostHog 或 Sentry 发送账户用户 ID。Sentry 使用 localStorage 中保存的 `installation_id` 标签和每次会话的 `telemetry_session_id`；PostHog 使用 SDK 自生成的 `distinct_id` 和 `$session_id`。这些标识都是匿名的、与登录账户无关，并在用户关闭遥测时旋转，避免重新开启后继续关联关闭前的数据。
+Wework 不向 PostHog 或 Sentry 发送账户用户 ID。Sentry 使用 `installation_id` 标签和每次会话的 `telemetry_session_id`；PostHog 使用配置选择的 `distinct_id` 和 SDK 会话标识。默认用户标识是匿名的；显式选择 `email_prefix` 后，产品事件会关联该账号前缀。关闭遥测会重置 SDK 分析身份并停止采集；启用账号前缀模式时，该前缀仍可跨会话保持稳定。
 
 ## 事件目录
 

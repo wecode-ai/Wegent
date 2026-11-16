@@ -23,6 +23,7 @@ from knowledge_engine.embedding.errors import (
     EmbeddingDimensionMismatchError,
     EmbeddingResponseFormatError,
 )
+from shared.event_reporting.operations import embedding_fact
 
 
 class CustomEmbedding(BaseEmbedding):
@@ -78,6 +79,7 @@ class CustomEmbedding(BaseEmbedding):
     async def _aget_text_embedding(self, text: str) -> list[float]:
         return await asyncio.to_thread(self._get_text_embedding, text)
 
+    @embedding_fact("embedding")
     @retry(
         retry=retry_if_not_exception_type(
             (EmbeddingDimensionMismatchError, EmbeddingResponseFormatError)

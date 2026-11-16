@@ -61,7 +61,7 @@ export function ScheduleViewControls({
     value: ScheduleViewOptions[Key],
   ) => onViewOptionsChange?.({ ...viewOptions, [key]: value });
   const selectClassName =
-    "h-8 min-w-28 rounded-lg border border-border bg-background px-2 text-xs text-text-primary outline-none hover:bg-muted focus:border-blue-500 max-md:h-11";
+    "h-8 min-w-28 rounded-lg border border-border bg-background px-2 text-xs text-text-primary outline-none hover:bg-muted keyboard:focus:border-blue-500 max-md:h-11";
   const labels =
     locale === "zh-CN"
       ? {

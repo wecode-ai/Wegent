@@ -62,11 +62,12 @@ function* candidatePorts(dynamicRange) {
 
 export async function reservePort(
   registryDir = process.env.WEWORK_E2E_PORT_REGISTRY_DIR,
-  { dynamicRange } = {}
+  { dynamicRange, excludedPorts = [], dualStack = false } = {}
 ) {
   const excludedRange = dynamicRange === undefined ? await kernelDynamicPortRange() : dynamicRange
   for (const port of candidatePorts(excludedRange)) {
     const server = createServer()
+    const ipv6Server = dualStack ? createServer() : null
     try {
       await new Promise((resolvePromise, reject) => {
         server.once('error', reject)
@@ -74,12 +75,27 @@ export async function reservePort(
       })
       const address = server.address()
       assert.ok(address && typeof address !== 'string', 'Unable to reserve an E2E port')
-      if (address.port < 1024 || FETCH_BLOCKED_SERVICE_PORTS.has(address.port)) continue
+      if (
+        address.port < 1024 ||
+        FETCH_BLOCKED_SERVICE_PORTS.has(address.port) ||
+        excludedPorts.includes(address.port)
+      )
+        continue
+      if (ipv6Server) {
+        await new Promise((resolvePromise, reject) => {
+          ipv6Server.once('error', reject)
+          ipv6Server.listen({ port: address.port, host: '::1', ipv6Only: true }, resolvePromise)
+        })
+      }
       if (await claimPort(registryDir, address.port)) return address.port
     } catch (error) {
       if (!excludedRange || error.code !== 'EADDRINUSE') throw error
     } finally {
-      await new Promise(resolvePromise => server.close(resolvePromise))
+      await Promise.all(
+        [server, ipv6Server]
+          .filter(Boolean)
+          .map(listener => new Promise(resolvePromise => listener.close(resolvePromise)))
+      )
     }
   }
   throw new Error('All E2E service ports outside the kernel dynamic range are occupied or claimed')

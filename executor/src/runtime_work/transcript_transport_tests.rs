@@ -53,6 +53,58 @@ fn large_transcript() -> Value {
 }
 
 #[test]
+fn escaped_history_batches_compressor_writes_without_changing_json() {
+    #[derive(Default)]
+    struct CountingWriter {
+        bytes: Vec<u8>,
+        writes: usize,
+    }
+    impl Write for CountingWriter {
+        fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+            self.writes += 1;
+            self.bytes.extend_from_slice(bytes);
+            Ok(bytes.len())
+        }
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+    let packed = pack(large_transcript());
+    let mut unbuffered = CountingWriter::default();
+    serde_json::to_writer(&mut unbuffered, &packed).unwrap();
+
+    let buffered = write_packed_json(CountingWriter::default(), &packed).unwrap();
+
+    assert_eq!(buffered.bytes, unbuffered.bytes);
+    assert!(
+        buffered.writes * 100 < unbuffered.writes,
+        "small compressor writes were not batched: {} versus {}",
+        buffered.writes,
+        unbuffered.writes
+    );
+}
+
+#[test]
+fn buffered_serialization_reports_final_write_failure() {
+    #[derive(Debug)]
+    struct FailedWriter;
+    impl Write for FailedWriter {
+        fn write(&mut self, _bytes: &[u8]) -> std::io::Result<usize> {
+            Err(std::io::Error::other("snapshot sink unavailable"))
+        }
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+
+    let error = write_packed_json(FailedWriter, &json!({"small": "buffered until completion"}))
+        .unwrap_err();
+
+    assert_eq!(error.code, "transcript_transport_failed");
+    assert!(error.message.contains("snapshot sink unavailable"));
+}
+
+#[test]
 fn old_requests_keep_the_old_contract_and_unknown_versions_fail() {
     assert!(!requested(&json!({})).unwrap());
     assert!(!requested(&json!({"transcriptProtocolVersion":1})).unwrap());

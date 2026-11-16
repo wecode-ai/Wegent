@@ -7,11 +7,14 @@ import pytest
 from app.models.cloud_project import CloudProject
 from app.models.resource_member import ResourceMember
 from app.schemas.base_role import BaseRole
+from app.schemas.cloud_project import CloudProjectMemberResponse
 from app.services.cloud_project_visibility import project_participant_ids
+from app.services.cloud_projects.service import cloud_project_service
 from app.services.collaboration_permissions import collaboration_permission_service
 from app.services.collaboration_revocation import execution_authorized
 from tests.api import test_collaboration_permission_contract as permission_contract
 from tests.api.test_collaboration_permission_resources import make_execution
+from tests.service_results import service_result
 
 invite = permission_contract.invite
 scope = permission_contract.scope
@@ -120,8 +123,12 @@ def test_deleting_override_restores_inheritance_and_effective_eligibility(
         test_db, scope["user"].id, "read", pid
     )
     assert decision.role.value == space_role
-    roster = test_client.get(
-        f"/api/v1/cloud-projects/{pid}/members", headers=scope["owner"]
+    roster = service_result(
+        cloud_project_service.list_members,
+        test_db,
+        int(pid),
+        scope["space"]["owner_user_id"],
+        response_model=list[CloudProjectMemberResponse],
     )
     assert roster.status_code == 200, roster.text
     row = next(row for row in roster.json() if row["user_id"] == scope["user"].id)
@@ -232,12 +239,3 @@ def test_direct_viewer_downgrade_revokes_work_without_faking_runtime_completion(
     assert not execution_authorized(test_db, run)
     assert run.status == ("cancel_requested" if initial == "running" else "cancelled")
     cancellation.assert_called_once()
-
-
-@pytest.fixture
-def test_client(test_client):
-    """Exercise retained Python HTTP components in an isolated application."""
-    from tests.retained_python_handlers import component_client
-
-    with component_client(test_client, ("project_members",)) as client:
-        yield client

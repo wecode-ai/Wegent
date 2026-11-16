@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
@@ -18,6 +18,19 @@ describe('prepareLocalFileNavigation', () => {
     if (result.kind !== 'preview') throw new Error('Expected a directory preview')
     expect(isGeneratedLocalFilePreview(result.displayUrl)).toBe(true)
     expect(fileURLToPath(result.displayUrl)).not.toBe(directory)
+  })
+
+  test('links directory entries and their parent with directory URLs', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'wework-directory-preview-'))
+    const nested = join(directory, 'nested')
+    await mkdir(nested)
+
+    const result = await prepareLocalFileNavigation(`${pathToFileURL(nested).href}/`)
+
+    expect(result.kind).toBe('preview')
+    if (result.kind !== 'preview') throw new Error('Expected a directory preview')
+    const html = await readFile(fileURLToPath(result.displayUrl), 'utf8')
+    expect(html).toContain(`href="${pathToFileURL(directory).href}/"`)
   })
 
   test('blocks archive navigation so the workbench can show a notice', async () => {

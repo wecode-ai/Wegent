@@ -15,6 +15,8 @@ import {
 
 interface DocumentProtectionBoundaryProps {
   enabled: boolean
+  /** Show the built-in watermark without enabling extraction guards. */
+  showWatermark?: boolean
   knowledgeBaseId: number
   children: ReactNode
   /** Let an internal deployment supply its organization-specific preview. */
@@ -51,37 +53,79 @@ function preventExtraction(event: SyntheticEvent) {
 
 function CoreProtectedKnowledgePreview({
   watermarkText,
+  protectedMode,
   children,
 }: {
   watermarkText: string
+  protectedMode: boolean
   children: ReactNode
 }) {
-  const [watermarkPattern, setWatermarkPattern] = useState<string | null>(null)
+  const { t } = useTranslation('knowledge')
+  const [generation, setGeneration] = useState<{
+    text: string
+    pattern: string | null
+    failed: boolean
+  }>({ text: '', pattern: null, failed: false })
+  const [retryKey, setRetryKey] = useState(0)
 
   useEffect(() => {
     try {
-      setWatermarkPattern(createWatermarkPattern(watermarkText))
+      setGeneration({
+        text: watermarkText,
+        pattern: createWatermarkPattern(watermarkText),
+        failed: false,
+      })
     } catch {
-      setWatermarkPattern(null)
+      setGeneration({ text: watermarkText, pattern: null, failed: true })
     }
-  }, [watermarkText])
+  }, [retryKey, watermarkText])
+
+  if (generation.text !== watermarkText || !generation.pattern) {
+    return (
+      <div
+        className="flex h-full min-h-[200px] flex-col items-center justify-center gap-3 text-sm text-text-secondary"
+        data-testid={
+          generation.failed ? 'knowledge-watermark-unavailable' : 'knowledge-watermark-loading'
+        }
+      >
+        <span>
+          {t(
+            generation.failed
+              ? 'document.document.detail.linkPreview.watermarkUnavailable'
+              : 'document.document.detail.linkPreview.watermarkLoading'
+          )}
+        </span>
+        {generation.failed && (
+          <button
+            type="button"
+            className="min-h-11 rounded-md border border-border px-4 py-2 text-text-primary"
+            onClick={() => setRetryKey(key => key + 1)}
+            data-testid="knowledge-watermark-retry"
+          >
+            {t('document.document.detail.linkPreview.retry')}
+          </button>
+        )}
+      </div>
+    )
+  }
 
   return (
     <div
-      className="relative h-full overflow-hidden select-none"
-      onCopy={preventExtraction}
-      onCut={preventExtraction}
-      onContextMenu={preventExtraction}
-      onDragStart={preventExtraction}
-      data-testid="knowledge-protected-content"
+      className={`relative h-full overflow-hidden ${protectedMode ? 'select-none' : ''}`}
+      onCopy={protectedMode ? preventExtraction : undefined}
+      onCut={protectedMode ? preventExtraction : undefined}
+      onContextMenu={protectedMode ? preventExtraction : undefined}
+      onDragStart={protectedMode ? preventExtraction : undefined}
+      data-testid={protectedMode ? 'knowledge-protected-content' : 'knowledge-watermarked-content'}
     >
       {children}
       <div
         aria-hidden="true"
         className="pointer-events-none absolute inset-0 z-20"
-        style={{ backgroundImage: watermarkPattern ? `url(${watermarkPattern})` : undefined }}
+        style={{ backgroundImage: `url(${generation.pattern})` }}
         data-testid="knowledge-document-watermark"
         data-watermark-pattern="tiled"
+        data-watermark-text={watermarkText}
       />
     </div>
   )
@@ -89,6 +133,7 @@ function CoreProtectedKnowledgePreview({
 
 export function DocumentProtectionBoundary({
   enabled,
+  showWatermark = false,
   knowledgeBaseId,
   children,
   preferExtension = false,
@@ -101,11 +146,11 @@ export function DocumentProtectionBoundary({
     getKnowledgeDocumentProtectionExtension
   )
 
-  if (!enabled) return children
-  if (preferExtension && extension) {
+  if (!enabled && !showWatermark) return children
+  if (enabled && preferExtension && extension) {
     return extension.renderBoundary({ knowledgeBaseId, children })
   }
-  if (preferExtension && isKnowledgeDocumentProtectionRequired()) {
+  if (enabled && preferExtension && isKnowledgeDocumentProtectionRequired()) {
     return (
       <div
         className="flex h-full min-h-[200px] items-center justify-center text-sm text-red-600"
@@ -116,7 +161,7 @@ export function DocumentProtectionBoundary({
     )
   }
   return (
-    <CoreProtectedKnowledgePreview watermarkText={watermarkText}>
+    <CoreProtectedKnowledgePreview watermarkText={watermarkText} protectedMode={enabled}>
       {children}
     </CoreProtectedKnowledgePreview>
   )

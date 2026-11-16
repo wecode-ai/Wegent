@@ -1035,6 +1035,61 @@ describe('QuickAccessCards', () => {
     expect(routerPush).toHaveBeenCalledWith('/chat?teamId=2&mode=image')
   })
 
+  test('keeps a dual-mode agent on the code page when selected from all agents', async () => {
+    const onTeamSelect = jest.fn()
+    const dualModeTeam = makeTeam({
+      id: 4,
+      name: 'dual-mode-agent',
+      bind_mode: ['chat', 'code'],
+    })
+
+    renderQuickAccessCards(
+      [dualModeTeam],
+      {
+        system_version: 2,
+        system_team_ids: [],
+        user_version: 2,
+        show_system_recommended: false,
+        teams: [],
+      },
+      { currentMode: 'code', onTeamSelect }
+    )
+
+    expect(await screen.findByTestId('quick-launch-cards')).toBeInTheDocument()
+
+    fireEvent.click(screen.getByText('More'))
+    fireEvent.click(screen.getByTestId('quick-access-view-all-agents'))
+    fireEvent.click(await screen.findByTestId('quick-access-more-team-dual-mode-agent'))
+
+    expect(onTeamSelect).toHaveBeenCalledWith(expect.objectContaining({ id: 4 }))
+    expect(routerPush).not.toHaveBeenCalled()
+  })
+
+  test('switches a chat-only agent from the code page to chat', async () => {
+    const onTeamSelect = jest.fn()
+
+    renderQuickAccessCards(
+      [makeTeam({ id: 5, name: 'chat-only-agent', bind_mode: ['chat'] })],
+      {
+        system_version: 2,
+        system_team_ids: [],
+        user_version: 2,
+        show_system_recommended: false,
+        teams: [],
+      },
+      { currentMode: 'code', onTeamSelect }
+    )
+
+    expect(await screen.findByTestId('quick-launch-cards')).toBeInTheDocument()
+
+    fireEvent.click(screen.getByText('More'))
+    fireEvent.click(screen.getByTestId('quick-access-view-all-agents'))
+    fireEvent.click(await screen.findByTestId('quick-access-more-team-chat-only-agent'))
+
+    expect(routerPush).toHaveBeenCalledWith('/chat?teamId=5')
+    expect(onTeamSelect).not.toHaveBeenCalled()
+  })
+
   test('shows favorite image and video agents in chat mode and opens their modes', async () => {
     mockGetQuickLaunch.mockResolvedValueOnce({
       system_functions: [],

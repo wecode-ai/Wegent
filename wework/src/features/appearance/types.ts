@@ -20,6 +20,10 @@ export interface WorkbenchBackgroundConfig {
 }
 
 export interface AppearanceConfig extends ThemeAppearance {
+  schemaVersion: 2
+  lightThemeId: string
+  darkThemeId: string
+  themeOverrides: Record<ResolvedAppearanceMode, AppearanceThemeOverrides>
   mode: AppearanceMode
   sidebarTranslucent: boolean
   backgroundImagePath: string | null
@@ -34,13 +38,19 @@ export interface AppearanceConfig extends ThemeAppearance {
   darkBackground: WorkbenchBackgroundConfig
 }
 
+export interface AppearanceThemeOverrides {
+  accentColor?: string
+  palette?: Partial<ThemePalette>
+}
+
 export type AppearanceUpdate = Partial<
-  Omit<AppearanceConfig, 'light' | 'dark' | 'lightBackground' | 'darkBackground'>
+  Omit<AppearanceConfig, 'light' | 'dark' | 'lightBackground' | 'darkBackground' | 'themeOverrides'>
 > & {
   light?: Partial<ThemePalette>
   dark?: Partial<ThemePalette>
   lightBackground?: Partial<WorkbenchBackgroundConfig>
   darkBackground?: Partial<WorkbenchBackgroundConfig>
+  themeOverrides?: Partial<Record<ResolvedAppearanceMode, AppearanceThemeOverrides>>
 }
 
 export interface AppearanceContextValue {

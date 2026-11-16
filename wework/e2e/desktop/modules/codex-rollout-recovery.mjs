@@ -7,7 +7,7 @@ import { selectE2EModel } from './shared.mjs'
 
 export const ROLLOUT_CHAT_PROMPT = 'WEWORK_E2E_CODEX_ROLLOUT_CHAT'
 
-const CHILD_THREAD_ID = 'desktop-e2e-rollout-child'
+const CHILD_THREAD_ID = '00000000-0000-4000-8000-000000000089'
 const FIXTURE_PLUGIN_ID = 'codex-rollout-e2e'
 const REPORT_PATH = '/codex-rollout-reports'
 // Must match CODEX_ROLLOUT_SUBSCRIPTION in executor/src/hooks/model.rs.

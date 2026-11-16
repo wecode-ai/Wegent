@@ -5,6 +5,7 @@
 """GitHub repository provider implementation."""
 
 from typing import Dict, Optional, Tuple
+from urllib.parse import quote
 
 from app.services.git_skill.models import RepoAuthInfo
 from app.services.git_skill.providers.base import GitRepoProvider
@@ -46,5 +47,5 @@ class GitHubProvider(GitRepoProvider):
         return headers
 
     def get_zip_download_url(self, owner: str, repo: str, branch: str) -> str:
-        """Get the URL to download the repository as a ZIP file."""
-        return f"{self.base_url}/{owner}/{repo}/archive/refs/heads/{branch}.zip"
+        """Download archives through the repository API, like metadata requests."""
+        return f"{self.get_api_url(owner, repo)}/zipball/{quote(branch, safe='')}"

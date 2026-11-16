@@ -1,11 +1,17 @@
+import type {
+  RequestUserInputResponse,
+  RuntimeSendResponse,
+  RuntimeWorkListResponse,
+} from '@/types/api'
 import { renderHook, waitFor } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
-import type { RuntimeSendResponse, RuntimeWorkListResponse } from '@/types/api'
 import {
   clearRuntimeConversationCacheForTests,
   evictRuntimeConversation,
   getRuntimeConversationMessages,
   getRuntimeConversationQueuedMessages,
+  getRuntimeConversationTurns,
+  reconcileRuntimeConversationSnapshot,
 } from './runtimeConversationCache'
 import { sendRuntimeQueuedMessage } from './runtimeQueuedMessageSender'
 import { RuntimeTaskLifecycleStore } from './runtimeTaskLifecycle/RuntimeTaskLifecycleStore'
@@ -60,6 +66,14 @@ function fixture() {
     isOptionsLocked: false,
     attachmentSelection: { attachments: [], resetAttachments: vi.fn() },
     modelSelection: { models: [], selectedModel: null, selectedModelOptions: {} },
+    resolveRuntimeTaskModelSelection: () => ({
+      selectionResolved: false,
+      selectionReady: false,
+      taskSelection: null,
+      selectedModel: null,
+      activeModel: null,
+      selectedModelOptions: {},
+    }),
     skillSelection: { selectedSkills: [] },
     refreshWorkLists: refresh,
   }
@@ -69,6 +83,43 @@ function fixture() {
     store.remove(address)
   }
   return { store, send, list, refresh, dispatch, messaging: result.current, archive }
+}
+
+function inputFixture() {
+  const runtime = fixture()
+  const response: RequestUserInputResponse = {
+    requestId: 2,
+    itemId: 'mcp_server_elicitation',
+    answers: { audience: { answers: ['owner'] } },
+  }
+  const block = {
+    id: 'request-user-input-2',
+    subtaskId: 'elicitation-turn',
+    type: 'tool' as const,
+    toolName: 'request_user_input',
+    status: 'pending' as const,
+    createdAt: 2,
+    renderPayload: {
+      kind: 'request_user_input' as const,
+      requestId: 2,
+      itemId: 'mcp_server_elicitation',
+      questions: [
+        {
+          id: 'audience',
+          question: '访问范围',
+          options: [{ label: '仅自己', value: 'owner' }],
+        },
+      ],
+    },
+  }
+  reconcileRuntimeConversationSnapshot(address, [
+    {
+      id: 'elicitation-turn',
+      status: 'streaming',
+      items: [{ id: block.id, type: 'block', block }],
+    },
+  ])
+  return { ...runtime, response, blockId: block.id }
 }
 
 describe('runtime message archival', () => {
@@ -144,7 +195,7 @@ describe('runtime message archival', () => {
     expect(store.getTask(address)).toBeNull()
   })
 
-  test('does not append an accepted message after archival during work-list refresh', async () => {
+  test('does not restore an accepted conversation archived during background work-list refresh', async () => {
     const { messaging, store, send, refresh, archive } = fixture()
     const refreshed = deferred<void>()
     send.mockResolvedValue({ accepted: true, taskId: address.taskId })
@@ -154,32 +205,59 @@ describe('runtime message archival', () => {
       sendRuntimePaneMessage: messaging.sendRuntimePaneMessage,
     })
     await waitFor(() => expect(refresh).toHaveBeenCalledTimes(1))
+    await expect(sending).resolves.toEqual({ accepted: true, queued: false })
+    expect(getRuntimeConversationMessages(address)).toContainEqual(
+      expect.objectContaining({ role: 'user', content: queuedMessage.content })
+    )
     archive()
     refreshed.resolve()
-
-    await expect(sending).resolves.toEqual({ accepted: false, queued: false })
+    await refreshed.promise
     expect(store.getTask(address)).toBeNull()
     expect(getRuntimeConversationMessages(address)).toEqual([])
     expect(getRuntimeConversationQueuedMessages(address)).toEqual([])
   })
 
-  test('still accepts an ordinary non-archived continuation', async () => {
-    const { messaging, store, send, refresh } = fixture()
-    send.mockResolvedValue({ accepted: true, taskId: address.taskId })
+  test.each(['rejected', 'transport-failed'] as const)(
+    'does not record an input answer when %s',
+    async outcome => {
+      const { messaging, send, refresh, response } = inputFixture()
+      const before = getRuntimeConversationTurns(address)
+      const warning = vi.spyOn(console, 'warn').mockImplementation(() => {})
+      if (outcome === 'rejected') {
+        send.mockResolvedValue({ accepted: false, error: 'Input is no longer pending' })
+      } else send.mockRejectedValue(new Error('Transport unavailable'))
 
-    await expect(
-      sendRuntimeQueuedMessage(address, queuedMessage, {
-        lifecycleStore: store,
-        sendRuntimePaneMessage: messaging.sendRuntimePaneMessage,
-      })
-    ).resolves.toEqual({ accepted: true, queued: false })
+      await expect(
+        messaging.sendRuntimePaneMessage({
+          address,
+          message: 'owner',
+          modelId: 'test-model',
+          requestUserInputResponse: response,
+        })
+      ).resolves.toBe(false)
 
-    expect(
-      getRuntimeConversationMessages(address)
-        .filter(message => message.role === 'user')
-        .map(message => message.id)
-    ).toEqual([queuedMessage.id])
-    expect(store.getTask(address)).not.toBeNull()
-    expect(refresh).toHaveBeenCalledTimes(1)
+      expect(getRuntimeConversationTurns(address)).toEqual(before)
+      expect(refresh).not.toHaveBeenCalled()
+      warning.mockRestore()
+    }
+  )
+
+  test('does not restore an input answer accepted after its conversation was archived', async () => {
+    const { messaging, send, refresh, response, archive } = inputFixture()
+    const accepted = deferred<RuntimeSendResponse>()
+    send.mockReturnValue(accepted.promise)
+    const sending = messaging.sendRuntimePaneMessage({
+      address,
+      message: 'owner',
+      modelId: 'test-model',
+      requestUserInputResponse: response,
+    })
+    await waitFor(() => expect(send).toHaveBeenCalledTimes(1))
+    archive()
+    accepted.resolve({ accepted: true, taskId: address.taskId })
+
+    await expect(sending).resolves.toBe(false)
+    expect(getRuntimeConversationTurns(address)).toEqual([])
+    expect(refresh).not.toHaveBeenCalled()
   })
 })

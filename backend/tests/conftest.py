@@ -2,11 +2,13 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
+import asyncio
+import copy
 import hashlib
 import os
 import tempfile
 import uuid
-from contextlib import contextmanager
+from contextlib import asynccontextmanager, contextmanager
 from datetime import datetime, timedelta, timezone
 from typing import Any, Generator, Tuple
 
@@ -37,6 +39,7 @@ from app.models.kind import Kind
 from app.models.skill_binary import SkillBinary
 from app.models.subtask import Subtask
 from app.models.user import User
+from tests.mcp_oauth_cache import mcp_session_cache  # noqa: F401
 
 
 @pytest.fixture(autouse=True)
@@ -61,8 +64,31 @@ def use_fast_test_password_hashing() -> Generator[None, None, None]:
 
 
 class FakeIMSessionRedisClient:
+    class _Lock:
+        def __init__(self) -> None:
+            self._lock = asyncio.Lock()
+
+        async def __aenter__(self) -> "FakeIMSessionRedisClient._Lock":
+            await self._lock.acquire()
+            return self
+
+        async def __aexit__(self, *_args) -> None:
+            self._lock.release()
+
+        async def acquire(self) -> bool:
+            return await self._lock.acquire()
+
+        async def owned(self) -> bool:
+            return self._lock.locked()
+
+        async def release(self) -> None:
+            self._lock.release()
+
     def __init__(self, cache: "FakeIMSessionCache") -> None:
         self._cache = cache
+
+    def lock(self, _name: str, **_options) -> "FakeIMSessionRedisClient._Lock":
+        return self._cache.locks.setdefault(_name, self._Lock())
 
     async def zadd(self, key: str, mapping: dict[str, float]) -> int:
         zset = self._cache.zsets.setdefault(key, {})
@@ -113,14 +139,29 @@ class FakeIMSessionCache:
         self.values: dict[str, Any] = {}
         self.expires: dict[str, int | None] = {}
         self.zsets: dict[str, dict[str, float]] = {}
+        self.locks: dict[str, FakeIMSessionRedisClient._Lock] = {}
 
     async def get(self, key: str) -> Any:
-        return self.values.get(key)
+        # Redis serializes values, so callers never share mutable snapshots.
+        return copy.deepcopy(self.values.get(key))
 
     async def set(self, key: str, value: Any, expire: int | None = None) -> bool:
-        self.values[key] = value
+        self.values[key] = copy.deepcopy(value)
         self.expires[key] = expire
         return True
+
+    async def get_or_raise(self, key: str) -> Any:
+        return await self.get(key)
+
+    async def set_or_raise(
+        self, key: str, value: Any, expire: int | None = None
+    ) -> bool:
+        return await self.set(key, value, expire)
+
+    async def setnx(self, key: str, value: Any, expire: int | None = None) -> bool:
+        if key in self.values:
+            return False
+        return await self.set(key, value, expire)
 
     async def delete(self, key: str) -> bool:
         existed = key in self.values
@@ -135,6 +176,10 @@ class FakeIMSessionCache:
 
     async def _get_client(self) -> FakeIMSessionRedisClient:
         return FakeIMSessionRedisClient(self)
+
+    @asynccontextmanager
+    async def _client_context(self):
+        yield await self._get_client()
 
 
 @pytest.fixture
@@ -188,6 +233,21 @@ def _set_sqlite_pragma(dbapi_conn, connection_record):
     cursor.close()
 
 
+def _register_sqlite_functions(dbapi_conn, connection_record):
+    """Register share lookup functions on every SQLite connection."""
+    # SQLite unit fixtures use the same SHA-256 expression as MySQL share lookup.
+    dbapi_conn.create_function(
+        "sha2",
+        2,
+        lambda value, bits: (
+            hashlib.sha256(value.encode("utf-8")).hexdigest()
+            if value is not None and bits == 256
+            else None
+        ),
+        deterministic=True,
+    )
+
+
 # Session-scoped engine and tables - created once per test session (per worker)
 @pytest.fixture(scope="session")
 def test_engine(worker_id):
@@ -214,6 +274,7 @@ def test_engine(worker_id):
         pool_pre_ping=True,
     )
 
+    event.listen(engine, "connect", _register_sqlite_functions)
     # Enable WAL mode for better concurrent access (only for file-based databases)
     if worker_id != "master":
         event.listen(engine, "connect", _set_sqlite_pragma)
@@ -261,6 +322,27 @@ def test_session_factory(test_engine):
 
 
 @pytest.fixture(scope="function")
+def mcp_test_db(
+    tmp_path, monkeypatch: pytest.MonkeyPatch, mcp_session_cache
+) -> Generator[Session, None, None]:
+    """Expose committed MCP state to independent transaction sessions."""
+    from app.services import user_mcp_service as mcp_module
+
+    engine = create_engine(
+        f"sqlite:///{tmp_path}/mcp.sqlite", connect_args={"check_same_thread": False}
+    )
+    Base.metadata.create_all(engine)
+    factory = sessionmaker(engine, expire_on_commit=False)
+    monkeypatch.setattr(mcp_module, "SessionLocal", factory, raising=False)
+    monkeypatch.setattr("app.db.timezone.DATABASE_DATETIME_TIMEZONE", timezone.utc)
+    try:
+        with factory() as db:
+            yield db
+    finally:
+        engine.dispose()
+
+
+@pytest.fixture(scope="function")
 def test_db(
     test_engine, test_session_factory, monkeypatch: pytest.MonkeyPatch
 ) -> Generator[Session, None, None]:
@@ -295,6 +377,29 @@ def test_db(
         # Rollback the transaction to restore database state
         transaction.rollback()
         connection.close()
+
+
+@pytest.fixture(scope="function")
+def runtime_transcript_sessions(
+    test_db: Session, monkeypatch: pytest.MonkeyPatch
+) -> list[Session]:
+    """Keep packet sessions independent inside a unit test's outer transaction."""
+    from app.services import runtime_work_service
+
+    sessions: list[Session] = []
+
+    @contextmanager
+    def session() -> Generator[Session, None, None]:
+        with Session(
+            bind=test_db.get_bind(),
+            autoflush=False,
+            join_transaction_mode="create_savepoint",
+        ) as db:
+            sessions.append(db)
+            yield db
+
+    monkeypatch.setattr(runtime_work_service, "get_db_session", session, raising=False)
+    return sessions
 
 
 @pytest.fixture(scope="function")

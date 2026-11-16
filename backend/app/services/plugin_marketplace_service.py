@@ -13,6 +13,7 @@ import logging
 import re
 import zipfile
 from collections import OrderedDict
+from copy import deepcopy
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from io import BytesIO
@@ -65,6 +66,7 @@ from app.schemas.installed_plugin import (
 from app.services.marketplace_submission_upload import (
     build_marketplace_submission_upload_url,
 )
+from app.services.plugin_catalog_identity import ensure_catalog_plugin
 from app.services.plugin_device_identity import (
     coalesce_plugin_device_rows,
     plugin_device_id,
@@ -89,6 +91,7 @@ from app.services.plugin_package_storage import (
     PluginPackageStorageError,
     plugin_package_storage,
 )
+from app.services.plugin_release_components import components_with_manifest_account_auth
 from app.services.plugin_release_notification_service import (
     notify_plugin_release_available,
 )
@@ -470,12 +473,21 @@ class PluginMarketplaceService:
         user_id: int,
         plugin_id: int,
         release_id: int | None = None,
+        commit: bool = True,
     ) -> InstalledPlugin:
-        self.reconcile_stale_installed_catalog_refs(db, user_id=user_id)
+        if commit:
+            self.reconcile_stale_installed_catalog_refs(db, user_id=user_id)
         # Catalog repair may have committed its own transaction.
         acquire_plugin_write_lock(db, user_id)
         plugin = self._published_plugin(db, plugin_id, user_id=user_id)
+        kind_name = self._kind_name(plugin.catalog_namespace, plugin.slug)
         existing = self._find_installed(db, user_id=user_id, plugin_id=plugin.id)
+        if existing is None:
+            # Catalog rebuilds can leave inactive installs whose pluginId no longer
+            # resolves. Their canonical Kind name is still the catalog identity.
+            existing = self._find_installed_kind_by_name(
+                db, user_id=user_id, kind_name=kind_name
+            )
         if release_id is not None:
             if not existing and release_id != plugin.latest_release_id:
                 raise HTTPException(
@@ -489,20 +501,27 @@ class PluginMarketplaceService:
                 )
         release = self._installable_release(db, plugin, None)
         installed = existing
-        payload = self._installed_payload(plugin, release)
+        payload = (
+            self._installed_release_payload(installed, plugin=plugin, release=release)
+            if installed and installed.is_active
+            else self._installed_payload(plugin, release)
+        )
         if installed:
             replace_installed_kind(db, installed, payload, is_active=True)
         else:
             installed = Kind(
                 user_id=user_id,
                 kind="InstalledPlugin",
-                name=self._kind_name(plugin.catalog_namespace, plugin.slug),
+                name=kind_name,
                 namespace="default",
                 json=payload,
                 is_active=True,
             )
             db.add(installed)
-        db.commit()
+        if commit:
+            db.commit()
+        else:
+            db.flush()
         db.refresh(installed)
         return self._kind_to_installed(installed)
 
@@ -513,6 +532,7 @@ class PluginMarketplaceService:
         user_id: int,
         installed_id: int,
         release_id: int,
+        commit: bool = True,
     ) -> InstalledPlugin:
         acquire_plugin_write_lock(db, user_id)
         installed = self._owned_install(db, user_id=user_id, installed_id=installed_id)
@@ -528,7 +548,10 @@ class PluginMarketplaceService:
             installed, plugin=plugin, release=release
         )
         replace_installed_kind(db, installed, payload)
-        db.commit()
+        if commit:
+            db.commit()
+        else:
+            db.flush()
         db.refresh(installed)
         return self._kind_to_installed(installed)
 
@@ -552,10 +575,17 @@ class PluginMarketplaceService:
         return payload
 
     def release_package_for_install(
-        self, db: Session, *, user_id: int, installed_id: int
+        self,
+        db: Session,
+        *,
+        user_id: int,
+        installed_id: int,
+        expected_release_id: int | None = None,
     ) -> tuple[bytes, str]:
         installed = self._owned_install(db, user_id=user_id, installed_id=installed_id)
         release_id = installed.json.get("spec", {}).get("releaseId")
+        if expected_release_id is not None and release_id != expected_release_id:
+            raise HTTPException(status_code=409, detail="RELEASE_CHANGED")
         if not isinstance(release_id, int):
             raise HTTPException(status_code=404, detail="Plugin release not found")
         release = db.get(PluginRelease, release_id)
@@ -623,11 +653,7 @@ class PluginMarketplaceService:
                 status_code=409, detail="Source plugin is not a personal plugin"
             )
         parsed, security_report = self._analyze_package(package)
-        if parsed.name != plugin.slug:
-            raise HTTPException(
-                status_code=422,
-                detail="Personal plugin slug must match the manifest name",
-            )
+        self._validate_personal_manifest_name(plugin, parsed)
         try:
             result = self._publish_release(
                 db,
@@ -688,16 +714,25 @@ class PluginMarketplaceService:
                 status_code=422,
                 detail="Official plugin slug must match the manifest name",
             )
-        plugin = (
-            db.query(Plugin)
-            .filter(
-                Plugin.catalog_namespace == catalog_namespace,
-                Plugin.slug == slug,
-            )
-            .with_for_update()
-            .first()
+        plugin = ensure_catalog_plugin(
+            db,
+            {
+                "catalog_namespace": catalog_namespace,
+                "slug": slug,
+                "name": parsed.name,
+                "display_name": parsed.displayName,
+                "listing_type": listing_type,
+                "source_type": "native",
+                "source_provider": "wework",
+                "owner_user_id": 0,
+                "origin_plugin_id": origin_plugin_id,
+                "keywords_json": [],
+                "interface_json": {},
+                "visibility": visibility,
+                "status": "draft",
+            },
         )
-        if plugin and (
+        if (
             plugin.source_type != "native"
             or plugin.source_provider != "wework"
             or plugin.owner_user_id != 0
@@ -706,32 +741,14 @@ class PluginMarketplaceService:
                 status_code=409,
                 detail="Plugin slug is owned by a different publisher",
             )
-        if plugin and plugin.listing_type != listing_type:
+        if plugin.listing_type != listing_type:
             raise HTTPException(
                 status_code=409, detail="Plugin listing type cannot be changed"
             )
-        if plugin and catalog_namespace == ENTERPRISE_CATALOG_NAMESPACE:
+        if catalog_namespace == ENTERPRISE_CATALOG_NAMESPACE:
             self._validate_enterprise_origin(
                 plugin, requested_origin_plugin_id=origin_plugin_id
             )
-        if not plugin:
-            plugin = Plugin(
-                catalog_namespace=catalog_namespace,
-                slug=slug,
-                name=parsed.name,
-                display_name=parsed.displayName,
-                listing_type=listing_type,
-                source_type="native",
-                source_provider="wework",
-                owner_user_id=0,
-                origin_plugin_id=origin_plugin_id,
-                keywords_json=[],
-                interface_json={},
-                visibility=visibility,
-                status="draft",
-            )
-            db.add(plugin)
-            db.flush()
         current_release = (
             db.get(PluginRelease, plugin.latest_release_id)
             if plugin.latest_release_id
@@ -919,6 +936,7 @@ class PluginMarketplaceService:
             release = PluginRelease(
                 plugin_id=plugin.id,
                 version=request.version,
+                release_notes=request.releaseNotes or "",
                 manifest_json={},
                 interface_json={},
                 storage_key="pending",
@@ -1127,6 +1145,7 @@ class PluginMarketplaceService:
             package = plugin_package_storage.get(release.storage_key)
             self._validate_uploaded_package(release, package)
             parsed, security_report = self._analyze_package(package)
+            self._validate_personal_manifest_name(plugin, parsed)
             if parsed.version != release.version:
                 raise HTTPException(
                     status_code=422,
@@ -1462,6 +1481,24 @@ class PluginMarketplaceService:
             plugin.latest_release_id = release.id
         if unset_datetime(plugin.published_at) is None:
             plugin.published_at = now
+
+    @staticmethod
+    def _validate_personal_manifest_name(
+        plugin: Plugin, parsed: PluginUploadInfo
+    ) -> None:
+        if parsed.name in {".", ".."} or any(
+            character in parsed.name for character in ("/", "\\", ":", "\0")
+        ):
+            raise HTTPException(
+                status_code=422,
+                detail="Personal plugin manifest name must be a safe path component",
+            )
+        manifest_slug = re.sub(r"[^a-z0-9._-]+", "-", parsed.name.lower())
+        if manifest_slug != plugin.slug:
+            raise HTTPException(
+                status_code=422,
+                detail="Personal plugin slug must match the manifest name",
+            )
 
     def _analyze_package(
         self, package: bytes
@@ -2155,7 +2192,10 @@ class PluginMarketplaceService:
         )
 
     def _installed_payload(self, plugin: Plugin, release: PluginRelease) -> dict:
-        components = (release.scan_report_json or {}).get("components") or {}
+        components = components_with_manifest_account_auth(
+            (release.scan_report_json or {}).get("components") or {},
+            release.manifest_json or {},
+        )
         return {
             "apiVersion": "agent.wecode.io/v1",
             "kind": "InstalledPlugin",
@@ -2926,6 +2966,22 @@ class PluginMarketplaceService:
             plugin_id
         )
 
+    def _find_installed_kind_by_name(
+        self, db: Session, *, user_id: int, kind_name: str
+    ) -> Kind | None:
+        return (
+            db.query(Kind)
+            .filter(
+                Kind.user_id == user_id,
+                Kind.kind == "InstalledPlugin",
+                Kind.namespace == "default",
+                Kind.name == kind_name,
+            )
+            .order_by(Kind.is_active.desc(), Kind.id.asc())
+            .with_for_update()
+            .first()
+        )
+
     def _published_plugin_by_key(
         self,
         db: Session,
@@ -3060,7 +3116,23 @@ class PluginMarketplaceService:
                 and str(source.get("catalogItemId") or "") == str(matched.id)
                 and str(source.get("marketplace") or "") == expected_marketplace
             ):
-                return False
+                # Repair only the current package's auth snapshot. Do not change
+                # release selection, user preferences, or device update state.
+                if (
+                    spec.get("version") != target_release.version
+                    or (spec.get("packageRef") or {}).get("checksum")
+                    != f"sha256:{target_release.sha256}"
+                ):
+                    return False
+                components = components_with_manifest_account_auth(
+                    spec.get("components") or {}, target_release.manifest_json or {}
+                )
+                if components == (spec.get("components") or {}):
+                    return False
+                replacement = deepcopy(payload)
+                replacement["spec"]["components"] = components
+                replace_installed_kind(db, row, replacement)
+                return True
             self._apply_catalog_ref_to_installed_kind(
                 db, row, plugin=matched, release=target_release
             )
@@ -3116,9 +3188,12 @@ class PluginMarketplaceService:
                 "installState": "installed",
                 "manifest": release.manifest_json or spec.get("manifest"),
                 "interface": release.interface_json or spec.get("interface"),
-                "components": (release.scan_report_json or {}).get("components")
-                or spec.get("components")
-                or {},
+                "components": components_with_manifest_account_auth(
+                    (release.scan_report_json or {}).get("components")
+                    or spec.get("components")
+                    or {},
+                    release.manifest_json or {},
+                ),
                 "packageRef": package_ref,
                 "sourcePayload": source_payload,
             }

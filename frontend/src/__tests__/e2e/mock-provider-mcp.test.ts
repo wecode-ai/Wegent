@@ -96,4 +96,59 @@ describe('MCP import response gate', () => {
     expect(response.status).toBe(200)
     expect(response.headers.get('connection')).toBe('close')
   })
+
+  it('keeps another worker gated, configured and recorded when one worker resets', async () => {
+    const scopedControl = async (scope: string, path: string, body: unknown = {}) => {
+      const response = await fetch(`${url}/e2e/${scope}/mcp-control/${path}`, {
+        method: 'POST',
+        body: JSON.stringify(body),
+      })
+      expect(response.status).toBe(200)
+      return response.json()
+    }
+    const call = async (scope: string) => {
+      const response = await fetch(`${url}/e2e/${scope}/mcp`, {
+        method: 'POST',
+        body: JSON.stringify({
+          jsonrpc: '2.0',
+          id: 1,
+          method: 'tools/call',
+          params: { name: 'get_document_content', arguments: { nodeId: 'imp-product' } },
+        }),
+      })
+      expect(response.status).toBe(200)
+      return response.json()
+    }
+    let pending: Promise<unknown> | undefined
+    try {
+      await scopedControl('worker-b', 'config', {
+        pausedContentNodeIds: ['imp-product'],
+        documentContents: { 'imp-product': 'WORKER_B_CONTENT' },
+      })
+      // The real HTTP handler enters the content gate before its end observer runs.
+      const received = new Promise<void>(resolve =>
+        server.once('request', request => request.once('end', resolve))
+      )
+      pending = call('worker-b')
+      await received
+      await scopedControl('worker-a', 'config', { deniedNodeIds: ['imp-product'] })
+      const denied = await call('worker-a')
+      expect(denied.result.isError).toBe(true)
+      await scopedControl('worker-a', 'reset')
+      const state = await scopedControl('worker-b', 'config')
+      expect(state.waitingContentNodeIds).toEqual(['imp-product'])
+      expect(state.documentContents).toEqual({ 'imp-product': 'WORKER_B_CONTENT' })
+      expect(await (await fetch(`${url}/e2e/worker-a/mcp-control/calls`)).json()).toEqual([])
+      await scopedControl('worker-b', 'config', { pausedContentNodeIds: [] })
+      const result = (await pending) as { result: { content: Array<{ text: string }> } }
+      expect(result.result.content[0].text).toContain('WORKER_B_CONTENT')
+      const calls = await (await fetch(`${url}/e2e/worker-b/mcp-control/calls`)).json()
+      expect(calls).toHaveLength(1)
+      expect(calls[0].isError).toBe(false)
+    } finally {
+      await scopedControl('worker-a', 'reset')
+      await scopedControl('worker-b', 'reset')
+      await pending
+    }
+  })
 })

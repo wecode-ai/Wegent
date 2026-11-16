@@ -398,7 +398,7 @@ async def test_dingtalk_runtime_notification_enables_quoted_reply_continuation(
             "任务标题：Native Codex task\n\n"
             "任务状态：有新的 AI 回复\n\n"
             "最新回复：Implemented from native Codex\n\n"
-            "引用本通知回复，即可继续该任务。"
+            "在分身模式下引用本通知回复，可交给当前分身处理。发送 /standin 可进入。"
         ),
     }
     assert (
@@ -909,13 +909,11 @@ async def test_runtime_task_update_suppresses_global_target_while_client_is_acti
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("target_kind", ["active", "subscribed"])
 async def test_runtime_task_update_master_switch_suppresses_session_targets(
     test_db: Session,
     test_user,
     fake_im_session_cache,
     monkeypatch: pytest.MonkeyPatch,
-    target_kind: str,
 ) -> None:
     address = {
         "deviceId": "device-1",
@@ -929,18 +927,9 @@ async def test_runtime_task_update_master_switch_suppresses_session_targets(
         proactive_recipient_id="staff-1",
     )
     await im_session_service.save_session(session)
-    if target_kind == "active":
-        await im_session_service.bind_active_runtime_task(
-            test_db,
-            session=session,
-            runtime_task=address,
-        )
-    else:
-        await im_session_service.subscribe_runtime_task_notification(
-            test_db,
-            session=session,
-            runtime_task=address,
-        )
+    await im_session_service.subscribe_runtime_task_notification(
+        test_db, session=session, runtime_task=address
+    )
 
     send_text = AsyncMock(return_value={"success": True})
     monkeypatch.setattr(im_notification_dispatcher, "send_text", send_text)
@@ -960,7 +949,7 @@ async def test_runtime_task_update_master_switch_suppresses_session_targets(
 
 
 @pytest.mark.asyncio
-async def test_runtime_task_update_uses_active_session_when_master_switch_enabled(
+async def test_runtime_task_update_does_not_use_retired_task_bindings(
     test_db: Session,
     test_user,
     fake_im_session_cache,
@@ -978,10 +967,10 @@ async def test_runtime_task_update_uses_active_session_when_master_switch_enable
         proactive_recipient_id="staff-1",
     )
     await im_session_service.save_session(session)
-    await im_session_service.bind_active_runtime_task(
-        test_db,
-        session=session,
-        runtime_task=address,
+    legacy = session.to_dict()
+    legacy["active_runtime_task"] = address
+    await fake_im_session_cache.set(
+        f"channel:private_session:{session.session_key}", legacy
     )
     await im_session_service.enable_global_notification(test_db, session=session)
     await im_session_service.update_im_notification_presence(
@@ -1002,8 +991,8 @@ async def test_runtime_task_update_uses_active_session_when_master_switch_enable
         source="codex_watcher",
     )
 
-    assert result["sent"] == 1
-    send_text.assert_awaited_once()
+    assert result["sent"] == 0
+    send_text.assert_not_awaited()
 
 
 @pytest.mark.asyncio

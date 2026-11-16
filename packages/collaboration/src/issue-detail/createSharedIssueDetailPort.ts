@@ -2,7 +2,11 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-import type { SharedWorkspaceApi } from "../ports/SharedWorkspaceApi";
+import type {
+  WorkspaceDeliveryUpdate,
+  SharedWorkspaceApi,
+  IssueAttachmentContext,
+} from "../ports/SharedWorkspaceApi";
 import type { ModelSelectionConfig } from "@wegent/chat-core/runtime-stream-types";
 import type {
   CollaborationAttachment,
@@ -18,6 +22,7 @@ import {
 } from "./issueAssigneeResources";
 
 export interface SharedIssueDetailTaskBinding {
+  stand_in_pending?: boolean | null;
   id: string;
   cloud_project_id: string;
   loop_item_id: string | null;
@@ -67,6 +72,12 @@ export interface SharedIssueDetailDeliveryAsset {
 }
 
 export interface SharedIssueDetailDelivery {
+  title?: string;
+  version?: number;
+  source_task_snapshot?: Record<string, unknown> | null;
+  created_by_user_id?: number | null;
+  markdown?: string;
+  chat?: Record<string, unknown> | null;
   id: string;
   loop_item_id: string;
   status: "draft" | "delivered";
@@ -89,6 +100,8 @@ export interface SharedIssueDetailAgent {
 }
 
 export interface SharedIssueDetailCreateInput {
+  request_id?: string;
+  milestone_id?: string | null;
   title: string;
   description?: string;
   status?: string;
@@ -105,6 +118,7 @@ export interface SharedIssueDetailCreateInput {
 }
 
 export interface SharedIssueDetailUpdateInput {
+  milestone_id?: string | null;
   version: number;
   security_level?: "open" | "related";
   title?: string;
@@ -129,6 +143,7 @@ export interface SharedIssueDetailAssignmentInput {
 }
 
 export interface SharedIssueDetailPort {
+  milestones?: SharedWorkspaceApi["milestones"];
   issues: {
     get(issueId: string): Promise<CollaborationIssue>;
     create(
@@ -187,13 +202,22 @@ export interface SharedIssueDetailPort {
   deliveries: {
     list(issueId: string): Promise<SharedIssueDetailDelivery[]>;
     get(deliveryId: string): Promise<SharedIssueDetailDeliveryDetail>;
+    update?(
+      deliveryId: string,
+      input: WorkspaceDeliveryUpdate,
+    ): Promise<SharedIssueDetailDeliveryDetail>;
+    loadSourceMessages?(
+      delivery: SharedIssueDetailDeliveryDetail,
+    ): Promise<unknown[]>;
   };
 }
 
 export type SharedIssueDetailWorkspaceApi = Omit<
   Pick<
     SharedWorkspaceApi,
+    | "milestones"
     | "issues"
+    | "assignmentReceipts"
     | "attachments"
     | "collaborators"
     | "taskBindings"
@@ -205,6 +229,7 @@ export type SharedIssueDetailWorkspaceApi = Omit<
   agents: Pick<SharedWorkspaceApi["agents"], "list"> &
     Partial<Pick<SharedWorkspaceApi["agents"], "create">>;
   workspaces?: SharedWorkspaceApi["workspaces"];
+  runtime?: SharedWorkspaceApi["runtime"];
 };
 
 export function toSharedIssueDetailTaskBinding(
@@ -225,6 +250,7 @@ export function toSharedIssueDetailTaskBinding(
     executionContext: binding.executionContext,
     binding_type: binding.bindingType,
     human_assignment_id: binding.humanAssignmentId,
+    stand_in_pending: binding.standInPending,
     dispatch_id: binding.dispatchId,
     linked_at: binding.linkedAt,
   };
@@ -254,6 +280,12 @@ function toDelivery(
 ): SharedIssueDetailDelivery {
   return {
     id: delivery.id,
+    title: delivery.title,
+    version: delivery.version,
+    source_task_snapshot: delivery.sourceTaskSnapshot,
+    created_by_user_id: delivery.createdByUserId,
+    markdown: delivery.markdown,
+    chat: delivery.chat,
     loop_item_id: delivery.issueId,
     status: delivery.status,
     assets: delivery.assets.map((asset) => ({
@@ -289,6 +321,8 @@ function toDeliveryDetail(
 export function createSharedIssueDetailPort(
   api: SharedIssueDetailWorkspaceApi,
   saveFile: (blob: Blob, filename: string) => Promise<void>,
+  getTranscript = api.runtime?.getTranscript,
+  attachmentContext?: IssueAttachmentContext,
 ): SharedIssueDetailPort {
   const projects = (
     api as SharedIssueDetailWorkspaceApi & {
@@ -300,10 +334,15 @@ export function createSharedIssueDetailPort(
   ).projects;
 
   return {
+    milestones: api.milestones,
     issues: {
       get: api.issues.get,
       create: (projectId, input) =>
         api.issues.create(projectId, {
+          ...(input.request_id !== undefined
+            ? { requestId: input.request_id }
+            : {}),
+          milestoneId: input.milestone_id,
           title: input.title,
           ...(input.description !== undefined
             ? { description: input.description }
@@ -332,6 +371,7 @@ export function createSharedIssueDetailPort(
       update: (issueId, input) =>
         api.issues.update(issueId, {
           version: input.version,
+          milestoneId: input.milestone_id,
           ...(input.security_level !== undefined
             ? { securityLevel: input.security_level }
             : {}),
@@ -365,15 +405,32 @@ export function createSharedIssueDetailPort(
     attachments: {
       list: api.attachments.list,
       upload: api.attachments.upload,
-      read: api.attachments.read,
+      read: (attachmentId) =>
+        attachmentContext
+          ? api.attachments.read(attachmentId, attachmentContext)
+          : api.attachments.read(attachmentId),
       async download(attachmentId, filename) {
         if (api.attachments.download) {
-          await api.attachments.download(attachmentId, filename);
+          await (attachmentContext
+            ? api.attachments.download(
+                attachmentId,
+                filename,
+                attachmentContext,
+              )
+            : api.attachments.download(attachmentId, filename));
           return;
         }
-        await saveFile(await api.attachments.read(attachmentId), filename);
+        await saveFile(
+          await (attachmentContext
+            ? api.attachments.read(attachmentId, attachmentContext)
+            : api.attachments.read(attachmentId)),
+          filename,
+        );
       },
-      remove: api.attachments.remove,
+      remove: (attachmentId) =>
+        attachmentContext
+          ? api.attachments.remove(attachmentId, attachmentContext)
+          : api.attachments.remove(attachmentId),
     },
     collaborators: {
       list: (issueId) =>
@@ -415,6 +472,46 @@ export function createSharedIssueDetailPort(
         projects?.listCollaborationGroups?.(projectId) ?? Promise.resolve([]),
     },
     deliveries: {
+      ...(api.deliveries.update
+        ? {
+            update: (id: string, input: WorkspaceDeliveryUpdate) =>
+              api.deliveries.update!(id, input).then(toDeliveryDetail),
+          }
+        : {}),
+      ...(getTranscript
+        ? {
+            loadSourceMessages: async (
+              delivery: SharedIssueDetailDeliveryDetail,
+            ) => {
+              const snapshot = delivery.source_task_snapshot;
+              const deviceId = snapshot?.deviceId ?? snapshot?.device_id;
+              const taskId = snapshot?.taskId ?? snapshot?.task_id;
+              if (typeof deviceId !== "string" || typeof taskId !== "string")
+                throw new Error("Delivery source is unavailable");
+              const messages: unknown[] = [];
+              let beforeCursor: string | null = null;
+              do {
+                const result = await getTranscript({
+                  deviceId,
+                  taskId,
+                  beforeCursor,
+                  includeFullContent: true,
+                });
+                if (result.historyUnavailable)
+                  throw new Error("Delivery source is unavailable");
+                messages.unshift(...result.messages);
+                if (!result.hasMoreBefore) break;
+                if (
+                  !result.beforeCursor ||
+                  result.beforeCursor === beforeCursor
+                )
+                  throw new Error("Invalid transcript pagination");
+                beforeCursor = result.beforeCursor;
+              } while (true);
+              return messages;
+            },
+          }
+        : {}),
       list: (issueId) =>
         api.deliveries.list(issueId).then((items) => items.map(toDelivery)),
       get: (deliveryId) =>

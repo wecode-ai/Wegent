@@ -43,6 +43,7 @@ const defaultStreamHandlers = {
 }
 
 let streamHandlersMock = { ...defaultStreamHandlers }
+const readyTeam = { id: 5, name: 'Ready agent', agent_type: 'chat' } as Team
 let selectedTaskDetailMock: TaskDetail | null = null
 let mockTaskInputMessage = ''
 let mockSearchParams: URLSearchParams | undefined = new URLSearchParams()
@@ -87,7 +88,7 @@ jest.mock('@/features/tasks/hooks/useChatStatusIndicator', () => ({
 
 jest.mock('@/features/tasks/components/chat/useChatAreaState', () => ({
   useChatAreaState: () => ({
-    selectedTeam: null,
+    selectedTeam: selectedTaskDetailMock?.team ?? null,
     handleTeamChange: mockHandleTeamChange,
     findDefaultTeamForMode: jest.fn(),
     defaultTeam: null,
@@ -480,12 +481,15 @@ describe('ChatArea queue message handler mounting', () => {
     }
     selectedTaskDetailMock = {
       id: 42,
+      team: readyTeam,
       status: 'RUNNING',
       is_group_chat: false,
       subtasks: [],
     } as unknown as TaskDetail
 
-    render(<ChatArea teams={[]} isTeamsLoading={false} taskType="chat" showRepositorySelector />)
+    render(
+      <ChatArea teams={[readyTeam]} isTeamsLoading={false} taskType="chat" showRepositorySelector />
+    )
 
     expect(mockChatInputCard).toHaveBeenCalledWith(
       expect.objectContaining({ canQueueMessage: true, canSubmit: true, queuedMessages: [] })
@@ -533,12 +537,15 @@ describe('ChatArea queue message handler mounting', () => {
     }
     selectedTaskDetailMock = {
       id: 42,
+      team: readyTeam,
       status: 'RUNNING',
       is_group_chat: false,
       subtasks: [],
     } as unknown as TaskDetail
 
-    render(<ChatArea teams={[]} isTeamsLoading={false} taskType="chat" showRepositorySelector />)
+    render(
+      <ChatArea teams={[readyTeam]} isTeamsLoading={false} taskType="chat" showRepositorySelector />
+    )
 
     expect(mockChatInputCard).toHaveBeenCalledWith(
       expect.objectContaining({ canQueueMessage: false, canSubmit: false })
@@ -926,12 +933,15 @@ describe('ChatArea queue message handler mounting', () => {
     }
     selectedTaskDetailMock = {
       id: 42,
+      team: readyTeam,
       status: 'PENDING',
       is_group_chat: false,
       subtasks: [],
     } as unknown as TaskDetail
 
-    render(<ChatArea teams={[]} isTeamsLoading={false} taskType="chat" showRepositorySelector />)
+    render(
+      <ChatArea teams={[readyTeam]} isTeamsLoading={false} taskType="chat" showRepositorySelector />
+    )
 
     const latestProps = mockChatInputCard.mock.calls.at(-1)?.[0] as {
       handleSendMessage: (message?: string) => Promise<void>
@@ -953,12 +963,15 @@ describe('ChatArea queue message handler mounting', () => {
     }
     selectedTaskDetailMock = {
       id: 42,
+      team: readyTeam,
       status: 'RUNNING',
       is_group_chat: false,
       subtasks: [],
     } as unknown as TaskDetail
 
-    render(<ChatArea teams={[]} isTeamsLoading={false} taskType="chat" showRepositorySelector />)
+    render(
+      <ChatArea teams={[readyTeam]} isTeamsLoading={false} taskType="chat" showRepositorySelector />
+    )
 
     expect(mockChatInputCard).toHaveBeenCalledWith(
       expect.objectContaining({ canQueueMessage: true, canSubmit: true })

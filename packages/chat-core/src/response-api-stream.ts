@@ -1,6 +1,6 @@
 import type {
   RuntimeGoal,
-  RuntimeGoalContinuationPayload,
+  RuntimeTurnUpdatedPayload,
   RuntimeSupervisorState,
   RuntimeTaskTitleUpdatedPayload,
 } from "./runtime-stream-types";
@@ -60,6 +60,9 @@ export function emitResponseApiEvent(
     );
     handlers.onChatStart?.({
       ...base,
+      ...(data.task
+        ? { task: data.task as RuntimeTurnUpdatedPayload["task"] }
+        : {}),
       shellType: stringField(payload, "runtime"),
       ...(generatedUserMessageId &&
         generatedUserMessageContent && {
@@ -198,6 +201,9 @@ export function emitResponseApiEvent(
     handlers.onRuntimeWorkChanged?.({
       taskId,
       ...(base.deviceId ? { deviceId: base.deviceId } : {}),
+      ...(typeof data.archived === "boolean"
+        ? { archived: data.archived }
+        : {}),
       ...(workspacePath && Array.isArray(cleanup.errors)
         ? {
             archiveCleanup: {
@@ -239,15 +245,16 @@ export function emitResponseApiEvent(
     return;
   }
 
-  if (eventName === "runtime.goal.continuation") {
+  if (eventName === "runtime.turn.updated") {
     const status = stringField(data, "status");
     if (status !== "started" && status !== "settled") return;
-    handlers.onRuntimeGoalContinuation?.({
+    handlers.onRuntimeTurnUpdated?.({
       ...base,
+      task: data.task as RuntimeTurnUpdatedPayload["task"],
       threadId: stringField(data, "thread_id") ?? stringField(data, "threadId"),
       turnId: stringField(data, "turn_id") ?? stringField(data, "turnId"),
       status,
-    } as RuntimeGoalContinuationPayload);
+    } as RuntimeTurnUpdatedPayload);
     return;
   }
 
@@ -352,10 +359,26 @@ export function emitResponseApiEvent(
     state.toolContexts.clear();
     handlers.onChatDone?.({
       ...base,
+      task: data.task as RuntimeTurnUpdatedPayload["task"],
       ...(eventOffset(payload) !== undefined && {
         offset: eventOffset(payload),
       }),
       result: completedResult(data),
+    });
+    return;
+  }
+
+  if (eventName === "response.recovered") {
+    state.toolContexts.clear();
+    const turnId =
+      stringField(data, "turnId") ??
+      stringField(data, "turn_id") ??
+      base.subtaskId;
+    if (!turnId) return;
+    handlers.onChatRecovered?.({
+      ...base,
+      subtaskId: turnId,
+      turnId,
     });
     return;
   }
@@ -368,6 +391,7 @@ export function emitResponseApiEvent(
     state.toolContexts.clear();
     handlers.onChatError?.({
       ...base,
+      task: data.task as RuntimeTurnUpdatedPayload["task"],
       error: errorMessage(payload, data),
       type: stringField(payload, "type") ?? eventName,
       shellType:

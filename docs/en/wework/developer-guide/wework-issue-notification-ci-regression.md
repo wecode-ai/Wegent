@@ -4,6 +4,44 @@ sidebar_position: 40
 
 # Issue notification and human-task CI regression
 
+## Read synchronization when opening an Issue from another entry
+
+Once Issue activity is visible, the existing `POST /v1/loop-items/{id}/read`
+updates the activity cursor and the reader's associated notifications in one
+transaction. Notifications match by payload `itemId` or `issueId`. Other Issues,
+other recipients, unrelated notifications and existing read timestamps remain
+unchanged. Reopening previously read content also acknowledges notifications
+that arrived later. Failed reads preserve the count; successful responses refresh
+the notification center immediately.
+
+The existing CI checkpoint `collaboration-issue-comment-notification` runs both
+its original navigation scenario and the independent `issue-notification-read`
+scenario. The new scenario creates three already-read Issues and unread notices
+through the real Backend, then opens them through a system notification, a deep
+link and a board card. It asserts persisted reads and badge counts from 3 to 0
+without manual refresh, retaining each unrelated notice until its Issue opens.
+The shared runner cleans up the isolated Electron and database environment.
+Each Issue deep link carries a fresh open request through the existing
+`focusRequest`. Reusing an open drawer acknowledges later notifications while
+retaining activity scroll progress. The scenario also sends another notice while
+the drawer remains open, reopens the same Issue through a system notification,
+and asserts that the badge clears again.
+
+Focused tests additionally cover repeated reads, recipient isolation, unrelated
+notifications, failed reads without refresh and revisiting already-read content.
+Activity must load and become visible before acknowledging a read.
+
+2026-10-27: the isolated Electron `issue-notification-read` checkpoint passed all
+three entry paths and later notifications for the same open drawer. Four Backend
+read API regressions, 37 notification/API tests, 146 activity/routing tests, 19
+shared scrolling tests and four checkpoint contract tests passed. Fixtures retain
+project IDs as strings to avoid JavaScript Number precision loss.
+
+The same CI run exposed a shared desktop artifact build waiting for a nonexistent
+Rust image: its consumer omitted the producer's `backend-rs/examples/**` from the
+source digest. Desktop CI and cache warmup now use the producer's source inputs,
+with a contract check covering all three definitions instead of increasing waits.
+
 ## Evidence and fix boundaries
 
 PR #3763 at `f124f3d2e` failed desktop Core shards 12 and 15:
@@ -25,6 +63,41 @@ new one on the next frame. No user-entered fields, model/device routing changes,
 or human submission permission changes are introduced.
 
 ## QA plan
+
+### Observing the transient highlight
+
+PR #3947 Core shard 8 read `animation-name=none` after waiting for the comment to
+settle. The scenario waited for the detail and comment to remain stable for 400 ms
+each before querying a two-second animation. A busy runner can consume that
+observation window. The scenario now reuses renderer frame sampling before
+navigation to retain the exact comment selector's `animationName`, then checks the
+record after landing. It does not extend the animation or wait budgets.
+Each navigation rejects an existing highlight and retains its own frame evidence.
+A missing target animation, another comment's animation, failed navigation, or a
+highlight beyond the original eight-second budget still fails. The six-second
+landing budget, reload, link opening, and persisted-read checks remain intact;
+product highlight behavior is unchanged.
+
+Focused tests cover expired animation records, exact comment ownership, and
+failure cleanup. Real Electron continues to run the existing
+`collaboration-issue-comment-notification` checkpoint in Core CI.
+
+### Local push-gate resource isolation
+
+Memory-constrained hosts can set
+`WEWORK_PRE_PUSH_RENDERER_SHARD_CONCURRENCY=1` to run the original complete
+`1/2` and `2/2` renderer shards serially. The default still runs both concurrently;
+`WEWORK_PRE_PUSH_TEST_WORKERS` continues to control workers per shard.
+All files, timeouts, and failure propagation remain intact, and a failed first
+shard still runs the second. Invalid concurrency values explicitly block the push.
+Gate regressions cover non-overlap, complete coverage, and failure propagation.
+
+The visible activity cursor unit test waits for loaded comments and drives the
+real scrolling hook with controlled animation frames. It no longer depends on
+the host scheduling `requestAnimationFrame` promptly. No read may occur before
+the frame; afterward only visible sequence 2 may be acknowledged, never offscreen
+sequence 3, with the original parent callback checks retained. Product scrolling
+and presentation behavior remain unchanged.
 
 Environment: isolated Electron with real Backend, Socket.IO and devices; only
 model services use the scenario's test service. Focused local Vitest checks run

@@ -1,5 +1,15 @@
 {
   "device_actions": "设备操作",
+  "ide": {
+    "open": "打开 IDE",
+    "opening": "正在打开 IDE…",
+    "device_offline": "设备已离线",
+    "device_restarting": "设备正在升级或重启",
+    "disabled_on_device": "该设备已关闭 IDE 会话",
+    "popup_blocked": "浏览器拦截了 IDE 标签页。请允许弹出窗口后重试。",
+    "invalid_url": "设备未返回有效的 IDE 地址，请重试。",
+    "start_failed": "无法打开设备 IDE，请重试。"
+  },
   "delete_confirm_title": "移除离线设备？",
   "delete_confirm_description": "确定从列表中移除 {{name}} 吗？历史对话和本地文件会保留。设备再次连接后会重新出现。",
   "delete_cancel": "取消",

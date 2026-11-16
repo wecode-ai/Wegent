@@ -66,7 +66,7 @@ describe('ScrollableMessageArea virtual layout ownership', () => {
   test('correlates external desktop scrolling with nested message and Markdown diagnostics', () => {
     const desktopScroller = document.createElement('div')
     desktopScroller.innerHTML =
-      '<div data-scroll-origin="bottom"><div data-index="7"><p>Private message</p></div></div>'
+      '<div data-scroll-origin="top"><div data-index="7"><p>Private message</p></div></div>'
     const paragraph = desktopScroller.querySelector('p')!
     const external = getConversationDiagnosticContext(desktopScroller)
     const nested = getConversationDiagnosticContext(paragraph)
@@ -86,7 +86,7 @@ describe('ScrollableMessageArea virtual layout ownership', () => {
             id: 'streaming-message',
             role: 'assistant',
             content: 'Visible streaming paragraph',
-            status: 'streaming',
+            status: 'done',
             createdAt: '2026-08-18T00:00:00.000Z',
           },
         ]}
@@ -121,7 +121,6 @@ describe('ScrollableMessageArea virtual layout ownership', () => {
     render(
       <ScrollableMessageArea
         conversationKey="1"
-        scrollOrigin="bottom"
         messages={[
           { id: '1', role: 'assistant', content: 'Text', status: 'streaming', createdAt: '' },
         ]}
@@ -129,33 +128,33 @@ describe('ScrollableMessageArea virtual layout ownership', () => {
     )
     const scroller = screen.getByTestId('chat-message-scroll-area')
     const anchor = screen.getByText('Text')
+    let anchorContentTop = 880
     let scrollHeight = 1_200
     Object.defineProperties(scroller, {
       clientHeight: { configurable: true, value: 200 },
       scrollHeight: { configurable: true, get: () => scrollHeight },
-      scrollTop: { configurable: true, writable: true, value: -160 },
+      scrollTop: { configurable: true, writable: true, value: 840 },
     })
     scroller.getBoundingClientRect = () => new DOMRect(0, 100, 320, 200)
     anchor.getBoundingClientRect = () =>
-      new DOMRect(0, 1_000 - (scrollHeight - 200 + scroller.scrollTop), 320, 40)
-    // Release initial positioning ownership before simulating reader input.
-    act(() => virtualLayoutCallback?.())
+      new DOMRect(0, 100 + anchorContentTop - scroller.scrollTop, 320, 40)
     fireEvent.wheel(scroller, { deltaY: -12 })
     fireEvent.scroll(scroller)
     const anchorTop = anchor.getBoundingClientRect().top
 
     scrollHeight += 40
+    anchorContentTop -= 40
     expect(anchor.getBoundingClientRect().top).toBe(anchorTop - 40)
     expect(virtualLayoutCallback).toBeTypeOf('function')
     act(() => virtualLayoutCallback!())
 
     expect(anchor.getBoundingClientRect().top).toBe(anchorTop)
-    expect(scroller.scrollTop).toBe(-200)
+    expect(scroller.scrollTop).toBe(800)
     act(() => resizeObserverCallback!([], {} as ResizeObserver))
-    expect(scroller.scrollTop).toBe(-200)
+    expect(scroller.scrollTop).toBe(800)
   })
 
-  test('switches bottom-pinned conversations without synchronously measuring layout', () => {
+  test('switches bottom-pinned conversations without scanning text anchors', () => {
     const requestAnimationFrameSpy = vi
       .spyOn(window, 'requestAnimationFrame')
       .mockImplementation(() => 1)
@@ -170,6 +169,7 @@ describe('ScrollableMessageArea virtual layout ownership', () => {
       <ScrollableMessageArea conversationKey="long-a" messages={[message('a')]} />
     )
     const scroller = screen.getByTestId('chat-message-scroll-area')
+    const anchorQueries = vi.spyOn(scroller, 'querySelectorAll')
     const scrollHeightGetter = vi.fn(() => 10_000)
     Object.defineProperty(scroller, 'scrollHeight', {
       get: scrollHeightGetter,
@@ -198,11 +198,14 @@ describe('ScrollableMessageArea virtual layout ownership', () => {
       callback!([], {} as ResizeObserver)
     })
 
-    expect(scrollHeightGetter).not.toHaveBeenCalled()
+    expect(anchorQueries.mock.calls.some(([selector]) => selector === '[data-scroll-anchor]')).toBe(
+      false
+    )
+    expect(scrollHeightGetter).toHaveBeenCalled()
     requestAnimationFrameSpy.mockRestore()
   })
 
-  test('releases virtual ownership for a keyless conversation after the first layout', () => {
+  test('keeps keyless conversations following subsequent layout changes', () => {
     const requestAnimationFrameSpy = vi
       .spyOn(window, 'requestAnimationFrame')
       .mockImplementation(() => 1)
@@ -221,6 +224,7 @@ describe('ScrollableMessageArea virtual layout ownership', () => {
       />
     )
     const scroller = screen.getByTestId('chat-message-scroll-area')
+    const anchorQueries = vi.spyOn(scroller, 'querySelectorAll')
     const scrollHeightGetter = vi.fn(() => 10_000)
     Object.defineProperty(scroller, 'scrollHeight', {
       get: scrollHeightGetter,
@@ -232,7 +236,10 @@ describe('ScrollableMessageArea virtual layout ownership', () => {
     act(() => {
       callback!([], {} as ResizeObserver)
     })
-    expect(scrollHeightGetter).not.toHaveBeenCalled()
+    expect(anchorQueries.mock.calls.some(([selector]) => selector === '[data-scroll-anchor]')).toBe(
+      false
+    )
+    expect(scrollHeightGetter).toHaveBeenCalled()
 
     act(() => {
       callback!([], {} as ResizeObserver)

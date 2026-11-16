@@ -38,4 +38,26 @@ describe('workspace tab transfer state', () => {
 
     expect(consumeWorkspaceTabTransfer('task-2')).toBeNull()
   })
+
+  test.each([null, [], { 'blank:0': null }, { 'blank:0': 1 }])(
+    'rejects invalid draft records without applying them',
+    draftInputByScope => {
+      localStorage.setItem(
+        'wework.workspaceTabTransfer.v1:invalid',
+        JSON.stringify({ draftInputByScope })
+      )
+      expect(consumeWorkspaceTabTransfer('invalid')).toBeNull()
+    }
+  )
+
+  test.each([null, [], { task: 'true' }, { task: 1 }])(
+    'rejects invalid goal mode records without applying them',
+    goalDraftActiveByScope => {
+      localStorage.setItem(
+        'wework.workspaceTabTransfer.v1:invalid-goal',
+        JSON.stringify({ draftInputByScope: {}, goalDraftActiveByScope })
+      )
+      expect(consumeWorkspaceTabTransfer('invalid-goal')).toBeNull()
+    }
+  )
 })

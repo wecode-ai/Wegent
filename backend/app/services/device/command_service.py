@@ -5,6 +5,7 @@
 """Backend RPC service for executing commands on local devices."""
 
 import logging
+from pathlib import PurePosixPath, PureWindowsPath
 from typing import Any, Mapping, Optional
 
 from socketio.exceptions import (
@@ -72,6 +73,7 @@ REMOTE_READ_ONLY_COMMAND_KEYS = frozenset(
 REMOTE_MUTATING_COMMAND_KEYS = frozenset(
     {
         "mkdir_p",
+        "git_clone",
         "git_checkout",
         "git_checkout_new",
         "git_add_all",
@@ -96,6 +98,53 @@ INTERNAL_DEVICE_COMMAND_KEYS = frozenset(
     {"environment_prepare", "sync_git_credentials"}
 )
 _registered_command_scopes: dict[str, frozenset[DeviceType]] = {}
+
+
+def _git_command_failure(result: Mapping[str, Any]) -> str:
+    """Classify Git failures without recording URLs, credentials, or raw output."""
+    if result.get("timed_out"):
+        return "timeout"
+    if result.get("success") and result.get("exit_code") == 0:
+        return "none"
+    output = str(result.get("stderr") or result.get("error") or "").lower()
+    for failure, needles in (
+        ("target_not_empty", ("already exists and is not an empty directory",)),
+        (
+            "authentication",
+            (
+                "authentication failed",
+                "could not read username",
+                "permission denied (publickey)",
+            ),
+        ),
+        ("repository_not_found", ("repository not found",)),
+        ("branch_not_found", ("not found in upstream origin",)),
+        ("host_key", ("host key verification failed",)),
+        (
+            "network",
+            (
+                "could not resolve",
+                "connection refused",
+                "unable to access",
+                "failed to connect",
+            ),
+        ),
+        ("not_repository", ("not a git repository",)),
+        ("path_permissions", ("permission denied", "operation not permitted")),
+        ("path_missing", ("no such file or directory",)),
+    ):
+        if any(needle in output for needle in needles):
+            return failure
+    return "git_error"
+
+
+def _command_log_path(value: Any) -> str | None:
+    """Only log absolute paths; command operands may be credential-bearing URLs."""
+    if not isinstance(value, str) or "://" in value:
+        return None
+    if PurePosixPath(value).is_absolute() or PureWindowsPath(value).is_absolute():
+        return value
+    return None
 
 
 def register_device_command(
@@ -294,6 +343,23 @@ class LocalDeviceCommandService:
 
         if not isinstance(result, dict):
             raise DeviceCommandError("Command RPC returned an invalid response")
+        if command in {"git clone", "git remote get-url origin"}:
+            logger.info(
+                "Git command RPC completed: device_id=%s command=%s cwd=%r "
+                "target=%r success=%s exit_code=%s failure=%s duration=%s",
+                device_id,
+                command,
+                _command_log_path(path or cwd),
+                (
+                    _command_log_path(args[-1])
+                    if command == "git clone" and args and len(args) >= 2
+                    else None
+                ),
+                result.get("success"),
+                result.get("exit_code"),
+                _git_command_failure(result),
+                result.get("duration"),
+            )
         return result
 
     def _clamp_positive_int(
@@ -342,6 +408,16 @@ class LocalDeviceCommandService:
 local_device_command_service = LocalDeviceCommandService()
 
 
+def is_builtin_native_git_command(
+    command_key: str, configured_commands: Mapping[str, Any]
+) -> bool:
+    """Identify native Git commands while preserving explicit overrides."""
+    return (
+        command_key in {"git_branch", "git_branch_list", "git_clone"}
+        and command_key not in configured_commands
+    )
+
+
 async def execute_configured_device_command(
     *,
     db: Any,
@@ -368,14 +444,12 @@ async def execute_configured_device_command(
             f"Device command key '{command_key}' is not available through the command API"
         )
 
+    configured_commands = (
+        settings.LOCAL_DEVICE_COMMANDS if command_config is None else command_config
+    )
     try:
         command_definition = resolve_local_device_command(
-            command_key,
-            (
-                settings.LOCAL_DEVICE_COMMANDS
-                if command_config is None
-                else command_config
-            ),
+            command_key, configured_commands
         )
     except CommandRegistryError as exc:
         raise DeviceCommandConfigurationError(str(exc)) from exc
@@ -385,6 +459,9 @@ async def execute_configured_device_command(
             f"Device command key '{command_key}' is not configured"
         )
 
+    uses_native_git_command = is_builtin_native_git_command(
+        command_key, configured_commands
+    )
     dispatch_device_id = await _resolve_dispatch_device_id(
         user_id=user_id,
         submitted_device_id=device_id,
@@ -404,7 +481,7 @@ async def execute_configured_device_command(
         "timeout_seconds": timeout_seconds,
         "max_output_bytes": max_output_bytes,
     }
-    if command_key in {
+    if uses_native_git_command or command_key in {
         "environment_prepare",
         "git_apply_patch",
         "workspace_tree",

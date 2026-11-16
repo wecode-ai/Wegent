@@ -1,7 +1,7 @@
 import { calculateAppUpdateDownloadPercent } from '@/features/app-update/app-update-format'
 import { formatAppUpdateProgress } from '@/features/app-update/app-update-progress-copy'
 import { Download, Loader2, UserRound } from 'lucide-react'
-import { useEffect, useRef, useState, type ReactNode, type RefObject } from 'react'
+import { useContext, useEffect, useRef, useState, type ReactNode, type RefObject } from 'react'
 import { createPortal } from 'react-dom'
 import { Tooltip } from '@/components/ui/tooltip'
 import { getRuntimeConfig } from '@/config/runtime'
@@ -9,6 +9,7 @@ import { useOptionalAppUpdate } from '@/features/app-update/app-update-context'
 import { formatAppUpdateErrorSummary } from '@/features/app-update/app-update-error-copy'
 import { CloudConnectionDialog } from '@/features/cloud-connection/CloudConnectionDialog'
 import { isCloudConnectionUiAvailable } from '@/features/cloud-connection/cloudConnectionAvailability'
+import { CloudConnectionContext } from '@/features/cloud-connection/CloudConnectionContext'
 import { useOptionalCloudConnection } from '@/features/cloud-connection/useCloudConnection'
 import { useTranslation } from '@/hooks/useTranslation'
 import { cn } from '@/lib/utils'
@@ -121,7 +122,7 @@ function SidebarAppUpdateButton({ onBeforeInstall }: { onBeforeInstall?: () => v
       className={cn(
         'group relative inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-md transition-colors disabled:cursor-not-allowed disabled:opacity-60',
         errorSummary
-          ? 'text-red-500 hover:bg-red-500/10'
+          ? 'text-destructive hover:bg-destructive/10 wework:text-red-500 wework:hover:bg-red-500/10'
           : 'text-[rgb(var(--color-sidebar-text-secondary))] hover:bg-[rgb(var(--color-sidebar-hover))] hover:text-[rgb(var(--color-sidebar-text-primary))]'
       )}
     >
@@ -136,7 +137,7 @@ function SidebarAppUpdateButton({ onBeforeInstall }: { onBeforeInstall?: () => v
         <span className="absolute right-1 top-1 h-2 w-2 rounded-full bg-primary ring-2 ring-[rgb(var(--color-sidebar-hover))]" />
       )}
       {errorSummary && (
-        <span className="absolute right-1 top-1 h-2 w-2 rounded-full bg-red-500 ring-2 ring-[rgb(var(--color-sidebar-hover))]" />
+        <span className="absolute right-1 top-1 h-2 w-2 rounded-full bg-destructive ring-2 ring-[rgb(var(--color-sidebar-hover))] wework:bg-red-500" />
       )}
     </button>
   )
@@ -161,7 +162,7 @@ function SidebarAppUpdateButton({ onBeforeInstall }: { onBeforeInstall?: () => v
             <div
               data-testid="sidebar-app-update-error"
               style={errorTooltipPosition}
-              className="fixed z-system-popover w-[260px] -translate-y-1/2 rounded-lg border border-red-500/20 bg-popover px-3 py-2 text-xs font-medium leading-5 text-red-500 shadow-[0_12px_28px_rgba(0,0,0,0.18)] [overflow-wrap:anywhere]"
+              className="fixed z-system-popover w-[260px] -translate-y-1/2 rounded-lg border border-destructive/20 bg-popover px-3 py-2 text-xs font-medium leading-5 text-destructive shadow-[0_12px_28px_rgba(0,0,0,0.18)] [overflow-wrap:anywhere] wework:border-red-500/20 wework:text-red-500"
             >
               {errorSummary}
             </div>,
@@ -181,10 +182,12 @@ export function DesktopSidebarAccount({
   compact = false,
 }: DesktopSidebarAccountProps) {
   const { t } = useTranslation('common')
+  const cloudContext = useContext(CloudConnectionContext)
   const cloud = useOptionalCloudConnection()
   const appUpdate = useOptionalAppUpdate()
   const usesCloudAccount =
-    isCloudConnectionUiAvailable() && Boolean(getRuntimeConfig().wegentBackendUrl)
+    (isCloudConnectionUiAvailable() && Boolean(getRuntimeConfig().wegentBackendUrl)) ||
+    Boolean(cloudContext?.isConnected && cloudContext.backendUrl)
   const requiresCloudLogin = usesCloudAccount && !cloud.isConnected
   const hasAvailableAppUpdate = Boolean(appUpdate?.availableUpdate)
   const account = requiresCloudLogin

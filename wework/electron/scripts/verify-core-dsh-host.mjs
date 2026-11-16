@@ -5,6 +5,7 @@ import { createServer } from 'node:net'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { createInterface } from 'node:readline'
+import { authenticatedBrowserRequest, terminate } from './runtime-smoke-process.mjs'
 import { prepareCoreDshLaunch } from '../dist/runtime/core-dsh-runtime.js'
 
 const requestedRoot = process.argv[2]
@@ -18,6 +19,7 @@ if (!requestedRoot || !requestedPluginsRoot) {
 const home = await mkdtemp(join(tmpdir(), 'wework-electron-dsh-'))
 const token = randomBytes(32).toString('base64url')
 let child = null
+let browserRequest
 let stderr = ''
 const executor = await startFakeExecutor(home)
 
@@ -37,7 +39,8 @@ try {
     cwd: launch.cwd,
     detached: process.platform !== 'win32',
     env: {
-      ...process.env,
+      ...launch.environment,
+      WEWORK_DSH_BROWSER_AUTH_FD: '5',
       DSH_HOME: launch.dshHome,
       DSH_TELEMETRY_DISABLED: '1',
       PATH: `${join(launch.cwd, 'node_modules', '.bin')}:${process.env.PATH ?? ''}`,
@@ -48,20 +51,21 @@ try {
       WEWORK_EXECUTOR_ENDPOINT: executor.endpoint,
       WEWORK_EXECUTOR_TOKEN: executor.token,
     },
-    stdio: ['ignore', 'pipe', 'pipe', 'pipe', 'pipe'],
+    stdio: ['ignore', 'pipe', 'pipe', 'pipe', 'pipe', 'pipe'],
   })
   child.stderr.setEncoding('utf8')
   child.stderr.on('data', chunk => {
     stderr += String(chunk)
   })
   attachFakeElectronHost(child, token)
+  browserRequest = await authenticatedBrowserRequest(child, `http://127.0.0.1:${port}`)
 
   const baseUrl = `http://127.0.0.1:${port}/wework/electron-host/v1`
   const description = await waitForJson(baseUrl, child)
   assertEqual(description.protocolVersion, 1, 'protocol version')
   assertDeepEqual(description.capabilities, ['app.getVersion'], 'capabilities')
 
-  const response = await fetch(`${baseUrl}/invoke`, {
+  const response = await browserRequest(`${baseUrl}/invoke`, {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify({
@@ -83,7 +87,7 @@ try {
     child
   )
   assertEqual(executorDescription.protocolVersion, 1, 'executor protocol version')
-  const executorResponse = await fetch(`http://127.0.0.1:${port}/wework/executor/v1/rpc`, {
+  const executorResponse = await browserRequest(`http://127.0.0.1:${port}/wework/executor/v1/rpc`, {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify({ method: 'executor.health', params: {} }),
@@ -291,7 +295,7 @@ async function waitForJson(url, processHandle) {
       throw new Error(`DSH exited before becoming ready: ${processHandle.exitCode}`)
     }
     try {
-      const response = await fetch(url)
+      const response = await browserRequest(url)
       const contentType = response.headers.get('content-type') ?? ''
       if (response.ok && contentType.startsWith('application/json')) {
         return response.json()
@@ -314,7 +318,7 @@ async function waitForText(url, processHandle) {
       throw new Error(`DSH exited before becoming ready: ${processHandle.exitCode}`)
     }
     try {
-      const response = await fetch(url)
+      const response = await browserRequest(url)
       if (response.ok) return response.text()
       lastError = new Error(`DSH route is not ready: HTTP ${response.status}`)
     } catch (error) {
@@ -357,26 +361,6 @@ function freePort() {
       })
     })
   })
-}
-
-async function terminate(processHandle) {
-  if (processHandle.exitCode !== null) return
-  const exited = new Promise(resolvePromise => processHandle.once('exit', resolvePromise))
-  try {
-    if (process.platform === 'win32') processHandle.kill()
-    else if (processHandle.pid) process.kill(-processHandle.pid, 'SIGTERM')
-  } catch (error) {
-    if (error.code !== 'ESRCH') throw error
-  }
-  const timeout = new Promise(resolvePromise => setTimeout(resolvePromise, 2_000, 'timeout'))
-  if ((await Promise.race([exited, timeout])) !== 'timeout') return
-  try {
-    if (process.platform === 'win32') processHandle.kill('SIGKILL')
-    else if (processHandle.pid) process.kill(-processHandle.pid, 'SIGKILL')
-  } catch (error) {
-    if (error.code !== 'ESRCH') throw error
-  }
-  await exited
 }
 
 function assertEqual(actual, expected, label) {

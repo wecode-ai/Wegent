@@ -86,6 +86,7 @@ export interface HttpClientOptions {
   baseUrl: string
   getToken?: () => string | null
   redirectOnUnauthorized?: boolean
+  signal?: AbortSignal
 }
 
 export interface HttpRequestOptions {
@@ -162,7 +163,11 @@ export function createHttpClient(options: HttpClientOptions): HttpClient {
     init: RequestInit,
     fetchOptions: HttpFetchOptions
   ): Promise<HttpResponseDiagnostics> {
-    const { token, signal } = fetchOptions
+    const { token } = fetchOptions
+    const signal =
+      fetchOptions.signal && options.signal && fetchOptions.signal !== options.signal
+        ? AbortSignal.any([options.signal, fetchOptions.signal])
+        : (fetchOptions.signal ?? options.signal)
     const isFormData = init.body instanceof FormData
     const method = init.method ?? 'GET'
     const startedAt = nowMs()
@@ -290,7 +295,9 @@ export function createHttpClient(options: HttpClientOptions): HttpClient {
         typeof init.body === 'string' &&
         ['POST', 'PATCH'].includes(init.method ?? '')
       ) {
-        const selection = await requestRunnerSelection(selectionRequest)
+        const selection = await requestRunnerSelection(selectionRequest).catch(cause => {
+          throw selectionRequest.recovery_from_environment_id ? error : cause
+        })
         const body = JSON.parse(init.body) as Record<string, unknown>
         delete body.runnerSelection
         delete body.runner_selection

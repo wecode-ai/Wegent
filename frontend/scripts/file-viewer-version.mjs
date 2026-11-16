@@ -70,3 +70,23 @@ export async function resolveFileViewerVersion(frontendDir = FRONTEND_DIR) {
 
   return validateFileViewerVersions({ manifest, installedVersions })
 }
+
+export async function resolveDocxEngine(frontendDir = FRONTEND_DIR) {
+  const require = createRequire(path.join(frontendDir, 'package.json'))
+  const manifest = JSON.parse(await readFile(path.join(frontendDir, 'package.json'), 'utf8'))
+  const presetRequire = createRequire(require.resolve('@file-viewer/preset-office'))
+  const wordRequire = createRequire(presetRequire.resolve('@file-viewer/renderer-word'))
+  const docxRequire = createRequire(wordRequire.resolve('@file-viewer/docx'))
+  const { version } = wordRequire('@file-viewer/docx/package.json')
+  const directVersion = require('@file-viewer/docx/package.json').version
+  if (manifest.dependencies['@file-viewer/docx'] !== version || directVersion !== version) {
+    throw new Error(
+      'DOCX runtime, direct dependency and preview Worker must use the same exact version'
+    )
+  }
+  return {
+    version,
+    workerPath: wordRequire.resolve('@file-viewer/docx/worker'),
+    jsZipPath: docxRequire.resolve('jszip/dist/jszip.min.js'),
+  }
+}

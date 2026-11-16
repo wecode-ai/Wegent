@@ -1,3 +1,5 @@
+// @vitest-environment node
+
 import { beforeEach, expect, test, vi } from 'vitest'
 import { readElectronLocalFile } from './electron-local-file'
 

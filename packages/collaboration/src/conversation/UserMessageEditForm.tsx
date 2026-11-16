@@ -65,7 +65,7 @@ export function UserMessageEditForm({
           }
           return false;
         }}
-        className="max-h-[280px] min-h-24 w-full overflow-y-auto rounded-xl border border-border bg-base px-3 py-2 text-base leading-5 text-text-primary outline-none focus:border-primary focus:ring-1 focus:ring-primary disabled:cursor-wait disabled:opacity-70"
+        className="max-h-[280px] min-h-24 w-full overflow-y-auto rounded-xl border border-border bg-base px-3 py-2 text-base leading-5 text-text-primary outline-none keyboard:focus:border-primary keyboard:focus:ring-1 keyboard:focus:ring-primary disabled:cursor-wait disabled:opacity-70"
       />
       <div className="mt-2 flex items-center justify-end gap-2">
         <button

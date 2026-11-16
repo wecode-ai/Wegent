@@ -2,7 +2,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-use super::*;
+use super::{client::reconcile_account_plugins, *};
 
 impl<T, R> LocalBackendRunner<T, R>
 where
@@ -12,14 +12,20 @@ where
     pub async fn run_forever(mut self) -> Result<(), String> {
         self.connection_status.store(false, Ordering::Release);
         let auth_home = crate::config::paths::executor_home();
-        let _auth_broker = crate::plugin_account_auth::broker::start(
-            self.client.transport.clone(),
-            auth_home,
-            self.connection_status.clone(),
-            matches!(self.client.config.device_type.as_str(), "cloud" | "remote"),
-        )
-        .await
-        .map_err(|error| error.to_string())?;
+        let _auth_broker = if self.external_plugin_auth_broker {
+            None
+        } else {
+            Some(
+                crate::plugin_account_auth::broker::start(
+                    self.client.transport.clone(),
+                    auth_home,
+                    self.connection_status.clone(),
+                    matches!(self.client.config.device_type.as_str(), "cloud" | "remote"),
+                )
+                .await
+                .map_err(|error| error.to_string())?,
+            )
+        };
         if let Some(event_hub) = self.runtime_event_hub.take() {
             self.start_runtime_event_forwarder(event_hub);
         }
@@ -85,6 +91,9 @@ where
     }
 
     pub async fn connect_and_register(&self) -> Result<(), String> {
+        if let Ok(mut route_id) = self.device_route_id.lock() {
+            *route_id = None;
+        }
         let epoch = *self.connection_epoch.lock().expect("connection epoch lock");
         self.client.connect().await?;
         match self
@@ -92,7 +101,7 @@ where
             .register_device(self.client.config.registration_timeout)
             .await
         {
-            Ok(true) => {
+            Ok(Some(route_id)) => {
                 if let Err(error) = self.client.emit_liveness_heartbeat().await {
                     let _ = self.client.disconnect().await;
                     return Err(error);
@@ -103,14 +112,14 @@ where
                         .expect("session handler lock")
                         .prepare_terminal_reconnect();
                 }
-                if let Err(error) = self.publish_registered_connection(epoch) {
+                if let Err(error) = self.publish_registered_connection(epoch, route_id) {
                     let _ = self.client.disconnect().await;
                     return Err(error);
                 }
                 self.trigger_runtime_work_poll();
                 Ok(())
             }
-            Ok(false) => {
+            Ok(None) => {
                 let _ = self.client.disconnect().await;
                 Err("device registration was rejected by backend".to_owned())
             }
@@ -122,10 +131,17 @@ where
     }
 
     /// Publish readiness atomically with respect to connection-close notifications.
-    fn publish_registered_connection(&self, registered_epoch: u64) -> Result<(), String> {
+    fn publish_registered_connection(
+        &self,
+        registered_epoch: u64,
+        route_id: String,
+    ) -> Result<(), String> {
         let epoch = self.connection_epoch.lock().expect("connection epoch lock");
         if *epoch != registered_epoch {
             return Err("local backend connection closed during registration".to_owned());
+        }
+        if let Ok(mut slot) = self.device_route_id.lock() {
+            *slot = (!route_id.is_empty()).then_some(route_id);
         }
         self.connection_status.store(true, Ordering::Release);
         Ok(())
@@ -136,6 +152,7 @@ where
             ConnectionStatus,
             Heartbeat,
             RuntimeWork,
+            PluginReconcile,
         }
 
         let mut consecutive_failures = 0_u32;
@@ -145,6 +162,8 @@ where
         let mut next_heartbeat_at = Instant::now() + self.client.config.heartbeat_interval;
         let mut next_runtime_work_poll_at =
             Instant::now() + self.client.config.runtime_work_poll_interval;
+        let mut next_plugin_reconcile_at =
+            Instant::now() + plugin_reconcile_delay(&self.client.config.runtime_instance_id);
         let terminal_event_notifier = self.session_handler.as_ref().map(|handler| {
             handler
                 .lock()
@@ -157,7 +176,10 @@ where
             let tick = tokio::select! {
                 _ = sleep_until(next_connection_status_poll_at) => RunnerTick::ConnectionStatus,
                 _ = sleep_until(next_heartbeat_at) => RunnerTick::Heartbeat,
+                _ = self.client.remote_task_access.changed(),
+                    if self.client.config.device_type == "app" => RunnerTick::Heartbeat,
                 _ = sleep_until(next_runtime_work_poll_at) => RunnerTick::RuntimeWork,
+                _ = sleep_until(next_plugin_reconcile_at) => RunnerTick::PluginReconcile,
                 result = &mut terminal_relay => {
                     let error = result.expect_err("terminal relay only stops on error");
                     write_executor_error_line(&format_executor_log(
@@ -181,6 +203,33 @@ where
                 self.trigger_runtime_work_poll();
                 next_runtime_work_poll_at =
                     Instant::now() + self.client.config.runtime_work_poll_interval;
+                continue;
+            }
+            if matches!(tick, RunnerTick::PluginReconcile) {
+                // Fire-and-forget: the backend answers over this same socket
+                // while it reconciles, so the heartbeat loop must not await it.
+                let backend_url = self.client.config.backend_url.clone();
+                let auth_token = self.client.config.auth_token.clone();
+                let device_id = self
+                    .device_route_id
+                    .lock()
+                    .ok()
+                    .and_then(|slot| slot.clone())
+                    .map(|value| value.trim().to_owned())
+                    .filter(|value| !value.is_empty())
+                    .unwrap_or_else(|| self.client.config.device_id.clone());
+                tokio::spawn(async move {
+                    if let Err(error) =
+                        reconcile_account_plugins(&backend_url, &auth_token, &device_id).await
+                    {
+                        write_executor_error_line(&format_executor_log(
+                            "plugin reconcile fallback failed",
+                            &[("error", error)],
+                        ));
+                    }
+                });
+                next_plugin_reconcile_at = Instant::now()
+                    + plugin_reconcile_delay(&self.client.config.runtime_instance_id);
                 continue;
             }
             if let Some(handler) = &self.session_handler {

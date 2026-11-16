@@ -44,7 +44,10 @@ export function ResourceTypeFilter({
         aria-label={t('fields.type')}
         data-testid="resource-type-navigation"
       >
-        {filters.map(filter => {
+        {(marketLabels && !filters.includes('template')
+          ? [...filters, 'template' as const]
+          : filters
+        ).map(filter => {
           const isActive = value === filter
           const labelKey =
             marketLabels && (filter === 'agent' || filter === 'skill' || filter === 'mcp')

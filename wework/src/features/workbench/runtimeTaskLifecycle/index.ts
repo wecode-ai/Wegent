@@ -11,8 +11,10 @@ export { registerRuntimeTaskLifecycleAutomation } from './automation'
 export { RuntimeTaskLifecycleStreamCoordinator } from './RuntimeTaskLifecycleStreamCoordinator'
 export {
   useRuntimeTaskLifecycle,
+  useRuntimeTaskLifecycleResolver,
   useRuntimeTaskLifecycleStore,
   useRuntimeTaskLifecycleStoreSnapshot,
+  useRuntimeTaskSummaryResolver,
 } from './context'
 export type {
   RuntimeTaskExecutionPhase,

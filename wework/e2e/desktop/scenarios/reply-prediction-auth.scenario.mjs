@@ -1,6 +1,8 @@
+import { fetchLocalRuntimeJson } from '../modules/runtime-request.mjs'
 import assert from 'node:assert/strict'
 import { requestExecutor } from '../modules/executor-rpc.mjs'
 import { accountCommandResult } from '../modules/account-auth-command.mjs'
+import { waitForValue } from '../modules/workspace-agent-setup.mjs'
 import {
   shellCommandResponse,
   shellCommandPollResponse,
@@ -9,7 +11,6 @@ import {
   ACTIVE_COMPOSER_SELECTOR,
   ACTIVE_WORKBENCH_SELECTOR,
   createSingleRootLocalProject,
-  fetchJson,
   selectE2EModel,
 } from '../modules/shared.mjs'
 import {
@@ -35,13 +36,17 @@ export function createDesktopScenario({ workspacePath, modelResponseTimeoutMs })
   let rejectedPredictions = 0
   let shellIdentityVerified = false
   let identity
+  let releasePredictionFailure
+  const predictionFailure = new Promise(resolve => {
+    releasePredictionFailure = resolve
+  })
 
   async function assertRedactedTask(control) {
     const state = JSON.parse(await control.command('getWorkbenchDebugSnapshot', 'body'))
     const address = state.workbench?.currentRuntimeTask
     assert.ok(address?.taskId, 'The conversation address is missing')
     const origin = await control.command('getLocationOrigin', 'body')
-    const response = await fetchJson(`${origin}/wework/executor/v1/rpc`, {
+    const response = await fetchLocalRuntimeJson(control, `${origin}/wework/executor/v1/rpc`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -49,7 +54,7 @@ export function createDesktopScenario({ workspacePath, modelResponseTimeoutMs })
         method: 'runtime.tasks.get',
         params: { address },
       }),
-      signal: AbortSignal.timeout(modelResponseTimeoutMs),
+      timeoutMs: modelResponseTimeoutMs,
     })
     assert.equal(response.ok, true)
     const task = response.result?.task
@@ -78,6 +83,7 @@ export function createDesktopScenario({ workspacePath, modelResponseTimeoutMs })
   }
 
   return {
+    handlesReplyPredictions: true,
     async handleHttp(request, response, url) {
       if (request.method !== 'POST' || !['/responses', '/v1/responses'].includes(url.pathname))
         return false
@@ -116,7 +122,7 @@ export function createDesktopScenario({ workspacePath, modelResponseTimeoutMs })
             ...shellCommandResponse(
               body,
               ENV_CALL,
-              `test -x "$WEGENT_EXECUTOR_BINARY" && test "$WEGENT_TASK_WORKSPACE" = "$PWD" && printf '${ENV_OK}\\n'`,
+              `node -e 'const fs = require("node:fs"); const assert = require("node:assert/strict"); assert.ok(fs.statSync(process.env.WEGENT_EXECUTOR_BINARY).isFile()); fs.accessSync(process.env.WEGENT_EXECUTOR_BINARY, fs.constants.X_OK); assert.equal(fs.realpathSync(process.env.WEGENT_TASK_WORKSPACE), fs.realpathSync(process.cwd())); console.log("${ENV_OK}")'`,
               workspacePath
             ),
             responseCompleted(id),
@@ -126,6 +132,7 @@ export function createDesktopScenario({ workspacePath, modelResponseTimeoutMs })
       }
       if (prediction && normalRequests === 2) {
         rejectedPredictions += 1
+        await predictionFailure
         response.writeHead(401, { 'Content-Type': 'application/json' })
         response.end(
           JSON.stringify({
@@ -185,8 +192,12 @@ export function createDesktopScenario({ workspacePath, modelResponseTimeoutMs })
       await assertRedactedTask(control)
       // Make prediction the first reader to restore this parent after a native restart.
       // The following real shell call must retain task identity even in this ordering.
-      const restarted = JSON.parse(
-        await control.command('restartLocalCodexAppServerIfIdle', 'body')
+      // Sidebar reads may still be in flight after the prediction has completed.
+      const restarted = await waitForValue(
+        async () => JSON.parse(await control.command('restartLocalCodexAppServerIfIdle', 'body')),
+        result => result.restarted === true,
+        'The native app server did not become idle before prediction',
+        10_000
       )
       assert.equal(restarted.restarted, true, 'The parent must be unloaded before prediction')
       const predicted = await requestExecutor(
@@ -206,10 +217,15 @@ export function createDesktopScenario({ workspacePath, modelResponseTimeoutMs })
       )
       assert.equal(predicted.suggestion, '继续第 1 轮方案')
       await send(control, 2)
-      await control.command('waitFor', ERROR, {
-        text: '回复建议生成失败',
+      await control.command('waitFor', PENDING, {
         timeoutMs: modelResponseTimeoutMs,
       })
+      releasePredictionFailure()
+      await control.command('waitFor', PENDING, {
+        visible: false,
+        timeoutMs: modelResponseTimeoutMs,
+      })
+      assert.equal(Number(await control.command('getElementCount', ERROR)), 0)
       assert.equal(Number(await control.command('getElementCount', PENDING)), 0)
       assert.equal(Number(await control.command('getElementCount', GHOST)), 0)
       assert.ok(rejectedPredictions > 0, 'The failure case never reached the model')

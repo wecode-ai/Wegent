@@ -1,0 +1,21 @@
+{
+  "revision": "d6e7f8a9b0c1",
+  "parents": [
+    "c5d6e7f8a9b0"
+  ],
+  "source": "20260827_d6e7f8a9b0c1_add_dingtalk_node_metadata.py",
+  "upgrade": [
+    {
+      "sql": [
+        "ALTER TABLE dingtalk_synced_nodes ADD COLUMN raw_metadata JSON"
+      ]
+    }
+  ],
+  "downgrade": [
+    {
+      "sql": [
+        "ALTER TABLE dingtalk_synced_nodes DROP COLUMN raw_metadata"
+      ]
+    }
+  ]
+}

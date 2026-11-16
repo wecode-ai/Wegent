@@ -599,7 +599,8 @@ async fn app_ipc_imports_external_codex_content() {
     let native_codex_home = home.join(".codex");
     let codex_home = root.path().join("wework-codex");
     fs::create_dir_all(native_codex_home.join("skills/example")).unwrap();
-    fs::write(native_codex_home.join("config.toml"), "model = \"gpt-5\"\n").unwrap();
+    let source_config = "model = \"gpt-5\"\npersonality = \"friendly\"\n";
+    fs::write(native_codex_home.join("config.toml"), source_config).unwrap();
     fs::write(native_codex_home.join("skills/example/SKILL.md"), "example").unwrap();
     let _codex_home = EnvGuard::set("WEGENT_CODEX_HOME", &codex_home.display().to_string());
     let _e2e = EnvGuard::set("VITE_WEWORK_E2E", "true");
@@ -625,7 +626,11 @@ async fn app_ipc_imports_external_codex_content() {
     assert_eq!(result["importedEntries"], json!(["config.toml", "skills"]));
     assert_eq!(
         fs::read_to_string(codex_home.join("config.toml")).unwrap(),
-        "model = \"gpt-5\"\n"
+        "personality = \"friendly\"\n"
+    );
+    assert_eq!(
+        fs::read_to_string(native_codex_home.join("config.toml")).unwrap(),
+        source_config
     );
     assert_eq!(
         fs::read_to_string(codex_home.join("skills/example/SKILL.md")).unwrap(),
@@ -849,14 +854,43 @@ async fn app_ipc_manages_local_projects_and_nested_todos() {
         .unwrap_err();
     assert_eq!(conflict.code, "version_conflict");
 
-    let incomplete_archive = server
+    server
         .dispatch(
             "todos.archive",
             json!({"project_id": project_id, "task_id": parent_id}),
         )
         .await
-        .unwrap_err();
-    assert_eq!(incomplete_archive.code, "bad_request");
+        .unwrap();
+    let hidden = server
+        .dispatch("todos.list", json!({"project_id": project_id}))
+        .await
+        .unwrap();
+    assert!(hidden.as_array().unwrap().is_empty());
+    let initially_restored = server
+        .dispatch(
+            "todos.restore",
+            json!({"project_id": project_id, "task_id": parent_id}),
+        )
+        .await
+        .unwrap();
+    let restored_child = initially_restored
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|item| item["id"] == child["id"])
+        .unwrap();
+    assert_eq!(restored_child["status"], child["status"]);
+    let restored_parent = initially_restored
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|item| item["id"] == parent_id)
+        .unwrap();
+    assert_eq!(restored_parent["status"], "completed");
+    assert_eq!(
+        restored_parent["metadata"]["due_at"],
+        rescheduled["metadata"]["due_at"]
+    );
 
     let completed_child = server
         .dispatch(
@@ -865,7 +899,7 @@ async fn app_ipc_manages_local_projects_and_nested_todos() {
                 "project_id": project_id,
                 "task_id": child["id"],
                 "todo": {
-                    "version": child["version"],
+                    "version": restored_child["version"],
                     "status": "completed"
                 }
             }),
@@ -1488,6 +1522,27 @@ async fn app_ipc_resolves_configured_device_command() {
 }
 
 #[tokio::test]
+async fn app_ipc_native_directory_listing_preserves_directory_projection() {
+    let root = tempfile::tempdir().unwrap();
+    fs::create_dir(root.path().join("visible")).unwrap();
+    fs::create_dir(root.path().join(".hidden")).unwrap();
+    fs::write(root.path().join("file.txt"), "file").unwrap();
+    let response = AppIpcServer::new()
+        .handle_line(
+            &json!({
+                "type": "request", "id": "native-directories", "method": "device.execute_command",
+                "params": { "command_key": "ls_dirs", "path": root.path(),
+                    "env": { "PATH": root.path() } }
+            })
+            .to_string(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response["result"]["success"], true);
+    assert_eq!(response["result"]["stdout"], json!([".hidden", "visible"]));
+}
+
+#[tokio::test]
 async fn app_ipc_runtime_auth_status_uses_executor_codex_home() {
     let _lock = env_lock().await;
     let root = tempfile::tempdir().unwrap();
@@ -2072,7 +2127,174 @@ async fn app_ipc_routes_git_inspection_for_repository_workspaces() {
     assert_eq!(response["ok"], true);
     assert_eq!(response["result"]["success"], true);
     let request = seen_request.lock().unwrap().clone().unwrap();
-    assert_eq!(request.argv, ["git", "branch", "--show-current"]);
+    assert_eq!(
+        request.argv,
+        ["git", "symbolic-ref", "--quiet", "--short", "HEAD"]
+    );
+}
+
+#[tokio::test]
+async fn app_ipc_branch_list_uses_portable_ref_query() {
+    let workspace = tempfile::tempdir().unwrap();
+    assert_command_success(
+        git_command()
+            .arg("init")
+            .arg(workspace.path())
+            .output()
+            .unwrap(),
+    );
+    let command_handler = JsonCaptureCommandHandler::default();
+    let seen_request = Arc::clone(&command_handler.seen_request);
+    let server = AppIpcServer::new().with_command_handler(command_handler);
+
+    let response = server
+        .handle_line(
+            &json!({
+                "type": "request",
+                "id": "branch-list",
+                "method": "device.execute_command",
+                "params": {
+                    "command_key": "git_branch_list",
+                    "path": workspace.path().display().to_string()
+                }
+            })
+            .to_string(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response["result"]["success"], true);
+    assert_eq!(
+        seen_request.lock().unwrap().as_ref().unwrap().argv,
+        [
+            "git",
+            "for-each-ref",
+            "--format=%(refname:short)",
+            "refs/heads/"
+        ]
+    );
+}
+
+#[tokio::test]
+async fn app_ipc_branch_list_handles_empty_detached_and_linked_workspaces() {
+    let root = tempfile::tempdir().unwrap();
+    let repo = root.path().join("repo");
+    let worktree = root.path().join("linked");
+    assert_command_success(git_command().arg("init").arg(&repo).output().unwrap());
+    let setup = |args: &[&str]| {
+        assert_command_success(
+            git_command()
+                .arg("-C")
+                .arg(&repo)
+                .args(args)
+                .output()
+                .unwrap(),
+        );
+    };
+    let server = AppIpcServer::new();
+    let list = |path: std::path::PathBuf| {
+        let server = &server;
+        async move {
+            let response = server
+                .handle_line(
+                    &json!({
+                        "type": "request",
+                        "id": "branch-list",
+                        "method": "device.execute_command",
+                        "params": {"command_key": "git_branch_list", "path": path}
+                    })
+                    .to_string(),
+                )
+                .await
+                .unwrap();
+            assert_eq!(response["result"]["success"], true, "{response}");
+            response["result"]["stdout"].as_str().unwrap().to_owned()
+        }
+    };
+    assert_eq!(list(repo.clone()).await, "");
+    setup(&["symbolic-ref", "HEAD", "refs/heads/main"]);
+    setup(&[
+        "-c",
+        "user.name=Test",
+        "-c",
+        "user.email=test@example.com",
+        "-c",
+        "commit.gpgsign=false",
+        "commit",
+        "--allow-empty",
+        "-m",
+        "seed",
+    ]);
+    setup(&["branch", "feature/nested"]);
+    setup(&["tag", "tag-only"]);
+    setup(&["update-ref", "refs/remotes/origin/remote-only", "HEAD"]);
+    assert_eq!(list(repo.clone()).await, "feature/nested\nmain\n");
+    setup(&["checkout", "--detach"]);
+    assert_eq!(list(repo.clone()).await, "feature/nested\nmain\n");
+    setup(&[
+        "worktree",
+        "add",
+        worktree.to_str().unwrap(),
+        "feature/nested",
+    ]);
+    assert_eq!(list(worktree).await, "feature/nested\nmain\n");
+}
+
+#[tokio::test]
+async fn app_ipc_current_branch_handles_unborn_detached_and_invalid_head() {
+    let root = tempfile::tempdir().unwrap();
+    assert_command_success(git_command().arg("init").arg(root.path()).output().unwrap());
+    let setup = |args: &[&str]| {
+        assert_command_success(
+            git_command()
+                .arg("-C")
+                .arg(root.path())
+                .args(args)
+                .output()
+                .unwrap(),
+        );
+    };
+    let server = AppIpcServer::new();
+    let read_branch = || async {
+        server
+            .handle_line(
+                &json!({
+                    "type": "request", "id": "current-branch",
+                    "method": "device.execute_command",
+                    "params": {"command_key": "git_branch", "path": root.path()}
+                })
+                .to_string(),
+            )
+            .await
+            .unwrap()
+    };
+    setup(&["symbolic-ref", "HEAD", "refs/heads/feature/nested"]);
+    let unborn = read_branch().await;
+    assert_eq!(unborn["result"]["success"], true, "{unborn}");
+    assert_eq!(unborn["result"]["stdout"], "feature/nested\n");
+    setup(&[
+        "-c",
+        "user.name=Test",
+        "-c",
+        "user.email=test@example.com",
+        "-c",
+        "commit.gpgsign=false",
+        "commit",
+        "--allow-empty",
+        "-m",
+        "seed",
+    ]);
+    let attached = read_branch().await;
+    assert_eq!(attached["result"]["success"], true, "{attached}");
+    assert_eq!(attached["result"]["stdout"], "feature/nested\n");
+    setup(&["checkout", "--detach"]);
+    let detached = read_branch().await;
+    assert_eq!(detached["result"]["success"], true, "{detached}");
+    assert_eq!(detached["result"]["stdout"], "");
+    assert_eq!(detached["result"]["exit_code"], 0);
+    fs::write(root.path().join(".git/HEAD"), "invalid HEAD\n").unwrap();
+    let invalid = read_branch().await;
+    assert_eq!(invalid["result"]["success"], false, "{invalid}");
 }
 
 #[tokio::test]

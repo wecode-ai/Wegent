@@ -1,0 +1,41 @@
+{
+  "revision": "f5e4d3c2b1a0",
+  "parents": [
+    "735edcb17bec"
+  ],
+  "source": "20260812_f5e4d3c2b1a0_add_project_chat_runtime_activity_key.py",
+  "upgrade": [
+    {
+      "sql": [
+        "ALTER TABLE project_chat_messages ADD COLUMN runtime_activity_key VARCHAR(64) NOT NULL COMMENT 'Stable runtime identity for agent activity; message identity otherwise' DEFAULT ''"
+      ]
+    },
+    {
+      "sql": [
+        "UPDATE project_chat_messages\n        SET runtime_activity_key = SHA2(\n            CONCAT(\n                CASE\n                    WHEN deleted_at = '1970-01-01 00:00:00'\n                        THEN 'message'\n                    ELSE 'deleted'\n                END,\n                CHAR(0),\n                message_id\n            ),\n            256\n        )"
+      ]
+    },
+    {
+      "sql": [
+        "UPDATE project_chat_messages AS message\n        JOIN (\n            SELECT\n                runtime_device_id,\n                runtime_task_id,\n                trigger_message_id,\n                MAX(id) AS latest_id\n            FROM project_chat_messages\n            WHERE sender_type = 'agent'\n              AND runtime_device_id <> ''\n              AND runtime_task_id <> ''\n              AND deleted_at = '1970-01-01 00:00:00'\n              AND JSON_EXTRACT(metadata, '$.run_id') IS NOT NULL\n            GROUP BY\n                runtime_device_id,\n                runtime_task_id,\n                trigger_message_id\n        ) AS latest\n          ON latest.latest_id = message.id\n        SET message.runtime_activity_key = SHA2(\n            CONCAT(\n                message.runtime_device_id,\n                CHAR(0),\n                message.runtime_task_id,\n                CHAR(0),\n                message.trigger_message_id\n            ),\n            256\n        )"
+      ]
+    },
+    {
+      "sql": [
+        "CREATE UNIQUE INDEX uniq_project_chat_runtime_activity ON project_chat_messages (runtime_activity_key)"
+      ]
+    }
+  ],
+  "downgrade": [
+    {
+      "sql": [
+        "DROP INDEX uniq_project_chat_runtime_activity ON project_chat_messages"
+      ]
+    },
+    {
+      "sql": [
+        "ALTER TABLE project_chat_messages DROP COLUMN runtime_activity_key"
+      ]
+    }
+  ]
+}

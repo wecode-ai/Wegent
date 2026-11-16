@@ -5,135 +5,127 @@
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <meta name="color-scheme" content="light dark" />
     <title>Wework</title>
-    <script>
-      const theme = new URLSearchParams(window.location.search).get('theme')
-      document.documentElement.dataset.theme = theme === 'dark' ? 'dark' : 'light'
-    </script>
+    <script src="./theme.js"></script>
     <link rel="stylesheet" href="./styles.css" />
   </head>
   <body>
-    <div class="startup-stage">
-      <svg class="ambient-workflow" viewBox="0 0 760 520" aria-hidden="true">
-        <path class="ambient-path ambient-path-primary" d="M56 164h112c30 0 44-18 44-46V72" />
-        <path class="ambient-path ambient-path-secondary" d="M704 356H592c-30 0-44 18-44 46v46" />
-        <path class="ambient-path ambient-path-tertiary" d="M104 400h74c24 0 36 12 36 36v26" />
-        <path class="ambient-path ambient-path-tertiary" d="M656 120h-74c-24 0-36-12-36-36V58" />
-        <circle class="ambient-node ambient-node-one" cx="56" cy="164" r="4" />
-        <circle class="ambient-node ambient-node-two" cx="704" cy="356" r="4" />
-        <circle class="ambient-node ambient-node-three" cx="104" cy="400" r="3" />
-        <circle class="ambient-node ambient-node-four" cx="656" cy="120" r="3" />
-        <circle class="ambient-node ambient-node-accent" cx="212" cy="88" r="3" />
-        <circle class="ambient-node ambient-node-accent" cx="548" cy="432" r="3" />
-      </svg>
-      <span class="stage-corner stage-corner-top-left" aria-hidden="true"></span>
-      <span class="stage-corner stage-corner-top-right" aria-hidden="true"></span>
-      <span class="stage-corner stage-corner-bottom-left" aria-hidden="true"></span>
-      <span class="stage-corner stage-corner-bottom-right" aria-hidden="true"></span>
-
-      <main id="splash-root" class="splash" aria-label="Wework is starting">
-        <div class="workbench-scene" aria-hidden="true">
-          <svg class="workbench" viewBox="0 0 300 126">
-            <path class="floor-line" d="M17 108h266" />
-
-            <g transform="translate(27 18)">
-              <g class="robot">
-                <g class="robot-antenna">
-                  <path d="M35 7V1" />
-                  <circle class="robot-antenna-tip" cx="35" cy="0" r="3" />
-                </g>
-                <g class="robot-head">
-                  <rect x="5" y="7" width="60" height="40" rx="14" />
-                  <path class="robot-ear" d="M5 21H1v13h4M65 21h4v13h-4" />
-                  <g class="robot-eyes">
-                    <rect x="19" y="23" width="8" height="5" rx="2.5" />
-                    <rect x="43" y="23" width="8" height="5" rx="2.5" />
-                  </g>
-                  <path class="robot-smile" d="M29 36h12" />
-                </g>
-
-                <g class="robot-body">
-                  <rect x="14" y="50" width="42" height="38" rx="12" />
-                  <circle cx="35" cy="63" r="7" />
-                  <path d="M29 77h12" />
-                </g>
-
-                <path class="robot-arm robot-arm-back" d="M15 57C3 59 1 72 9 78" />
-                <g class="robot-working-arm">
-                  <path class="robot-arm" d="M55 57c13 0 17-8 24-14" />
-                  <circle class="robot-hand" cx="80" cy="42" r="5" />
-                </g>
-                <path class="robot-leg" d="M25 87v13M46 87v13M19 101h12M40 101h12" />
-              </g>
-            </g>
-
-            <g class="toolbox">
-              <rect x="108" y="70" width="32" height="28" rx="8" />
-              <path d="M117 70v-6h14v6M114 82h20" />
-            </g>
-
-            <g class="monitor">
-              <rect class="monitor-shell" x="139" y="18" width="105" height="68" rx="14" />
-              <rect class="monitor-screen" x="147" y="26" width="89" height="52" rx="9" />
-              <path class="monitor-stand" d="M192 86v9M173 96h38" />
-              <g class="morph-icon" transform="translate(171 27) scale(2)">
-                <path id="morph-primary" />
-                <path id="morph-secondary" />
-                <path id="morph-tertiary" />
-              </g>
-              <circle class="monitor-status" cx="229" cy="71" r="2" />
-            </g>
-
-            <g class="keyboard">
-              <rect x="157" y="99" width="72" height="10" rx="5" />
-              <path d="M168 104h50" />
-            </g>
-
-            <g class="human">
-              <circle class="human-head" cx="270" cy="34" r="15" />
-              <path class="human-hair" d="M256 34c1-10 6-15 14-15 9 0 14 6 15 15" />
-              <g class="human-face">
-                <circle cx="265" cy="34" r="1.5" />
-                <circle cx="275" cy="34" r="1.5" />
-                <path d="M266 41h8" />
-              </g>
-              <path class="human-body" d="M248 108V82c0-18 9-29 22-29s22 11 22 29v26" />
-              <g class="human-working-arm">
-                <path class="human-arm" d="M256 68c-8 7-10 22-25 29" />
-                <circle class="human-hand" cx="228" cy="99" r="5" />
-              </g>
-            </g>
-
-            <g class="robot-sparks">
-              <path d="m113 48 5-3M114 55h6M110 42v-5" />
-              <circle cx="121" cy="40" r="2" />
-            </g>
-
-            <g class="assembly-piece assembly-piece-one">
-              <rect x="121" y="39" width="12" height="12" rx="3" />
-              <path d="M125 45h4" />
-            </g>
-            <g class="assembly-piece assembly-piece-two">
-              <circle cx="127" cy="45" r="6" />
-              <path d="m124 45 2 2 4-5" />
-            </g>
-          </svg>
+    <div id="splash-root" class="startup-stage splash" aria-labelledby="splash-title">
+      <main class="startup-hero" aria-label="Wework">
+        <div class="startup-brand" aria-hidden="true">
+          <canvas id="startup-brand-canvas" data-testid="startup-brand-canvas"></canvas>
         </div>
+      </main>
+      <div
+        id="startup-window-drag-region"
+        class="startup-window-drag-region"
+        data-testid="startup-window-drag-region"
+        aria-hidden="true"
+      ></div>
+      <footer id="startup-status" class="startup-status" data-testid="startup-status">
         <div class="splash-copy">
-          <h1 id="splash-title">We're preparing your workbench</h1>
-          <p id="splash-status" aria-live="polite">Opening your projects</p>
+          <h1 id="splash-title" class="sr-only" aria-live="polite">
+            We're preparing your workbench
+          </h1>
+          <p id="splash-activity" class="activity-line" aria-hidden="true"></p>
+          <span id="splash-percentage" aria-hidden="true">0%</span>
         </div>
-        <div
-          id="stage-indicator"
-          class="stage-indicator"
-          role="progressbar"
-          aria-label="Preparing your workbench"
-          aria-valuemin="1"
-          aria-valuemax="3"
-          aria-valuenow="1"
-        >
-          <span class="stage-dot is-active"></span>
-          <span class="stage-dot"></span>
-          <span class="stage-dot"></span>
+        <section class="progress-block" aria-label="Startup progress">
+          <div class="sr-only">
+            <span id="splash-step-count">Starting</span>
+            <span id="splash-elapsed">0.0s</span>
+          </div>
+          <div
+            id="splash-progress"
+            class="startup-progress is-running"
+            role="progressbar"
+            aria-label="Preparing your workbench"
+            aria-valuemin="0"
+            aria-valuemax="100"
+            aria-valuenow="0"
+          >
+            <svg class="startup-progress-svg" aria-hidden="true">
+              <defs>
+                <linearGradient
+                  id="startup-progress-gradient"
+                  gradientUnits="userSpaceOnUse"
+                  x1="0"
+                  y1="2"
+                  x2="0"
+                  y2="2"
+                >
+                  <stop offset="0%" class="startup-progress-stop-start" />
+                  <stop offset="72%" class="startup-progress-stop-middle" />
+                  <stop offset="100%" class="startup-progress-stop-end" />
+                </linearGradient>
+              </defs>
+              <line
+                id="splash-progress-track"
+                class="startup-progress-track"
+                x1="0"
+                x2="0"
+                y1="2"
+                y2="2"
+              />
+              <line
+                id="splash-progress-fill"
+                class="startup-progress-fill"
+                x1="0"
+                x2="0"
+                y1="2"
+                y2="2"
+                visibility="hidden"
+              />
+            </svg>
+          </div>
+        </section>
+        <div id="startup-slow" class="inline-note" hidden>
+          <svg width="14" height="14" viewBox="0 0 16 16" aria-hidden="true">
+            <circle cx="8" cy="8" r="6.2" fill="none" stroke="currentColor" />
+            <path d="M8 4.6v4l2.3 1.4" fill="none" stroke="currentColor" stroke-linecap="round" />
+          </svg>
+          <div class="note-body">
+            <strong id="startup-slow-title">Please wait</strong>
+            <p id="startup-slow-detail">First launches and updates can take longer.</p>
+          </div>
+        </div>
+        <div id="startup-timeout" class="inline-note" role="alert" hidden>
+          <svg width="14" height="14" viewBox="0 0 16 16" aria-hidden="true">
+            <circle cx="8" cy="8" r="6.2" fill="none" stroke="currentColor" />
+            <path d="M8 2.8v5.4l3 1.8" fill="none" stroke="currentColor" stroke-linecap="round" />
+          </svg>
+          <div class="note-body">
+            <strong id="startup-timeout-title">First startup can take longer</strong>
+            <p id="startup-timeout-detail">Still loading. Please wait…</p>
+          </div>
+        </div>
+        <div id="startup-timeout-actions" class="startup-actions startup-timeout-actions" hidden>
+          <button
+            id="startup-timeout-copy"
+            data-testid="startup-timeout-copy-button"
+            class="startup-button startup-button-secondary"
+            type="button"
+          >
+            Copy diagnostics
+          </button>
+          <button
+            id="startup-timeout-open-logs"
+            data-testid="startup-timeout-open-logs-button"
+            class="startup-link-button"
+            type="button"
+          >
+            Open log folder
+          </button>
+        </div>
+        <div id="startup-failure" class="inline-note inline-note-error" role="alert" hidden>
+          <svg width="14" height="14" viewBox="0 0 16 16" aria-hidden="true">
+            <circle cx="8" cy="8" r="6.2" fill="none" stroke="currentColor" />
+            <path d="M8 4.6v4.2" stroke="currentColor" stroke-linecap="round" />
+            <circle cx="8" cy="11.3" r="0.8" fill="currentColor" stroke="none" />
+          </svg>
+          <div class="note-body">
+            <strong id="startup-failure-title">Startup was interrupted</strong>
+            <p id="startup-failure-detail">Restarting usually recovers.</p>
+          </div>
         </div>
         <div id="startup-recovery" class="startup-recovery" hidden>
           <div class="startup-actions">
@@ -153,6 +145,14 @@
               Retry
             </button>
             <button
+              id="startup-copy-diagnostics"
+              data-testid="startup-copy-diagnostics-button"
+              class="startup-button startup-button-secondary"
+              type="button"
+            >
+              Copy diagnostics
+            </button>
+            <button
               id="startup-recover"
               data-testid="startup-recover-button"
               class="startup-button startup-button-primary"
@@ -167,6 +167,14 @@
               type="button"
             >
               Reset personal state
+            </button>
+            <button
+              id="startup-open-logs"
+              data-testid="startup-open-logs-button"
+              class="startup-link-button"
+              type="button"
+            >
+              Open log folder
             </button>
           </div>
           <p id="startup-action-error" class="startup-action-error" role="alert" hidden></p>
@@ -197,8 +205,11 @@
             ></button>
           </div>
         </div>
-      </main>
+      </footer>
     </div>
+    <div id="startup-toast" class="startup-toast" role="status" hidden></div>
+    <script src="./brand-mark.js"></script>
+    <script src="./brand-animation.js"></script>
     <script src="./splash.js"></script>
   </body>
 </html>

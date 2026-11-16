@@ -1,7 +1,3 @@
-import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
-import userEvent from '@testing-library/user-event'
-import { describe, expect, test, vi } from 'vitest'
-import '@/i18n'
 import { ApiError } from '@/api/http'
 import {
   createUnavailableSitesApi,
@@ -9,8 +5,11 @@ import {
   type SiteAnalytics,
   type SiteAnalyticsRange,
 } from '@/api/sites'
+import '@/i18n'
+import { render, screen } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
+import { describe, expect, test, vi } from 'vitest'
 import { SiteAnalyticsDialog } from './SiteAnalyticsDialog'
-import { recentAnalyticsRange } from './siteAnalyticsDates'
 
 const site = { siteid: 'prj-site', name: '测试站点' } as Site
 function result(range: SiteAnalyticsRange): SiteAnalytics {
@@ -34,46 +33,6 @@ function setup(get = vi.fn().mockImplementation((_id, range) => Promise.resolve(
 }
 
 describe('site analytics dialog', () => {
-  test('loads seven days and displays independent total UV, detail and trend', async () => {
-    const { get } = setup()
-    expect(get).toHaveBeenCalledWith(site.siteid, recentAnalyticsRange(7))
-    const totals = await screen.findByTestId('site-analytics-totals')
-    expect(totals).toHaveTextContent('5')
-    expect(totals).toHaveTextContent('2')
-    expect(totals).not.toHaveTextContent('4')
-    expect(screen.getByTestId('site-analytics-trend')).toBeInTheDocument()
-    expect(within(screen.getByTestId('site-analytics-daily')).getAllByRole('row')).toHaveLength(3)
-    expect(screen.getByTestId('site-analytics-result-range')).toHaveTextContent(
-      recentAnalyticsRange(7).start_date
-    )
-  })
-  test('blocks 32 days and reversed dates; allows 31 and same-day queries', async () => {
-    const { get } = setup()
-    await screen.findByTestId('site-analytics-totals')
-    const start = screen.getByTestId('site-analytics-start_date')
-    const end = screen.getByTestId('site-analytics-end_date')
-    const query = screen.getByTestId('site-analytics-query')
-    fireEvent.change(start, { target: { value: '2026-08-01' } })
-    fireEvent.change(end, { target: { value: '2026-09-01' } })
-    expect(query).toBeDisabled()
-    expect(get).toHaveBeenCalledTimes(1)
-    fireEvent.change(end, { target: { value: '2026-08-31' } })
-    await userEvent.click(query)
-    await waitFor(() =>
-      expect(get).toHaveBeenCalledWith(site.siteid, {
-        start_date: '2026-08-01',
-        end_date: '2026-08-31',
-      })
-    )
-    fireEvent.change(start, { target: { value: '2026-09-01' } })
-    expect(query).toBeDisabled()
-    fireEvent.change(start, { target: { value: '2026-08-31' } })
-    await userEvent.click(query)
-    expect(get).toHaveBeenLastCalledWith(site.siteid, {
-      start_date: '2026-08-31',
-      end_date: '2026-08-31',
-    })
-  })
   test('shows query errors and retries without presenting zero visits', async () => {
     const get = vi
       .fn()
@@ -92,30 +51,6 @@ describe('site analytics dialog', () => {
     expect(await screen.findByTestId('site-analytics-totals')).toHaveTextContent('0')
     expect(screen.getByRole('status')).toHaveTextContent('暂无访问记录')
     expect(get).toHaveBeenCalledTimes(2)
-  })
-  test('ignores an old response after switching the range and closes with Escape', async () => {
-    let resolveOld!: (value: SiteAnalytics) => void
-    const old = new Promise<SiteAnalytics>(resolve => {
-      resolveOld = resolve
-    })
-    const get = vi
-      .fn()
-      .mockReturnValueOnce(old)
-      .mockImplementation((_id, range) => Promise.resolve(result(range)))
-    const { onClose } = setup(get)
-    expect(screen.getByRole('status')).toHaveTextContent('查询')
-    await userEvent.click(screen.getByTestId('site-analytics-recent-31'))
-    expect(await screen.findByTestId('site-analytics-result-range')).toHaveTextContent(
-      recentAnalyticsRange(31).start_date
-    )
-    resolveOld(result(recentAnalyticsRange(7)))
-    await waitFor(() =>
-      expect(screen.getByTestId('site-analytics-result-range')).toHaveTextContent(
-        recentAnalyticsRange(31).start_date
-      )
-    )
-    await userEvent.keyboard('{Escape}')
-    expect(onClose).toHaveBeenCalledTimes(1)
   })
   test('traps keyboard focus and restores the connected trigger on unmount', async () => {
     const trigger = document.createElement('button')

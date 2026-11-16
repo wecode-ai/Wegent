@@ -1,0 +1,112 @@
+{
+  "zh": {
+    "title": "WeWork Mobile 隐私政策",
+    "updated": "更新日期：2026 年 11 月 15 日",
+    "introduction": [
+      "本说明适用于由 App Store 页面所列开发者发布和维护的 WeWork Mobile（Wegent 移动客户端）。应用支持手机本机执行，以及可选的用户自建 Wegent 服务连接。执行工具与 AI 模型推理可能位于不同位置。"
+    ],
+    "sections": [
+      {
+        "title": "本机数据",
+        "paragraphs": [
+          "本机项目、工作文件、会话和执行记录保存在设备上的应用环境中。本机功能无需登录 Wegent。登录、退出或切换 Wegent 服务不会自动把本机项目上传到该服务。",
+          "自定义模型配置由设备保存，API Key 使用本机安全存储。供本机任务调用模型时，相关配置可能传入本机执行环境。OpenAI / Codex 登录凭据由本机执行环境保存。获得完整访问授权的任务可能读取同一本机执行环境内的文件；这一环境不是项目之间的安全隔离边界。",
+          "应用不会默认把本机项目、会话或模型密钥发送到开发者的分析服务器，也没有内置广告追踪功能。"
+        ]
+      },
+      {
+        "title": "你选择的模型服务",
+        "paragraphs": [
+          "发送模型任务时，消息、所选附件、任务需要的文件内容，以及工具执行结果可能发送到你选择的模型服务。模型推理由该服务处理；即使执行工具位于手机上，模型请求仍可能离开设备。",
+          "保存自定义模型或登录 OpenAI 前，应用会说明共享范围并要求明确确认。取消确认不会保存新的模型配置或启动该次登录。模型服务收到的数据、网络信息及其保存期限，由该服务的隐私政策和账号配置决定。请选择你信任的服务，并仅提供完成任务所需的资料。",
+          "“测试连接”会向你填写的模型地址发送测试请求及鉴权信息，以验证模型和工具调用能力。"
+        ]
+      },
+      {
+        "title": "可选的自建 Wegent 服务",
+        "paragraphs": [
+          "你可以主动配置 Wegent 服务地址并登录，以使用远程设备和服务端会话。相关账号信息、远程会话、附件、设备状态和任务请求由所选 Wegent 部署处理。这些服务的数据处理和保存由部署运营者管理。",
+          "应用不要求连接开发者提供的统一公网 Backend。未配置或未登录 Wegent 时，包含本机执行环境的安装包仍可使用本机项目和自行配置的模型。"
+        ]
+      },
+      {
+        "title": "系统权限与诊断",
+        "paragraphs": [
+          "相机、照片和文件选择用于你主动添加附件或导入资料；授权范围由系统权限和选择器控制。选择的资料可能在你发送任务或上传到所选远程服务时共享。",
+          "设备上可能保存任务转录和技术诊断信息，以恢复会话、显示错误或排查故障。使用“复制详情”、系统分享或导出时，由你决定是否把相应资料交给他人。点击外部网站链接后，该网站按其自身政策处理访问数据。"
+        ]
+      },
+      {
+        "title": "管理与删除",
+        "paragraphs": [
+          "本机项目、文件和执行记录会保留到你删除相应资料或应用容器；模型服务和自建 Wegent 服务的保存期限由相应运营者决定。应用不会替这些服务承诺统一的保存期限。",
+          "你可以删除模型配置、退出模型账号，并在本机环境中明确删除不再需要的工作文件和执行记录。删除某个配置或会话不表示所有独立的项目文件、工具转录或服务端副本都会一并删除。",
+          "你可以随时停止发送任务、删除模型配置或退出模型账号，以停止后续向相应模型服务发送任务数据；这不会自动撤回已发送的数据。申请访问、更正或删除开发者因你主动反馈而收到的个人资料，可通过下方邮箱联系。模型服务和自建 Wegent 服务控制的数据，请联系其运营者处理。",
+          "卸载应用时，应用容器由 iOS 管理；系统安全存储或备份中的资料可能另行保留。建议先退出模型账号并删除不再使用的模型配置。需要删除模型服务或自建 Wegent 服务保存的数据时，请联系相应服务运营者。"
+        ]
+      },
+      {
+        "title": "联系与更新",
+        "paragraphs": [
+          "有关本客户端的隐私问题，可联系现有测试反馈邮箱：yudexiaozhou@gmail.com。请不要在反馈中附上密码、API Key 或其他人的私人资料。",
+          "本说明会随实际数据处理方式更新，并在本页标明更新日期。"
+        ]
+      }
+    ]
+  },
+  "en": {
+    "title": "WeWork Mobile Privacy Policy",
+    "updated": "Last updated: November 15, 2026",
+    "introduction": [
+      "This notice covers WeWork Mobile, the Wegent mobile client published and maintained by the developer identified on its App Store page. The app supports phone-local execution and optional connections to user-provided Wegent deployments. Execution tools and AI model inference can run in different locations."
+    ],
+    "sections": [
+      {
+        "title": "Data on your device",
+        "paragraphs": [
+          "Phone-local projects, working files, conversations and execution records are stored in the app's environment on your device. Local features do not require Wegent login. Connecting, disconnecting or changing a Wegent account does not automatically upload local projects to that service.",
+          "Custom model settings are stored on the device, with API keys held in device secure storage. Settings needed by local tasks may be supplied to the local execution environment. OpenAI / Codex credentials are stored by that environment. Tasks granted full access may read files in the same local environment; it is not a security boundary between projects.",
+          "The app does not send local projects, conversations or model keys to the developer's analytics server by default, and has no built-in advertising tracking."
+        ]
+      },
+      {
+        "title": "Model providers you choose",
+        "paragraphs": [
+          "Sending a model task may transmit your messages, selected attachments, file contents needed by the task, and tool results to your selected model provider. That service performs inference. Model requests may leave the device even when execution tools run locally.",
+          "Before saving custom model settings or starting OpenAI login, the app explains this sharing and requests explicit confirmation. Cancelling does not save the new configuration or start that login. Your provider's privacy policy and account settings govern its handling and retention of request data and network information. Choose a service you trust and provide only information needed for the task.",
+          "“Test connection” sends a test request and authentication information to the model address you enter to verify model and tool-call support."
+        ]
+      },
+      {
+        "title": "Optional self-hosted Wegent services",
+        "paragraphs": [
+          "You may configure a Wegent address and sign in to use remote devices and server-side conversations. The selected deployment processes related account information, remote conversations, attachments, device status and task requests. Its operator controls server-side processing and retention.",
+          "The app does not require a developer-hosted public Wegent Backend. A package containing the local runtime can use local projects and independently configured models without Wegent login."
+        ]
+      },
+      {
+        "title": "Permissions and diagnostics",
+        "paragraphs": [
+          "Camera, photo and file access support attachments and imports that you initiate. System permissions and pickers control access. Selected material may be shared when you send a task or upload it to your selected remote service.",
+          "Task transcripts and technical diagnostics may be kept on the device for conversation recovery, error reporting and troubleshooting. You decide whether to share information through Copy details, system sharing or export. External websites process visits under their own policies."
+        ]
+      },
+      {
+        "title": "Managing and deleting data",
+        "paragraphs": [
+          "Local projects, files and execution records remain until you delete the corresponding material or app container. Model providers and Wegent deployment operators set their own retention periods. This app does not promise a uniform retention period for those services.",
+          "You can remove model settings, sign out of model accounts and explicitly delete unwanted working files and execution records in the local environment. Deleting a configuration or conversation does not necessarily delete independent project files, tool transcripts or server-side copies.",
+          "You can stop sending tasks, remove model settings or sign out of model accounts at any time to stop subsequent task-data sharing with that provider; this does not automatically retract data already sent. Contact the address below to request access, correction or deletion of personal information received by the developer through feedback you submit. Contact the respective operator about data controlled by a model provider or Wegent deployment.",
+          "iOS manages removal of the app container on uninstall. Secure storage or system backups may retain information separately. Sign out and remove unused model settings before uninstalling. Contact your model provider or Wegent deployment operator to request removal of their stored data."
+        ]
+      },
+      {
+        "title": "Contact and updates",
+        "paragraphs": [
+          "For privacy questions about this client, contact the existing beta feedback address: yudexiaozhou@gmail.com. Do not include passwords, API keys or other people's private information in feedback.",
+          "This notice will be updated as actual data handling changes, with the update date shown above."
+        ]
+      }
+    ]
+  }
+}

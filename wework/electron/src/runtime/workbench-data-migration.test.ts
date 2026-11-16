@@ -109,7 +109,7 @@ test('accepts a completed directory bridge after the device number changes', () 
   expect(fs.readFileSync(join(options.target, 'tasks.sqlite'), 'utf8')).toBe('original')
 })
 
-test('empty-directory recovery rejects an ancestor alias into the migration target', () => {
+test('migration rejects an ancestor alias into the migration target', () => {
   const options = entry()
   fs.mkdirSync(options.source, { recursive: true })
   migrateWorkbenchDataEntry(options)
@@ -119,32 +119,28 @@ test('empty-directory recovery rejects an ancestor alias into the migration targ
   fs.rmdirSync(join(root, 'old'))
   fs.symlinkSync(join(root, 'new'), join(root, 'old'), 'junction')
 
-  expect(() => recoverWorkbenchDataBridge(options, { replaceEmptyDirectory: true })).toThrow(
-    'disjoint'
-  )
+  recoverWorkbenchDataBridge(options)
+  expect(() => migrateWorkbenchDataEntry(options)).toThrow('disjoint')
 
   expect(fs.statSync(options.target, { bigint: true }).ino).toBe(identity)
   expect(fs.readdirSync(options.target)).toEqual([])
   expect(fs.readFileSync(options.journal, 'utf8')).toBe(journal)
 })
 
-test('empty-directory recovery preserves a concurrent log write', () => {
+test.each(['empty', 'nonempty'])('bridge recovery preserves a recreated %s directory', state => {
   const options = entry()
   write(join(options.source, 'retained.log'), 'original')
   migrateWorkbenchDataEntry(options)
   fs.unlinkSync(options.source)
   fs.mkdirSync(options.source)
-  const remove = vi.spyOn(fs, 'rmdirSync').mockImplementationOnce(path => {
-    write(join(String(path), 'new.log'), 'concurrent')
-    actual.rmdirSync(path)
-  })
-  try {
-    expect(() => recoverWorkbenchDataBridge(options, { replaceEmptyDirectory: true })).toThrow()
-    expect(fs.readFileSync(join(options.source, 'new.log'), 'utf8')).toBe('concurrent')
-    expect(fs.readFileSync(join(options.target, 'retained.log'), 'utf8')).toBe('original')
-  } finally {
-    remove.mockRestore()
-  }
+  if (state === 'nonempty') write(join(options.source, 'new.log'), 'independent')
+  const identity = fs.statSync(options.source, { bigint: true }).ino
+  recoverWorkbenchDataBridge(options)
+  expect(fs.statSync(options.source, { bigint: true }).ino).toBe(identity)
+  expect(() => migrateWorkbenchDataEntry(options)).toThrow('conflict')
+  if (state === 'nonempty')
+    expect(fs.readFileSync(join(options.source, 'new.log'), 'utf8')).toBe('independent')
+  expect(fs.readFileSync(join(options.target, 'retained.log'), 'utf8')).toBe('original')
 })
 
 test.each(['replacement', 'redirect'])('rejects a completed bridge with a %s directory', change => {
@@ -433,7 +429,7 @@ test.each(['missing', 'incomplete', 'different-identity'])(
   }
 )
 
-test('moves browser partitions, preferences and logs before stores open', () => {
+test('moves user data while selecting stable logs without moving legacy logs', () => {
   const source = join(root, 'appData/app')
   const desktop = join(root, 'workbench/wework/app')
   const logs = join(root, 'logs/app')
@@ -446,6 +442,10 @@ test('moves browser partitions, preferences and logs before stores open', () => 
   prepareDesktopDataSource(source, desktop)
   const result = migrateWorkbenchDesktopData({ source, desktop, logs })
   expect(result.userData).toBe(join(desktop, 'user-data'))
+  expect(result.logs).toBe(join(desktop, 'electron-logs'))
+  expect(fs.readFileSync(join(logs, 'app.log'), 'utf8')).toBe('fixture')
+  expect(fs.lstatSync(logs).isSymbolicLink()).toBe(false)
+  expect(fs.existsSync(join(desktop, 'migrations/desktop-electron-logs-v1.json'))).toBe(false)
   expect(fs.readFileSync(join(result.userData, 'Partitions/browser/Cookies'), 'utf8')).toBe(
     'fixture'
   )

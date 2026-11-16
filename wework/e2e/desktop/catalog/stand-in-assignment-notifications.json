@@ -1,0 +1,16 @@
+{
+  "order": 48000,
+  "scenario": "./scenarios/stand-in-assignment-suite.scenario.mjs",
+  "scenarioOnly": true,
+  "paths": [
+    "wework/e2e/desktop/scenarios/stand-in-issue-delegation.scenario.mjs",
+    "wework/e2e/desktop/modules/issue-delegation-model.mjs"
+  ],
+  "ci": {
+    "core": {
+      "order": 47000,
+      "shard": 8,
+      "position": 7000
+    }
+  }
+}

@@ -30,6 +30,30 @@ const project = (items: RuntimeConversationItem[]) =>
   projectRuntimeConversationTurn({ ...turn, items });
 
 describe("assistant view identity", () => {
+  it("projects the canonical turn identity on users whose request alias was rebound", () => {
+    const result = projectRuntimeConversationTurn({
+      ...turn,
+      id: "native-turn",
+      items: [
+        {
+          id: "user",
+          type: "user_message",
+          message: {
+            id: "client-user",
+            role: "user",
+            content: "Edit me",
+            status: "done",
+            createdAt: "",
+            turnId: "request-turn",
+            subtaskId: "request-turn",
+          },
+        },
+      ],
+    });
+    expect(result[0].turnId).toBe("native-turn");
+    expect(result[0].subtaskId).toBe("native-turn");
+  });
+
   it("keeps pre-prompt processing in the same reply when native positions put it before the initial user", () => {
     const compact: RuntimeConversationItem = {
       id: "compact",

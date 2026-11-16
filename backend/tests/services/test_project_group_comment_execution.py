@@ -266,6 +266,41 @@ def test_unrelated_manager_session_is_rejected(group_scenario):
     assert error.value.status_code == 409
 
 
+def test_initial_manager_dispatch_uses_its_persisted_comment_identity(
+    group_scenario, monkeypatch
+):
+    s = group_scenario
+    intent = s.execution.execution_intent
+    intent["dispatch_request"] = {"kind": "collaboration_group"}
+    intent["origin_context"]["comment_trigger_message_id"] = "manager-source-comment"
+    s.execution.execution_payload = json.dumps(intent)
+    monkeypatch.setattr(
+        loop_item_execution_service,
+        "_collaboration_member_runtime_profiles",
+        lambda *a, **k: [],
+    )
+
+    payload = loop_item_execution_service.build_executor_runtime_payload(
+        s.db,
+        execution=s.execution,
+        execution_target_id="admin-cloud",
+        executor_device_id="admin-cloud",
+    )
+
+    assert payload["dispatchKind"] == "collaboration_group"
+    assert (
+        payload["managerRuntimeRequest"]["clientUserMessageId"]
+        == "manager-source-comment"
+    )
+    assert (
+        payload["managerRuntimeRequest"]["executionRequest"]["client_user_message_id"]
+        == "manager-source-comment"
+    )
+    request = s.compiler.call_args.kwargs["request"]
+    assert request.local_task_id == s.execution.runtime_task_id
+    assert request.model_id == "admin-model"
+
+
 @pytest.mark.asyncio
 async def test_manager_reply_queues_same_session_and_rebuilds_member_profiles(
     group_scenario, monkeypatch
@@ -314,6 +349,10 @@ async def test_manager_reply_queues_same_session_and_rebuilds_member_profiles(
 
     assert payload["runtimeAction"] == "send"
     assert payload["clientUserMessageId"] == request.trigger_message_id
+    assert (
+        payload["executionRequest"]["client_user_message_id"]
+        == request.trigger_message_id
+    )
     assert (
         payload["runtimeHandle"]["collaborationDispatchTaskId"]
         == s.execution.runtime_task_id

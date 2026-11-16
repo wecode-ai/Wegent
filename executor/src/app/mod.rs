@@ -135,8 +135,14 @@ pub async fn run_with_shell_environment(
         return Ok(());
     }
 
+    if local_endpoint_enabled() {
+        eprintln!("executor startup: migrating default home");
+    }
     crate::config::paths::migrate_default_home()
         .map_err(|error| AppError::Server(format!("Executor Home migration failed: {error}")))?;
+    if local_endpoint_enabled() {
+        eprintln!("executor startup: default home ready");
+    }
 
     if args.upgrade {
         let config = load_device_config(args.config_path.as_deref())?;
@@ -154,6 +160,7 @@ pub async fn run_with_shell_environment(
     crate::local::capabilities::initialize_default_manifest()
         .map_err(|error| AppError::Server(error.to_string()))?;
     recover_plugins_before_startup();
+    let python_prewarm = crate::python_runtime::prewarm::start();
     if plan
         .local_sidecar
         .as_ref()
@@ -175,6 +182,9 @@ pub async fn run_with_shell_environment(
     // outlive this executor, and release the blocking reads parked on their
     // stdio.
     crate::agents::terminate_agent_processes().await;
+    if let Some(task) = python_prewarm {
+        task.abort();
+    }
     outcome
 }
 

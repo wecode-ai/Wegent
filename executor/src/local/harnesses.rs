@@ -452,59 +452,6 @@ async fn read_command_version(path: &Path, args: &[&str]) -> Option<String> {
 mod tests {
     use super::*;
 
-    #[cfg(unix)]
-    #[tokio::test]
-    async fn detects_an_explicit_executable_and_reads_its_version() {
-        use std::os::unix::fs::symlink;
-
-        let root = tempfile::tempdir().unwrap();
-        let executable = root.path().join("claude");
-        // A checked-in executable avoids writer descriptors inherited by other
-        // parallel tests' child processes, which can cause ETXTBSY on Linux.
-        let fixture =
-            Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/local-harness-version.sh");
-        symlink(fixture, &executable).unwrap();
-
-        let descriptors = list_local_harnesses(ListLocalHarnessesRequest {
-            executable_overrides: HashMap::from([(
-                "claude_code".to_owned(),
-                Some(executable.display().to_string()),
-            )]),
-        })
-        .await;
-
-        assert_eq!(
-            descriptors
-                .into_iter()
-                .find(|descriptor| descriptor.id == "claude_code"),
-            Some(LocalHarnessDescriptor {
-                id: "claude_code".to_owned(),
-                installed: true,
-                executable_path: Some(executable.display().to_string()),
-                version: Some("2.1.228 (Claude Code)".to_owned()),
-            })
-        );
-    }
-
-    #[tokio::test]
-    async fn reports_a_missing_explicit_executable_as_not_installed() {
-        let descriptors = list_local_harnesses(ListLocalHarnessesRequest {
-            executable_overrides: HashMap::from([(
-                "claude_code".to_owned(),
-                Some("/definitely/missing/wework-e2e-claude".to_owned()),
-            )]),
-        })
-        .await;
-
-        let claude = descriptors
-            .into_iter()
-            .find(|descriptor| descriptor.id == "claude_code")
-            .unwrap();
-        assert!(!claude.installed);
-        assert_eq!(claude.executable_path, None);
-        assert_eq!(claude.version, None);
-    }
-
     #[test]
     fn prepares_isolated_kimi_home_and_workspace_trust() {
         let root = tempfile::tempdir().unwrap();

@@ -1,11 +1,46 @@
+// @vitest-environment node
+
 import assert from 'node:assert/strict'
 import { test } from 'vitest'
+import { createAndAssignCloudIssue } from '../e2e/desktop/modules/workspace-agent-setup.mjs'
 import {
   openDirectProjectCreation,
   openProjectAgentCreator,
-  expandCollaborationWorkspace,
+  expandCollaborationSpaces,
+  revealCollaborationSidebarElement,
   selectCollaborationIssueAgent,
+  selectCollaborationProjectView,
 } from '../e2e/desktop/modules/workspace-flows.mjs'
+import { DEFAULT_STEP_TIMEOUT_MS } from '../e2e/desktop/modules/shared.mjs'
+
+test.each([
+  ['expanded', 'manage', 'collaboration-tab-manage'],
+  ['compact', 'manage', 'collaboration-tab-manage'],
+  ['expanded', 'milestones', 'collaboration-milestones-tab'],
+  ['compact', 'milestones', 'collaboration-milestones-tab'],
+])('selects %s navigation view %s after the switcher mounts', async (layout, view, tabId) => {
+  let selected = null
+  let commands = 0
+  const control = {
+    async command(action, selector, options) {
+      commands += 1
+      assert.equal(action, 'chooseWhenEnabled')
+      assert.equal(
+        selector,
+        `main [data-testid="collaboration-project-view-select"], main [data-testid="${tabId}"]`
+      )
+      assert.deepEqual(options, {
+        value: view,
+        visible: true,
+        timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+      })
+      selected = options.value
+    },
+  }
+  await selectCollaborationProjectView(control, 'main', view)
+  assert.equal(selected, view)
+  assert.equal(commands, 1, 'Mount readiness and selection must use one renderer command')
+})
 
 function projectCreationControl({ menuTrigger = false, menuCount = 0, dialogError } = {}) {
   const calls = []
@@ -106,42 +141,6 @@ test('does not open an Agent form when the creation choice is unavailable', asyn
   assert.equal(calls.length, 2)
 })
 
-test.each(['true', 'false'])(
-  'ensures a workspace is open from its initial aria-expanded=%s state',
-  async expanded => {
-    const calls = []
-    const control = {
-      async command(action, selector, options) {
-        calls.push({ action, selector, options })
-        if (action === 'getAttribute') return expanded
-      },
-    }
-    const toggle = '[data-testid="collaboration-workspace-toggle-guest-parent"]'
-    await expandCollaborationWorkspace(control, toggle)
-    assert.equal(calls.filter(call => call.action === 'click').length, expanded === 'false' ? 1 : 0)
-    assert.deepEqual(calls.at(-1), {
-      action: 'waitFor',
-      selector: `${toggle}[aria-expanded="true"]`,
-      options: { visible: true, timeoutMs: 10000 },
-    })
-  }
-)
-
-test('rejects a workspace toggle without a declared expanded state', async () => {
-  const calls = []
-  const control = {
-    async command(action) {
-      calls.push(action)
-      if (action === 'getAttribute') return ''
-    },
-  }
-  await assert.rejects(
-    expandCollaborationWorkspace(control, '[data-testid="workspace-toggle"]'),
-    /must expose its expanded state/
-  )
-  assert.ok(!calls.includes('click'))
-})
-
 test('waits for asynchronously loaded Agent options before selecting an assignee', async () => {
   const calls = []
   let optionReady
@@ -180,4 +179,137 @@ test('does not select an Agent when the authorized option never becomes availabl
     error => error === failure
   )
   assert.deepEqual(clicks, [trigger])
+})
+
+test('waits for the saved Issue editor before assigning a persisted Issue', async () => {
+  const detailInteraction = Promise.withResolvers()
+  const detailRendered = Promise.withResolvers()
+  const issue = { id: 'issue-7', title: 'Assign after creation' }
+  const trigger = 'main [data-testid="cloud-todo-detail-assignee"]'
+  const option = '[data-testid="cloud-todo-detail-assignee-option-agent:agent-7"]'
+  let persisted = false
+  let rendered = false
+  let selected = false
+  let saved = false
+  let assigneeClickAction
+  const control = {
+    async command(action, selector) {
+      if (
+        action === 'clickWhenEnabled' &&
+        selector.endsWith('[data-testid="cloud-todo-create-confirm"]')
+      ) {
+        persisted = true
+      }
+      if (selector === trigger) {
+        detailInteraction.resolve()
+        if (action === 'waitFor') await detailRendered.promise
+        if (action === 'click' || action === 'clickWhenEnabled') {
+          assert.ok(rendered, 'The creation panel is still saving')
+          assigneeClickAction = action
+        }
+      }
+      if (action === 'click' && selector === option) {
+        selected = true
+        assert.ok(
+          rendered && selected,
+          'Assignment must be selected through the persisted detail editor'
+        )
+        saved = true
+      }
+    },
+  }
+  const request = async pathname => {
+    assert.equal(pathname, '/api/v1/cloud-projects/project-7/loop-items')
+    assert.ok(persisted)
+    return { items: [issue] }
+  }
+  const outcome = createAndAssignCloudIssue(control, request, {
+    contentSelector: 'main',
+    projectId: 'project-7',
+    title: issue.title,
+    description: 'The server has persisted the Issue before the creation panel closes.',
+    assigneeTarget: 'agent:agent-7',
+    timeoutMs: 10000,
+  }).then(
+    value => ({ value }),
+    error => ({ error })
+  )
+
+  await detailInteraction.promise
+  assert.equal(selected, false)
+  assert.equal(saved, false)
+  rendered = true
+  detailRendered.resolve()
+
+  assert.deepEqual(await outcome, { value: issue })
+  assert.equal(assigneeClickAction, 'clickWhenEnabled')
+  assert.ok(selected)
+  assert.ok(saved)
+})
+
+test('waits for the unified project tree without clicking a section toggle', async () => {
+  const calls = []
+  const control = {
+    async command(action, selector) {
+      calls.push({ action, selector })
+    },
+  }
+  await expandCollaborationSpaces(control)
+  assert.deepEqual(
+    calls.map(call => call.action),
+    ['waitFor']
+  )
+  assert.ok(calls[0].selector.includes('collaboration-project-tree'))
+})
+
+test('reveals offscreen navigation controls before testing visibility or clicking', async () => {
+  let visible = false
+  const control = {
+    async command(action, selector, options = {}) {
+      assert.ok(selector.includes('collaboration-workspace-home-guest-parent'))
+      if (action === 'scrollIntoView') visible = true
+      if (options.visible) assert.ok(visible)
+    },
+  }
+  await revealCollaborationSidebarElement(
+    control,
+    '[data-testid="collaboration-workspace-home-guest-parent"]'
+  )
+  assert.ok(visible)
+})
+
+test('expands collapsed collaboration management before revealing a resource destination', async () => {
+  let expanded = false
+  const calls = []
+  const control = {
+    async command(action, selector) {
+      calls.push({ action, selector })
+      if (action === 'getAttribute') return expanded ? 'true' : 'false'
+      if (action === 'click') expanded = true
+      if (selector.includes('collaboration-primary-agents')) assert.ok(expanded)
+    },
+  }
+  await revealCollaborationSidebarElement(
+    control,
+    '[data-testid="collaboration-platform-sidebar"] [data-testid="collaboration-primary-agents"]'
+  )
+  assert.equal(calls[0].action, 'waitFor')
+  assert.equal(calls[1].action, 'getAttribute')
+  assert.equal(calls[2].action, 'click')
+  assert.ok(calls[2].selector.endsWith('[data-testid="collaboration-management-toggle"]'))
+})
+
+test('reveals a workspace identity independently of its section toggle position', async () => {
+  const identity =
+    'main [data-testid="collaboration-workspace-tree-local"] .collaboration-workspace-identity'
+  let visible = false
+  const control = {
+    async command(action, selector, options = {}) {
+      assert.equal(selector, identity)
+      if (action === 'scrollIntoView') visible = true
+      if (action === 'waitFor' && options.visible) assert.ok(visible)
+    },
+  }
+  await revealCollaborationSidebarElement(control, identity)
+  assert.ok(visible)
 })

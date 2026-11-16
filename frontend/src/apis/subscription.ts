@@ -114,7 +114,8 @@ export const subscriptionApis = {
     status?: BackgroundExecutionStatus[],
     startDate?: string,
     endDate?: string,
-    includeSilent?: boolean
+    includeSilent?: boolean,
+    previewChars?: number
   ): Promise<BackgroundExecutionListResponse> {
     const queryParams = new URLSearchParams()
     queryParams.append('page', String(params?.page || 1))
@@ -138,6 +139,10 @@ export const subscriptionApis = {
 
     if (includeSilent !== undefined) {
       queryParams.append('include_silent', String(includeSilent))
+    }
+
+    if (previewChars !== undefined) {
+      queryParams.append('preview_chars', String(previewChars))
     }
 
     return apiClient.get(`/subscriptions/executions?${queryParams.toString()}`)

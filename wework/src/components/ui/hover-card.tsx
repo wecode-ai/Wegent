@@ -22,6 +22,7 @@ interface HoverCardProps {
   content: ReactNode
   testId: string
   interactive?: boolean
+  // Opt into focus-driven visibility; interactive alone only enables pointer actions.
   openOnFocus?: boolean
   pinOnInteraction?: boolean
   pinOnInteractionSelector?: string
@@ -175,7 +176,7 @@ export function HoverCard({
   }, [clearTimers, show])
 
   const scheduleClose = useCallback(() => {
-    if (pinnedRef.current) return
+    if (pinnedRef.current || focusWithinRef.current) return
     if (!interactive) {
       close()
       return
@@ -225,13 +226,9 @@ export function HoverCard({
           pin()
         }
       }
-      if (focusIsInsideAnchor && !openOnFocus) return
+      if (!openOnFocus) return
       focusWithinRef.current = true
-      if (openOnFocus) {
-        show()
-        return
-      }
-      keepOpen()
+      show()
     },
     [keepOpen, openOnFocus, pin, shouldPinInteraction, show]
   )
@@ -280,10 +277,6 @@ export function HoverCard({
     if (!position) return
 
     const handlePointerMove = (event: PointerEvent) => {
-      if (focusWithinRef.current || pinnedRef.current) {
-        keepOpen()
-        return
-      }
       const path = event.composedPath()
       if (path.includes(anchorRef.current as EventTarget)) {
         keepOpen()
@@ -326,8 +319,8 @@ export function HoverCard({
       ref={anchorRef}
       onMouseEnter={scheduleOpen}
       onMouseLeave={scheduleClose}
-      onFocusCapture={interactive || openOnFocus ? handleFocusCapture : undefined}
-      onBlurCapture={interactive || openOnFocus ? handleBlurCapture : undefined}
+      onFocusCapture={openOnFocus || pinOnInteraction ? handleFocusCapture : undefined}
+      onBlurCapture={openOnFocus ? handleBlurCapture : undefined}
       onPointerMoveCapture={interactive ? keepOpen : undefined}
       onPointerDownCapture={event => {
         pointerPinPendingRef.current = false

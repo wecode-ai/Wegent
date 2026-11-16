@@ -1,0 +1,12 @@
+{
+  "order": 64000,
+  "scenario": "./scenarios/collaboration-issue-assignment-activity.scenario.mjs",
+  "scenarioOnly": true,
+  "ci": {
+    "core": {
+      "order": 57000,
+      "shard": 7,
+      "position": 4000
+    }
+  }
+}

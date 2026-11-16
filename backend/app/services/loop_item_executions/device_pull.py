@@ -17,8 +17,12 @@ from app.db.session import get_db_session
 from app.models.delivery import loop_datetime_is_unset
 from app.models.loop_item_execution import LoopItemExecution
 from app.services.loop_item_executions.profile import WeworkExecutionProfileError
+from app.services.loop_item_executions.runtime_identity import (
+    execution_runtime_turn_id,
+)
 from app.services.loop_item_executions.service import (
     WeworkRuntimeConfigurationError,
+    _execution_is_claimable_by_device,
     loop_item_execution_service,
 )
 from app.services.workspace_cleanup_intents import pull_due
@@ -92,6 +96,13 @@ def _claim_execution(
             runtime_instance_id=runtime_instance_id,
             environment=environment,
         )
+        if row is not None and not _execution_is_claimable_by_device(
+            db,
+            execution=row,
+            owner_user_id=owner_user_id,
+            submitted_device_id=execution_target_id,
+        ):
+            row = None
         if row is not None:
             row = loop_item_execution_service.heartbeat(
                 db,
@@ -151,7 +162,15 @@ def _claim_execution(
         execution_request = payload.get("executionRequest")
         if isinstance(execution_request, dict):
             execution_request["task_id"] = runtime_task_id
-            execution_request["subtask_id"] = f"{runtime_task_id}-execution-{row.id}"
+            execution_request["subtask_id"] = execution_runtime_turn_id(row)
+
+        if not _execution_is_claimable_by_device(
+            db,
+            execution=row,
+            owner_user_id=owner_user_id,
+            submitted_device_id=execution_target_id,
+        ):
+            return {"success": True, "task": None}
 
         # Claiming and materializing a payload does not prove that the
         # Socket.IO acknowledgement reached the Executor. Keep

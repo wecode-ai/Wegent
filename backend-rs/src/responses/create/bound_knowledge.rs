@@ -21,17 +21,17 @@
 //! task row (`id + kind = 'Task' + is_active IN (1, 2)`), returns early for
 //! that row's owner, and only otherwise probes `resource_members`.
 //!
-//! Known gap: the two branches that resolve persisted refs
-//! (`KnowledgeBaseNameResolver.resolve` for `knowledgeBaseScopes` and
-//! `resolve_kb_refs_batch` for `knowledgeBaseRefs`) need the accessible-KB
-//! grouping and folder-scope subsystems, which this flow does not host yet.
-//! A task without persisted KB refs — every recorded create case — never
-//! reaches them.
+//! `spec.knowledgeBaseScopes` resolve through
+//! [`super::kb_resolver::resolve_scope_refs`]
+//! (`KnowledgeBaseNameResolver.resolve`), including its `404` / `403`
+//! rejections.
+//!
 use brz_mysql::{Json, Mysql, MysqlResult, MysqlRow};
 use serde_json::Value;
 
 use super::selected_knowledge::KnowledgeBaseScope;
 use crate::internal_callback::completion::task_column;
+use crate::sql_support::StatementArg;
 use crate::task_store_traits::TaskStore;
 
 /// The task-level bound knowledge bases of one request.
@@ -44,17 +44,20 @@ pub struct BoundKnowledgeBases {
 }
 
 /// `_prepare_kb_tools_from_contexts`' priority-2 KB resolution.
-pub async fn resolve_bound_knowledge_bases<M: Mysql>(
+pub async fn resolve_bound_knowledge_bases<M: Mysql, R: brz_redis::Redis>(
     mysql: &M,
+    acl: &super::knowledge::AclContextSource<'_, R>,
     store: &dyn TaskStore,
     task_id: i64,
     user_id: i64,
-) -> MysqlResult<BoundKnowledgeBases> {
-    let scopes = bound_knowledge_base_scopes(store, task_id).await?;
+) -> Result<BoundKnowledgeBases, crate::http_compat::FastApiError> {
+    let scopes = bound_knowledge_base_scopes(acl, store, task_id, user_id).await?;
     // `bound_knowledge_base_ids = [scope ids] or _get_bound_knowledge_base_ids`:
     // the ids chain runs only when the scopes produced no ids.
     let ids = if scopes.is_empty() {
-        bound_knowledge_base_ids(mysql, store, task_id, user_id).await?
+        bound_knowledge_base_ids(mysql, store, task_id, user_id)
+            .await
+            .map_err(super::request::dependency)?
     } else {
         scopes.iter().map(|scope| scope.knowledge_base_id).collect()
     };
@@ -62,12 +65,19 @@ pub async fn resolve_bound_knowledge_bases<M: Mysql>(
 }
 
 /// `_get_bound_knowledge_base_scopes`: the regular-active task read, then the
-/// persisted scope refs resolved against the caller's accessible KBs.
-async fn bound_knowledge_base_scopes(
+/// persisted scope refs resolved through `KnowledgeBaseNameResolver`
+/// (`contexts.py:2177-2212`).
+async fn bound_knowledge_base_scopes<R: brz_redis::Redis>(
+    acl: &super::knowledge::AclContextSource<'_, R>,
     store: &dyn TaskStore,
     task_id: i64,
-) -> MysqlResult<Vec<KnowledgeBaseScope>> {
-    let Some(task) = store.get_regular_active_task(task_id).await? else {
+    user_id: i64,
+) -> Result<Vec<KnowledgeBaseScope>, crate::http_compat::FastApiError> {
+    let Some(task) = store
+        .get_regular_active_task(task_id)
+        .await
+        .map_err(super::request::dependency)?
+    else {
         return Ok(Vec::new());
     };
     let task_json = task_json(&task);
@@ -75,14 +85,15 @@ async fn bound_knowledge_base_scopes(
     if refs.is_empty() {
         return Ok(Vec::new());
     }
-    // GAP: `KnowledgeBaseNameResolver.resolve` (accessible-KB grouping plus
-    // folder/document scope resolution) is not part of this flow yet.
-    tracing::warn!(
-        task_id,
-        refs = refs.len(),
-        "bound knowledge-base scopes are not resolved in the create flow yet"
-    );
-    Ok(Vec::new())
+    let resolved = super::kb_resolver::resolve_scope_refs(acl, user_id, &refs).await?;
+    Ok(resolved
+        .into_iter()
+        .map(|reference| KnowledgeBaseScope {
+            knowledge_base_id: reference.kb_id,
+            scope_restricted: reference.scope_restricted,
+            document_ids: reference.resolved_document_ids,
+        })
+        .collect())
 }
 
 /// `_get_bound_knowledge_base_ids`: the second regular-active task read, the
@@ -104,14 +115,65 @@ async fn bound_knowledge_base_ids<M: Mysql>(
     if refs.is_empty() {
         return Ok(Vec::new());
     }
-    // GAP: `resolve_kb_refs_batch` (the id/name batch lookup and its legacy
-    // ref migration) is not part of this flow yet.
-    tracing::warn!(
-        task_id,
-        refs = refs.len(),
-        "bound knowledge-base refs are not resolved in the create flow yet"
-    );
-    Ok(Vec::new())
+    resolve_task_bound_refs(mysql, &refs).await
+}
+
+async fn resolve_task_bound_refs<M: Mysql>(mysql: &M, refs: &[Value]) -> MysqlResult<Vec<i64>> {
+    #[derive(brz_mysql::FromMysqlRow)]
+    struct KnowledgeBase {
+        id: i64,
+        namespace: String,
+        json: Json<Value>,
+    }
+
+    let mut predicates = Vec::new();
+    let mut args = Vec::new();
+    let identities: Vec<_> = refs
+        .iter()
+        .filter_map(|reference| {
+            if let Some(id) = reference.get("id").filter(|id| !id.is_null()) {
+                let id = int_value(id)?;
+                predicates.push("id = ?");
+                args.push(StatementArg::Int(id));
+                return Some((Some(id), "", ""));
+            }
+            let name = reference["name"].as_str().filter(|name| !name.is_empty())?;
+            let namespace = reference["namespace"].as_str().unwrap_or("default");
+            predicates
+                .push("(namespace = ? AND JSON_UNQUOTE(JSON_EXTRACT(json, '$.spec.name')) = ?)");
+            args.push(StatementArg::Str(namespace.to_owned()));
+            args.push(StatementArg::Str(name.to_owned()));
+            Some((None, namespace, name))
+        })
+        .collect();
+    if predicates.is_empty() {
+        return Ok(Vec::new());
+    }
+    let rows: Vec<KnowledgeBase> = mysql
+        .fetch_all(
+            format!(
+                "SELECT id, namespace, json \
+                 FROM kinds WHERE kind='KnowledgeBase' AND is_active=1 AND ({}) ORDER BY id",
+                predicates.join(" OR ")
+            ),
+            args,
+        )
+        .await?;
+    Ok(identities
+        .into_iter()
+        .filter_map(|(id, namespace, name)| {
+            rows.iter()
+                .rev()
+                .find(|row| match id {
+                    Some(id) => row.id == id,
+                    None => {
+                        row.namespace == namespace
+                            && row.json.0["spec"]["name"].as_str() == Some(name)
+                    }
+                })
+                .map(|row| row.id)
+        })
+        .collect())
 }
 
 /// `task_access_store.is_member`: the accessible-task read, the owner
@@ -239,7 +301,7 @@ fn task_json(task: &MysqlRow) -> Value {
 }
 
 /// `int(raw)` for a JSON number or a numeric string.
-fn int_value(value: &Value) -> Option<i64> {
+pub(super) fn int_value(value: &Value) -> Option<i64> {
     match value {
         Value::Number(number) => number.as_i64(),
         Value::String(text) => text.trim().parse().ok(),
@@ -249,7 +311,7 @@ fn int_value(value: &Value) -> Option<i64> {
 
 /// `raw.get(key)`: `None` when the key is absent or null, the parsed integer
 /// list otherwise (empty lists are preserved).
-fn int_list(value: Option<&Value>) -> Option<Vec<i64>> {
+pub(super) fn int_list(value: Option<&Value>) -> Option<Vec<i64>> {
     match value? {
         Value::Null => None,
         Value::Array(items) => Some(items.iter().filter_map(int_value).collect()),

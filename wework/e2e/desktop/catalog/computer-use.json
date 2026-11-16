@@ -1,0 +1,20 @@
+{
+  "order": 131000,
+  "scenario": "./scenarios/computer-use.scenario.mjs",
+  "scenarioOnly": true,
+  "resources": ["macos-inspector-foreground"],
+  "paths": [
+    "executor/src/computer_use_mcp.rs",
+    "wework/electron/src/host/computer-use-service*",
+    "wework/electron/src/host/computer-use-driver-*",
+    "wework/e2e/desktop/modules/computer-use-*",
+    "wework/scripts/computer-use-checkpoint.test.mjs"
+  ],
+  "ci": {
+    "core": {
+      "order": 81000,
+      "shard": 3,
+      "position": 22000
+    }
+  }
+}

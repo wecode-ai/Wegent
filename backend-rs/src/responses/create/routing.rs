@@ -51,10 +51,16 @@ pub fn shell_type(request: &ExecutionRequest) -> String {
         .unwrap_or_else(|| "Chat".to_string())
 }
 
+/// The deployment's Chat Shell execution mode.
+pub(crate) fn chat_shell_mode() -> String {
+    crate::config::env_or_dotenv("CHAT_SHELL_MODE").unwrap_or_else(|| "http".to_owned())
+}
+
 /// `ExecutionRouter.route`'s inputs after settings resolution.
 #[derive(Clone)]
 pub struct RouteInputs<'a> {
     pub shell_type: &'a str,
+    pub chat_shell_mode: &'a str,
     pub chat_shell_url: &'a str,
     pub executor_manager_url: &'a str,
     pub device_id: Option<&'a str>,
@@ -70,10 +76,9 @@ pub struct RouteInputs<'a> {
 /// (`gemini-deep-research` → `POLLING`), 2 (a `device_id` → `WEBSOCKET`), 5
 /// (shell lookup: `Chat` → `SSE` at `CHAT_SHELL_URL`; `ClaudeCode` / `Codex` /
 /// `Agno` / `Dify` → `HTTP_CALLBACK` at `{EXECUTOR_MANAGER_URL}/executor-manager`),
-/// and 6 (default `HTTP_CALLBACK` at the executor-manager URL). Priorities 3
-/// (standalone Rust executor) and 4 (`chat_shell` package mode) are settings
-/// this route's recordings do not enable and are left out; `mode` only depends
-/// on the shell type, so `supports_streaming` is unaffected by them.
+/// and 6 (default `HTTP_CALLBACK` at the executor-manager URL). Package mode
+/// selects `INPROCESS` and the embedded engine URL supplied by the caller.
+/// Standalone device routing remains outside this service lookup.
 pub fn route(inputs: &RouteInputs<'_>) -> ExecutionTarget {
     if inputs.model_is_video && inputs.device_id.is_none() {
         return ExecutionTarget {
@@ -95,7 +100,11 @@ pub fn route(inputs: &RouteInputs<'_>) -> ExecutionTarget {
     }
     match inputs.shell_type {
         "Chat" => ExecutionTarget {
-            mode: CommunicationMode::Sse,
+            mode: if inputs.chat_shell_mode == "package" {
+                CommunicationMode::Inprocess
+            } else {
+                CommunicationMode::Sse
+            },
             url: Some(inputs.chat_shell_url.to_string()),
         },
         "ClaudeCode" | "Codex" | "Agno" | "Dify" => ExecutionTarget {
@@ -134,6 +143,7 @@ mod tests {
     fn executor_shells_route_to_http_callback_and_chat_to_sse() {
         let base = RouteInputs {
             shell_type: "ClaudeCode",
+            chat_shell_mode: "http",
             chat_shell_url: "http://chat-shell:8100",
             executor_manager_url: "http://host:8001/",
             device_id: None,
@@ -158,9 +168,35 @@ mod tests {
     }
 
     #[test]
+    fn package_chat_uses_embedded_execution_without_streaming_eligibility() {
+        let inputs = RouteInputs {
+            shell_type: "Chat",
+            chat_shell_mode: "package",
+            chat_shell_url: "http://python:8004/_runtime/chat-shell",
+            executor_manager_url: "http://manager:8001",
+            device_id: None,
+            model_is_video: false,
+            model_protocol: None,
+        };
+        let target = route(&inputs);
+        assert_eq!(target.mode, CommunicationMode::Inprocess);
+        assert_eq!(target.url.as_deref(), Some(inputs.chat_shell_url));
+        assert!(!supports_streaming(&target));
+        assert_eq!(
+            route(&RouteInputs {
+                device_id: Some("device"),
+                ..inputs
+            })
+            .mode,
+            CommunicationMode::Websocket
+        );
+    }
+
+    #[test]
     fn a_device_forces_websocket_and_a_video_model_polls() {
         let base = RouteInputs {
             shell_type: "Chat",
+            chat_shell_mode: "http",
             chat_shell_url: "http://chat-shell:8100",
             executor_manager_url: "http://host:8001",
             device_id: None,

@@ -53,7 +53,7 @@ export function TaskBoardColumnCreateButton({
         type="button"
         data-testid={`cloud-todo-column-add-${columnKey}`}
         onClick={onClick}
-        className="flex h-6 w-6 items-center justify-center rounded-md text-text-muted opacity-0 transition hover:bg-background hover:text-text-primary focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus/30 group-hover:opacity-100"
+        className="flex h-6 w-6 items-center justify-center rounded-md text-text-muted opacity-0 transition hover:bg-background hover:text-text-primary focus-visible:opacity-100 focus-visible:outline-none keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-focus/30 group-hover:opacity-100"
         aria-label={label}
       >
         <Plus className="h-3.5 w-3.5" />

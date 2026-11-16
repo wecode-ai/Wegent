@@ -2,6 +2,7 @@ const path = require('node:path')
 
 const { resolveBuildIdentity } = require('./scripts/build-identity.cjs')
 const macosAppIcon = require('./scripts/macos-app-icon.cjs')
+const bundledComponentLayout = require('./scripts/bundled-component-layout.cjs')
 
 const updateBaseUrl =
   process.env.WEWORK_UPDATE_BASE_URL ||
@@ -17,9 +18,10 @@ const managedComponentResources = [
   { from: 'resources/harness-runtime', to: 'harness-runtime' },
   { from: 'resources/bin', to: 'bin' },
   { from: 'resources/codex', to: 'codex' },
-  { from: 'resources/wework-core-plugins', to: 'wework-core-plugins' },
-  { from: 'resources/wework-app-static', to: 'wework-app-static' },
-  { from: 'resources/bundled-plugins', to: 'bundled-plugins' },
+  ...bundledComponentLayout.directories.map(name => ({
+    from: `resources/${name}.tar.gz`,
+    to: `${name}.tar.gz`,
+  })),
 ]
 
 module.exports = {
@@ -31,6 +33,8 @@ module.exports = {
   beforePack: macosAppIcon.prepare,
   afterPack: require('./scripts/verify-windows-migration-lock.cjs'),
   extraMetadata: {
+    weworkDataSchema: 1,
+    weworkReadableDataSchemas: [1],
     name: identity.packageName,
     weworkUpdateBaseUrl: updateBaseUrl,
     weworkAppId: identity.identifier,
@@ -48,6 +52,10 @@ module.exports = {
   asar: true,
   asarUnpack: ['**/*.{node,dylib,so,dll}'],
   extraResources: [
+    {
+      from: `resources/wework-launcher${process.platform === 'win32' ? '.exe' : ''}`,
+      to: `wework-launcher${process.platform === 'win32' ? '.exe' : ''}`,
+    },
     ...(!onlineUpdateBuild || onlineUpdateIncludesComponents ? managedComponentResources : []),
     { from: 'resources/components.json', to: 'components.json' },
     { from: '../resources/licenses', to: 'licenses' },
@@ -76,8 +84,10 @@ module.exports = {
     icon: macosAppIcon.icon,
     extraFiles: [{ from: macosAppIcon.assetCatalog, to: 'Resources/Assets.car' }],
     signIgnore: process.env.APPLE_SIGNING_IDENTITY
-      ? managedComponentResources.map(resource => '/Contents/Resources/' + resource.to + '/')
-      : ['/Contents/Resources/wework-core-plugins/'],
+      ? managedComponentResources
+          .filter(resource => !resource.to.endsWith('.tar.gz'))
+          .map(resource => '/Contents/Resources/' + resource.to + '/')
+      : [],
     target: onlineUpdateBuild ? ['zip'] : ['dmg', 'zip'],
   },
   dmg: {

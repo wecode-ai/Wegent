@@ -854,6 +854,34 @@ async def create_task_and_subtasks(
     if assistant_subtask:
         db.refresh(assistant_subtask)
 
+    schedule_chat_memory_save(db, task, user_subtask, user, team, existing_subtasks)
+
+    # Initialize Redis chat history from existing subtasks if needed
+    if existing_subtasks:
+        await initialize_redis_chat_history(task_id, existing_subtasks)
+
+    # Notify all group chat members about the new message via WebSocket
+    if is_task_group_chat(task, params.is_group_chat):
+        await notify_group_members_task_updated(db, task, user.id)
+
+    return TaskCreationResult(
+        task=task,
+        user_subtask=user_subtask,
+        assistant_subtask=assistant_subtask,
+        ai_triggered=should_trigger_ai,
+        rag_prompt=rag_prompt,
+    )
+
+
+def schedule_chat_memory_save(
+    db: Session,
+    task: TaskResource,
+    user_subtask: Subtask,
+    user: User,
+    team: Kind,
+    existing_subtasks: list[Subtask],
+) -> None:
+    """Schedule the existing long-term memory write for a committed user message."""
     # Store user message in long-term memory (fire-and-forget)
     # WebSocket chat (web) respects user preference for memory
     # This runs in background and doesn't block the main flow
@@ -934,22 +962,6 @@ async def create_task_and_subtasks(
                 task.id,
                 user_subtask.id,
             )
-
-    # Initialize Redis chat history from existing subtasks if needed
-    if existing_subtasks:
-        await initialize_redis_chat_history(task_id, existing_subtasks)
-
-    # Notify all group chat members about the new message via WebSocket
-    if is_task_group_chat(task, params.is_group_chat):
-        await notify_group_members_task_updated(db, task, user.id)
-
-    return TaskCreationResult(
-        task=task,
-        user_subtask=user_subtask,
-        assistant_subtask=assistant_subtask,
-        ai_triggered=should_trigger_ai,
-        rag_prompt=rag_prompt,
-    )
 
 
 async def create_chat_task(

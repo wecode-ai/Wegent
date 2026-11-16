@@ -99,7 +99,6 @@ async def test_quote_uses_delivery_mapping_and_actual_actor(quote_case):
         {"originalProcessQueryKey": "unmapped"},
         {"conversationId": "another-group"},
         {"senderCorpId": "another-corp"},
-        {"conversationType": "1"},
         {"isInAtList": False},
         {"chatbotUserId": "another-robot"},
         {"text": {"isReplyMsg": False, "content": "hello"}},
@@ -108,6 +107,14 @@ async def test_quote_uses_delivery_mapping_and_actual_actor(quote_case):
 async def test_unmatched_messages_keep_original_routing(quote_case, change):
     receiver, _, data = quote_case
     data.update(change)
+    assert not await route_quoted_card(receiver, data)
+    receiver.inbox.enqueue.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_unknown_conversation_type_keeps_original_routing(quote_case):
+    receiver, _, data = quote_case
+    data["conversationType"] = "3"
     assert not await route_quoted_card(receiver, data)
     receiver.inbox.enqueue.assert_not_awaited()
 
@@ -129,6 +136,74 @@ async def test_quote_of_running_card_reports_rejection_without_new_task(quote_ca
     assert await route_quoted_card(receiver, data)
     receiver.inbox.enqueue.assert_not_awaited()
     assert "仍在生成" in receiver._report_error.call_args.args[1]
+
+
+@pytest.mark.asyncio
+async def test_private_quote_uses_delivery_mapping(quote_case):
+    receiver, binding, data = quote_case
+    binding.incoming_data.update({"conversationId": "dm-a", "conversationType": "1"})
+    await save_binding("card-446", binding)
+    await save_quote_address(285, "dm-a", "delivery-carrier", "card-446")
+    data.update(
+        {
+            "conversationType": "1",
+            "conversationId": "dm-a",
+            "senderStaffId": "212680",
+        }
+    )
+    data.pop("isInAtList")
+
+    assert await route_quoted_card(receiver, data)
+
+    record = receiver.inbox.enqueue.call_args.args[0]
+    assert record.track_id == "card-446"
+    assert record.actor_staff_id == "212680"
+
+
+@pytest.mark.asyncio
+async def test_private_quote_of_running_card_reports_rejection(quote_case):
+    receiver, binding, data = quote_case
+    binding.ready = False
+    binding.incoming_data.update({"conversationId": "dm-a", "conversationType": "1"})
+    await save_binding("card-446", binding)
+    await save_quote_address(285, "dm-a", "delivery-carrier", "card-446")
+    data.update(
+        {
+            "conversationType": "1",
+            "conversationId": "dm-a",
+            "senderStaffId": "212680",
+        }
+    )
+    data.pop("isInAtList")
+
+    assert await route_quoted_card(receiver, data)
+
+    receiver.inbox.enqueue.assert_not_awaited()
+    assert "仍在生成" in receiver._report_error.call_args.args[1]
+
+
+@pytest.mark.asyncio
+async def test_quote_with_media_keeps_normal_attachment_routing(quote_case):
+    receiver, binding, data = quote_case
+    binding.incoming_data.update({"conversationId": "dm-a", "conversationType": "1"})
+    await save_binding("card-446", binding)
+    await save_quote_address(285, "dm-a", "delivery-carrier", "card-446")
+    data.update(
+        {
+            "conversationType": "1",
+            "conversationId": "dm-a",
+            "senderStaffId": "212680",
+            "msgtype": "richText",
+            "content": {
+                "richText": [{"type": "picture", "downloadCode": "quoted-image"}]
+            },
+        }
+    )
+    data.pop("isInAtList")
+
+    assert not await route_quoted_card(receiver, data)
+
+    receiver.inbox.enqueue.assert_not_awaited()
 
 
 @pytest.mark.asyncio

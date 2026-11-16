@@ -7,6 +7,7 @@ import { useTranslation } from '@/hooks/useTranslation'
 import { logRuntimeTaskCreateStage } from '@/lib/runtime-create-diagnostics'
 import type { WeworkInbox } from '@/api/notifications'
 import type { TaskSource } from './NotificationTaskSourceContext'
+import { useStandInAssignmentTasks } from './useStandInAssignmentTasks'
 import {
   mergeStandInNotifications,
   matchesStandInVersion,
@@ -33,10 +34,22 @@ export function useStandInNotifications(
       observedTasks.current = { storageKey, startedAt: Date.now(), keys: new Set<string>() }
     }
   }, [storageKey])
-  const items = useMemo(
-    () => mergeStandInNotifications(inbox?.items ?? [], enabled ? (source?.items ?? []) : []),
-    [inbox, source?.items, enabled]
-  )
+  const assignments = useStandInAssignmentTasks(inbox, source, accountKey, enabled)
+  const items = useMemo(() => {
+    const live = enabled ? (source?.items ?? []) : []
+    const visible = new Set(live.map(item => item.key))
+    return mergeStandInNotifications(inbox?.items ?? [], [
+      ...live,
+      ...assignments.items.filter(item => !visible.has(item.key)),
+    ]).map(item => ({
+      ...item,
+      payload: {
+        ...item.payload,
+        standInLookupPending: !item.payload.standIn && assignments.pending,
+        standInLookupError: !item.payload.standIn ? assignments.error : undefined,
+      },
+    }))
+  }, [inbox, source?.items, enabled, assignments.items, assignments.pending, assignments.error])
   const trackedItems = useMemo(
     () =>
       items
@@ -139,7 +152,8 @@ export function useStandInNotifications(
         source?.currentAddress?.deviceId === state.deviceId &&
         source?.currentAddress?.taskId === state.taskId &&
         isMainWindowFocused()
-      if (!systemEnabled || viewingTask) continue
+      // Pending interactions have one shared foreground/background delivery owner.
+      if (!systemEnabled || viewingTask || state.status === 'waiting') continue
       alerts.push({
         title: item.payload.taskTitle || item.title,
         body: t(`notifications.stand_in_${state.status}`),

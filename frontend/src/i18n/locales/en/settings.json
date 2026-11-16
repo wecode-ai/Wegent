@@ -348,7 +348,7 @@
           "description": "Best suited for Anthropic models."
         },
         "custom": {
-          "title": "Advanced custom",
+          "title": "Custom",
           "description": "Use a runtime you created for specialized needs."
         }
       }

@@ -13,6 +13,7 @@ interface ConfirmDialogProps {
   cancelTestId?: string
   destructive?: boolean
   pending?: boolean
+  confirmDisabled?: boolean
   onClose: () => void
   onConfirm: () => void
 }
@@ -28,6 +29,7 @@ export function ConfirmDialog({
   cancelTestId,
   destructive = false,
   pending = false,
+  confirmDisabled = false,
   onClose,
   onConfirm,
 }: ConfirmDialogProps) {
@@ -74,11 +76,11 @@ export function ConfirmDialog({
           <button
             type="button"
             data-testid={confirmTestId}
-            disabled={pending}
+            disabled={pending || confirmDisabled}
             onClick={onConfirm}
             className={
               destructive
-                ? 'min-h-11 rounded-lg bg-red-600 px-3 text-sm text-white hover:bg-red-700 disabled:cursor-not-allowed disabled:opacity-45 md:min-h-8'
+                ? 'min-h-11 rounded-lg bg-destructive px-3 text-sm text-destructive-contrast hover:bg-destructive/90 disabled:cursor-not-allowed disabled:opacity-45 md:min-h-8 wework:bg-red-600 wework:text-white wework:hover:bg-red-700'
                 : 'min-h-11 rounded-lg bg-text-primary px-3 text-sm text-background hover:bg-text-primary/90 disabled:cursor-not-allowed disabled:opacity-45 md:min-h-8'
             }
           >

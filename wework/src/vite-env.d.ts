@@ -5,11 +5,13 @@ declare const __WEWORK_COMMIT_SHA__: string
 
 interface ImportMetaEnv {
   readonly VITE_COLLAB_PROJECT_CREATE_MEMBERS_V1?: string
+  readonly VITE_WEWORK_TELEMETRY_CONTEXT_FIELDS?: string
+  readonly VITE_WEWORK_TELEMETRY_IDENTITY?: string
+  readonly VITE_WEWORK_TELEMETRY_SOURCE?: string
   readonly VITE_WEWORK_POSTHOG_HOST?: string
   readonly VITE_WEWORK_POSTHOG_KEY?: string
   readonly VITE_WEWORK_RELEASE_CHANNEL?: string
   readonly VITE_WEWORK_SENTRY_DSN?: string
   readonly VITE_WEWORK_SENTRY_TRACES_SAMPLE_RATE?: string
   readonly VITE_WEWORK_TELEMETRY_ENVIRONMENT?: string
-  readonly VITE_WEWORK_TELEMETRY_DISTRIBUTION?: string
 }

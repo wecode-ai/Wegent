@@ -157,12 +157,15 @@ fn migration_preserves_project_scopes_agent_permissions_and_assignment_cutoff() 
         assert_eq!(roles[index]["version"], 4);
         let project_view = store.stand_in_settings(project, 7, "default").unwrap();
         assert_eq!(project_view["id"], roles[index]["id"]);
-        assert_eq!(project_view["agentProject"]["id"], project);
+        assert!(project_view.get("agentProject").is_none());
+        assert!(project_view.get("agentId").is_none());
         assert!(role_project_matches(&roles[index], project, "cloud"));
         assert!(!role_project_matches(&roles[index], "unrelated", "cloud"));
-        let mut broadened = roles[index].clone();
-        broadened["collaboration"]["allProjects"] = json!(true);
-        assert!(!role_project_matches(&broadened, "unrelated", "cloud"));
+        assert_eq!(roles[index]["collaboration"]["allProjects"], false);
+        assert_eq!(
+            roles[index]["collaboration"]["projects"],
+            json!([{"id":project,"store":"cloud"}])
+        );
     }
     let remaining: i64 = connection
         .query_row(
@@ -251,4 +254,227 @@ fn legacy_settings_without_optional_name_remain_editable_after_migration() {
         "other",
         "cloud"
     ));
+}
+
+#[test]
+fn importing_legacy_project_roles_rebinds_all_stale_device_ids() {
+    for initial_device in ["", "mac"] {
+        let root = tempfile::tempdir().unwrap();
+        let path = root.path().join("tasks.sqlite");
+        let store = LocalTaskStore::open(&path).unwrap();
+        let connection = rusqlite::Connection::open(&path).unwrap();
+        for (index, device) in ["stale-one", "stale-two"].iter().enumerate() {
+            let mut legacy = role(&format!("role-{index}"));
+            legacy["executionDeviceId"] = json!(device);
+            legacy["projectId"] = json!(format!("project-{index}"));
+            legacy["projectStore"] = json!("cloud");
+            legacy["userId"] = json!(7);
+            connection.execute("INSERT INTO loop_items (id,resource_type,metadata,created_at,updated_at) VALUES (?1,'stand_in_settings',?2,'now','now')", rusqlite::params![format!("legacy-{index}"), legacy.to_string()]).unwrap();
+        }
+        store.personal_stand_in(7, initial_device).unwrap();
+        let imported = store.personal_stand_in(7, "mac").unwrap();
+        assert_eq!(imported["executionDeviceId"], "mac");
+        assert_eq!(imported["roles"].as_array().unwrap().len(), 2);
+        for role in imported["roles"].as_array().unwrap() {
+            assert_eq!(role["executionDeviceId"], "mac");
+        }
+    }
+}
+
+#[test]
+fn project_role_save_keeps_primary_device_while_preserving_the_role_device() {
+    let root = tempfile::tempdir().unwrap();
+    let store = LocalTaskStore::open(root.path().join("tasks.sqlite")).unwrap();
+    let personal = store.personal_stand_in(7, "mac").unwrap();
+    store.save_personal_stand_in(7, "mac", personal).unwrap();
+    let mut draft = store.stand_in_settings("project", 7, "default").unwrap();
+    draft["projectStore"] = json!("cloud");
+    draft["executionDeviceId"] = json!("remote");
+    store.save_stand_in_settings("project", 7, draft).unwrap();
+    let saved = store.personal_stand_in(7, "").unwrap();
+    assert_eq!(saved["executionDeviceId"], "mac");
+    assert_eq!(saved["roles"][0]["executionDeviceId"], "remote");
+}
+
+#[test]
+fn old_agent_bindings_are_removed_atomically_without_changing_identity_or_grants() {
+    let root = tempfile::tempdir().unwrap();
+    let path = root.path().join("tasks.sqlite");
+    let store = LocalTaskStore::open(&path).unwrap();
+    let mut settings = store.personal_stand_in(7, "mac").unwrap();
+    settings["roles"] = json!([role("project"), role("personal")]);
+    settings["primary"] =
+        json!({"enabled":true,"prompt":"Primary instructions","preferences":"Use Chinese"});
+    settings["roles"][1]["connections"] = json!([{
+        "providerId":"example","id":"group","kind":"group","profile":"work","name":"Group",
+        "policy":{"automatic":true,"askBeforeAct":true,"immediate":false}
+    }]);
+    let saved = store.save_personal_stand_in(7, "mac", settings).unwrap();
+    let mut old = saved.clone();
+    old["primary"]["agentResourceId"] = json!(88);
+    old["roles"][0]["agentId"] = json!("deleted-project-agent");
+    old["roles"][0]["agentProject"] = json!({"id":"one","store":"cloud"});
+    old["roles"][0]["projectBoundaries"] =
+        json!([{"id":"one","store":"cloud","enabledAfter":"2026-11-06T12:00:00Z"}]);
+    old["roles"][0]["collaboration"]["excludedProjects"] = json!([{"id":"one","store":"cloud"}]);
+    old["roles"][1]["agentResourceId"] = json!(99);
+    old["roles"][1]["preferences"] = json!("Keep concise");
+    old["roles"][1]["model"] = json!({"runtime":"codex","provider":"native","model_id":"explicit"});
+    old["roles"][1]["modelOptions"] = json!({"reasoning_effort":"high"});
+    let connection = rusqlite::Connection::open(&path).unwrap();
+    connection
+        .execute(
+            "UPDATE loop_items SET metadata=?1 WHERE id='personal-stand-in:7'",
+            [old.to_string()],
+        )
+        .unwrap();
+
+    let mut expected = old.clone();
+    expected["primary"]
+        .as_object_mut()
+        .unwrap()
+        .remove("agentResourceId");
+    expected["roles"][0]["collaboration"]["allProjects"] = json!(false);
+    expected["roles"][0]["collaboration"]["projects"] = json!([{"id":"one","store":"cloud"}]);
+    expected["roles"][0]
+        .as_object_mut()
+        .unwrap()
+        .remove("agentId");
+    expected["roles"][0]
+        .as_object_mut()
+        .unwrap()
+        .remove("agentProject");
+    expected["roles"][1]
+        .as_object_mut()
+        .unwrap()
+        .remove("agentResourceId");
+    let migrated = store.personal_stand_in(7, "mac").unwrap();
+    assert_eq!(migrated, expected);
+    assert!(!role_project_matches(&migrated["roles"][0], "one", "cloud"));
+    assert!(!role_project_matches(&migrated["roles"][0], "two", "cloud"));
+    assert!(!role_project_matches(&migrated["roles"][0], "one", "local"));
+    assert!(role_project_matches(
+        &migrated["roles"][1],
+        "future",
+        "cloud"
+    ));
+    let persisted: String = connection
+        .query_row(
+            "SELECT metadata FROM loop_items WHERE id='personal-stand-in:7'",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(serde_json::from_str::<Value>(&persisted).unwrap(), migrated);
+    assert_eq!(
+        store.all_personal_stand_ins("mac").unwrap(),
+        vec![migrated.clone()]
+    );
+    assert_eq!(store.personal_stand_in(7, "mac").unwrap(), migrated);
+    let updated = store
+        .save_personal_stand_in(7, "mac", migrated.clone())
+        .unwrap();
+    assert!(store.save_personal_stand_in(7, "mac", old).is_err());
+    assert_eq!(store.personal_stand_in(7, "mac").unwrap(), updated);
+}
+
+#[test]
+fn removing_a_project_binding_intersects_explicit_scopes_even_for_paused_sources() {
+    for enabled in [true, false] {
+        for selected in [true, false] {
+            let root = tempfile::tempdir().unwrap();
+            let store = LocalTaskStore::open(root.path().join("tasks.sqlite")).unwrap();
+            let mut settings = store.personal_stand_in(7, "mac").unwrap();
+            let mut old = role("review");
+            old["agentId"] = json!("reviewer");
+            old["agentProject"] = json!({"id":"one","store":"cloud"});
+            old["collaboration"]["enabled"] = json!(enabled);
+            old["collaboration"]["allProjects"] = json!(false);
+            old["collaboration"]["projects"] = if selected {
+                json!([{"id":"one","store":"cloud"},{"id":"other","store":"local"}])
+            } else {
+                json!([{"id":"one","store":"local"}])
+            };
+            settings["roles"] = json!([old]);
+            let saved = store.save_personal_stand_in(7, "mac", settings).unwrap();
+            let migrated = &saved["roles"][0];
+            assert_eq!(migrated["collaboration"]["enabled"], enabled);
+            assert_eq!(
+                role_project_matches(migrated, "one", "cloud"),
+                enabled && selected
+            );
+            assert!(!role_project_matches(migrated, "one", "local"));
+            assert!(!role_project_matches(migrated, "other", "local"));
+            assert_eq!(
+                migrated["collaboration"]["projects"]
+                    .as_array()
+                    .unwrap()
+                    .len(),
+                usize::from(selected)
+            );
+            assert!(migrated.get("agentId").is_none());
+            assert!(migrated.get("agentProject").is_none());
+        }
+    }
+}
+
+#[test]
+fn primary_project_bindings_without_intake_migrate_without_adding_project_grants() {
+    let root = tempfile::tempdir().unwrap();
+    let path = root.path().join("tasks.sqlite");
+    let store = LocalTaskStore::open(&path).unwrap();
+    let mut settings = store.personal_stand_in(7, "mac").unwrap();
+    settings["primary"] = json!({"enabled":true,"prompt":"Keep primary instructions","preferences":"Keep preferences"});
+    let mut legacy = store.save_personal_stand_in(7, "mac", settings).unwrap();
+    let other = store.personal_stand_in(8, "mac").unwrap();
+    let other = store.save_personal_stand_in(8, "mac", other).unwrap();
+    legacy["primary"]["agentId"] = json!("old-primary-project");
+    legacy["primary"]["agentProject"] = json!({"id":"one","store":"cloud"});
+    let connection = rusqlite::Connection::open(&path).unwrap();
+    connection
+        .execute(
+            "UPDATE loop_items SET metadata=?1 WHERE id='personal-stand-in:7'",
+            [legacy.to_string()],
+        )
+        .unwrap();
+    let mut expected = legacy.clone();
+    expected["primary"]
+        .as_object_mut()
+        .unwrap()
+        .remove("agentId");
+    expected["primary"]
+        .as_object_mut()
+        .unwrap()
+        .remove("agentProject");
+
+    let accounts = store.all_personal_stand_ins("mac").unwrap();
+    assert_eq!(accounts.len(), 2);
+    assert!(accounts.contains(&other));
+    assert!(accounts.contains(&expected));
+    let migrated = store.personal_stand_in(7, "mac").unwrap();
+    assert_eq!(migrated, expected);
+    assert!(migrated["primary"].get("collaboration").is_none());
+    assert!(!role_project_matches(&migrated["primary"], "one", "cloud"));
+    assert_eq!(store.personal_stand_in(7, "mac").unwrap(), migrated);
+    let updated = store.save_personal_stand_in(7, "mac", migrated).unwrap();
+    assert_eq!(updated["primary"], expected["primary"]);
+}
+
+#[test]
+fn invalid_legacy_project_bindings_cannot_be_removed_by_a_successful_save() {
+    let root = tempfile::tempdir().unwrap();
+    let store = LocalTaskStore::open(root.path().join("tasks.sqlite")).unwrap();
+    let initial = store.personal_stand_in(7, "mac").unwrap();
+    let saved = store.save_personal_stand_in(7, "mac", initial).unwrap();
+    for project in [
+        json!({"id":"one","store":"unknown"}),
+        json!({"store":"cloud"}),
+        json!("one"),
+    ] {
+        let mut draft = saved.clone();
+        draft["roles"][0]["agentId"] = json!("legacy");
+        draft["roles"][0]["agentProject"] = project;
+        assert!(store.save_personal_stand_in(7, "mac", draft).is_err());
+        assert_eq!(store.personal_stand_in(7, "mac").unwrap(), saved);
+    }
 }

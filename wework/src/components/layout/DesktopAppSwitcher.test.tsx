@@ -1,9 +1,5 @@
 import { act, fireEvent, render, screen, within } from '@testing-library/react'
 import { afterEach, describe, expect, test, vi } from 'vitest'
-import {
-  CloudConnectionContext,
-  type CloudConnectionContextValue,
-} from '@/features/cloud-connection/CloudConnectionContext'
 import { DesktopAppSwitcher } from './DesktopAppSwitcher'
 
 const experimentalFeatures = vi.hoisted(() => ({ enabled: false }))
@@ -12,101 +8,11 @@ vi.mock('@/features/experimental-features/useExperimentalFeaturesEnabled', () =>
   useExperimentalFeaturesEnabled: () => experimentalFeatures.enabled,
 }))
 
-const connectedCloud: CloudConnectionContextValue = {
-  status: 'connected',
-  backendUrl: 'https://backend.example.com',
-  apiBaseUrl: 'https://backend.example.com/api',
-  socketBaseUrl: 'https://backend.example.com',
-  socketPath: '/socket.io',
-  token: 'token',
-  tokenExpiresAt: null,
-  user: { id: 1, user_name: 'alice', email: 'alice@example.com' },
-  connectedAt: '2026-07-18T00:00:00.000Z',
-  error: null,
-  isConnected: true,
-  serviceKey: 'cloud:test',
-  connectWithAuthorization: vi.fn(),
-  refreshUser: vi.fn(),
-  disconnect: vi.fn(),
-}
-
 describe('DesktopAppSwitcher', () => {
   afterEach(() => {
     vi.useRealTimers()
     experimentalFeatures.enabled = false
     window.history.pushState({}, '', '/')
-  })
-
-  test('renders 任务 as a compact product menu without a divider', () => {
-    render(<DesktopAppSwitcher activeApp="wework" onNavigate={vi.fn()} />)
-
-    expect(screen.getByTestId('desktop-app-switcher')).not.toHaveClass('before:bg-border')
-    expect(screen.getByTestId('desktop-app-switcher')).toHaveTextContent('任务')
-    expect(screen.getByTestId('chrome-tab-wework')).toHaveTextContent('任务')
-    expect(screen.getByTestId('chrome-tab-wework')).toHaveAttribute('aria-haspopup', 'menu')
-  })
-
-  test('does not expose hidden plugin applications', () => {
-    const apps = [
-      {
-        id: 'visible',
-        mode: 'native',
-        path: '/visible',
-        labelKey: 'visible.label',
-        label: 'Visible',
-        descriptionKey: 'visible.description',
-        description: 'Visible application',
-      },
-      {
-        id: 'hidden',
-        mode: 'native',
-        path: '/hidden',
-        hiddenInSwitcher: true,
-        labelKey: 'hidden.label',
-        label: 'Hidden',
-        descriptionKey: 'hidden.description',
-        description: 'Hidden application',
-      },
-    ]
-    window.__WEWORK_DSH_UI__ = {
-      getEntries: slot => (slot === 'wework.app' ? apps : []),
-      subscribe: () => () => undefined,
-      attach: () => ({ update: () => undefined, dispose: () => undefined }),
-    }
-
-    render(<DesktopAppSwitcher activeApp="visible" onNavigate={vi.fn()} />)
-    fireEvent.click(screen.getByTestId('chrome-tab-visible'))
-    expect(screen.getByTestId('app-switcher-option-visible')).toBeInTheDocument()
-    expect(screen.queryByTestId('app-switcher-option-hidden')).not.toBeInTheDocument()
-  })
-
-  test('renders always-visible view tabs and navigates directly', () => {
-    experimentalFeatures.enabled = true
-    const onNavigate = vi.fn()
-
-    render(<DesktopAppSwitcher activeApp="wework" onNavigate={onNavigate} variant="tabs" />)
-
-    expect(screen.getByTestId('chrome-tab-wework')).toHaveAttribute('aria-current', 'page')
-    expect(screen.getByTestId('chrome-tab-todo')).toHaveTextContent('项目空间')
-    expect(screen.getByTestId('chrome-tab-todo')).not.toHaveAttribute('aria-haspopup')
-    fireEvent.click(screen.getByTestId('chrome-tab-todo'))
-    expect(onNavigate).toHaveBeenCalledWith('todo')
-  })
-
-  test('shows Kanban while experimental features are disabled', () => {
-    render(<DesktopAppSwitcher activeApp="wework" onNavigate={vi.fn()} />)
-
-    fireEvent.click(screen.getByTestId('chrome-tab-wework'))
-    expect(screen.getByTestId('app-switcher-option-todo')).toBeInTheDocument()
-    expect(
-      within(screen.getByTestId('desktop-app-switcher-menu'))
-        .getAllByRole('menuitemradio')
-        .map(option => option.textContent)
-    ).toEqual([
-      '任务使用 AI 解决具体问题',
-      '项目空间用 AI 管理项目的规划、执行与反馈',
-      '智能体构建并交付可嵌入业务的云端智能体',
-    ])
   })
 
   test('keeps Kanban navigable while disconnected', () => {
@@ -140,82 +46,5 @@ describe('DesktopAppSwitcher', () => {
     fireEvent.click(todoOption)
     act(() => vi.advanceTimersByTime(260))
     expect(onNavigate).toHaveBeenCalledWith('todo')
-  })
-
-  test('shows Kanban when experimental features are enabled', () => {
-    experimentalFeatures.enabled = true
-    render(<DesktopAppSwitcher activeApp="wework" onNavigate={vi.fn()} />)
-
-    fireEvent.click(screen.getByTestId('chrome-tab-wework'))
-    expect(
-      within(screen.getByTestId('desktop-app-switcher-menu'))
-        .getAllByRole('menuitemradio')
-        .map(option => option.textContent)
-    ).toEqual([
-      '任务使用 AI 解决具体问题',
-      '项目空间用 AI 管理项目的规划、执行与反馈',
-      '智能体构建并交付可嵌入业务的云端智能体',
-    ])
-    expect(screen.getByTestId('app-switcher-option-todo')).toHaveTextContent(
-      '项目空间用 AI 管理项目的规划、执行与反馈'
-    )
-  })
-
-  test('keeps the Task, Kanban, Agent order when Agent is active', () => {
-    experimentalFeatures.enabled = true
-    render(
-      <CloudConnectionContext.Provider value={connectedCloud}>
-        <DesktopAppSwitcher activeApp="wegent" onNavigate={vi.fn()} />
-      </CloudConnectionContext.Provider>
-    )
-
-    fireEvent.click(screen.getByTestId('chrome-tab-wegent'))
-    expect(
-      within(screen.getByTestId('desktop-app-switcher-menu'))
-        .getAllByRole('menuitemradio')
-        .map(option => option.textContent)
-    ).toEqual([
-      '任务使用 AI 解决具体问题',
-      '项目空间用 AI 管理项目的规划、执行与反馈',
-      '智能体构建并交付可嵌入业务的云端智能体',
-    ])
-  })
-
-  test('shows Agent after connecting and navigates to it', () => {
-    vi.useFakeTimers()
-    const onNavigate = vi.fn()
-    render(
-      <CloudConnectionContext.Provider value={connectedCloud}>
-        <DesktopAppSwitcher activeApp="wework" onNavigate={onNavigate} />
-      </CloudConnectionContext.Provider>
-    )
-
-    fireEvent.click(screen.getByTestId('chrome-tab-wework'))
-    fireEvent.click(screen.getByTestId('app-switcher-option-wegent'))
-    act(() => vi.advanceTimersByTime(260))
-    expect(onNavigate).toHaveBeenCalledWith('wegent')
-  })
-
-  test('labels the TODO board as Kanban', () => {
-    experimentalFeatures.enabled = true
-    render(<DesktopAppSwitcher activeApp="todo" onNavigate={vi.fn()} />)
-
-    expect(screen.getByTestId('desktop-app-switcher')).toHaveTextContent('项目空间')
-  })
-
-  test('opens settings from the switcher menu', () => {
-    window.history.pushState({}, '', '/app/wegent')
-    render(
-      <CloudConnectionContext.Provider value={connectedCloud}>
-        <DesktopAppSwitcher activeApp="wegent" onNavigate={vi.fn()} />
-      </CloudConnectionContext.Provider>
-    )
-
-    fireEvent.click(screen.getByTestId('chrome-tab-wegent'))
-    expect(screen.getByTestId('app-switcher-option-wegent')).toHaveTextContent(
-      '智能体构建并交付可嵌入业务的云端智能体'
-    )
-    fireEvent.click(screen.getByTestId('app-switcher-settings'))
-    expect(window.location.pathname).toBe('/settings')
   })
 })

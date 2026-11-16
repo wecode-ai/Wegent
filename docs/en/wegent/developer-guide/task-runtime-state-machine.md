@@ -97,6 +97,28 @@ When a task becomes terminal:
 
 `chat:done` only means the current message stream ended. It does not prove the task lifecycle is terminal. If queued messages are still blocked after `chat:done`, `useChatStreamHandlers` calls the current task machine with `requestRuntimeCheck('queued-message-blocked')` so the frontend converges back to the server state.
 
+### Claude Background Subagent Completion
+
+A Claude parent can return `end_turn` while its background subagents are still running. The executor aligns the CLI background wait ceiling with `WEGENT_CLAUDE_CODE_PROCESS_TIMEOUT_SECONDS` (24 hours by default) and enables background task reporting, preventing the CLI's default ten-minute wait from terminating subagents early.
+
+A successful CLI exit alone does not establish task completion. If the stream ends with unfinished, failed, or stopped subagents, or the final `subagent_stats` reports system-terminated or unfinished subagents, the executor returns `runtime_error`; the existing error callback marks the task `FAILED`. Completed subagents and subsequent parent turns can still produce `COMPLETED`; explicit user cancellation remains `CANCELLED`.
+
+### Claude stdout Message Size Limit
+
+The executor limits each normalized Claude stdout JSON message by its UTF-8 byte count. `WEGENT_CLAUDE_STDOUT_MAX_BUFFER_BYTES` defaults to `10485760` (10 MiB) and accepts positive integers from `1` through `67108864`; the separate 64 MiB raw-message guard remains unchanged. An unset value uses the default. Blank, invalid, or out-of-range values log a warning and use the default.
+
+Messages above the configured limit first undergo removal of recognized duplicate task transcripts and fail only if they still exceed the limit. Messages within the limit retain their task transcript metadata.
+
+Set the variable in the executor container's launch environment, for example to allow 20 MiB:
+
+```yaml
+env:
+  - name: WEGENT_CLAUDE_STDOUT_MAX_BUFFER_BYTES
+    value: '20971520'
+```
+
+The value is cached within the process after its first read. After changing the launch environment, restart the executor or recreate the Pod / Docker container to apply it. Running `export` inside a container does not change the environment of an already running executor process.
+
 ### Cancellation And State Convergence
 
 Runtime task cancellation must converge two state surfaces:
@@ -111,6 +133,18 @@ The cancellation flow must follow these rules:
 - After the frontend receives an accepted cancellation result, it must refresh the runtime work list so sidebars and close guards observe `running: false`.
 - The pane session must locally finalize any still-streaming assistant messages as cancelled because cancellation may not emit a normal `chat:done` or response completed event.
 - Updating only runtime work leaves the composer looking busy. Updating only message streams leaves the sidebar looking busy. Both state surfaces must be updated in the same stop path.
+
+### Async Questions and Waiting State
+
+Codex async questions can remain unanswered after their turn finishes. The
+executor's sole native notification owner must persist
+`interactionStatus: awaitingUserReply` before publishing
+the question card. Publishing only the card lets subsequent task snapshots clear
+the sidebar waiting indicator. Request receivers handle their own resources and
+hooks without maintaining question state or publishing duplicate cards.
+Preserve waiting state through turn completion and
+task-store reload, then clear it when the next user message is accepted. A child
+thread's question must not mark its parent task as awaiting a reply.
 
 ## Change Guidelines
 

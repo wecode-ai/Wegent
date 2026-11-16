@@ -1,0 +1,83 @@
+{
+  "revision": "e6f7a8b9c012",
+  "parents": [
+    "9d4be4601172"
+  ],
+  "source": "20260529_e6f7a8b9c012_add_client_origin.py",
+  "upgrade": [
+    {
+      "sql": [
+        "ALTER TABLE projects ADD COLUMN client_origin VARCHAR(32) NOT NULL COMMENT 'Client surface that owns this project, e.g. frontend or wework' DEFAULT 'frontend'"
+      ],
+      "when": {
+        "query": "SELECT COUNT(*) AS n FROM information_schema.COLUMNS WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='projects' AND COLUMN_NAME='client_origin'",
+        "nonzero": false
+      }
+    },
+    {
+      "sql": [
+        "ALTER TABLE tasks ADD COLUMN client_origin VARCHAR(32) NOT NULL COMMENT 'Client surface that owns this task, e.g. frontend or wework' DEFAULT 'frontend'"
+      ],
+      "when": {
+        "query": "SELECT COUNT(*) AS n FROM information_schema.COLUMNS WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='tasks' AND COLUMN_NAME='client_origin'",
+        "nonzero": false
+      }
+    },
+    {
+      "sql": [
+        "CREATE INDEX ix_projects_user_origin_active ON projects (user_id, client_origin, is_active)"
+      ],
+      "when": {
+        "query": "SELECT COUNT(*) AS n FROM information_schema.STATISTICS WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='projects' AND INDEX_NAME='ix_projects_user_origin_active'",
+        "nonzero": false
+      }
+    },
+    {
+      "sql": [
+        "CREATE INDEX ix_tasks_user_origin_active_project ON tasks (user_id, client_origin, is_active, project_id)"
+      ],
+      "when": {
+        "query": "SELECT COUNT(*) AS n FROM information_schema.STATISTICS WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='tasks' AND INDEX_NAME='ix_tasks_user_origin_active_project'",
+        "nonzero": false
+      }
+    }
+  ],
+  "downgrade": [
+    {
+      "sql": [
+        "DROP INDEX ix_tasks_user_origin_active_project ON tasks"
+      ],
+      "when": {
+        "query": "SELECT COUNT(*) AS n FROM information_schema.STATISTICS WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='tasks' AND INDEX_NAME='ix_tasks_user_origin_active_project'",
+        "nonzero": true
+      }
+    },
+    {
+      "sql": [
+        "DROP INDEX ix_projects_user_origin_active ON projects"
+      ],
+      "when": {
+        "query": "SELECT COUNT(*) AS n FROM information_schema.STATISTICS WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='projects' AND INDEX_NAME='ix_projects_user_origin_active'",
+        "nonzero": true
+      }
+    },
+    {
+      "sql": [
+        "ALTER TABLE tasks DROP COLUMN client_origin"
+      ],
+      "when": {
+        "query": "SELECT COUNT(*) AS n FROM information_schema.COLUMNS WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='tasks' AND COLUMN_NAME='client_origin'",
+        "nonzero": true
+      }
+    },
+    {
+      "sql": [
+        "ALTER TABLE projects DROP COLUMN client_origin"
+      ],
+      "when": {
+        "query": "SELECT COUNT(*) AS n FROM information_schema.COLUMNS WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='projects' AND COLUMN_NAME='client_origin'",
+        "nonzero": true
+      }
+    }
+  ]
+}

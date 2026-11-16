@@ -67,7 +67,7 @@ export function IssueExecutionEnvironmentNotice({
       </p>
       <button
         type="button"
-        className="min-h-7 shrink-0 rounded-md px-2 text-sm font-medium text-text-primary hover:bg-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
+        className="min-h-7 shrink-0 rounded-md px-2 text-sm font-medium text-text-primary hover:bg-background focus-visible:outline-none keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-primary"
         data-testid="issue-execution-environment-notice-action"
         onClick={
           readiness.kind === "unknown"

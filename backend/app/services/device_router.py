@@ -14,13 +14,12 @@ Refactored version:
 """
 
 import logging
-from datetime import datetime
 from typing import List, Optional, Union
 
 from sqlalchemy.orm import Session
 
 from app.models.kind import Kind
-from app.models.subtask import Subtask, SubtaskStatus
+from app.models.subtask import Subtask
 from app.models.task import TaskResource
 from app.models.user import User
 from app.services.device_service import device_service
@@ -49,9 +48,7 @@ async def route_task_to_device(
     Refactored version that uses ExecutionDispatcher for unified dispatch.
 
     This function:
-    1. Verifies device is online
-    2. Updates subtask with device executor info
-    3. Uses ExecutionDispatcher to dispatch task via WebSocket
+    Records the selected device and delegates binding and delivery to ExecutionDispatcher.
 
     Args:
         db: Database session
@@ -77,47 +74,21 @@ async def route_task_to_device(
 
     from app.services.execution import TaskRequestBuilder, execution_dispatcher
 
-    # Verify device is online
-    device_info = await device_service.get_device_online_info(user_id, device_id)
-    if not device_info:
-        raise HTTPException(status_code=400, detail="Selected device is offline")
-
-    # Re-query ORM objects within this session to avoid cross-session issues
     local_subtask = subtask_store.get_by_id(db, subtask_id=subtask.id)
-
-    if not local_subtask:
+    if local_subtask is None:
         raise HTTPException(status_code=404, detail="Subtask not found")
 
-    # Update Task CRD with device_id for historical task tracking
     local_task = task_store.get_by_id(db, task_id=task.id)
     if local_task and local_task.kind == "Task":
         from app.schemas.kind import Task as TaskCRD
 
         task_crd = TaskCRD.model_validate(local_task.json)
-        if not task_crd.spec.device_id or task_crd.spec.device_id != device_id:
+        if task_crd.spec.device_id != device_id:
             task_crd.spec.device_id = device_id
             task_store.update_json(
-                db,
-                task=local_task,
-                payload=task_crd.model_dump(mode="json"),
+                db, task=local_task, payload=task_crd.model_dump(mode="json")
             )
-            logger.info(
-                f"[DeviceRouter] Updated Task {task.id} with device_id={device_id}"
-            )
-
-    # Update subtask with device executor info
-    subtask_store.update_fields(
-        db,
-        subtask=local_subtask,
-        executor_name=f"device-{device_id}",
-        executor_namespace=f"user-{user_id}",
-        status=SubtaskStatus.RUNNING,
-        started_at=datetime.now(),
-    )
-    db.commit()
-
-    # Refresh to get updated state
-    db.refresh(local_subtask)
+            db.commit()
 
     # Extract model override from task labels
     task_json = local_task.json if local_task else {}
@@ -165,7 +136,8 @@ async def route_task_to_device(
     from app.core.socketio import get_sio
 
     sio = get_sio()
-    await _broadcast_device_slot_update(sio, db, user_id, device_id)
+    route_id = (request.executor_name or f"device-{device_id}").removeprefix("device-")
+    await _broadcast_device_slot_update(sio, db, user_id, route_id)
 
     return True
 

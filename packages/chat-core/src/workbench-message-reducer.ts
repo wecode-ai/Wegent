@@ -35,6 +35,7 @@ export interface BaseWorkbenchProcessingBlock {
 export interface WorkbenchToolBlock extends BaseWorkbenchProcessingBlock {
   type: 'tool'
   toolName: string
+  mcpServer?: string
   toolInput?: Record<string, unknown>
   toolOutput?: unknown
   toolOutputTruncated?: boolean
@@ -153,21 +154,23 @@ const MAX_LIVE_BLOCK_CONTENT_CHARS = 120_000
 const MAX_LIVE_TOOL_OUTPUT_CHARS = 64 * 1024
 const MAX_LIVE_SUBAGENT_CHILDREN = 256
 
+interface WorkbenchAssistantIdentity {
+  messageId?: string
+  taskId?: string
+  subtaskId?: string
+  clientUserMessageId?: string | null
+  shellType?: string
+  startedAt?: number
+}
+
 export type WorkbenchMessageAction<
   TAttachment = unknown,
   TFileChanges = unknown
 > =
   | { type: 'reset'; messages: WorkbenchMessage<TAttachment, TFileChanges>[] }
   | { type: 'user_added'; message: WorkbenchMessage<TAttachment, TFileChanges> }
-  | {
-      type: 'assistant_started'
-      messageId?: string
-      taskId?: string
-      subtaskId?: string
-      clientUserMessageId?: string
-      shellType?: string
-      startedAt?: number
-    }
+  | ({ type: 'assistant_started' } & WorkbenchAssistantIdentity)
+  | ({ type: 'assistant_bound' } & WorkbenchAssistantIdentity)
   | {
       type: 'assistant_chunk'
       messageId?: string
@@ -249,6 +252,19 @@ export function reduceWorkbenchMessages<
       return normalizeUniqueWorkbenchMessages([...state, action.message]).map(
         limitWorkbenchMessage
       )
+    case 'assistant_bound':
+      return state.map(message => {
+        if (message.role === 'user' && message.id === action.clientUserMessageId) {
+          return { ...message, subtaskId: action.subtaskId, turnId: action.subtaskId }
+        }
+        return isAssistantMessageForAction(message, action)
+          ? {
+              ...message,
+              taskId: action.taskId ?? message.taskId,
+              shellType: action.shellType ?? message.shellType,
+            }
+          : message
+      })
     case 'assistant_started':
       if (
         state.some((message) => isAssistantMessageForAction(message, action))
@@ -1576,6 +1592,9 @@ export function settleWorkbenchProcessingBlock<TFileChanges>(
   finalStatus: 'done' | 'error' = 'done'
 ): WorkbenchProcessingBlock<TFileChanges> {
   if (block.status === 'done' || block.status === 'error') return block
+
+  // Native child threads complete independently of their initiating turn.
+  if (block.type === 'subagent' && block.agentThreadId) return block
 
   // A turn completing does not prove that its terminal process has exited.
   if (commandExecutionPayload(block)?.status === 'inProgress') return block

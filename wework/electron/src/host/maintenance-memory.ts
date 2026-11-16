@@ -1,12 +1,13 @@
 /** Measure allocatable memory, including reclaimable file cache. */
 export function availableMemoryRatio(
-  memory: Pick<Electron.SystemMemoryInfo, 'total' | 'free' | 'available' | 'fileBacked'>,
-  platform: NodeJS.Platform
+  memory: Pick<Electron.SystemMemoryInfo, 'total' | 'free' | 'fileBacked'>,
+  platform: NodeJS.Platform,
+  availableMemoryBytes: number
 ): number {
   if (memory.total <= 0) return 0
   const available =
     platform === 'linux'
-      ? memory.available
+      ? availableMemoryBytes / 1024
       : platform === 'darwin'
         ? memory.free + memory.fileBacked
         : memory.free

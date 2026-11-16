@@ -2,6 +2,7 @@ import { ArrowRight, Bot, CheckCircle2, CircleDot, UserRound } from 'lucide-reac
 import { useTranslation } from '@/hooks/useTranslation'
 import type { User as UserProfile } from '@/types/api'
 import type { TodoDetailItem, TodoViewState } from './TodoDetailPanel'
+import { todoStateColors } from './todoStateColors'
 
 interface TodoOverviewProps {
   projectName: string
@@ -17,14 +18,29 @@ const OVERVIEW_STATES: Array<{
   fallback: string
   color: string
 }> = [
-  { state: 'backlog', labelKey: 'todo.state_backlog', fallback: '待处理', color: '#858E97' },
-  { state: 'started', labelKey: 'todo.state_started', fallback: '进行中', color: '#F59E0B' },
-  { state: 'review', labelKey: 'todo.state_review', fallback: '待确认', color: '#8B5CF6' },
+  {
+    state: 'backlog',
+    labelKey: 'todo.state_backlog',
+    fallback: '待处理',
+    color: todoStateColors.backlog,
+  },
+  {
+    state: 'started',
+    labelKey: 'todo.state_started',
+    fallback: '进行中',
+    color: todoStateColors.started,
+  },
+  {
+    state: 'review',
+    labelKey: 'todo.state_review',
+    fallback: '待确认',
+    color: todoStateColors.review,
+  },
   {
     state: 'completed',
     labelKey: 'todo.state_completed',
     fallback: '已完成',
-    color: '#10B981',
+    color: todoStateColors.completed,
   },
 ]
 

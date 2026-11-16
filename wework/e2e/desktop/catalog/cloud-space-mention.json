@@ -1,0 +1,12 @@
+{
+  "order": 16000,
+  "scenario": "./scenarios/cloud-space-mention.scenario.mjs",
+  "scenarioOnly": true,
+  "ci": {
+    "core": {
+      "order": 62000,
+      "shard": 5,
+      "position": 4000
+    }
+  }
+}

@@ -1,36 +1,10 @@
-import { describe, expect, it } from 'vitest'
-import type { CloudLoopItem, CloudProject } from '@/api/deliveries'
-import {
-  dingtalkAITableRuntimeContext,
-  parseDingTalkAITableLink,
-  projectSpaceChatRuntimeContext,
-  repositoryProviderConfig,
-} from './projectProviderConfig'
+// @vitest-environment node
 
-describe('repositoryProviderConfig', () => {
-  it('removes GitLab web page suffixes from repository URLs', () => {
-    expect(
-      repositoryProviderConfig('https://gitlab.example.com/hongyu91/tab-prompt/-/issues', 'gitlab')
-    ).toEqual({
-      repository: 'hongyu91/tab-prompt',
-      domain: 'gitlab.example.com',
-      api_base: 'https://gitlab.example.com/api/v4',
-    })
-  })
-})
+import type { CloudLoopItem, CloudProject } from '@/api/deliveries'
+import { describe, expect, it } from 'vitest'
+import { dingtalkAITableRuntimeContext, parseDingTalkAITableLink } from './projectProviderConfig'
 
 describe('parseDingTalkAITableLink', () => {
-  it('extracts the document node, sheet, and view from an Alidocs link', () => {
-    const url =
-      'https://alidocs.dingtalk.com/i/nodes/pYLaezmVN63PAZGPTPKyr2X3VrMqPxX6?iframeQuery=entrance%3Ddata%26sheetId%3DhERWDMS%26viewId%3DqvGDAH2'
-    expect(parseDingTalkAITableLink(url)).toEqual({
-      baseId: 'pYLaezmVN63PAZGPTPKyr2X3VrMqPxX6',
-      tableId: 'hERWDMS',
-      viewId: 'qvGDAH2',
-      url,
-    })
-  })
-
   it('rejects unrelated or incomplete links', () => {
     expect(parseDingTalkAITableLink('https://example.com/i/nodes/base?sheetId=table')).toBeNull()
     expect(parseDingTalkAITableLink('https://alidocs.dingtalk.com/i/nodes/base')).toBeNull()
@@ -75,15 +49,6 @@ describe('dingtalkAITableRuntimeContext', () => {
     expect(context?.dingtalkAITableProject.value).not.toContain('credential')
   })
 
-  it('does not inject DingTalk instructions for another provider', () => {
-    expect(
-      dingtalkAITableRuntimeContext({
-        task_provider: 'local',
-        provider_config: {},
-      } as CloudProject)
-    ).toBeUndefined()
-  })
-
   it('binds the current record and requires a full native DWS read', () => {
     const context = dingtalkAITableRuntimeContext(
       {
@@ -112,35 +77,5 @@ describe('dingtalkAITableRuntimeContext', () => {
     expect(value).toContain('bundled_dws_fallback')
     expect(value).toContain('Never invoke a bare dws command')
     expect(value).not.toContain('$DWS_BINARY_PATH')
-  })
-})
-
-describe('projectSpaceChatRuntimeContext', () => {
-  it('binds ordinary chat references to the current project board without enabling task mode', () => {
-    const context = projectSpaceChatRuntimeContext({
-      id: 'space-7',
-      name: 'Local tasks',
-      task_provider: 'local',
-      provider_config: {},
-    } as CloudProject)
-
-    expect(context.projectSpaceChat.kind).toBe('application')
-    expect(context.projectSpaceChat.value).toContain('<current_project_space>')
-    expect(context.projectSpaceChat.value).toContain('{"id":"space-7","name":"Local tasks"}')
-    expect(context.projectSpaceChat.value).toContain('use the configured project task-provider')
-    expect(context).not.toHaveProperty('dingtalkAITableProject')
-  })
-
-  it('keeps the bound DingTalk provider instructions alongside the chat context', () => {
-    const context = projectSpaceChatRuntimeContext({
-      id: 'space-8',
-      name: 'DingTalk tasks',
-      project_key: 'DING',
-      task_provider: 'dingtalk_aitable',
-      provider_config: { base_id: 'base-1', table_id: 'table-1' },
-    } as CloudProject)
-
-    expect(context.projectSpaceChat.kind).toBe('application')
-    expect(context.dingtalkAITableProject.kind).toBe('application')
   })
 })

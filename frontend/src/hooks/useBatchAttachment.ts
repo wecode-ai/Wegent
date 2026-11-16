@@ -113,6 +113,10 @@ export function useBatchAttachment(): UseBatchAttachmentReturn {
       const validationErrors: string[] = []
 
       for (const file of filesToAdd) {
+        if (file.size === 0) {
+          validationErrors.push(`${file.name}: ${t('common:attachment.errors.empty_file')}`)
+          continue
+        }
         // Validate file type
         if (!isSupportedExtension(file.name)) {
           validationErrors.push(`${file.name}: ${t('common:attachment.errors.unsupported_type')}`)

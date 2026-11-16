@@ -22,13 +22,11 @@ use crate::{
 };
 
 use super::{
-    codex_notifications::{
-        codex_notification, debug_ignored_codex_notification, is_root_codex_turn_event,
-    },
+    codex_notifications::{codex_notification, debug_ignored_codex_notification},
     codex_user_input::async_question_payload_from_item,
     notification_mapping::{
-        codex_stream_debug_enabled, log_dropped_notification, map_text_chunk,
-        map_tool_output_delta, notification_item_id, TextChunkMapping,
+        codex_stream_debug_enabled, log_agent_message_completion, log_dropped_notification,
+        map_text_chunk, map_tool_output_delta, notification_item_id, TextChunkMapping,
     },
     transcript::{
         completed_workbench_block_from_notification, file_changes_block_from_patch_updated,
@@ -45,6 +43,10 @@ use super::{
 const MAX_TOOL_OUTPUT_DELTA_BYTES: usize = 64 * 1024;
 const MAX_TOOL_OUTPUT_BUFFER_BYTES: usize = 512 * 1024;
 static LAST_RUNTIME_EVENT_SEQUENCE: AtomicU64 = AtomicU64::new(0);
+
+#[path = "retry_status.rs"]
+mod retry_status;
+use retry_status::{codex_error_will_retry, codex_notification_resumes_turn};
 
 pub(super) fn next_runtime_event_sequence() -> u64 {
     let wall_clock = SystemTime::now()
@@ -67,35 +69,20 @@ pub(super) fn next_runtime_event_sequence() -> u64 {
     }
 }
 
-fn codex_error_will_retry(params: &Value) -> bool {
-    params
-        .get("willRetry")
-        .or_else(|| params.get("will_retry"))
-        .and_then(Value::as_bool)
-        .unwrap_or(false)
-}
-
-fn codex_retry_message(params: &Value) -> String {
-    params
-        .get("error")
-        .and_then(|error| error.get("message"))
-        .or_else(|| params.get("message"))
-        .and_then(Value::as_str)
-        .unwrap_or("Reconnecting")
-        .to_owned()
-}
-
-fn reconnecting_model_kind(request: &ExecutionRequest) -> Option<String> {
-    string_field(&request.model_config, "wework_model_kind")
-        .or_else(|| string_field(&request.model_config, "weworkModelKind"))
-}
-
-fn codex_notification_resumes_turn(method: &str) -> bool {
-    method.starts_with("item/") || method.starts_with("turn/")
-}
-
 pub(crate) fn is_context_compaction_request(request: &ExecutionRequest) -> bool {
     request.subtask_id.ends_with("-context-compact")
+}
+
+pub(super) fn apply_runtime_event_conversation_context(
+    payload: &mut Value,
+    request: &ExecutionRequest,
+) {
+    if let Some(payload) = payload.as_object_mut() {
+        payload.remove("conversationContext");
+    }
+    if super::util::is_private_discussion(request) {
+        payload["conversationContext"] = json!("private_discussion");
+    }
 }
 
 pub(crate) fn emit_response_event(
@@ -120,6 +107,33 @@ pub(crate) fn emit_response_event(
         }
         return;
     };
+    if codex_stream_debug_enabled()
+        && matches!(
+            event,
+            "response.created" | "response.output_text.delta" | "runtime.turn.updated"
+        )
+    {
+        log_executor_event(
+            "runtime response identity",
+            &[
+                ("event", event.to_owned()),
+                ("local_task_id", local_task_id.to_owned()),
+                ("subtask_id", request.subtask_id.clone()),
+                (
+                    "turn_id",
+                    data["turnId"].as_str().unwrap_or_default().to_owned(),
+                ),
+                (
+                    "item_id",
+                    data["item_id"].as_str().unwrap_or_default().to_owned(),
+                ),
+                (
+                    "delta_bytes",
+                    data["delta"].as_str().map_or(0, str::len).to_string(),
+                ),
+            ],
+        );
+    }
     let mut payload = json!({
         "type": "event",
         "event": event,
@@ -133,6 +147,7 @@ pub(crate) fn emit_response_event(
             "eventSeq": next_runtime_event_sequence(),
         },
     });
+    apply_runtime_event_conversation_context(&mut payload["payload"], request);
     if let Some(client_user_message_id) = request
         .extra
         .get("client_user_message_id")
@@ -302,8 +317,9 @@ pub(crate) struct CodexNotificationEventMapper {
     process_text_count: usize,
     plan_blocks: BTreeMap<String, String>,
     tool_output_deltas: BTreeMap<String, String>,
-    goal_status: Option<String>,
     reconnecting_block_id: Option<String>,
+    proxy_retry_wait_ids: BTreeSet<String>,
+    native_retry_waits: BTreeMap<String, Value>,
     completed_context_compaction_ids: BTreeSet<String>,
 }
 
@@ -340,8 +356,13 @@ impl CodexNotificationEventMapper {
             request,
         };
         let notification = codex_notification(&message);
-        if codex_notification_resumes_turn(&notification.method) {
-            self.clear_reconnecting(&emit_context);
+        if codex_notification_resumes_turn(&notification.method)
+            || (notification.method == "error" && !codex_error_will_retry(notification.params))
+        {
+            self.clear_resumed_native_retry(&emit_context, notification.params);
+        }
+        if notification.method == "turn/completed" {
+            self.clear_completed_turn_retry_waits(&emit_context, notification.params);
         }
         if codex_stream_debug_enabled()
             && notification.method == "item/agentMessage/delta"
@@ -576,6 +597,12 @@ impl CodexNotificationEventMapper {
                 let output_item_id_fallback = can_reuse_active_output_id
                     .then(|| self.active_output_item_id.clone())
                     .flatten();
+                log_agent_message_completion(
+                    local_task_id,
+                    &request.subtask_id,
+                    notification.params,
+                    resolved_phase.as_deref(),
+                );
                 if is_context_compaction_notification(notification.params) {
                     self.emit_context_compaction_once(&emit_context, notification.params);
                     return;
@@ -666,12 +693,14 @@ impl CodexNotificationEventMapper {
             "thread/started" => {
                 self.observe_root_thread(notification.params);
             }
-            "turn/started" if self.has_active_goal() => {
-                emit_goal_continuation_event(&emit_context, notification.params, "started");
+            "turn/started" if !self.is_subagent_delta(notification.params) => {
+                // Reset in native event order, before any item in the new turn.
+                // A later turn/start response must preserve already observed phases.
+                let root_thread_id = self.root_thread_id.clone();
+                *self = Self::default();
+                self.root_thread_id = root_thread_id;
             }
-            "turn/completed" if self.has_active_goal() => {
-                emit_goal_continuation_event(&emit_context, notification.params, "settled");
-            }
+            "turn/started" | "turn/completed" | "thread/status/changed" => {}
             "thread/goal/updated" => {
                 let goal = notification
                     .params
@@ -679,8 +708,6 @@ impl CodexNotificationEventMapper {
                     .cloned()
                     .map(normalize_runtime_goal_timestamps)
                     .unwrap_or(Value::Null);
-                self.goal_status =
-                    string_field(&goal, "status").map(|status| status.to_ascii_lowercase());
                 emit_response_event(
                     event_tx,
                     device_id,
@@ -697,7 +724,6 @@ impl CodexNotificationEventMapper {
                 );
             }
             "thread/goal/cleared" => {
-                self.goal_status = None;
                 emit_response_event(
                     event_tx,
                     device_id,
@@ -711,7 +737,21 @@ impl CodexNotificationEventMapper {
                 );
             }
             "error" if codex_error_will_retry(notification.params) => {
-                self.emit_reconnecting(&emit_context, notification.params);
+                let thread_id = stream_thread_id(notification.params).unwrap_or_default();
+                self.native_retry_waits
+                    .insert(thread_id, notification.params.clone());
+                self.refresh_reconnecting(&emit_context);
+            }
+            crate::server::local_model_proxy::retry_notifications::METHOD => {
+                let Some(wait_id) = string_field(notification.params, "waitId") else {
+                    return;
+                };
+                if notification.params["waiting"] == true {
+                    self.proxy_retry_wait_ids.insert(wait_id);
+                } else {
+                    self.proxy_retry_wait_ids.remove(&wait_id);
+                }
+                self.refresh_reconnecting(&emit_context);
             }
             _ => {
                 log_unhandled_codex_raw_message(
@@ -730,10 +770,6 @@ impl CodexNotificationEventMapper {
         }
     }
 
-    fn has_active_goal(&self) -> bool {
-        self.goal_status.as_deref() == Some("active")
-    }
-
     fn emit_context_compaction_once(&mut self, context: &EventEmitContext<'_>, params: &Value) {
         let item = params
             .get("item")
@@ -749,54 +785,6 @@ impl CodexNotificationEventMapper {
             context.local_task_id,
             context.request,
             params,
-        );
-    }
-
-    fn emit_reconnecting(&mut self, context: &EventEmitContext<'_>, params: &Value) {
-        if self.reconnecting_block_id.is_some() {
-            return;
-        }
-        let id = format!(
-            "reconnecting-{}-{}",
-            context.local_task_id, context.request.subtask_id
-        );
-        self.reconnecting_block_id = Some(id.clone());
-        emit_response_event(
-            context.event_tx,
-            context.device_id,
-            "response.block.created",
-            context.local_task_id,
-            context.request,
-            json!({
-                "block": {
-                    "id": id,
-                    "type": "tool",
-                    "tool_name": "runtime_reconnecting",
-                    "tool_input": {
-                        "message": codex_retry_message(params),
-                        "model_kind": reconnecting_model_kind(context.request),
-                    },
-                    "status": "streaming",
-                    "timestamp": now_ms(),
-                }
-            }),
-        );
-    }
-
-    fn clear_reconnecting(&mut self, context: &EventEmitContext<'_>) {
-        let Some(id) = self.reconnecting_block_id.take() else {
-            return;
-        };
-        emit_response_event(
-            context.event_tx,
-            context.device_id,
-            "response.block.updated",
-            context.local_task_id,
-            context.request,
-            json!({
-                "block_id": id,
-                "updates": { "status": "done" }
-            }),
         );
     }
 
@@ -1738,28 +1726,6 @@ fn log_unhandled_codex_raw_message(
     );
 }
 
-fn emit_goal_continuation_event(context: &EventEmitContext<'_>, params: &Value, status: &str) {
-    if !is_root_codex_turn_event(params) {
-        return;
-    }
-    let turn = params.get("turn").unwrap_or(params);
-    emit_response_event(
-        context.event_tx,
-        context.device_id,
-        "runtime.goal.continuation",
-        context.local_task_id,
-        context.request,
-        json!({
-            "status": status,
-            "thread_id": string_field(params, "threadId")
-                .or_else(|| string_field(params, "thread_id")),
-            "turn_id": string_field(turn, "id")
-                .or_else(|| string_field(turn, "turnId"))
-                .or_else(|| string_field(turn, "turn_id")),
-        }),
-    );
-}
-
 impl ProcessTextStream {
     fn accepts(&self, block_type: &str, process_kind: &str, item_id: Option<&str>) -> bool {
         self.block_type == block_type
@@ -1889,7 +1855,7 @@ fn text_fingerprint(value: &str) -> String {
     format!("{hash:08x}")
 }
 
-fn is_context_compaction_notification(params: &Value) -> bool {
+pub(crate) fn is_context_compaction_notification(params: &Value) -> bool {
     let item = params
         .get("item")
         .or_else(|| params.get("turn"))
@@ -2060,7 +2026,11 @@ fn emit_request_user_input_block(
     block_id: String,
     mut render_payload: Value,
 ) {
-    if let Some(payload) = render_payload.as_object_mut() {
+    // Async call IDs must retain the same identity in live events and history.
+    if let Some(payload) = render_payload
+        .as_object_mut()
+        .filter(|payload| payload.get("delivery").and_then(Value::as_str) != Some("async"))
+    {
         payload
             .entry("interactionScope".to_owned())
             .or_insert_with(|| json!(request.subtask_id));
@@ -2769,7 +2739,7 @@ fn collab_agent_status(status: &str) -> &'static str {
 
 #[cfg(test)]
 mod tests {
-    use serde_json::{json, Map};
+    use serde_json::json;
     use tokio::sync::broadcast;
 
     use crate::protocol::ExecutionRequest;
@@ -2777,127 +2747,52 @@ mod tests {
     use super::*;
 
     #[test]
-    fn terminal_content_update_does_not_repeat_streamed_content() {
-        assert_eq!(
-            terminal_content_updates("already streamed", "already streamed"),
-            json!({"status": "done"})
-        );
-    }
-
-    #[test]
-    fn terminal_content_update_only_sends_an_unstreamed_suffix() {
-        assert_eq!(
-            terminal_content_updates("already", "already streamed"),
-            json!({"content_delta": " streamed", "status": "done"})
-        );
-    }
-
-    #[test]
-    fn terminal_content_update_repairs_a_mismatched_stream_with_the_final_snapshot() {
-        assert_eq!(
-            terminal_content_updates("streamed text", "canonical text"),
-            json!({"content": "canonical text", "status": "done"})
-        );
-    }
-
-    #[test]
-    fn emits_client_user_message_id_with_runtime_response_events() {
-        let (event_tx, mut event_rx) = broadcast::channel(1);
-        let request = ExecutionRequest {
-            task_id: "task-1".to_owned(),
-            subtask_id: "codex-turn-1".to_owned(),
-            extra: Map::from_iter([
-                ("client_user_message_id".to_owned(), json!("client-user-1")),
-                (
-                    "source".to_owned(),
-                    json!({"source": "im", "channel_type": "dingtalk"}),
-                ),
-                (
-                    "runtime_generated_user_message".to_owned(),
-                    json!({
-                        "id": "client-user-1",
-                        "message": "continue from dingtalk",
-                        "createdAt": 1_780_000_000_000_i64,
-                        "source": {"source": "im", "channel_type": "dingtalk"}
-                    }),
-                ),
-            ]),
-            ..ExecutionRequest::default()
-        };
-
-        emit_response_event(
-            &Some(event_tx),
-            "device-1",
-            "response.created",
-            "local-task-1",
-            &request,
-            json!({"response": {"status": "in_progress"}}),
-        );
-
-        let event = event_rx.try_recv().expect("response event");
-        assert_eq!(event["payload"]["subtaskId"], "codex-turn-1");
-        assert_eq!(event["payload"]["clientUserMessageId"], "client-user-1");
-        assert_eq!(event["payload"]["source"]["source"], "im");
-        assert_eq!(
-            event["payload"]["runtimeGeneratedUserMessage"]["message"],
-            "continue from dingtalk"
-        );
-        assert!(event["payload"]["eventSeq"].as_u64().unwrap_or_default() > 0);
-    }
-
-    #[test]
-    fn emits_runtime_task_title_only_with_terminal_response_events() {
-        let (event_tx, mut event_rx) = broadcast::channel(2);
-        let request = ExecutionRequest {
-            task_id: "task-1".to_owned(),
-            subtask_id: "codex-turn-1".to_owned(),
-            extra: Map::from_iter([
-                (
-                    "runtimeTaskTitle".to_owned(),
-                    json!("Analyze production issue"),
-                ),
-                (
-                    "modelSelection".to_owned(),
-                    json!({
-                        "modelName": "deepseek-v4-pro-responses(public)",
-                        "modelType": "public",
-                        "options": {"reasoning": "medium"}
-                    }),
-                ),
-            ]),
-            ..ExecutionRequest::default()
-        };
-
-        emit_response_event(
-            &Some(event_tx.clone()),
-            "device-1",
-            "response.output_text.delta",
-            "local-task-1",
-            &request,
-            json!({"delta": "working"}),
-        );
-        emit_response_event(
-            &Some(event_tx),
-            "device-1",
-            "response.completed",
-            "local-task-1",
-            &request,
-            json!({"value": "done"}),
-        );
-
-        let progress = event_rx.try_recv().expect("progress event");
-        let terminal = event_rx.try_recv().expect("terminal event");
-        assert!(progress["payload"].get("taskTitle").is_none());
-        assert!(progress["payload"].get("modelSelection").is_none());
-        assert_eq!(terminal["payload"]["taskTitle"], "Analyze production issue");
-        assert_eq!(
-            terminal["payload"]["modelSelection"],
-            json!({
-                "modelName": "deepseek-v4-pro-responses(public)",
-                "modelType": "public",
-                "options": {"reasoning": "medium"}
-            })
-        );
+    fn emits_private_discussion_context_from_each_source_request_without_hiding_content() {
+        let (event_tx, mut events) = broadcast::channel(6);
+        for private in [true, false] {
+            let mut request = ExecutionRequest {
+                subtask_id: if private {
+                    "private-turn"
+                } else {
+                    "public-turn"
+                }
+                .into(),
+                ..Default::default()
+            };
+            if private {
+                request
+                    .extra
+                    .insert("conversationContext".into(), json!("private_discussion"));
+            }
+            for event in [
+                "response.created",
+                "response.output_text.delta",
+                "response.completed",
+            ] {
+                let data = json!({"turnId":request.subtask_id,"value":"Original transcript"});
+                emit_response_event(
+                    &Some(event_tx.clone()),
+                    "device",
+                    event,
+                    "same-task",
+                    &request,
+                    data.clone(),
+                );
+                let emitted = events.try_recv().unwrap();
+                assert_eq!(emitted["event"], event);
+                assert_eq!(emitted["payload"]["taskId"], "same-task");
+                assert_eq!(emitted["payload"]["subtaskId"], request.subtask_id);
+                assert_eq!(emitted["payload"]["data"], data);
+                if private {
+                    assert_eq!(
+                        emitted["payload"]["conversationContext"],
+                        "private_discussion"
+                    );
+                } else {
+                    assert!(emitted["payload"].get("conversationContext").is_none());
+                }
+            }
+        }
     }
 
     #[test]
@@ -2945,6 +2840,12 @@ mod tests {
             created["payload"]["data"]["block"]["tool_input"]["model_kind"],
             "codex-official"
         );
+        let updated = event_rx.try_recv().expect("retry attempt update");
+        assert_eq!(updated["event"], "response.block.updated");
+        assert_eq!(
+            updated["payload"]["data"]["updates"]["tool_input"]["message"],
+            "Reconnecting... 2/5"
+        );
         assert!(event_rx.try_recv().is_err());
 
         mapper.map(
@@ -2973,106 +2874,6 @@ mod tests {
         let cleared = event_rx.try_recv().expect("reconnecting block update");
         assert_eq!(cleared["event"], "response.block.updated");
         assert_eq!(cleared["payload"]["data"]["updates"]["status"], "done");
-    }
-
-    #[test]
-    fn identifies_initial_user_message_and_guidance_by_client_id() {
-        let (event_tx, mut event_rx) = broadcast::channel(4);
-        let request = ExecutionRequest {
-            task_id: "7".to_owned(),
-            subtask_id: "8".to_owned(),
-            extra: Map::from_iter([("client_user_message_id".to_owned(), json!("client-initial"))]),
-            ..ExecutionRequest::default()
-        };
-        let mut mapper = CodexNotificationEventMapper::default();
-        let user_message = |id: &str, client_id: &str, text: &str, completed_at_ms: i64| {
-            json!({
-                "method": "item/completed",
-                "params": {
-                    "completedAtMs": completed_at_ms,
-                    "item": {
-                        "id": id,
-                        "clientId": client_id,
-                        "type": "userMessage",
-                        "content": [{"type": "text", "text": text}]
-                    }
-                }
-            })
-        };
-
-        mapper.map(
-            &Some(event_tx.clone()),
-            "device-1",
-            "local-1",
-            &request,
-            user_message("user-initial", "client-initial", "first", 100),
-        );
-        assert!(event_rx.try_recv().is_err());
-
-        mapper.map(
-            &Some(event_tx),
-            "device-1",
-            "local-1",
-            &request,
-            user_message(
-                "user-guidance",
-                "client-guidance",
-                "also inspect memory",
-                200,
-            ),
-        );
-
-        let event = event_rx
-            .try_recv()
-            .expect("guidance event should be emitted");
-        assert_eq!(event["event"], "response.guidance.applied");
-        assert_eq!(event["payload"]["subtaskId"], "8");
-        assert_eq!(event["payload"]["data"]["guidanceId"], "user-guidance");
-        assert_eq!(
-            event["payload"]["data"]["clientGuidanceId"],
-            "client-guidance"
-        );
-        assert_eq!(event["payload"]["data"]["message"], "also inspect memory");
-        assert_eq!(event["payload"]["data"]["appliedAtMs"], 200);
-    }
-
-    #[test]
-    fn emits_first_completed_user_message_as_guidance_without_an_initial_client_id() {
-        let (event_tx, mut event_rx) = broadcast::channel(2);
-        let request = ExecutionRequest {
-            task_id: "7".to_owned(),
-            subtask_id: "8".to_owned(),
-            ..ExecutionRequest::default()
-        };
-        let mut mapper = CodexNotificationEventMapper::default();
-
-        mapper.map(
-            &Some(event_tx),
-            "device-1",
-            "local-1",
-            &request,
-            json!({
-                "method": "item/completed",
-                "params": {
-                    "completedAtMs": 200,
-                    "item": {
-                        "id": "user-guidance",
-                        "clientId": "queued-runtime-pane-1",
-                        "type": "userMessage",
-                        "content": [{"type": "text", "text": "also inspect memory"}]
-                    }
-                }
-            }),
-        );
-
-        let event = event_rx
-            .try_recv()
-            .expect("goal continuation guidance event should be emitted");
-        assert_eq!(event["event"], "response.guidance.applied");
-        assert_eq!(
-            event["payload"]["data"]["clientGuidanceId"],
-            "queued-runtime-pane-1"
-        );
     }
 
     #[test]
@@ -3347,287 +3148,6 @@ mod tests {
     }
 
     #[test]
-    fn completes_streamed_process_text_when_the_next_codex_item_starts() {
-        let (event_tx, mut event_rx) = broadcast::channel(4);
-        let request = ExecutionRequest {
-            task_id: "7".to_owned(),
-            subtask_id: "8".to_owned(),
-            ..ExecutionRequest::default()
-        };
-        let mut mapper = CodexNotificationEventMapper::default();
-
-        for message in [
-            json!({
-                "method": "item/started",
-                "params": {
-                    "item": {
-                        "id": "msg-commentary",
-                        "type": "agentMessage",
-                        "phase": "commentary",
-                        "text": ""
-                    }
-                }
-            }),
-            json!({
-                "method": "item/agentMessage/delta",
-                "params": {
-                    "itemId": "msg-commentary",
-                    "delta": "I will inspect."
-                }
-            }),
-            json!({
-                "method": "item/started",
-                "params": {
-                    "item": {
-                        "id": "reasoning-1",
-                        "type": "reasoning"
-                    }
-                }
-            }),
-        ] {
-            mapper.map(
-                &Some(event_tx.clone()),
-                "device-1",
-                "local-1",
-                &request,
-                message,
-            );
-        }
-
-        let created = event_rx
-            .try_recv()
-            .expect("streamed process text should be emitted");
-        let completed = event_rx
-            .try_recv()
-            .expect("the next item should settle the process text");
-
-        assert_eq!(created["event"], "response.block.created");
-        assert_eq!(created["payload"]["data"]["block"]["status"], "streaming");
-        assert_eq!(completed["event"], "response.block.updated");
-        assert_eq!(
-            completed["payload"]["data"]["block_id"],
-            created["payload"]["data"]["block"]["id"]
-        );
-        assert_eq!(completed["payload"]["data"]["updates"]["status"], "done");
-        assert!(event_rx.try_recv().is_err());
-    }
-
-    #[test]
-    fn reclassifies_streamed_final_text_as_commentary_before_the_real_final_answer() {
-        let (event_tx, mut event_rx) = broadcast::channel(8);
-        let request = ExecutionRequest {
-            task_id: "7".to_owned(),
-            subtask_id: "8".to_owned(),
-            ..ExecutionRequest::default()
-        };
-        let mut mapper = CodexNotificationEventMapper::default();
-
-        for message in [
-            json!({
-                "method": "item/started",
-                "params": {
-                    "item": {
-                        "id": "msg-progress",
-                        "type": "agentMessage",
-                        "phase": "final_answer",
-                        "text": ""
-                    }
-                }
-            }),
-            json!({
-                "method": "item/agentMessage/delta",
-                "params": {
-                    "itemId": "msg-progress",
-                    "delta": "I will inspect."
-                }
-            }),
-            json!({
-                "method": "item/completed",
-                "params": {
-                    "item": {
-                        "type": "agentMessage",
-                        "phase": "commentary",
-                        "text": "I will inspect."
-                    }
-                }
-            }),
-            json!({
-                "method": "item/started",
-                "params": {
-                    "item": {
-                        "id": "call-1",
-                        "type": "function_call",
-                        "call_id": "call-1",
-                        "name": "exec_command",
-                        "arguments": "{\"cmd\":\"pwd\"}"
-                    }
-                }
-            }),
-            json!({
-                "method": "item/started",
-                "params": {
-                    "item": {
-                        "id": "msg-final",
-                        "type": "agentMessage",
-                        "phase": "final_answer",
-                        "text": ""
-                    }
-                }
-            }),
-            json!({
-                "method": "item/agentMessage/delta",
-                "params": {
-                    "itemId": "msg-final",
-                    "delta": "Done."
-                }
-            }),
-            json!({
-                "method": "item/completed",
-                "params": {
-                    "item": {
-                        "id": "msg-final",
-                        "type": "agentMessage",
-                        "phase": "final_answer",
-                        "text": "Done."
-                    }
-                }
-            }),
-        ] {
-            mapper.map(
-                &Some(event_tx.clone()),
-                "device-1",
-                "local-1",
-                &request,
-                message,
-            );
-        }
-
-        let created = event_rx
-            .try_recv()
-            .expect("streamed output text should be emitted");
-        let reclassified = event_rx
-            .try_recv()
-            .expect("reclassified process text should be emitted");
-        let tool = event_rx.try_recv().expect("tool block should be emitted");
-        let final_delta = event_rx
-            .try_recv()
-            .expect("real final output delta should be emitted");
-        let final_completed = event_rx
-            .try_recv()
-            .expect("real final output completion should be emitted");
-
-        assert_eq!(created["event"], "response.output_text.delta");
-        assert_eq!(created["payload"]["data"]["item_id"], "msg-progress");
-        assert_eq!(created["payload"]["data"]["delta"], "I will inspect.");
-        assert_eq!(reclassified["event"], "response.block.created");
-        assert_eq!(
-            reclassified["payload"]["data"]["replacesItemId"],
-            "msg-progress"
-        );
-        assert_eq!(
-            reclassified["payload"]["data"]["block"]["id"],
-            "msg-progress"
-        );
-        assert_eq!(
-            reclassified["payload"]["data"]["block"]["content"],
-            "I will inspect."
-        );
-        assert_eq!(tool["event"], "response.block.created");
-        assert_eq!(
-            tool["payload"]["data"]["block"]["tool_name"],
-            "exec_command"
-        );
-        assert_eq!(final_delta["event"], "response.output_text.delta");
-        assert_eq!(final_delta["payload"]["data"]["item_id"], "msg-final");
-        assert_eq!(final_delta["payload"]["data"]["delta"], "Done.");
-        assert_eq!(final_completed["event"], "response.output_text.done");
-        assert_eq!(final_completed["payload"]["data"]["item_id"], "msg-final");
-        assert_eq!(final_completed["payload"]["data"]["text"], "Done.");
-        assert!(event_rx.try_recv().is_err());
-    }
-
-    #[test]
-    fn coalesces_dense_process_text_deltas_before_the_terminal_update() {
-        let (event_tx, mut event_rx) = broadcast::channel(256);
-        let request = ExecutionRequest {
-            task_id: "7".to_owned(),
-            subtask_id: "8".to_owned(),
-            ..ExecutionRequest::default()
-        };
-        let mut mapper = CodexNotificationEventMapper::default();
-
-        mapper.map(
-            &Some(event_tx.clone()),
-            "device-1",
-            "local-1",
-            &request,
-            json!({
-                "method": "item/started",
-                "params": {
-                    "item": {
-                        "id": "msg-noisy",
-                        "type": "agentMessage",
-                        "phase": "commentary",
-                        "text": ""
-                    }
-                }
-            }),
-        );
-        for _ in 0..2_200 {
-            mapper.map(
-                &Some(event_tx.clone()),
-                "device-1",
-                "local-1",
-                &request,
-                json!({
-                    "method": "item/agentMessage/delta",
-                    "params": {
-                        "itemId": "msg-noisy",
-                        "delta": "x"
-                    }
-                }),
-            );
-        }
-        mapper.map(
-            &Some(event_tx),
-            "device-1",
-            "local-1",
-            &request,
-            json!({
-                "method": "item/completed",
-                "params": {
-                    "item": {
-                        "id": "msg-noisy",
-                        "type": "agentMessage",
-                        "phase": "commentary",
-                        "text": "NOISY_COMPLETE"
-                    }
-                }
-            }),
-        );
-
-        let mut events = Vec::new();
-        while let Ok(event) = event_rx.try_recv() {
-            events.push(event);
-        }
-
-        assert!(
-            events.len() < 160,
-            "dense text deltas should not flood the desktop transport"
-        );
-        assert_eq!(events[0]["event"], "response.block.created");
-        let completed = events
-            .last()
-            .expect("terminal block update should be emitted");
-        assert_eq!(completed["event"], "response.block.updated");
-        assert_eq!(
-            completed["payload"]["data"]["updates"]["content"],
-            "NOISY_COMPLETE"
-        );
-        assert_eq!(completed["payload"]["data"]["updates"]["status"], "done");
-    }
-
-    #[test]
     fn maps_codex_context_compacted_event_to_completed_tool_block() {
         let (event_tx, mut event_rx) = broadcast::channel(4);
         let request = ExecutionRequest {
@@ -3757,251 +3277,6 @@ mod tests {
             "done"
         );
         assert!(event_rx.try_recv().is_err());
-    }
-
-    #[test]
-    fn maps_completed_context_compaction_nested_under_turn() {
-        let (event_tx, mut event_rx) = broadcast::channel(4);
-        let request = ExecutionRequest {
-            task_id: "7".to_owned(),
-            subtask_id: "8".to_owned(),
-            ..ExecutionRequest::default()
-        };
-        let mut mapper = CodexNotificationEventMapper::default();
-
-        mapper.map(
-            &Some(event_tx),
-            "device-1",
-            "local-1",
-            &request,
-            json!({
-                "method": "item/completed",
-                "params": {
-                    "turn": {
-                        "id": "ctx-turn-1",
-                        "type": "contextCompaction"
-                    }
-                }
-            }),
-        );
-
-        let completed = event_rx
-            .try_recv()
-            .expect("nested turn compaction should be emitted");
-        assert_eq!(completed["event"], "response.block.created");
-        assert_eq!(completed["payload"]["data"]["block"]["id"], "ctx-turn-1");
-        assert_eq!(
-            completed["payload"]["data"]["block"]["tool_name"],
-            "context_compaction"
-        );
-        assert_eq!(completed["payload"]["data"]["block"]["status"], "done");
-        assert!(event_rx.try_recv().is_err());
-    }
-
-    #[test]
-    fn updates_codex_web_search_input_when_the_action_completes() {
-        let (event_tx, mut event_rx) = broadcast::channel(4);
-        let request = ExecutionRequest {
-            task_id: "7".to_owned(),
-            subtask_id: "8".to_owned(),
-            ..ExecutionRequest::default()
-        };
-        let mut mapper = CodexNotificationEventMapper::default();
-
-        mapper.map(
-            &Some(event_tx.clone()),
-            "device-1",
-            "local-1",
-            &request,
-            json!({
-                "method": "item/started",
-                "params": {
-                    "item": {
-                        "id": "search-1",
-                        "type": "webSearch",
-                        "query": ""
-                    }
-                }
-            }),
-        );
-        mapper.map(
-            &Some(event_tx),
-            "device-1",
-            "local-1",
-            &request,
-            json!({
-                "method": "item/completed",
-                "params": {
-                    "item": {
-                        "id": "search-1",
-                        "type": "webSearch",
-                        "query": "Wegent documentation",
-                        "action": {
-                            "type": "search",
-                            "query": "Wegent documentation"
-                        }
-                    }
-                }
-            }),
-        );
-
-        let created = event_rx
-            .try_recv()
-            .expect("web search start should create a block");
-        assert_eq!(created["event"], "response.block.created");
-        assert_eq!(
-            created["payload"]["data"]["block"]["tool_input"]["query"],
-            ""
-        );
-
-        let updated = event_rx
-            .try_recv()
-            .expect("web search completion should update the block");
-        assert_eq!(updated["event"], "response.block.updated");
-        assert_eq!(updated["payload"]["data"]["block_id"], "search-1");
-        assert_eq!(updated["payload"]["data"]["updates"]["status"], "done");
-        assert_eq!(
-            updated["payload"]["data"]["updates"]["tool_input"]["type"],
-            "search"
-        );
-        assert_eq!(
-            updated["payload"]["data"]["updates"]["tool_input"]["query"],
-            "Wegent documentation"
-        );
-        assert!(event_rx.try_recv().is_err());
-    }
-
-    #[test]
-    fn maps_codex_started_final_agent_message_deltas_to_output_text() {
-        let (event_tx, mut event_rx) = broadcast::channel(5);
-        let request = ExecutionRequest {
-            task_id: "7".to_owned(),
-            subtask_id: "8".to_owned(),
-            ..ExecutionRequest::default()
-        };
-        let mut mapper = CodexNotificationEventMapper::default();
-
-        mapper.map(
-            &Some(event_tx.clone()),
-            "device-1",
-            "local-1",
-            &request,
-            json!({
-                "method": "thread/started",
-                "params": {
-                    "thread": {
-                        "id": "root-thread"
-                    }
-                }
-            }),
-        );
-        mapper.map(
-            &Some(event_tx.clone()),
-            "device-1",
-            "local-1",
-            &request,
-            json!({
-                "method": "item/started",
-                "params": {
-                    "item": {
-                        "id": "msg-final",
-                        "type": "agentMessage",
-                        "phase": "final_answer",
-                        "text": ""
-                    }
-                }
-            }),
-        );
-        mapper.map(
-            &Some(event_tx.clone()),
-            "device-1",
-            "local-1",
-            &request,
-            json!({
-                "method": "item/agentMessage/delta",
-                "params": {
-                    "itemId": "msg-final",
-                    "delta": "Done."
-                }
-            }),
-        );
-        mapper.map(
-            &Some(event_tx.clone()),
-            "device-1",
-            "local-1",
-            &request,
-            json!({
-                "method": "item/agentMessage/delta",
-                "params": {
-                    "itemId": "msg-final",
-                    "delta": " More."
-                }
-            }),
-        );
-        mapper.map(
-            &Some(event_tx.clone()),
-            "device-1",
-            "local-1",
-            &request,
-            json!({
-                "method": "item/completed",
-                "params": {
-                    "item": {
-                        "id": "msg-final",
-                        "type": "agentMessage",
-                        "phase": "final_answer",
-                        "text": "Done. More."
-                    }
-                }
-            }),
-        );
-        mapper.map(
-            &Some(event_tx.clone()),
-            "device-1",
-            "local-1",
-            &request,
-            json!({
-                "method": "thread/started",
-                "params": {
-                    "thread": {
-                        "id": "root-thread-2"
-                    }
-                }
-            }),
-        );
-        mapper.map(
-            &Some(event_tx),
-            "device-1",
-            "local-1",
-            &request,
-            json!({
-                "method": "item/agentMessage/delta",
-                "params": {
-                    "itemId": "msg-final-2",
-                    "delta": "Next."
-                }
-            }),
-        );
-
-        let first_event = event_rx.try_recv().expect("first event should be emitted");
-        let second_event = event_rx.try_recv().expect("second event should be emitted");
-        let completed_event = event_rx
-            .try_recv()
-            .expect("completed final text should be emitted");
-        let next_event = event_rx
-            .try_recv()
-            .expect("next turn event should be emitted");
-        assert_eq!(first_event["event"], "response.output_text.delta");
-        assert_eq!(first_event["payload"]["data"]["item_id"], "msg-final");
-        assert_eq!(first_event["payload"]["data"]["delta"], "Done.");
-        assert_eq!(second_event["event"], "response.output_text.delta");
-        assert_eq!(second_event["payload"]["data"]["delta"], " More.");
-        assert_eq!(completed_event["event"], "response.output_text.done");
-        assert_eq!(completed_event["payload"]["data"]["item_id"], "msg-final");
-        assert_eq!(completed_event["payload"]["data"]["text"], "Done. More.");
-        assert_eq!(next_event["event"], "response.block.created");
-        assert_eq!(next_event["payload"]["data"]["block"]["type"], "text");
-        assert_eq!(next_event["payload"]["data"]["block"]["content"], "Next.");
     }
 
     #[test]
@@ -4423,63 +3698,6 @@ mod tests {
     }
 
     #[test]
-    fn keeps_legacy_explicit_final_as_process_text_until_turn_completion() {
-        let (event_tx, mut event_rx) = broadcast::channel(4);
-        let request = ExecutionRequest {
-            task_id: "7".to_owned(),
-            subtask_id: "8".to_owned(),
-            ..ExecutionRequest::default()
-        };
-        let mut mapper = CodexNotificationEventMapper::default();
-
-        mapper.map(
-            &Some(event_tx.clone()),
-            "device-1",
-            "local-1",
-            &request,
-            json!({
-                "method": "item/agentMessage/delta",
-                "params": {
-                    "itemId": "msg-final",
-                    "delta": "Done."
-                }
-            }),
-        );
-        mapper.map(
-            &Some(event_tx),
-            "device-1",
-            "local-1",
-            &request,
-            json!({
-                "type": "event_msg",
-                "payload": {
-                    "type": "agent_message",
-                    "phase": "final_answer",
-                    "message": "Done."
-                }
-            }),
-        );
-
-        let process_event = event_rx
-            .try_recv()
-            .expect("unphased live delta should be emitted as process text");
-        assert_eq!(process_event["event"], "response.block.created");
-        assert_eq!(process_event["payload"]["data"]["block"]["type"], "text");
-        assert_eq!(
-            process_event["payload"]["data"]["block"]["content"],
-            "Done."
-        );
-        let completed = event_rx
-            .try_recv()
-            .expect("completed process block should be emitted");
-        assert_eq!(completed["event"], "response.block.created");
-        assert_eq!(completed["payload"]["data"]["block"]["type"], "text");
-        assert_eq!(completed["payload"]["data"]["block"]["content"], "Done.");
-        assert_eq!(completed["payload"]["data"]["block"]["status"], "done");
-        assert!(event_rx.try_recv().is_err());
-    }
-
-    #[test]
     fn emits_codex_completed_plan_items_as_plan_blocks() {
         let (event_tx, mut event_rx) = broadcast::channel(4);
         let request = ExecutionRequest {
@@ -4603,746 +3821,6 @@ mod tests {
     }
 
     #[test]
-    fn emits_codex_structured_turn_plan_updates_separately_from_plan_items() {
-        let (event_tx, mut event_rx) = broadcast::channel(4);
-        let request = ExecutionRequest {
-            task_id: "7".to_owned(),
-            subtask_id: "8".to_owned(),
-            ..ExecutionRequest::default()
-        };
-
-        map_codex_notification(
-            &Some(event_tx),
-            "device-1",
-            "local-1",
-            &request,
-            json!({
-                "method": "turn/plan/updated",
-                "params": {
-                    "threadId": "thread-1",
-                    "turnId": "turn-1",
-                    "explanation": "Implementing the requested change.",
-                    "plan": [
-                        {"step": "Inspect", "status": "completed"},
-                        {"step": "Implement", "status": "inProgress"},
-                        {"step": "Verify", "status": "pending"}
-                    ]
-                }
-            }),
-        );
-
-        let event = event_rx.try_recv().expect("event should be emitted");
-        assert_eq!(event["event"], "runtime.plan.updated");
-        assert_eq!(event["payload"]["data"]["threadId"], "thread-1");
-        assert_eq!(event["payload"]["data"]["turnId"], "turn-1");
-        assert_eq!(event["payload"]["data"]["plan"][1]["status"], "inProgress");
-    }
-
-    #[test]
-    fn emits_codex_subagent_activity_events() {
-        let (event_tx, mut event_rx) = broadcast::channel(4);
-        let request = ExecutionRequest {
-            task_id: "7".to_owned(),
-            subtask_id: "8".to_owned(),
-            ..ExecutionRequest::default()
-        };
-
-        map_codex_notification(
-            &Some(event_tx),
-            "device-1",
-            "local-1",
-            &request,
-            json!({
-                "type": "event_msg",
-                "payload": {
-                    "type": "sub_agent_activity",
-                    "agent_path": "/root/worker",
-                    "agent_thread_id": "thread-worker",
-                    "kind": "started",
-                    "occurred_at_ms": 12345
-                }
-            }),
-        );
-
-        let event = event_rx.try_recv().expect("event should be emitted");
-        assert_eq!(event["event"], "response.subagent.activity");
-        assert_eq!(event["payload"]["data"]["agent_path"], "/root/worker");
-        assert_eq!(event["payload"]["data"]["agent_id"], "thread-worker");
-        assert_eq!(event["payload"]["data"]["agent_name"], "worker");
-        assert_eq!(event["payload"]["data"]["agent_thread_id"], "thread-worker");
-        assert_eq!(event["payload"]["data"]["kind"], "started");
-        assert_eq!(event["payload"]["data"]["status"], "running");
-        assert_eq!(event["payload"]["data"]["occurred_at_ms"], 12345);
-    }
-
-    #[test]
-    fn emits_child_turn_completion_as_done_subagent_activity() {
-        let (event_tx, mut event_rx) = broadcast::channel(4);
-        let request = ExecutionRequest {
-            task_id: "7".to_owned(),
-            subtask_id: "8".to_owned(),
-            ..ExecutionRequest::default()
-        };
-
-        map_codex_notification(
-            &Some(event_tx),
-            "device-1",
-            "local-1",
-            &request,
-            json!({
-                "method": "turn/completed",
-                "params": {
-                    "threadId": "thread-worker",
-                    "turn": {
-                        "turn_id": "child-turn",
-                        "agent_path": "/root/worker"
-                    }
-                }
-            }),
-        );
-
-        let event = event_rx.try_recv().expect("event should be emitted");
-        assert_eq!(event["event"], "response.subagent.activity");
-        assert_eq!(event["payload"]["data"]["agent_id"], "thread-worker");
-        assert_eq!(event["payload"]["data"]["agent_thread_id"], "thread-worker");
-        assert_eq!(event["payload"]["data"]["status"], "done");
-        assert_eq!(event["payload"]["data"]["kind"], "completed");
-
-        let update = event_rx.try_recv().expect("block update should be emitted");
-        assert_eq!(update["event"], "response.block.updated");
-        assert_eq!(
-            update["payload"]["data"]["block_id"],
-            "subagent-thread-worker"
-        );
-        assert_eq!(update["payload"]["data"]["updates"]["status"], "done");
-    }
-
-    #[test]
-    fn emits_goal_turn_lifecycle_only_for_the_root_thread() {
-        let (event_tx, mut event_rx) = broadcast::channel(4);
-        let request = ExecutionRequest {
-            task_id: "7".to_owned(),
-            subtask_id: "8".to_owned(),
-            ..ExecutionRequest::default()
-        };
-        let mut mapper = CodexNotificationEventMapper::default();
-
-        mapper.map(
-            &Some(event_tx.clone()),
-            "device-1",
-            "local-1",
-            &request,
-            json!({
-                "method": "thread/goal/updated",
-                "params": {
-                    "threadId": "thread-root",
-                    "goal": {
-                        "status": "active",
-                        "createdAt": 1_787_636_000,
-                        "updatedAt": 1_787_636_001
-                    }
-                }
-            }),
-        );
-        let goal = event_rx.try_recv().expect("goal event should be emitted");
-        assert_eq!(
-            goal["payload"]["data"]["goal"]["createdAt"],
-            1_787_636_000_000_i64
-        );
-        assert_eq!(
-            goal["payload"]["data"]["goal"]["updatedAt"],
-            1_787_636_001_000_i64
-        );
-
-        mapper.map(
-            &Some(event_tx.clone()),
-            "device-1",
-            "local-1",
-            &request,
-            json!({
-                "method": "turn/started",
-                "params": {
-                    "threadId": "thread-root",
-                    "turn": { "id": "turn-2", "agent_path": "/root" }
-                }
-            }),
-        );
-        let started = event_rx
-            .try_recv()
-            .expect("started event should be emitted");
-        assert_eq!(started["event"], "runtime.goal.continuation");
-        assert_eq!(started["payload"]["data"]["status"], "started");
-        assert_eq!(started["payload"]["data"]["turn_id"], "turn-2");
-
-        mapper.map(
-            &Some(event_tx.clone()),
-            "device-1",
-            "local-1",
-            &request,
-            json!({
-                "method": "turn/started",
-                "params": {
-                    "threadId": "thread-worker",
-                    "turn": { "id": "child-turn", "agent_path": "/root/worker" }
-                }
-            }),
-        );
-        assert!(event_rx.try_recv().is_err());
-
-        mapper.map(
-            &Some(event_tx),
-            "device-1",
-            "local-1",
-            &request,
-            json!({
-                "method": "turn/completed",
-                "params": {
-                    "threadId": "thread-root",
-                    "turn": { "id": "turn-2", "agent_path": "/root" }
-                }
-            }),
-        );
-        let settled = event_rx
-            .try_recv()
-            .expect("settled event should be emitted");
-        assert_eq!(settled["event"], "runtime.goal.continuation");
-        assert_eq!(settled["payload"]["data"]["status"], "settled");
-    }
-
-    #[test]
-    fn emits_explicit_subagent_activity_items() {
-        let (event_tx, mut event_rx) = broadcast::channel(4);
-        let request = ExecutionRequest {
-            task_id: "7".to_owned(),
-            subtask_id: "8".to_owned(),
-            ..ExecutionRequest::default()
-        };
-
-        map_codex_notification(
-            &Some(event_tx),
-            "device-1",
-            "local-1",
-            &request,
-            json!({
-                "method": "item/completed",
-                "params": {
-                    "threadId": "thread-parent",
-                    "item": {
-                        "type": "subAgentActivity",
-                        "agentPath": "/root/worker",
-                        "agentThreadId": "thread-worker",
-                        "kind": "interacted"
-                    }
-                }
-            }),
-        );
-
-        let event = event_rx.try_recv().expect("event should be emitted");
-        assert_eq!(event["event"], "response.subagent.activity");
-        assert_eq!(event["payload"]["data"]["agent_path"], "/root/worker");
-        assert_eq!(event["payload"]["data"]["agent_id"], "thread-worker");
-        assert_eq!(event["payload"]["data"]["agent_thread_id"], "thread-worker");
-        assert_eq!(event["payload"]["data"]["kind"], "interacted");
-        assert_eq!(event["payload"]["data"]["status"], "running");
-
-        let block = event_rx.try_recv().expect("block should be emitted");
-        assert_eq!(block["event"], "response.block.created");
-        assert_eq!(
-            block["payload"]["data"]["block"]["id"],
-            "subagent-thread-worker"
-        );
-        assert_eq!(
-            block["payload"]["data"]["block"]["agent_thread_id"],
-            "thread-worker"
-        );
-    }
-
-    #[test]
-    fn emits_collab_agent_tool_call_subagent_status() {
-        let (event_tx, mut event_rx) = broadcast::channel(4);
-        let request = ExecutionRequest {
-            task_id: "7".to_owned(),
-            subtask_id: "8".to_owned(),
-            ..ExecutionRequest::default()
-        };
-
-        map_codex_notification(
-            &Some(event_tx),
-            "device-1",
-            "local-1",
-            &request,
-            json!({
-                "method": "item/completed",
-                "params": {
-                    "completedAtMs": 12345,
-                    "item": {
-                        "type": "collabAgentToolCall",
-                        "tool": "spawnAgent",
-                        "prompt": "你是一个只读代码库分析 subagent。请聚焦 Backend 模块，不要修改文件。",
-                        "receiverThreadIds": ["thread-worker"],
-                        "agentsStates": {
-                            "thread-worker": {
-                                "status": "pendingInit",
-                                "message": null
-                            }
-                        },
-                        "status": "completed"
-                    }
-                }
-            }),
-        );
-
-        let event = event_rx.try_recv().expect("event should be emitted");
-        assert_eq!(event["event"], "response.subagent.activity");
-        assert_eq!(
-            event["payload"]["data"]["agent_path"],
-            "thread:thread-worker"
-        );
-        assert_eq!(event["payload"]["data"]["agent_id"], "thread-worker");
-        assert_eq!(event["payload"]["data"]["agent_thread_id"], "thread-worker");
-        assert!(event["payload"]["data"].get("agent_name").is_none());
-        assert_eq!(event["payload"]["data"]["kind"], "spawnAgent");
-        assert_eq!(event["payload"]["data"]["status"], "running");
-        assert_eq!(event["payload"]["data"]["occurred_at_ms"], 12345);
-
-        let block = event_rx.try_recv().expect("block should be emitted");
-        assert_eq!(block["event"], "response.block.created");
-        assert_eq!(
-            block["payload"]["data"]["block"]["id"],
-            "subagent-thread-worker"
-        );
-        assert_eq!(
-            block["payload"]["data"]["block"]["tool_use_id"],
-            "subagent-thread-worker"
-        );
-        assert_eq!(block["payload"]["data"]["block"]["tool_name"], "spawnAgent");
-        assert_eq!(block["payload"]["data"]["block"]["status"], "running");
-    }
-
-    #[test]
-    fn emits_explicit_subagent_name_when_field_exists() {
-        let (event_tx, mut event_rx) = broadcast::channel(4);
-        let request = ExecutionRequest {
-            task_id: "7".to_owned(),
-            subtask_id: "8".to_owned(),
-            ..ExecutionRequest::default()
-        };
-
-        map_codex_notification(
-            &Some(event_tx),
-            "device-1",
-            "local-1",
-            &request,
-            json!({
-                "method": "item/completed",
-                "params": {
-                    "item": {
-                        "type": "subAgentActivity",
-                        "agentPath": "/root/worker",
-                        "agentThreadId": "thread-worker",
-                        "agentName": "Frontend reviewer",
-                        "kind": "interacted"
-                    }
-                }
-            }),
-        );
-
-        let event = event_rx.try_recv().expect("event should be emitted");
-        assert_eq!(event["payload"]["data"]["agent_name"], "Frontend reviewer");
-    }
-
-    #[test]
-    fn derives_subagent_name_from_agent_path() {
-        let (event_tx, mut event_rx) = broadcast::channel(4);
-        let request = ExecutionRequest {
-            task_id: "7".to_owned(),
-            subtask_id: "8".to_owned(),
-            ..ExecutionRequest::default()
-        };
-
-        map_codex_notification(
-            &Some(event_tx),
-            "device-1",
-            "local-1",
-            &request,
-            json!({
-                "method": "item/completed",
-                "params": {
-                    "item": {
-                        "type": "subAgentActivity",
-                        "agentPath": "/root/say_hello",
-                        "agentThreadId": "thread-worker",
-                        "kind": "started"
-                    }
-                }
-            }),
-        );
-
-        let event = event_rx.try_recv().expect("event should be emitted");
-        assert_eq!(event["payload"]["data"]["agent_name"], "say_hello");
-    }
-
-    #[test]
-    fn emits_collab_agent_id_without_inventing_name_from_prompt() {
-        let (event_tx, mut event_rx) = broadcast::channel(4);
-        let request = ExecutionRequest {
-            task_id: "7".to_owned(),
-            subtask_id: "8".to_owned(),
-            ..ExecutionRequest::default()
-        };
-
-        map_codex_notification(
-            &Some(event_tx),
-            "device-1",
-            "local-1",
-            &request,
-            json!({
-                "method": "item/completed",
-                "params": {
-                    "item": {
-                        "type": "collabAgentToolCall",
-                        "tool": "spawnAgent",
-                        "prompt": "在 /repo 分析前端部分，重点是 frontend/ 与 wework/。只读分析。",
-                        "receiverThreadIds": ["thread-worker"],
-                        "agentsStates": {
-                            "thread-worker": {
-                                "status": "running"
-                            }
-                        },
-                        "status": "completed"
-                    }
-                }
-            }),
-        );
-
-        let event = event_rx.try_recv().expect("event should be emitted");
-        assert_eq!(event["payload"]["data"]["agent_id"], "thread-worker");
-        assert!(event["payload"]["data"].get("agent_name").is_none());
-    }
-
-    #[test]
-    fn emits_completed_final_agent_message_as_output_text() {
-        let (event_tx, mut event_rx) = broadcast::channel(4);
-        let request = ExecutionRequest {
-            task_id: "7".to_owned(),
-            subtask_id: "8".to_owned(),
-            ..ExecutionRequest::default()
-        };
-        let mut mapper = CodexNotificationEventMapper::default();
-
-        mapper.map(
-            &Some(event_tx),
-            "device-1",
-            "local-1",
-            &request,
-            json!({
-                "method": "item/completed",
-                "params": {
-                    "item": {
-                        "id": "msg-final",
-                        "type": "agentMessage",
-                        "phase": "final_answer",
-                        "text": "Completed without a streaming delta."
-                    }
-                }
-            }),
-        );
-
-        let event = event_rx
-            .try_recv()
-            .expect("output text event should be emitted");
-        assert_eq!(event["event"], "response.output_text.done");
-        assert_eq!(
-            event["payload"]["data"]["text"],
-            "Completed without a streaming delta."
-        );
-        assert_eq!(event["payload"]["data"]["item_id"], "msg-final");
-        assert!(event_rx.try_recv().is_err());
-    }
-
-    #[test]
-    fn emits_each_completed_final_agent_message_as_output_text() {
-        let (event_tx, mut event_rx) = broadcast::channel(4);
-        let request = ExecutionRequest {
-            task_id: "7".to_owned(),
-            subtask_id: "8".to_owned(),
-            ..ExecutionRequest::default()
-        };
-        let mut mapper = CodexNotificationEventMapper::default();
-
-        for (id, text) in [
-            ("msg-first", "先完成真机验证。"),
-            ("msg-second", "主路径验证通过。"),
-        ] {
-            mapper.map(
-                &Some(event_tx.clone()),
-                "device-1",
-                "local-1",
-                &request,
-                json!({
-                    "method": "item/completed",
-                    "params": {
-                        "item": {
-                            "id": id,
-                            "type": "agentMessage",
-                            "phase": "final_answer",
-                            "text": text
-                        }
-                    }
-                }),
-            );
-        }
-
-        let first = event_rx
-            .try_recv()
-            .expect("first output text event should be emitted");
-        let second = event_rx
-            .try_recv()
-            .expect("second output text event should be emitted");
-
-        assert_eq!(first["event"], "response.output_text.done");
-        assert_eq!(first["payload"]["data"]["text"], "先完成真机验证。");
-        assert_eq!(first["payload"]["data"]["item_id"], "msg-first");
-        assert_eq!(second["event"], "response.output_text.done");
-        assert_eq!(second["payload"]["data"]["text"], "主路径验证通过。");
-        assert_eq!(second["payload"]["data"]["item_id"], "msg-second");
-        assert!(event_rx.try_recv().is_err());
-    }
-
-    #[test]
-    fn maps_codex_commentary_then_tool_then_unphased_final_without_duplication() {
-        let (event_tx, mut event_rx) = broadcast::channel(8);
-        let request = ExecutionRequest {
-            task_id: "7".to_owned(),
-            subtask_id: "8".to_owned(),
-            ..ExecutionRequest::default()
-        };
-        let mut mapper = CodexNotificationEventMapper::default();
-
-        mapper.map(
-            &Some(event_tx.clone()),
-            "device-1",
-            "local-1",
-            &request,
-            json!({
-                "method": "item/started",
-                "params": {
-                    "item": {
-                        "id": "msg-commentary",
-                        "type": "agentMessage",
-                        "phase": "commentary",
-                        "text": ""
-                    }
-                }
-            }),
-        );
-        mapper.map(
-            &Some(event_tx.clone()),
-            "device-1",
-            "local-1",
-            &request,
-            json!({
-                "method": "item/agentMessage/delta",
-                "params": {
-                    "itemId": "msg-commentary",
-                    "delta": "I will inspect."
-                }
-            }),
-        );
-        mapper.map(
-            &Some(event_tx.clone()),
-            "device-1",
-            "local-1",
-            &request,
-            json!({
-                "method": "item/started",
-                "params": {
-                    "item": {
-                        "id": "call-1",
-                        "type": "function_call",
-                        "call_id": "call-1",
-                        "name": "exec_command",
-                        "arguments": "{\"cmd\":\"pwd\"}"
-                    }
-                }
-            }),
-        );
-        mapper.map(
-            &Some(event_tx.clone()),
-            "device-1",
-            "local-1",
-            &request,
-            json!({
-                "method": "item/started",
-                "params": {
-                    "item": {
-                        "id": "msg-final",
-                        "type": "agentMessage",
-                        "phase": "final_answer",
-                        "text": ""
-                    }
-                }
-            }),
-        );
-        mapper.map(
-            &Some(event_tx.clone()),
-            "device-1",
-            "local-1",
-            &request,
-            json!({
-                "method": "item/agentMessage/delta",
-                "params": {
-                    "itemId": "msg-final",
-                    "delta": "Current directory: /tmp/project"
-                }
-            }),
-        );
-        mapper.map(
-            &Some(event_tx),
-            "device-1",
-            "local-1",
-            &request,
-            json!({
-                "method": "item/completed",
-                "params": {
-                    "item": {
-                        "type": "message",
-                        "role": "assistant",
-                        "phase": "final_answer",
-                        "content": [{"type": "output_text", "text": "Current directory: /tmp/project"}]
-                    }
-                }
-            }),
-        );
-
-        let process = event_rx
-            .try_recv()
-            .expect("commentary process event should be emitted");
-        let tool = event_rx.try_recv().expect("tool event should be emitted");
-        let process_completed = event_rx
-            .try_recv()
-            .expect("the final item should settle commentary");
-        let final_text = event_rx
-            .try_recv()
-            .expect("final output delta should be emitted");
-
-        assert_eq!(process["event"], "response.block.created");
-        assert_eq!(process["payload"]["data"]["block"]["type"], "text");
-        assert_eq!(
-            process["payload"]["data"]["block"]["content"],
-            "I will inspect."
-        );
-        assert_eq!(tool["event"], "response.block.created");
-        assert_eq!(
-            tool["payload"]["data"]["block"]["tool_name"],
-            "exec_command"
-        );
-        assert_eq!(process_completed["event"], "response.block.updated");
-        assert_eq!(
-            process_completed["payload"]["data"]["block_id"],
-            process["payload"]["data"]["block"]["id"]
-        );
-        assert_eq!(
-            process_completed["payload"]["data"]["updates"]["status"],
-            "done"
-        );
-        assert_eq!(final_text["event"], "response.output_text.delta");
-        assert_eq!(final_text["payload"]["data"]["item_id"], "msg-final");
-        assert_eq!(
-            final_text["payload"]["data"]["delta"],
-            "Current directory: /tmp/project"
-        );
-        let completed = event_rx
-            .try_recv()
-            .expect("completed output text should be emitted");
-        assert_eq!(completed["event"], "response.output_text.done");
-        assert_eq!(completed["payload"]["data"]["item_id"], "msg-final");
-        assert_eq!(
-            completed["payload"]["data"]["text"],
-            "Current directory: /tmp/project"
-        );
-        assert!(event_rx.try_recv().is_err());
-    }
-
-    #[test]
-    fn maps_unphased_agent_text_around_tools_as_process_text() {
-        let (event_tx, mut event_rx) = broadcast::channel(8);
-        let request = ExecutionRequest {
-            task_id: "7".to_owned(),
-            subtask_id: "8".to_owned(),
-            ..ExecutionRequest::default()
-        };
-        let mut mapper = CodexNotificationEventMapper::default();
-
-        for (id, text) in [
-            ("msg-before-tool", "I will inspect the workspace."),
-            ("msg-after-tool", "The issue is in the configuration."),
-        ] {
-            mapper.map(
-                &Some(event_tx.clone()),
-                "device-1",
-                "local-1",
-                &request,
-                json!({
-                    "method": "item/completed",
-                    "params": {
-                        "item": {
-                            "id": id,
-                            "type": "agentMessage",
-                            "role": "assistant",
-                            "text": text
-                        }
-                    }
-                }),
-            );
-
-            if id == "msg-before-tool" {
-                mapper.map(
-                    &Some(event_tx.clone()),
-                    "device-1",
-                    "local-1",
-                    &request,
-                    json!({
-                        "method": "item/started",
-                        "params": {
-                            "item": {
-                                "id": "call-1",
-                                "type": "function_call",
-                                "call_id": "call-1",
-                                "name": "exec_command",
-                                "arguments": "{\"cmd\":\"pwd\"}"
-                            }
-                        }
-                    }),
-                );
-            }
-        }
-
-        let before_tool = event_rx
-            .try_recv()
-            .expect("first process text should be emitted");
-        let tool = event_rx.try_recv().expect("tool should be emitted");
-        let after_tool = event_rx
-            .try_recv()
-            .expect("second process text should be emitted");
-
-        assert_eq!(before_tool["event"], "response.block.created");
-        assert_eq!(before_tool["payload"]["data"]["block"]["type"], "text");
-        assert_eq!(
-            before_tool["payload"]["data"]["block"]["content"],
-            "I will inspect the workspace."
-        );
-        assert_eq!(tool["payload"]["data"]["block"]["type"], "tool");
-        assert_eq!(after_tool["event"], "response.block.created");
-        assert_eq!(after_tool["payload"]["data"]["block"]["type"], "text");
-        assert_eq!(
-            after_tool["payload"]["data"]["block"]["content"],
-            "The issue is in the configuration."
-        );
-        assert!(event_rx.try_recv().is_err());
-    }
-
-    #[test]
     fn maps_codex_request_user_input_to_interactive_tool_block() {
         let (event_tx, mut event_rx) = broadcast::channel(4);
         let request = ExecutionRequest {
@@ -5390,6 +3868,7 @@ mod tests {
         assert_eq!(block["status"], "pending");
         assert_eq!(block["render_payload"]["kind"], "request_user_input");
         assert_eq!(block["render_payload"]["questions"][0]["id"], "goal");
+        assert_eq!(block["render_payload"]["interactionScope"], "8");
     }
 
     #[test]
@@ -5438,6 +3917,10 @@ mod tests {
         assert_eq!(block["render_payload"]["kind"], "request_user_input");
         assert_eq!(block["render_payload"]["delivery"], "async");
         assert_eq!(block["render_payload"]["itemId"], "call-question");
+        assert!(
+            block["render_payload"].get("interactionScope").is_none(),
+            "Async call identity must match the unscoped transcript payload"
+        );
         assert_eq!(
             block["render_payload"]["questions"][0]["question"],
             "Which state jitters?"
@@ -5707,112 +4190,6 @@ mod tests {
                 {"label": "decline", "description": ""}
             ])
         );
-    }
-
-    #[test]
-    fn maps_codex_exec_output_delta_to_tool_output_update() {
-        let (event_tx, mut event_rx) = broadcast::channel(4);
-        let request = ExecutionRequest {
-            task_id: "7".to_owned(),
-            subtask_id: "8".to_owned(),
-            ..ExecutionRequest::default()
-        };
-        let mut mapper = CodexNotificationEventMapper::default();
-
-        mapper.map(
-            &Some(event_tx.clone()),
-            "device-1",
-            "local-1",
-            &request,
-            json!({
-                "type": "event_msg",
-                "payload": {
-                    "type": "exec_command_output_delta",
-                    "call_id": "call-1",
-                    "stream": "stdout",
-                    "chunk": "one"
-                }
-            }),
-        );
-        mapper.map(
-            &Some(event_tx.clone()),
-            "device-1",
-            "local-1",
-            &request,
-            json!({
-                "type": "event_msg",
-                "payload": {
-                    "type": "exec_command_output_delta",
-                    "call_id": "call-1",
-                    "stream": "stdout",
-                    "chunk": " two"
-                }
-            }),
-        );
-
-        let first = event_rx
-            .try_recv()
-            .expect("first output delta should update the tool block");
-        assert_eq!(first["event"], "response.block.updated");
-        assert_eq!(first["payload"]["data"]["block_id"], "call-1");
-        assert_eq!(
-            first["payload"]["data"]["updates"]["tool_output_delta"],
-            "one"
-        );
-        assert_eq!(
-            first["payload"]["data"]["updates"]["tool_output_truncated"],
-            false
-        );
-        assert_eq!(first["payload"]["data"]["updates"]["status"], "streaming");
-
-        let second = event_rx
-            .try_recv()
-            .expect("second output delta should update the tool block");
-        assert_eq!(second["event"], "response.block.updated");
-        assert_eq!(second["payload"]["data"]["block_id"], "call-1");
-        assert_eq!(
-            second["payload"]["data"]["updates"]["tool_output_delta"],
-            " two"
-        );
-        assert_eq!(
-            second["payload"]["data"]["updates"]["tool_output_truncated"],
-            false
-        );
-        assert_eq!(second["payload"]["data"]["updates"]["status"], "streaming");
-    }
-
-    #[test]
-    fn completed_event_finishes_statusless_tool() {
-        let (event_tx, mut event_rx) = broadcast::channel(4);
-        let request = ExecutionRequest {
-            task_id: "7".to_owned(),
-            subtask_id: "8".to_owned(),
-            ..ExecutionRequest::default()
-        };
-
-        map_codex_notification(
-            &Some(event_tx),
-            "device-1",
-            "local-1",
-            &request,
-            json!({
-                "method": "item/completed",
-                "params": {
-                    "item": {
-                        "id": "image-view-1",
-                        "type": "imageView",
-                        "path": "/tmp/image.png"
-                    }
-                }
-            }),
-        );
-
-        let event = event_rx
-            .try_recv()
-            .expect("completed image view should update the tool block");
-        assert_eq!(event["event"], "response.block.updated");
-        assert_eq!(event["payload"]["data"]["block_id"], "image-view-1");
-        assert_eq!(event["payload"]["data"]["updates"]["status"], "done");
     }
 
     #[test]

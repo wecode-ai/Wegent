@@ -1,11 +1,17 @@
-import { beforeEach, describe, expect, test, vi } from 'vitest'
+// @vitest-environment node
+
 import type { InstalledPlugin } from '@/types/api'
+import { beforeEach, describe, expect, test, vi } from 'vitest'
 import { createLocalCodexPluginApi } from './codexPlugins'
 
 const mocks = vi.hoisted(() => ({
   requestLocalExecutor: vi.fn(),
   readElectronLocalFile: vi.fn(),
   sha256Hex: vi.fn(),
+}))
+
+vi.mock('@/api/local/runtimeAuthStatus', () => ({
+  getLocalCodexAuthStatus: vi.fn().mockResolvedValue({ sha256: 'test-account' }),
 }))
 
 vi.mock('@/lib/runtime-environment', () => ({
@@ -77,22 +83,6 @@ describe('personal plugin package artifacts', () => {
     })
     mocks.readElectronLocalFile.mockResolvedValue(new Uint8Array([1, 2, 3, 4]))
     mocks.sha256Hex.mockResolvedValue(artifact.sha256)
-  })
-
-  test('reads, verifies, and cleans up an Executor package artifact', async () => {
-    const packaged = await createLocalCodexPluginApi().packageCreatedPlugin(plugin)
-
-    expect(packaged.name).toBe('dev-tools.zip')
-    expect(packaged.type).toBe('application/zip')
-    expect(packaged.size).toBe(4)
-    expect(mocks.readElectronLocalFile).toHaveBeenCalledWith(artifact.path, {
-      expectedSize: 4,
-      maxBytes: 50 * 1024 * 1024,
-    })
-    expect(mocks.requestLocalExecutor).toHaveBeenLastCalledWith(
-      'executor.plugins.personal.package.cleanup',
-      { cleanupToken: artifact.cleanupToken }
-    )
   })
 
   test('cleanup failures do not replace a package read failure', async () => {

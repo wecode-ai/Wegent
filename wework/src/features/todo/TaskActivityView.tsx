@@ -1,9 +1,19 @@
+import { IssueCommentChildAction } from '@wegent/collaboration'
 import { IssueManagerEvent } from './IssueManagerEvent'
+import { IssueHumanRequests } from './IssueHumanRequests'
 import { IssueAssignmentEvent } from './IssueAssignmentEvent'
+import {
+  IssueAssignmentReceiptStatus,
+  type IssueAssignmentReceiptState,
+} from './IssueAssignmentReceipts'
+import { issueAssignmentRevision, sameIssueAssignment } from './issueAssignmentReceiptScope'
 import { issueActivityTimeline } from './issueActivityTimeline'
+import { collapsedIssueActivity } from './collapsedIssueActivity'
 import { useIssueActivityHistory } from './useIssueActivityHistory'
-import { issueActivityRole } from './issueActivityRole'
+import { issueActivityRole, isPublicStandInMessage } from './issueActivityRole'
 import { useActivityExecutionBinding } from './useActivityExecutionStatus'
+import { useNotificationEntity } from '@/features/notifications/NotificationEntityContext'
+import { notificationCommentFocus } from '@/features/notifications/notificationCommentFocus'
 import { useIssueActivityScroll } from '@wegent/collaboration/issue-detail/useIssueActivityScroll'
 import { useTaskActivityRefresh } from './useTaskActivityRefresh'
 import { useFocusedComment } from './useFocusedComment'
@@ -36,6 +46,8 @@ import {
 import type { CollaborationAgent, CollaborationMember } from '@wegent/collaboration'
 import { IssueActivityTools } from '@wegent/collaboration/issue-detail/IssueActivityTools'
 import { canApproveIssueExecution } from '@wegent/collaboration/issue-detail/activityApproval'
+import { issueExecutionApprovalCreator } from './issueExecutionApproval'
+import { LOCAL_USER } from '@/api/local/localSession'
 import { copyTextToClipboard } from '@/lib/clipboard'
 import { createTaskCommentPreparer } from './prepareTaskComment'
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
@@ -76,11 +88,16 @@ import type { RuntimePaneQueuedMessage } from '@/types/workbench'
 import {
   selectActivityRerunModel,
   mergeProjectChatMessages,
+  refreshTaskAfterComment,
   startTaskAiRun,
 } from './taskAiExecution'
 import { RuntimeTaskExecutionOverlay } from './RuntimeTaskExecutionOverlay'
 import { CardCommentComposer, type CardCommentSendResult } from './CardCommentComposer'
 import { TaskCommentComposer } from './TaskCommentComposer'
+import {
+  useNotificationCommentReply,
+  useNotificationCommentDispatch,
+} from '@/features/notifications/useNotificationCommentReply'
 import { useIssueExecutionCancellation } from '@wegent/collaboration/issue-detail/useIssueExecutionCancellation'
 import { ChatMessage, type ExecutionTaskSummary } from './TaskActivityMessage'
 import { resolveMessageRunStatus } from './taskActivityMessageUtils'
@@ -90,6 +107,8 @@ import { IssueChangeRequestBadges } from '@/features/change-requests/IssueChange
 import type { CloudProjectMember } from '@/api/deliveries'
 
 interface TaskActivityViewProps {
+  commentActions?: import('@wegent/collaboration').CommentIssueActions
+  assignmentReceipts?: IssueAssignmentReceiptState | null
   commentAssignment?: import('@wegent/collaboration').CommentAssignment
   client?: ProjectChatClient
   project: CloudProject
@@ -113,6 +132,8 @@ interface TaskActivityViewProps {
   projectMembers?: CloudProjectMember[]
   issueTimeline?: boolean
   onOpenTask?: (task: LoopItemTaskBinding) => void
+  /** Embedded hosts hand workspace-dependent execution details back to the task page. */
+  onOpenRuntimeTask?: (address: RuntimeTaskAddress) => void
   onRefreshExecutionArtifacts?: () => void | Promise<void>
   /** Project members and robots that the comment composers can mention. */
   members?: CollaborationMember[]
@@ -215,6 +236,8 @@ function isVersionConflict(cause: unknown): boolean {
 }
 
 export function TaskActivityView({
+  commentActions,
+  assignmentReceipts,
   commentAssignment,
   client,
   project,
@@ -233,6 +256,7 @@ export function TaskActivityView({
   projectMembers = [],
   issueTimeline = false,
   onOpenTask,
+  onOpenRuntimeTask,
   onRefreshExecutionArtifacts,
   members = [],
   agents = [],
@@ -251,7 +275,7 @@ export function TaskActivityView({
   // Local project spaces keep their board, comments and runs in the local
   // executor; every delivery/approval call must route to the project's space
   // API instead of always hitting the cloud backend.
-  const projectLocation = (project as { location?: 'local' | 'cloud' }).location
+  const projectLocation = project.project_store === 'local' ? 'local' : 'cloud'
   const projectDeliveryApi =
     projectLocation === 'local'
       ? (services.projectSpaceApis?.local ?? services.deliveryApi)
@@ -393,6 +417,7 @@ export function TaskActivityView({
       handleFileSelect: attachmentSelection.handleFileSelect,
       addExistingAttachment: attachmentSelection.addExistingAttachment,
       removeAttachment: attachmentSelection.removeAttachment,
+      dismissAttachmentError: attachmentSelection.dismissAttachmentError,
       resetAttachments: attachmentSelection.resetAttachments,
       listLocalSkills: async () => [],
       listLocalApps: async () => [],
@@ -416,19 +441,31 @@ export function TaskActivityView({
   const [chatCurrentUserId, setChatCurrentUserId] = useState<string | null>(null)
   const [newCommentDraft, setNewCommentDraft] = useState('')
   const [replyTarget, setReplyTarget] = useState<TaskReplyCard | null>(null)
+  const skipReplyFocus = useRef(false)
   const replyComposerRef = useRef<HTMLDivElement>(null)
-  useEffect(() => {
-    if (!replyTarget) return
+  const focusReplyComposer = useCallback(() => {
     replyComposerRef.current
       ?.querySelector<HTMLElement>('[contenteditable="true"], textarea')
       ?.focus()
-  }, [replyTarget])
+  }, [])
+  useEffect(() => {
+    if (!replyTarget) return
+    if (skipReplyFocus.current) {
+      skipReplyFocus.current = false
+      return
+    }
+    focusReplyComposer()
+  }, [focusReplyComposer, replyTarget])
+  const beginReply = (card: TaskReplyCard) => {
+    if (card === replyTarget) focusReplyComposer()
+    else setReplyTarget(card)
+  }
   // A reply on a thread with no execution to continue only lands as a comment.
   // When a manager assigned this member a human work item, the reply also opens
   // that work item's task composer.
   // Local spaces expose both the signed-in identity and the device identity.
   const humanUserIds =
-    projectLocation === 'local' || project.project_store === 'local'
+    projectLocation === 'local'
       ? [currentUserId, chatCurrentUserId].filter((id): id is string | number => id != null)
       : (chatCurrentUserId ?? currentUserId)
   const currentHumanDispatch = humanDispatchAssignment(threadMessages, humanUserIds)
@@ -442,7 +479,9 @@ export function TaskActivityView({
   function cardReplyLabel(card: TaskReplyCard) {
     if (humanDispatchForCard(card)) return t('workbench.task_activity_reply_start_new_task')
     return t(
-      [card.root, ...card.replies].some(message => message.sender.type === 'agent')
+      [card.root, ...card.replies].some(
+        message => message.sender.type === 'agent' && !isPublicStandInMessage(message)
+      )
         ? 'workbench.task_activity_reply_action'
         : 'workbench.task_activity_reply_discussion'
     )
@@ -488,6 +527,8 @@ export function TaskActivityView({
   const cancellingMessageId = cancellation.stoppingMessageId
   const [error, setError] = useState<string | null>(null)
   const [readError, setReadError] = useState<string | null>(null)
+  const [expandedActivityScope, setExpandedActivityScope] = useState<string | null>(null)
+  const activityScope = `${project.project_store}:${project.id}:${task.id}`
   const executionBinding = useActivityExecutionBinding(messages, executionDetail?.messageId)
   const compact = rail || linear
   const readScope = useRef<object | null>(null)
@@ -502,7 +543,11 @@ export function TaskActivityView({
       const scope = readScope.current
       if (!projectDeliveryApi || !scope) return
       try {
-        const updated = await projectDeliveryApi.markLoopItemRead(task.id, sequence)
+        const updated = await projectDeliveryApi.markLoopItemRead(
+          task.id,
+          sequence,
+          task.content_revision
+        )
         if (readScope.current !== scope) {
           throw new DOMException('Activity read scope changed', 'AbortError')
         }
@@ -515,7 +560,7 @@ export function TaskActivityView({
         throw cause
       }
     },
-    [onTaskRead, projectDeliveryApi, t, task.id]
+    [onTaskRead, projectDeliveryApi, t, task.id, task.content_revision]
   )
   const { listRef, followCard, scrollTaskCommentsToBottom, revealCardBottom } =
     useIssueActivityScroll({
@@ -524,7 +569,11 @@ export function TaskActivityView({
       issueId: issueTimeline ? task.id : undefined,
       readSequence: task.activity_read_sequence ?? 0,
       unread: Boolean(task.is_unread),
-      unreadRevision: task.is_unread ? (task.content_revision ?? task.version) : undefined,
+      // Inbox notifications can arrive after the Issue content was already read.
+      // A visible visit must still acknowledge them through the shared read API.
+      unreadRevision: task.content_revision ?? task.version,
+      readRequestKey: focusedCommentRequestKey,
+      visibilityRevision: expandedActivityScope,
       onReadSequence: issueTimeline && projectDeliveryApi ? markActivityRead : undefined,
       linear,
       compact,
@@ -532,11 +581,44 @@ export function TaskActivityView({
     })
 
   // Land once per notification, then leave scrolling under the reader's control.
+  const notificationEntity = useNotificationEntity()
+  const ownsNotification =
+    notificationEntity?.projectId === project.id &&
+    notificationEntity?.issueId === task.id &&
+    notificationEntity?.store === project.project_store
+  const notificationCommentId = ownsNotification
+    ? notificationCommentFocus(
+        threadMessages,
+        notificationEntity?.address,
+        notificationEntity?.sourceMessageIds,
+        state.devices
+      )
+    : undefined
+  const onFocusedMessage = notificationEntity?.onFocusedMessage
+  const notificationRequestId = notificationEntity?.id
+  const notificationSourceIds = JSON.stringify(notificationEntity?.sourceMessageIds ?? [])
+  useEffect(() => {
+    if (ownsNotification) {
+      console.debug('[Wework] Notification comment location resolved', {
+        requestId: notificationRequestId,
+        sourceMessageIds: notificationSourceIds,
+        commentId: notificationCommentId,
+      })
+    }
+    if (ownsNotification && notificationCommentId) onFocusedMessage?.(notificationCommentId)
+  }, [
+    notificationCommentId,
+    notificationRequestId,
+    notificationSourceIds,
+    onFocusedMessage,
+    ownsNotification,
+  ])
   const flashedCommentId = useFocusedComment(
     listRef,
     threadMessages,
-    focusedCommentId,
-    focusedCommentRequestKey
+    notificationCommentId !== undefined ? notificationCommentId : focusedCommentId,
+    ownsNotification ? (notificationEntity?.id ?? null) : focusedCommentRequestKey,
+    !loading && Boolean(activityLoaded) && !activityHistory.loading
   )
 
   useEffect(() => {
@@ -641,10 +723,11 @@ export function TaskActivityView({
     ]
   )
   const activeUserId = currentUserId ?? chatCurrentUserId
+  const approvalUserId = projectLocation === 'local' ? LOCAL_USER.id : activeUserId
   const canApproveCurrentRun = canApproveIssueExecution(
     task.can_approve,
-    assignedAgent?.createdByUserId,
-    activeUserId
+    issueExecutionApprovalCreator(task, threadMessages, projectChatAgents),
+    approvalUserId
   )
   useEffect(() => {
     if (!onRefreshExecutionArtifacts) return
@@ -672,6 +755,23 @@ export function TaskActivityView({
         : groupIssueActivityThreads(threadMessages),
     [issueTimeline, threadMessages]
   )
+  const notificationReply = useNotificationCommentReply({
+    projectId: project.id,
+    issueId: task.id,
+    store: project.project_store,
+    cards: commentCards,
+    target: replyTarget,
+    selectTarget: card => {
+      if (card !== replyTarget) skipReplyFocus.current = true
+      setReplyTarget(card)
+    },
+  })
+  const notificationComposer = notificationReply?.composing ? notificationReply : null
+  const coordinateCommentDispatch = useNotificationCommentDispatch({
+    projectId: project.id,
+    issueId: task.id,
+    store: project.project_store,
+  })
   const activityEntries = useMemo(
     () =>
       issueActivityTimeline({
@@ -682,6 +782,37 @@ export function TaskActivityView({
       }),
     [activityHistory, commentCards, issueTimeline, task.created_at]
   )
+  const latestAssignment = activityEntries.findLast(activity => activity.kind === 'assignment')
+  const visibleActivity = useMemo(
+    () =>
+      collapsedIssueActivity(
+        activityEntries,
+        expandedActivityScope === activityScope ||
+          Boolean(notificationCommentId ?? focusedCommentId) ||
+          Boolean(replyTarget),
+        activity =>
+          activity.kind === 'comment'
+            ? [activity.card.root, ...activity.card.replies].map(message => message.sequenceNumber)
+            : []
+      ),
+    [
+      activityEntries,
+      activityScope,
+      expandedActivityScope,
+      notificationCommentId,
+      focusedCommentId,
+      replyTarget,
+    ]
+  )
+  const currentReceipts = sameIssueAssignment(
+    assignmentReceipts,
+    task.id,
+    task.version,
+    task.assignee_user_id,
+    issueAssignmentRevision(task)
+  )
+    ? assignmentReceipts
+    : null
 
   function cardSessionActive(card: TaskReplyCard) {
     if (onStartHumanTaskFromReply && humanDispatchForCard(card)) return false
@@ -692,7 +823,7 @@ export function TaskActivityView({
   }
   const replyQueue = useTaskReplyQueue({
     store: taskReplyQueueStore,
-    scope: `task-activity:${projectLocation ?? 'cloud'}:${project.id}:${task.id}`,
+    scope: `task-activity:${projectLocation}:${project.id}:${task.id}`,
     cards: commentCards,
     enabled: Boolean(client) && !sending,
     busy: cardSessionActive,
@@ -830,6 +961,16 @@ export function TaskActivityView({
     card: TaskReplyCard,
     reply: TaskCardQueuedReply
   ): Promise<TaskCardDispatchResult> {
+    return coordinateCommentDispatch(card.root.messageId, reply, humanRequestId =>
+      sendCardReplyNow(card, reply, humanRequestId)
+    )
+  }
+
+  async function sendCardReplyNow(
+    card: TaskReplyCard,
+    reply: TaskCardQueuedReply,
+    humanRequestId?: string
+  ): Promise<TaskCardDispatchResult> {
     if (!client)
       return { ok: false, persisted: false, error: t('workbench.project_chat_send_failed') }
     setSending(true)
@@ -837,7 +978,7 @@ export function TaskActivityView({
     try {
       const prepared = await prepareComment(reply.content, reply.attachments ?? [])
       const dispatch = humanDispatchForCard(card)
-      if (dispatch && onStartHumanTaskFromReply) {
+      if (dispatch && onStartHumanTaskFromReply && !humanRequestId) {
         const message = await client.send({
           projectId: project.id,
           taskId: task.id,
@@ -858,6 +999,7 @@ export function TaskActivityView({
         return { ok: true, persisted: true }
       }
       const result = await dispatchTaskCardReply({
+        humanRequestId,
         client,
         services: taskAiServices,
         runtime: { createProjectRuntimeTask, sendRuntimePaneMessage },
@@ -898,13 +1040,18 @@ export function TaskActivityView({
     card: TaskReplyCard,
     text: string,
     mentions: ProjectChatMention[],
-    attachments: Attachment[]
+    attachments: Attachment[],
+    interactionId?: string
   ): Promise<CardCommentSendResult> {
     if (!client || !text) return { ok: false, error: t('workbench.project_chat_send_failed') }
-    return replyQueue.enqueue(card.root.messageId, text, attachments, mentions)
+    return replyQueue.enqueue(card.root.messageId, text, attachments, mentions, interactionId)
   }
 
-  async function sendNewComment(text: string, mentions: ProjectChatMention[]): Promise<boolean> {
+  async function sendNewComment(
+    text: string,
+    mentions: ProjectChatMention[],
+    submission?: { commentOnly?: boolean }
+  ): Promise<boolean> {
     let persisted = false
     const attachments = attachmentSelection.attachments
     if (!client || !text || sending) return false
@@ -919,11 +1066,13 @@ export function TaskActivityView({
       const executionProject = effectiveCommentProject
       const explicitMentions = commentAgentMentions(text, agents)
       const activeMentions: ProjectChatMention[] = [
-        ...(explicitMentions.length || projectLocation !== 'local'
-          ? explicitMentions
-          : assignedAgent
-            ? [{ type: 'agent' as const, id: assignedAgent.id, label: assignedAgent.name }]
-            : []),
+        ...(submission?.commentOnly
+          ? []
+          : explicitMentions.length || projectLocation !== 'local'
+            ? explicitMentions
+            : assignedAgent
+              ? [{ type: 'agent' as const, id: assignedAgent.id, label: assignedAgent.name }]
+              : []),
         ...mentions.filter(mention => mention.type === 'user'),
       ]
       const message = await client.send({
@@ -945,7 +1094,7 @@ export function TaskActivityView({
       attachmentSelection.resetAttachments()
       scrollTaskCommentsToBottom()
       void persistConversationAttachments(attachments)
-      if (client.executeTaskComment) {
+      if (!submission?.commentOnly && client.executeTaskComment) {
         const incoming = await client.executeTaskComment({
           projectId: project.id,
           taskId: task.id,
@@ -953,7 +1102,7 @@ export function TaskActivityView({
           attachmentIds: prepared.attachments.map(file => file.id),
         })
         setMessages(current => mergeProjectChatMessages(current, incoming))
-      } else if (assignedAgent && !selfManagedExecution) {
+      } else if (!submission?.commentOnly && assignedAgent && !selfManagedExecution) {
         await startTaskAiRun({
           client,
           services: taskAiServices,
@@ -980,6 +1129,13 @@ export function TaskActivityView({
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : t('workbench.project_chat_send_failed'))
     } finally {
+      if (persisted)
+        await refreshTaskAfterComment({
+          projectId: project.id,
+          taskId: task.id,
+          getTask: projectDeliveryApi?.getLoopItem,
+          onTaskUpdated,
+        })
       setSending(false)
     }
     return persisted
@@ -987,16 +1143,23 @@ export function TaskActivityView({
 
   async function submitTimelineComment(
     text: string,
-    mentions: ProjectChatMention[]
+    mentions: ProjectChatMention[],
+    submission?: { commentOnly?: boolean }
   ): Promise<boolean> {
     if (!replyTarget) {
-      return sendNewComment(text, mentions)
+      return sendNewComment(text, mentions, submission)
     }
     if (!attachmentSelection.isAttachmentReadyToSend) {
       setError(t('workbench.task_activity_attachment_uploading'))
       return false
     }
-    const result = await sendCardReply(replyTarget, text, mentions, attachmentSelection.attachments)
+    const result = await sendCardReply(
+      replyTarget,
+      text,
+      mentions,
+      attachmentSelection.attachments,
+      notificationComposer?.id
+    )
     if (!result.ok) {
       setError(result.error ?? t('workbench.project_chat_send_failed'))
       return false
@@ -1006,6 +1169,28 @@ export function TaskActivityView({
     attachmentSelection.resetAttachments()
     return true
   }
+
+  const renderCommentChildAction = (message: ProjectChatMessage) =>
+    issueTimeline && commentAssignment?.createChild && client ? (
+      <IssueCommentChildAction
+        body={message.content}
+        messageId={message.messageId}
+        assignment={commentAssignment}
+        translate={activityTranslate}
+        onComment={async (text, requestId) => {
+          const notice = await client.send({
+            projectId: project.id,
+            taskId: task.id,
+            clientMessageId: requestId,
+            text,
+            replyToMessageId: message.messageId,
+            model: null,
+            mentions: [],
+          })
+          setMessages(current => mergeProjectChatMessages(current, [notice]))
+        }}
+      />
+    ) : null
 
   const renderActivityMessage = (
     message: ProjectChatMessage,
@@ -1021,53 +1206,72 @@ export function TaskActivityView({
         )
       : undefined
     return (
-      <ChatMessage
-        key={message.messageId}
-        message={message}
-        executionTurnId={executionBinding.getTurnId(message)}
-        flash={message.messageId === flashedCommentId}
-        mine={
-          message.sender.type === 'user' &&
-          String(message.sender.id) === String(chatCurrentUserId ?? currentUserId ?? '')
-        }
-        compact
-        plain
-        showInlineExecutionStatus={issueTimeline}
-        agentRole={agentRole}
-        allowBackendExecutionFallback={!issueTimeline}
-        eventOnly={eventOnly}
-        taskAiState={task.ai_state}
-        executionDeviceName={deviceNameForMessage(message)}
-        taskSummary={taskSummaryForMessage(message)}
-        hideTime={hideTime}
-        onOpenExecution={
-          issueTimeline
-            ? binding && onOpenTask
-              ? () => onOpenTask(binding)
-              : undefined
-            : address
-              ? () =>
-                  setExecutionDetail({
-                    address,
-                    messageId: message.messageId,
-                    senderName: message.sender.name,
-                    runId:
-                      typeof message.metadata.run_id === 'string' ? message.metadata.run_id : null,
-                    modelName:
-                      typeof message.metadata.model === 'string' ? message.metadata.model : null,
-                    runStatus: resolveMessageRunStatus(task.ai_state, message),
-                  })
-              : undefined
-        }
-        onStopExecution={address ? () => void stopRuntimeTask(message) : undefined}
-        stopping={cancellingMessageId === message.messageId}
-      />
+      <div key={message.messageId}>
+        <ChatMessage
+          key={message.messageId}
+          message={message}
+          members={members}
+          executionTurnId={executionBinding.getTurnId(message)}
+          flash={message.messageId === flashedCommentId}
+          mine={
+            message.sender.type === 'user' &&
+            String(message.sender.id) === String(chatCurrentUserId ?? currentUserId ?? '')
+          }
+          compact
+          plain
+          showInlineExecutionStatus={issueTimeline}
+          agentRole={agentRole}
+          allowBackendExecutionFallback={!issueTimeline}
+          eventOnly={eventOnly}
+          taskAiState={task.ai_state}
+          executionDeviceName={deviceNameForMessage(message)}
+          taskSummary={taskSummaryForMessage(message)}
+          hideTime={hideTime}
+          onOpenExecution={
+            address && onOpenRuntimeTask
+              ? () => onOpenRuntimeTask(address)
+              : issueTimeline
+                ? binding && onOpenTask
+                  ? () => onOpenTask(binding)
+                  : undefined
+                : address
+                  ? () =>
+                      setExecutionDetail({
+                        address,
+                        messageId: message.messageId,
+                        senderName: message.sender.name,
+                        runId:
+                          typeof message.metadata.run_id === 'string'
+                            ? message.metadata.run_id
+                            : null,
+                        modelName:
+                          typeof message.metadata.model === 'string'
+                            ? message.metadata.model
+                            : null,
+                        runStatus: resolveMessageRunStatus(task.ai_state, message),
+                      })
+                  : undefined
+          }
+          onStopExecution={address ? () => void stopRuntimeTask(message) : undefined}
+          stopping={cancellingMessageId === message.messageId}
+        />
+        {!eventOnly && renderCommentChildAction(message)}
+      </div>
     )
   }
 
   return (
     <>
       <IssueChangeRequestBadges api={services.deviceApi} badges={task.badges ?? []} />
+      <IssueHumanRequests
+        key={`${projectLocation}:${project.id}:${task.id}`}
+        services={services}
+        projectId={String(project.id)}
+        issueId={task.id}
+        store={projectLocation === 'local' ? 'local' : 'backend'}
+        userId={activeUserId ?? undefined}
+        members={members}
+      />
       <IssueActivityFeed
         mode={linear ? 'linear' : rail ? 'rail' : 'document'}
         testId={`cloud-task-activity-${task.id}`}
@@ -1118,7 +1322,9 @@ export function TaskActivityView({
                       {t(
                         replyHumanDispatch
                           ? 'workbench.task_activity_replying_to_human'
-                          : 'workbench.task_activity_replying_to',
+                          : isPublicStandInMessage(replyTarget.root)
+                            ? 'workbench.task_activity_replying_to_stand_in'
+                            : 'workbench.task_activity_replying_to',
                         {
                           name: replyTarget.root.sender.name,
                         }
@@ -1148,6 +1354,7 @@ export function TaskActivityView({
                 </div>
               ) : null}
               <TaskCommentComposer
+                issueActions={!replyTarget ? commentActions : undefined}
                 assignment={!replyTarget ? commentAssignment : undefined}
                 predictionAddress={
                   replyTarget && !replyHumanDispatch
@@ -1155,19 +1362,32 @@ export function TaskActivityView({
                     : null
                 }
                 key={task.id}
-                value={newCommentDraft}
-                onChange={setNewCommentDraft}
+                value={notificationComposer?.draft ?? newCommentDraft}
+                onChange={value => {
+                  setNewCommentDraft(value)
+                  notificationComposer?.setDraft(value)
+                }}
                 onSubmit={submitTimelineComment}
-                disabled={!client}
-                sending={sending}
-                error={error ?? (!client ? t('workbench.project_chat_cloud_required') : null)}
+                disabled={!client || notificationComposer?.disabled === true}
+                sending={sending || notificationComposer?.busy === true}
+                error={
+                  notificationComposer?.error ??
+                  error ??
+                  (!client ? t('workbench.project_chat_cloud_required') : null)
+                }
                 mentionCandidates={mentionCandidates}
                 translate={activityTranslate}
                 controls={commentProjectChat}
                 projectWork={commentProjectWork}
                 serverExecution={Boolean(client?.executeTaskComment)}
                 placeholder={
-                  replyTarget ? t('workbench.task_activity_inline_placeholder') : undefined
+                  replyTarget
+                    ? t(
+                        isPublicStandInMessage(replyTarget.root)
+                          ? 'workbench.task_activity_stand_in_reply_placeholder'
+                          : 'workbench.task_activity_inline_placeholder'
+                      )
+                    : undefined
                 }
               />
             </div>
@@ -1175,6 +1395,7 @@ export function TaskActivityView({
             <>
               {linear || client?.executeTaskComment ? (
                 <TaskCommentComposer
+                  issueActions={commentActions}
                   assignment={commentAssignment}
                   key={task.id}
                   value={newCommentDraft}
@@ -1218,7 +1439,29 @@ export function TaskActivityView({
       >
         {linear ? (
           <div className="flex flex-col">
-            {activityEntries.map(activity => {
+            {visibleActivity.map(row => {
+              if (row.kind === 'collapsed')
+                return (
+                  <div
+                    key="collapsed-middle"
+                    className="my-3 flex items-center gap-3"
+                    data-testid="issue-collapsed-activity"
+                    data-activity-collapsed-first-sequence={row.firstSequence}
+                    data-activity-collapsed-last-sequence={row.lastSequence}
+                  >
+                    <span aria-hidden="true" className="h-px flex-1 bg-border" />
+                    <button
+                      type="button"
+                      data-testid="issue-expand-activity"
+                      onClick={() => setExpandedActivityScope(activityScope)}
+                      className="min-h-11 shrink-0 rounded-lg border border-border px-3 text-sm text-text-secondary transition-colors hover:bg-muted hover:text-text-primary keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-focus/30 md:min-h-8"
+                    >
+                      {t('personalHome.expandActivity', { count: row.count })}
+                    </button>
+                    <span aria-hidden="true" className="h-px flex-1 bg-border" />
+                  </div>
+                )
+              const activity = row.activity
               if (activity.kind === 'created') {
                 return (
                   <div
@@ -1267,6 +1510,21 @@ export function TaskActivityView({
                     entry={activity.entry}
                     index={activity.index}
                     projectMembers={projectMembers}
+                    receipts={
+                      activity === latestAssignment &&
+                      activity.entry.action !== 'unassign' &&
+                      activity.entry.to_type === 'user' &&
+                      currentReceipts?.assigneeUserId != null &&
+                      activity.entry.to_id === String(currentReceipts.assigneeUserId) ? (
+                        <span
+                          data-testid="issue-assignment-activity-receipts"
+                          className="inline-flex items-center gap-1 text-xs text-text-muted"
+                          aria-live="polite"
+                        >
+                          <IssueAssignmentReceiptStatus {...currentReceipts} />
+                        </span>
+                      ) : null
+                    }
                   />
                 )
               }
@@ -1292,9 +1550,14 @@ export function TaskActivityView({
                         message={card.root}
                         task={task}
                         onOpenExecution={
-                          binding && onOpenTask ? () => onOpenTask(binding) : undefined
+                          address && onOpenRuntimeTask
+                            ? () => onOpenRuntimeTask(address)
+                            : binding && onOpenTask
+                              ? () => onOpenTask(binding)
+                              : undefined
                         }
                       />
+                      {renderCommentChildAction(card.root)}
                     </div>
                     <div data-testid={`cloud-task-activity-replies-${rootId}`}>
                       {card.replies.map(reply => renderActivityMessage(reply))}
@@ -1305,7 +1568,7 @@ export function TaskActivityView({
                         createdAt={issueThreadActivityTimestamp(card)}
                         replyLabel={cardReplyLabel(card)}
                         active={replyTarget?.root.messageId === rootId}
-                        onReply={() => setReplyTarget(card)}
+                        onReply={() => beginReply(card)}
                       />
                     ) : null}
                   </div>
@@ -1343,7 +1606,7 @@ export function TaskActivityView({
                           createdAt={issueThreadActivityTimestamp(card)}
                           replyLabel={cardReplyLabel(card)}
                           active={replyTarget?.root.messageId === rootId}
-                          onReply={() => setReplyTarget(card)}
+                          onReply={() => beginReply(card)}
                         />
                       ) : (
                         <CardCommentComposer
@@ -1389,6 +1652,7 @@ export function TaskActivityView({
                 <ChatMessage
                   key={message.messageId}
                   message={message}
+                  members={members}
                   executionTurnId={executionBinding.getTurnId(message)}
                   flash={message.messageId === flashedCommentId}
                   mine={
@@ -1401,7 +1665,11 @@ export function TaskActivityView({
                   taskSummary={taskSummaryForMessage(message)}
                   onOpenExecution={
                     runtimeAddress
-                      ? () =>
+                      ? () => {
+                          if (onOpenRuntimeTask) {
+                            onOpenRuntimeTask(runtimeAddress)
+                            return
+                          }
                           setExecutionDetail({
                             address: runtimeAddress,
                             messageId: message.messageId,
@@ -1416,6 +1684,7 @@ export function TaskActivityView({
                                 : null,
                             runStatus: resolveMessageRunStatus(task.ai_state, message),
                           })
+                        }
                       : undefined
                   }
                   onStopExecution={runtimeAddress ? () => void stopRuntimeTask(message) : undefined}
@@ -1434,7 +1703,7 @@ export function TaskActivityView({
             executionDetail.messageId,
           ])}
           address={
-            projectLocation === 'local' || project.project_store === 'local'
+            projectLocation === 'local'
               ? executionDetail.address
               : {
                   ...executionDetail.address,

@@ -30,6 +30,7 @@ import {
   Zap,
 } from 'lucide-react'
 import { toast } from 'sonner'
+import { subscriptionApis } from '@/apis/subscription'
 import { useTranslation } from '@/hooks/useTranslation'
 import { Button } from '@/components/ui/button'
 import {
@@ -283,6 +284,29 @@ export function SubscriptionTimeline({
 
   // Track which execution's summary is expanded
   const [expandedSummaryId, setExpandedSummaryId] = useState<number | null>(null)
+  // Full summaries fetched on demand for executions whose list preview was truncated
+  const [fullSummaries, setFullSummaries] = useState<Record<number, string>>({})
+  // Track which execution's full summary is currently being fetched
+  const [loadingSummaryId, setLoadingSummaryId] = useState<number | null>(null)
+
+  // Expand a summary, fetching its full content first when the list only returned a preview
+  const handleExpandSummary = async (exec: BackgroundExecution) => {
+    if (!exec.result_summary_truncated || fullSummaries[exec.id] !== undefined) {
+      setExpandedSummaryId(exec.id)
+      return
+    }
+
+    setLoadingSummaryId(exec.id)
+    try {
+      const fullExecution = await subscriptionApis.getExecution(exec.id)
+      setFullSummaries(prev => ({ ...prev, [exec.id]: fullExecution.result_summary ?? '' }))
+      setExpandedSummaryId(exec.id)
+    } catch {
+      toast.error(t('feed.load_summary_failed'))
+    } finally {
+      setLoadingSummaryId(null)
+    }
+  }
 
   const renderPost = (exec: BackgroundExecution, isLast: boolean) => {
     const status = statusConfig[exec.status]
@@ -402,7 +426,7 @@ export function SubscriptionTimeline({
                   <div className="text-sm prose prose-sm max-w-none dark:prose-invert">
                     {isSummaryExpanded ? (
                       <EnhancedMarkdown
-                        source={exec.result_summary}
+                        source={fullSummaries[exec.id] ?? exec.result_summary}
                         theme={theme}
                         components={{
                           img: ({ src, alt }) => {
@@ -437,9 +461,13 @@ export function SubscriptionTimeline({
                       </button>
                     ) : (
                       <button
-                        onClick={() => setExpandedSummaryId(exec.id)}
-                        className="text-xs text-primary hover:text-primary/80 transition-colors"
+                        onClick={() => handleExpandSummary(exec)}
+                        disabled={loadingSummaryId === exec.id}
+                        className="text-xs text-primary hover:text-primary/80 transition-colors disabled:opacity-50"
                       >
+                        {loadingSummaryId === exec.id && (
+                          <Loader2 className="h-3 w-3 animate-spin inline-block mr-1" />
+                        )}
                         {t('feed.expand')}
                       </button>
                     )}

@@ -128,6 +128,87 @@ fn executor_source_dir() -> PathBuf {
         .unwrap_or_else(|| PathBuf::from(env!("CARGO_MANIFEST_DIR")))
 }
 
+#[derive(serde::Deserialize)]
+struct SourceMetadata {
+    workspace_root: PathBuf,
+    packages: Vec<SourcePackage>,
+}
+
+#[derive(serde::Deserialize)]
+struct SourcePackage {
+    manifest_path: PathBuf,
+    dependencies: Vec<SourceDependency>,
+}
+
+#[derive(serde::Deserialize)]
+struct SourceDependency {
+    path: Option<PathBuf>,
+}
+
+fn rust_source_inputs(manifest: &Path) -> Result<(Vec<PathBuf>, Vec<PathBuf>), String> {
+    use std::collections::BTreeSet;
+    let mut pending = vec![manifest.to_path_buf()];
+    let mut visited = BTreeSet::new();
+    let mut directories = BTreeSet::new();
+    let mut files = BTreeSet::new();
+    while let Some(manifest) = pending.pop() {
+        if visited.contains(&manifest) {
+            continue;
+        }
+        let output = Command::new("cargo")
+            .args([
+                "metadata",
+                "--no-deps",
+                "--format-version",
+                "1",
+                "--manifest-path",
+            ])
+            .arg(&manifest)
+            .output()
+            .map_err(|error| format!("failed to query Cargo source dependencies: {error}"))?;
+        if !output.status.success() {
+            return Err(format!(
+                "Cargo source discovery failed: {}",
+                String::from_utf8_lossy(&output.stderr)
+            ));
+        }
+        let metadata: SourceMetadata = serde_json::from_slice(&output.stdout)
+            .map_err(|error| format!("invalid Cargo source metadata: {error}"))?;
+        for name in ["Cargo.toml", "Cargo.lock"] {
+            let file = metadata.workspace_root.join(name);
+            if file.exists() {
+                files.insert(file);
+            }
+        }
+        for package in metadata.packages {
+            visited.insert(package.manifest_path.clone());
+            let root = package
+                .manifest_path
+                .parent()
+                .ok_or("Cargo package has no source directory")?;
+            let source = root.join("src");
+            if source.exists() {
+                directories.insert(source);
+            }
+            let build = root.join("build.rs");
+            if build.exists() {
+                files.insert(build);
+            }
+            files.insert(package.manifest_path);
+            pending.extend(
+                package
+                    .dependencies
+                    .into_iter()
+                    .filter_map(|dependency| dependency.path.map(|path| path.join("Cargo.toml"))),
+            );
+        }
+    }
+    Ok((
+        directories.into_iter().collect(),
+        files.into_iter().collect(),
+    ))
+}
+
 fn watch_executor_sources(
     manifest_dir: &Path,
     tx: mpsc::Sender<DevEvent>,
@@ -144,21 +225,13 @@ fn watch_executor_sources(
     )
     .map_err(|error| error.to_string())?;
 
-    watch_path(
-        &mut watcher,
-        &manifest_dir.join("src"),
-        RecursiveMode::Recursive,
-    )?;
-    watch_path(
-        &mut watcher,
-        &manifest_dir.join("Cargo.toml"),
-        RecursiveMode::NonRecursive,
-    )?;
-    watch_path(
-        &mut watcher,
-        &manifest_dir.join("Cargo.lock"),
-        RecursiveMode::NonRecursive,
-    )?;
+    let (directories, files) = rust_source_inputs(&manifest_dir.join("Cargo.toml"))?;
+    for path in directories {
+        watch_path(&mut watcher, &path, RecursiveMode::Recursive)?;
+    }
+    for path in files {
+        watch_path(&mut watcher, &path, RecursiveMode::NonRecursive)?;
+    }
     Ok(watcher)
 }
 
@@ -343,12 +416,6 @@ mod tests {
     }
 
     impl EnvVarGuard {
-        fn set(key: &'static str, value: &Path) -> Self {
-            let previous = env::var_os(key);
-            env::set_var(key, value);
-            Self { key, previous }
-        }
-
         fn set_text(key: &'static str, value: &str) -> Self {
             let previous = env::var_os(key);
             env::set_var(key, value);
@@ -370,51 +437,6 @@ mod tests {
                 env::remove_var(self.key);
             }
         }
-    }
-
-    #[test]
-    fn debug_binary_path_uses_explicit_cargo_target_dir() {
-        let _guard = env_lock();
-        let target_dir = env::temp_dir().join("wegent-executor-dev-target");
-        let _env = EnvVarGuard::set("CARGO_TARGET_DIR", &target_dir);
-        let _target = EnvVarGuard::remove(BUILD_TARGET_ENV);
-
-        assert_eq!(
-            debug_binary_path(Path::new("/tmp/executor")),
-            target_dir.join("debug").join(executable_name())
-        );
-    }
-
-    #[test]
-    fn debug_binary_path_defaults_to_manifest_target_dir() {
-        let _guard = env_lock();
-        let _env = EnvVarGuard::remove("CARGO_TARGET_DIR");
-        let _target = EnvVarGuard::remove(BUILD_TARGET_ENV);
-        let manifest_dir = Path::new("/tmp/executor");
-
-        assert_eq!(
-            debug_binary_path(manifest_dir),
-            manifest_dir
-                .join("target")
-                .join("debug")
-                .join(executable_name())
-        );
-    }
-
-    #[test]
-    fn debug_binary_path_includes_explicit_build_target() {
-        let _guard = env_lock();
-        let target_dir = env::temp_dir().join("wegent-executor-dev-target");
-        let _env = EnvVarGuard::set("CARGO_TARGET_DIR", &target_dir);
-        let _target = EnvVarGuard::set_text(BUILD_TARGET_ENV, "x86_64-pc-windows-msvc");
-
-        assert_eq!(
-            debug_binary_path(Path::new("/tmp/executor")),
-            target_dir
-                .join("x86_64-pc-windows-msvc")
-                .join("debug")
-                .join(executable_name())
-        );
     }
 
     #[test]
@@ -460,27 +482,10 @@ mod tests {
     }
 
     #[test]
-    fn executor_source_dir_uses_runtime_override() {
-        let _guard = env_lock();
-        let source_dir = PathBuf::from("/tmp/wegent-executor-source");
-        let _env = EnvVarGuard::set("WEGENT_EXECUTOR_SOURCE_DIR", &source_dir);
-
-        assert_eq!(executor_source_dir(), source_dir);
-    }
-
-    #[test]
     fn parent_process_change_detects_orphaned_supervisor() {
         assert!(parent_process_changed(42, 1));
         assert!(parent_process_changed(42, 43));
         assert!(!parent_process_changed(42, 42));
         assert!(!parent_process_changed(1, 1));
-    }
-
-    fn executable_name() -> &'static str {
-        if cfg!(windows) {
-            "wegent-executor.exe"
-        } else {
-            "wegent-executor"
-        }
     }
 }

@@ -10,6 +10,8 @@
  * fall back to server-side offset/limit pagination.
  */
 
+import client from '@/apis/client'
+import { isContinuableDeletionError } from '@/apis/knowledge-deletion'
 import { useState, useCallback, useEffect, useRef } from 'react'
 import { ApiError } from '@/apis/client'
 import {
@@ -19,7 +21,7 @@ import {
   deleteDocument,
   batchDeleteDocuments,
   transferDocuments,
-  type BatchOperationResult,
+  type BatchDeletionResult,
   type TransferDocumentsRequest,
   type TransferDocumentsResponse,
   type ListDocumentsParams,
@@ -161,6 +163,9 @@ export function useDocuments(options: UseDocumentsOptions) {
     origin,
   } = options
   const { t } = useTranslation('knowledge')
+  const deletionScope = JSON.stringify([knowledgeBaseId, client.getCacheScope()])
+  const deletionScopeRef = useRef(deletionScope)
+  deletionScopeRef.current = deletionScope
 
   const [documents, setDocuments] = useState<KnowledgeDocument[]>([])
   const [loading, setLoading] = useState(false)
@@ -172,6 +177,30 @@ export function useDocuments(options: UseDocumentsOptions) {
   const [pageSize, setPageSize] = useState(initialPageSize)
   const [totalCount, setTotalCount] = useState(0)
   const totalPages = Math.max(1, Math.ceil(totalCount / pageSize))
+  const batchViewScope = JSON.stringify([
+    knowledgeBaseId,
+    client.getCacheScope(),
+    folderId,
+    includeSubfolders,
+    folderScopeIds,
+    keyword,
+    debouncedKeyword,
+    sortBy,
+    sortOrder,
+    origin,
+    loadAll,
+    paginationEnabled,
+    serverPaginationOnly,
+    autoLoad,
+    page,
+    pageSize,
+  ])
+  const batchViewScopeRef = useRef(batchViewScope)
+  batchViewScopeRef.current = batchViewScope
+  const displayedDocumentsRef = useRef(documents)
+  displayedDocumentsRef.current = documents
+  const [batchRefreshRevision, setBatchRefreshRevision] = useState(0)
+  const handledBatchRefreshRevision = useRef(0)
 
   // Use refs for pagination state to avoid stale closures and duplicate fetches.
   // This prevents fetchDocuments from depending on page/pageSize, which would
@@ -507,15 +536,24 @@ export function useDocuments(options: UseDocumentsOptions) {
   )
 
   const remove = useCallback(
-    async (id: number) => {
+    async (id: number, continueOnExternalFailure = false) => {
+      const requestScope = deletionScopeRef.current
+      const cacheScope = client.getCacheScope()
+      const current = () =>
+        deletionScopeRef.current === requestScope && client.getCacheScope() === cacheScope
       setLoading(true)
       setError(null)
       try {
-        await deleteDocument(id)
+        const outcome = await deleteDocument(id, continueOnExternalFailure)
+        if (!current()) return false
+        if (outcome?.index_cleanup === 'unconfirmed') {
+          toast({ title: t('knowledge:document.deletion.residualWarning') })
+        }
         if (paginationEnabledRef.current) {
           resetLocalSnapshot()
           const currentPage = pageRef.current
           await fetchDocuments()
+          if (!current()) return false
           // If the current page is now empty and we're not on page 1, go to previous page
           setDocuments(prev => {
             if (prev.length === 0 && currentPage > 1) {
@@ -528,12 +566,14 @@ export function useDocuments(options: UseDocumentsOptions) {
           setDocuments(prev => prev.filter(doc => doc.id !== id))
           setTotalCount(prev => Math.max(0, prev - 1))
         }
+        return true
       } catch (err) {
+        if (!current()) throw err
         const message = mapKnowledgeDocumentErrorMessage(err, t, 'document.document.deleteFailed')
-        toast({ title: message, variant: 'destructive' })
+        if (!isContinuableDeletionError(err)) toast({ title: message, variant: 'destructive' })
         throw err
       } finally {
-        setLoading(false)
+        if (current()) setLoading(false)
       }
     },
     [t, fetchDocuments, goToPage, resetLocalSnapshot]
@@ -541,23 +581,47 @@ export function useDocuments(options: UseDocumentsOptions) {
 
   // Batch operations
   const batchDelete = useCallback(
-    async (ids: number[]): Promise<BatchOperationResult> => {
+    async (
+      ids: number[],
+      continueOnExternalFailure = false
+    ): Promise<BatchDeletionResult | null> => {
+      const requestScope = deletionScopeRef.current
+      const requestView = batchViewScopeRef.current
+      const cacheScope = client.getCacheScope()
+      const current = () =>
+        deletionScopeRef.current === requestScope && client.getCacheScope() === cacheScope
       setLoading(true)
       setError(null)
       try {
-        const result = await batchDeleteDocuments(ids)
-        if (paginationEnabledRef.current) {
-          resetLocalSnapshot()
-          await fetchDocuments()
-        } else {
-          // Remove successfully deleted documents from state
-          setDocuments(prev =>
-            prev.filter(doc => !ids.includes(doc.id) || result.failed_ids.includes(doc.id))
-          )
-          setTotalCount(prev => Math.max(0, prev - (ids.length - result.failed_ids.length)))
+        const result = await batchDeleteDocuments([...new Set(ids)], continueOnExternalFailure)
+        if (!current()) return null
+        resetLocalSnapshot()
+        if (batchViewScopeRef.current !== requestView) {
+          setBatchRefreshRevision(revision => revision + 1)
+          return result
         }
-        return result
+        const deletedIds = new Set(
+          result.items.filter(item => item.content_deleted).map(item => item.document_id)
+        )
+        const removedVisibleCount = displayedDocumentsRef.current.filter(doc =>
+          deletedIds.has(doc.id)
+        ).length
+        setDocuments(prev =>
+          current() && batchViewScopeRef.current === requestView
+            ? prev.filter(doc => !deletedIds.has(doc.id))
+            : prev
+        )
+        setTotalCount(prev =>
+          current() && batchViewScopeRef.current === requestView
+            ? Math.max(0, prev - removedVisibleCount)
+            : prev
+        )
+        if (paginationEnabledRef.current) {
+          await fetchDocuments()
+        }
+        return current() ? result : null
       } catch (err) {
+        if (!current() || batchViewScopeRef.current !== requestView) throw err
         const message = mapKnowledgeDocumentErrorMessage(
           err,
           t,
@@ -566,7 +630,7 @@ export function useDocuments(options: UseDocumentsOptions) {
         toast({ title: message, variant: 'destructive' })
         throw err
       } finally {
-        setLoading(false)
+        if (current() && batchViewScopeRef.current === requestView) setLoading(false)
       }
     },
     [t, fetchDocuments, resetLocalSnapshot]
@@ -640,6 +704,14 @@ export function useDocuments(options: UseDocumentsOptions) {
     loadAll,
     fetchDocuments,
   ])
+
+  useEffect(() => {
+    if (handledBatchRefreshRevision.current === batchRefreshRevision) return
+    handledBatchRefreshRevision.current = batchRefreshRevision
+    if (autoLoad) {
+      void fetchDocuments()
+    }
+  }, [batchRefreshRevision, autoLoad, fetchDocuments])
 
   return {
     documents,

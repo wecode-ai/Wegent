@@ -16,6 +16,10 @@ inputs:
 runs:
   using: composite
   steps:
+    - name: Restore published Electron and Codex downloads
+      shell: bash
+      run: .github/scripts/restore-ci-downloads.sh
+
     - name: Set up Node workspace
       uses: ./.github/actions/setup-node-workspace
       with:
@@ -39,9 +43,8 @@ runs:
         EXECUTOR_IMAGE: ${{ inputs.executor-image }}
         BACKEND_RS_IMAGE: ${{ inputs.backend-rs-image }}
         GITHUB_TOKEN: ${{ github.token }}
-        BUILD_RUNTIMES_FROM_SOURCE: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository }}
-        EXECUTOR_ARTIFACT: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository }}
-        EXECUTOR_HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        RUNTIME_ARTIFACTS: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository }}
+        RUNTIME_HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
         # Allow the producer's 25-minute deadline plus runner queue time.
         # The 35-minute consumer deadline leaves time for setup and archiving.
         OCI_RUNTIME_WAIT_SECONDS: "1800"
@@ -51,52 +54,35 @@ runs:
         WEWORK_ELECTRON_DEPENDENCIES_READY: "true"
       run: |
         mkdir -p .ci-artifacts
-        restore_executor() {
-          if [[ "$EXECUTOR_ARTIFACT" == "true" ]]; then
-            artifact_directory="$(mktemp -d .ci-artifacts/executor-download.XXXXXX)"
-            trap 'rm -rf "$artifact_directory"' EXIT
+        restore_runtime() {
+          local component="$1" artifact="$2" binary="$3" image="$4" image_path="$5"
+          if [[ "$RUNTIME_ARTIFACTS" == "true" ]]; then
             ACTIONS_ARTIFACT_WORKFLOW=e2e-tests.yml \
-              ACTIONS_ARTIFACT_HEAD_SHA="$EXECUTOR_HEAD_SHA" \
+              ACTIONS_ARTIFACT_HEAD_SHA="$RUNTIME_HEAD_SHA" \
               ACTIONS_ARTIFACT_WAIT_SECONDS=1800 \
-              .github/scripts/download-actions-artifact.sh \
-                executor-e2e-binary "$artifact_directory"
-            test -f "$artifact_directory/wegent-executor"
-            chmod 0755 "$artifact_directory/wegent-executor"
-            mv "$artifact_directory/wegent-executor" .ci-artifacts/wegent-executor
+              .github/scripts/restore-actions-runtime.sh \
+                "$artifact" "$component" "$binary" "$image" ".ci-artifacts/$binary"
           else
             .github/scripts/restore-oci-runtime-binary.sh \
-              "$EXECUTOR_IMAGE" \
-              /app/executor \
-              .ci-artifacts/wegent-executor
+              "$image" "$image_path" ".ci-artifacts/$binary"
           fi
         }
-        restore_executor &
+        restore_runtime executor executor-e2e-binary wegent-executor "$EXECUTOR_IMAGE" /app/executor &
         executor_pid=$!
-        (
-          if [[ "$BUILD_RUNTIMES_FROM_SOURCE" == "true" ]]; then
-            oras logout ghcr.io
-            unset GITHUB_TOKEN
-            apt-get update
-            apt-get install -y --no-install-recommends cmake nasm
-            cargo build --release --locked --manifest-path backend-rs/Cargo.toml --bin wegent-backend-rs
-            install -m 0755 backend-rs/target/release/wegent-backend-rs .ci-artifacts/wegent-backend-rs.build
-            mv .ci-artifacts/wegent-backend-rs.build .ci-artifacts/wegent-backend-rs
-          else
-            .github/scripts/restore-oci-runtime-binary.sh \
-              "$BACKEND_RS_IMAGE" /app/wegent-backend-rs .ci-artifacts/wegent-backend-rs
-          fi
-        ) &
+        restore_runtime backend-rs backend-rs-e2e-runtime wegent-backend-rs "$BACKEND_RS_IMAGE" /app/wegent-backend-rs &
         backend_pid=$!
 
         status=0
-        if [[ "$BUILD_RUNTIMES_FROM_SOURCE" == "true" ]]; then
+        if [[ "$RUNTIME_ARTIFACTS" == "true" ]]; then
           if ! wait "$executor_pid"; then status=1; fi
           if ! wait "$backend_pid"; then status=1; fi
           if ((status != 0)); then exit "$status"; fi
+          oras logout ghcr.io
         fi
         unset GITHUB_TOKEN
+        printf '[wework-build] phase=package-start\n'
         pnpm --filter wework ai:verify:electron:build || status=$?
-        if [[ "$BUILD_RUNTIMES_FROM_SOURCE" != "true" ]]; then
+        if [[ "$RUNTIME_ARTIFACTS" != "true" ]]; then
           if ! wait "$executor_pid"; then status=1; fi
           if ! wait "$backend_pid"; then status=1; fi
         fi

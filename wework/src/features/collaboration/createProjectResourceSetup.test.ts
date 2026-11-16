@@ -4,7 +4,10 @@ import type {
   CollaborationProject,
   SharedWorkspaceApi,
 } from '@wegent/collaboration'
-import type { ProjectCreateResourceSelection } from '@wegent/collaboration/project-create'
+import {
+  ProjectCreateMembersError,
+  type ProjectCreateResourceSelection,
+} from '@wegent/collaboration/project-create'
 import { createProjectResourceSetup } from './createProjectResourceSetup'
 
 const owner = { id: 1, user_id: 1, user_name: 'owner', email: null, role: 'Owner' as const }
@@ -12,7 +15,7 @@ const selection: ProjectCreateResourceSelection = {
   memberUserIds: [1, 2, 2, 3],
   agentResourceIds: [],
   executionEnvironmentDeviceIds: [],
-  collaborationGroupDraft: null,
+  collaborationGroupDrafts: [],
 }
 
 afterEach(() => vi.unstubAllEnvs())
@@ -50,9 +53,7 @@ describe('ordinary project resource setup', () => {
     const searchUsers = vi.fn(async () => [{ id: 2, user_name: 'alice', email: null }])
     const api = { members: { searchUsers } } as unknown as SharedWorkspaceApi
     const setup = createProjectResourceSetup(api, { id: 1, name: 'owner' }, vi.fn(), 'Retry')!
-    expect(await setup.searchMembers!('alice')).toEqual([
-      { id: 2, user_name: 'alice', email: null },
-    ])
+    expect(await setup.searchUsers!('alice')).toEqual([{ id: 2, user_name: 'alice', email: null }])
     expect(searchUsers).toHaveBeenCalledWith('alice')
   })
 
@@ -64,5 +65,35 @@ describe('ordinary project resource setup', () => {
     expect(
       createProjectResourceSetup(undefined, { id: 1, name: 'owner' }, vi.fn(), '')
     ).toBeUndefined()
+  })
+
+  it('keeps a failed project refresh retryable without reporting saved members as failed', async () => {
+    const members: CollaborationMember[] = [
+      owner,
+      { ...owner, id: 2, user_id: 2, user_name: 'alice', role: 'Developer' },
+    ]
+    const add = vi.fn()
+    const api = {
+      members: { list: vi.fn(async () => members), add },
+    } as unknown as SharedWorkspaceApi
+    let refreshFailed = true
+    const refresh = vi.fn(async () => {
+      if (refreshFailed) throw new Error('Project refresh failed')
+    })
+    const setup = createProjectResourceSetup(api, { id: 1, name: 'owner' }, refresh, 'Retry')!
+    const selected = { ...selection, memberUserIds: [2] }
+
+    const error = await setup
+      .configure({ id: 'new-project' } as CollaborationProject, selected)
+      .catch(cause => cause)
+
+    expect(error).toBeInstanceOf(ProjectCreateMembersError)
+    expect(error.message).toBe('Project refresh failed')
+    expect(error.failures).toEqual([])
+    expect(error.members).toEqual(members)
+    refreshFailed = false
+    await setup.configure({ id: 'new-project' } as CollaborationProject, selected)
+    expect(refresh).toHaveBeenCalledTimes(2)
+    expect(add).not.toHaveBeenCalled()
   })
 })

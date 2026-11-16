@@ -1,0 +1,297 @@
+import type { InteractionHistory, InteractionReplyDraft } from './RuntimeInteractionsContext'
+import {
+  interactionId,
+  interactionOriginalScheme,
+  interactionSource,
+  isInteractionSource,
+  type RuntimeInteraction,
+} from './runtimeInteractions'
+import { parseWeworkScheme } from './scheme'
+import { issueHumanInteraction } from './issueHumanInteractions'
+import type { IssueHumanRequest } from '@wegent/collaboration'
+
+function read(key: string): unknown {
+  try {
+    return JSON.parse(localStorage.getItem(key) || 'null')
+  } catch {
+    return null
+  }
+}
+
+export function readInteractionDismissal(key: string): boolean {
+  return read(key) === 'dismissed'
+}
+
+function record(value: unknown): value is Record<string, unknown> {
+  return Boolean(value && typeof value === 'object' && !Array.isArray(value))
+}
+
+function validIssueQuestionIdentity(value: unknown): value is string {
+  if (typeof value !== 'string') return false
+  try {
+    const identity: unknown = JSON.parse(value)
+    return (
+      Array.isArray(identity) &&
+      identity.length === 5 &&
+      ['local', 'backend'].includes(identity[0]) &&
+      identity.every(part => typeof part === 'string' && part.length > 0)
+    )
+  } catch {
+    return false
+  }
+}
+
+function validIssueResolution(value: unknown, id: string): boolean {
+  if (
+    !record(value) ||
+    !validIssueQuestionIdentity(value.questionIdentity) ||
+    value.nativeInteractionId !== id
+  )
+    return false
+  try {
+    const identity = JSON.parse(value.questionIdentity) as string[]
+    const native: unknown = JSON.parse(id)
+    return (
+      Array.isArray(native) &&
+      native.length === 3 &&
+      native.every(part => typeof part === 'string' && part.length > 0) &&
+      native[1] === identity[3] &&
+      native[2] === `item:${identity[4]}`
+    )
+  } catch {
+    return false
+  }
+}
+
+/** Last-known requests remain visible offline, but never carry response authority. */
+export function readPendingInteractionCache(key: string): RuntimeInteraction[] {
+  const rows = read(key)
+  if (!Array.isArray(rows)) return []
+  return rows.flatMap<RuntimeInteraction>(row => {
+    if (
+      !record(row) ||
+      !record(row.address) ||
+      typeof row.address.deviceId !== 'string' ||
+      typeof row.address.taskId !== 'string' ||
+      !row.address.deviceId ||
+      !row.address.taskId ||
+      typeof row.runtime !== 'string' ||
+      typeof row.workspacePath !== 'string' ||
+      typeof row.requestKey !== 'string' ||
+      typeof row.title !== 'string' ||
+      typeof row.question !== 'string' ||
+      typeof row.createdAt !== 'number' ||
+      !Number.isFinite(row.createdAt)
+    )
+      return []
+    const address = { deviceId: row.address.deviceId, taskId: row.address.taskId }
+    if (
+      record(row.sharedRequest) &&
+      ['local', 'backend'].includes(String(row.projectStore)) &&
+      [
+        'id',
+        'project_id',
+        'issue_id',
+        'root_comment_id',
+        'runtime_device_id',
+        'runtime_task_id',
+        'item_id',
+        'question',
+        'created_at',
+        'updated_at',
+      ].every(
+        key =>
+          typeof row.sharedRequest === 'object' &&
+          row.sharedRequest !== null &&
+          typeof (row.sharedRequest as Record<string, unknown>)[key] === 'string'
+      ) &&
+      ['pending', 'answering', 'resolved', 'cancelled'].includes(String(row.sharedRequest.status))
+    ) {
+      const item = issueHumanInteraction(
+        row.sharedRequest as unknown as IssueHumanRequest,
+        row.projectStore as 'local' | 'backend'
+      )
+      return [
+        {
+          ...item,
+          cached: true,
+          task: { ...item.task, workspace: { ...item.task.workspace, available: false } },
+        },
+      ]
+    }
+    const task = {
+      key: `${address.deviceId}\0${address.taskId}`,
+      address,
+      task: {
+        taskId: address.taskId,
+        title: row.title,
+        runtime: row.runtime,
+        workspacePath: row.workspacePath,
+        interactionStatus: 'awaitingUserReply' as const,
+      },
+      workspace: { deviceId: address.deviceId, available: false, workspacePath: '', tasks: [] },
+      projectName: '',
+    }
+    return [
+      {
+        id: interactionId(task, row.requestKey),
+        requestKey: row.requestKey,
+        task,
+        question: row.question,
+        createdAt: row.createdAt,
+        payload: { kind: 'request_user_input' },
+        answered: false,
+        cached: true,
+        source: isInteractionSource(row.source) ? row.source : undefined,
+        sourceMessageIds:
+          Array.isArray(row.sourceMessageIds) &&
+          row.sourceMessageIds.every(id => typeof id === 'string')
+            ? row.sourceMessageIds
+            : undefined,
+        originalUrl:
+          typeof row.originalUrl === 'string' && parseWeworkScheme(row.originalUrl)
+            ? row.originalUrl
+            : undefined,
+      },
+    ]
+  })
+}
+
+export function pendingInteractionCache(items: RuntimeInteraction[]) {
+  return items.map(item => ({
+    address: { deviceId: item.task.address.deviceId, taskId: item.task.address.taskId },
+    requestKey: item.requestKey,
+    source: interactionSource(item),
+    title: item.task.task.title,
+    runtime: item.task.task.runtime,
+    workspacePath: item.task.task.workspacePath,
+    question: item.question,
+    createdAt: item.createdAt,
+    originalUrl: interactionOriginalScheme(item),
+    sourceMessageIds: item.sourceMessageIds,
+    sharedRequest: item.sharedRequest,
+    projectStore: item.project?.store,
+  }))
+}
+
+function interactionHistoryRows(value: unknown): InteractionHistory[] {
+  if (!Array.isArray(value)) return []
+  return value
+    .filter(
+      (row): row is InteractionHistory =>
+        record(row) &&
+        typeof row.id === 'string' &&
+        (row.dismissed === undefined || row.dismissed === true) &&
+        (row.dismissedHandoff === undefined ||
+          (row.dismissed === true &&
+            typeof row.dismissedHandoff === 'string' &&
+            row.dismissedHandoff.length > 0)) &&
+        (row.dismissedQuestionIdentity === undefined ||
+          (row.dismissed === true && validIssueQuestionIdentity(row.dismissedQuestionIdentity))) &&
+        (row.resolvedIssueQuestion === undefined ||
+          validIssueResolution(row.resolvedIssueQuestion, row.id)) &&
+        (row.source === undefined || isInteractionSource(row.source)) &&
+        typeof row.title === 'string' &&
+        typeof row.question === 'string' &&
+        typeof row.answeredAt === 'number' &&
+        Number.isFinite(row.answeredAt) &&
+        ((record(row.address) &&
+          typeof row.address.deviceId === 'string' &&
+          typeof row.address.taskId === 'string') ||
+          (row.address === undefined &&
+            row.source === 'project' &&
+            typeof row.originalUrl === 'string' &&
+            parseWeworkScheme(row.originalUrl)?.kind === 'board')) &&
+        (row.sourceMessageIds === undefined ||
+          (Array.isArray(row.sourceMessageIds) &&
+            row.sourceMessageIds.every(id => typeof id === 'string'))) &&
+        (row.originalUrl === undefined || typeof row.originalUrl === 'string')
+    )
+    .sort((a, b) => b.answeredAt - a.answeredAt)
+}
+
+export function readInteractionHistory(key: string): InteractionHistory[] {
+  return interactionHistoryRows(read(key)).slice(0, 100)
+}
+
+export function parseInteractionHistory(value: string | null): InteractionHistory[] {
+  return interactionHistoryRows(value === null ? null : JSON.parse(value)).slice(0, 100)
+}
+
+export type InteractionDraftState = Record<string, string | InteractionReplyDraft>
+
+/** Recovery metadata belongs to the draft, not the bounded handled-history list. */
+export function readInteractionDraftState(key: string, historyKey: string): InteractionDraftState {
+  const value = read(key)
+  if (!record(value)) return {}
+  const history = interactionHistoryRows(read(historyKey))
+  return Object.fromEntries(
+    Object.entries(value).flatMap<[string, string | InteractionReplyDraft]>(([id, draft]) => {
+      if (typeof draft === 'string') {
+        const interaction = history.find(row => row.id === id)
+        return [[id, interaction ? { text: draft, interaction, nativeReplyIds: [] } : draft]]
+      }
+      if (
+        !record(draft) ||
+        typeof draft.text !== 'string' ||
+        !Array.isArray(draft.nativeReplyIds) ||
+        !draft.nativeReplyIds.every(id => typeof id === 'string')
+      )
+        return []
+      const [interaction] = interactionHistoryRows([draft.interaction])
+      return interaction?.id === id
+        ? [[id, { text: draft.text, interaction, nativeReplyIds: draft.nativeReplyIds }]]
+        : []
+    })
+  )
+}
+
+export function saveInteractionState(key: string, value: unknown): boolean {
+  try {
+    localStorage.setItem(key, JSON.stringify(value))
+    return true
+  } catch (error) {
+    console.error('[Wework] Could not persist interaction state', error)
+    return false
+  }
+}
+
+/** Keep stable ordering and avoid re-adding evicted history on every transcript poll. */
+export function archiveInteraction(
+  current: InteractionHistory[],
+  entry: InteractionHistory
+): InteractionHistory[] {
+  const previous = current.find(row => row.id === entry.id)
+  if (previous) {
+    if (
+      (!entry.dismissed || previous.dismissed) &&
+      (entry.dismissedHandoff === undefined ||
+        previous.dismissedHandoff === entry.dismissedHandoff) &&
+      (!entry.dismissedQuestionIdentity ||
+        previous.dismissedQuestionIdentity === entry.dismissedQuestionIdentity) &&
+      (!entry.resolvedIssueQuestion ||
+        JSON.stringify(previous.resolvedIssueQuestion) ===
+          JSON.stringify(entry.resolvedIssueQuestion))
+    )
+      return current
+    return current.map(row =>
+      row === previous
+        ? {
+            ...row,
+            ...(entry.dismissed ? { dismissed: true as const } : {}),
+            ...(entry.dismissedHandoff !== undefined
+              ? { dismissedHandoff: entry.dismissedHandoff }
+              : {}),
+            ...(entry.dismissedQuestionIdentity
+              ? { dismissedQuestionIdentity: entry.dismissedQuestionIdentity }
+              : {}),
+            ...(entry.resolvedIssueQuestion
+              ? { resolvedIssueQuestion: entry.resolvedIssueQuestion }
+              : {}),
+          }
+        : row
+    )
+  }
+  const next = [...current, entry].sort((a, b) => b.answeredAt - a.answeredAt).slice(0, 100)
+  return next.some((row, index) => row !== current[index]) ? next : current
+}

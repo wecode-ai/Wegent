@@ -23,10 +23,10 @@ use tokio::time::sleep;
 
 use crate::{
     agents::{
-        bind_codex_thread_model_route, codex_notification_requires_user_input,
-        codex_runtime_approval_policy, select_wework_codex_user_instructions, AgentCommandPlanner,
-        AgentProcessEngine, CodexActiveTurnCallback, CodexActiveTurnFinishedCallback,
-        CodexAppServerClient, CodexAppServerTurnOptions, CodexIdleMutationError, CodexNotification,
+        codex_notification_requires_user_input, codex_runtime_approval_policy,
+        select_wework_codex_user_instructions, AgentCommandPlanner, AgentProcessEngine,
+        CodexActiveTurnCallback, CodexActiveTurnFinishedCallback, CodexAppServerClient,
+        CodexAppServerTurnOptions, CodexIdleMutationError, CodexNotification,
         CodexRequestUserInputReceiver, CodexThreadStartedCallback, CODEX_APP_SERVER_TURN_CANCELLED,
         CODEX_DANGER_FULL_ACCESS_PERMISSION_PROFILE, CODEX_READ_ONLY_PERMISSION_PROFILE,
         CODEX_WORKSPACE_PERMISSION_PROFILE,
@@ -121,41 +121,99 @@ impl RestoreStartupGate {
 }
 
 mod active_text;
+mod active_transcript;
 mod archives;
+mod assignment_receipts;
+mod async_questions;
+mod automatic_turns;
 mod automation_rpc;
 mod background_terminals;
+mod bounded_history;
 mod claude_turns;
 mod codex_accounts;
 mod codex_config;
 mod collection;
 mod command_items;
+mod command_journal;
+mod concurrency;
 mod connections;
 mod context_compaction;
+mod control;
+mod control_metadata;
+mod conversation_provider;
+mod conversation_sessions;
+mod creation;
+mod execution_control;
 mod fork_transfer;
+mod git_connections;
+mod git_source_workspace;
+mod git_webhook_setup;
 mod hooks;
+pub(super) mod lifecycle;
+mod mcp_app_source;
+mod mcp_approval_context;
+mod mcp_apps;
 mod notifications;
 mod personal_stand_in;
 mod plugin_install;
 mod plugin_marketplace;
+mod project_coordination_binding;
+mod project_coordination_commands;
+mod project_coordination_execution;
+mod project_coordinator;
 mod project_preparation;
+mod project_router;
 mod queries;
+mod queries_projection;
+mod quota_recovery;
 mod robot_queue_rpc;
 mod runner_catalog;
 mod runner_cloud_models;
+mod runtime_owner;
+mod side_source;
 mod sidebar;
 mod stand_in;
 mod stand_in_agent;
+mod stand_in_arrangements;
+mod stand_in_assignment_intake;
+mod stand_in_calendar;
+mod stand_in_connection_guidance;
+mod stand_in_context;
 mod stand_in_conversations;
+mod stand_in_diagnostics;
+mod stand_in_dispatches;
 mod stand_in_events;
+mod stand_in_execution;
+mod stand_in_history;
 mod stand_in_ingress;
+mod stand_in_issue_mentions;
+mod stand_in_issue_replies;
+mod stand_in_lifecycle;
 mod stand_in_memory;
+mod stand_in_memory_progress;
+mod stand_in_memory_review;
+mod stand_in_processing;
+mod stand_in_proposal_continuations;
+mod stand_in_read_sources;
+mod stand_in_review;
+mod stand_in_schedules;
+mod stand_in_source_tasks;
+mod stand_in_task_results;
+mod stand_in_tasks;
+mod stand_in_telemetry;
 mod stand_in_work;
 mod stand_in_workspace;
+mod submitted_model;
 mod supervisor;
+use concurrency::{RuntimeSettings, RuntimeTaskKind, RuntimeTurnScheduler};
+
+mod generated_issue_title;
 mod system;
 mod tasks;
 mod text_generation;
+mod transcript_diagnostics;
 mod transcript_overlays;
+mod transcript_read_link;
 mod transcript_search;
 mod transcript_sync;
 mod turns;
@@ -202,17 +260,15 @@ use super::{
         transcript_snapshot_pagination, user_message_presentations, visit_transcript_blocks_mut,
     },
     store::{runtime_work_dir, RuntimeWorkStore},
-    transcript::{
-        full_transcript_messages, normalized_user_request_content, notification_item,
-        project_transcript, transcript_messages,
-    },
+    transcript::{normalized_user_request_content, notification_item, transcript_messages},
     transcript_page::transcript_page,
     util::{
         apply_runtime_payload_metadata, bool_field, cloud_project_id, execution_request, id_field,
-        infer_workspace_kind, integer_field, is_codex_context_compaction_item_type, item_id,
-        item_type, normalize_device_id, normalize_runtime_goal_timestamps,
-        normalize_workspace_path, now_ms, prompt_text, raw_string_field, restore_cloud_project_id,
-        restore_origin, runtime_task_id, runtime_task_title, set_runtime_task_title, string_field,
+        infer_workspace_kind, integer_field, is_codex_context_compaction_item_type,
+        is_codex_runtime, item_id, item_type, model_provider_routing, normalize_device_id,
+        normalize_runtime_goal_timestamps, normalize_workspace_path, now_ms, prompt_text,
+        raw_string_field, replace_runtime_task_id, restore_cloud_project_id, restore_origin,
+        runtime_task_id, runtime_task_title, set_runtime_task_title, string_field,
         timestamp_ms_field, workspace_group_path, workspace_path,
     },
     worktrees::{WorktreeManager, WorktreeSettingsPatch},
@@ -238,6 +294,8 @@ const SEARCH_SNIPPET_CONTEXT_CHARS: usize = 80;
 const SEARCH_SNIPPET_MAX_CHARS: usize = 240;
 const ARCHIVED_BACKGROUND_THREAD_DELETE_SLOW_THRESHOLD: Duration = Duration::from_secs(5);
 const ARCHIVED_BACKGROUND_DELETE_INTERVAL: Duration = Duration::from_millis(250);
+const ARCHIVED_BACKGROUND_FORK_RETRY_LIMIT: usize = 3;
+const ARCHIVED_BACKGROUND_FORK_RETRY_DELAY: Duration = Duration::from_secs(1);
 const WORKTREE_AUTO_CLEANUP_IDLE_DELAY: Duration = Duration::from_secs(5 * 60);
 const WORKTREE_AUTO_CLEANUP_BATCH_DELAY: Duration = Duration::from_secs(30);
 const WORKTREE_AUTO_CLEANUP_ERROR_DELAY: Duration = Duration::from_secs(5 * 60);
@@ -284,6 +342,8 @@ fn worktree_error_code(error: &str) -> &'static str {
 #[derive(Clone, serde::Deserialize, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
 struct SpawnTurnRequest {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    task_kind: Option<RuntimeTaskKind>,
     local_task_id: String,
     #[serde(default = "default_turn_runtime")]
     runtime: String,
@@ -299,127 +359,6 @@ struct SpawnTurnRequest {
 
 fn default_turn_runtime() -> String {
     "codex".to_owned()
-}
-
-#[derive(Clone)]
-struct RuntimeTurnScheduler {
-    max_concurrent_tasks: usize,
-    active_tasks: usize,
-    active_task_ids: HashSet<String>,
-    queued_turns: VecDeque<SpawnTurnRequest>,
-}
-
-impl RuntimeTurnScheduler {
-    fn new(max_concurrent_tasks: usize, queued_turns: VecDeque<SpawnTurnRequest>) -> Self {
-        Self {
-            max_concurrent_tasks,
-            active_tasks: 0,
-            active_task_ids: HashSet::new(),
-            queued_turns,
-        }
-    }
-
-    fn enqueue(&mut self, turn: SpawnTurnRequest) -> Option<SpawnTurnRequest> {
-        if self.active_tasks >= self.max_concurrent_tasks
-            || self.active_task_ids.contains(&turn.local_task_id)
-            || !self.queued_turns.is_empty()
-        {
-            self.queued_turns.push_back(turn);
-            return None;
-        }
-        self.active_tasks += 1;
-        self.active_task_ids.insert(turn.local_task_id.clone());
-        Some(turn)
-    }
-
-    fn enqueue_forced(&mut self, turn: SpawnTurnRequest) -> SpawnTurnRequest {
-        self.active_tasks += 1;
-        self.active_task_ids.insert(turn.local_task_id.clone());
-        turn
-    }
-
-    fn enqueue_queued(&mut self, turn: SpawnTurnRequest) {
-        self.queued_turns.push_back(turn);
-    }
-
-    fn queued_position(&self, local_task_id: &str) -> Option<usize> {
-        self.queued_turns
-            .iter()
-            .position(|turn| turn.local_task_id == local_task_id)
-    }
-
-    fn reordered_queue(
-        &self,
-        local_task_id: &str,
-        target_position: usize,
-    ) -> Result<VecDeque<SpawnTurnRequest>, &'static str> {
-        let current_position = self
-            .queued_position(local_task_id)
-            .ok_or("runtime task is not queued")?;
-        let mut reordered = self.queued_turns.clone();
-        let turn = reordered
-            .remove(current_position)
-            .ok_or("queued runtime task disappeared")?;
-        reordered.insert(target_position.saturating_sub(1).min(reordered.len()), turn);
-        Ok(reordered)
-    }
-
-    fn finish(&mut self, local_task_id: &str) -> Vec<SpawnTurnRequest> {
-        self.active_task_ids.remove(local_task_id);
-        self.active_tasks = self.active_task_ids.len();
-        self.take_available()
-    }
-
-    fn force_start(&mut self, local_task_id: &str) -> Option<SpawnTurnRequest> {
-        let position = self
-            .queued_turns
-            .iter()
-            .position(|turn| turn.local_task_id == local_task_id)?;
-        let turn = self.queued_turns.remove(position)?;
-        self.active_tasks += 1;
-        self.active_task_ids.insert(turn.local_task_id.clone());
-        Some(turn)
-    }
-
-    fn update_limit(&mut self, max_concurrent_tasks: usize) -> Vec<SpawnTurnRequest> {
-        self.max_concurrent_tasks = max_concurrent_tasks;
-        self.take_available()
-    }
-
-    fn take_available(&mut self) -> Vec<SpawnTurnRequest> {
-        let available = self.max_concurrent_tasks.saturating_sub(self.active_tasks);
-        let mut turns = Vec::with_capacity(available);
-        while turns.len() < available {
-            let Some(position) = self
-                .queued_turns
-                .iter()
-                .position(|turn| !self.active_task_ids.contains(&turn.local_task_id))
-            else {
-                break;
-            };
-            let Some(turn) = self.queued_turns.remove(position) else {
-                break;
-            };
-            self.active_task_ids.insert(turn.local_task_id.clone());
-            turns.push(turn);
-        }
-        self.active_tasks += turns.len();
-        turns
-    }
-}
-
-#[derive(Clone, serde::Deserialize, serde::Serialize)]
-#[serde(default, rename_all = "camelCase")]
-struct RuntimeSettings {
-    max_concurrent_tasks: usize,
-}
-
-impl Default for RuntimeSettings {
-    fn default() -> Self {
-        Self {
-            max_concurrent_tasks: DEFAULT_MAX_CONCURRENT_TASKS,
-        }
-    }
 }
 
 fn standalone_chat_workspace_path(
@@ -509,6 +448,7 @@ fn current_codex_model_provider(
         .or_else(|| string_from_map(&config, "model_provider"))
         .filter(|provider| {
             provider != crate::server::codex_model_catalog::PROVIDER_ID
+                && provider != crate::server::codex_model_catalog::LEGACY_PROVIDER_ID
                 && provider != "wework-catalog"
         });
     let current_provider = if configured_provider != CODEX_OFFICIAL_PROVIDER_ID {
@@ -603,6 +543,8 @@ fn hook_rpc_error(error: String) -> AppIpcError {
 
 #[derive(Clone)]
 pub struct RuntimeWorkRpcHandler {
+    #[cfg(test)]
+    transcript_test_workers: Option<Arc<tokio::sync::Semaphore>>,
     device_id: String,
     codex_app_server: CodexAppServerClient,
     claude_process_engine: AgentProcessEngine,
@@ -612,12 +554,16 @@ pub struct RuntimeWorkRpcHandler {
     event_tx: Option<broadcast::Sender<Value>>,
     next_execution_id: Arc<AtomicU64>,
     task_send_gates: Arc<Mutex<HashMap<String, Weak<AsyncMutex<()>>>>>,
+    stand_in_lifecycle_gate: Arc<Mutex<()>>,
     turn_scheduler: Arc<Mutex<RuntimeTurnScheduler>>,
     active_goal_turns: Arc<Mutex<HashMap<String, SpawnTurnRequest>>>,
     restore_startup_semaphore: Arc<Semaphore>,
+    command_journal: Arc<Mutex<command_journal::CommandJournal>>,
     turn_queue_operation: Arc<AsyncMutex<()>>,
     turn_queue_path: Arc<PathBuf>,
-    preparing_worktree_turns: Arc<Mutex<HashMap<String, PreparingWorktreeTurn>>>,
+    quota_wake: Arc<tokio::sync::Notify>,
+    quota_waker_started: Arc<AtomicBool>,
+    preparing_turns: Arc<Mutex<HashMap<String, PreparingTurn>>>,
     active_local_executions: Arc<Mutex<HashMap<String, ActiveLocalExecution>>>,
     active_text_generations: Arc<Mutex<HashMap<String, Option<oneshot::Sender<()>>>>>,
     active_codex_transcript_items: Arc<Mutex<HashMap<String, ActiveCodexTranscriptItems>>>,
@@ -626,6 +572,10 @@ pub struct RuntimeWorkRpcHandler {
     supervisor_evaluating: Arc<Mutex<HashSet<String>>>,
     supervisor_model_configs: Arc<Mutex<HashMap<String, Value>>>,
     runtime_model_configs: Arc<Mutex<HashMap<String, Value>>>,
+    creation_model_profiles: Arc<Mutex<Vec<Value>>>,
+    submitted_model_bindings:
+        Arc<Mutex<HashMap<String, submitted_model::SubmittedInterfaceBinding>>>,
+    local_runner_models: Arc<Mutex<Vec<Value>>>,
     active_collaboration_rounds: Arc<Mutex<HashSet<String>>>,
     thread_event_routing: Arc<Mutex<RuntimeThreadEventRouting>>,
     codex_notification_delivery: Arc<Mutex<()>>,
@@ -646,6 +596,7 @@ pub struct RuntimeWorkRpcHandler {
     /// carry credentials, so turns fill them from here before launching the
     /// project-space MCP server.
     backend_connection: Arc<Mutex<Option<ConnectionConfig>>>,
+    backend_device_route: Option<Arc<Mutex<Option<String>>>>,
 }
 
 struct CodexRuntimeProxyConfig {
@@ -670,6 +621,7 @@ struct WorktreeReconciliationState {
 
 struct ActiveLocalExecution {
     execution_id: u64,
+    request: Option<ExecutionRequest>,
     stop_requested: bool,
     stop_acknowledged: bool,
     cancel: oneshot::Sender<()>,
@@ -678,7 +630,7 @@ struct ActiveLocalExecution {
 }
 
 #[derive(Debug, PartialEq, Eq)]
-struct PreparingWorktreeTurn {
+struct PreparingTurn {
     cancellation_requested: bool,
 }
 
@@ -699,6 +651,7 @@ struct ActiveCodexTurn {
 struct ActiveCodexTranscriptItems {
     thread_id: String,
     turn_id: String,
+    private_discussion: bool,
     items: Vec<Value>,
     // Keep settled request IDs until the turn ends so replay cannot reopen them.
     user_input_requests: HashMap<String, bool>,
@@ -717,7 +670,6 @@ struct RuntimeThreadEventRoute {
     active: bool,
     nested: bool,
     generation: u64,
-    native_completed_turn_id: Option<String>,
 }
 
 #[derive(Default)]
@@ -741,6 +693,9 @@ struct PendingCodexNotificationReplay {
 struct ScheduledTurnGuard {
     handler: RuntimeWorkRpcHandler,
     local_task_id: String,
+    execution_id: u64,
+    command_id: Option<String>,
+    command_outcome: Option<command_journal::CommandState>,
 }
 
 struct StoppedTurnGuard {
@@ -764,10 +719,18 @@ impl Drop for StoppedTurnGuard {
 }
 
 impl ScheduledTurnGuard {
-    fn new(handler: RuntimeWorkRpcHandler, local_task_id: String) -> Self {
+    fn new(
+        handler: RuntimeWorkRpcHandler,
+        local_task_id: String,
+        execution_id: u64,
+        command_id: Option<String>,
+    ) -> Self {
         Self {
             handler,
             local_task_id,
+            execution_id,
+            command_id,
+            command_outcome: None,
         }
     }
 }
@@ -776,9 +739,19 @@ impl Drop for ScheduledTurnGuard {
     fn drop(&mut self) {
         let handler = self.handler.clone();
         let local_task_id = self.local_task_id.clone();
+        let execution_id = self.execution_id;
+        let command_id = self.command_id.clone();
+        let command_outcome = self.command_outcome.clone();
         if let Ok(runtime) = tokio::runtime::Handle::try_current() {
             runtime.spawn(async move {
-                handler.finish_scheduled_turn(&local_task_id).await;
+                handler
+                    .finish_command_execution(
+                        &local_task_id,
+                        execution_id,
+                        command_id.as_deref(),
+                        command_outcome,
+                    )
+                    .await;
             });
         }
     }
@@ -804,20 +777,27 @@ impl RuntimeThreadEventRoute {
             active,
             nested: false,
             generation,
-            native_completed_turn_id: None,
         }
     }
 }
 
 impl RuntimeWorkRpcHandler {
     pub fn new(device_id: impl Into<String>, codex_binary: impl Into<String>) -> Self {
-        Self::with_optional_event_sender(device_id, codex_binary, None)
+        Self::with_optional_event_sender(
+            device_id,
+            codex_binary,
+            None,
+            Arc::new(Mutex::new(None)),
+            None,
+        )
     }
 
     fn with_optional_event_sender(
         device_id: impl Into<String>,
         codex_binary: impl Into<String>,
         event_tx: Option<broadcast::Sender<Value>>,
+        backend_connection: Arc<Mutex<Option<ConnectionConfig>>>,
+        backend_device_route: Option<Arc<Mutex<Option<String>>>>,
     ) -> Self {
         let codex_binary = codex_binary.into();
         let device_id = normalize_device_id(device_id.into());
@@ -832,19 +812,76 @@ impl RuntimeWorkRpcHandler {
                 log_executor_event("runtime turn queue restore failed", &[("error", error)]);
                 turns::RuntimeTurnQueueState::default()
             });
+        quota_recovery::restore_dispatches(&mut persisted_turns);
+        for command in persisted_turns.commands.values_mut() {
+            if command.is_owner_abandoned()
+                || matches!(
+                    command.state,
+                    command_journal::CommandState::Dispatching
+                        | command_journal::CommandState::Started
+                )
+            {
+                command.state = command_journal::CommandState::RecoveryRequired;
+            }
+        }
+        persisted_turns.active_goal_turns.retain(|task, turn| {
+            let Some(id) = turn
+                .request
+                .extra
+                .get("runtime_command_id")
+                .and_then(Value::as_str)
+            else {
+                return true;
+            };
+            let Some(command) = persisted_turns
+                .commands
+                .get(&command_journal::key(task, id))
+            else {
+                return false;
+            };
+            if command.is_owner_abandoned()
+                || matches!(
+                    command.state,
+                    command_journal::CommandState::Cancelled
+                        | command_journal::CommandState::Failed
+                )
+            {
+                return false;
+            }
+            let known_native = command.native.is_some()
+                || store
+                    .read_task(task, |link| {
+                        link.runtime_handle["turnIdsBySubtask"][&turn.request.subtask_id]
+                            .is_string()
+                    })
+                    .unwrap_or(false);
+            command.state != command_journal::CommandState::RecoveryRequired || known_native
+        });
         let active_goal_turns = persisted_turns.active_goal_turns.clone();
+        let command_journal = persisted_turns.commands;
         for turn in persisted_turns.active_goal_turns.values_mut() {
             turn.initial_thread_goal = None;
             turn.request.prompt = Value::String(String::new());
+            // Goal continuation is not a resubmission of its original user command.
+            turn.request.extra.remove("runtime_command_id");
+            turn.request.extra.remove("runtime_command_input");
             turn.request
                 .extra
                 .insert(RESUME_GOAL_ONLY_MARKER.to_owned(), Value::Bool(true));
         }
         let mut queued_turns = persisted_turns.queued_turns;
+        let mut restored_inputs = queued_turns
+            .iter()
+            .map(|turn| (turn.local_task_id.clone(), turn.request.subtask_id.clone()))
+            .collect::<HashSet<_>>();
         queued_turns.extend(
             persisted_turns
                 .active_goal_turns
                 .into_values()
+                .filter(|turn| {
+                    restored_inputs
+                        .insert((turn.local_task_id.clone(), turn.request.subtask_id.clone()))
+                })
                 .filter(|turn| {
                     turn.request
                         .extra
@@ -854,13 +891,14 @@ impl RuntimeWorkRpcHandler {
                 }),
         );
         for turn in &mut queued_turns {
+            turn.bind_task_kind(&store);
             turn.request
                 .extra
                 .insert(RESTORED_TURN_MARKER.to_owned(), Value::Bool(true));
         }
         let restored_turn_count = queued_turns.len();
         let restore_startup_concurrency =
-            restore_startup_concurrency(runtime_settings.max_concurrent_tasks);
+            restore_startup_concurrency(runtime_settings.total_limit());
         if restored_turn_count > 0 {
             log_executor_event(
                 "runtime persisted turn startup ramp configured",
@@ -882,6 +920,8 @@ impl RuntimeWorkRpcHandler {
             );
         }
         let handler = Self {
+            #[cfg(test)]
+            transcript_test_workers: None,
             device_id,
             connectors: ConnectorRuntime::new(codex_app_server.clone()),
             codex_app_server,
@@ -894,15 +934,19 @@ impl RuntimeWorkRpcHandler {
             event_tx,
             next_execution_id: Arc::new(AtomicU64::new(1)),
             task_send_gates: Arc::new(Mutex::new(HashMap::new())),
+            stand_in_lifecycle_gate: Arc::new(Mutex::new(())),
             turn_scheduler: Arc::new(Mutex::new(RuntimeTurnScheduler::new(
-                runtime_settings.max_concurrent_tasks,
+                runtime_settings,
                 queued_turns,
             ))),
             active_goal_turns: Arc::new(Mutex::new(active_goal_turns)),
+            command_journal: Arc::new(Mutex::new(command_journal)),
             restore_startup_semaphore: Arc::new(Semaphore::new(restore_startup_concurrency)),
             turn_queue_operation: Arc::new(AsyncMutex::new(())),
             turn_queue_path: Arc::new(turn_queue_path),
-            preparing_worktree_turns: Arc::new(Mutex::new(HashMap::new())),
+            quota_wake: Arc::new(tokio::sync::Notify::new()),
+            quota_waker_started: Arc::new(AtomicBool::new(false)),
+            preparing_turns: Arc::new(Mutex::new(HashMap::new())),
             active_local_executions: Arc::new(Mutex::new(HashMap::new())),
             active_text_generations: Arc::new(Mutex::new(HashMap::new())),
             active_codex_transcript_items: Arc::new(Mutex::new(HashMap::new())),
@@ -911,13 +955,18 @@ impl RuntimeWorkRpcHandler {
             supervisor_evaluating: Arc::new(Mutex::new(HashSet::new())),
             supervisor_model_configs: Arc::new(Mutex::new(HashMap::new())),
             runtime_model_configs: Arc::new(Mutex::new(HashMap::new())),
+            creation_model_profiles: Arc::new(Mutex::new(Vec::new())),
+            submitted_model_bindings: Arc::new(Mutex::new(HashMap::new())),
+            local_runner_models: Arc::new(Mutex::new(Vec::new())),
             active_collaboration_rounds: Arc::new(Mutex::new(HashSet::new())),
             thread_event_routing: Arc::new(Mutex::new(RuntimeThreadEventRouting::default())),
             codex_notification_delivery: Arc::new(Mutex::new(())),
             notification_router: Arc::new(Mutex::new(None)),
             local_issue_scheduler_started: Arc::new(AtomicBool::new(false)),
             archived_delete_tx,
-            automation_store: AutomationStore::from_env(),
+            automation_store: AutomationStore::new(
+                super::store::runtime_work_dir().join("automations.json"),
+            ),
             task_store_path: Arc::new(LocalTaskStore::default_path()),
             store,
             worktrees,
@@ -926,8 +975,12 @@ impl RuntimeWorkRpcHandler {
             )),
             worktree_cleanup_generation: Arc::new(AtomicU64::new(0)),
             opened_workspace_roots: Arc::new(Mutex::new(HashSet::new())),
-            hook_service: HookService::from_env(),
-            backend_connection: Arc::new(Mutex::new(None)),
+            hook_service: HookService::new(
+                crate::hooks::registry::HookRegistryStore::from_env(),
+                crate::agents::wework_codex_home(),
+            ),
+            backend_connection,
+            backend_device_route,
         };
         for (local_task_id, turn) in handler
             .active_goal_turns
@@ -950,7 +1003,16 @@ impl RuntimeWorkRpcHandler {
                 },
             );
         }
+        let queued = handler
+            .turn_scheduler
+            .lock()
+            .expect("turn scheduler poisoned")
+            .queued_turns
+            .clone();
+        handler.project_quota_waits(&queued);
+        handler.reconcile_command_recovery();
         handler.spawn_archived_delete_worker(archived_delete_rx);
+        crate::workbench_control::register(&handler.device_id, Arc::new(handler.clone()));
         handler
     }
 
@@ -959,8 +1021,29 @@ impl RuntimeWorkRpcHandler {
         codex_binary: impl Into<String>,
         event_tx: broadcast::Sender<Value>,
     ) -> Self {
-        let handler =
-            Self::with_event_sender_deferred_startup_recovery(device_id, codex_binary, event_tx);
+        Self::with_event_sender_and_backend_connection(
+            device_id,
+            codex_binary,
+            event_tx,
+            None,
+            None,
+        )
+    }
+
+    pub fn with_event_sender_and_backend_connection(
+        device_id: impl Into<String>,
+        codex_binary: impl Into<String>,
+        event_tx: broadcast::Sender<Value>,
+        backend_connection: Option<Arc<Mutex<Option<ConnectionConfig>>>>,
+        backend_device_route: Option<Arc<Mutex<Option<String>>>>,
+    ) -> Self {
+        let handler = Self::with_event_sender_deferred_startup_recovery(
+            device_id,
+            codex_binary,
+            event_tx,
+            backend_connection,
+            backend_device_route,
+        );
         handler
             .startup_recovery_deferred
             .store(false, Ordering::Release);
@@ -972,8 +1055,17 @@ impl RuntimeWorkRpcHandler {
         device_id: impl Into<String>,
         codex_binary: impl Into<String>,
         event_tx: broadcast::Sender<Value>,
+        backend_connection: Option<Arc<Mutex<Option<ConnectionConfig>>>>,
+        backend_device_route: Option<Arc<Mutex<Option<String>>>>,
     ) -> Self {
-        let handler = Self::with_optional_event_sender(device_id, codex_binary, Some(event_tx));
+        let has_backend = backend_connection.is_some();
+        let handler = Self::with_optional_event_sender(
+            device_id,
+            codex_binary,
+            Some(event_tx),
+            backend_connection.unwrap_or_else(|| Arc::new(Mutex::new(None))),
+            backend_device_route,
+        );
         if let Some(sender) = handler.event_tx.clone() {
             crate::task_runtime::mcp_http::register_runtime_event_sender(sender.clone());
             handler.hook_service.set_event_sender(sender);
@@ -983,20 +1075,40 @@ impl RuntimeWorkRpcHandler {
             .store(true, Ordering::Release);
         handler.start_automation_scheduler();
         handler.start_local_issue_scheduler();
+        if has_backend {
+            handler.start_backend_services();
+        }
         handler
     }
 
+    #[cfg(test)]
+    pub fn with_backend_device_route(mut self, route: Arc<Mutex<Option<String>>>) -> Self {
+        self.backend_device_route = Some(route);
+        self
+    }
+
+    #[cfg(test)]
     pub fn with_backend_connection(
         mut self,
         backend_connection: Arc<Mutex<Option<ConnectionConfig>>>,
     ) -> Self {
         self.backend_connection = backend_connection;
+        self.start_backend_services();
+        self
+    }
+
+    fn start_backend_services(&self) {
+        crate::workbench_control::register(&self.device_id, Arc::new(self.clone()));
         self.start_local_stand_in_scheduler();
         self.start_connection_stand_in_scheduler();
         self.register_cloud_collaboration_dispatcher();
+        self.register_stand_in_task_dispatcher();
         self.resume_cloud_collaboration_rounds();
+        for link in self.local_task_links(false) {
+            self.sync_issue_human_requests(&link.local_task_id);
+            self.sync_stand_in_issue_replies(&link.local_task_id);
+        }
         self.start_supervisor_scheduler();
-        self
     }
 
     /// Fill the request's backend connection fields from the executor's
@@ -1049,6 +1161,14 @@ impl RuntimeWorkRpcHandler {
         {
             request.backend_url = Some(connection.backend_url.clone());
         }
+        // Coordinator work must retain the enabling actor, including absent credentials.
+        if request
+            .extra
+            .get("origin")
+            .is_some_and(|origin| origin.get("project_coordination").is_some())
+        {
+            return;
+        }
         if request
             .auth_token
             .as_deref()
@@ -1094,6 +1214,7 @@ impl RuntimeWorkRpcHandler {
     }
 
     fn forget_runtime_model_config(&self, local_task_id: &str) {
+        self.forget_submitted_interfaces(local_task_id);
         self.runtime_model_configs
             .lock()
             .expect("runtime model config map lock should not be poisoned")
@@ -1130,256 +1251,26 @@ impl RuntimeWorkRpcHandler {
         {
             self.reconcile_and_resume_persisted_turns().await;
         }
-        let result = match method {
-            "runtime.stand_in.list" => self.list_stand_in_settings(payload).await,
-            "runtime.stand_in.personal.get" => self.personal_stand_in_settings(payload, false),
-            "runtime.stand_in.personal.agents" => self.personal_stand_in_agents(payload).await,
-            "runtime.stand_in.personal.save" => self.personal_stand_in_settings(payload, true),
-            "runtime.stand_in.conversation" => self.stand_in_conversation(payload).await,
-            "runtime.stand_in.memory.list" => self.stand_in_memory(payload, "list"),
-            "runtime.stand_in.memory.save" => self.stand_in_memory(payload, "save"),
-            "runtime.stand_in.memory.delete" => self.stand_in_memory(payload, "delete"),
-            "runtime.stand_in.proposal.get" => self.stand_in_proposal(payload, false),
-            "runtime.stand_in.proposal.resolve" => self.stand_in_proposal(payload, true),
-            "runtime.connections.host" => self.configure_connection_host(payload),
-            "runtime.connections.catalog" => self.connection_call("catalog", None, payload).await,
-            "runtime.connections.dependencies.inventory" => {
-                self.handle_codex_app_server_rpc(
-                    json!({"method":"plugin/installed","params":{"cwds":[]}}),
-                )
-                .await
+        let stand_in_operation = self.stand_in_operation(method, &payload);
+        let result = self.dispatch_method(method, payload).await;
+        if let Some((user, operation, properties)) = stand_in_operation {
+            // Successful configuration diffs are recorded in the settings transaction.
+            if operation != "configuration" || result.is_err() {
+                let rejected = result
+                    .as_ref()
+                    .ok()
+                    .filter(|value| value["success"] == false || value["accepted"] == false)
+                    .map(|_| {
+                        AppIpcError::new("stand_in_start_failed", "Operation was not accepted")
+                    });
+                self.record_stand_in_result(
+                    user,
+                    operation,
+                    properties,
+                    result.as_ref().err().or(rejected.as_ref()),
+                );
             }
-            "runtime.connections.resources" => {
-                self.connection_call(
-                    "listResources",
-                    payload["providerId"].as_str(),
-                    payload.clone(),
-                )
-                .await
-            }
-            "runtime.connections.dependencies.install" => {
-                self.connection_call(
-                    "installDependencies",
-                    payload["providerId"].as_str(),
-                    payload.clone(),
-                )
-                .await
-            }
-            "runtime.connections.mcp" => {
-                let mut payload = payload;
-                let provider = string_field(&payload, "providerId")
-                    .ok_or_else(|| AppIpcError::new("bad_request", "providerId is required"))?;
-                let declaration = super::connection_host::declared_dependency(
-                    &provider,
-                    &payload["source"],
-                    payload["dependencyAlias"].as_str(),
-                )?;
-                payload["readTools"] = declaration["readTools"].clone();
-                super::connection_mcp::request(self.codex_app_server.clone(), payload).await
-            }
-            "runtime.connections.cli" => {
-                let provider = string_field(&payload, "providerId")
-                    .ok_or_else(|| AppIpcError::new("bad_request", "providerId is required"))?;
-                let declaration = super::connection_host::declared_dependency(
-                    &provider,
-                    &payload["source"],
-                    payload["dependencyAlias"].as_str(),
-                )?;
-                super::connection_cli::request(
-                    &self.codex_app_server,
-                    payload,
-                    declaration["cliReadTools"].clone(),
-                )
-                .await
-            }
-            "runtime.stand_in.work.list" => self.list_connection_stand_in_work(payload),
-            "runtime.stand_in.work.messages" => self.connection_stand_in_messages(payload),
-            "runtime.stand_in.work.run" => self.run_connection_stand_in_work(payload).await,
-            "runtime.stand_in.work.adjust" => self.adjust_connection_stand_in_work(payload),
-            "runtime.stand_in.work.organize" => self.organize_connection_stand_in_work(payload),
-            "runtime.stand_in.source.retry" => self.retry_connection_source(payload),
-            "runtime.stand_in.get" => self.stand_in_settings(payload, false).await,
-            "runtime.stand_in.save" => self.stand_in_settings(payload, true).await,
-            "runtime.stand_in.run" => self.run_stand_in(payload).await,
-            "runtime.stand_in.assignment" => {
-                self.handle_stand_in_assignment(payload).await?;
-                Ok(json!({"success":true}))
-            }
-            "runtime.tasks.list" => self.list_tasks(&payload).await,
-            "runtime.tasks.get" => self.get_task(&payload),
-            "runtime.tasks.running_count" => Ok(self.running_task_count()),
-            "runtime.tasks.search" => self.search_tasks(payload).await,
-            "runtime.tasks.transcript" => self.transcript(payload).await,
-            "runtime.tasks.transcript.search" => self.search_transcript(payload).await,
-            "runtime.tasks.transcript.sync_status" => self.transcript_sync_status(payload),
-            "runtime.tasks.transcript.export" => self.export_transcript_segment(payload).await,
-            "runtime.tasks.transcript.restore" => self.restore_transcript_segments(payload).await,
-            "runtime.tasks.transcript.acknowledge" => self.acknowledge_transcript_turn(payload),
-            "runtime.tasks.create" => self.create_task(payload).await,
-            "runtime.collaboration.dispatch" => self.create_collaboration_dispatch(payload).await,
-            "runtime.text.generate" => self.generate_text(payload).await,
-            "runtime.text.predict_reply" => self.predict_reply(payload).await,
-            "runtime.text.cancel" => self.cancel_text_generation(payload),
-            "runtime.tasks.fork_at_turn" => self.fork_task_at_turn(payload).await,
-            "runtime.tasks.send" => self.send_message(payload).await,
-            "runtime.tasks.interrupt_and_send" => self.interrupt_and_send(payload).await,
-            "runtime.tasks.rollback" => self.rollback_task(payload).await,
-            "runtime.tasks.guidance" => self.send_guidance(payload).await,
-            "runtime.tasks.compact" => self.compact_task(payload).await,
-            "runtime.tasks.background_terminals.clean" => {
-                self.clean_background_terminals(payload).await
-            }
-            "runtime.tasks.prepare_fork_transfer" => self.prepare_fork_transfer(payload).await,
-            "runtime.tasks.import_fork" => self.import_fork(payload).await,
-            "runtime.tasks.archive" => self.archive_task(payload).await,
-            "runtime.tasks.rename" => self.rename_task(payload).await,
-            "runtime.tasks.cancel" => self.cancel_task(payload).await,
-            "runtime.tasks.force_start" => self.force_start_task(payload).await,
-            "runtime.tasks.queue.reorder" => self.reorder_queued_task(payload).await,
-            "runtime.automations.list" => self.list_automations().await,
-            "runtime.automations.get" => self.get_automation(payload).await,
-            "runtime.automations.create" => self.create_automation(payload).await,
-            "runtime.automations.update" => self.update_automation(payload).await,
-            "runtime.automations.delete" => self.delete_automation(payload).await,
-            "runtime.automations.toggle" => self.toggle_automation(payload).await,
-            "runtime.automations.run_now" => self.run_automation_now(payload).await,
-            "runtime.automation_runs.list" => self.list_automation_runs(payload).await,
-            "runtime.tasks.goal.get" => self.get_task_goal(payload).await,
-            "runtime.tasks.goal.set" => self.set_task_goal(payload).await,
-            "runtime.tasks.goal.clear" => self.clear_task_goal(payload).await,
-            "runtime.tasks.supervisor.get" => self.get_task_supervisor(payload).await,
-            "runtime.tasks.supervisor.set" => self.set_task_supervisor(payload).await,
-            "runtime.tasks.supervisor.clear" => self.clear_task_supervisor(payload).await,
-            "runtime.tasks.supervisor.run_now" => self.run_task_supervisor_now(payload).await,
-            "runtime.tasks.supervisor.resolve" => self.resolve_task_supervisor(payload).await,
-            "runtime.keybindings.get" => self.get_keybindings().await,
-            "runtime.keybindings.update" => self.update_keybindings(payload).await,
-            "runtime.settings.get" => self.get_runtime_settings().await,
-            "runtime.settings.update" => self.update_runtime_settings(payload).await,
-            "runtime.capacity.get" => self.get_runtime_capacity().await,
-            "runtime.hooks.list" | "runtime.hooks.reload" => {
-                Ok(json!({"plugins": self.hook_service.list()}))
-            }
-            "runtime.hooks.create" => self.create_hook(payload).await,
-            "runtime.hooks.install" => self.install_hook(payload).await,
-            "runtime.hooks.update" => self.update_hook(payload).await,
-            "runtime.hooks.set_enabled" => self.set_hook_enabled(payload).await,
-            "runtime.hooks.delete" => self.delete_hook(payload).await,
-            "runtime.hooks.reveal" => self.reveal_hook(payload).await,
-            "runtime.hooks.test" => self.test_hook(payload).await,
-            "runtime.runner.catalog" => self.runner_catalog().await,
-            "runtime.codex.models.list" => self.list_codex_models(payload).await,
-            "runtime.codex.ensure_started" => self.ensure_codex_started().await,
-            "runtime.codex.auth.read" => self.read_codex_account().await,
-            "runtime.codex.accounts.list" => self.list_codex_accounts().await,
-            "runtime.codex.accounts.switch" => self.switch_codex_account(payload).await,
-            "runtime.codex.auth.login.start" => self.start_codex_login().await,
-            "runtime.codex.auth.login.cancel" => self.cancel_codex_login(payload).await,
-            "runtime.codex.catalog.custom.write" => self.write_custom_codex_catalog(payload).await,
-            "runtime.codex.catalog.overrides.read" => {
-                self.read_codex_model_overrides(payload).await
-            }
-            "runtime.codex.catalog.overrides.write" => {
-                self.write_codex_model_override(payload).await
-            }
-            "runtime.codex.catalog.overrides.delete" => {
-                self.delete_codex_model_override(payload).await
-            }
-            "runtime.codex.instructions.read" => self.read_codex_instructions().await,
-            "runtime.codex.instructions.write" => self.write_codex_instructions(payload).await,
-            "runtime.codex.personality.read" => self.read_codex_personality().await,
-            "runtime.codex.personality.write" => self.write_codex_personality(payload).await,
-            "runtime.codex.plugin.install_local_first" => self.install_local_plugin(payload).await,
-            "runtime.codex.plugin.sync_bundled" => self.sync_bundled_plugin(payload).await,
-            "runtime.codex.plugin.uninstall_local" => self.uninstall_local_plugin(payload).await,
-            "runtime.codex.plugin.reconcile_bundled_marketplace" => {
-                self.reconcile_bundled_plugin_marketplace(payload).await
-            }
-            "runtime.codex.rate_limits.read" => self.read_codex_rate_limits().await,
-            "runtime.codex.runtime_config.update" => {
-                self.update_codex_runtime_config(payload).await
-            }
-            "runtime.codex.app_server.restart" => self.restart_codex_app_server(payload).await,
-            "runtime.codex.app_server.request" => self.handle_codex_app_server_rpc(payload).await,
-            "runtime.codex.stream_debug.get" => self.get_codex_stream_debug().await,
-            "runtime.codex.stream_debug.set" => self.set_codex_stream_debug(payload).await,
-            "runtime.harness_proxy.register" => self.register_harness_proxy(payload).await,
-            "runtime.harness_proxy.unregister" => self.unregister_harness_proxy(payload).await,
-            "runtime.decision_proxy.register" => self.register_decision_proxy(payload).await,
-            "runtime.decision_proxy.unregister" => self.unregister_decision_proxy(payload).await,
-            "runtime.harness_context.register" => self.register_harness_context(payload).await,
-            "runtime.harness_context.unregister" => self.unregister_harness_context(payload).await,
-            "runtime.connectors.configure" => self.connectors.configure(payload).await,
-            "runtime.connectors.clear" => self.connectors.clear(payload).await,
-            "runtime.connectors.status" => self.connectors.status().await,
-            "runtime.connectors.tools" => self.connectors.tools().await,
-            "runtime.connectors.call" => self.connectors.call(payload).await,
-            "runtime.connectors.apps.sync" => self.connectors.sync_apps(payload).await,
-            "runtime.local_connector_auth.health" => {
-                super::local_connector_auth::health(payload).await
-            }
-            "runtime.local_connector_auth.start" => {
-                super::local_connector_auth::start(payload).await
-            }
-            "runtime.local_connector_auth.poll" => super::local_connector_auth::poll(payload).await,
-            "runtime.local_connector_auth.cancel" => {
-                super::local_connector_auth::cancel(payload).await
-            }
-            "runtime.local_connector_auth.logout" => {
-                super::local_connector_auth::logout(payload).await
-            }
-            "runtime.archived_conversations.list" => {
-                self.list_archived_conversations(payload).await
-            }
-            "runtime.archived_conversations.unarchive" => self.unarchive_task(payload).await,
-            "runtime.archived_conversations.delete" => self.delete_archived_task(payload).await,
-            "runtime.archived_conversations.delete_bulk" => {
-                self.delete_archived_tasks_bulk(payload).await
-            }
-            "runtime.archived_conversations.cleanup_preview" => {
-                self.preview_archived_conversation_cleanup(payload).await
-            }
-            "runtime.archived_conversations.cleanup" => {
-                self.cleanup_archived_conversations(payload).await
-            }
-            "runtime.archived_conversations.archive_project" => {
-                self.archive_project_conversations(payload).await
-            }
-            "runtime.archived_conversations.archive_all" => self.archive_all_conversations().await,
-            "runtime.worktrees.capabilities" => self.get_worktree_capabilities().await,
-            "runtime.worktrees.preflight" => self.preflight_worktree(payload).await,
-            "runtime.worktrees.settings.get" => self.get_worktree_settings().await,
-            "runtime.worktrees.settings.update" => self.update_worktree_settings(payload).await,
-            "runtime.worktrees.prepare" => self.prepare_worktree(payload).await,
-            "runtime.worktrees.list" => self.list_worktrees().await,
-            "runtime.worktrees.delete" => self.delete_worktree(payload).await,
-            "runtime.worktrees.apply_issue_cleanup" => {
-                self.apply_issue_worktree_cleanup(payload).await
-            }
-            "runtime.worktrees.restore" => self.restore_worktree(payload).await,
-            "runtime.worktrees.prune" => self.prune_worktrees().await,
-            "runtime.workspaces.open" => self.open_workspace(payload).await,
-            "runtime.projects.upsert_local" => self.upsert_local_project(payload).await,
-            "runtime.workspaces.rename" => self.rename_workspace(payload).await,
-            "runtime.workspaces.remove" => self.remove_workspace(payload).await,
-            "runtime.composer.catalog.read" => self.read_composer_catalog(payload).await,
-            "runtime.workspace.search" => self.search_workspace(payload).await,
-            "runtime.sidebar.projects.reorder" => self.reorder_sidebar_projects(payload).await,
-            "runtime.sidebar.projects.pin" => self.pin_sidebar_project(payload).await,
-            "runtime.sidebar.projects.appearance" => {
-                self.set_sidebar_project_appearance(payload).await
-            }
-            "runtime.sidebar.projects.sync_remote" => {
-                self.sync_sidebar_remote_projects(payload).await
-            }
-            "runtime.sidebar.projects.activate" => self.activate_sidebar_project(payload).await,
-            "runtime.sidebar.tasks.reorder" => self.reorder_sidebar_project_task(payload).await,
-            "runtime.sidebar.tasks.pin" => self.pin_sidebar_task(payload).await,
-            unsupported => Err(AppIpcError::new(
-                "unsupported_method",
-                format!("Unsupported runtime RPC method: {unsupported}"),
-            )),
-        };
+        }
         if configure_before_startup_recovery && result.is_ok() {
             self.startup_recovery_deferred
                 .store(false, Ordering::Release);
@@ -1391,12 +1282,20 @@ impl RuntimeWorkRpcHandler {
 
 fn should_resume_persisted_turns_before_rpc(method: &str) -> bool {
     // Connection discovery and transport must never resume unrelated model work.
-    if method.starts_with("runtime.connections.") {
+    if method.starts_with("runtime.connections.")
+        || method.starts_with("runtime.stand_in.telemetry.")
+        || method.starts_with("runtime.stand_in.onboarding.")
+        || method == "runtime.stand_in.processing.status"
+        || method == "runtime.stand_in.binding"
+        || method == "runtime.stand_in.personal.lifecycle"
+    {
         return false;
     }
     !matches!(
         method,
         "runtime.tasks.running_count"
+            | "runtime.python.has_demand"
+            | "runtime.stand_in.assignment_tasks"
             | "runtime.tasks.get"
             | "runtime.composer.catalog.read"
             | "runtime.worktrees.capabilities"
@@ -1414,6 +1313,8 @@ include!("handler/helpers.rs");
 
 mod collaboration;
 mod composer_catalog;
+mod dispatch;
+mod plugin_catalog;
 mod runtime_rpc;
 
 use runtime_rpc::{
@@ -1426,4 +1327,8 @@ use runtime_rpc::is_allowed_plugin_app_server_method;
 
 #[cfg(test)]
 #[path = "handler/tests.rs"]
-mod tests;
+pub(super) mod tests;
+
+#[cfg(test)]
+#[path = "handler/private_discussion_tests.rs"]
+mod private_discussion_tests;

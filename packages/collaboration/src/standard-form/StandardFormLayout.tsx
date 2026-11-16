@@ -96,7 +96,7 @@ export function StandardFormSection({
         <button
           aria-controls={contentId}
           aria-expanded={expanded}
-          className="group flex w-full items-center gap-3 text-left focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/50"
+          className="group flex w-full items-center gap-3 text-left focus:outline-none keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-primary/50"
           data-testid={testId ? `${testId}-trigger` : undefined}
           onClick={() => setExpanded((current) => !current)}
           type="button"

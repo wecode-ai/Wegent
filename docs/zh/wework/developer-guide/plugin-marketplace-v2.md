@@ -342,11 +342,17 @@ GitLab Webhook 使用独立的 Webhook Secret，只更新 MR/Pipeline/merge 状�
 
 HTTP 接口不得启动 `publish_official_plugin.py` 子进程，也不得复制一套发布逻辑。
 
+首次发布通过 `ensure_catalog_plugin` 先原子插入 `catalog_namespace + slug` 身份，再锁定已存在的行；重复身份不覆盖发布者、来源或市场元数据。同一身份的发布串行，不同身份可以并行。禁止先对不存在的身份执行 `SELECT FOR UPDATE` 再插入，以免 MySQL REPEATABLE READ 下的间隙锁与并发插入形成死锁。
+
 ### 6.6 市场安装与更新
 
 安装、更新和设备同步合同保持不变：`kinds/InstalledPlugin` 表示账号期望版本，`plugin_device_installations` 表示设备实际结果，Codex App Server 是本机安装事实源。新安装取 `latest_release_id`；自动更新只推进到 `ready + scan passed` 的不可变 Release。失败不得覆盖 `actual_release_id`，连续失败三次后暂停自动重试，手动更新或新的目标 Release 重置计数。
 
 正常卸载只删除确认设备的运行入口和安装记录，不直接清空 Codex/Claude `plugins/cache`。离线设备在重连后补执行。当前设备安装失败必须返回明确错误，不能用其他设备成功掩盖。
+
+安装发现 `shared/plugins/<digest>` 的内容校验失败时，重新下载本次目标版本的归档，验证期望 SHA-256 和插件身份后恢复缓存，不自行选择最新版本或改变更新偏好。只自动恢复具有匹配发布记录的普通目录；原包与原始元数据保留在 Workbench Home 的 `shared/recovery/plugins/<digest>/recovered-<id>/`。日志记录恢复结果与备份路径；中断的事务在下次读取时恢复，冲突内容保留现场。目录链接和实体目录副本使用同一归属校验，发布 Runtime 前仍须确认目标可由当前安装管理；未知目录、符号链接和未通过校验的下载不得据此被覆盖。
+
+缓存暂时被其他恢复事务占用时返回可重试的 `PLUGIN_PACKAGE_BUSY`，不会将临时占用写成持久的 Runtime 损坏状态。恢复失败的错误同时保留最初的发布原因，便于区分缓存异常和磁盘 I/O 问题。
 
 ## 7. API 合同
 
@@ -374,7 +380,7 @@ HTTP 接口不得启动 `publish_official_plugin.py` 子进程，也不得复制
 | GET  | `/admin/plugins/publication-requests`                              | 管理员分页、筛选和汇总                              |
 | GET  | `/admin/plugins/publication-requests/{id}`                         | 管理员查看完整证据和事件                            |
 | POST | `/admin/plugins/publication-requests/{id}/return`                  | 必填原因和修改项，退回当前 revision                 |
-| POST | `/admin/plugins/publication-requests/{id}/accept`                  | 幂等物化分支并创建 MR，不发布                 |
+| POST | `/admin/plugins/publication-requests/{id}/accept`                  | 幂等物化分支并创建 MR，不发布                       |
 | POST | `/admin/plugins/publication-requests/{id}/reconcile`               | 重试物化或主动对账 GitLab 状态                      |
 
 ### 7.3 内部接口
@@ -426,13 +432,13 @@ Webhook Secret 与 Release Token 是两套凭据。Webhook 接口还必须校验
 
 ### 10.1 当前功能分支已实现
 
-| 领域     | 当前分支实现                                                                                                                         |
-| -------- | ------------------------------------------------------------------------------------------------------------------------------------ |
-| Wework   | 个人详情双范围、三步申请抽屉、五阶段进度、完整 Request/Revision 历史，以及 ACL 与发布状态都加载完成后才允许提交的 ready gate         |
-| Backend  | `catalog_namespace`、个人/企业来源关联、Request/Revision/Check/Event、用户/管理员/内部 API、幂等 MR 物化与只同步状态的 Webhook |
-| Web      | 发布申请队列、筛选、revision 证据详情、退回修改、确认后接受并创建 MR、重试与对账                                               |
+| 领域     | 当前分支实现                                                                                                                     |
+| -------- | -------------------------------------------------------------------------------------------------------------------------------- |
+| Wework   | 个人详情双范围、三步申请抽屉、五阶段进度、完整 Request/Revision 历史，以及 ACL 与发布状态都加载完成后才允许提交的 ready gate     |
+| Backend  | `catalog_namespace`、个人/企业来源关联、Request/Revision/Check/Event、用户/管理员/内部 API、幂等 MR 物化与只同步状态的 Webhook   |
+| Web      | 发布申请队列、筛选、revision 证据详情、退回修改、确认后接受并创建 MR、重试与对账                                                 |
 | Release  | `plugin_release` 专用机器身份、Bearer-only 内部接口、受信 GitLab/master provenance 检查、幂等与企业旧版本保留                    |
-| 兼容边界 | 旧 `/plugins/submissions` 只允许 `restricted_share + personal`；旧管理员直接 review 和脚本仅用于处理历史记录，新企业申请不得调用     |
+| 兼容边界 | 旧 `/plugins/submissions` 只允许 `restricted_share + personal`；旧管理员直接 review 和脚本仅用于处理历史记录，新企业申请不得调用 |
 
 新 Alembic revision 已在当前分支添加命名空间、来源关联和发布领域表，并覆盖 upgrade → downgrade → upgrade 及冲突阻断验证。本地测试只证明代码和迁移实现，不能替代真实生产配置与端到端发布彩排。
 

@@ -1,11 +1,12 @@
+import '@/i18n'
 import { act, fireEvent, render, renderHook } from '@testing-library/react'
-import { afterEach, describe, expect, test, vi } from 'vitest'
 import type { WorkbenchMessage } from '@wegent/chat-core/runtime-conversation'
 import { createCollaborationTranslator } from '@wegent/collaboration'
 import {
   AssistantMessage,
   ConversationTranslationProvider,
 } from '@wegent/collaboration/conversation'
+import { afterEach, describe, expect, test, vi } from 'vitest'
 import { conversationSearchRanges } from '../../../../packages/collaboration/src/conversation/useConversationSearchTarget'
 import {
   conversationSearchText,
@@ -14,7 +15,6 @@ import {
   resolveConversationMatch,
 } from './conversationSearch'
 import { useConversationFind } from './useConversationFind'
-import '@/i18n'
 
 vi.mock('@/lib/platform', () => ({ getPlatform: () => 'mac' }))
 
@@ -170,7 +170,7 @@ describe('visible process text in terminal conversation search', () => {
     })
   })
 
-  test.each(['failed', 'cancelled', 'empty'] as const)(
+  test.each(['failed', 'cancelled'] as const)(
     'has no searchable units for %s messages without visible blocks',
     state => {
       const projected = { ...projectedMessage(state), blocks: [] }

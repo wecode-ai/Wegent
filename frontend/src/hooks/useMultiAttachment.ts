@@ -136,6 +136,13 @@ export function useMultiAttachment(options?: {
       for (const file of fileList) {
         // Use only filename as fileId to avoid duplicate errors for the same file
         const fileId = file.name
+        if (file.size === 0) {
+          toast({
+            title: t('common:attachment.errors.empty_file'),
+            variant: 'destructive',
+          })
+          continue
+        }
         const mediaType = getMediaType(file.name)
 
         if (

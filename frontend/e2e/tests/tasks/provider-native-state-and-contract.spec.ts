@@ -460,7 +460,18 @@ test.describe('Provider-native binding state and contracts', () => {
     const knowledge = new ProviderNativeKnowledgePage(page)
     await knowledge.sendMessage(prompt)
     const taskId = await knowledge.waitForTaskId()
-    if (expectedTaskId) expect(taskId).toBe(expectedTaskId)
+    if (expectedTaskId) {
+      expect(taskId).toBe(expectedTaskId)
+      // A follow-up task is already COMPLETED from the previous turn. Wait for
+      // the new prompt to reach the model before terminal-state polling, otherwise
+      // the test can read the previous completion and inspect stale model bodies.
+      await expect
+        .poll(async () => (await getScenarioModelBodies(request, prompt)).length, {
+          message: `Follow-up prompt should reach the model: ${prompt}`,
+          timeout: 30000,
+        })
+        .toBeGreaterThan(0)
+    }
     await waitForTaskTerminal(resources.token, taskId)
     return getTask(request, resources.token, taskId)
   }

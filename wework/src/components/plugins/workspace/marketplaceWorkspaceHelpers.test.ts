@@ -1,27 +1,20 @@
-import { describe, expect, test, vi } from 'vitest'
 import { navigateTo } from '@/lib/navigation'
 import type { InstalledPlugin, PluginMarketplaceItem } from '@/types/api'
+import { describe, expect, test, vi } from 'vitest'
 import type { InstalledPluginItem } from '../PluginManagementRows'
 import {
-  keepRicherMarketplacePluginDetail,
+  createDefaultPluginApi,
   marketplacePluginDetailSelectionKey,
-  marketplacePluginDetailSource,
   pluginDetailActionErrorMessage,
   pluginUsesWegentConnectorOAuth,
   queueMarketplacePluginTrial,
   requiredConnectionNames,
-  resolveCloudMarketplaceRevalidateIntervalMs,
   resolveMarketplaceUninstallId,
 } from './marketplaceWorkspaceHelpers'
 
 vi.mock('@/lib/navigation', () => ({
   navigateTo: vi.fn(),
 }))
-
-test('keeps production marketplace polling at sixty seconds while accelerating E2E', () => {
-  expect(resolveCloudMarketplaceRevalidateIntervalMs(false)).toBe(60_000)
-  expect(resolveCloudMarketplaceRevalidateIntervalMs(true)).toBe(5_000)
-})
 
 const emptyComponents = {
   skills: [],
@@ -34,31 +27,6 @@ const emptyComponents = {
   bins: [],
   connectors: [],
 }
-
-test('detail source preserves the shared inventory local path for an official marketplace', () => {
-  const item = githubMarketplaceItem()
-  item.manifest = { marketplaceId: 'openai-official' }
-  expect(
-    marketplacePluginDetailSource(item, [
-      {
-        key: 'local:openai-official',
-        id: 'openai-official',
-        name: 'OpenAI',
-        kind: 'local',
-        path: '/tmp/github-marketplace',
-      },
-    ])
-  ).toEqual({ id: 'openai-official', name: 'OpenAI', path: '/tmp/github-marketplace' })
-})
-
-test('only a declared remote catalog can resolve without a local path', () => {
-  const item = githubMarketplaceItem()
-  expect(marketplacePluginDetailSource(item, []).path).toBe('openai-curated-remote')
-  item.manifest = { marketplaceId: 'enterprise' }
-  expect(() => marketplacePluginDetailSource(item, [])).toThrow(
-    'Local plugin marketplace path is unavailable'
-  )
-})
 
 test('account connections do not require legacy login during plugin installation', () => {
   const item = githubMarketplaceItem()
@@ -254,44 +222,6 @@ describe('pluginDetailActionErrorMessage', () => {
   })
 })
 
-describe('keepRicherMarketplacePluginDetail', () => {
-  test('keeps previously loaded skills when a later catalog row has empty components', () => {
-    const empty = githubInstalledItem()
-    const rich: InstalledPluginItem = {
-      ...empty,
-      raw: {
-        ...empty.raw,
-        spec: {
-          ...empty.raw.spec,
-          components: {
-            ...emptyComponents,
-            skills: [{ name: 'ci-debug', description: 'Debug failing checks', path: 'ci-debug' }],
-            apps: [
-              {
-                name: 'GitHub',
-                path: 'github',
-                description: 'Access repositories, issues, and pull requests.',
-              },
-            ],
-          },
-        },
-      },
-    }
-
-    const kept = keepRicherMarketplacePluginDetail(rich, empty)
-    expect(kept.raw.spec.components.skills).toEqual([
-      { name: 'ci-debug', description: 'Debug failing checks', path: 'ci-debug' },
-    ])
-    expect(kept.raw.spec.components.apps).toEqual([
-      {
-        name: 'GitHub',
-        path: 'github',
-        description: 'Access repositories, issues, and pull requests.',
-      },
-    ])
-  })
-})
-
 describe('marketplacePluginDetailSelectionKey', () => {
   test('separates same-name personal and enterprise cloud listings', () => {
     const enterprise = githubMarketplaceItem()
@@ -315,5 +245,45 @@ describe('marketplacePluginDetailSelectionKey', () => {
     expect(marketplacePluginDetailSelectionKey(enterprise)).not.toBe(
       marketplacePluginDetailSelectionKey(personal)
     )
+  })
+})
+
+describe('plugin HTTP profile credentials', () => {
+  test('captures the implicit token so an old API cannot read a replacement account token', async () => {
+    localStorage.setItem('auth_token', 'original-account')
+    const api = createDefaultPluginApi('/api')
+    localStorage.setItem('auth_token', 'replacement-account')
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(Response.json({ items: [] })))
+    try {
+      await api.listInstalledPlugins()
+      const options = vi.mocked(fetch).mock.calls[0][1]
+      expect(new Headers(options?.headers).get('Authorization')).toBe('Bearer original-account')
+    } finally {
+      localStorage.removeItem('auth_token')
+      vi.unstubAllGlobals()
+    }
+  })
+
+  test.each([
+    { token: undefined, redirects: true },
+    { token: 'explicit-cloud-account', redirects: false },
+    { token: null, redirects: false },
+  ])('preserves the existing 401 redirect policy: %o', async ({ token, redirects }) => {
+    localStorage.setItem('auth_token', 'implicit-account')
+    vi.mocked(navigateTo).mockClear()
+    const api = createDefaultPluginApi('/api', token)
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue(Response.json({ detail: 'Unauthorized' }, { status: 401 }))
+    )
+    try {
+      await expect(api.listInstalledPlugins()).rejects.toMatchObject({ status: 401 })
+      if (redirects) expect(navigateTo).toHaveBeenCalledExactlyOnceWith('/login')
+      else expect(navigateTo).not.toHaveBeenCalled()
+    } finally {
+      localStorage.removeItem('auth_token')
+      vi.mocked(navigateTo).mockClear()
+      vi.unstubAllGlobals()
+    }
   })
 })

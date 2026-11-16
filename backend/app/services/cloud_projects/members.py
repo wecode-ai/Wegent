@@ -3,27 +3,59 @@
 from fastapi import HTTPException
 from sqlalchemy.orm import Session
 
+from app.models.cloud_project import CloudProject
 from app.models.resource_member import ResourceMember
 from app.models.user import User
 from app.schemas.base_role import BaseRole, has_permission
 from app.schemas.cloud_project import CloudProjectMemberCreate, CloudProjectMemberUpdate
 from app.services.cloud_project_visibility import (
     effective_project_role,
+    project_membership_rows,
     project_participant_ids,
+    project_participant_roles,
 )
-from app.services.cloud_projects.access import require_cloud_project_role
+from app.services.cloud_projects.access import (
+    CloudProjectAccess,
+    require_cloud_project_role,
+)
 from app.services.collaboration_permissions import collaboration_permission_service
 
 
 class CloudProjectMemberService:
     def list_members(self, db: Session, cloud_project_id: int, user_id: int):
-        project = require_cloud_project_role(db, cloud_project_id, user_id).project
-        participants = project_participant_ids(db, project)
+        access = require_cloud_project_role(db, cloud_project_id, user_id)
+        return self.list_members_for_access(db, access, user_id)
+
+    def list_members_for_access(
+        self, db: Session, access: CloudProjectAccess, user_id: int
+    ) -> list[dict[str, object]]:
+        project = access.project
+        workspace, membership_rows = project_membership_rows(db, project)
+        roles = project_participant_roles(project, workspace, membership_rows)
         capabilities = self._member_capabilities(project)
-        users = db.query(User).filter(User.id.in_(participants)).order_by(User.id).all()
+        users = (
+            db.query(User)
+            .filter(User.id.in_(roles), User.is_active.is_(True))
+            .order_by(User.id)
+            .all()
+        )
+        participants = {member.id for member in users}
+        sources = collaboration_permission_service.project_sources_many(
+            project, users, workspace=workspace, grants=membership_rows
+        )
+        grants = {
+            grant.entity_id: grant
+            for grant in membership_rows
+            if grant.resource_type == "CloudProject"
+        }
         return [
-            self._member_view(
-                db, project, member, capabilities, user_id in participants
+            self._member_values(
+                project,
+                member,
+                capabilities,
+                user_id in participants,
+                sources[member.id],
+                grants.get(str(member.id)),
             )
             for member in users
         ]
@@ -33,6 +65,20 @@ class CloudProjectMemberService:
         sources = collaboration_permission_service.project_sources(
             db, project, member.id
         )
+        grant = CloudProjectMemberService._direct_member(db, int(project.id), member.id)
+        return CloudProjectMemberService._member_values(
+            project, member, capabilities, expose_email, sources, grant
+        )
+
+    @staticmethod
+    def _member_values(
+        project: CloudProject,
+        member: User,
+        capabilities: dict[str, str],
+        expose_email: bool,
+        sources: tuple[dict, ...],
+        grant: ResourceMember | None,
+    ) -> dict[str, object]:
         direct = next(
             (source["role"] for source in sources if source["type"] == "direct"), None
         )
@@ -41,7 +87,6 @@ class CloudProjectMemberService:
             None,
         )
         role = effective_project_role(direct, inherited)
-        grant = CloudProjectMemberService._direct_member(db, int(project.id), member.id)
         return {
             "id": grant.id if grant else member.id,
             "user_id": member.id,

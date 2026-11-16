@@ -1,0 +1,31 @@
+{
+  "revision": "a6c9d1e4f3b2",
+  "parents": [
+    "f5b8c0d3e2a1"
+  ],
+  "source": "20260908_a6c9d1e4f3b2_optional_notification_source.py",
+  "upgrade": [
+    {
+      "sql": [
+        "ALTER TABLE wework_notifications MODIFY url VARCHAR(2048) NULL"
+      ]
+    },
+    {
+      "sql": [
+        "UPDATE wework_notifications SET url = NULL WHERE url = ''"
+      ]
+    }
+  ],
+  "downgrade": [
+    {
+      "sql": [
+        "UPDATE wework_notifications SET url = '' WHERE url IS NULL"
+      ]
+    },
+    {
+      "sql": [
+        "ALTER TABLE wework_notifications MODIFY url VARCHAR(2048) NOT NULL"
+      ]
+    }
+  ]
+}

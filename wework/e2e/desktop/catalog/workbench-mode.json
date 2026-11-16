@@ -1,0 +1,17 @@
+{
+  "order": 89000,
+  "scenario": "./scenarios/workbench-mode.scenario.mjs",
+  "scenarioOnly": true,
+  "paths": [
+    ".github/actions/prepare-electron-installer-cache/*",
+    ".github/scripts/prime-ci-electron-installer-cache.mjs",
+    "wework/scripts/lib/electron-installer-cache.mjs"
+  ],
+  "ci": {
+    "core": {
+      "order": 80000,
+      "shard": 5,
+      "position": 10000
+    }
+  }
+}

@@ -28,6 +28,13 @@ pub trait CapabilityReportProvider: Send + Sync + 'static {
 }
 
 pub trait CapabilitySyncRpcHandler: Send + Sync + 'static {
+    fn invalidate_connection(&self) {}
+    fn local_plugin_digest(&self) -> Option<String> {
+        None
+    }
+    fn local_plugin_revision(&self) -> Option<String> {
+        None
+    }
     fn handle_sync_capabilities<'a>(
         &'a self,
         payload: Value,
@@ -63,6 +70,16 @@ impl<P> CapabilitySyncRpcHandler for CapabilitySyncHandler<P>
 where
     P: CapabilityPackageProvider + Send + Sync + 'static,
 {
+    fn invalidate_connection(&self) {
+        CapabilitySyncHandler::invalidate_connection(self);
+    }
+    fn local_plugin_digest(&self) -> Option<String> {
+        CapabilitySyncHandler::local_plugin_digest(self).ok()
+    }
+    fn local_plugin_revision(&self) -> Option<String> {
+        CapabilitySyncHandler::local_plugin_revision(self).ok()
+    }
+
     fn handle_sync_capabilities<'a>(
         &'a self,
         payload: Value,
@@ -85,6 +102,7 @@ pub(super) fn default_capability_sync_handler(
         config.auth_token.clone(),
         default_plugin_store(),
         HttpPackageProvider::new(config.backend_url.clone(), config.auth_token.clone()),
+        std::sync::Arc::new(crate::agents::CodexSkillConfigurationReloader),
     )
 }
 
@@ -114,9 +132,9 @@ impl HttpPackageProvider {
             request = request.bearer_auth(auth_token);
         }
         let response = request.send().await.map_err(|error| {
-            let error = error.without_url();
             CapabilitySyncError::invalid_payload(format!(
-                "Capability package download failed: {error}"
+                "Capability package download failed: {}",
+                transport_error_details(&error)
             ))
         })?;
         let status = response.status();
@@ -131,7 +149,8 @@ impl HttpPackageProvider {
             .map(|bytes| bytes.to_vec())
             .map_err(|error| {
                 CapabilitySyncError::invalid_payload(format!(
-                    "Capability package read failed: {error}"
+                    "Capability package read failed: {}",
+                    transport_error_details(&error)
                 ))
             })
     }
@@ -153,6 +172,35 @@ impl HttpPackageProvider {
         };
         Ok(url)
     }
+}
+
+fn transport_error_details(error: &reqwest::Error) -> String {
+    format!(
+        "timeout={} connect={} request={} body={} decode={} redirect={} {}",
+        error.is_timeout(),
+        error.is_connect(),
+        error.is_request(),
+        error.is_body(),
+        error.is_decode(),
+        error.is_redirect(),
+        transport_io_details(error),
+    )
+}
+
+fn transport_io_details(error: &(dyn std::error::Error + 'static)) -> String {
+    let mut source = Some(error);
+    while let Some(error) = source {
+        if let Some(error) = error.downcast_ref::<std::io::Error>() {
+            // Never format peer-controlled messages, URLs, or nested Debug data.
+            return format!(
+                "io_kind={:?} os_code={:?}",
+                error.kind(),
+                error.raw_os_error()
+            );
+        }
+        source = error.source();
+    }
+    "io_kind=None os_code=None".to_owned()
 }
 
 impl CapabilityPackageProvider for HttpPackageProvider {
@@ -237,4 +285,56 @@ fn canonical_digest(value: &Value) -> String {
         output.push_str(&format!("{byte:02x}"));
     }
     output
+}
+
+#[cfg(test)]
+mod download_error_tests {
+    use super::{transport_io_details, HttpPackageProvider};
+    use tokio::{io::AsyncReadExt, net::TcpListener, time::Duration};
+
+    #[tokio::test]
+    async fn download_error_retains_transport_cause_without_signed_url_or_auth() {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move {
+            tokio::time::timeout(Duration::from_secs(3), async move {
+                let (mut stream, _) = listener.accept().await.unwrap();
+                let mut buffer = [0; 4096];
+                assert!(stream.read(&mut buffer).await.unwrap() > 0);
+                // Close before response headers to reproduce a transport-level failure.
+            })
+            .await
+            .unwrap();
+        });
+        let mut provider = HttpPackageProvider::new(format!("http://{address}"), "backend-secret");
+        provider.client = reqwest::Client::builder().no_proxy().build().unwrap();
+        let error = tokio::time::timeout(
+            Duration::from_secs(3),
+            provider.get_bytes("/package.zip?signature=private-signature"),
+        )
+        .await
+        .unwrap()
+        .unwrap_err()
+        .to_string();
+        tokio::time::timeout(Duration::from_secs(3), server)
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(error.contains("request=true"), "{error}");
+        assert!(!error.contains("private-signature"));
+        assert!(!error.contains("backend-secret"));
+        assert!(!error.contains("package.zip"));
+    }
+
+    #[test]
+    fn io_diagnostics_never_include_peer_controlled_messages() {
+        let error = std::io::Error::new(
+            std::io::ErrorKind::ConnectionReset,
+            "https://private.invalid/package?signature=peer-controlled-secret",
+        );
+        assert_eq!(
+            transport_io_details(&error),
+            "io_kind=ConnectionReset os_code=None"
+        );
+    }
 }

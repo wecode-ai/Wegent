@@ -5,6 +5,7 @@ import { writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { promisify } from 'node:util'
 import { selectE2EModel } from '../modules/shared.mjs'
+import { verifyGitBranchFlows } from '../modules/git-branch-flows.mjs'
 
 const exec = promisify(execFile)
 const SUBJECT = 'test: verify routed commit generation'
@@ -103,6 +104,7 @@ export async function createDesktopScenario({
       await control.command('waitFor', '[data-testid="project-work-button"]', {
         text: 'commit-generation-e2e',
       })
+      await verifyGitBranchFlows(control, workspacePath)
       await selectE2EModel(control)
       await control.command('fill', '[data-testid="chat-message-input"]', {
         value: 'Prepare the commit fixture',
@@ -134,7 +136,9 @@ export async function createDesktopScenario({
         '--git-dir',
         remote,
         'rev-parse',
-        (await exec('git', ['branch', '--show-current'], { cwd: workspacePath })).stdout.trim(),
+        (
+          await exec('git', ['symbolic-ref', '--short', 'HEAD'], { cwd: workspacePath })
+        ).stdout.trim(),
       ])
       assert.equal(local.stdout.trim(), upstream.stdout.trim())
       assert.equal(local.stdout.trim(), remoteHead.stdout.trim())

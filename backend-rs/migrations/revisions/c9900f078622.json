@@ -1,0 +1,7 @@
+{
+  "revision": "c9900f078622",
+  "parents": [],
+  "source": "20260308_c9900f078622_unified_baseline_for_sqlite_support.py",
+  "upgrade": [],
+  "downgrade": []
+}

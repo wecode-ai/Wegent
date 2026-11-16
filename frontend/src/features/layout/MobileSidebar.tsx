@@ -52,7 +52,7 @@ export function MobileSidebar({
             leaveFrom="translate-x-0"
             leaveTo="-translate-x-full"
           >
-            <Dialog.Panel className="relative mr-16 flex w-full max-w-xs flex-1">
+            <Dialog.Panel className="relative mr-16 flex w-full min-w-0 max-w-xs flex-1">
               {/* 关闭按钮 - 改进样式 */}
               <Transition.Child
                 as={Fragment}

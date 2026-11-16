@@ -15,15 +15,11 @@
 //! `401 "User not activated"`.
 use std::sync::Arc;
 
+use crate::auth::SessionClaims;
 use brz_mysql::{FromMysqlRow, Mysql, MysqlResult};
-use jsonwebtoken::{Algorithm, DecodingKey, Validation, decode};
-use serde::Deserialize;
+use jsonwebtoken::Algorithm;
 
 use crate::plugins_marketplace::query::PluginQuery;
-
-/// Source `session_token.py`: sessions have no `scope` claim and a
-/// `token_use` of either absent or `wework_access`.
-const WEWORK_ACCESS_TOKEN_USE: &str = "wework_access";
 
 /// Source `OAuth2PasswordBearer.make_not_authenticated_error`.
 const NOT_AUTHENTICATED_DETAIL: &str = "Not authenticated";
@@ -31,13 +27,6 @@ const NOT_AUTHENTICATED_DETAIL: &str = "Not authenticated";
 pub(crate) const UNAUTHORIZED_DETAIL: &str = "Could not validate credentials";
 /// Source `security.py` `get_current_user` inactive-user detail.
 pub(crate) const USER_NOT_ACTIVATED_DETAIL: &str = "User not activated";
-
-#[derive(Debug, Deserialize)]
-struct Claims {
-    sub: Option<String>,
-    scope: Option<String>,
-    token_use: Option<String>,
-}
 
 /// One `users` row needed for authentication (`shared/models/db/user.py`).
 ///
@@ -227,29 +216,12 @@ pub fn verify_token(token: &str, keys: &[Arc<str>], algorithm: &str) -> Option<S
         "HS512" => Algorithm::HS512,
         _ => return None,
     };
-    let mut validation = Validation::new(algorithm);
-    // Source `verify_token` requires `sub`; no audience is issued or checked.
-    validation.validate_aud = false;
-    validation.required_spec_claims.clear();
-    for key in keys {
-        let decoding = DecodingKey::from_secret(key.as_bytes());
-        if let Ok(claims) = decode::<Claims>(token, &decoding, &validation) {
-            let payload = claims.claims;
-            if !is_user_session_payload(&payload) {
-                return None;
-            }
-            return payload.sub;
-        }
-    }
-    None
-}
-
-fn is_user_session_payload(claims: &Claims) -> bool {
-    claims.scope.is_none()
-        && matches!(
-            claims.token_use.as_deref(),
-            None | Some(WEWORK_ACCESS_TOKEN_USE)
-        )
+    crate::jwt_compat::decode_jose::<SessionClaims>(
+        token,
+        keys.iter().map(|key| key.as_bytes()),
+        algorithm,
+    )?
+    .username()
 }
 
 /// Extract the bearer credential like the source `OAuth2PasswordBearer`
@@ -457,5 +429,20 @@ mod tests {
         let keys = test_keys();
         let token = make_token("secret", r#"{"sub":"matao"}"#);
         assert_eq!(verify_token(&token, &keys, "RS256"), None);
+    }
+}
+
+#[cfg(test)]
+mod python_compatibility {
+    #[test]
+    fn session_entry_point_matches_python() {
+        for (name, claims, expected) in crate::jwt_compat::tests::session_cases() {
+            let token = crate::jwt_compat::tests::sign(&claims, b"test-key");
+            assert_eq!(
+                super::verify_token(&token, &[std::sync::Arc::from("test-key")], "HS256").is_some(),
+                expected,
+                "{name}"
+            );
+        }
     }
 }

@@ -7,10 +7,15 @@ import type {
   RuntimeWorkListResponse,
 } from '@/types/api'
 import type { RuntimePaneTranscript } from '@/types/workbench'
+import { RuntimeMessageReceipts } from './RuntimeMessageReceipts'
+import { readStoredTaskKeys, serializeTaskKeys } from './taskKeyStorage'
 import { logRuntimeTaskCreateStage } from '@/lib/runtime-create-diagnostics'
 import { getUnambiguousWorkbenchDeviceAliases } from '@/lib/workbench-device'
 import {
+  emptyRuntimeTaskSummary,
+  isRuntimeGoalExecutionActive,
   isRuntimeTaskAuthoritativeCompletion,
+  isRuntimeTaskConfirmedActive,
   normalizeRuntimeTaskSummary,
   shouldReplaceRuntimeTaskProjection,
   summarizeRuntimeTaskExecution,
@@ -53,6 +58,8 @@ const RUNTIME_TASK_LIFECYCLE_READ_METHODS = new Set<PropertyKey>([
 ])
 
 export class RuntimeTaskLifecycleStore {
+  readonly messageReceipts: RuntimeMessageReceipts
+  readonly notificationScope: string
   private readonly machines = new Map<string, RuntimeTaskMachine>()
   private readonly deviceAliases = new Map<string, string>()
   private readonly unreadStateByTask: Map<string, TaskUnreadState>
@@ -70,6 +77,8 @@ export class RuntimeTaskLifecycleStore {
 
   constructor(userId: number | string | null | undefined) {
     const storageScope = `wework.runtimeTaskLifecycle.${userId ?? 'anonymous'}`
+    this.notificationScope = storageScope
+    this.messageReceipts = new RuntimeMessageReceipts(`${storageScope}.messages.v1`)
     this.unreadStorageKey = `${storageScope}.unread.v2`
     this.runningStorageKey = `${storageScope}.running.v2`
     // Task snapshots may arrive separately, after device aliases and other events.
@@ -139,6 +148,19 @@ export class RuntimeTaskLifecycleStore {
     if (changed) this.publish()
   }
 
+  invalidateNativeExecutions(): RuntimeTaskAddress[] {
+    let changed = false
+    const addresses: RuntimeTaskAddress[] = []
+    for (const machine of this.machines.values()) {
+      if (machine.getState().task?.executionState) {
+        addresses.push(machine.getState().address)
+        changed = machine.dispatch({ type: 'executor_replaced' }) || changed
+      }
+    }
+    if (changed) this.publish()
+    return addresses
+  }
+
   syncDevices(devices: DeviceInfo[]): void {
     let changed = false
     const aliases = getUnambiguousWorkbenchDeviceAliases(devices)
@@ -189,6 +211,7 @@ export class RuntimeTaskLifecycleStore {
       }>
     }
   ): void {
+    if (this.getTask(address)?.task?.executionState) return
     if (transcript.running === true) {
       const current = this.getTask(address)
       if (shouldIgnoreStaleRunningTranscript(current)) return
@@ -326,6 +349,7 @@ export class RuntimeTaskLifecycleStore {
     transcript: RuntimePaneTranscript,
     options: SyncTranscriptOptions = {}
   ): void {
+    if (this.getTask(address)?.task?.executionState) return
     logRuntimeTaskCreateStage('lifecycle-transcript-received', {
       taskId: address.taskId,
       deviceId: address.deviceId,
@@ -353,21 +377,31 @@ export class RuntimeTaskLifecycleStore {
           currentTurn?.active && terminalTurn?.id && this.isPriorTurn(address, terminalTurn.id)
         ))
     if (!ignoreStaleIdleTranscript) this.syncRuntimeTranscriptSnapshot(address, transcript)
-    const streamingTurn = transcript.turns.findLast(
-      turn => turn.status === 'pending' || turn.status === 'streaming'
-    )
+    // Only the latest canonical turn can identify the current execution.
+    const latestTurn = transcript.turns.at(-1)
+    const streamingTurn =
+      latestTurn?.status === 'pending' || latestTurn?.status === 'streaming'
+        ? latestTurn
+        : undefined
     const hasStreamingTurn = Boolean(streamingTurn)
     const current = this.getTask(address)
     const ignoreStaleRunningTranscript = shouldIgnoreStaleRunningTranscript(current)
     if (hasStreamingTurn) {
+      if (ignoreStaleRunningTranscript) {
+        const machine = this.ensureMachine(this.canonicalizeAddress(address))
+        for (const turn of transcript.turns) {
+          if (turn.id && (turn.status === 'pending' || turn.status === 'streaming')) {
+            machine.observeTurn(turn.id)
+          }
+        }
+        return
+      }
       if (
-        ignoreStaleRunningTranscript ||
-        (currentTurn?.active &&
-          streamingTurn?.id &&
-          (this.isPriorTurn(address, streamingTurn.id) ||
-            (transcript.running === false &&
-              currentTurn.id &&
-              streamingTurn.id !== currentTurn.id)))
+        streamingTurn?.id &&
+        ((currentTurn?.active && this.isPriorTurn(address, streamingTurn.id)) ||
+          (transcript.running === false &&
+            (currentTurn?.id ?? currentTurn?.latestId) &&
+            streamingTurn.id !== (currentTurn?.id ?? currentTurn?.latestId)))
       )
         return
       this.executorStarted(address)
@@ -377,8 +411,21 @@ export class RuntimeTaskLifecycleStore {
         turnId: streamingTurn?.id,
       })
     } else if (transcript.running === true) {
-      if (ignoreStaleRunningTranscript) return
-      this.executorStarted(address)
+      if (!ignoreStaleRunningTranscript) {
+        this.executorStarted(address)
+      }
+      if (
+        (current?.execution.phase === 'idle' || current?.execution.phase === 'running') &&
+        !current.turn.active &&
+        latestTurn?.id &&
+        isTerminalTurnStatus(latestTurn.status) &&
+        (current.turn.latestId === null || current.turn.latestId === latestTurn.id)
+      ) {
+        // Older streaming history may coexist with the latest terminal turn.
+        // Retain terminal identity even when completed task metadata arrives after history.
+        // Execution ownership and a known later turn remain independent of that history.
+        this.turnSettled(address, latestTurn.id, terminalTurnOutcome(latestTurn.status))
+      }
     } else if (transcript.running === false && !ignoreStaleIdleTranscript) {
       this.executorSettled(address)
       this.turnSettled(
@@ -394,6 +441,7 @@ export class RuntimeTaskLifecycleStore {
   }
 
   markRead(address: RuntimeTaskAddress): void {
+    this.messageReceipts.markRead(getRuntimeTaskLifecycleKey(this.canonicalizeAddress(address)))
     this.dispatch(address, { type: 'marked_read' })
   }
 
@@ -437,20 +485,62 @@ export class RuntimeTaskLifecycleStore {
       event.type === 'executor_snapshot_received' ? { ...event, address: canonicalAddress } : event
     const machine = this.ensureMachine(canonicalAddress)
     const previous = machine.getSnapshot()
+    const hasPendingSend =
+      previous.turn.active &&
+      previous.turn.id === null &&
+      machine.getState().expectedExecutorRunning === true
+    const confirmsAcceptedSend =
+      hasPendingSend &&
+      previous.turn.phase === 'awaiting' &&
+      canonicalEvent.type === 'executor_snapshot_received' &&
+      canonicalEvent.task.running === true
+    // Native snapshots are ordered by revision and executor epoch. Legacy turn
+    // history must not reject their authoritative startup or settlement updates.
     if (
       canonicalEvent.type === 'executor_snapshot_received' &&
-      previous.turn.active &&
+      !canonicalEvent.task.executionState &&
+      !confirmsAcceptedSend &&
+      (previous.turn.active
+        ? previous.task !== null
+        : previous.turn.outcome !== null && !isRuntimeTaskConfirmedActive(canonicalEvent.task)) &&
       typeof canonicalEvent.task.runtimeHandle?.lastTurnId === 'string' &&
-      machine.isPriorTurn(canonicalEvent.task.runtimeHandle.lastTurnId) &&
-      previous.task?.completedAt != null
-    )
+      machine.isPriorTurn(canonicalEvent.task.runtimeHandle.lastTurnId)
+    ) {
+      logRuntimeTaskCreateStage('lifecycle-snapshot-skipped', {
+        taskId: canonicalAddress.taskId,
+        deviceId: canonicalAddress.deviceId,
+        reason: 'prior-turn',
+        receivedTurnId: canonicalEvent.task.runtimeHandle.lastTurnId,
+        activeTurnId: previous.turn.id,
+        latestTurnId: previous.turn.latestId,
+      })
       return false
+    }
+    if (
+      canonicalEvent.type === 'executor_snapshot_received' &&
+      !canonicalEvent.task.executionState &&
+      canonicalEvent.task.running === true &&
+      !confirmsAcceptedSend &&
+      !isRuntimeGoalExecutionActive(canonicalEvent.task) &&
+      typeof canonicalEvent.task.runtimeHandle?.lastTurnId === 'string' &&
+      machine.isSettledTurn(canonicalEvent.task.runtimeHandle.lastTurnId)
+    ) {
+      logRuntimeTaskCreateStage('lifecycle-snapshot-skipped', {
+        taskId: canonicalAddress.taskId,
+        deviceId: canonicalAddress.deviceId,
+        reason: 'settled-turn',
+        receivedTurnId: canonicalEvent.task.runtimeHandle.lastTurnId,
+        activeTurnId: previous.turn.id,
+        latestTurnId: previous.turn.latestId,
+      })
+      return false
+    }
     const key = previous.key
     const wasRunning = previous.derived.isRunning || this.previousRunningTaskKeys.has(key)
     if (
       canonicalEvent.type === 'executor_snapshot_received' &&
       previous.task &&
-      !shouldReplaceRuntimeTaskProjection(previous.task, canonicalEvent.task)
+      !shouldReplaceRuntimeTaskProjection(previous.task, canonicalEvent.task, hasPendingSend)
     ) {
       return false
     }
@@ -634,6 +724,7 @@ export class RuntimeTaskLifecycleStore {
   }
 
   private movePersistedTaskState(previousKey: string, nextKey: string): boolean {
+    this.messageReceipts.merge(previousKey, nextKey)
     const previousUnread = this.unreadStateByTask.get(previousKey)
     const nextUnread = this.unreadStateByTask.get(nextKey)
     let changed = this.unreadStateByTask.delete(previousKey)
@@ -827,7 +918,8 @@ function shouldIgnoreStaleRunningTranscript(current: RuntimeTaskLifecycleSnapsho
   return Boolean(
     current &&
     !current.derived.isRunning &&
-    (current.turn.outcome !== null ||
+    (current.task?.goalExecutionStatus === 'needsAttention' ||
+      current.turn.outcome !== null ||
       (current.goalStatus !== 'active' &&
         current.task !== null &&
         isRuntimeTaskAuthoritativeCompletion(current.task)))
@@ -900,30 +992,5 @@ function getRuntimeTaskAddress(
     threadId: task.threadId,
     workspacePath: task.workspacePath || workspace.workspacePath,
     runtimeHandle: task.runtimeHandle,
-  }
-}
-
-function emptyRuntimeTaskSummary(address: RuntimeTaskAddress): RuntimeTaskSummary {
-  return {
-    taskId: address.taskId,
-    threadId: address.threadId,
-    workspacePath: address.workspacePath ?? '',
-    title: address.taskId,
-    runtime: address.runtime ?? 'codex',
-    runtimeHandle: address.runtimeHandle,
-  }
-}
-
-function serializeTaskKeys(keys: ReadonlySet<string>): string {
-  return JSON.stringify([...keys].slice(-200))
-}
-
-function readStoredTaskKeys(storageKey: string): Set<string> {
-  if (typeof window === 'undefined') return new Set()
-  try {
-    const value = JSON.parse(window.localStorage.getItem(storageKey) ?? '[]')
-    return new Set(Array.isArray(value) ? value.filter(item => typeof item === 'string') : [])
-  } catch {
-    return new Set()
   }
 }

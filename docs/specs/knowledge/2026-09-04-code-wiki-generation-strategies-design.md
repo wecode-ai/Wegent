@@ -114,7 +114,7 @@ prompt、状态机或任意工作流定义。策略行为仍由代码中的 regi
 仍通过内部 `legacy` 策略保持兼容行为。
 
 Policy 首版放在 backend 的 Code Wiki 配置中，通过一个结构化配置项加载；默认值与
-`backend/init_data/02-public-resources.yaml` 中的内建 Team 对齐。不要分别用三个散落的 Team 环境变量，
+`backend-rs/init_data/02-public-resources.yaml` 中的内建 Team 对齐。不要分别用三个散落的 Team 环境变量，
 也不要让前端维护策略到 Team 的映射。backend 提供只读 capabilities API，前端只展示当前启用且 Team
 校验通过的策略。
 

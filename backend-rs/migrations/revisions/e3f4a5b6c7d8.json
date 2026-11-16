@@ -1,0 +1,21 @@
+{
+  "revision": "e3f4a5b6c7d8",
+  "parents": [
+    "d2e3f4a5b6c7"
+  ],
+  "source": "20260806_e3f4a5b6c7d8_add_execution_status_device_index.py",
+  "upgrade": [
+    {
+      "sql": [
+        "CREATE INDEX idx_exec_status_device ON loop_item_executions (status, execution_device_id)"
+      ]
+    }
+  ],
+  "downgrade": [
+    {
+      "sql": [
+        "DROP INDEX idx_exec_status_device ON loop_item_executions"
+      ]
+    }
+  ]
+}

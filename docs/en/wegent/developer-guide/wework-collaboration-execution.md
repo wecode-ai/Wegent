@@ -35,6 +35,29 @@ The durable queue, atomic claim, and Runtime acceptance control task delivery. A
 Routed work notifies eligible devices using their owners' connection identities, after checking current grants, models, and Issue runner affinity.
 `LOCAL_RUNTIME_WORK_POLL_INTERVAL` overrides the default five-second interval. Reconnection and availability notifications still initiate an immediate pull.
 
+Running and terminal Runtime observations both lock and refresh their execution before writing back, preserving the execution-to-activity lock order. Acceptance acknowledgements or lease updates must not drop an already-received `response.created` because of a stale version. Device and owner matching, monotonic event sequences, and terminal-state protection remain unchanged.
+
+## Stand-in assignment identities
+
+For a direct human assignment, `human_task_binding.assignmentId` identifies the
+Issue assignment event. In a collaboration round it identifies the manager's
+member work; the additional `issueAssignmentId` identifies the current Issue
+assignment event. Executor uses the latter for current-assignment validation and
+reception receipts, persisting it as `issue_assignment_id` in task binding
+metadata while retaining the member work ID for round coordination. Receipts
+still require the current recipient, an owned device, and an owned task binding.
+
+Manual delegation from a notification without an execution omits the stand-in
+ID so Executor resolves an identity connected to the project, rather than
+assuming `default`. Reassignment creates a new assignment event and an independent
+stand-in task. The CI-covered `stand-in-assignment-notifications` suite verifies
+notification dispatch, manual delegation, reassignment after completion, and
+round reception receipts together.
+
+## Manager status decisions
+
+The server locks and refreshes the current execution record before applying a manager status decision. Issue status, execution completion and the manager comment commit in one transaction. If completion loses its version comparison, the server rolls back and returns `409`. Regressions cover stale-version refresh, conflict rollback and recovery with the same idempotency key.
+
 ## Verification cases
 
 1. A project Maintainer can bind another member's workspace-authorized Agent while global configuration permissions remain unchanged.

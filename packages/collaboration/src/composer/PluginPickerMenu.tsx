@@ -180,7 +180,7 @@ export function PluginPickerMenu({
                 disabled={disabled}
                 aria-label={t('workbench.composer_plugin_search')}
                 data-testid="composer-plugin-picker-search"
-                className="h-9 max-md:h-11 w-full rounded-lg border border-border/30 bg-background pl-9 pr-3 text-sm outline-none focus:border-focus/70 focus:ring-2 focus:ring-focus/15"
+                className="h-9 max-md:h-11 w-full rounded-lg border border-border/30 bg-background pl-9 pr-3 text-sm outline-none keyboard:focus:border-focus/70 keyboard:focus:ring-2 keyboard:focus:ring-focus/15"
                 placeholder={t('workbench.composer_plugin_search', '搜索插件')}
                 onChange={event => setQuery(event.target.value)}
               />

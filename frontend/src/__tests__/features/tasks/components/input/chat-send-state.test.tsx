@@ -7,6 +7,7 @@ import { fireEvent, render, screen } from '@testing-library/react'
 import type { ChatInputControlsProps } from '@/features/tasks/components/input/ChatInputControls'
 import { ChatInputControls } from '@/features/tasks/components/input/ChatInputControls'
 import { getChatSendState } from '@/features/tasks/components/input/chatSendState'
+import type { Team } from '@/types/api'
 
 jest.mock('@/features/layout/hooks/useMediaQuery', () => ({
   useIsMobile: () => false,
@@ -116,7 +117,7 @@ jest.mock('@/features/tasks/components/selector', () => ({
 function createProps(): ChatInputControlsProps {
   return {
     taskType: 'chat',
-    selectedTeam: null,
+    selectedTeam: { id: 5, name: 'Ready agent', agent_type: 'chat' } as Team,
     teams: [],
     selectedModel: null,
     setSelectedModel: jest.fn(),
@@ -156,11 +157,31 @@ function createProps(): ChatInputControlsProps {
 }
 
 describe('ChatInputControls send state', () => {
+  it('keeps a draft unsendable until the selected agent is resolved', () => {
+    const props = createProps()
+    const view = render(<ChatInputControls {...props} selectedTeam={null} />)
+    expect(screen.getByRole('button', { name: 'Send message' })).toBeDisabled()
+
+    view.rerender(<ChatInputControls {...props} />)
+    expect(screen.getByRole('button', { name: 'Send message' })).toBeEnabled()
+  })
+
   it('shows stop action while the runtime is active', () => {
     render(<ChatInputControls {...createProps()} isStreaming />)
 
     expect(screen.getByRole('button', { name: 'Stop generating' })).toBeInTheDocument()
     expect(screen.queryByRole('button', { name: 'Send' })).not.toBeInTheDocument()
+  })
+
+  it('keeps stop available while an agent is unresolved', () => {
+    render(<ChatInputControls {...createProps()} selectedTeam={null} isStreaming canQueueMessage />)
+    expect(screen.getByRole('button', { name: 'Stop generating' })).toBeEnabled()
+    expect(screen.queryByRole('button', { name: 'Queue message' })).not.toBeInTheDocument()
+  })
+
+  it('keeps cancellation available while an agent is unresolved', () => {
+    render(<ChatInputControls {...createProps()} selectedTeam={null} canCancelTask />)
+    expect(screen.getByRole('button', { name: 'Cancel task' })).toBeEnabled()
   })
 
   it('labels queued send action separately from stop action', () => {
@@ -212,6 +233,7 @@ describe('getChatSendState', () => {
         isModelSelectionRequired: false,
         isAttachmentReadyToSend: true,
         hasNoTeams: false,
+        hasSelectedTeam: true,
         shouldHideChatInput: false,
         taskInputMessage: 'next question',
         canQueueMessage: true,
@@ -232,6 +254,7 @@ describe('getChatSendState', () => {
         isModelSelectionRequired: false,
         isAttachmentReadyToSend: true,
         hasNoTeams: false,
+        hasSelectedTeam: true,
         shouldHideChatInput: false,
         taskInputMessage: 'next question',
         canQueueMessage: true,
@@ -252,6 +275,7 @@ describe('getChatSendState', () => {
         isModelSelectionRequired: false,
         isAttachmentReadyToSend: true,
         hasNoTeams: false,
+        hasSelectedTeam: true,
         shouldHideChatInput: false,
         taskInputMessage: '',
         canQueueMessage: true,
@@ -272,6 +296,7 @@ describe('getChatSendState', () => {
         isModelSelectionRequired: false,
         isAttachmentReadyToSend: true,
         hasNoTeams: false,
+        hasSelectedTeam: true,
         shouldHideChatInput: true,
         taskInputMessage: '',
         canQueueMessage: true,
@@ -292,6 +317,7 @@ describe('getChatSendState', () => {
         isModelSelectionRequired: false,
         isAttachmentReadyToSend: true,
         hasNoTeams: false,
+        hasSelectedTeam: true,
         shouldHideChatInput: false,
         taskInputMessage: 'hello',
         canQueueMessage: false,
@@ -312,6 +338,7 @@ describe('getChatSendState', () => {
         isModelSelectionRequired: false,
         isAttachmentReadyToSend: true,
         hasNoTeams: false,
+        hasSelectedTeam: true,
         shouldHideChatInput: false,
         taskInputMessage: '',
         hasAttachments: true,
@@ -333,6 +360,7 @@ describe('getChatSendState', () => {
         isModelSelectionRequired: false,
         isAttachmentReadyToSend: true,
         hasNoTeams: false,
+        hasSelectedTeam: true,
         shouldHideChatInput: false,
         taskInputMessage: 'hello',
         canQueueMessage: false,
@@ -354,6 +382,7 @@ describe('getChatSendState', () => {
         isModelSelectionRequired: false,
         isAttachmentReadyToSend: true,
         hasNoTeams: false,
+        hasSelectedTeam: true,
         shouldHideChatInput: false,
         taskInputMessage: 'hello',
         canQueueMessage: false,
@@ -375,6 +404,7 @@ describe('getChatSendState', () => {
         isModelSelectionRequired: false,
         isAttachmentReadyToSend: true,
         hasNoTeams: false,
+        hasSelectedTeam: true,
         shouldHideChatInput: false,
         taskInputMessage: 'hello',
         canQueueMessage: false,

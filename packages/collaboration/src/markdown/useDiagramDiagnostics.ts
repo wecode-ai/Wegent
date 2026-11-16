@@ -8,7 +8,6 @@ import {
 
 const MAX_CONTENT_IDENTITIES = 64
 const MAX_IDENTITY_CHARACTERS = 262_144
-const OBSERVATION_WINDOW_MS = 10_000
 const contentIds = new Map<string, number>()
 let identityCharacters = 0
 let nextContentId = 1
@@ -46,6 +45,7 @@ interface DiagramDiagnosticOptions {
   theme: string
   renderViewer: boolean
   fullscreen: boolean
+  status: 'idle' | 'loading' | 'ready' | 'error'
 }
 
 export function useDiagramDiagnostics(
@@ -84,73 +84,37 @@ export function useDiagramDiagnostics(
     return () => record('search-diagram-unmount')
   }, [record])
 
-  const { code, language, theme, renderViewer, fullscreen } = options
+  const cycle = useRef<{ id: number; startedAt: number; reported: boolean } | null>(null)
+  const { code, language, theme, renderViewer, status } = options
   useLayoutEffect(() => {
-    const element = elementRef.current
-    if (!renderViewer || !element || !isConversationDiagnosticsEnabled()) return
+    if (!renderViewer || !isConversationDiagnosticsEnabled()) return
     if (!activated.current) {
       activated.current = true
       record('search-diagram-activate')
     }
-    const renderId = nextRenderId++
-    const startedAt = performance.now()
-    let rendered = false
-    let failed = false
-    let timedOut = false
-    const previousState = element.querySelector<HTMLElement>('.drawing-state')
-    record('search-diagram-viewer-start', { diagramRenderId: renderId, startTime: startedAt })
-    const details = () => ({
-      diagramRenderId: renderId,
-      startTime: startedAt,
-      elapsedMs: performance.now() - startedAt,
-      rendered,
-      failed,
-      timedOut,
-    })
-    const observer = new MutationObserver(() => {
-      if (!isConversationDiagnosticsEnabled()) {
-        timedOut = true
-        stop()
-        return
-      }
-      inspectResult()
-    })
-    const stop = () => {
-      observer.disconnect()
-      clearTimeout(timer)
-    }
-    const inspectResult = () => {
-      // The renderer returns before its asynchronous layout finishes. Its own
-      // hidden loading state changes only after the final SVG and Panzoom exist.
-      const state = element.querySelector<HTMLElement>('.drawing-state')
-      // Updated viewer props reload in a passive effect, after this layout effect.
-      if (!state || state === previousState) return
-      const svg = element.querySelector('.drawing-diagram-pan > svg.drawing-diagram-svg')
-      rendered = Boolean(state.hidden && svg)
-      failed = Boolean(state?.classList.contains('error'))
-      if (!rendered && !failed) return
-      record('search-diagram-viewer-result', {
-        ...details(),
-        cacheHit: svg?.getAttribute('data-diagram-cache-hit') === 'true',
-        layoutIsolated: svg?.getAttribute('data-mermaid-layout-isolated') === 'true',
-      })
-      stop()
-    }
-    const timer = setTimeout(() => {
-      timedOut = true
-      record('search-diagram-viewer-timeout', details())
-      stop()
-    }, OBSERVATION_WINDOW_MS)
-    observer.observe(element, {
-      childList: true,
-      subtree: true,
-      attributes: true,
-      attributeFilter: ['hidden', 'class'],
-    })
-    inspectResult()
+    const next = { id: nextRenderId++, startedAt: performance.now(), reported: false }
+    cycle.current = next
+    record('search-diagram-viewer-start', { diagramRenderId: next.id, startTime: next.startedAt })
     return () => {
-      stop()
-      record('search-diagram-viewer-stop', details())
+      record('search-diagram-viewer-stop', {
+        diagramRenderId: next.id,
+        elapsedMs: performance.now() - next.startedAt,
+        rendered: current.current.status === 'ready',
+        failed: current.current.status === 'error',
+      })
+      cycle.current = null
     }
-  }, [code, language, theme, renderViewer, fullscreen, elementRef, record])
+  }, [code, language, theme, renderViewer, record])
+
+  useLayoutEffect(() => {
+    const active = cycle.current
+    if (!active || active.reported || (status !== 'ready' && status !== 'error')) return
+    active.reported = true
+    record('search-diagram-viewer-result', {
+      diagramRenderId: active.id,
+      elapsedMs: performance.now() - active.startedAt,
+      rendered: status === 'ready',
+      failed: status === 'error',
+    })
+  }, [status, code, language, theme, record])
 }

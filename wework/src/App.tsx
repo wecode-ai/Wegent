@@ -1,3 +1,4 @@
+import { useWorkbenchServiceConnections } from '@/features/workbench/workbenchServiceConnections'
 import { NotificationEventsBridge } from '@/features/notifications/NotificationEventsBridge'
 import { LOCAL_USER } from '@/api/local/localSession'
 import {
@@ -5,6 +6,16 @@ import {
   NotificationTaskSourceProvider,
 } from '@/features/notifications/NotificationTaskSource'
 import { WeworkSchemeBridge } from '@/features/notifications/WeworkSchemeBridge'
+import { RuntimeInteractionsProvider } from '@/features/notifications/RuntimeInteractionsProvider'
+import { RuntimeInteractionsPage } from '@/features/notifications/RuntimeInteractionsPage'
+import { RuntimeInteractionNotice } from '@/features/notifications/RuntimeInteractionNotice'
+import { PluginPythonRuntimeNotice } from '@/components/plugins/PluginPythonRuntimeNotice'
+import { INTERACTIONS_PATH } from '@/features/notifications/RuntimeInteractionsContext'
+import { CollaborationExpRoute } from '@/features/collaboration-exp/CollaborationExpRoute'
+import {
+  COLLABORATION_EXP_PATH,
+  isCollaborationExpPath,
+} from '@/features/collaboration-exp/collaborationExpFeature'
 import {
   Activity,
   useCallback,
@@ -22,6 +33,7 @@ import { Check, Copy, Info, Minimize2, PlugZap } from 'lucide-react'
 import { AuthProvider } from '@/features/auth/AuthProvider'
 import { useAuth } from '@/features/auth/useAuth'
 import { WorkbenchProvider } from '@/features/workbench/WorkbenchProvider'
+import { resolveWorkbenchOwnership } from '@/features/workbench/workbenchOwnership'
 import {
   registerRuntimeTaskLifecycleAutomation,
   RuntimeTaskLifecycleStore,
@@ -33,12 +45,17 @@ import {
 } from '@/features/workbench/workbenchServices'
 import { RuntimeTaskCloseGuard } from '@/features/workbench/RuntimeTaskCloseGuard'
 import { RuntimeTaskSystemSleepBridge } from '@/features/workbench/RuntimeTaskSystemSleepBridge'
+import { ReplyPredictionCoordinator } from '@/features/reply-predictions/ReplyPredictionCoordinator'
 import { OidcCallbackPage } from '@/pages/OidcCallbackPage'
 import { LoginPage } from '@/pages/LoginPage'
 import { WeworkAuthorizePage } from '@/pages/WeworkAuthorizePage'
 import { PopoutWorkbenchPage } from '@/pages/PopoutWorkbenchPage'
 import { stripAppBasePath } from '@/config/runtime'
-import { AppearanceProvider, useAppearance } from '@/features/appearance'
+import {
+  AppearanceProvider,
+  getWorkbenchBackground,
+  useOptionalAppearance,
+} from '@/features/appearance'
 import { ChromeTitlebar } from '@/components/topnav/ChromeTitlebar'
 import { GlobalIconButtonTooltip } from '@/components/ui/GlobalIconButtonTooltip'
 import { AppIframe } from '@/components/topnav/AppIframe'
@@ -60,6 +77,8 @@ import {
 } from '@/lib/runtime-environment'
 import { AppUpdateProvider } from '@/features/app-update/AppUpdateProvider'
 import { LocalRuntimeInitializer } from '@/features/local-runtime/LocalRuntimeInitializer'
+import { LocalRuntimeNotice } from '@/features/local-runtime/LocalRuntimeNotice'
+import { MacOSTitleBarDragRegion } from '@/components/layout/MacOSTitleBarDragRegion'
 import { CodexHomeInitializer } from '@/features/local-runtime/CodexHomeInitializer'
 import { IdleTaskCoordinator } from '@/features/idle-tasks/IdleTaskCoordinator'
 import { WeworkIdleTasks } from '@/features/idle-tasks/WeworkIdleTasks'
@@ -117,6 +136,7 @@ import { SystemDragBridge } from '@/features/system-drag/SystemDragBridge'
 import { ProcessExplorerPage } from '@/pages/ProcessExplorerPage'
 import { installMacOSInputArrowKeyGuard } from '@/lib/macosInputArrowKeyGuard'
 import { useExperimentalFeaturesState } from '@/features/experimental-features/useExperimentalFeaturesEnabled'
+import { useAppPreferenceFeatureState } from '@/features/experimental-features/useAppPreferenceFeatureState'
 import { AppPreferencesProvider } from '@/features/app-preferences/AppPreferencesProvider'
 import { useAppPreferencesState } from '@/features/app-preferences/useAppPreferencesState'
 import { useTranslation } from '@/hooks/useTranslation'
@@ -160,6 +180,7 @@ import { invokeDesktopHost } from '@/api/dsh/desktopHost'
 import { deviceSurfaceExtension } from '@extensions/device-surface'
 
 const POPOUT_WINDOW_LABEL = 'popout-window'
+const COLLABORATION_EXP_TAB_PATHS = [COLLABORATION_EXP_PATH] as const
 
 function isPopoutWindowRuntime() {
   return isElectronRuntime() && getDesktopWindowLabel() === POPOUT_WINDOW_LABEL
@@ -304,6 +325,7 @@ function UnavailableWorkspaceRoute({ path }: { path: string }) {
 
 interface WorkspaceTabSurfaceProps {
   active: boolean
+  collaborationExperienceEnabled?: boolean
   cloudWebUrl: string | null | undefined
   lifecycleStore: RuntimeTaskLifecycleStore
   nativeWorkbenchKind?: 'task' | 'board'
@@ -317,6 +339,7 @@ interface WorkspaceTabSurfaceProps {
 
 export const WorkspaceTabSurface = memo(function WorkspaceTabSurface({
   active,
+  collaborationExperienceEnabled = false,
   cloudWebUrl,
   lifecycleStore,
   nativeWorkbenchKind,
@@ -336,6 +359,8 @@ export const WorkspaceTabSurface = memo(function WorkspaceTabSurface({
   const harnessAppInstallationId = harnessAppInstallationIdFromPath(tabPath)
   const iframe = workspaceTabIframe(tab, cloudWebUrl)
   const auxiliaryRoute = resolveDshRoute(tabPath)
+  const collaborationExperienceActive =
+    collaborationExperienceEnabled && isCollaborationExpPath(tabPath)
   const inferredNativeKind = inferWorkspaceTabKind(tabPath)
   const retainedNativeKind = nativeWorkbenchKind ?? inferredNativeKind
   const routedDshApp = workspaceTabDshApp(tabPath, inferredNativeKind)
@@ -346,7 +371,10 @@ export const WorkspaceTabSurface = memo(function WorkspaceTabSurface({
     (inferredNativeKind === 'task' || inferredNativeKind === 'board') &&
     nativeDshApp?.workspaceKinds?.includes(inferredNativeKind)
   )
-  const auxiliaryActive = Boolean(auxiliaryRoute || surfaceDshApp) || dshWorkspaceTabActive
+  const auxiliaryActive =
+    Boolean(auxiliaryRoute || surfaceDshApp) ||
+    dshWorkspaceTabActive ||
+    collaborationExperienceActive
   const harnessAppLaunch = useHarnessAppLaunchState(harnessAppInstallationId)
   const harnessAppLaunchActive = Boolean(harnessAppLaunch)
   const [harnessAppStartupOwner, setHarnessAppStartupOwner] = useState(() => ({
@@ -399,7 +427,7 @@ export const WorkspaceTabSurface = memo(function WorkspaceTabSurface({
       : (iframe ?? surfaceHistory.iframe)
   const nextSurfaceHistory = {
     iframe: nextIframe,
-    hasMountedProvider: surfaceHistory.hasMountedProvider || !iframe,
+    hasMountedProvider: surfaceHistory.hasMountedProvider || !iframe || harnessAppStartupPending,
     hasMountedWorkbench: surfaceHistory.hasMountedWorkbench || nativeWorkbenchActive,
   }
   if (
@@ -411,7 +439,7 @@ export const WorkspaceTabSurface = memo(function WorkspaceTabSurface({
   }
 
   const renderedIframe = iframe ?? surfaceHistory.iframe
-  const renderProvider = surfaceHistory.hasMountedProvider || !iframe
+  const renderProvider = surfaceHistory.hasMountedProvider || !iframe || harnessAppStartupPending
   const renderWorkbench = surfaceHistory.hasMountedWorkbench || nativeWorkbenchActive
   // Fixed native tabs behave like desktop tabs: mount once, preserve their
   // effects and in-memory UI state, and remove them from layout and paint while inactive.
@@ -421,9 +449,11 @@ export const WorkspaceTabSurface = memo(function WorkspaceTabSurface({
   // disconnects their effects. Keep the current iframe route connected while
   // inactive; AppIframe hides the native WebView through its active prop.
   const keepIframeActive = Boolean(iframe)
-  // Starting an Electron Smart app is an application lifecycle operation, not
-  // a visible-tab effect. Keep its launcher connected until startup settles.
-  const keepHarnessAppLaunchActive = Boolean(harnessAppInstallationId && harnessAppLaunchActive)
+  // A reopened launch can be queued behind the old tab's cleanup before it
+  // establishes shared launch state. Keep that tab's pending owner connected too.
+  const keepHarnessAppLaunchActive = Boolean(
+    harnessAppInstallationId && (harnessAppLaunchActive || harnessAppStartupPending)
+  )
   const keepSurfaceActive =
     keepNativeWorkbenchActive || keepIframeActive || keepHarnessAppLaunchActive
 
@@ -461,6 +491,9 @@ export const WorkspaceTabSurface = memo(function WorkspaceTabSurface({
         <div data-testid="desktop-auxiliary-surface" className="h-full">
           <DshRouteSurface route={auxiliaryRoute} search={tabSearch} workspaceTabId={tab.id} />
         </div>
+      ) : null}
+      {collaborationExperienceActive ? (
+        <CollaborationExpRoute active={active} search={tabSearch} />
       ) : null}
       {surfaceDshApp ? <DshAppSurface active={active} app={surfaceDshApp} tab={tab} /> : null}
       {dshWorkspaceTabActive ? (
@@ -548,6 +581,7 @@ function AppRoutes({ onWorkbenchStartupReadyChange, onOpenWeworkForAppshot }: Ap
   const { user, isLoading } = useAuth()
   const cloudConnection = useCloudConnection()
   const experimentalFeatures = useExperimentalFeaturesState()
+  const collaborationExperience = useAppPreferenceFeatureState('collaborationExperienceEnabled')
   const workspaceTabs = useOptionalWorkspaceTabs()
   const [mountedTabs, setMountedTabs] = useState(() => ({
     ids: new Set(workspaceTabs ? [workspaceTabs.activeTabId] : []),
@@ -557,10 +591,12 @@ function AppRoutes({ onWorkbenchStartupReadyChange, onOpenWeworkForAppshot }: Ap
       ) ?? []
     ),
   }))
-  const lifecycleStore = useMemo(() => new RuntimeTaskLifecycleStore(user?.id), [user?.id])
+  const { user: workbenchIdentity, key: ownershipKey } = resolveWorkbenchOwnership(
+    cloudConnection,
+    user
+  )
+  const lifecycleStore = useMemo(() => new RuntimeTaskLifecycleStore(ownershipKey), [ownershipKey])
   useEffect(() => registerRuntimeTaskLifecycleAutomation(lifecycleStore), [lifecycleStore])
-  const usesFallbackCloudConnection = cloudConnection.serviceKey.startsWith('fallback:')
-  const workbenchIdentity = usesFallbackCloudConnection ? user : (cloudConnection.user ?? user)
   const workbenchIdentityId = workbenchIdentity?.id
   const workbenchIdentityName = workbenchIdentity?.user_name
   const workbenchIdentityEmail = workbenchIdentity?.email
@@ -596,6 +632,7 @@ function AppRoutes({ onWorkbenchStartupReadyChange, onOpenWeworkForAppshot }: Ap
       runtimeServiceUser,
     ]
   )
+  useWorkbenchServiceConnections(services)
 
   useEffect(() => {
     if (!isElectronRuntime()) return
@@ -712,6 +749,7 @@ function AppRoutes({ onWorkbenchStartupReadyChange, onOpenWeworkForAppshot }: Ap
     return (
       <>
         <RuntimeTaskLifecycleStreamCoordinator services={services} store={lifecycleStore} />
+        <ReplyPredictionCoordinator services={services} store={lifecycleStore} />
         <RuntimeTaskSystemSleepBridge store={lifecycleStore} />
         <NotificationEventsBridge
           chatStream={services.chatStream}
@@ -741,31 +779,73 @@ function AppRoutes({ onWorkbenchStartupReadyChange, onOpenWeworkForAppshot }: Ap
   return (
     <>
       <RuntimeTaskLifecycleStreamCoordinator services={services} store={lifecycleStore} />
+      <ReplyPredictionCoordinator services={services} store={lifecycleStore} />
       <RuntimeTaskSystemSleepBridge store={lifecycleStore} />
       <NotificationEventsBridge
         chatStream={services.chatStream}
         currentUserId={workbenchIdentity?.id}
         localUserId={LOCAL_USER.id}
       />
-      {mountedWorkspaceTabs.map(tab => (
-        <WorkspaceTabSurface
-          key={tab.id}
-          active={tab.id === workspaceTabs.activeTabId}
-          lifecycleStore={lifecycleStore}
-          nativeWorkbenchKind={nextNativeWorkbenchKinds.get(tab.id)}
-          smartAppsEnabled={experimentalFeatures.enabled}
-          services={services}
-          cloudWebUrl={cloudWebUrl}
-          onOpenWeworkForAppshot={onOpenWeworkForAppshot}
-          onWorkbenchStartupReadyChange={onWorkbenchStartupReadyChange}
-          tab={
-            tab.id === workspaceTabs.activeTabId && isSettingsRoute(path)
-              ? { ...tab, contentRoute: `${path}${search}` }
-              : tab
-          }
-          user={user}
-        />
-      ))}
+      {mountedWorkspaceTabs.map(tab =>
+        tab.contentRoute.startsWith(INTERACTIONS_PATH) ? (
+          <Activity key={tab.id} mode={tab.id === workspaceTabs.activeTabId ? 'visible' : 'hidden'}>
+            <div
+              className={cn('h-full', tab.id !== workspaceTabs.activeTabId && 'hidden')}
+              data-testid={`workspace-tab-content-${tab.id}`}
+              data-workspace-tab-content={tab.id}
+              aria-hidden={tab.id !== workspaceTabs.activeTabId}
+            >
+              <WorkbenchProvider
+                lifecycleStore={lifecycleStore}
+                services={services}
+                user={user}
+                workspaceTabId={tab.id}
+                loadTaskComposerCatalogs={tab.id === workspaceTabs.activeTabId}
+                composerAppsSourceActive={tab.id === workspaceTabs.activeTabId}
+                debugSnapshotEnabled={false}
+                publishDebugSnapshots={false}
+                consumePluginTrials={false}
+                syncCoreDshModels={false}
+                syncRemoteProjects={tab.id === workspaceTabs.activeTabId}
+                syncRuntimeTaskLifecycle={tab.id === workspaceTabs.activeTabId}
+                onStartupReadyChange={
+                  tab.id === workspaceTabs.activeTabId ? onWorkbenchStartupReadyChange : undefined
+                }
+              >
+                <NotificationTaskSourceBridge
+                  id={tab.id}
+                  active={tab.id === workspaceTabs.activeTabId}
+                />
+                <RuntimeInteractionsPage
+                  active={tab.id === workspaceTabs.activeTabId}
+                  selectedId={new URL(tab.contentRoute, window.location.origin).searchParams.get(
+                    'interaction'
+                  )}
+                />
+              </WorkbenchProvider>
+            </div>
+          </Activity>
+        ) : (
+          <WorkspaceTabSurface
+            key={tab.id}
+            active={tab.id === workspaceTabs.activeTabId}
+            lifecycleStore={lifecycleStore}
+            nativeWorkbenchKind={nextNativeWorkbenchKinds.get(tab.id)}
+            smartAppsEnabled={experimentalFeatures.enabled}
+            collaborationExperienceEnabled={collaborationExperience.enabled}
+            services={services}
+            cloudWebUrl={cloudWebUrl}
+            onOpenWeworkForAppshot={onOpenWeworkForAppshot}
+            onWorkbenchStartupReadyChange={onWorkbenchStartupReadyChange}
+            tab={
+              tab.id === workspaceTabs.activeTabId && isSettingsRoute(path)
+                ? { ...tab, contentRoute: `${path}${search}` }
+                : tab
+            }
+            user={user}
+          />
+        )
+      )}
     </>
   )
 }
@@ -776,14 +856,17 @@ export default function App() {
     isDesktopRuntime() && path === '/system-drag' ? (
       <SystemDragPanel />
     ) : isDesktopRuntime() && path === '/process-explorer' ? (
-      <AppEnvironment persistAppearance={false} syncAppearanceFromPreferences>
-        <ProcessExplorerPage />
-      </AppEnvironment>
+      <ProcessExplorerPage />
     ) : (
       <MainApp />
     )
   return (
-    <>
+    <AppEnvironment
+      persistAppearance={
+        !isDesktopRuntime() ||
+        (!['/system-drag', '/process-explorer'].includes(path) && !isPopoutWindowRuntime())
+      }
+    >
       <DshSlotSurface className="contents" slot={WEWORK_DSH_SLOTS.shellBefore} />
       {content}
       <GlobalIconButtonTooltip />
@@ -795,7 +878,7 @@ export default function App() {
           slot={WEWORK_DSH_SLOTS.shellOverlay}
         />
       </div>
-    </>
+    </AppEnvironment>
   )
 }
 
@@ -805,50 +888,33 @@ function MainApp() {
   }, [])
 
   return (
-    <AppEnvironment>
-      <AppUpdateProvider>
-        <CloudConnectionProvider>
-          <AuthProvider>
-            <TelemetryBridge />
-            <TelemetryAgent />
-            <AppShell />
-          </AuthProvider>
-        </CloudConnectionProvider>
-      </AppUpdateProvider>
-    </AppEnvironment>
+    <AppUpdateProvider>
+      <CloudConnectionProvider>
+        <AuthProvider>
+          <TelemetryBridge />
+          <TelemetryAgent />
+          <AppShell />
+        </AuthProvider>
+      </CloudConnectionProvider>
+    </AppUpdateProvider>
   )
 }
 
 function AppEnvironment({
   children,
   persistAppearance = true,
-  syncAppearanceFromPreferences = false,
 }: {
   children: ReactNode
   persistAppearance?: boolean
-  syncAppearanceFromPreferences?: boolean
 }) {
   return (
     <AppearanceProvider persist={persistAppearance}>
       <AppPreferencesProvider>
-        {syncAppearanceFromPreferences ? <AppearancePreferenceSync /> : null}
         <LanguagePreferenceInitializer />
         {children}
       </AppPreferencesProvider>
     </AppearanceProvider>
   )
-}
-
-function AppearancePreferenceSync() {
-  const appPreferences = useAppPreferencesState()
-  const { setAppearance } = useAppearance()
-
-  useEffect(() => {
-    if (!appPreferences?.loaded) return
-    setAppearance({ mode: appPreferences.preferences.appearanceMode })
-  }, [appPreferences?.loaded, appPreferences?.preferences.appearanceMode, setAppearance])
-
-  return null
 }
 
 function LanguagePreferenceInitializer() {
@@ -874,18 +940,17 @@ function browserWorkspaceTabStorageScope(): string {
 function AppShell() {
   const { t } = useTranslation('common')
   const dshContext = useDshClientContext()
+  const appearanceContext = useOptionalAppearance()
+  const workbenchBackground = appearanceContext?.appearance
+    ? getWorkbenchBackground(appearanceContext.appearance, appearanceContext.resolvedMode)
+    : null
+  const hasWorkbenchBackground = Boolean(workbenchBackground?.imagePath)
   const registeredRoutes = useDshSlotEntries<WeworkDshRoute>(WEWORK_DSH_SLOTS.route)
   const appPreferences = useAppPreferencesState()
   const { pathname: path, search } = useCurrentLocation()
   const { user, isLoading } = useAuth()
   const cloudConnection = useCloudConnection()
-  const initialCloudConnection = {
-    apiBaseUrl: cloudConnection.apiBaseUrl,
-    backendUrl: cloudConnection.backendUrl,
-    socketBaseUrl: cloudConnection.socketBaseUrl,
-    isConnected: cloudConnection.isConnected,
-    token: cloudConnection.token,
-  }
+  const { key: ownershipKey } = resolveWorkbenchOwnership(cloudConnection, user)
   const { activeAppKey, navigateToApp } = useChromeTabs(path)
   const isElectron = isElectronRuntime()
   const isDesktop = isDesktopRuntime()
@@ -893,6 +958,17 @@ function AppShell() {
   const currentWindowLabel = isElectron ? getDesktopWindowLabel() : null
   const isMainWindow = currentWindowLabel === 'main'
   const isWorkspaceWindow = currentWindowLabel?.startsWith('workspace-') === true
+  const localExecutorCloudBridge =
+    !isPopoutWindow && !isWorkspaceWindow ? (
+      <LocalExecutorCloudBridge
+        apiBaseUrl={cloudConnection.apiBaseUrl}
+        backendUrl={cloudConnection.backendUrl}
+        socketBaseUrl={cloudConnection.socketBaseUrl}
+        isConnected={cloudConnection.isConnected}
+        token={cloudConnection.token}
+        preferencesLoaded={appPreferences?.loaded ?? false}
+      />
+    ) : null
   const cloudApiBaseUrl = cloudConnection.apiBaseUrl
   const cloudToken = cloudConnection.token
   const titlebarOverlaysContent = false
@@ -913,15 +989,19 @@ function AppShell() {
   const workspaceTabLabels = useMemo(
     () => ({
       task: t('workbench.workspace_tab_task', '任务'),
-      board: t('workbench.workspace_tab_board', '协作 (Beta)'),
+      board: t('workbench.workspace_tab_board', '协作'),
       agent: t('workbench.workspace_tab_agent', '智能体'),
       auxiliary: t('workbench.workspace_tab_auxiliary', '工作区'),
-      auxiliaryRoutes: Object.fromEntries(
-        registeredRoutes.map(route => [
-          route.path,
-          t(route.titleKey ?? route.id, route.title ?? route.label ?? route.id),
-        ])
-      ),
+      auxiliaryRoutes: {
+        ...Object.fromEntries(
+          registeredRoutes.map(route => [
+            route.path,
+            t(route.titleKey ?? route.id, route.title ?? route.label ?? route.id),
+          ])
+        ),
+        [INTERACTIONS_PATH]: t('interactions.title', '待你处理'),
+        [COLLABORATION_EXP_PATH]: t('workbench.workspace_tab_collaboration_exp', '协作 exp'),
+      },
     }),
     [registeredRoutes, t]
   )
@@ -963,10 +1043,15 @@ function AppShell() {
   )
   const startupWorkspaceTabId = useMemo(() => {
     if (!isMainWindow || !appPreferences?.loaded) return undefined
+    const visibleFixedTabs = fixedWorkspaceTabs.filter(
+      tab =>
+        appPreferences.preferences.collaborationExperienceEnabled ||
+        !isCollaborationExpPath(tab.contentRoute)
+    )
     const preferredId = appPreferences.preferences.startupWorkspaceTabId
-    return fixedWorkspaceTabs.some(tab => tab.id === preferredId)
+    return visibleFixedTabs.some(tab => tab.id === preferredId)
       ? preferredId
-      : fixedWorkspaceTabs[0]?.id
+      : visibleFixedTabs[0]?.id
   }, [appPreferences, fixedWorkspaceTabs, isMainWindow])
   const [workbenchStartupReady, setWorkbenchStartupReady] = useState(false)
   const updateImNotificationPresence = useMemo(() => {
@@ -1195,7 +1280,10 @@ function AppShell() {
     return (
       <CodexHomeInitializer>
         <LocalRuntimeInitializer startupReady={false}>
-          <div />
+          <div className="flex h-dvh flex-col">
+            <MacOSTitleBarDragRegion className="h-10 shrink-0" />
+            <LocalRuntimeNotice />
+          </div>
         </LocalRuntimeInitializer>
       </CodexHomeInitializer>
     )
@@ -1207,18 +1295,20 @@ function AppShell() {
 
   if (isIsolatedSurface) {
     const isolatedShell = (
-      <div data-testid="app-shell" className="fixed inset-0 overflow-hidden bg-background">
-        <div data-testid="app-route-host" className="h-full min-h-0 overflow-hidden">
+      <div
+        data-testid="app-shell"
+        className="fixed inset-0 flex flex-col overflow-hidden bg-background"
+      >
+        <LocalRuntimeNotice />
+        <div data-testid="app-route-host" className="min-h-0 flex-1 overflow-hidden">
           <AppRoutes />
         </div>
       </div>
     )
     return (
       <CodexHomeInitializer>
-        <LocalRuntimeInitializer
-          initialCloudConnection={initialCloudConnection}
-          startupReady={workbenchStartupReady}
-        >
+        <LocalRuntimeInitializer startupReady={workbenchStartupReady}>
+          {localExecutorCloudBridge}
           {isolatedShell}
         </LocalRuntimeInitializer>
       </CodexHomeInitializer>
@@ -1226,71 +1316,74 @@ function AppShell() {
   }
 
   const shell = (
-    <NotificationTaskSourceProvider key={user.id}>
+    <NotificationTaskSourceProvider key={ownershipKey}>
       <WorkspaceTabsProvider
         pathname={path}
         search={search}
-        storageScope={workspaceTabStorageScope}
+        storageScope={
+          isMainWindow ? `${workspaceTabStorageScope}:${ownershipKey}` : workspaceTabStorageScope
+        }
         labels={workspaceTabLabels}
         fixedTabs={fixedWorkspaceTabs}
         startupTabId={startupWorkspaceTabId}
         restoreSessionTabs={!isMainWindow}
+        retainedTabPaths={isMainWindow ? COLLABORATION_EXP_TAB_PATHS : undefined}
+        hiddenTabPaths={
+          appPreferences?.preferences.collaborationExperienceEnabled
+            ? undefined
+            : COLLABORATION_EXP_TAB_PATHS
+        }
       >
-        <ElectronWorkbenchTabBridge />
-        <WeworkSchemeBridge />
-        {isElectron && !isPopoutWindow ? <ApplicationMenuWorkspaceBridge pathname={path} /> : null}
-        <div
-          data-testid="app-shell"
-          className={cn(
-            isDesktop ? 'fixed inset-0' : 'h-dvh',
-            isPopoutWindow
-              ? 'overflow-visible bg-transparent'
-              : isWorkspaceWindow
-                ? 'overflow-hidden bg-[rgb(var(--color-titlebar))]'
-                : 'overflow-hidden bg-surface',
-            titlebarOverlaysContent ? 'relative' : 'flex flex-col'
-          )}
-        >
-          {showChromeTitlebar && (
-            <ChromeTitlebar
-              showWorkspacePortals={activeAppKey !== 'wework'}
-              showFeedback={activeAppKey !== 'wework'}
-            />
-          )}
-          {isDesktop && !isPopoutWindow && !isWorkspaceWindow ? <RuntimeTaskCloseGuard /> : null}
-          {!isPopoutWindow && !isWorkspaceWindow ? (
-            <LocalExecutorCloudBridge
-              apiBaseUrl={cloudConnection.apiBaseUrl}
-              backendUrl={cloudConnection.backendUrl}
-              socketBaseUrl={cloudConnection.socketBaseUrl}
-              isConnected={cloudConnection.isConnected}
-              token={cloudConnection.token}
-              preferencesLoaded={appPreferences?.loaded ?? false}
-            />
+        <RuntimeInteractionsProvider accountKey={ownershipKey}>
+          <ElectronWorkbenchTabBridge />
+          <WeworkSchemeBridge />
+          {isElectron && !isPopoutWindow ? (
+            <ApplicationMenuWorkspaceBridge pathname={path} />
           ) : null}
-          {isMainWindow && isElectron ? (
-            <>
-              <IdleTaskCoordinator active={workbenchStartupReady} />
-              <WeworkIdleTasks />
-            </>
-          ) : null}
-          {isMainWindow && isElectron ? <PluginAutoUpdateCoordinator /> : null}
-          <CloudModelCatalogSyncDialogHost />
           <div
-            data-testid="app-route-host"
+            data-testid="app-shell"
             className={cn(
-              'relative min-h-0',
-              isPopoutWindow ? 'overflow-visible' : 'overflow-hidden',
-              titlebarOverlaysContent ? 'h-full' : 'flex-1'
+              isDesktop ? 'fixed inset-0' : 'h-dvh',
+              isPopoutWindow
+                ? 'overflow-visible bg-transparent'
+                : isWorkspaceWindow
+                  ? 'overflow-hidden bg-[rgb(var(--color-titlebar))]'
+                  : hasWorkbenchBackground
+                    ? 'overflow-hidden bg-transparent'
+                    : 'overflow-hidden bg-surface',
+              titlebarOverlaysContent ? 'relative' : 'flex flex-col'
             )}
           >
-            <AppRoutes
-              onWorkbenchStartupReadyChange={setWorkbenchStartupReady}
-              onOpenWeworkForAppshot={isDesktop ? openWeworkForAppshot : undefined}
-            />
+            {showChromeTitlebar && (
+              <ChromeTitlebar showWorkspacePortals={activeAppKey !== 'wework'} />
+            )}
+            {isDesktop && !isPopoutWindow && !isWorkspaceWindow ? <RuntimeTaskCloseGuard /> : null}
+            {isMainWindow && isElectron ? (
+              <>
+                <IdleTaskCoordinator active={workbenchStartupReady} />
+                <WeworkIdleTasks />
+              </>
+            ) : null}
+            {isMainWindow && isElectron ? <PluginAutoUpdateCoordinator /> : null}
+            <CloudModelCatalogSyncDialogHost />
+            <div
+              data-testid="app-route-host"
+              className={cn(
+                'relative min-h-0',
+                isPopoutWindow ? 'overflow-visible' : 'overflow-hidden',
+                titlebarOverlaysContent ? 'h-full' : 'flex-1'
+              )}
+            >
+              <AppRoutes
+                onWorkbenchStartupReadyChange={setWorkbenchStartupReady}
+                onOpenWeworkForAppshot={isDesktop ? openWeworkForAppshot : undefined}
+              />
+            </div>
+            {!isPopoutWindow && <WeworkDevInstanceBadge />}
+            {!isPopoutWindow && !isWorkspaceWindow && <RuntimeInteractionNotice />}
+            {isElectron && !isPopoutWindow && !isWorkspaceWindow && <PluginPythonRuntimeNotice />}
           </div>
-          {!isPopoutWindow && <WeworkDevInstanceBadge />}
-        </div>
+        </RuntimeInteractionsProvider>
       </WorkspaceTabsProvider>
     </NotificationTaskSourceProvider>
   )
@@ -1301,10 +1394,8 @@ function AppShell() {
 
   return (
     <CodexHomeInitializer>
-      <LocalRuntimeInitializer
-        initialCloudConnection={initialCloudConnection}
-        startupReady={workbenchStartupReady}
-      >
+      <LocalRuntimeInitializer startupReady={workbenchStartupReady}>
+        {localExecutorCloudBridge}
         {shell}
       </LocalRuntimeInitializer>
     </CodexHomeInitializer>
@@ -1429,7 +1520,7 @@ function WeworkDevInstanceBadge() {
               <button
                 type="button"
                 data-testid="collapse-wework-dev-instance-button"
-                className="flex h-7 w-7 items-center justify-center rounded-md text-text-secondary hover:bg-black/[0.04] hover:text-text-primary"
+                className="flex h-7 w-7 items-center justify-center rounded-md text-text-secondary hover:bg-muted hover:text-text-primary wework:hover:bg-black/[0.04]"
                 title="Collapse to movable icon"
                 aria-label="Collapse development instance info"
                 onClick={() => setCollapsed(true)}
@@ -1454,7 +1545,7 @@ function WeworkDevInstanceBadge() {
                 <button
                   type="button"
                   data-testid={`copy-wework-dev-${row.key}-button`}
-                  className="flex h-7 w-7 items-center justify-center rounded-md text-text-secondary hover:bg-black/[0.04] hover:text-text-primary"
+                  className="flex h-7 w-7 items-center justify-center rounded-md text-text-secondary hover:bg-muted hover:text-text-primary wework:hover:bg-black/[0.04]"
                   title={`Copy ${row.label}`}
                   aria-label={`Copy ${row.label}`}
                   onClick={() => void copyValue(row.key, row.value)}

@@ -712,6 +712,73 @@ async def test_queue_wakeup_only_emits_availability(
     )
 
 
+async def test_operation_wakeup_does_not_scan_or_prepare_other_executions(
+    test_db, test_user
+):
+    from app.tasks.robot_queue_tasks import notify_execution_targets, wake_executions
+
+    execution = _make_execution(test_db, test_user)
+    with (
+        patch("app.tasks.robot_queue_tasks._prepare_queue_targets") as scan,
+        patch.object(
+            loop_item_execution_service, "prepare_queued_assignments"
+        ) as prepare,
+        patch("app.core.async_utils.schedule_async_task") as schedule,
+        patch("app.core.socketio.get_sio", return_value=AsyncMock()) as socket,
+    ):
+        wake_executions(test_db, [execution])
+        callback, targets = schedule.call_args.args
+        await callback(targets)
+
+    scan.assert_not_called()
+    prepare.assert_not_called()
+    schedule.assert_called_once_with(
+        notify_execution_targets, [(test_user.id, "cloud-device")]
+    )
+    socket.return_value.emit.assert_awaited_once_with(
+        "runtime.tasks.available",
+        {},
+        room=f"execution-target:{test_user.id}:cloud-device",
+        namespace="/local-executor",
+    )
+
+
+def test_operation_wakeup_preserves_shared_runner_ownership_and_revocation(
+    test_db, test_user, test_admin_user
+):
+    from app.tasks.robot_queue_tasks import notify_execution_targets, wake_executions
+
+    execution = _make_execution(test_db, test_user)
+    _make_execution(test_db, test_admin_user)
+    shared = (
+        test_db.query(Kind)
+        .filter_by(kind="Device", namespace="default", user_id=test_admin_user.id)
+        .one()
+    )
+    project = test_db.get(CloudProject, execution.cloud_project_id)
+    authorize_resource(test_db, project, shared)
+    execution.execution_device_id = ""
+    test_db.commit()
+    with patch("app.core.async_utils.schedule_async_task") as schedule:
+        wake_executions(test_db, [execution])
+    schedule.assert_called_once_with(
+        notify_execution_targets,
+        sorted([(test_user.id, "cloud-device"), (test_admin_user.id, "cloud-device")]),
+    )
+    test_db.query(ResourceMember).filter_by(
+        resource_type="Device",
+        resource_id=shared.id,
+        entity_type="project",
+        entity_id=str(project.id),
+    ).delete()
+    test_db.commit()
+    with patch("app.core.async_utils.schedule_async_task") as schedule:
+        wake_executions(test_db, [execution])
+    schedule.assert_called_once_with(
+        notify_execution_targets, [(test_user.id, "cloud-device")]
+    )
+
+
 async def test_heartbeat_reconciliation_queries_only_unconfirmed_executions(
     test_db: Session,
 ) -> None:
@@ -744,3 +811,51 @@ async def test_heartbeat_reconciliation_queries_only_unconfirmed_executions(
         needs_confirmation_only=True,
     )
     get_sio.assert_not_called()
+
+
+@pytest.mark.parametrize("needs_confirmation_only", [False, True])
+async def test_device_inventory_does_not_reconcile_group_dispatch_aggregates(
+    test_db: Session, test_user: User, needs_confirmation_only: bool
+) -> None:
+    execution = _make_execution(test_db, test_user)
+    execution.status = "claimed"
+    execution.observed_state = "accepted"
+    execution.runtime_device_id = "cloud-device"
+    execution.runtime_task_id = f"codex-queue-{execution.id}"
+    test_db.commit()
+    options = {
+        "owner_user_id": test_user.id,
+        "runtime_device_id": "cloud-device",
+        "needs_confirmation_only": needs_confirmation_only,
+    }
+    assert loop_item_execution_service.active_for_device_reconciliation(
+        test_db, **options
+    ) == [execution]
+
+    payload = execution.execution_intent
+    payload["runtime_selection"]["executor_kind"] = "collaboration_group_dispatch"
+    execution.execution_payload = json.dumps(payload)
+    test_db.commit()
+
+    @contextmanager
+    def _test_session():
+        yield test_db
+
+    from app.tasks.robot_queue_tasks import reconcile_device_executions
+
+    with (
+        patch("app.db.session.get_db_session", _test_session),
+        patch("app.core.socketio.get_sio") as get_sio,
+    ):
+        assert (
+            await reconcile_device_executions(
+                user_id=test_user.id,
+                device_id="cloud-device",
+                needs_confirmation_only=needs_confirmation_only,
+            )
+            == 0
+        )
+    get_sio.assert_not_called()
+    test_db.refresh(execution)
+    assert execution.status == "claimed"
+    assert execution.observed_state == "accepted"

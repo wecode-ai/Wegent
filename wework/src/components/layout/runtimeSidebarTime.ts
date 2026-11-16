@@ -20,14 +20,15 @@ export function formatRelativeSidebarTime(value?: string | number, nowMs = Date.
   return `${Math.floor(days / 7)}w`
 }
 
-export function useSidebarRelativeTimeRefresh() {
+export function useSidebarRelativeTimeRefresh(enabled = true) {
   const [, setRefreshTick] = useState(0)
 
   useEffect(() => {
+    if (!enabled) return
     const timer = window.setInterval(() => {
       setRefreshTick(tick => tick + 1)
     }, SIDEBAR_TIME_REFRESH_INTERVAL_MS)
 
     return () => window.clearInterval(timer)
-  }, [])
+  }, [enabled])
 }

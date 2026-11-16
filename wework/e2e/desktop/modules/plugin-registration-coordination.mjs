@@ -91,7 +91,7 @@ export async function verifyPluginRegistrationCoordination({
     assert.equal(changed.affected, 1)
     const before = await rows()
     assert.equal(before.length, 1)
-    const logOffset = (await readFile(cloud.backendLogPath, 'utf8')).length
+    const logOffset = (await readFile(cloud.remoteExecutorLogPath, 'utf8')).length
     const revision = (await manifest()).revision
     await cloud.restartCloudExecutor()
     await lease.waitFor('contended')
@@ -102,9 +102,25 @@ export async function verifyPluginRegistrationCoordination({
       timeoutMs
     )
     const merged = await manifest()
-    const registrationLog = (await readFile(cloud.backendLogPath, 'utf8')).slice(logOffset)
-    assert.match(registrationLog, /Plugin sync after register deferred/)
-    assert.match(registrationLog, /mode=merge .*plugin_names=\[\]/)
+    // Registration can originate in either backend. Check what the real
+    // Executor received after the coordinated reconnect.
+    const mergeLog = await until(
+      async () => {
+        const log = (await readFile(cloud.remoteExecutorLogPath, 'utf8')).slice(logOffset)
+        return log
+          .split('device capability sync started mode=')
+          .find(
+            entry =>
+              entry.startsWith('merge\n') &&
+              entry.includes(`name=${fresh.name} status=synced`) &&
+              /device capability sync finished .*ok=true/.test(entry)
+          )
+      },
+      Boolean,
+      'Executor did not complete the registration merge for the fresh capabilities',
+      timeoutMs
+    )
+    assert.match(mergeLog, /capability_sync_completed .*plugin_count=0\b/)
     assert.ok(hasCapabilities(merged, old), 'Merge prematurely removed obsolete Skills/MCP')
     assert.ok(
       await materializedPlugin(remoteHome, item.installedId),

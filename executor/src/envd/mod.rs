@@ -5,4 +5,4 @@
 pub mod archive;
 mod archive_repository;
 pub mod archive_sessions;
-pub mod process_service;
+pub use wegent_subprocess::process_service;

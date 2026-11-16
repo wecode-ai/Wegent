@@ -21,11 +21,13 @@ export class ProjectCreateMembersError extends Error {
   constructor(
     failures: ProjectCreateMemberFailure[],
     members: CollaborationMember[],
+    message?: string,
   ) {
     super(
-      failures
-        .map(({ userName, reason }) => `${userName}: ${reason}`)
-        .join("\n"),
+      message ??
+        failures
+          .map(({ userName, reason }) => `${userName}: ${reason}`)
+          .join("\n"),
     );
     this.name = "ProjectCreateMembersError";
     this.failures = failures;
@@ -60,7 +62,25 @@ export async function configureProjectMembers({
   const selectedIds = [...new Set(memberUserIds)].filter(
     (userId) => userId !== currentUserId,
   );
-  const existingMembers = await api.members.list(projectId);
+  const describeFailure = (userId: number, reason: string) => ({
+    userId,
+    userName:
+      members.find((member) => member.user_id === userId)?.user_name ??
+      String(userId),
+    reason,
+  });
+  let existingMembers: CollaborationMember[];
+  try {
+    existingMembers = await api.members.list(projectId);
+  } catch (cause) {
+    throw new ProjectCreateMembersError(
+      selectedIds.map((userId) =>
+        describeFailure(userId, failureReason(cause)),
+      ),
+      [],
+      failureReason(cause),
+    );
+  }
   const existingIds = new Set(existingMembers.map((member) => member.user_id));
   const pendingIds = selectedIds.filter((userId) => !existingIds.has(userId));
   const results = await Promise.allSettled(
@@ -77,28 +97,23 @@ export async function configureProjectMembers({
   try {
     verifiedMembers = await api.members.list(projectId);
   } catch (cause) {
-    if (!selectedIds.length) throw cause;
     throw new ProjectCreateMembersError(
-      selectedIds.map((userId) => ({
-        userId,
-        userName:
-          members.find((member) => member.user_id === userId)?.user_name ??
-          String(userId),
-        reason: failures.get(userId) ?? failureReason(cause),
-      })),
+      selectedIds.map((userId) =>
+        describeFailure(userId, failures.get(userId) ?? failureReason(cause)),
+      ),
       [],
+      failureReason(cause),
     );
   }
   const verifiedIds = new Set(verifiedMembers.map((member) => member.user_id));
   const missingMembers = selectedIds
     .filter((userId) => !verifiedIds.has(userId))
-    .map((userId) => ({
-      userId,
-      userName:
-        members.find((member) => member.user_id === userId)?.user_name ??
-        String(userId),
-      reason: failures.get(userId) ?? verificationFailureMessage,
-    }));
+    .map((userId) =>
+      describeFailure(
+        userId,
+        failures.get(userId) ?? verificationFailureMessage,
+      ),
+    );
   if (missingMembers.length) {
     throw new ProjectCreateMembersError(missingMembers, verifiedMembers);
   }

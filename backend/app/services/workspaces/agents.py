@@ -25,7 +25,12 @@ class WorkspaceAgentService:
     """Authorize Agent Teams for use in a Workspace."""
 
     def list_agents(
-        self, db: Session, workspace_id: int, user_id: int
+        self,
+        db: Session,
+        workspace_id: int,
+        user_id: int,
+        *,
+        include_readiness: bool = True,
     ) -> list[dict[str, object]]:
         require_workspace_role(db, workspace_id, user_id)
         rows = (
@@ -42,15 +47,11 @@ class WorkspaceAgentService:
             .order_by(ResourceMember.created_at, ResourceMember.id)
             .all()
         )
-        return [
-            agent_values(
-                db,
-                grant=grant,
-                team=team,
-                execution_user_id=user_id,
-            )
-            for grant, team in rows
-        ]
+        from app.services.workspaces.agent_catalog import map_agent_catalog
+
+        return map_agent_catalog(
+            db, rows, workspace_id, user_id, include_readiness=include_readiness
+        )
 
     def require_agent_authorized(
         self, db: Session, *, workspace_id: int, team_id: int

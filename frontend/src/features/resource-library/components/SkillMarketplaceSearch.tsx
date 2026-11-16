@@ -23,6 +23,10 @@ interface SkillMarketplaceSearchProps {
   provider: SkillMarketProvider
   onSkillsChange?: () => void
   namespace?: string
+  /** Keyword supplied by the URL so deep links can open a marketplace pre-searched. */
+  initialKeyword?: string
+  /** Reports user-initiated searches so the page can keep the URL shareable. */
+  onKeywordChange?: (keyword: string) => void
 }
 
 interface InstallingSkill {
@@ -31,16 +35,20 @@ interface InstallingSkill {
   error?: string
 }
 
+/** Search UI for one external skill marketplace provider. */
 export function SkillMarketplaceSearch({
   provider,
   onSkillsChange,
   namespace = 'default',
+  initialKeyword = '',
+  onKeywordChange,
 }: SkillMarketplaceSearchProps) {
   const { t } = useTranslation('resource-library')
   const { toast } = useToast()
+  const normalizedInitialKeyword = initialKeyword.trim()
 
   // Search state
-  const [keyword, setKeyword] = useState('')
+  const [keyword, setKeyword] = useState(normalizedInitialKeyword)
   const [searching, setSearching] = useState(false)
   const [skills, setSkills] = useState<MarketSkill[]>([])
   const [total, setTotal] = useState(0)
@@ -48,27 +56,36 @@ export function SkillMarketplaceSearch({
   const [pageSize] = useState(20)
   const [hasSearched, setHasSearched] = useState(false)
   const initiallyLoadedProviderRef = useRef<string | null>(null)
+  const lastInitialKeywordRef = useRef(normalizedInitialKeyword)
+  const committedKeywordRef = useRef(normalizedInitialKeyword)
+  const submittedKeywordRef = useRef<string | null>(null)
+  const searchRequestIdRef = useRef(0)
+  const onKeywordChangeRef = useRef(onKeywordChange)
+  onKeywordChangeRef.current = onKeywordChange
 
   // Installation state
   const [installingSkills, setInstallingSkills] = useState<Map<string, InstallingSkill>>(new Map())
 
-  // Search skills
+  /** Loads one result page, ignoring responses superseded by a newer search. */
   const handleSearch = useCallback(
-    async (searchPage = 1) => {
+    async (searchKeyword: string, searchPage = 1) => {
+      const requestId = ++searchRequestIdRef.current
       setSearching(true)
       setHasSearched(true)
 
       try {
         const result = await searchSkills(provider.key, {
-          keyword: keyword || undefined,
+          keyword: searchKeyword || undefined,
           page: searchPage,
           pageSize,
         })
 
+        if (requestId !== searchRequestIdRef.current) return
         setSkills(result.skills)
         setTotal(result.total)
         setPage(result.page)
       } catch (error) {
+        if (requestId !== searchRequestIdRef.current) return
         // Clear stale results on error to avoid showing outdated data
         setSkills([])
         setTotal(0)
@@ -80,22 +97,44 @@ export function SkillMarketplaceSearch({
             error instanceof Error ? error.message : t('external_skill_market.unknown_error'),
         })
       } finally {
-        setSearching(false)
+        if (requestId === searchRequestIdRef.current) setSearching(false)
       }
     },
-    [keyword, pageSize, provider.key, toast, t]
+    [pageSize, provider.key, toast, t]
   )
 
   // Handle page change
   const handlePageChange = (newPage: number) => {
-    handleSearch(newPage)
+    void handleSearch(committedKeywordRef.current, newPage)
+  }
+
+  /** Runs a user-initiated search and reports the keyword back to the page. */
+  const submitSearch = () => {
+    const nextKeyword = keyword.trim()
+    committedKeywordRef.current = nextKeyword
+    // Remember the local submission so the page writing it back to the URL does
+    // not trigger a duplicate request. Re-submitting the current URL keyword
+    // cannot change the prop, so there is nothing to suppress.
+    submittedKeywordRef.current = nextKeyword === lastInitialKeywordRef.current ? null : nextKeyword
+    void handleSearch(nextKeyword, 1)
+    onKeywordChangeRef.current?.(nextKeyword)
   }
 
   useEffect(() => {
-    if (initiallyLoadedProviderRef.current === provider.key) return
+    const providerChanged = initiallyLoadedProviderRef.current !== provider.key
+    const initialKeywordChanged = lastInitialKeywordRef.current !== normalizedInitialKeyword
+    lastInitialKeywordRef.current = normalizedInitialKeyword
+    if (!providerChanged && !initialKeywordChanged) return
+    if (!providerChanged && submittedKeywordRef.current === normalizedInitialKeyword) {
+      submittedKeywordRef.current = null
+      return
+    }
+    submittedKeywordRef.current = null
     initiallyLoadedProviderRef.current = provider.key
-    void handleSearch(1)
-  }, [handleSearch, provider.key])
+    committedKeywordRef.current = normalizedInitialKeyword
+    setKeyword(normalizedInitialKeyword)
+    void handleSearch(normalizedInitialKeyword, 1)
+  }, [handleSearch, normalizedInitialKeyword, provider.key])
 
   // Install skill
   const handleInstallSkill = async (skill: MarketSkill) => {
@@ -166,7 +205,7 @@ export function SkillMarketplaceSearch({
   // Handle key down in search input
   const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
     if (e.key === 'Enter') {
-      handleSearch(1)
+      submitSearch()
     }
   }
 
@@ -202,7 +241,7 @@ export function SkillMarketplaceSearch({
           data-testid={`skill-marketplace-search-button-${provider.key}`}
           variant="primary"
           className="h-11 min-w-[44px] px-4 sm:h-10"
-          onClick={() => handleSearch(1)}
+          onClick={submitSearch}
           disabled={searching}
         >
           {searching ? (

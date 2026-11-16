@@ -58,6 +58,12 @@ export function normalizeProcessingBlock(
       id,
       subtaskId,
       type: "tool",
+      mcpServer:
+        typeof block.mcp_server === "string"
+          ? block.mcp_server
+          : typeof block.mcpServer === "string"
+            ? block.mcpServer
+            : undefined,
       toolName:
         typeof block.toolName === "string"
           ? block.toolName

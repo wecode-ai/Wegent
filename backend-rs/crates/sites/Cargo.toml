@@ -1,0 +1,24 @@
+[package]
+name = "wegent-sites"
+version = "0.1.0"
+edition = "2024"
+rust-version.workspace = true
+license = "Apache-2.0"
+description = "Sites catalogue routes and upstream integration"
+
+[dependencies]
+chrono = { version = "0.4", default-features = false, features = ["clock", "serde"] }
+anyhow = "1"
+brz-json = "=0.0.11"
+brz-http = { version = "=0.0.14", features = ["json"] }
+brz-http-server = { version = "=0.0.33", features = ["macros"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = { version = "1", features = ["preserve_order"] }
+url = "2"
+tracing = "0.1"
+wegent-backend-config = { path = "../config" }
+wegent-http-compat = { path = "../http-compat" }
+wegent-identity = { path = "../identity" }
+
+[dev-dependencies]
+tokio = { version = "1", features = ["io-util", "macros", "net", "rt-multi-thread", "sync", "time"] }

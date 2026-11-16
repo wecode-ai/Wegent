@@ -1,0 +1,12 @@
+{
+  "order": 106000,
+  "scenario": "./scenarios/plugin-account-auth.scenario.mjs",
+  "scenarioOnly": true,
+  "ci": {
+    "cloud": {
+      "order": 32000,
+      "shard": 8,
+      "position": 2000
+    }
+  }
+}

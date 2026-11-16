@@ -1,0 +1,50 @@
+{
+  "revision": "f1a2b3c4d5e6",
+  "parents": [
+    "e0f1a2b3c4d5"
+  ],
+  "source": "20260815_f1a2b3c4d5e6_add_loop_item_team_assignee.py",
+  "upgrade": null,
+  "downgrade": [
+    {
+      "sql": [
+        "ALTER TABLE loop_item_executions DROP FOREIGN KEY fk_loop_item_executions_backend_task_id_tasks"
+      ]
+    },
+    {
+      "sql": [
+        "ALTER TABLE loop_item_executions DROP FOREIGN KEY fk_loop_item_executions_team_id_kinds"
+      ]
+    },
+    {
+      "sql": [
+        "DROP INDEX idx_exec_team_status ON loop_item_executions"
+      ]
+    },
+    {
+      "sql": [
+        "ALTER TABLE loop_item_executions DROP COLUMN backend_task_id"
+      ]
+    },
+    {
+      "sql": [
+        "ALTER TABLE loop_item_executions DROP COLUMN team_id"
+      ]
+    },
+    {
+      "sql": [
+        "ALTER TABLE loop_items DROP FOREIGN KEY fk_loop_items_assignee_team_id_kinds"
+      ]
+    },
+    {
+      "sql": [
+        "DROP INDEX ix_loop_items_assignee_team_id ON loop_items"
+      ]
+    },
+    {
+      "sql": [
+        "ALTER TABLE loop_items DROP COLUMN assignee_team_id"
+      ]
+    }
+  ]
+}

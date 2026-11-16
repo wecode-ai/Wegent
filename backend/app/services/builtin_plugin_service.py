@@ -132,7 +132,9 @@ class BuiltinPluginService:
         if configured.is_dir() or not configured.is_absolute():
             return configured
 
-        return Path(__file__).resolve().parents[2] / "init_data" / "plugins"
+        return (
+            Path(__file__).resolve().parents[3] / "backend-rs" / "init_data" / "plugins"
+        )
 
     def _package_plugin_directory(self, plugin_dir: Path) -> bytes:
         buffer = io.BytesIO()

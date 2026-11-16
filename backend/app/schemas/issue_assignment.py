@@ -31,6 +31,9 @@ class IssueAssignmentCreate(BaseModel):
 
 
 class IssueAssignmentResponse(BaseModel):
+    automation: dict[str, str] | None = Field(
+        default=None, exclude_if=lambda value: value is None
+    )
     id: str
     issue_id: str
     target_type: Literal["human", "agent"]

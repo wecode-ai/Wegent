@@ -1,0 +1,12 @@
+{
+  "order": 27000,
+  "scenario": "./scenarios/collaboration-template-lifecycle.scenario.mjs",
+  "scenarioOnly": true,
+  "ci": {
+    "core": {
+      "order": 27000,
+      "shard": 10,
+      "position": 4000
+    }
+  }
+}

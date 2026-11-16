@@ -101,6 +101,10 @@ export function useDocumentDetail({
   const offsetRef = useRef(0)
   // Use ref for abort controller to cancel requests on unmount
   const abortControllerRef = useRef<AbortController | null>(null)
+  // The API client does not currently accept an AbortSignal, so use a
+  // monotonically increasing request id to prevent stale responses from
+  // overwriting a newer refresh.
+  const fetchRequestIdRef = useRef(0)
 
   // Update ref when state changes
   useEffect(() => {
@@ -110,6 +114,7 @@ export function useDocumentDetail({
   // Cleanup abort controller on unmount
   useEffect(() => {
     return () => {
+      fetchRequestIdRef.current += 1
       if (abortControllerRef.current) {
         abortControllerRef.current.abort()
         abortControllerRef.current = null
@@ -121,6 +126,7 @@ export function useDocumentDetail({
    * Fetch document detail (initial load or full refresh)
    */
   const fetchDetail = useCallback(async () => {
+    const requestId = ++fetchRequestIdRef.current
     // Cancel any pending request
     if (abortControllerRef.current) {
       abortControllerRef.current.abort()
@@ -138,6 +144,7 @@ export function useDocumentDetail({
         offset: 0,
         limit: MAX_CHARS_PER_REQUEST,
       })
+      if (requestId !== fetchRequestIdRef.current) return
 
       // Extract content from response and store separately
       // Content is excluded from detail to make fullContent the single source of truth
@@ -162,6 +169,7 @@ export function useDocumentDetail({
         setHasMoreContent(false)
       }
     } catch (err) {
+      if (requestId !== fetchRequestIdRef.current) return
       // Don't show error for aborted requests
       if (err instanceof Error && err.name === 'AbortError') {
         return
@@ -170,7 +178,7 @@ export function useDocumentDetail({
       setError(errorMessage)
       toast.error(t('document.document.detail.contentLoadFailed'))
     } finally {
-      setLoading(false)
+      if (requestId === fetchRequestIdRef.current) setLoading(false)
     }
   }, [kbId, docId, includeContent, includeSummary, t])
 
@@ -303,15 +311,9 @@ export function useDocumentDetail({
     }
   }, [kbId, docId, fetchDetail, t])
 
-  // Initial load
-  useEffect(() => {
-    if (enabled) {
-      fetchDetail()
-    }
-  }, [fetchDetail, enabled])
-
   // Reset state when document changes
   useEffect(() => {
+    fetchRequestIdRef.current += 1
     // Cancel any pending request
     if (abortControllerRef.current) {
       abortControllerRef.current.abort()
@@ -328,6 +330,14 @@ export function useDocumentDetail({
     setError(null)
     setRefreshing(false)
   }, [kbId, docId])
+
+  // Initial load. Keep this effect after the document reset so the request it
+  // starts is not invalidated by the reset effect from the same render.
+  useEffect(() => {
+    if (enabled) {
+      void fetchDetail()
+    }
+  }, [fetchDetail, enabled])
 
   return {
     detail,

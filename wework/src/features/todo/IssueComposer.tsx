@@ -712,7 +712,7 @@ export function IssueComposer({
                 data-template-content={template.content}
                 disabled={busy}
                 onClick={applyIssueTemplate}
-                className="h-7 rounded-lg bg-muted px-2.5 text-xs text-text-secondary transition hover:bg-text-primary/10 hover:text-text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus/30 disabled:opacity-40"
+                className="h-7 rounded-lg bg-muted px-2.5 text-xs text-text-secondary transition hover:bg-text-primary/10 hover:text-text-primary focus-visible:outline-none keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-focus/30 disabled:opacity-40"
               >
                 {template.label}
               </button>
@@ -885,7 +885,7 @@ export function IssueComposer({
                       </select>
                     </label>
                     <label className="relative inline-flex h-8 cursor-pointer items-center gap-1.5 rounded-full border border-border px-3 text-sm font-normal text-text-secondary transition hover:bg-muted hover:text-text-primary">
-                      <span className="h-2 w-2 rounded-full bg-zinc-400" />
+                      <span className="h-2 w-2 rounded-full bg-text-muted wework:bg-zinc-400" />
                       <span className="font-medium text-text-primary">
                         {statusOptions.find(option => option.id === status)?.name ?? status}
                       </span>

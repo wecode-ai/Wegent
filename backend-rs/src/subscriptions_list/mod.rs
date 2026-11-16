@@ -508,21 +508,42 @@ mod tests {
         })));
         assert_eq!(
             config,
-            json!({"expression": "0 9 * * *", "timezone": "UTC"})
+            json!({"expression": "0 9 * * *", "timezone": "UTC", "workday_only": false})
         );
         assert!(valid);
         assert!(error.is_none());
     }
 
     #[test]
+    fn list_item_preserves_cron_workday_filter() {
+        for workday_only in [true, false] {
+            let mut stored = subscription_json();
+            stored["spec"]["trigger"]["cron"]["workday_only"] = json!(workday_only);
+
+            let item = convert_to_subscription_in_db(&kind_row(stored), &HashMap::new());
+            let serialized = serde_json::to_value(item).unwrap();
+
+            assert_eq!(
+                serialized["trigger_config"],
+                json!({
+                    "expression": "0 9 * * *",
+                    "timezone": "Asia/Shanghai",
+                    "workday_only": workday_only,
+                })
+            );
+        }
+    }
+
+    #[test]
     fn too_frequent_cron_marks_invalid_and_fixes() {
         let (config, valid, error) = validated_trigger_config(&Some(json!({
             "type": "cron",
-            "cron": {"expression": "*/5 * * * *", "timezone": "UTC"}
+            "cron": {"expression": "*/5 * * * *", "timezone": "UTC", "workday_only": true}
         })));
         assert!(!valid);
         assert_eq!(error.as_deref(), Some("执行间隔太短，不满足最小间隔要求"));
         assert_eq!(config["expression"], json!("*/15 * * * *"));
+        assert_eq!(config["workday_only"], json!(true));
     }
 
     #[test]
@@ -585,10 +606,22 @@ mod tests {
 
     #[test]
     fn aware_expires_at_renders_z_suffix() {
-        let mut json = subscription_json();
-        json["_internal"]["expires_at"] = json!("2026-10-30T11:53:00+00:00");
-        let item = convert_to_subscription_in_db(&kind_row(json), &HashMap::new());
-        assert_eq!(item.expires_at.as_deref(), Some("2026-10-30T11:53:00Z"));
+        for days in [-1, 1] {
+            let expires_at = (chrono::Utc::now() + chrono::Duration::days(days))
+                .format("%Y-%m-%dT%H:%M:%S")
+                .to_string();
+            let mut json = subscription_json();
+            json["_internal"]["expires_at"] = json!(format!("{expires_at}+00:00"));
+            let item = convert_to_subscription_in_db(&kind_row(json), &HashMap::new());
+            assert_eq!(item.expires_at, Some(format!("{expires_at}Z")));
+            assert_eq!(item.is_expired, days < 0);
+        }
+    }
+
+    #[test]
+    fn no_expiration_is_not_expired() {
+        let item = convert_to_subscription_in_db(&kind_row(subscription_json()), &HashMap::new());
+        assert!(item.expires_at.is_none());
         assert!(!item.is_expired);
     }
 

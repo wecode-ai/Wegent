@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 
 import {
+  continuationSelection,
   defaultModel,
   defaultModelOptions,
   executionFields,
@@ -12,6 +13,7 @@ import {
   speedLabel,
 } from './modelSelection'
 import type { UnifiedModel } from '@/types/runtime'
+import { runnerModelCatalog } from '../../../packages/collaboration/src/agent-form/runnerModelCatalog'
 
 function model(overrides: Partial<UnifiedModel>): UnifiedModel {
   return {
@@ -89,6 +91,7 @@ describe('defaultModel', () => {
     const fastModel = model({
       config: {
         ui: {
+          family: 'gpt',
           reasoningEfforts: ['low', 'high'],
           controls: { speed: true },
         },
@@ -99,6 +102,62 @@ describe('defaultModel', () => {
     expect(defaultModelOptions(fastModel)).toEqual({ reasoning: 'high', speed: 'standard' })
     expect(speedLabel('standard')).toBe('标准')
     expect(speedLabel('fast')).toBe('快速')
+  })
+
+  it.each(['openai', 'custom-provider'])(
+    'preserves native %s fast speed and execution identity for creation and continuation',
+    provider => {
+      const [{ model: nativeModel }] = runnerModelCatalog(
+        [
+          {
+            runtime: 'codex',
+            provider,
+            model_id: 'future-native-model',
+            local_model_id: 'future-native-model',
+            label: 'Future native model',
+            account_label: 'Device account',
+            is_default: true,
+            default_reasoning_effort: 'medium',
+            supported_reasoning_efforts: ['low', 'medium', 'high'],
+          },
+        ],
+        [],
+        'codex'
+      )
+
+      expect(modelSupportsSpeed(nativeModel)).toBe(true)
+      expect(defaultModelOptions(nativeModel).speed).toBe('standard')
+      const fields = executionFields(nativeModel, { speed: 'fast', reasoning: 'high' })
+      expect(fields).toMatchObject({
+        modelId: 'future-native-model',
+        modelType: 'runtime',
+        modelOptions: { speed: 'fast', reasoning: 'high', runnerModelProvider: provider },
+      })
+      expect(continuationSelection(fields)).toMatchObject({
+        modelName: 'future-native-model',
+        modelType: 'runtime',
+        options: { speed: 'fast', reasoning: 'high', runnerModelProvider: provider },
+      })
+      expect(executionFields(nativeModel, { speed: 'invalid-tier' }).modelOptions.speed).toBe(
+        'standard'
+      )
+    }
+  )
+
+  it.each([
+    { family: 'gpt' },
+    { family: 'gpt', controls: [] },
+    { family: 'gpt', controls: { speed: false } },
+    { family: 'gpt', controls: { speed: { enabled: false } } },
+    { family: 'claude', controls: ['speed'] },
+  ])('keeps unsupported or disabled speed unavailable: %j', ui => {
+    const unsupported = model({ config: { ui } })
+
+    expect(modelSupportsSpeed(unsupported)).toBe(false)
+    expect(defaultModelOptions(unsupported)).not.toHaveProperty('speed')
+    const fields = executionFields(unsupported, { speed: 'fast' })
+    expect(fields.modelOptions).not.toHaveProperty('speed')
+    expect(continuationSelection(fields).options).not.toHaveProperty('speed')
   })
 
   it('uses the standard reasoning control when a model interface does not declare efforts', () => {
@@ -127,20 +186,20 @@ describe('defaultModel', () => {
     expect(resolvedReasoningEffort(interfaceModel, 'high')).toBeUndefined()
   })
 
-  it('uses the compact Codex model label shown by the mobile picker', () => {
+  it('preserves the complete PC model label', () => {
     expect(
       modelLabel(
         model({
           displayName: 'GPT 5.6 Sol',
         })
       )
-    ).toBe('5.6 Sol')
+    ).toBe('GPT 5.6 Sol')
     expect(
       modelLabel(
         model({
           modelId: 'gpt-5.4-mini',
         })
       )
-    ).toBe('5.4 Mini')
+    ).toBe('gpt-5.4-mini')
   })
 })

@@ -27,6 +27,8 @@ from app.stores.tasks import task_store
 from app.stores.tasks.interfaces import ProjectTaskSummary
 from shared.telemetry.decorators import trace_sync
 
+MAX_SIGNED_BIGINT = 2**63 - 1
+
 
 def readable_projects_query(
     db: Session, *, user_id: int, client_origin: Optional[str] = None
@@ -59,6 +61,7 @@ def list_project_tasks(
     cursor: Optional[str] = None,
     client_origin: Optional[str] = None,
     title: Optional[str] = None,
+    include_total: bool = True,
 ) -> ProjectTaskListResponse:
     """Return one page without materializing other project tasks."""
     before = _decode_task_cursor(cursor) if cursor is not None else None
@@ -69,15 +72,20 @@ def list_project_tasks(
     )
     if not project:
         raise HTTPException(status_code=404, detail="Project not found")
-    total = task_store.count_active_project_tasks(
-        db,
-        project_id=project.id,
-        owner_user_id=project.user_id,
-        client_origin=client_origin,
-        title=title,
-    )
+    total = None
+    if include_total:
+        total = task_store.count_active_project_tasks(
+            db,
+            project_id=project.id,
+            owner_user_id=project.user_id,
+            client_origin=client_origin,
+            title=title,
+        )
     skip = 0 if before is not None else (page - 1) * limit
-    if before is None and skip >= total:
+    # Offset parameters must fit in the database's signed integer range.
+    if before is None and (
+        skip > MAX_SIGNED_BIGINT or (total is not None and skip >= total)
+    ):
         return ProjectTaskListResponse(total=total, items=[], has_more=False)
     tasks = task_store.list_active_project_tasks(
         db,
@@ -124,7 +132,7 @@ def _decode_task_cursor(cursor: str) -> tuple[datetime, int]:
             or created_at.year < 1000
             or created_at.isoformat() != payload["created_at"]
             or type(task_id) is not int
-            or not 0 < task_id <= 2**63 - 1
+            or not 0 < task_id <= MAX_SIGNED_BIGINT
         ):
             raise ValueError("Invalid task ordering key")
     except (binascii.Error, TypeError, ValueError) as exc:

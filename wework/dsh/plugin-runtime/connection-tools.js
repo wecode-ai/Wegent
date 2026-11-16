@@ -23,7 +23,10 @@ export function connectionTools(identity, dependencies, request, satisfies) {
     const result = await request(`runtime.connections.${transport}`, {
       providerId: identity.providerId,
       dependencyAlias: alias,
-      source: dependency.source,
+      source: {
+        marketplaceId: dependency.resolved.marketplaceId,
+        pluginId: dependency.resolved.pluginId,
+      },
       expectedVersion: dependency.resolved.version,
       operation,
       ...input,
@@ -41,6 +44,7 @@ export function connectionTools(identity, dependencies, request, satisfies) {
       }),
   })
   const cli = Object.freeze({
+    describe: alias => invoke('cli', alias, 'describe'),
     callTool: (alias, input) =>
       invoke('cli', alias, 'callTool', {
         tool: input.tool,

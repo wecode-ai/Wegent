@@ -1,3 +1,17 @@
+import { WorkspaceTitleTab } from './WorkspaceTitleTab'
+import { revealWorkspaceTab } from './revealWorkspaceTab'
+import { McpAppPanelSlot } from '@/features/mcp-apps/McpAppPanelSlot'
+import { QuestionDiscussionTabPanel } from '@/features/notifications/QuestionDiscussionScope'
+import {
+  isQuestionDiscussionTab,
+  type QuestionDiscussionTab,
+} from '@/features/notifications/questionDiscussion'
+import {
+  getMcpAppPanel,
+  isMcpAppPanelTab,
+  useMcpAppPanels,
+  type McpAppPanelTab,
+} from '@/features/mcp-apps/workspacePanels'
 import {
   Bot,
   CheckCircle2,
@@ -14,7 +28,6 @@ import {
   Puzzle,
   RefreshCw,
   SquareTerminal,
-  X,
 } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
 import {
@@ -28,7 +41,7 @@ import {
   useState,
   useSyncExternalStore,
 } from 'react'
-import type { ComponentType, KeyboardEvent as ReactKeyboardEvent, ReactNode, Ref } from 'react'
+import type { ComponentType, ReactNode, Ref } from 'react'
 import {
   FileChangesReviewPanel,
   type FileChangesReviewViewOption,
@@ -124,6 +137,8 @@ export type RightWorkspaceHarnessTab = `harness:${string}`
 export type RightWorkspaceTerminalTab = `terminal:${string}`
 export type RightWorkspaceBackgroundTerminalTab = `background-terminal:${string}`
 export type RightWorkspacePanelTab =
+  | McpAppPanelTab
+  | QuestionDiscussionTab
   | 'review'
   | 'files'
   | 'plan'
@@ -611,6 +626,7 @@ export const RightWorkspacePanel = memo(function RightWorkspacePanel({
   onChatAddressChange,
 }: RightWorkspacePanelProps) {
   const { t } = useTranslation('common')
+  const mcpAppPanels = useMcpAppPanels(currentRuntimeTask)
   const filePanelRef = useRef<FileWorkspacePanelHandle>(null)
   const tabsViewportRef = useRef<HTMLDivElement>(null)
   const activeFileTab = isWorkspaceFileTab(activeView) ? fileTabs[activeView] : undefined
@@ -685,17 +701,7 @@ export const RightWorkspacePanel = memo(function RightWorkspacePanel({
   const renderTabsInTitlebar =
     renderTabsInAppTitlebar && isDesktopRuntime() && platform !== 'win' && visible && showTabs
   useLayoutEffect(() => {
-    const viewport = tabsViewportRef.current
-    const activeTab = viewport?.querySelector<HTMLElement>('[aria-selected="true"]')
-    if (!viewport || !activeTab) return
-
-    const viewportRect = viewport.getBoundingClientRect()
-    const tabRect = activeTab.getBoundingClientRect()
-    if (tabRect.left < viewportRect.left) {
-      viewport.scrollLeft += tabRect.left - viewportRect.left
-    } else if (tabRect.right > viewportRect.right) {
-      viewport.scrollLeft += tabRect.right - viewportRect.right
-    }
+    revealWorkspaceTab(tabsViewportRef.current)
   }, [activeView, renderTabsInTitlebar, showTabs, visible])
   const harnessSessionsById = new Map(
     harnessSessions.map(session => [session.sessionId, session] as const)
@@ -911,6 +917,7 @@ export const RightWorkspacePanel = memo(function RightWorkspacePanel({
             onSelectBrowser={onSelectBrowser}
             onSelectFiles={onSelectFiles}
             onSelectChat={onSelectChat}
+            showWorkbenchBackground={showWorkbenchBackground}
           />
         ) : !isRightWorkspaceChatTab(activeView) && activeView === 'review' ? (
           <FileChangesReviewPanel
@@ -930,7 +937,10 @@ export const RightWorkspacePanel = memo(function RightWorkspacePanel({
             onAddCodeComment={onAddCodeComment}
           />
         ) : !isRightWorkspaceChatTab(activeView) && activeView === 'plan' ? (
-          <PlanWorkspacePanel content={planContent ?? ''} />
+          <PlanWorkspacePanel
+            content={planContent ?? ''}
+            showWorkbenchBackground={showWorkbenchBackground}
+          />
         ) : !isRightWorkspaceChatTab(activeView) && activeView === 'subagents' ? (
           subagentPanel
         ) : !isRightWorkspaceChatTab(activeView) && activeView === 'work-item' ? (
@@ -938,7 +948,7 @@ export const RightWorkspacePanel = memo(function RightWorkspacePanel({
         ) : activeView === 'files' && workspaceTargetError ? (
           <section
             data-testid="workspace-target-error"
-            className="flex min-h-0 flex-1 items-center justify-center px-6 text-center text-sm text-red-500"
+            className="flex min-h-0 flex-1 items-center justify-center px-6 text-center text-sm text-destructive wework:text-red-500"
           >
             {workspaceTargetError}
           </section>
@@ -998,6 +1008,7 @@ export const RightWorkspacePanel = memo(function RightWorkspacePanel({
               initialAddress={getChatInitialAddress?.(tab)}
               onAddressChange={address => onChatAddressChange?.(tab, address)}
               expanded={expanded && activeView === tab}
+              showWorkbenchBackground={showWorkbenchBackground}
               onRestoreConversation={onRestoreConversation}
               testId={
                 activeView === tab
@@ -1170,6 +1181,28 @@ export const RightWorkspacePanel = memo(function RightWorkspacePanel({
             </div>
           )
         })}
+        {openTabs.filter(isQuestionDiscussionTab).map(tab => (
+          <div
+            key={tab}
+            className={cn('min-h-0 flex-1 flex-col', activeView === tab ? 'flex' : 'hidden')}
+          >
+            <QuestionDiscussionTabPanel
+              tab={tab}
+              active={visible && activeView === tab}
+              onClose={() => onCloseTab(tab)}
+            />
+          </div>
+        ))}
+        {mcpAppPanels
+          .filter(panel => openTabs.includes(panel.id))
+          .map(panel => (
+            <div
+              key={panel.id}
+              className={cn('min-h-0 flex-1 flex-col', activeView === panel.id ? 'flex' : 'hidden')}
+            >
+              <McpAppPanelSlot panel={panel} />
+            </div>
+          ))}
         {openTabs.filter(isRightWorkspaceExtensionTab).map(tab => {
           const extensionState = extensionTabs[tab]
           const descriptor = resolveRightWorkspaceExtensionDescriptor(extensionState)
@@ -1236,40 +1269,16 @@ function RightWorkspaceTitleTab({
   onSelect: () => void
   onClose: () => void
 }) {
-  const { t } = useTranslation('common')
-  const handleKeyDown = (event: ReactKeyboardEvent<HTMLDivElement>) => {
-    if (event.key !== 'Enter' && event.key !== ' ') {
-      return
-    }
-    event.preventDefault()
-    onSelect()
-  }
-
   return (
-    <div
-      data-testid={getRightWorkspaceTabTestId(tab)}
-      role="tab"
-      aria-selected={active}
+    <WorkspaceTitleTab
+      testId={getRightWorkspaceTabTestId(tab)}
+      active={active}
+      label={filePath ? workspaceFileTabLabel(filePath) : label}
       title={title ?? filePath}
-      tabIndex={0}
-      onClick={onSelect}
-      onKeyDown={handleKeyDown}
-      className={cn(
-        'group/tab relative flex h-8 min-w-0 max-w-[200px] shrink-0 cursor-pointer items-stretch rounded-md text-left text-xs font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40 pointer-events-auto',
-        active
-          ? 'bg-muted text-text-primary'
-          : 'text-text-secondary hover:bg-muted hover:text-text-primary'
-      )}
-    >
-      <button
-        type="button"
-        onClick={event => {
-          event.stopPropagation()
-          onSelect()
-        }}
-        className="flex min-w-0 flex-1 items-center gap-1.5 rounded-md py-1 pl-2 pr-7 text-left"
-      >
-        {filePath ? (
+      onSelect={onSelect}
+      onClose={onClose}
+      icon={
+        filePath ? (
           <WorkspaceFileIcon path={filePath} testId={`${getRightWorkspaceTabTestId(tab)}-icon`} />
         ) : (
           <RightWorkspaceTabIcon
@@ -1280,26 +1289,9 @@ function RightWorkspaceTitleTab({
             agentActive={agentActive}
             testId={getRightWorkspaceTabTestId(tab)}
           />
-        )}
-        <span className="min-w-0 flex-1 truncate">
-          {filePath ? workspaceFileTabLabel(filePath) : label}
-        </span>
-      </button>
-      <span className="pointer-events-none absolute right-1 top-1/2 z-critical flex -translate-y-1/2 items-center opacity-0 transition-opacity group-hover/tab:pointer-events-auto group-hover/tab:opacity-100 hover:pointer-events-auto hover:opacity-100 focus-within:pointer-events-auto focus-within:opacity-100">
-        <button
-          type="button"
-          data-testid={`${getRightWorkspaceTabTestId(tab)}-close-button`}
-          onClick={event => {
-            event.stopPropagation()
-            onClose()
-          }}
-          className="flex h-[18px] w-[18px] items-center justify-center rounded-full text-text-secondary transition-colors hover:bg-black/70 hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40"
-          aria-label={t('workbench.close_right_workspace_panel')}
-        >
-          <X className="h-3 w-3" />
-        </button>
-      </span>
-    </div>
+        )
+      }
+    />
   )
 }
 
@@ -1354,13 +1346,22 @@ function RightWorkspaceTabIcon({
   )
 }
 
-function PlanWorkspacePanel({ content }: { content: string }) {
+function PlanWorkspacePanel({
+  content,
+  showWorkbenchBackground,
+}: {
+  content: string
+  showWorkbenchBackground: boolean
+}) {
   const { t } = useTranslation('common')
 
   return (
     <section
       data-testid="workspace-plan-panel"
-      className="min-h-0 flex-1 overflow-y-auto bg-background px-8 py-6"
+      className={cn(
+        'min-h-0 flex-1 overflow-y-auto px-8 py-6',
+        showWorkbenchBackground ? 'bg-background/20' : 'bg-background'
+      )}
     >
       <div className="mx-auto max-w-4xl text-base leading-7 text-text-primary">
         {content.trim() ? (
@@ -1386,6 +1387,7 @@ function RightWorkspaceLauncher({
   onSelectBrowser,
   onSelectFiles,
   onSelectChat,
+  showWorkbenchBackground,
 }: {
   canOpenReview: boolean
   canBrowseFiles: boolean
@@ -1397,6 +1399,7 @@ function RightWorkspaceLauncher({
   onSelectBrowser: () => void
   onSelectFiles: () => void
   onSelectChat: () => void
+  showWorkbenchBackground: boolean
 }) {
   const { t } = useTranslation('common')
   const platform = getPlatform()
@@ -1416,6 +1419,7 @@ function RightWorkspaceLauncher({
               icon={PanelRight}
               label={titleOfWeworkWorkspaceSidebarTab(descriptor, t)}
               onClick={() => rightWorkspaceDshSidebar.openTab({ type: descriptor.id })}
+              showWorkbenchBackground={showWorkbenchBackground}
             />
           ))}
         {workspaceActions.map(action => (
@@ -1427,6 +1431,7 @@ function RightWorkspaceLauncher({
             shortcut={action.shortcut}
             onClick={() => void action.onSelect()}
             disabled={action.disabled}
+            showWorkbenchBackground={showWorkbenchBackground}
           />
         ))}
         <RightWorkspaceLauncherItem
@@ -1436,12 +1441,14 @@ function RightWorkspaceLauncher({
           shortcut={getRightWorkspaceShortcuts(platform).review}
           onClick={onSelectReview}
           disabled={!canOpenReview}
+          showWorkbenchBackground={showWorkbenchBackground}
         />
         <RightWorkspaceLauncherItem
           data-testid="right-workspace-terminal-option"
           icon={SquareTerminal}
           label={t('workbench.terminal', '终端')}
           onClick={onSelectTerminal}
+          showWorkbenchBackground={showWorkbenchBackground}
         />
         <RightWorkspaceLauncherItem
           data-testid="right-workspace-browser-option"
@@ -1449,6 +1456,7 @@ function RightWorkspaceLauncher({
           label={t('workbench.browser')}
           shortcut={getRightWorkspaceShortcuts(platform).browser}
           onClick={onSelectBrowser}
+          showWorkbenchBackground={showWorkbenchBackground}
         />
         {allowTemporaryChat && (
           <RightWorkspaceLauncherItem
@@ -1457,6 +1465,7 @@ function RightWorkspaceLauncher({
             label={t('workbench.workspace_tab_chat', '临时聊天')}
             shortcut={getRightWorkspaceShortcuts(platform).chat}
             onClick={onSelectChat}
+            showWorkbenchBackground={showWorkbenchBackground}
           />
         )}
         {canBrowseFiles && (
@@ -1466,6 +1475,7 @@ function RightWorkspaceLauncher({
             label={t('workbench.workspace_tab_files', '文件')}
             shortcut={getRightWorkspaceShortcuts(platform).files}
             onClick={onSelectFiles}
+            showWorkbenchBackground={showWorkbenchBackground}
           />
         )}
       </div>
@@ -1479,6 +1489,7 @@ function RightWorkspaceLauncherItem({
   shortcut,
   disabled,
   onClick,
+  showWorkbenchBackground,
   'data-testid': testId,
 }: {
   icon: ComponentType<{ className?: string }>
@@ -1486,6 +1497,7 @@ function RightWorkspaceLauncherItem({
   shortcut?: string
   disabled?: boolean
   onClick: () => void
+  showWorkbenchBackground: boolean
   'data-testid': string
 }) {
   return (
@@ -1494,7 +1506,12 @@ function RightWorkspaceLauncherItem({
       data-testid={testId}
       onClick={onClick}
       disabled={disabled}
-      className="flex h-11 w-full items-center gap-2 rounded-xl bg-surface px-3 text-left text-sm font-light leading-[18px] text-text-primary transition-colors hover:bg-muted disabled:cursor-not-allowed disabled:opacity-50"
+      className={cn(
+        'flex h-11 w-full items-center gap-2 rounded-xl px-3 text-left text-sm font-light leading-[18px] text-text-primary transition-colors disabled:cursor-not-allowed disabled:opacity-50',
+        showWorkbenchBackground
+          ? 'border border-border/45 bg-surface/20 hover:bg-background/30'
+          : 'bg-surface hover:bg-muted'
+      )}
     >
       <Icon className="h-4 w-4 shrink-0 text-text-secondary" />
       <span className="min-w-0 flex-1 truncate">{label}</span>
@@ -1515,6 +1532,8 @@ function getRightWorkspaceTabLabel(
   extensionTabs: Partial<Record<RightWorkspaceExtensionTab, RightWorkspaceExtensionTabState>>,
   backgroundTerminals: BackgroundTerminal[]
 ) {
+  if (isMcpAppPanelTab(tab)) return getMcpAppPanel(tab)?.title ?? t('mcp_apps.title')
+  if (isQuestionDiscussionTab(tab)) return t('question_discussion.title')
   if (tab.startsWith('background-terminal:')) {
     return (
       unwrapShellCommand(
@@ -1556,6 +1575,8 @@ function getRightWorkspaceTabLabel(
 }
 
 function getRightWorkspaceTabTestId(tab: RightWorkspacePanelTab) {
+  if (isMcpAppPanelTab(tab)) return `right-workspace-mcp-app-tab-${tab.slice(8)}`
+  if (isQuestionDiscussionTab(tab)) return `right-workspace-discussion-tab-${tab.slice(11)}`
   if (isWorkspaceFileTab(tab)) return `right-workspace-file-tab-${tab.slice('file:'.length)}`
   if (isRightWorkspaceExtensionTab(tab)) {
     return `right-workspace-extension-tab-${tab.slice('dsh:'.length)}`
@@ -1580,6 +1601,8 @@ function getRightWorkspaceTabTestId(tab: RightWorkspacePanelTab) {
 }
 
 function getRightWorkspaceTabIcon(tab: RightWorkspacePanelTab) {
+  if (isMcpAppPanelTab(tab)) return PanelRight
+  if (isQuestionDiscussionTab(tab)) return MessageCircle
   if (tab.startsWith('background-terminal:')) return SquareTerminal
   if (isRightWorkspaceExtensionTab(tab)) return PanelRight
   if (tab === 'review') return FileDiff

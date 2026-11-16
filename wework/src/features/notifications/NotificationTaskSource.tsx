@@ -1,3 +1,4 @@
+import { StandInTelemetryAgent } from '@/telemetry/StandInTelemetryAgent'
 import { useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from 'react'
 import { useWorkbench } from '@/features/workbench/useWorkbench'
 import { NotificationTaskContext, type TaskSource } from './NotificationTaskSourceContext'
@@ -26,14 +27,17 @@ export function NotificationTaskSourceProvider({ children }: { children: ReactNo
     [registerTaskSource, taskSource]
   )
   return (
-    <NotificationTaskContext.Provider value={value}>{children}</NotificationTaskContext.Provider>
+    <NotificationTaskContext.Provider value={value}>
+      <StandInTelemetryAgent />
+      {children}
+    </NotificationTaskContext.Provider>
   )
 }
 
 export function NotificationTaskSourceBridge({ active, id }: { active: boolean; id: string }) {
   const context = useContext(NotificationTaskContext)
   const registerTaskSource = context?.registerTaskSource
-  const { runtimeTaskReminders, services, state } = useWorkbench()
+  const { runtimeTaskReminders, services, state, refreshWorkLists } = useWorkbench()
   const currentAddress = state?.currentRuntimeTask
   const userId = state?.user?.id
   const devices = state?.devices
@@ -43,7 +47,14 @@ export function NotificationTaskSourceBridge({ active, id }: { active: boolean; 
     registerTaskSource(
       id,
       runtimeTaskReminders
-        ? { ...runtimeTaskReminders, services, devices, currentAddress, userId }
+        ? {
+            ...runtimeTaskReminders,
+            services,
+            devices,
+            currentAddress,
+            userId,
+            refresh: refreshWorkLists,
+          }
         : null,
       active
     )
@@ -57,6 +68,7 @@ export function NotificationTaskSourceBridge({ active, id }: { active: boolean; 
     devices,
     currentAddress,
     userId,
+    refreshWorkLists,
   ])
 
   return null

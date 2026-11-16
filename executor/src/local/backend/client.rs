@@ -67,6 +67,7 @@ where
     running_tasks: LocalRunningTaskTracker,
     capability_reporter: Arc<dyn CapabilityReportProvider>,
     runtime_transfer_port: Arc<Mutex<Option<u16>>>,
+    pub(super) remote_task_access: crate::runtime_work::remote_task_access::RemoteTaskAccess,
 }
 
 impl<T> LocalBackendClient<T>
@@ -108,6 +109,8 @@ where
             running_tasks,
             capability_reporter: Arc::new(capability_reporter),
             runtime_transfer_port: Arc::new(Mutex::new(None)),
+            remote_task_access: crate::runtime_work::remote_task_access::RemoteTaskAccess::from_env(
+            ),
         }
     }
 
@@ -125,7 +128,12 @@ where
         self.transport.disconnect().await
     }
 
-    pub async fn register_device(&self, timeout: Duration) -> Result<bool, String> {
+    /// Register this device and return the backend-assigned record route id.
+    ///
+    /// The route id uniquely identifies the persisted Device record for the
+    /// current Runtime registration, even when historical records share this
+    /// device's submitted id. An unrecognized rejection returns `Ok(None)`.
+    pub async fn register_device(&self, timeout: Duration) -> Result<Option<String>, String> {
         if self.config.device_id.is_empty() || self.config.runtime_instance_id.is_empty() {
             return Err(
                 "persistent device and Runtime identities are required for registration".to_owned(),
@@ -135,7 +143,24 @@ where
             .transport
             .call(REGISTER_EVENT, self.registration_payload(), timeout)
             .await?;
-        Ok(ack_success(&response))
+        if !ack_success(&response) {
+            // Other registration failures can contain raw database diagnostics.
+            match ack_payload(&response).and_then(|payload| payload.get("error")).and_then(Value::as_str) {
+                Some(message @ (
+                    "Registration failed: App device identity changed; reconnect using the original installation identity"
+                    | "Registration failed: Device name is already registered; configure a unique persistent device ID for this installation"
+                )) => return Err(message.to_owned()),
+                _ => return Ok(None),
+            }
+        }
+        let route_id = ack_payload(&response)
+            .and_then(|payload| payload.get("device_route_id"))
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(str::to_owned)
+            .unwrap_or_default();
+        Ok(Some(route_id))
     }
 
     pub async fn send_heartbeat(&self, timeout: Duration) -> Result<bool, String> {
@@ -280,7 +305,32 @@ where
     pub async fn emit_event(&self, event: EventEnvelope) -> Result<(), String> {
         let event_type = event.event_type.clone();
         let payload = backend_event_payload(event)?;
-        self.transport.emit(&event_type, payload).await
+        if !matches!(
+            event_type.as_str(),
+            "response.completed" | "response.incomplete" | "error"
+        ) {
+            return self.transport.emit(&event_type, payload).await;
+        }
+
+        const TERMINAL_ACK_TIMEOUT: Duration = Duration::from_secs(45);
+        for attempt in 0..3 {
+            match self
+                .call_raw_event(&event_type, payload.clone(), TERMINAL_ACK_TIMEOUT)
+                .await
+            {
+                Ok(()) => return Ok(()),
+                Err(
+                    error @ RawEventCallError::Rejected {
+                        retryable: false, ..
+                    },
+                ) => {
+                    return Err(error.to_string());
+                }
+                Err(error) if attempt == 2 => return Err(error.to_string()),
+                Err(_) => tokio::time::sleep(Duration::from_millis(200 * (1 << attempt))).await,
+            }
+        }
+        unreachable!("the final delivery attempt returns")
     }
 
     pub async fn emit_raw_event(&self, event: &str, payload: Value) -> Result<(), String> {
@@ -341,6 +391,25 @@ where
             .expect("runtime transfer port lock should not be poisoned") = port;
     }
 
+    pub(super) fn runtime_features(&self) -> Value {
+        let mut features = runtime_features();
+        if self.config.device_type == "app" {
+            features["remoteTaskAccess"] = json!({
+                "version": 1,
+                "taskCreation": true,
+                "enabled": self.remote_task_access.enabled(),
+            });
+        }
+        features
+    }
+
+    pub(super) fn runtime_event(&self, mut event: Value) -> Value {
+        if self.config.device_type == "app" {
+            event["appRemoteTaskAccessEnabled"] = json!(self.remote_task_access.enabled());
+        }
+        event
+    }
+
     fn registration_payload(&self) -> Value {
         let runtime_transfer_port = *self
             .runtime_transfer_port
@@ -357,7 +426,7 @@ where
             "runtime_transfer_host": self.config.runtime_transfer_host,
             "runtime_transfer_port": runtime_transfer_port,
             "app_device_id": self.config.app_device_id,
-            "runtime_features": runtime_features(),
+            "runtime_features": self.runtime_features(),
         })
     }
 
@@ -373,7 +442,7 @@ where
             "running_task_ids": running_task_ids,
             "executor_version": self.config.executor_version,
             "capabilities": self.capability_reporter.build_report(),
-            "runtime_features": runtime_features(),
+            "runtime_features": self.runtime_features(),
             "runtime_auth_files": build_runtime_auth_file_report(
                 &crate::agents::wework_codex_home()
             ),
@@ -473,4 +542,43 @@ fn numeric_backend_id(value: &str) -> Result<Value, String> {
         .parse::<i64>()
         .map(|number| json!(number))
         .map_err(|_| format!("backend task identity is not numeric: {trimmed}"))
+}
+
+/// Ask the backend to reconcile one device's account plugins.
+///
+/// This is the low-frequency fallback for missed change notifications: the
+/// backend pushes only the actual plugin drift to the device. The device
+/// address should be the backend-assigned record route id so the request
+/// reaches this exact Runtime registration even when historical Device
+/// records share its name.
+pub(super) async fn reconcile_account_plugins(
+    backend_url: &str,
+    auth_token: &str,
+    device_id: &str,
+) -> Result<(), String> {
+    let base = backend_url.trim().trim_end_matches('/');
+    let token = auth_token.trim();
+    let device_id = device_id.trim();
+    if base.is_empty() || token.is_empty() || device_id.is_empty() {
+        return Ok(());
+    }
+    let mut url = url::Url::parse(&format!("{base}/api/plugins/installed/sync-device"))
+        .map_err(|error| format!("invalid backend url: {error}"))?;
+    url.query_pairs_mut()
+        .append_pair("device_id", device_id)
+        .append_pair("reconcile", "true");
+    let response = crate::agents::backend_url::backend_http_client()?
+        .post(url)
+        .bearer_auth(token)
+        .timeout(Duration::from_secs(130))
+        .send()
+        .await
+        .map_err(|error| format!("plugin reconcile request failed: {error}"))?;
+    if !response.status().is_success() {
+        return Err(format!(
+            "plugin reconcile failed with HTTP {}",
+            response.status()
+        ));
+    }
+    Ok(())
 }

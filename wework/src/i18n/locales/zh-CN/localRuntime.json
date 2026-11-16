@@ -25,5 +25,7 @@
   "local_workspace_opening_unavailable": "本地工作区打开仅在 Electron 桌面端可用",
   "local_file_opening_unavailable": "本地文件打开仅在 Electron 桌面端可用",
   "local_file_revealing_unavailable": "本地文件定位仅在 Electron 桌面端可用",
-  "local_app_icons_unavailable": "本地应用图标仅在 Electron 桌面端可用"
+  "local_app_icons_unavailable": "本地应用图标仅在 Electron 桌面端可用",
+  "service_unavailable_title": "本机服务暂不可用",
+  "service_unavailable_description": "依赖本机服务的功能暂不可用，你仍可使用工作台并重试连接。"
 }

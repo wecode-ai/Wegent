@@ -20,15 +20,31 @@ mod catalog_write;
 mod desired_capabilities;
 mod handler;
 mod item;
+mod local_sync;
+
+pub(crate) fn local_sync_enabled() -> bool {
+    local_sync::enabled()
+}
+mod online_route;
+mod plugin_sync_protocol;
 mod record_sync_result;
+mod registration_sync;
+pub(crate) mod removal_sync;
 mod report;
 mod sync_device;
-mod write_coordination;
+// Shared with `plugin_account_auth`, which drives the same owner lease and
+// policy-revision CAS for plugin-auth exchanges.
+pub(crate) mod write_coordination;
 use brz_mysql::{FromMysqlRow, Mysql, MysqlResult};
 use chrono::NaiveDateTime;
 pub use item::kind_to_item;
 use serde_json::{Map, Value};
 use std::collections::HashMap;
+
+pub(crate) use registration_sync::{
+    CapabilityDispatch, DispatchOutcome, PluginPreparation, prepare_plugins_for_registered_device,
+    record_registration_sync_result, sync_registration_capabilities,
+};
 
 use crate::device_identity::{DeviceRow, coalesce_plugin_device_rows, plugin_device_id};
 

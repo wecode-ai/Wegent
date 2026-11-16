@@ -21,7 +21,7 @@ export function telemetryTraceId(seed: string): string {
 // trace id. Trace events and generations emitted while a run is active share
 // the minted id; once the run settles the entry is removed and the next run
 // mints a fresh one. The registry is per process/window, which keeps one run
-// internally consistent even when two windows observe the same task.
+// consistent even when two windows observe the same task.
 const activeRunTraceIds = new Map<string, string>()
 
 function runtimeRunKey(deviceId: string, taskId: string): string {

@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import { selectCollaborationProjectView } from './collaboration-project-navigation.mjs'
 
 function dateKey(value) {
   const year = value.getFullYear()
@@ -13,11 +14,51 @@ function addDays(value, days) {
   return next
 }
 
-function nextMonday() {
-  const today = new Date()
-  today.setHours(12, 0, 0, 0)
-  const daysUntilMonday = (8 - today.getDay()) % 7 || 7
-  return addDays(today, daysUntilMonday)
+export function collaborationScheduleDates(today = new Date()) {
+  const anchor = new Date(today)
+  anchor.setHours(12, 0, 0, 0)
+  const firstOfMonth = new Date(anchor.getFullYear(), anchor.getMonth(), 1, 12)
+  const gridEnd = addDays(firstOfMonth, 41 - ((firstOfMonth.getDay() + 6) % 7))
+  const currentMonday = addDays(anchor, -((anchor.getDay() + 6) % 7))
+  // Keep both calendar ranges visible; Gantt starts at the current week.
+  const initialStart = addDays(currentMonday, addDays(currentMonday, 9) > gridEnd ? -7 : 0)
+  const initialEnd = addDays(initialStart, 2)
+  const calendarStart = addDays(initialStart, 7)
+  const calendarEnd = addDays(calendarStart, 2)
+  const resizedEnd = addDays(calendarEnd, 1)
+  return Object.fromEntries(
+    Object.entries({
+      initialStart,
+      initialEnd,
+      calendarStart,
+      calendarEnd,
+      resizedEnd,
+      movedStart: calendarEnd,
+      movedEnd: addDays(resizedEnd, 2),
+    }).map(([key, value]) => [key, dateKey(value)])
+  )
+}
+
+export async function ensureCalendarScheduleDatesVisible({ control, scoped, keys, timeoutMs }) {
+  const calendar = scoped('[data-testid="collaboration-calendar"]')
+  await control.command('waitFor', `${calendar} [data-testid^="collaboration-calendar-day-"]`, {
+    visible: true,
+    timeoutMs,
+  })
+  const selectors = [keys.initialStart, keys.calendarStart].map(
+    key => `${calendar} [data-testid="collaboration-calendar-day-${key}"]`
+  )
+  let hasAllDates = true
+  for (const selector of selectors) {
+    if (Number(await control.command('getElementCount', selector)) === 0) hasAllDates = false
+  }
+  // Keep both dates in one grid; blindly opening the target month can hide the source.
+  if (!hasAllDates) {
+    await control.command('click', `${calendar} [data-testid="collaboration-schedule-next"]`)
+  }
+  for (const selector of selectors) {
+    await control.command('waitFor', selector, { visible: true, timeoutMs })
+  }
 }
 
 async function waitForAttributeIncludes(
@@ -48,24 +89,7 @@ export async function verifyCollaborationScheduleViews({
   await control.command('setMainWindowSize', 'body', {
     value: JSON.stringify({ width: 1440, height: 900 }),
   })
-  const initialStart = nextMonday()
-  const initialEnd = addDays(initialStart, 2)
-  const calendarStart = addDays(initialStart, 7)
-  const calendarEnd = addDays(calendarStart, 2)
-  const resizedEnd = addDays(calendarEnd, 1)
-  const movedStart = calendarEnd
-  const movedEnd = addDays(resizedEnd, 2)
-  const keys = Object.fromEntries(
-    Object.entries({
-      initialStart,
-      initialEnd,
-      calendarStart,
-      calendarEnd,
-      resizedEnd,
-      movedStart,
-      movedEnd,
-    }).map(([key, value]) => [key, dateKey(value)])
-  )
+  const keys = collaborationScheduleDates()
 
   await control.command('click', scoped('[aria-label="时间范围"]'))
   await control.command('waitFor', '[data-testid="cloud-todo-detail-start-date"]', {
@@ -78,9 +102,6 @@ export async function verifyCollaborationScheduleViews({
   await control.command('fill', '[data-testid="cloud-todo-detail-due-date"]', {
     value: keys.initialEnd,
   })
-  await control.command('clickWhenEnabled', scoped('[data-testid="cloud-todo-save"]'), {
-    timeoutMs,
-  })
   await control.command('waitFor', scoped('[data-testid="cloud-todo-save"]'), {
     visible: false,
     timeoutMs,
@@ -91,11 +112,12 @@ export async function verifyCollaborationScheduleViews({
     timeoutMs,
   })
 
-  await control.command('click', scoped('[data-testid="collaboration-calendar-tab"]'))
+  await selectCollaborationProjectView(control, scoped('').trim(), 'calendar')
   await control.command('waitFor', scoped('[data-testid="collaboration-calendar"]'), {
     visible: true,
     timeoutMs,
   })
+  await ensureCalendarScheduleDatesVisible({ control, scoped, keys, timeoutMs })
   await control.command('select', scoped('[data-testid="collaboration-calendar-status-filter"]'), {
     value: 'inbox',
   })
@@ -125,12 +147,6 @@ export async function verifyCollaborationScheduleViews({
   )
 
   const calendarTarget = scoped(`[data-testid="collaboration-calendar-day-${keys.calendarStart}"]`)
-  // The next Monday plus one week can fall beyond the current month's grid.
-  if (Number(await control.command('getElementCount', calendarTarget)) === 0) {
-    await control.command('click', scoped('[data-testid="collaboration-schedule-next"]'))
-  }
-  await control.command('waitFor', calendarTarget, { visible: true, timeoutMs })
-
   const calendarBar = scoped('[data-testid^="collaboration-calendar-issue-"]')
   await control.command('waitFor', calendarBar, {
     text: issueTitle,
@@ -159,7 +175,7 @@ export async function verifyCollaborationScheduleViews({
     timeoutMs
   )
 
-  await control.command('click', scoped('[data-testid="collaboration-gantt-tab"]'))
+  await selectCollaborationProjectView(control, scoped('').trim(), 'gantt')
   await control.command('waitFor', scoped('[data-testid="collaboration-gantt"]'), {
     visible: true,
     timeoutMs,
@@ -225,7 +241,7 @@ export async function verifyCollaborationScheduleViews({
   )
   await capture(control, 'offline-local-project-space-03-gantt-schedule.png')
 
-  await control.command('click', scoped('[data-testid="collaboration-tab-table"]'))
+  await selectCollaborationProjectView(control, scoped('').trim(), 'table')
   await control.command('waitFor', scoped('[data-testid="collaboration-issue-table"]'), {
     text: issueTitle,
     visible: true,

@@ -5,9 +5,8 @@
  * runtime-check pull path only as a lightweight convergence checkpoint.
  */
 
-import { APIRequestContext, BrowserContext, Page, expect, test } from '@playwright/test'
-import { ADMIN_USER } from '../../config/test-users'
-import { ApiClient, createApiClient } from '../../utils/api-client'
+import { APIRequestContext, BrowserContext, Page, expect } from '@playwright/test'
+import { test } from '../../fixtures/task-runtime'
 
 const API_BASE_URL = process.env.E2E_API_URL || 'http://localhost:8000'
 const MOCK_MODEL_SERVER_URL = process.env.MOCK_MODEL_SERVER_URL || 'http://localhost:9999'
@@ -54,18 +53,15 @@ type CapturedModelRequest = {
 test.describe.configure({ mode: 'serial', timeout: 120_000 })
 
 test.describe('Task runtime consistency', () => {
-  let apiClient: ApiClient
   let token = ''
   let createdModel = false
   let createdBotId: number | null = null
   let createdTeamId: number | null = null
   let streamRulesForCleanup: string[] = []
 
-  test.beforeAll(async ({ request }) => {
-    apiClient = createApiClient(request)
-    const loginResponse = await apiClient.login(ADMIN_USER.username, ADMIN_USER.password)
-    token = loginResponse.data?.access_token || ''
-    expect(token, 'Admin login should return an access token').toBeTruthy()
+  test.beforeAll(async ({ runtimeAccount }) => {
+    const { request } = runtimeAccount
+    token = runtimeAccount.token
 
     const healthResponse = await request.get(`${MOCK_MODEL_SERVER_URL}/health`)
     expect(healthResponse.status(), 'Mock model server should be running').toBe(200)
@@ -81,30 +77,6 @@ test.describe('Task runtime consistency', () => {
   test.afterEach(async ({ request, context }) => {
     await context.setOffline(false).catch(() => {})
     await cleanupStreamRules(request)
-  })
-
-  test('streams normally and reaches a terminal UI state', async ({ page, request }) => {
-    const runtimeChecks = trackRuntimeChecks(page)
-    const messageText = `${TEST_PREFIX} normal streaming request`
-    const responseMarker = `${TEST_PREFIX}-normal-response`
-
-    await configureStreamRule(request, messageText, {
-      responseContent: `${responseMarker} completed through socket`,
-      chunkDelayMs: 40,
-    })
-
-    await gotoChatWithTestTeam(page)
-    await sendChatMessage(page, messageText)
-
-    const taskId = await waitForTaskId(page)
-    await expect(page.getByTestId('messages-container')).toContainText(responseMarker, {
-      timeout: 30000,
-    })
-    await waitForBackendTerminal(request, taskId)
-
-    await expectChatInputCanSubmit(page, `${TEST_PREFIX} normal readiness probe`)
-    await expectNoQueuedMessages(page)
-    expect(runtimeChecks.count()).toBeLessThan(8)
   })
 
   test('keeps previous messages and resumes streaming after page refresh', async ({
@@ -414,7 +386,8 @@ test.describe('Task runtime consistency', () => {
         'finishes',
       ].join(' '),
       chunkDelayMs: 250,
-      doneDelayMs: 20000,
+      // Keep cancellation possible after the partial response is visible.
+      doneDelayMs: 10_000,
     })
 
     await gotoChatWithTestTeam(page)
@@ -459,7 +432,8 @@ test.describe('Task runtime consistency', () => {
     await configureStreamRule(request, messageText, {
       responseContent: `${responseMarker} keeps streaming until the browser cancels this response`,
       chunkDelayMs: 250,
-      doneDelayMs: 20000,
+      // Keep cancellation possible after the partial response is visible.
+      doneDelayMs: 10_000,
     })
     await configureStreamRule(request, followUpMessage, {
       responseContent: `${followUpMarker} is non-empty after cancellation`,
@@ -976,31 +950,8 @@ test.describe('Task runtime consistency', () => {
 
   async function ensureTestTeamSelected(page: Page): Promise<void> {
     const messageInput = page.getByTestId('message-input')
-    if (await messageInput.isVisible({ timeout: 5000 }).catch(() => false)) {
-      return
-    }
-
-    const agentSelector = page
-      .locator('[data-testid="agent-skill-selector-button"], [data-testid="team-selector"]')
-      .first()
-    await expect(agentSelector).toBeVisible({ timeout: 45_000 })
-    await agentSelector.click({ force: true })
-
-    const searchInput = page
-      .locator('input[placeholder*="Search"], input[placeholder*="搜索"]')
-      .last()
-    if (await searchInput.isVisible({ timeout: 1000 }).catch(() => false)) {
-      await searchInput.fill(TEST_TEAM_NAME)
-    }
-
-    const teamOption = page
-      .locator(
-        `[data-testid="team-option-${TEST_TEAM_NAME}"], [role="button"]:has-text("${TEST_TEAM_NAME}"), [role="option"]:has-text("${TEST_TEAM_NAME}")`
-      )
-      .first()
-    await expect(teamOption).toBeVisible({ timeout: 10000 })
-    await teamOption.click({ force: true })
-    await expect(messageInput).toBeVisible({ timeout: 10000 })
+    await expect(messageInput).toBeVisible({ timeout: 45_000 })
+    await expect(messageInput).toHaveAttribute('data-team-id', String(createdTeamId))
   }
 
   function authHeaders(): Record<string, string> {

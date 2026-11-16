@@ -1,18 +1,55 @@
 import assert from 'node:assert/strict'
+import { createStandInDingTalkFixture } from '../modules/stand-in-dingtalk-fixture.mjs'
 import { requestExecutor } from '../modules/executor-rpc.mjs'
+import { fetchLocalRuntime } from '../modules/runtime-request.mjs'
+import { createDingTalkReplyStory } from '../modules/stand-in-dingtalk-reply-story.mjs'
+import { createDirectRecoveryVerification } from '../modules/stand-in-direct-recovery.mjs'
+import { createSourceOwnerTaskStory } from '../modules/stand-in-source-owner-task.mjs'
 
-export function createDesktopScenario({ uiTimeoutMs }) {
+export function createDesktopScenario(options) {
+  const { uiTimeoutMs, workbenchReadyTimeoutMs } = options
+  const dingtalk = createStandInDingTalkFixture(options)
+  const story = createDingTalkReplyStory(options)
+  const recovery = createDirectRecoveryVerification(options)
+  const ownerTask = createSourceOwnerTaskStory(options)
   return {
+    async prepareApp(context) {
+      await story.prepareApp(context, dingtalk)
+      await recovery.prepareApp(context)
+      await ownerTask.prepareApp(context)
+    },
+    async handleHttp(req, response, url) {
+      if (await ownerTask.handleHttp(req, response, url)) return true
+      if (await recovery.handleHttp(req, response, url)) return true
+      return story.model.handleHttp(req, response, url)
+    },
+    reviewApproval: (...args) =>
+      ownerTask.state.active
+        ? ownerTask.reviewApproval(...args)
+        : story.model.reviewApproval(...args),
+    diagnostics: () => ({ directRecovery: recovery.diagnostics() }),
     async verify(control) {
-      const catalog = await requestExecutor(control, 'runtime.connections.catalog', {}, uiTimeoutMs)
+      await dingtalk.install(control)
+      // The first catalog request initializes the connection dependency inventory.
+      // Keep ordinary permission checks and the warm recovery request on the UI budget.
+      const catalog = await requestExecutor(
+        control,
+        'runtime.connections.catalog',
+        {},
+        workbenchReadyTimeoutMs
+      )
       const provider = catalog.items.find(
         item => item.id === '@wegent/dsh-connection-dingtalk/dingtalk'
       )
       assert.ok(provider)
       const declaration = provider.cliReadTools.dingtalk
       assert.deepEqual(Object.keys(declaration.operations).sort(), [
+        'downloadImage',
+        'listConversation',
+        'listDirectConversation',
         'listMentions',
         'listProfiles',
+        'listTopicReplies',
         'searchGroups',
         'searchMessages',
         'searchUsers',
@@ -20,11 +57,11 @@ export function createDesktopScenario({ uiTimeoutMs }) {
       const dependency = provider.dependencies.find(item => item.alias === 'dingtalk')
       const origin = await control.command('getLocationOrigin', 'body')
       const invoke = async (method, params) => {
-        const response = await fetch(`${origin}/wework/executor/v1/rpc`, {
+        const response = await fetchLocalRuntime(control, `${origin}/wework/executor/v1/rpc`, {
           method: 'POST',
           headers: { 'content-type': 'application/json' },
           body: JSON.stringify({ id: `cli-boundary-${method}`, method, params }),
-          signal: AbortSignal.timeout(uiTimeoutMs),
+          timeoutMs: uiTimeoutMs,
         })
         return response.json()
       }
@@ -37,7 +74,7 @@ export function createDesktopScenario({ uiTimeoutMs }) {
           providerId: provider.id,
           dependencyAlias: dependency.alias,
           source: dependency.source,
-          expectedVersion: null,
+          expectedVersion: dependency.resolved.version,
           operation: 'callTool',
           ...input,
           // Caller-owned declarations and executable paths must never grant capability.
@@ -59,7 +96,7 @@ export function createDesktopScenario({ uiTimeoutMs }) {
         providerId: provider.id,
         dependencyAlias: 'undeclared',
         source: dependency.source,
-        expectedVersion: null,
+        expectedVersion: dependency.resolved.version,
         operation: 'callTool',
         tool: 'searchGroups',
         arguments: { query: 'must not run' },
@@ -73,6 +110,13 @@ export function createDesktopScenario({ uiTimeoutMs }) {
         uiTimeoutMs
       )
       assert.ok(recovered.items.some(item => item.id === provider.id))
+      await recovery.verify(control)
+      await story.verify(control, (method, params) =>
+        requestExecutor(control, method, params, uiTimeoutMs)
+      )
+      await ownerTask.verify(control, (method, params) =>
+        requestExecutor(control, method, params, uiTimeoutMs)
+      )
     },
   }
 }

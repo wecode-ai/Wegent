@@ -1,3 +1,5 @@
+patchedDependencies:
+  pnpm@11.7.0: patches/pnpm@11.7.0.patch
 allowBuilds:
   '@deepseek-ai/dsh-subprocess-local': true
   '@google/genai': true

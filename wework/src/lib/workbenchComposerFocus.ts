@@ -1,5 +1,6 @@
 export const WORKBENCH_NEW_CHAT_FOCUS_EVENT = 'wework:focus-new-chat-composer'
 export const WORKBENCH_NEW_CHAT_STARTED_EVENT = 'wework:new-chat-started'
+export const WORKBENCH_NEW_CHAT_REQUEST_EVENT = 'wework:request-new-chat'
 export const WORKBENCH_COMPOSER_FOCUS_EVENT = 'wework:focus-composer'
 
 export interface WorkbenchComposerFocusDetail {
@@ -15,6 +16,19 @@ interface PendingWorkbenchComposerFocus {
 const WORKBENCH_COMPOSER_FOCUS_TTL_MS = 2_000
 const WORKBENCH_COMPOSER_FOCUS_RETRY_MS = 16
 let pendingWorkbenchComposerFocus: PendingWorkbenchComposerFocus | null = null
+const pendingNewChatScopes = new Set<string>()
+let pendingWorkbenchNewChat = false
+
+export function requestWorkbenchNewChat() {
+  pendingWorkbenchNewChat = true
+  window.dispatchEvent(new Event(WORKBENCH_NEW_CHAT_REQUEST_EVENT))
+}
+
+export function consumeWorkbenchNewChatRequest() {
+  const pending = pendingWorkbenchNewChat
+  pendingWorkbenchNewChat = false
+  return pending
+}
 
 export function focusComposerAtEnd(element: HTMLElement | null | undefined) {
   if (!element) return
@@ -47,7 +61,12 @@ export function focusTerminalUnlessComposerFocusRequested(
   terminalInput?.focus({ preventScroll: true })
 }
 
-export function requestNewChatComposerFocus() {
+export function consumeNewChatComposerRequest(workspaceTabId?: string) {
+  return pendingNewChatScopes.delete(workspaceTabId ?? 'main')
+}
+
+export function requestNewChatComposerFocus(workspaceTabId?: string) {
+  pendingNewChatScopes.add(workspaceTabId ?? 'main')
   window.dispatchEvent(new Event(WORKBENCH_NEW_CHAT_STARTED_EVENT))
   window.requestAnimationFrame(() => {
     window.dispatchEvent(new Event(WORKBENCH_NEW_CHAT_FOCUS_EVENT))

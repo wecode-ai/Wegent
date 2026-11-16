@@ -118,6 +118,7 @@ describe("shared project creation members", () => {
     expect((byTestId("cloud-project-name") as HTMLInputElement).value).toBe(
       "Research",
     );
+    await click("collaboration-project-create-add-collaborator");
     expect(document.body.textContent).toContain("Directory load failed");
     await click("collaboration-project-create-member-search-retry");
     expect(setup.reloadMembers).toHaveBeenCalledTimes(1);
@@ -125,8 +126,13 @@ describe("shared project creation members", () => {
 
   it("keeps multi-selection and the project draft after a search failure and retry", async () => {
     const setup = resourceSetup();
-    setup.searchMembers = vi
+    setup.searchUsers = vi
       .fn()
+      .mockResolvedValueOnce([
+        { id: 1, user_name: "Owner", email: null },
+        { id: 2, user_name: "Ada", email: null },
+        { id: 3, user_name: "Grace", email: null },
+      ])
       .mockResolvedValueOnce([
         { id: 1, user_name: "Owner", email: null },
         { id: 2, user_name: "Ada", email: null },
@@ -137,21 +143,24 @@ describe("shared project creation members", () => {
     await mount(setup);
     await input("cloud-project-name", "Research");
     await click("collaboration-project-create-add-collaborator");
-    await input("collaboration-project-create-member-search", "a");
+    await input("collaboration-project-create-people-search", "a");
     expect(
       document.querySelector(
         '[data-testid="collaboration-project-create-member-1"]',
       ),
     ).toBeNull();
     await click("collaboration-project-create-member-2");
-    await click("collaboration-project-create-member-3");
+    await click("collaboration-project-create-add-collaborator");
+    await input("collaboration-project-create-people-search", "a");
     expect(
-      byTestId("collaboration-project-create-member-2").getAttribute(
-        "aria-pressed",
+      document.querySelector(
+        '[data-testid="collaboration-project-create-member-2"]',
       ),
-    ).toBe("true");
+    ).toBeNull();
+    await click("collaboration-project-create-member-3");
 
-    await input("collaboration-project-create-member-search", "Lin");
+    await click("collaboration-project-create-add-collaborator");
+    await input("collaboration-project-create-people-search", "Lin");
     expect(document.body.textContent).toContain("Directory unavailable");
     expect(
       byTestId("collaboration-project-create-selected-member-2").textContent,
@@ -167,12 +176,12 @@ describe("shared project creation members", () => {
     expect(
       byTestId("collaboration-project-create-member-4").textContent,
     ).toContain("Lin");
-    expect(setup.searchMembers).toHaveBeenCalledTimes(3);
+    expect(setup.searchUsers).toHaveBeenCalledTimes(4);
   });
 
   it("names failed selected members, shows the verified roster and retries the created project", async () => {
     const setup = resourceSetup();
-    setup.searchMembers = vi.fn(async () => [
+    setup.searchUsers = vi.fn(async () => [
       { id: 2, user_name: "Ada", email: null },
     ]);
     setup.configure = vi
@@ -195,7 +204,7 @@ describe("shared project creation members", () => {
     const harness = await mount(setup);
     await input("cloud-project-name", "Research");
     await click("collaboration-project-create-add-collaborator");
-    await input("collaboration-project-create-member-search", "Ada");
+    await input("collaboration-project-create-people-search", "Ada");
     await click("collaboration-project-create-member-2");
     await click("cloud-project-create-confirm");
 
@@ -220,7 +229,7 @@ describe("shared project creation members", () => {
 
   it("hides a cloud member source for local creation and explains the limitation", async () => {
     const setup = resourceSetup();
-    setup.searchMembers = vi.fn(async () => []);
+    setup.searchUsers = vi.fn(async () => []);
     await mount(setup, "local");
 
     expect(
@@ -234,6 +243,6 @@ describe("shared project creation members", () => {
     await input("cloud-project-name", "Local");
     await click("cloud-project-create-confirm");
     expect(setup.configure).not.toHaveBeenCalled();
-    expect(setup.searchMembers).not.toHaveBeenCalled();
+    expect(setup.searchUsers).not.toHaveBeenCalled();
   });
 });

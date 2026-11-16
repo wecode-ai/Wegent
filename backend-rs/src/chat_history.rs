@@ -910,6 +910,48 @@ async fn build_user_message_content(
 ///
 /// The source declares the query model with defaults for every field, so an
 /// absent query string is valid and decodes to `HistoryQuery::default()`.
+/// `initialize_redis_chat_history` (`task_manager.py:674-727`): when a reused
+/// Task has history but the Redis cache is empty, rebuild it from the completed
+/// USER prompts and ASSISTANT `result.value`s in `message_id` order.
+pub(crate) async fn initialize_from_subtasks<R: brz_redis::Redis>(
+    redis: &R,
+    task_id: i64,
+    mut entries: Vec<crate::background_jobs::subscription::history::Entry>,
+) -> anyhow::Result<()> {
+    use brz_redis::{RedisBytes, SetExpiration, SetOptions};
+    if entries.is_empty() {
+        return Ok(());
+    }
+    let key = format!("chat:history:{task_id}");
+    if let Some(cached) = redis.get::<_, RedisBytes>(&key).await?
+        && serde_json::from_slice::<Vec<Value>>(cached.as_ref())
+            .is_ok_and(|history| !history.is_empty())
+    {
+        return Ok(());
+    }
+    entries.sort_by_key(|entry| entry.0);
+    let messages = crate::background_jobs::subscription::history::rebuild(
+        entries,
+        crate::background_jobs::subscription::model::setting("CHAT_HISTORY_MAX_MESSAGES", 50)
+            as usize,
+    );
+    if !messages.is_empty() {
+        redis
+            .set_with(
+                &key,
+                serde_json::to_string(&messages)?,
+                SetOptions::default().with_expiration(SetExpiration::Seconds(
+                    crate::background_jobs::subscription::model::setting(
+                        "CHAT_HISTORY_EXPIRE_SECONDS",
+                        7200,
+                    ),
+                )),
+            )
+            .await?;
+    }
+    Ok(())
+}
+
 pub async fn get_chat_history_value(
     app: &AppState,
     session_id: &str,

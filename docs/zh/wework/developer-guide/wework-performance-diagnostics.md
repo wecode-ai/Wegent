@@ -16,13 +16,25 @@ Wework 内置一个默认关闭的前端性能诊断开关，用于定位 releas
 
 ## 启动耗时诊断
 
-桌面端的启动页只等待本地 executor 通过 stdout 报告 ready；debug 构建不会为了播放完整动画而延迟工作台。冷启动时， Electron 直接启动新的 sidecar，不发现或附着已有 executor。
+桌面启动门控包括本地运行时和当前路由的首屏就绪条件。冷启动时，Electron 直接创建新的 sidecar，executor 通过 stdout 报告 ready。Renderer 在当前首屏所需数据和可操作界面就绪后发送 `renderer.startupReady`，触发窗口交接。debug 和正式包使用同一交接流程。
 
-排查启动页长时间不消失时，对齐前端日志的 `Frontend logging initialized` 与 executor 日志的 `app IPC stdio ready`。两者之间的时间主要反映本地 executor 冷启动；`runtime work list finished` 等后续记录用于判断工作台数据加载耗时。不要把后台云端同步的超时误判为本地启动门控。
+初始窗口首选尺寸为 1440×960；任一维度占满或超出所在屏幕的可用区域时，启动页与主窗口都使用系统标准最大化，否则保持普通窗口。最大化交接直接继承最大化状态，避免将整屏尺寸往返换算为普通窗口边框尺寸。
+
+启动页的动画舞台支持原生窗口拖动，底部状态区域和恢复按钮保留交互。舞台与主界面使用同一次启动解析的亮暗主题；采用密度 2.5、速度 1.0 的流星线条从四周勾勒标记，星头在首次接触字形前淡出，标记上只保留勾勒线条，长尾逐渐收细和淡出。浅色模式使用浅白背景与清晰蓝线，深色模式使用发光星头；成形后立即开始从左向右的渐变扫光，等待阶段不再调度 Canvas 绘制。底栏与舞台背景一致，主题在样式和动画首次绘制前确定，避免启动闪色。
+
+完整标记和光丝按窗口及底栏上沿等比缩放，边缘与状态内容之间保留安全间距。若极短窗口的底栏已盖过全页中心，暂时不绘制装饰图标；空间恢复后继续同一条动画时间轴。
+
+交接时，启动页在约 200ms 内补齐成形、冻结当前扫光色位并将进度推至 100%。完成帧经过两次绘制确认并停留 50ms 后，宿主对齐主窗位置和尺寸，使用 `capturePage()` 确认主窗已有非空合成帧，再以 600ms 原生窗口透明度淡出启动页（macOS/Windows）。Linux 的 Electron 原生窗口透明度不生效。启动页关闭并将焦点交给主窗口后，宿主记录启动成功。启用减少动态效果时，直接呈现完成帧并跳过收束、停留和淡出动画。
+
+排查启动页长时间不消失时，对齐 `Frontend logging initialized`、`app IPC stdio ready`、当前路由的数据加载记录（例如 `runtime work list finished`）与宿主的 `renderer-startup-ready`、`main-window-show`、`startup-splash-close` 记录，分别判断 executor 冷启动、首屏数据加载和窗口交接的耗时。`renderer-startup-ready` 到 `startup-splash-close` 之间包含完成帧呈现、主窗合成和淡出，应单独计量。后台云端同步耗时通过对应同步日志排查。
+
+桌面 E2E 的普通页面重载统一复用 `workspace-flows.mjs` 中的 `reloadMainWindow`。
+控制通道连接不代表原生启动交接已结束；该函数先等待启动页关闭，再重载并等待新控制客户端。
+场景内直接组合 `reloadApp` 和 `awaitReadyAfter` 会绕过这一门禁，可能使交接中的 `capturePage()` 失效并隐藏主窗口。
 
 ### 首屏门禁与闲时任务
 
-工作台首屏只依赖本地 executor 可用，不等待 Codex app-server、插件市场同步或可清理目录扫描。需要 Codex 的功能会在用户实际使用时启动它；插件自动升级、内置插件市场准备和临时图片清理等维护工作通过统一的 renderer 闲时任务调度器执行。
+工作台首屏门禁要求本地 executor 可用，并满足当前路由的数据与可操作条件。需要 Codex 的功能会在用户实际使用时启动它。插件自动升级、内置插件市场准备和临时图片清理等维护工作通过统一的 renderer 闲时任务调度器执行。
 
 闲时任务同时满足以下条件才会开始：
 
@@ -106,9 +118,9 @@ Codex 会从历史 API 中过滤 `<codex_internal_context>`，因此 Wework 发�
 
 桌面工作台最多缓存 10 个普通 pane，并按最近使用顺序淘汰。非活跃且已停止运行的 pane 会释放 transcript 消息、历史 DOM、分页范围、导航索引和 processing 展开状态；再次切回时从 runtime transcript 原始数据重新加载。
 
-Electron 对话统一使用 `@tanstack/react-virtual` 的消息行虚拟列表，不再根据消息数量切换实现。用户停留在底部时，虚拟列表使用 `anchorTo: 'end'` 维持末端跟随；用户主动向上滚动后必须切换为 `anchorTo: 'start'`，避免流式消息行增长时 TanStack Virtual 继续改写滚动位置。滚动快照统一表示为“视口底部到列表底部的距离”。库内共享 `ResizeObserver` 测量已挂载消息的真实高度。活动中的流式消息即使位于可见范围和 overscan 之外，也必须保留在虚拟 range 中，使其高度增长持续进入 TanStack Virtual 的测量；否则消息重新挂载时从估算高度切换到真实高度，会破坏历史阅读位置。用户停留在底部时，高度变化继续按末端距离补偿；用户主动向上滚动后，则记录视口内首个文本滚动锚点及其视口偏移，并在流式消息重新测量时恢复该文本锚点。这样既能保持底部自动跟随，也能避免正在阅读的文本随流式输出持续向上漂移。渲染范围在可见区前后各保留 2 条消息。消息行不再使用 `IntersectionObserver` 做第二层窗口化；单条超长 Markdown 仍保留独立的块级窗口化，以限制一个可见消息内部的 DOM 数量。未挂载富文本的块保留轻量纯文本内容，避免快速滚动时出现只有高度、没有可绘制内容的空白区。其余 `IntersectionObserver` 用途包括跟随底部状态和附件预览等独立功能。
+Electron 对话统一使用 `@tanstack/react-virtual` 的消息行虚拟列表，不再根据消息数量切换实现。跟随态和阅读态均使用 `anchorTo: 'end'`；阅读态关闭 `followOnAppend` 和末端容差，导航与滚动条拖动时才切换为 `anchorTo: 'start'`。滚动快照保存距底部距离，阅读态额外保存消息及文字锚点身份。同步布局与共享 `ResizeObserver` 通过同一个 `resizeItem` 入口写入真实行高。活动中的流式消息即使位于可见范围和 overscan 之外，也必须保留在虚拟 range 中，使其高度增长持续进入 TanStack Virtual 的测量；否则消息重新挂载时从估算高度切换到真实高度，会破坏历史阅读位置。用户停留在底部时，高度变化继续按末端距离补偿；用户主动向上滚动后，则记录视口内首个文本滚动锚点及其视口偏移，并在流式消息重新测量时恢复该文本锚点。这样既能保持底部自动跟随，也能避免正在阅读的文本随流式输出持续向上漂移。渲染范围在可见区前后各保留 2 条消息。消息行不再使用 `IntersectionObserver` 做第二层窗口化；单条超长 Markdown 仍保留独立的块级窗口化，以限制一个可见消息内部的 DOM 数量。未挂载富文本的块保留轻量纯文本内容，避免快速滚动时出现只有高度、没有可绘制内容的空白区。其余 `IntersectionObserver` 用途包括跟随底部状态和附件预览等独立功能。
 
-桌面对话滚动容器使用 DOM 底部原点：位于最新消息时 `scrollTop` 为 `0`，向历史方向滚动时为负值。业务状态、滚动快照、轮次导航和 E2E 断言只使用“距底部距离”或内容坐标，不得直接依赖顶部原点 `scrollTop`。TanStack Virtual 内部仍使用顶部 offset，但这层转换必须集中在 `useBottomOriginVirtualizer`，业务组件不得自行换算顶部坐标。切换任务时，hook 在同一次 layout commit 中按新 `conversationKey` 写入底部距离，避免先渲染顶部位置再在下一帧纠正。
+桌面对话使用正常 DOM 坐标：顶部 `scrollTop = 0`，底部为 `scrollHeight - clientHeight`。TanStack、滚动条和导航共用该范围，不再转换负偏移。`useConversationVirtualizer` 管理虚拟几何，控制器管理跟随、阅读、导航和拖动；行高及 Markdown 缓存按宽度、字体和正文校验，普通滚动不自动启动诊断采集。
 
 非分屏工作台由 pane 栈父容器持有共享内容宽度，并把稳定值传给新任务 Pane；Pane 自身测量只作为首次启动、零宽测量和分屏模式的回退。环境信息栏是否停靠必须在新 Pane 的首帧使用这份共享宽度决定，不能先按宽度 `0` 渲染全宽聊天区，再在下一帧扣除 320px 侧栏，否则消息和 Composer 会出现一次横向闪动。
 
@@ -260,6 +272,8 @@ Performance Diagnostics 有意保留独立的采集器：它仍通过 `wework/el
 - 是否存在重复的 `slow-react-commit`。
 
 主工作台的全高侧栏和横跨内容区的顶部栏应使用普通语义背景，避免在大面积常驻表面应用 `backdrop-filter`。这类滤镜可能让 Chromium 为整个区域保留额外图形 backing store；排查 Web Content 内存时，应在相同窗口尺寸和页面状态下比较启用前后的 `physical_footprint_kib`，并把 DevTools 堆快照产生的短期可回收内存高水位排除在稳定基线之外。
+
+流式进度文字的扫光宽度直接使用 `ResizeObserverEntry` 的尺寸，不在挂载时同步读取 `getBoundingClientRect()`。尺寸通知到来前，扫光层以零宽度初始化，基础文字保持可见。长轮次会反复挂载进度提示，同步读取布局后再写入样式会累积强制布局开销；排查时应使用同一 CI 构建的 source map 将性能追踪热点映射回源码。
 
 也可以手动打点：
 

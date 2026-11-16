@@ -52,7 +52,17 @@ impl RuntimeWorkRpcHandler {
                 ticks = ticks.wrapping_add(1);
                 if ticks % LOCAL_ISSUE_HEARTBEAT_TICKS == 0 {
                     handler.heartbeat_local_issue_executions();
+                    for link in handler.local_task_links(false) {
+                        handler.sync_stand_in_issue_replies(&link.local_task_id);
+                        if link.runtime_handle["issueHumanRequestOutbox"]
+                            .as_object()
+                            .is_some_and(|outbox| !outbox.is_empty())
+                        {
+                            handler.sync_issue_human_requests(&link.local_task_id);
+                        }
+                    }
                 }
+                handler.reconcile_local_project_coordination().await;
                 handler.drain_local_issue_queue().await;
             }
         });
@@ -65,11 +75,7 @@ impl RuntimeWorkRpcHandler {
                     .turn_scheduler
                     .lock()
                     .expect("runtime turn scheduler lock should not be poisoned");
-                scheduler.max_concurrent_tasks.saturating_sub(
-                    scheduler
-                        .active_tasks
-                        .saturating_add(scheduler.queued_turns.len()),
-                )
+                scheduler.available(RuntimeTaskKind::Agent)
             };
             if available == 0 {
                 return;
@@ -231,7 +237,7 @@ impl RuntimeWorkRpcHandler {
                 }
                 Ok(response) => {
                     let error = format!("Runtime rejected local Issue dispatch: {response}");
-                    let _ = store.fail_execution(execution.id, &error, false);
+                    let _ = store.reject_runtime_dispatch(execution.id, &error);
                     return;
                 }
                 Err(error) => {
@@ -250,7 +256,7 @@ impl RuntimeWorkRpcHandler {
                 .expect("runtime turn scheduler lock should not be poisoned");
             scheduler
                 .active_task_ids
-                .iter()
+                .keys()
                 .cloned()
                 .chain(
                     scheduler
@@ -281,12 +287,16 @@ impl RuntimeWorkRpcHandler {
         local_task_id: String,
         task_title: String,
         description: String,
-    ) {
+    ) -> Option<tokio::task::JoinHandle<()>> {
+        let link = self.local_task_link(&local_task_id)?;
+        if link.ephemeral || super::super::conversation_sessions::is_identity_conversation(&link) {
+            return None;
+        }
         let handler = self.clone();
         let device_id = self.device_id.clone();
         let task_store_path = self.task_store_path.clone();
         let worker_task_id = local_task_id.clone();
-        tokio::spawn(async move {
+        Some(tokio::spawn(async move {
             let binding_result = tokio::task::spawn_blocking(move || {
                 let store = LocalTaskStore::open(task_store_path.as_ref())?;
                 store.ensure_default_work_item_binding(
@@ -328,7 +338,7 @@ impl RuntimeWorkRpcHandler {
                     ],
                 ),
             }
-        });
+        }))
     }
 
     pub(crate) async fn reconcile_bound_task_statuses(&self) {
@@ -396,6 +406,23 @@ impl RuntimeWorkRpcHandler {
     }
 
     fn project_runtime_link_status_at(&self, link: &RuntimeTaskLink, observed_at_ms: i64) {
+        let queued_private = (!link.running
+            && matches!(link.status.as_str(), "queued" | "pending"))
+        .then(|| {
+            self.turn_scheduler
+                .lock()
+                .expect("runtime turn scheduler poisoned")
+                .queued_turns
+                .iter()
+                .find(|turn| turn.local_task_id == link.local_task_id)
+                .map(|turn| super::super::util::is_private_discussion(&turn.request))
+        })
+        .flatten();
+        if queued_private.unwrap_or_else(|| {
+            super::super::util::is_private_discussion(&runtime_event_request_from_link(link))
+        }) {
+            return;
+        }
         let execution_status = if link.status == "archived" {
             Some("archived")
         } else if link.running || link.status == "running" {
@@ -415,10 +442,24 @@ impl RuntimeWorkRpcHandler {
         }
     }
 
-    pub(super) fn project_queue_progress(&self, local_task_id: &str, content: &str) {
-        if !self
-            .local_task_link(local_task_id)
-            .is_some_and(|link| link.runtime_handle["origin"]["projectStore"] == "local")
+    pub(super) fn runtime_task_is_private_discussion(&self, local_task_id: &str) -> bool {
+        self.store.read_task(local_task_id, |link| {
+            super::super::util::is_private_discussion(&runtime_event_request_from_link(link))
+        }) == Some(true)
+    }
+
+    pub(super) fn project_queue_progress(
+        &self,
+        local_task_id: &str,
+        content: &str,
+        private_discussion: bool,
+    ) {
+        if private_discussion {
+            return;
+        }
+        if self.store.read_task(local_task_id, |link| {
+            link.runtime_handle["origin"]["projectStore"] == "local"
+        }) != Some(true)
         {
             return;
         }
@@ -435,7 +476,10 @@ impl RuntimeWorkRpcHandler {
         }
     }
 
-    pub(super) fn start_queue_run(&self, local_task_id: &str) {
+    pub(super) fn start_queue_run(&self, local_task_id: &str, request: &ExecutionRequest) {
+        if super::super::util::is_private_discussion(request) {
+            return;
+        }
         if let Err(error) = LocalTaskStore::open(self.task_store_path.as_ref())
             .and_then(|store| store.mark_runtime_running(local_task_id))
         {
@@ -457,10 +501,14 @@ impl RuntimeWorkRpcHandler {
     pub(super) fn finish_queue_run(
         &self,
         local_task_id: &str,
+        request: &ExecutionRequest,
         status: AutomationRunStatus,
         error: Option<String>,
         result_content: Option<String>,
     ) {
+        if super::super::util::is_private_discussion(request) {
+            return;
+        }
         let result = (|| {
             let store = LocalTaskStore::open(self.task_store_path.as_ref())?;
             let result_text = result_content.unwrap_or_default();

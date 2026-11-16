@@ -1,0 +1,37 @@
+{
+  "order": 71001,
+  "scenario": "./scenarios/collaboration-milestones.scenario.mjs",
+  "scenarioOnly": true,
+  "ci": {
+    "core": {
+      "order": 16001,
+      "shard": 6,
+      "position": 10001
+    }
+  },
+  "paths": [
+    "packages/collaboration/src/milestones/*",
+    "packages/collaboration/src/CollaborationApp.*",
+    "packages/collaboration/src/SharedIssueDetailEditor.*",
+    "packages/collaboration/src/IssueDetail.*",
+    "packages/collaboration/src/platform/useIssueAssignmentsByIssueId.*",
+    "packages/collaboration/src/platform/bulkIssueStatus.*",
+    "packages/collaboration/src/platform/ProjectIssueTable.*",
+    "packages/collaboration/src/web-adapter/ProjectBoardAdapter.*",
+    "packages/collaboration/src/ports/SharedWorkspaceApi*",
+    "packages/collaboration/src/types.*",
+    "packages/collaboration/src/permissions.*",
+    "packages/collaboration/src/i18n.*",
+    "packages/collaboration/src/issue-detail/*",
+    "packages/collaboration/src/project-board/*",
+    "packages/collaboration/src/project-shell/*",
+    "packages/collaboration/src/platform/platform.css",
+    "packages/collaboration/src/workspace-header/ProjectViewSwitcher.*",
+    "packages/collaboration/src/platform/WorkspaceResourceConfiguration*",
+    "packages/collaboration/src/project-agent-config/*",
+    "packages/collaboration/src/agent-form/runnerRouting*",
+    "packages/collaboration/src/http-api/createSharedWorkspaceHttpApi*",
+    "packages/collaboration/src/dto-mappers/workspaceDtoMappers*",
+    "backend/app/services/project_milestones.py"
+  ]
+}

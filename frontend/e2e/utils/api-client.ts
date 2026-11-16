@@ -12,7 +12,9 @@ export interface ApiResponse<T = unknown> {
 export function createBackendRequestHeaders(token?: string): Record<string, string> {
   const headers: Record<string, string> = {
     'Content-Type': 'application/json',
-    // Avoid reusing sockets after the E2E Uvicorn server closes its idle connection.
+    // Every request must opt out of reuse: the shared Playwright agent can
+    // hand a request with this header a socket pooled by an earlier request,
+    // and the E2E Uvicorn server may already have closed that idle socket.
     Connection: 'close',
   }
   if (token) headers.Authorization = `Bearer ${token}`
@@ -180,6 +182,40 @@ export class ApiClient {
    */
   async deleteBot(name: string, namespace: string = 'default'): Promise<ApiResponse> {
     return this.call('DELETE', `/api/v1/namespaces/${namespace}/bots/${name}`)
+  }
+
+  // ==================== Skill APIs ====================
+
+  /**
+   * Upload a Skill ZIP package through the real multipart endpoint.
+   */
+  async uploadSkill(params: {
+    name: string
+    namespace: string
+    file: Buffer
+    fileName?: string
+  }): Promise<ApiResponse> {
+    const headers: Record<string, string> = { Connection: 'close' }
+    if (this.token) headers.Authorization = `Bearer ${this.token}`
+
+    const response = await this.request.post(`${this.baseURL}/api/v1/kinds/skills/upload`, {
+      headers,
+      multipart: {
+        name: params.name,
+        namespace: params.namespace,
+        file: {
+          name: params.fileName || `${params.name}.zip`,
+          mimeType: 'application/zip',
+          buffer: params.file,
+        },
+      },
+    })
+
+    return {
+      status: response.status(),
+      data: await response.json().catch(() => null),
+      headers: response.headers(),
+    }
   }
 
   // ==================== Model APIs ====================

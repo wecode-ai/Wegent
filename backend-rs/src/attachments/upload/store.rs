@@ -11,7 +11,7 @@
 //! the commit, and the `db.refresh` re-select. `created_at`/`updated_at`
 //! render as SQL `now()` because the model declares `default=func.now()` /
 //! `onupdate=func.now()`.
-use brz_mysql::{FromMysqlRow, Json, Mysql, MysqlResult};
+use brz_mysql::{FromMysqlRow, Json, Mysql, MysqlResult, MysqlTransaction};
 use chrono::NaiveDateTime;
 use serde_json::Value;
 
@@ -140,7 +140,8 @@ impl SubtaskContextRefreshRow {
     }
 }
 
-/// `db.refresh(context)`.
+/// Refresh after an upload commit on the primary, like the source ORM session.
+/// Ordinary reads use the replica and may not see the new row or latest update.
 pub async fn refresh_context<M>(
     mysql: &M,
     context_id: i64,
@@ -149,7 +150,11 @@ where
     M: Mysql,
 {
     mysql
-        .fetch_optional(REFRESH_CONTEXT_QUERY, (context_id,))
+        .with_transaction(async |transaction| {
+            transaction
+                .fetch_optional(REFRESH_CONTEXT_QUERY, (context_id,))
+                .await
+        })
         .await
 }
 

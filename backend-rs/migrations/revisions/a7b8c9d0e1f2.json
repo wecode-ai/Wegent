@@ -1,0 +1,65 @@
+{
+  "revision": "a7b8c9d0e1f2",
+  "parents": [
+    "e3f4a5b6c7d8"
+  ],
+  "source": "20260806_a7b8c9d0e1f2_add_project_chat_reply_thread.py",
+  "upgrade": [
+    {
+      "sql": [
+        "ALTER TABLE project_chat_messages ADD COLUMN reply_to_message_id VARCHAR(64) NOT NULL DEFAULT ''"
+      ],
+      "when": {
+        "query": "SELECT COUNT(*) AS n FROM information_schema.COLUMNS WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='project_chat_messages' AND COLUMN_NAME='reply_to_message_id'",
+        "nonzero": false
+      }
+    },
+    {
+      "sql": [
+        "ALTER TABLE project_chat_messages ADD COLUMN thread_root_message_id VARCHAR(64) NOT NULL DEFAULT ''"
+      ],
+      "when": {
+        "query": "SELECT COUNT(*) AS n FROM information_schema.COLUMNS WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='project_chat_messages' AND COLUMN_NAME='thread_root_message_id'",
+        "nonzero": false
+      }
+    },
+    {
+      "sql": [
+        "CREATE INDEX idx_project_chat_thread_order ON project_chat_messages (thread_root_message_id, id)"
+      ],
+      "when": {
+        "query": "SELECT COUNT(*) AS n FROM information_schema.STATISTICS WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='project_chat_messages' AND INDEX_NAME='idx_project_chat_thread_order'",
+        "nonzero": false
+      }
+    }
+  ],
+  "downgrade": [
+    {
+      "sql": [
+        "DROP INDEX idx_project_chat_thread_order ON project_chat_messages"
+      ],
+      "when": {
+        "query": "SELECT COUNT(*) AS n FROM information_schema.STATISTICS WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='project_chat_messages' AND INDEX_NAME='idx_project_chat_thread_order'",
+        "nonzero": true
+      }
+    },
+    {
+      "sql": [
+        "ALTER TABLE project_chat_messages DROP COLUMN thread_root_message_id"
+      ],
+      "when": {
+        "query": "SELECT COUNT(*) AS n FROM information_schema.COLUMNS WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='project_chat_messages' AND COLUMN_NAME='thread_root_message_id'",
+        "nonzero": true
+      }
+    },
+    {
+      "sql": [
+        "ALTER TABLE project_chat_messages DROP COLUMN reply_to_message_id"
+      ],
+      "when": {
+        "query": "SELECT COUNT(*) AS n FROM information_schema.COLUMNS WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='project_chat_messages' AND COLUMN_NAME='reply_to_message_id'",
+        "nonzero": true
+      }
+    }
+  ]
+}

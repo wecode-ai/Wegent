@@ -11,6 +11,7 @@ Supports block events for tool call visualization.
 Uses unified block types from shared.models.blocks for consistency.
 """
 
+import asyncio
 import logging
 from typing import Any, Optional
 
@@ -158,15 +159,19 @@ class WebSocketResultEmitter(BaseResultEmitter):
 
         elif event.type == EventType.DONE.value:
             await self._emit_result_guidance_blocks(event, webpage_ws_emitter)
+            contexts = await asyncio.to_thread(
+                self._load_context_briefs, event.subtask_id
+            )
             await webpage_ws_emitter.emit_chat_done(
                 task_id=event.task_id,
                 subtask_id=event.subtask_id,
                 offset=event.offset,
                 result=event.result,
                 message_id=event.message_id,
+                contexts=contexts,
             )
             # Also emit task:status event to update task list
-            await self._emit_task_status(webpage_ws_emitter, "COMPLETED")
+            await self._emit_committed_task_status(webpage_ws_emitter)
 
         elif event.type == EventType.ERROR.value:
             await webpage_ws_emitter.emit_chat_error(
@@ -189,6 +194,18 @@ class WebSocketResultEmitter(BaseResultEmitter):
             )
             # Also emit task:status event to update task list
             await self._emit_task_status(webpage_ws_emitter, "CANCELLED")
+
+    @staticmethod
+    def _load_context_briefs(subtask_id: int) -> list[dict[str, Any]]:
+        """Read committed display metadata without blocking the socket event loop."""
+        from app.db.session import SessionLocal
+        from app.services.context import context_service
+
+        with SessionLocal() as db:
+            return [
+                brief.model_dump(mode="json")
+                for brief in context_service.get_briefs_by_subtask(db, subtask_id)
+            ]
 
     async def _emit_task_created(self, ws_emitter) -> None:
         """Emit task:created event to user room.
@@ -222,6 +239,28 @@ class WebSocketResultEmitter(BaseResultEmitter):
             f"[WebSocketResultEmitter] task:created emitted: "
             f"user_id={self.user_id}, task_id={self.task_id}"
         )
+
+    async def _emit_committed_task_status(
+        self, ws_emitter: WebPageSocketEmitter
+    ) -> None:
+        if not self.user_id:
+            return
+        status = await asyncio.to_thread(self._load_task_status)
+        if status is not None:
+            await ws_emitter.emit_task_status(
+                user_id=self.user_id,
+                task_id=self.task_id,
+                status=status["status"],
+                progress=status.get("progress"),
+            )
+
+    def _load_task_status(self) -> dict[str, Any] | None:
+        from app.db.session import SessionLocal
+        from app.stores.tasks import task_store
+
+        with SessionLocal() as db:
+            task = task_store.get_by_id(db, task_id=self.task_id)
+            return task.json.get("status") if task else None
 
     async def _emit_task_status(
         self, ws_emitter: WebPageSocketEmitter, status: str

@@ -1,0 +1,12 @@
+{
+  "order": 24000,
+  "scenario": "./scenarios/collaboration-worktree-policy.scenario.mjs",
+  "scenarioOnly": true,
+  "ci": {
+    "core": {
+      "order": 24000,
+      "shard": 5,
+      "position": 8000
+    }
+  }
+}

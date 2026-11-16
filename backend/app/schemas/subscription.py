@@ -11,33 +11,14 @@ task executions. It replaces the previous Flow concept.
 
 from datetime import datetime
 from enum import Enum
-from typing import Any, Dict, Iterable, List, Optional
+from typing import Any, Dict, List, Optional
 
-from pydantic import BaseModel, Field, field_validator, model_validator
+from pydantic import BaseModel, Field, StrictBool, model_validator
 
 from app.schemas.kind import ModelRef
 
 SUBSCRIPTION_MIN_TIMEOUT_SECONDS = 60
 SUBSCRIPTION_MAX_TIMEOUT_SECONDS = 24 * 60 * 60
-
-
-def normalize_dingtalk_mention_user_ids(values: Iterable[Any]) -> List[str]:
-    """Return unique, trimmed DingTalk user IDs in their original order.
-
-    Accepts both English and Chinese comma separators so API clients can submit
-    a single comma-separated string inside the list.
-    """
-    normalized: List[str] = []
-    seen: set[str] = set()
-    for value in values:
-        if not isinstance(value, str):
-            continue
-        for item in value.replace("，", ",").split(","):
-            user_id = item.strip()
-            if user_id and user_id not in seen:
-                seen.add(user_id)
-                normalized.append(user_id)
-    return normalized
 
 
 class SubscriptionTaskType(str, Enum):
@@ -114,6 +95,10 @@ class CronTriggerConfig(BaseModel):
 
     expression: str = Field(..., description="Cron expression (e.g., '0 9 * * *')")
     timezone: str = Field("UTC", description="Timezone for cron execution")
+    workday_only: StrictBool = Field(
+        False,
+        description="Run only on mainland China statutory workdays, including makeup workdays",
+    )
 
 
 class IntervalTriggerConfig(BaseModel):
@@ -648,6 +633,12 @@ class BackgroundExecutionInDB(BackgroundExecutionBase):
         description="Whether the current user can delete this execution. "
         "Only the subscription owner can delete executions.",
     )
+    prompt_truncated: bool = Field(
+        False, description="Whether prompt was cut short for a list preview."
+    )
+    result_summary_truncated: bool = Field(
+        False, description="Whether result_summary was cut short for a list preview."
+    )
 
     class Config:
         from_attributes = True
@@ -990,16 +981,6 @@ class NotificationChannelBindingConfig(BaseModel):
         None, description="Bound group conversation ID for group delivery"
     )
     group_name: Optional[str] = Field(None, description="Name of the bound group chat")
-    group_mention_user_ids: List[str] = Field(
-        default_factory=list,
-        description="DingTalk user IDs to mention in bound group notifications",
-    )
-
-    @field_validator("group_mention_user_ids")
-    @classmethod
-    def normalize_group_mention_user_ids(cls, value: List[str]) -> List[str]:
-        """Trim, drop empty values, and deduplicate DingTalk user IDs."""
-        return normalize_dingtalk_mention_user_ids(value)
 
 
 class FollowSettingsResponse(BaseModel):

@@ -1,0 +1,25 @@
+
+        <!DOCTYPE html>
+        <html>
+        <head>
+            <meta charset="UTF-8">
+            <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        </head>
+        <body style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif; line-height: 1.6; color: #333; max-width: 700px; margin: 0 auto; padding: 20px;">
+            <div style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); padding: 30px; border-radius: 10px 10px 0 0;">
+                <h1 style="color: white; margin: 0; font-size: 24px;">Wegent 群聊汇总</h1>
+                <p style="color: rgba(255,255,255,0.9); margin: 10px 0 0 0;">
+                    您好 {{user_name}}，以下是您参与的群聊最近 {{hours_back}} 小时的消息汇总
+                </p>
+            </div>
+
+            <div style="background: white; padding: 20px; border: 1px solid #eee; border-top: none;">
+                {{groups_html}}
+            </div>
+
+            <div style="background: #fafafa; padding: 15px; border-radius: 0 0 10px 10px; text-align: center; font-size: 12px; color: #999;">
+                <p style="margin: 0;">此邮件由 Wegent 系统自动发送，请勿回复</p>
+                <p style="margin: 5px 0 0 0;">如需帮助，请联系管理员</p>
+            </div>
+        </body>
+        </html>

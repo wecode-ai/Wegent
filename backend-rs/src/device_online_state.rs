@@ -10,9 +10,9 @@
 //! listing projection degrades a failed read to "offline"
 //! (`cache_manager.get`), so those callers keep their own tolerant read.
 
-use brz_redis::Redis as _;
-use brz_redis::RedisBytes;
+use brz_redis::{Redis, RedisBytes};
 use serde::de::DeserializeOwned;
+use serde_json::{Map, Value};
 
 use crate::http_compat::FastApiError;
 use crate::state::AppState;
@@ -42,6 +42,98 @@ pub(crate) async fn read_online_state<T: DeserializeOwned>(
         tracing::error!("device online state unavailable: no Redis service");
         return Err(FastApiError::unhandled());
     };
+    let Some(bytes) = read_online_bytes(redis, user_id, device_id)
+        .await
+        .map_err(|()| FastApiError::unhandled())?
+    else {
+        return Ok(None);
+    };
+    serde_json::from_slice(bytes.as_slice())
+        .map(Some)
+        .map_err(|error| {
+            tracing::error!(%error, "device online state decode failure");
+            FastApiError::unhandled()
+        })
+}
+
+/// The strict read against one explicit client, for callers that must tell a
+/// cache miss (`Ok(None)`) from a transport or decode failure (`Err`).
+///
+/// Used by the `on_disconnect` boundary, whose source equivalent is
+/// `cache_manager.get_or_raise`; the soft `cache_manager.get` helpers keep
+/// degrading failures to "offline" elsewhere.
+pub(crate) async fn read_online_state_with<R: Redis + ?Sized>(
+    redis: &R,
+    user_id: i64,
+    device_id: &str,
+) -> Result<Option<serde_json::Value>, ()> {
+    let Some(bytes) = read_online_bytes(redis, user_id, device_id).await? else {
+        return Ok(None);
+    };
+    serde_json::from_slice(bytes.as_slice())
+        .map(Some)
+        .map_err(|error| {
+            tracing::error!(%error, "device online state decode failure");
+        })
+}
+
+const REPLACE_UNCHANGED_SCRIPT: &str = "
+if redis.call('GET', KEYS[1]) ~= ARGV[1] then return 0 end
+redis.call('SET', KEYS[1], ARGV[2], 'EX', ARGV[3])
+return 1";
+
+/// Apply an update only while the online document belongs to this socket.
+pub(crate) async fn update_online_state(
+    state: &AppState,
+    user_id: i64,
+    route_id: &str,
+    socket_id: &str,
+    ttl: u64,
+    update: impl Fn(&mut Map<String, Value>),
+) -> bool {
+    let Some(redis) = state.redis.as_ref() else {
+        return false;
+    };
+    let key = online_key(user_id, route_id);
+    let ttl = ttl.to_string();
+    for _ in 0..3 {
+        let Ok(Some(raw)) = read_online_bytes(redis, user_id, route_id).await else {
+            return false;
+        };
+        let Ok(Value::Object(mut document)) = serde_json::from_slice(&raw) else {
+            return false;
+        };
+        if document.get("socket_id").and_then(Value::as_str) != Some(socket_id) {
+            return false;
+        }
+        update(&mut document);
+        let value = Value::Object(document).to_string();
+        let result: Result<i64, _> = redis
+            .eval(
+                REPLACE_UNCHANGED_SCRIPT,
+                [key.as_str()],
+                [raw.as_slice(), value.as_bytes(), ttl.as_bytes()],
+            )
+            .await;
+        match result {
+            Ok(1) => return true,
+            Ok(_) => {}
+            Err(error) => {
+                tracing::warn!(%error, user_id, route_id, "device online state update failed");
+                return false;
+            }
+        }
+    }
+    false
+}
+
+/// One strict `GET`: missing and empty are `None`; client, transport, and
+/// undecodable-bytes failures are `Err(())`.
+async fn read_online_bytes<R: Redis + ?Sized>(
+    redis: &R,
+    user_id: i64,
+    device_id: &str,
+) -> Result<Option<Vec<u8>>, ()> {
     match redis
         .get::<_, RedisBytes>(online_key(user_id, device_id))
         .await
@@ -51,15 +143,10 @@ pub(crate) async fn read_online_state<T: DeserializeOwned>(
         // the source then indexes as a dict and raises on. An empty value is
         // falsy, so it behaves like a missing key.
         Ok(Some(bytes)) if bytes.as_ref().is_empty() => Ok(None),
-        Ok(Some(bytes)) => serde_json::from_slice(bytes.as_ref())
-            .map(Some)
-            .map_err(|error| {
-                tracing::error!(%error, "device online state decode failure");
-                FastApiError::unhandled()
-            }),
+        Ok(Some(bytes)) => Ok(Some(bytes.as_ref().to_vec())),
         Err(error) => {
             tracing::error!(%error, "device online state read failure");
-            Err(FastApiError::unhandled())
+            Err(())
         }
     }
 }

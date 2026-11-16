@@ -6,6 +6,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import type { CollaborationProject } from "../types";
 import { projectCreateLabels } from "./labels";
+import { ProjectCreateMembersError } from "./configureProjectMembers";
 import { useProjectCreateController } from "./useProjectCreateController";
 
 const project = { id: "new-project", name: "Members" } as CollaborationProject;
@@ -56,12 +57,18 @@ describe("project resource configuration recovery", () => {
   it("retries the existing project after a member add failure and preserves selection", async () => {
     const configure = vi
       .fn()
-      .mockRejectedValueOnce(new Error("Ada: permission denied"))
+      .mockRejectedValueOnce(
+        new ProjectCreateMembersError(
+          [{ userId: 2, userName: "Ada", reason: "permission denied" }],
+          [],
+        ),
+      )
       .mockResolvedValueOnce(undefined);
     const harness = await mountController(configure);
 
     await act(async () => harness.current().commands.submit());
-    expect(harness.current().state.error).toBe("Ada: permission denied");
+    expect(harness.current().state.error).toContain("Ada: permission denied");
+    expect(harness.current().state.memberSetupFailed).toBe(true);
     expect(harness.current().state.memberUserIds).toEqual([2, 3]);
     expect(harness.onCreated).not.toHaveBeenCalled();
 
@@ -69,7 +76,33 @@ describe("project resource configuration recovery", () => {
     expect(harness.create).toHaveBeenCalledTimes(1);
     expect(configure).toHaveBeenCalledTimes(2);
     expect(configure.mock.calls[1]?.[0]).toBe(project);
+    expect(configure.mock.calls[1]?.[1]).toBe(configure.mock.calls[0]?.[1]);
     expect(harness.onCreated).toHaveBeenCalledWith(project, "cloud");
+  });
+
+  it("retries an empty failure list after roster refresh fails and opens the configured result", async () => {
+    const configured = { ...project, version: 2 };
+    const configure = vi
+      .fn()
+      .mockRejectedValueOnce(
+        new ProjectCreateMembersError([], [], "Roster refresh failed"),
+      )
+      .mockResolvedValueOnce(configured);
+    const harness = await mountController(configure);
+
+    await act(async () => harness.current().commands.submit());
+    expect(harness.current().state.memberSetupFailed).toBe(true);
+    expect(harness.current().state.error).toContain("Roster refresh failed");
+    expect(harness.onCreated).not.toHaveBeenCalled();
+    await act(async () => harness.current().commands.submit());
+    await act(async () => harness.current().commands.submit());
+
+    expect(harness.create).toHaveBeenCalledTimes(1);
+    expect(configure).toHaveBeenCalledTimes(2);
+    expect(harness.onCreated).toHaveBeenCalledExactlyOnceWith(
+      configured,
+      "cloud",
+    );
   });
 
   it("ignores simultaneous submissions while project creation is pending", async () => {

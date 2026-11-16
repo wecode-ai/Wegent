@@ -8,7 +8,7 @@ sidebar_position: 32
 
 ## Goal
 
-A cloud project is the shared collaboration and storage boundary for a team. Members may select the same cloud project as the default destination of their own local projects, execute work in Wework, and submit selected conversations, files, and Markdown as immutable delivery snapshots.
+A cloud project is the shared collaboration and storage boundary for a team. Members may select the same cloud project as the default destination of their own local projects, execute work in Wework, and submit selected conversations, files, and Markdown as editable deliveries.
 
 A cloud project is not the existing `Project` model:
 
@@ -83,7 +83,7 @@ projects/{cloud-project-public-id}/
       files/
 ```
 
-Finalized delivery prefixes are immutable. Later tasks may only read or copy them.
+Delivered artifacts support atomic updates with optimistic version checks. An update writes new objects under a distinct `edits/{revision}` prefix within the project delivery, then commits the title, object references, asset list, and version together. Failed commits preserve the original content; successful commits clean up superseded objects.
 
 ## Data model
 
@@ -211,7 +211,7 @@ The Wework local runtime classifies bindings as `system` or `user`. Every runtim
 
 ### Delivery
 
-`deliveries` and `delivery_assets` store immutable snapshot metadata. The nullable `Delivery.source_task_binding_id` points to a verified TODO/Task binding for local delivery and is null when a TODO is completed directly in the cloud UI.
+`deliveries` and `delivery_assets` store delivery metadata. The nullable `Delivery.source_task_binding_id` points to a verified TODO/Task binding for local delivery and is null when a TODO is completed directly in the cloud UI.
 
 ## Authorization
 
@@ -231,7 +231,7 @@ Every TODO, delivery, file, and MCP request resolves the caller's cloud-project 
 ```text
 cloud_projects/  projects and members
 loop_items/      TODOs, state transitions, and Task bindings
-delivery/        immutable delivery snapshots
+delivery/        editable deliveries
 cloud_files/     mutable shared files
 mcp_server/tools/delivery.py  authorized AI access to cloud references
 ```
@@ -244,8 +244,10 @@ Delivery services do not own TODO CRUD. LoopItem services do not access MinIO di
 2. Upload assets in bounded chunks and record size and SHA-256 metadata.
 3. `finalize` locks the Delivery and LoopItem and validates that the source Task is still linked to the TODO.
 4. Write `manifest.json`.
-5. In one database transaction, mark the Delivery delivered, complete the TODO, and update `current_delivery_id`.
+5. In one database transaction, mark the Delivery delivered and update `current_delivery_id`. Initial human-assignment delivery follows round-settlement rules; editing a delivery never settles the round again.
 6. If the database commit fails, remove the new manifest while keeping the draft retryable.
+
+`PATCH /api/v1/deliveries/{id}` is implemented by the Rust Backend. It accepts multipart `metadata` and `file_0`, `file_1`, and subsequent file parts. Metadata includes `title`, `version`, `markdown`, `chat`, `retained_asset_ids`, and file descriptors. New and retained assets must have unique relative paths; references to assets from other deliveries are rejected. Existing creation, read, and initial publication endpoints retain their current ownership.
 
 ## API
 
@@ -365,3 +367,13 @@ flowchart LR
 Historical execution outcomes and transcript availability are independent. A read failure must not appear as empty history or confirmed executor idleness. Initial loading uses a skeleton. An offline executor remains an explicit error with retry; clients must not switch to a member's similarly named device. The existing automation regression includes member reads of admin-owned history. Focused unit tests run by default; E2E requires an explicit request.
 
 HTTP transcript responses preserve the Runtime's `turns`, `running`, `origin`, `historyUnavailable`, and `turnNavigation`, matching the Socket.IO contract. Missing `turns` is a protocol error, not an empty-history fallback.
+
+## Project milestones
+
+Local and cloud projects with internally stored Issues support milestones. The Milestones project view manages a description, due date and manual open/closed state, and shows counts for Issues visible to the caller. Progress is completed Issues divided by linked Issues; empty milestones show 0%. Finishing an AI run does not complete an Issue.
+
+Each Issue can reference one milestone in the same project. Parent and child Issues are assigned independently. Issue creation and details offer a milestone selector. Creating an Issue from milestone details preselects that milestone and still allows changing or removing the association; boards and tables support filtering, and tables support bulk association and removal. Deleting a milestone only removes its associations and preserves every Issue. Cloud milestone management requires Maintainer or Owner; association changes retain the existing Issue content-edit policy. Counters apply the existing Issue visibility rules.
+
+Milestones reuse `loop_items` nodes with `resource_type=milestone`; Issue references live in `metadata.milestone_id`. Executor IPC and SQLite transactions own local persistence. Rust owns the new cloud milestone APIs, while existing Python Issue APIs create and update references. Association validation and deletion lock the same milestone row; updates and deletion check versions. No new table or migration is required. External GitHub, GitLab and DingTalk Issue providers are outside this feature's scope.
+
+Archived completed Issues remain in both total and completed counts, and archived unfinished Issues remain in the remaining count. Archiving and restoration do not change delivery progress. The UI identifies the archived count and links milestone details to the existing archive.

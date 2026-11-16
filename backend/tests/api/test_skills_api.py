@@ -12,13 +12,13 @@ import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy.orm import Session
 
-from app.api.endpoints.kind.skills import list_unified_skills
 from app.core.security import create_access_token, get_password_hash
 from app.models.kind import Kind
 from app.models.namespace import Namespace
 from app.models.resource_member import MemberStatus, ResourceMember
 from app.models.user import User
 from app.services.auth import create_skill_identity_token, create_task_token
+from app.services.skill_binding_service import skill_binding_service
 
 
 def _create_user(test_db: Session, username: str, email: str) -> User:
@@ -1288,7 +1288,7 @@ tags: ["public", "api", "test"]
         )
         assert updated_skill["visible"] is False
 
-    def test_unified_group_skills_include_installed_skill_bindings(
+    def test_group_skill_binding_changes_preserve_source_identity(
         self,
         test_client: TestClient,
         test_db: Session,
@@ -1347,20 +1347,14 @@ tags: ["public", "api", "test"]
         }
 
         for target_group in (group, second_group):
-            skills = list_unified_skills(
-                skip=0,
-                limit=100,
-                scope="group",
-                group_name=target_group.name,
-                current_user=test_user,
-                db=test_db,
+            assert (
+                skill.id
+                in skill_binding_service.list_group_skill_ids_for_authorized_namespaces(
+                    test_db, [target_group.name]
+                )
             )
-            matching = [item for item in skills if item["name"] == skill.name]
-            assert len(matching) == 1
-            assert matching[0]["id"] == skill.id
-            assert matching[0]["namespace"] == skill.namespace
-            assert matching[0]["is_group_shared"] is True
-            assert matching[0]["publication_status"] == "published"
+        assert skill.namespace == "default"
+        assert skill.json["spec"]["capability"]["publishStatus"] == "published"
 
         remove_response = test_client.delete(
             f"/api/v1/kinds/skills/{skill.id}/bindings/groups",
@@ -1369,98 +1363,20 @@ tags: ["public", "api", "test"]
         )
         assert remove_response.status_code == 204
 
-        removed_group_skills = list_unified_skills(
-            skip=0,
-            limit=100,
-            scope="group",
-            group_name=group.name,
-            current_user=test_user,
-            db=test_db,
+        assert (
+            skill.id
+            not in skill_binding_service.list_group_skill_ids_for_authorized_namespaces(
+                test_db, [group.name]
+            )
         )
-        retained_group_skills = list_unified_skills(
-            skip=0,
-            limit=100,
-            scope="group",
-            group_name=second_group.name,
-            current_user=test_user,
-            db=test_db,
+        assert (
+            skill.id
+            in skill_binding_service.list_group_skill_ids_for_authorized_namespaces(
+                test_db, [second_group.name]
+            )
         )
-        assert all(item["id"] != skill.id for item in removed_group_skills)
-        assert any(item["id"] == skill.id for item in retained_group_skills)
 
-        all_skills = list_unified_skills(
-            skip=0,
-            limit=100,
-            scope="all",
-            group_name=None,
-            current_user=test_user,
-            db=test_db,
-        )
-        all_matching = [item for item in all_skills if item["id"] == skill.id]
-        assert len(all_matching) == 1
-        assert all_matching[0]["is_group_shared"] is True
-
-    def test_unified_skills_keep_personal_and_group_skills_with_same_name(
-        self,
-        test_client: TestClient,
-        test_db: Session,
-        test_user: User,
-        test_token: str,
-    ):
-        """Personal and group skills may share a name without hiding either one."""
-        group = _create_group(test_db, test_user, "same-name-skill-group")
-        _add_group_member(test_db, group, test_user, "Developer")
-
-        personal_skill = Kind(
-            user_id=test_user.id,
-            kind="Skill",
-            name="same-name-skill",
-            namespace="default",
-            json={
-                "apiVersion": "agent.wecode.io/v1",
-                "kind": "Skill",
-                "metadata": {
-                    "name": "same-name-skill",
-                    "namespace": "default",
-                },
-                "spec": {"description": "Personal skill"},
-            },
-            is_active=True,
-        )
-        group_skill = Kind(
-            user_id=test_user.id,
-            kind="Skill",
-            name="same-name-skill",
-            namespace=group.name,
-            json={
-                "apiVersion": "agent.wecode.io/v1",
-                "kind": "Skill",
-                "metadata": {
-                    "name": "same-name-skill",
-                    "namespace": group.name,
-                },
-                "spec": {"description": "Group skill"},
-            },
-            is_active=True,
-        )
-        test_db.add_all([personal_skill, group_skill])
-        test_db.commit()
-
-        skills = list_unified_skills(
-            skip=0,
-            limit=100,
-            scope="all",
-            group_name=None,
-            current_user=test_user,
-            db=test_db,
-        )
-        matching = [item for item in skills if item["name"] == "same-name-skill"]
-        assert {item["namespace"] for item in matching} == {
-            "default",
-            group.name,
-        }
-
-    def test_unified_skills_returns_hidden_public_skill_with_visible_flag(
+    def test_public_skills_keep_hidden_visible_flag(
         self,
         test_client: TestClient,
         test_admin_token: str,
@@ -1503,16 +1419,15 @@ visible: false
         )
         assert update_response.status_code == 200
 
-        skills = list_unified_skills(
-            skip=0,
-            limit=100,
-            scope="personal",
-            group_name=None,
-            current_user=test_user,
-            db=test_db,
+        response = test_client.get(
+            "/api/v1/kinds/skills/public/list",
+            headers={"Authorization": f"Bearer {test_token}"},
         )
+        assert response.status_code == 200
         hidden_skill = next(
-            skill for skill in skills if skill["name"] == "hidden-public-unified"
+            skill
+            for skill in response.json()
+            if skill["name"] == "hidden-public-unified"
         )
         assert hidden_skill["displayName"] == "隐藏公共技能"
         assert hidden_skill["visible"] is False

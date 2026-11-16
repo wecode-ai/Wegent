@@ -1,9 +1,20 @@
+import { revealCollaborationSidebarElement } from '../modules/collaboration-sidebar-navigation.mjs'
 import assert from 'node:assert/strict'
+import {
+  handlePersonalHomeModel,
+  openCollaborationIssueCreation,
+  verifyCollaborationPersonalHome,
+  verifyPersonalHomeStartWork,
+} from '../modules/collaboration-personal-home.mjs'
+import { waitForValue } from '../modules/workspace-agent-setup.mjs'
+import { verifyIssueTranscriptTransfer } from '../modules/issue-transcript-transfer.mjs'
+import { TransportFaultProxy } from '../modules/transport-fault-proxy.mjs'
 
 import { ensureExperimentalFeaturesEnabled } from '../modules/preferences-automation-flows.mjs'
 import { waitForSnapshot } from '../modules/conversation-layout.mjs'
 import {
   reloadMainWindow,
+  inCollaborationSidebar,
   selectCollaborationProjectView,
   selectCollaborationDomain,
   waitForWorkbenchDebugState,
@@ -28,14 +39,18 @@ export function createDesktopScenario({
   modelResponseTimeoutMs,
   workspacePath,
   captureScreenshot,
+  codexSqliteHome,
 }) {
   let cloud
+  let proxy
   let environment
   let workspace
   let currentApp
   let localProjectCreated = false
   const fixtures = []
   const modelRequests = []
+  let homeModelRequests = 0
+  const appEnvironment = {}
   const request = async (path, values, method = values ? 'POST' : 'GET') => {
     const response = await fetch(`${cloud.backendUrl}${path}`, {
       method,
@@ -46,13 +61,15 @@ export function createDesktopScenario({
     assert.equal(response.ok, true, `${path}: ${JSON.stringify(body)}`)
     return body
   }
+  async function addWorkspaceEnvironment(device) {
+    await request(`/api/v1/workspaces/${workspace.id}/execution-environments`, {
+      device_id: device.id,
+    })
+  }
   async function prepareIssue(device, label, owner) {
     let project = await request('/api/v1/cloud-projects', {
       name: label,
       workspace_id: workspace.id,
-    })
-    await request(`/api/v1/workspaces/${workspace.id}/execution-environments`, {
-      device_id: device.id,
     })
     await request(`/api/v1/cloud-projects/${project.id}/execution-environments`, {
       device_id: device.id,
@@ -90,7 +107,7 @@ export function createDesktopScenario({
       text: project.name,
     })
     // Await the real catalog before sending; elapsed startup time cannot hide this regression.
-    await control.command('click', scoped('[data-testid="collaboration-tab-manage"]'))
+    await selectCollaborationProjectView(control, CONTENT, 'manage')
     await control.command(
       'click',
       scoped('[data-testid="collaboration-project-settings-environments"]')
@@ -101,13 +118,14 @@ export function createDesktopScenario({
     )
     await selectCollaborationProjectView(control, CONTENT, 'board')
     await control.command('clickWhenEnabled', scoped(`[data-testid="cloud-todo-card-${issue.id}"]`))
-    await control.command(
-      'clickWhenEnabled',
-      scoped('[data-testid="cloud-todo-personal-task-start"]')
-    )
+    await control.command('clickWhenEnabled', scoped('[data-testid="cloud-todo-create-task"]'))
     const panel = scoped('[data-testid="work-item-new-task-chat-panel"]')
     const composer = `${panel} [data-testid="chat-message-input"]`
     await control.command('waitFor', composer)
+    // Mounting the composer does not imply its asynchronous model selection is ready.
+    await control.command('waitFor', `${panel} [data-testid="send-message-button"]`, {
+      enabled: true,
+    })
     await control.command('press', composer, { key: 'Enter' })
     await control.command(
       'waitFor',
@@ -127,7 +145,7 @@ export function createDesktopScenario({
     assert.ok(boundDeviceId, 'The task binding must expose its device identity')
     assert.equal(
       boundDeviceId,
-      currentApp.app_device_id ?? currentApp.device_id,
+      currentApp.execution_target_id,
       'Human AI assistance must run on the current computer, regardless of the project environment'
     )
     assert.equal(
@@ -136,7 +154,8 @@ export function createDesktopScenario({
       'AI assistance must not submit or accept the human Issue'
     )
     await control.command('click', scoped('[data-testid="ai-chat-modal-close"]'))
-    await control.command('click', scoped('[data-testid="cloud-todo-detail-close"]'))
+    await control.command('clickWhenEnabled', scoped('[data-testid="cloud-todo-detail-close"]'))
+    return bindings[0]
   }
   async function runLocalTask(control) {
     await control.command('click', '[data-testid="workspace-tab-select-fixed-task"]')
@@ -195,10 +214,167 @@ export function createDesktopScenario({
       workbenchReadyTimeoutMs
     )
   }
+  async function openIssueWorkspace(control) {
+    await ensureExperimentalFeaturesEnabled(control)
+    await reloadMainWindow(
+      control,
+      'The workbench did not reload after enabling experimental features'
+    )
+    await control.command('waitFor', '[data-testid="workspace-tab-strip"]', {
+      visible: true,
+      timeoutMs: workbenchReadyTimeoutMs,
+    })
+    await control.command('waitFor', '[data-testid="workspace-tab-select-fixed-board"]', {
+      visible: true,
+      timeoutMs: workbenchReadyTimeoutMs,
+    })
+    await control.command('click', '[data-testid="workspace-tab-select-fixed-board"]')
+    await selectCollaborationDomain(control, CONTENT, 'cloud')
+    await control.command(
+      'waitFor',
+      scoped(
+        `[data-testid="collaboration-workspace-tree-${workspace.id}"] .collaboration-workspace-identity`
+      ),
+      { timeoutMs: workbenchReadyTimeoutMs }
+    )
+    await control.command(
+      'click',
+      scoped(
+        `[data-testid="collaboration-workspace-tree-${workspace.id}"] .collaboration-workspace-identity`
+      )
+    )
+  }
+  async function verifyDraftRecovery(control, project, otherProject) {
+    await openCollaborationIssueCreation(control, scoped)
+    await control.command('click', scoped('[data-testid="collaboration-issue-project-trigger"]'))
+    await control.command('click', `[data-testid="collaboration-issue-project-${project.id}"]`)
+    await control.command('click', scoped('[data-testid="personal-home-new-issue"]'))
+    const prompt = `Personal home start work recover ${Date.now()}`
+    await control.command('fill', scoped('[data-testid="personal-home-task-content"]'), {
+      value: prompt,
+    })
+    const previousRule = proxy.rule
+    const modelCount = homeModelRequests
+    const createPath = `/api/v1/cloud-projects/${project.id}/loop-items`
+    let issueId
+    proxy.rule = (entry, request) =>
+      entry.method === 'POST' && /^\/api\/v1\/loop-items\/[^/]+\/tasks$/.test(entry.path)
+        ? 'disconnect'
+        : previousRule(entry, request)
+    try {
+      await control.command('clickWhenEnabled', scoped('[data-testid="personal-home-start-task"]'))
+      await control.command('waitFor', scoped('[data-testid="personal-home-task-draft"]'))
+      await control.command('waitFor', scoped('[data-testid="personal-home-start-task"]'), {
+        enabled: true,
+      })
+      issueId = await control.command(
+        'getAttribute',
+        scoped('[data-testid="personal-home-task-draft"]'),
+        { value: 'data-issue-id' }
+      )
+      assert.ok(issueId)
+      const failed = await request(`/api/v1/loop-items/${issueId}`)
+      assert.equal(failed.description, prompt)
+      assert.notEqual(
+        failed.status,
+        'in_progress',
+        'Rejected work must not mark its Issue as started'
+      )
+      assert.deepEqual(await request(`/api/v1/loop-items/${issueId}/tasks`), [])
+      assert.equal(
+        homeModelRequests,
+        modelCount,
+        'Binding rejection must happen before model execution'
+      )
+    } finally {
+      proxy.rule = previousRule
+    }
+    await control.command('click', scoped('[data-testid="collaboration-issue-project-trigger"]'))
+    await control.command('click', `[data-testid="collaboration-issue-project-${otherProject.id}"]`)
+    await control.command('waitFor', scoped('[data-testid="personal-home-task-content"]'), {
+      text: prompt,
+    })
+    assert.equal(
+      Number(
+        await control.command('getElementCount', scoped('[data-testid="personal-home-task-draft"]'))
+      ),
+      0,
+      "A new project must not reuse another project's prepared Issue"
+    )
+    await control.command('click', scoped('[data-testid="collaboration-issue-project-trigger"]'))
+    await control.command('click', `[data-testid="collaboration-issue-project-${project.id}"]`)
+    await control.command('waitFor', scoped('[data-testid="personal-home-task-draft"]'), {
+      text: prompt,
+    })
+    assert.equal(
+      await control.command('getAttribute', scoped('[data-testid="personal-home-task-draft"]'), {
+        value: 'data-issue-id',
+      }),
+      issueId,
+      'Returning to a project must restore its own prepared Issue'
+    )
+    const creates = proxy.requests.filter(
+      entry => entry.method === 'POST' && entry.path === createPath
+    ).length
+    await revealCollaborationSidebarElement(
+      control,
+      inCollaborationSidebar('[data-testid="collaboration-primary-agents"]')
+    )
+    await control.command(
+      'click',
+      inCollaborationSidebar('[data-testid="collaboration-primary-agents"]')
+    )
+    await control.command('waitFor', scoped('[data-testid="collaboration-agents-page"]'))
+    assert.equal(
+      Number(
+        await control.command(
+          'getElementCount',
+          scoped('[data-testid="personal-home-task-content"]')
+        )
+      ),
+      0,
+      'Leaving home must really unmount the failed task composer'
+    )
+    await openCollaborationIssueCreation(control, scoped)
+    await control.command('click', scoped('[data-testid="personal-home-new-issue"]'))
+    await control.command('waitFor', scoped('[data-testid="personal-home-task-content"]'), {
+      text: prompt,
+    })
+    assert.equal(
+      await control.command('getAttribute', scoped('[data-testid="personal-home-task-draft"]'), {
+        value: 'data-issue-id',
+      }),
+      issueId
+    )
+    await control.command('clickWhenEnabled', scoped('[data-testid="personal-home-start-task"]'))
+    await control.command('waitFor', scoped('[data-testid="ai-chat-modal"]'), {
+      text: 'Personal home task complete',
+      timeoutMs: modelResponseTimeoutMs,
+    })
+    await waitForValue(
+      async () => request(`/api/v1/loop-items/${issueId}/tasks`),
+      items => items.length === 1,
+      'The original Issue must own exactly one resumed task',
+      workbenchReadyTimeoutMs
+    )
+    assert.equal(
+      proxy.requests.filter(entry => entry.method === 'POST' && entry.path === createPath).length,
+      creates,
+      'Reopening and retrying must not create a second Issue'
+    )
+    await control.command('click', scoped('[data-testid="ai-chat-modal-close"]'))
+    await control.command('clickWhenEnabled', scoped('[data-testid="cloud-todo-detail-close"]'))
+    console.log(
+      `[desktop-e2e] PASS draft-recovery: Issue ${issueId} survived a real binding transport failure and composer unmount without duplicate creation`
+    )
+  }
   return {
     requiresCloudEnvironment: true,
+    appEnvironment,
     async prepareCloud(value) {
       cloud = value
+      proxy = await new TransportFaultProxy(cloud.backendUrl).start()
+      appEnvironment.WEWORK_E2E_CLOUD_BACKEND_URL = proxy.url
       await request('/api/admin/setup-complete', {})
       workspace = await request('/api/v1/workspaces', { name: TITLE })
     },
@@ -206,6 +382,10 @@ export function createDesktopScenario({
       environment = value
     },
     async handleHttp(request, response, url) {
+      if (await handlePersonalHomeModel(request, response, url)) {
+        homeModelRequests += 1
+        return true
+      }
       if (request.method !== 'POST' || !['/responses', '/v1/responses'].includes(url.pathname))
         return false
       const body = await readRequestBody(request)
@@ -223,6 +403,22 @@ export function createDesktopScenario({
       console.log('[executor-identity] Registered local Executor; refreshing the cloud catalog')
       await waitForCurrentRegistration(control)
       await runLocalTask(control)
+      // Large-history transport needs one unambiguous device; identity conflicts are tested below.
+      const owner = await request('/api/users/me')
+      await addWorkspaceEnvironment(localApp)
+      const history = await prepareIssue(localApp, `${TITLE} large history`, owner)
+      await openIssueWorkspace(control)
+      const binding = await runAssistance(control, history)
+      await verifyIssueTranscriptTransfer({
+        control,
+        request,
+        fixture: history,
+        binding,
+        codexSqliteHome,
+        timeoutMs: workbenchReadyTimeoutMs,
+        scope: scoped,
+        proxy,
+      })
       console.log(
         '[executor-identity] Local task completed; registering a conflicting installation'
       )
@@ -235,7 +431,7 @@ export function createDesktopScenario({
       const otherApp = await environment.waitForDeviceType(OTHER_APP_ID, 'app')
       assert.notEqual(otherApp.runtime_instance_id, localApp.runtime_instance_id)
       assert.match(otherApp.execution_target_id, /^app-record-\d+$/)
-      const owner = await request('/api/users/me')
+      await addWorkspaceEnvironment(otherApp)
       const local = await prepareIssue(localApp, `${TITLE} local`, owner)
       const other = await prepareIssue(otherApp, `${TITLE} other`, owner)
       console.log(
@@ -246,27 +442,79 @@ export function createDesktopScenario({
       console.log(
         '[executor-identity] Local task completed with duplicate addresses; checking Issue assistance'
       )
-      await ensureExperimentalFeaturesEnabled(control)
-      await control.command('waitFor', '[data-testid="workspace-tab-select-fixed-board"]', {
-        timeoutMs: workbenchReadyTimeoutMs,
+      await openIssueWorkspace(control)
+      await runAssistance(control, local)
+      await runAssistance(control, other)
+      await verifyCollaborationPersonalHome(control, {
+        scoped,
+        project: local.project,
+        issue: local.issue,
       })
-      await control.command('click', '[data-testid="workspace-tab-select-fixed-board"]')
-      await selectCollaborationDomain(control, CONTENT, 'cloud')
+      await verifyPersonalHomeStartWork(control, {
+        scoped,
+        project: local.project,
+        viewerId: owner.id,
+      })
+      await verifyDraftRecovery(control, local.project, other.project)
+      const standalone = await request('/api/v1/cloud-projects', {
+        name: `${TITLE} default workspace`,
+      })
+      assert.ok(
+        standalone.workspace_id,
+        'Cloud project creation must resolve the default workspace'
+      )
+      const standaloneIssue = await request(`/api/v1/cloud-projects/${standalone.id}/loop-items`, {
+        title: 'Default workspace project personal work',
+        assignee_user_id: owner.id,
+        notify_assignee: false,
+      })
+      await reloadMainWindow(control, 'The standalone project catalog did not reload')
       await control.command(
         'waitFor',
-        scoped(
-          `[data-testid="collaboration-workspace-tree-${workspace.id}"] .collaboration-workspace-identity`
-        ),
-        { timeoutMs: workbenchReadyTimeoutMs }
+        inCollaborationSidebar('[data-testid="collaboration-primary-home"]')
       )
       await control.command(
         'click',
-        scoped(
-          `[data-testid="collaboration-workspace-tree-${workspace.id}"] .collaboration-workspace-identity`
-        )
+        inCollaborationSidebar('[data-testid="collaboration-primary-home"]')
       )
-      await runAssistance(control, local)
-      await runAssistance(control, other)
+      await control.command(
+        'waitFor',
+        scoped(`[data-testid="personal-home-issue-${standaloneIssue.id}"]`)
+      )
+      await control.command(
+        'click',
+        scoped(`[data-testid="personal-home-issue-${standaloneIssue.id}"]`)
+      )
+      await control.command('waitFor', scoped('[data-testid="personal-home-open-in-project"]'))
+      await control.command('click', scoped('[data-testid="personal-home-open-in-project"]'))
+      await control.command('waitFor', scoped('[data-testid="cloud-todo-detail-title"]'))
+      assert.equal(
+        await control.command('getValue', scoped('[data-testid="cloud-todo-detail-title"]')),
+        standaloneIssue.title
+      )
+      assert.equal(
+        Number(await control.command('getElementCount', scoped('[data-testid="personal-home"]'))),
+        0,
+        'Opening in a standalone project must leave the personal-home surface'
+      )
+      assert.equal(
+        Number(
+          await control.command(
+            'getElementCount',
+            scoped('[data-testid="collaboration-platform-opening-project"]')
+          )
+        ),
+        0,
+        'An authorized project in the default workspace must finish opening'
+      )
+      assert.deepEqual(
+        await request(`/api/v1/loop-items/${standaloneIssue.id}/tasks`),
+        [],
+        'Recording a standalone Issue must not launch a task'
+      )
+      console.log(
+        `[desktop-e2e] PASS default-workspace-project: personal Issue ${standaloneIssue.id} opened in project ${standalone.id} without a task`
+      )
     },
     diagnostics() {
       return {
@@ -280,7 +528,11 @@ export function createDesktopScenario({
           executionTarget: device.execution_target_id,
         })),
         modelRequestCount: modelRequests.length,
+        transportRequests: proxy?.requests,
       }
+    },
+    async cleanup() {
+      await proxy?.stop()
     },
   }
 }

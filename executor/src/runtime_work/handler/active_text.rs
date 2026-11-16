@@ -29,9 +29,7 @@ impl RuntimeWorkRpcHandler {
             return;
         };
         if transcript.turn_id != turn_id {
-            transcript.turn_id = turn_id.to_owned();
-            transcript.items.clear();
-            transcript.user_input_requests.clear();
+            return;
         }
         if let Some(existing) = transcript
             .items

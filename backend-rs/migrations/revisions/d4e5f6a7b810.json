@@ -1,0 +1,46 @@
+{
+  "revision": "d4e5f6a7b810",
+  "parents": [
+    "d4e5f6a7b809"
+  ],
+  "source": "20260514_d4e5f6a7b810_add_dingtalk_node_source_column.py",
+  "upgrade": [
+    {
+      "sql": [
+        "ALTER TABLE dingtalk_synced_nodes ADD COLUMN source VARCHAR(16) NOT NULL DEFAULT 'docs'"
+      ]
+    },
+    {
+      "sql": [
+        "DROP INDEX ix_dingtalk_nodes_user_node ON dingtalk_synced_nodes"
+      ]
+    },
+    {
+      "sql": [
+        "CREATE UNIQUE INDEX ix_dingtalk_nodes_user_node_source ON dingtalk_synced_nodes (user_id, dingtalk_node_id, source)"
+      ]
+    }
+  ],
+  "downgrade": [
+    {
+      "sql": [
+        "DROP INDEX ix_dingtalk_nodes_user_node_source ON dingtalk_synced_nodes"
+      ]
+    },
+    {
+      "sql": [
+        "DELETE FROM dingtalk_synced_nodes\n        WHERE id NOT IN (\n            SELECT MIN(id)\n            FROM dingtalk_synced_nodes\n            GROUP BY user_id, dingtalk_node_id\n        )"
+      ]
+    },
+    {
+      "sql": [
+        "CREATE UNIQUE INDEX ix_dingtalk_nodes_user_node ON dingtalk_synced_nodes (user_id, dingtalk_node_id)"
+      ]
+    },
+    {
+      "sql": [
+        "ALTER TABLE dingtalk_synced_nodes DROP COLUMN source"
+      ]
+    }
+  ]
+}

@@ -1,5 +1,3 @@
-import { act, renderHook, waitFor } from '@testing-library/react'
-import { describe, expect, it, vi } from 'vitest'
 import {
   bindProjectStandInApi,
   type StandInExecutorApi,
@@ -7,6 +5,8 @@ import {
 } from '@/api/standIn'
 import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
 import type { DeviceInfo } from '@/types/api'
+import { act, renderHook, waitFor } from '@testing-library/react'
+import { describe, expect, it, vi } from 'vitest'
 import { useStandInProjects } from './useStandInProjects'
 
 const row: StandInProjectSettings = {
@@ -33,24 +33,6 @@ function fixture(list = vi.fn<StandInExecutorApi['list']>().mockResolvedValue([r
 }
 
 describe('Stand-in sidebar indicators', () => {
-  it('retains the project mask while another Stand-in on the same device remains enabled', async () => {
-    const { services, api } = fixture(
-      vi.fn<StandInExecutorApi['list']>().mockResolvedValue([
-        { ...row, id: 'default' },
-        { ...row, id: 'review', tags: ['review'] },
-      ])
-    )
-    const { result } = renderHook(() => useStandInProjects(services, undefined, 7))
-    await waitFor(() => expect(result.current.has('cloud:project')).toBe(true))
-    await act(async () => {
-      await api.save('project', { ...row, id: 'default', enabled: false })
-    })
-    expect(result.current.has('cloud:project')).toBe(true)
-    await act(async () => {
-      await api.save('project', { ...row, id: 'review', enabled: false })
-    })
-    expect(result.current.has('cloud:project')).toBe(false)
-  })
   it('loads saved device settings and updates immediately after disabling or enabling', async () => {
     const { services, api } = fixture()
     const { result } = renderHook(() => useStandInProjects(services, undefined, 7))

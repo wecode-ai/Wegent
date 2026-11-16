@@ -6,23 +6,110 @@ from functools import partial
 from fastapi import HTTPException, status
 from sqlalchemy.orm import Session
 
+from app.db.session import get_db_session
 from app.models.kind import Kind
 from app.schemas.device import DeviceCapabilitySyncResponse
 from app.schemas.installed_plugin import InstalledPlugin
 from app.services.device.capability_sync_service import (
+    DESIRED_STATE_SYNC_ATTEMPTS,
     DeviceCapabilityResolutionError,
     DeviceCapabilitySyncError,
     device_capability_sync_service,
 )
-from app.services.plugin_device_identity import plugin_device_id, plugin_device_rows
+from app.services.device.plugin_change_sync import schedule_other_devices
+from app.services.device.plugin_removal_sync import (
+    prepare_plugin_removal,
+    sync_pending_plugin_removals,
+)
+from app.services.device.plugin_sync_protocol import (
+    lock_plugin_sync_state,
+    plugin_snapshot_watermark,
+)
+from app.services.device.runtime_route import resolve_runtime_route_identity
+from app.services.device_service import device_service
+from app.services.plugin_device_identity import (
+    plugin_device_id,
+    plugin_device_rows,
+    resolve_plugin_runtime_device_id,
+)
 from app.services.plugin_device_installation_service import (
     plugin_device_installation_service,
+)
+from app.services.plugin_write_coordination import (
+    acquire_plugin_write_lock,
+    configure_plugin_session,
 )
 from app.services.plugin_write_errors import PluginWriteError
 from app.services.plugin_write_operations import run_plugin_operation
 from shared.telemetry.decorators import trace_async
 
 logger = logging.getLogger(__name__)
+
+
+def _prepare_cloud_sync_after_local_change(
+    db: Session, *, user_id: int, installed_id: int
+) -> tuple[bool, int | None]:
+    configure_plugin_session(db)
+    acquire_plugin_write_lock(db, user_id)
+    row = (
+        db.query(Kind)
+        .filter_by(
+            id=installed_id,
+            user_id=user_id,
+            kind="InstalledPlugin",
+            namespace="default",
+        )
+        .one_or_none()
+    )
+    if row is None:
+        return False, None
+    if not row.is_active:
+        prepare_plugin_removal(db, user_id, installed_id)
+        db.commit()
+        return False, None
+    release_id = row.json.get("spec", {}).get("releaseId")
+    return True, release_id if type(release_id) is int else None
+
+
+@trace_async(
+    span_name="plugins.sync_cloud_after_local_change", tracer_name="backend.plugins"
+)
+async def sync_cloud_plugins_after_local_change(
+    user_id: int, installed_id: int, source_device_id: str | None = None
+) -> None:
+    """Reuse legacy device synchronization after the local intent has committed."""
+    try:
+        active, release = await run_plugin_operation(
+            _prepare_cloud_sync_after_local_change,
+            user_id=user_id,
+            installed_id=installed_id,
+        )
+        if not active:
+            await sync_pending_plugin_removals(user_id)
+            return
+        with get_db_session() as db:
+            source = (
+                resolve_plugin_runtime_device_id(
+                    db, user_id=user_id, device_id=source_device_id
+                )
+                if source_device_id
+                else None
+            )
+            if release is not None:
+                await plugin_device_installation_service.ensure_pending_for_all_devices(
+                    db,
+                    user_id=user_id,
+                    installed_kind_id=installed_id,
+                    desired_release_id=release,
+                    exclude_device_id=source,
+                )
+        await sync_plugin_to_other_devices_after_change(user_id, installed_id, source)
+    except Exception:
+        logger.exception(
+            "Cloud plugin sync deferred after local intent: user_id=%s installed_id=%s",
+            user_id,
+            installed_id,
+        )
 
 
 def deferred_plugin_sync(
@@ -61,9 +148,11 @@ async def sync_plugin_after_change(
     device_id: str | None,
     reset_failures: bool = False,
     sync_current_device_only: bool = False,
-) -> DeviceCapabilitySyncResponse:
+    require_device_success: bool = False,
+    runtime_state_changed: bool = False,
+) -> DeviceCapabilitySyncResponse | None:
     installed_id = int(installed.metadata["labels"]["id"])
-    if sync_current_device_only and device_id is not None:
+    if require_device_success and device_id is not None:
         try:
             result = (
                 await device_capability_sync_service.sync_installed_plugin_to_device(
@@ -107,6 +196,21 @@ async def sync_plugin_after_change(
             )
         finally:
             db.close()
+    if sync_current_device_only:
+        if runtime_state_changed:
+            return await sync_installed_plugin_on_device(
+                db,
+                user_id=user_id,
+                device_id=device_id,
+                installed_id=installed_id,
+            )
+        return await ensure_installed_plugin_on_device(
+            db,
+            user_id=user_id,
+            device_id=device_id,
+            installed_id=installed_id,
+            manual_retry=reset_failures,
+        )
     result = await sync_global_capabilities(
         db,
         user_id,
@@ -127,6 +231,71 @@ async def sync_plugin_after_change(
         )
         or result
     )
+
+
+@trace_async(span_name="plugins.sync_other_devices", tracer_name="backend.plugins")
+async def sync_plugin_to_other_devices_after_change(
+    user_id: int, installed_plugin_id: int, current_device_id: str | None
+) -> None:
+    """Converge the changed plugin without resending the initiating device."""
+    try:
+        with get_db_session() as db:
+            devices = await device_service.get_online_devices(db, user_id)
+            current = (
+                resolve_plugin_runtime_device_id(
+                    db, user_id=user_id, device_id=current_device_id
+                )
+                if current_device_id
+                else None
+            )
+            if current_device_id and current is None:
+                logger.info(
+                    "Skipping background plugin sync without a unique current target: "
+                    "user_id=%s installed_plugin_id=%s",
+                    user_id,
+                    installed_plugin_id,
+                )
+                return
+            current_route = (
+                resolve_runtime_route_identity(
+                    db, user_id=user_id, submitted_device_id=current
+                )
+                if current
+                else None
+            )
+            excluded = {current, current_device_id}
+            if current_route:
+                excluded.add(current_route.runtime_device_id)
+            targets = []
+            for device in devices:
+                target = device_capability_sync_service._extract_device_id(device)
+                if not target or target in excluded:
+                    continue
+                target = resolve_plugin_runtime_device_id(
+                    db, user_id=user_id, device_id=target
+                )
+                if target is None:
+                    continue
+                route = resolve_runtime_route_identity(
+                    db, user_id=user_id, submitted_device_id=target
+                )
+                if route and route.runtime_device_id in excluded:
+                    continue
+                target = plugin_device_id(db, user_id, target)
+                if target not in excluded and target not in targets:
+                    targets.append(target)
+        schedule_other_devices(
+            device_capability_sync_service,
+            user_id=user_id,
+            device_ids=targets,
+            installed_plugin_ids=[installed_plugin_id],
+        )
+    except Exception:
+        logger.exception(
+            "Background plugin sync failed: user_id=%s installed_plugin_id=%s",
+            user_id,
+            installed_plugin_id,
+        )
 
 
 def _needs_device_install(
@@ -163,43 +332,175 @@ async def ensure_installed_plugin_on_device(
     previous: DeviceCapabilitySyncResponse | None = None,
     manual_retry: bool = False,
 ) -> DeviceCapabilitySyncResponse | None:
-    if (
-        device_id
-        and previous
-        and await run_plugin_operation(
-            _has_current_plugin_snapshot,
+    try:
+        if (
+            device_id
+            and previous
+            and await run_plugin_operation(
+                _has_current_plugin_snapshot,
+                user_id=user_id,
+                device_id=device_id,
+                previous=previous,
+            )
+        ):
+            return previous
+        if not device_id or not await run_plugin_operation(
+            _needs_device_install,
+            user_id=user_id,
+            device_id=device_id,
+            installed_id=installed_id,
+            manual_retry=manual_retry,
+        ):
+            return previous
+    except PluginWriteError as exc:
+        return deferred_plugin_sync(
+            exc,
             user_id=user_id,
             device_id=device_id,
             previous=previous,
+            stage="snapshot",
         )
-    ):
-        return previous
-    if not device_id or not await run_plugin_operation(
-        _needs_device_install,
+    return await sync_installed_plugin_on_device(
+        db,
         user_id=user_id,
         device_id=device_id,
         installed_id=installed_id,
-        manual_retry=manual_retry,
-    ):
+        previous=previous,
+    )
+
+
+@trace_async(span_name="plugins.sync_device_plugin", tracer_name="backend.plugins")
+async def sync_installed_plugin_on_device(
+    db: Session,
+    *,
+    user_id: int,
+    device_id: str | None,
+    installed_id: int,
+    previous: DeviceCapabilitySyncResponse | None = None,
+) -> DeviceCapabilitySyncResponse | None:
+    """Finish the requesting device's sync with a persisted, current ACK."""
+    if not device_id:
         return previous
+    result = previous
+    for attempt in range(1, DESIRED_STATE_SYNC_ATTEMPTS + 1):
+        result = await _sync_installed_plugin_once(
+            db,
+            user_id=user_id,
+            device_id=device_id,
+            installed_id=installed_id,
+            previous=previous,
+        )
+        if result is None or not result.success:
+            return result
+        try:
+            superseded = await run_plugin_operation(
+                _plugin_ack_needs_reconciliation,
+                user_id=user_id,
+                device_id=device_id,
+                installed_id=installed_id,
+                response=result,
+            )
+        except PluginWriteError as exc:
+            return deferred_plugin_sync(
+                exc,
+                user_id=user_id,
+                device_id=device_id,
+                stage="plugin_ack",
+                previous=result,
+            )
+        if not superseded:
+            return result
+        logger.info(
+            "Plugin ACK superseded before persistence; synchronizing current state: "
+            "user_id=%s device_id=%s installed_id=%s attempt=%s",
+            user_id,
+            device_id,
+            installed_id,
+            attempt,
+        )
+        previous = result
+    return deferred_plugin_sync(
+        PluginWriteError("plugin_write_conflict"),
+        user_id=user_id,
+        device_id=device_id,
+        stage="plugin_ack",
+        previous=result,
+    )
+
+
+def _plugin_ack_needs_reconciliation(
+    db: Session,
+    *,
+    user_id: int,
+    device_id: str,
+    installed_id: int,
+    response: DeviceCapabilitySyncResponse,
+) -> bool:
+    """A newer sent intent fences old ACKs even for an identical package."""
+    if not _needs_device_install(
+        db,
+        user_id=user_id,
+        device_id=device_id,
+        installed_id=installed_id,
+        manual_retry=False,
+    ):
+        return False
+    canonical_id = plugin_device_id(db, user_id, device_id)
+    for result in response.results:
+        snapshot = result.desired_plugin_snapshot
+        if (
+            snapshot is None
+            or plugin_device_id(db, user_id, result.device_id) != canonical_id
+        ):
+            continue
+        state = lock_plugin_sync_state(db, user_id)
+        generation = snapshot["plugin_sync"]["generation"]
+        return generation < plugin_snapshot_watermark(state, canonical_id, installed_id)
+    return False
+
+
+async def _sync_installed_plugin_once(
+    db: Session,
+    *,
+    user_id: int,
+    device_id: str,
+    installed_id: int,
+    previous: DeviceCapabilitySyncResponse | None,
+) -> DeviceCapabilitySyncResponse | None:
     try:
         merge_sync = (
-            await device_capability_sync_service.sync_installed_plugin_to_device(
+            await device_capability_sync_service.sync_installed_plugin_to_device_result(
                 db,
                 user_id=user_id,
                 device_id=device_id,
                 installed_plugin_id=installed_id,
             )
         )
+    except PluginWriteError as exc:
+        return deferred_plugin_sync(
+            exc,
+            user_id=user_id,
+            device_id=device_id,
+            previous=previous,
+            stage="snapshot",
+        )
     except Exception:
         logger.exception(
-            "Single-plugin device sync failed after install: "
+            "Single-plugin device sync failed after account change: "
             "user_id=%s device_id=%s installed_id=%s",
             user_id,
             device_id,
             installed_id,
         )
-        return previous
+        if previous is None:
+            return None
+        return deferred_plugin_sync(
+            PluginWriteError("plugin_device_sync_failed"),
+            user_id=user_id,
+            device_id=device_id,
+            previous=previous,
+            stage="snapshot",
+        )
     finally:
         db.close()
     return await record_sync_response(

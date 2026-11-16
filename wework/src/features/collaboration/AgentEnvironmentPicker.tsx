@@ -71,7 +71,7 @@ export function AgentEnvironmentPicker({
       testId={testId}
       accessibleLabel={t('workbench.runner_environment')}
       disabled={disabled}
-      className="flex h-11 w-full items-center justify-between gap-2 rounded-lg border border-border bg-background px-3 text-left text-sm text-text-primary outline-none focus-visible:ring-2 focus-visible:ring-focus/20 disabled:opacity-50 md:h-9"
+      className="flex h-11 w-full items-center justify-between gap-2 rounded-lg border border-border bg-background px-3 text-left text-sm text-text-primary outline-none keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-focus/20 disabled:opacity-50 md:h-9"
       contentClassName="w-[var(--radix-popover-trigger-width)]"
       triggerContent={
         <>

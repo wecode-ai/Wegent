@@ -17,6 +17,7 @@ from app.services.task_run_metric_hooks import queue_bulk_subtask_status_metrics
 from app.stores.tasks.interfaces import (
     ExecutorReference,
     FailedSubtaskDetail,
+    StalledRunningSubtask,
     TaskAccessStore,
 )
 from shared.models.db.enums import ContextType
@@ -781,14 +782,22 @@ class SqlAlchemySubtaskStore:
         return query.first()
 
     def list_assistant_by_task(
-        self, db: Session, *, task_id: int, owner_user_id: Optional[int] = None
+        self,
+        db: Session,
+        *,
+        task_id: int,
+        owner_user_id: Optional[int] = None,
+        include_contexts: bool = True,
     ) -> list[Subtask]:
-        query = db.query(Subtask).filter(
+        query = db.query(Subtask.id).filter(
             Subtask.task_id == task_id,
             Subtask.role == SubtaskRole.ASSISTANT,
         )
         query = self._filter_owner_user_id(query, owner_user_id=owner_user_id)
-        return query.order_by(Subtask.message_id.asc()).all()
+        rows = query.order_by(Subtask.message_id.asc()).all()
+        return self._load_ordered(
+            db, [row[0] for row in rows], include_contexts=include_contexts
+        )
 
     def list_after_message_id(
         self,
@@ -827,7 +836,7 @@ class SqlAlchemySubtaskStore:
         order_by: Literal["id", "message_id", "created_at"] = "message_id",
         owner_user_id: Optional[int] = None,
     ) -> list[Subtask]:
-        query = db.query(Subtask).filter(Subtask.task_id == task_id)
+        query = db.query(Subtask.id).filter(Subtask.task_id == task_id)
         query = self._filter_owner_user_id(query, owner_user_id=owner_user_id)
         if message_ids is not None:
             if not message_ids:
@@ -843,7 +852,8 @@ class SqlAlchemySubtaskStore:
             query = query.order_by(Subtask.created_at.asc(), Subtask.id.asc())
         else:
             query = query.order_by(Subtask.message_id.asc(), Subtask.created_at.asc())
-        subtasks = query.all()
+        rows = query.all()
+        subtasks = self._load_ordered(db, [row[0] for row in rows])
         self._attach_sender_user_names(db, subtasks)
         return subtasks
 
@@ -1052,6 +1062,64 @@ class SqlAlchemySubtaskStore:
             .all()
         )
 
+    def list_stalled_running_assistant_subtasks(
+        self,
+        db: Session,
+        *,
+        cutoff: datetime,
+        max_age_cutoff: datetime,
+        limit: int,
+        after_updated_at: datetime | None = None,
+        after_subtask_id: int | None = None,
+    ) -> list[StalledRunningSubtask]:
+        """Find recent RUNNING assistant subtasks silent since ``cutoff``.
+
+        ``created_at`` is indexed, so the bounded recent window keeps this a
+        range scan instead of filtering every RUNNING row.
+        """
+        query = (
+            db.query(
+                Subtask.task_id,
+                Subtask.id,
+                TaskResource.user_id,
+                Subtask.executor_name,
+                Subtask.executor_namespace,
+                Subtask.updated_at,
+            )
+            .join(TaskResource, TaskResource.id == Subtask.task_id)
+            .filter(
+                Subtask.role == SubtaskRole.ASSISTANT,
+                Subtask.status == SubtaskStatus.RUNNING,
+                Subtask.updated_at <= cutoff,
+                Subtask.created_at >= max_age_cutoff,
+                TaskResource.is_active != TaskResource.STATE_DELETED,
+            )
+        )
+        if after_updated_at is not None and after_subtask_id is not None:
+            query = query.filter(
+                or_(
+                    Subtask.updated_at > after_updated_at,
+                    (Subtask.updated_at == after_updated_at)
+                    & (Subtask.id > after_subtask_id),
+                )
+            )
+        rows = (
+            query.order_by(Subtask.updated_at.asc(), Subtask.id.asc())
+            .limit(limit)
+            .all()
+        )
+        return [
+            StalledRunningSubtask(
+                task_id=row[0],
+                subtask_id=row[1],
+                owner_user_id=row[2],
+                executor_name=(row[3] or "").strip(),
+                executor_namespace=(row[4] or "").strip(),
+                updated_at=row[5],
+            )
+            for row in rows
+        ]
+
     def list_session_task_ids(self, db: Session, *, skip: int, limit: int) -> list[int]:
         rows = (
             db.query(Subtask.task_id)
@@ -1227,6 +1295,32 @@ class SqlAlchemySubtaskStore:
         if "result" in fields:
             flag_modified(subtask, "result")
         return subtask
+
+    def update_fields_if_status(
+        self,
+        db: Session,
+        *,
+        subtask: Subtask,
+        from_status: SubtaskStatus | tuple[SubtaskStatus, ...],
+        **fields: Any,
+    ) -> bool:
+        """Update fields only while the subtask still has ``from_status``.
+
+        Returns True when exactly one row was updated. Callers use this to
+        avoid overwriting a concurrent completion or cancellation with a stale
+        terminal event.
+        """
+        values: dict[Any, Any] = {
+            getattr(Subtask, field): value for field, value in fields.items()
+        }
+        values[Subtask.updated_at] = datetime.now()
+        statuses = from_status if isinstance(from_status, tuple) else (from_status,)
+        updated = (
+            db.query(Subtask)
+            .filter(Subtask.id == subtask.id, Subtask.status.in_(statuses))
+            .update(values, synchronize_session=False)
+        )
+        return updated == 1
 
     def transition_status(
         self,
@@ -1412,20 +1506,19 @@ class SqlAlchemySubtaskStore:
         subtasks = query.all()
         return self._delete_subtasks(db, subtasks)
 
-    def _load_ordered(self, db: Session, subtask_ids: list[int]) -> list[Subtask]:
+    def _load_ordered(
+        self, db: Session, subtask_ids: list[int], *, include_contexts: bool = True
+    ) -> list[Subtask]:
         if not subtask_ids:
             return []
-        subtasks = (
-            db.query(Subtask)
-            .options(
-                subqueryload(Subtask.contexts),
-                undefer(Subtask.prompt),
-                undefer(Subtask.result),
-                undefer(Subtask.error_message),
-            )
-            .filter(Subtask.id.in_(subtask_ids))
-            .all()
+        query = db.query(Subtask).options(
+            undefer(Subtask.prompt),
+            undefer(Subtask.result),
+            undefer(Subtask.error_message),
         )
+        if include_contexts:
+            query = query.options(subqueryload(Subtask.contexts))
+        subtasks = query.filter(Subtask.id.in_(subtask_ids)).all()
         id_to_subtask = {subtask.id: subtask for subtask in subtasks}
         return [
             id_to_subtask[subtask_id]

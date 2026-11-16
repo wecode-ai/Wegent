@@ -164,7 +164,7 @@ async def test_installed_state_without_target_release_still_syncs(
     test_db.commit()
     sync = AsyncMock(side_effect=RuntimeError("offline"))
     monkeypatch.setattr(
-        device_capability_sync_service, "sync_installed_plugin_to_device", sync
+        device_capability_sync_service, "sync_installed_plugin_to_device_result", sync
     )
     await ensure_installed_plugin_on_device(
         test_db,

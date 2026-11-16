@@ -2,6 +2,41 @@ use super::*;
 use crate::runtime_work::response::workspace_response;
 
 #[tokio::test]
+async fn restored_tasks_keep_their_directory_when_assigned_to_an_ancestor_project() {
+    let _guard = crate::test_env::lock();
+    let project = tempfile::tempdir().unwrap();
+    let executor_home = project.path().join("executor-home");
+    let restored = executor_home.join("restored-workspaces/task-1");
+    std::fs::create_dir_all(&restored).unwrap();
+    let project_path = normalize_workspace_path(&project.path().to_string_lossy());
+    let restored_path = normalize_workspace_path(&restored.to_string_lossy());
+    let previous = std::env::var_os("WEGENT_EXECUTOR_HOME");
+    std::env::set_var("WEGENT_EXECUTOR_HOME", &executor_home);
+    let handler = RuntimeWorkRpcHandler::new("device-1", "/bin/false");
+    let payload = json!({
+        "electron-saved-workspace-roots": [project_path],
+        "thread-project-assignments": {"thread-1": {"projectId": project_path}}
+    });
+    let index = CodexGlobalProjectIndex::from_test_payload(payload.as_object().unwrap());
+    let mut link = RuntimeTaskLink::new_pending(
+        "task-1".to_owned(),
+        restored_path.clone(),
+        "Restored task".to_owned(),
+    );
+    link.thread_id = Some("thread-1".to_owned());
+
+    let projected = handler.visible_links_for_projects(vec![link], &index);
+    let response = workspace_response(projected, vec![]);
+
+    match previous {
+        Some(value) => std::env::set_var("WEGENT_EXECUTOR_HOME", value),
+        None => std::env::remove_var("WEGENT_EXECUTOR_HOME"),
+    }
+    assert_eq!(response[0]["workspacePath"], project_path);
+    assert_eq!(response[0]["tasks"][0]["workspacePath"], restored_path);
+}
+
+#[tokio::test]
 async fn project_moves_preserve_nested_execution_roots_without_changing_normal_grouping() {
     let handler = RuntimeWorkRpcHandler::new("device-1", "/bin/false");
     for (source, cwd, target, expected) in [

@@ -7,11 +7,13 @@ import { runChecked } from '../modules/shared.mjs'
 import { ensureExperimentalFeaturesEnabled } from '../modules/preferences-automation-flows.mjs'
 import {
   inCollaborationSidebar,
+  revealCollaborationSidebarElement,
   configureFirstProjectExecutionEnvironment,
   openProjectAgentCreator,
   selectProjectRunnerModel,
   selectCollaborationIssueAgent,
   waitForTestIdByText,
+  reloadMainWindow,
 } from '../modules/workspace-flows.mjs'
 import {
   assistantMessage,
@@ -89,7 +91,7 @@ async function createTask(control, label, timeoutMs, executionMode = 'current_wo
   await createIssue(control, label)
   await control.command(
     'clickWhenEnabled',
-    scoped('[data-testid="cloud-todo-personal-task-start"]')
+    scoped('[data-testid="cloud-todo-create-task"]')
   )
   await control.command('waitFor', COMPOSER)
   const projectButton = `${PANEL} [data-testid="project-work-button"]`
@@ -157,7 +159,6 @@ async function runAgent(control, agentId, label, timeoutMs) {
     scoped('[data-testid="cloud-todo-detail-assignee"]'),
     agentId
   )
-  await control.command('clickWhenEnabled', scoped('[data-testid="cloud-todo-save"]'))
   await control.command('waitFor', scoped('[data-testid="cloud-task-activity-list"]'), {
     text: `${MARKER}_DONE`,
     timeoutMs,
@@ -206,18 +207,13 @@ export function createDesktopScenario({
         }),
       })
       await ensureExperimentalFeaturesEnabled(control)
-      const readyCount = control.readyCount
-      await control.command('reloadApp', 'body')
-      await control.awaitReadyAfter(readyCount)
+      await reloadMainWindow(control, 'The worktree policy renderer did not reconnect')
       await control.command('waitFor', '[data-testid="workspace-tab-select-fixed-board"]')
       await control.command('click', '[data-testid="workspace-tab-select-fixed-board"]')
-      const toggle = inCollaborationSidebar(
-        '[data-testid="collaboration-workspace-toggle-wework-local-workspace"]'
+      await revealCollaborationSidebarElement(
+        control,
+        inCollaborationSidebar(`[data-testid="collaboration-workspace-project-${PROJECT_ID}"]`)
       )
-      await control.command('waitFor', toggle)
-      if ((await control.command('getAttribute', toggle, { value: 'aria-expanded' })) !== 'true') {
-        await control.command('click', toggle)
-      }
       await control.command(
         'click',
         inCollaborationSidebar(`[data-testid="collaboration-workspace-project-${PROJECT_ID}"]`)

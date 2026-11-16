@@ -15,6 +15,9 @@ use tokio::sync::{broadcast, mpsc};
 
 use crate::{
     agent_session,
+    agents::completed_file_changes::{
+        finish_file_change_capture, start_file_change_capture, FileChangeCapture,
+    },
     emitter::{EventEnvelope, ResponsesEventBuilder},
     logging::{log_executor_event, task_fields},
     protocol::ExecutionRequest,
@@ -57,6 +60,8 @@ struct LiveTurn {
     projection: StandardEventProjection,
     root_thread_id: Option<String>,
     deferred_tool_use_id: Option<String>,
+    // The original snapshot belongs to the logical turn across every form pause.
+    file_changes: Option<FileChangeCapture>,
 }
 
 enum PendingTurn {
@@ -65,6 +70,7 @@ enum PendingTurn {
         request: ExecutionRequest,
         builder: ResponsesEventBuilder,
         tool_use_id: String,
+        file_changes: Option<FileChangeCapture>,
     },
 }
 
@@ -76,6 +82,7 @@ impl PendingTurn {
                 request,
                 builder,
                 tool_use_id,
+                ..
             } => (request, builder, tool_use_id),
         }
     }
@@ -122,6 +129,10 @@ impl CodexAppServerEngine {
         builder: ResponsesEventBuilder,
     ) -> Result<ExecutionOutcome, String> {
         let mut turn = self.start_or_resume(&mut request)?;
+        if turn.file_changes.is_none() {
+            turn.file_changes =
+                Some(start_file_change_capture(&request, request.cwd().map(Into::into)).await);
+        }
         let callbacks = StreamingCallbacks(StreamingEventDispatcher::with_live_compaction(sink));
         let dispatcher = &callbacks.0;
         let progress = tokio::select! {
@@ -152,8 +163,13 @@ impl CodexAppServerEngine {
                                 request,
                                 builder,
                                 tool_use_id,
+                                file_changes: turn.file_changes.take(),
                             },
                         );
+                } else if matches!(outcome, ExecutionOutcome::Completed { .. }) {
+                    if let Some(capture) = turn.file_changes.take() {
+                        finish_file_change_capture(capture, &request, &builder).await;
+                    }
                 }
                 Ok(outcome)
             }
@@ -182,6 +198,7 @@ impl CodexAppServerEngine {
     }
 
     fn start_or_resume(&self, request: &mut ExecutionRequest) -> Result<LiveTurn, String> {
+        let mut file_changes = None;
         let answer = request
             .extra
             .get("interactive_form_answer")
@@ -198,14 +215,14 @@ impl CodexAppServerEngine {
             validate_answer_scope(original, tool_use_id, request, answer)?;
             if let PendingTurn::Native(suspended) = suspended {
                 let response = suspended.interaction.answer(answer)?;
+                let Some(PendingTurn::Native(suspended)) = pending.remove(&request.task_id) else {
+                    unreachable!("validated native interaction")
+                };
                 suspended
                     .turn
                     .answers
                     .try_send(response)
                     .map_err(|_| "Codex interaction response channel is unavailable")?;
-                let Some(PendingTurn::Native(suspended)) = pending.remove(&request.task_id) else {
-                    unreachable!("validated native interaction")
-                };
                 return Ok(*suspended.turn);
             }
             // MCP forms finish the native turn; the answer resumes its saved thread.
@@ -216,7 +233,13 @@ impl CodexAppServerEngine {
             request.prompt = json!(format!(
                 "User response to interactive_form_question:\n{payload}"
             ));
-            pending.remove(&request.task_id);
+            if let Some(PendingTurn::Mcp {
+                file_changes: saved,
+                ..
+            }) = pending.remove(&request.task_id)
+            {
+                file_changes = saved;
+            }
         } else if pending.contains_key(&request.task_id) {
             if !request.new_session {
                 return Err("A pending Codex form must be answered or cancelled first".to_owned());
@@ -245,6 +268,7 @@ impl CodexAppServerEngine {
             projection: StandardEventProjection::default(),
             root_thread_id: None,
             deferred_tool_use_id: None,
+            file_changes,
         })
     }
 }

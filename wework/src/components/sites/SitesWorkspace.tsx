@@ -194,7 +194,7 @@ function SitesCreateError({
           type="button"
           data-testid="sites-open-plugins-button"
           onClick={onOpenPlugins}
-          className="h-8 shrink-0 rounded-lg border border-border bg-background px-3 text-sm text-text-primary hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus/30"
+          className="h-8 shrink-0 rounded-lg border border-border bg-background px-3 text-sm text-text-primary hover:bg-muted focus-visible:outline-none keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-focus/30"
         >
           {openPluginsLabel}
         </button>
@@ -472,7 +472,7 @@ export function SitesWorkspace({
                   aria-label={t(activeDefinition.refresh.key, activeDefinition.refresh.fallback)}
                   disabled={collection.loading}
                   onClick={() => void collection.loadFirstPage()}
-                  className="flex h-11 w-11 items-center justify-center rounded-lg text-text-secondary transition-colors hover:bg-surface hover:text-text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus/30 disabled:cursor-wait disabled:opacity-60 md:h-9 md:w-9"
+                  className="flex h-11 w-11 items-center justify-center rounded-lg text-text-secondary transition-colors hover:bg-surface hover:text-text-primary focus-visible:outline-none keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-focus/30 disabled:cursor-wait disabled:opacity-60 md:h-9 md:w-9"
                 >
                   <RefreshCw
                     className={collection.loading ? 'h-4 w-4 animate-spin' : 'h-4 w-4'}
@@ -489,7 +489,7 @@ export function SitesWorkspace({
                 disabled={Boolean(creatingType)}
                 placement="bottom-end"
                 triggerClassName={[
-                  'flex h-11 items-center gap-1.5 rounded-lg bg-text-primary px-3 text-sm font-medium text-background transition-colors hover:opacity-90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus/40 disabled:cursor-wait disabled:opacity-60 md:h-9',
+                  'flex h-11 items-center gap-1.5 rounded-lg bg-text-primary px-3 text-sm font-medium text-background transition-colors hover:opacity-90 focus-visible:outline-none keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-focus/40 disabled:cursor-wait disabled:opacity-60 md:h-9',
                   creatingType ? '[&>svg:first-child]:animate-spin' : '',
                 ].join(' ')}
               />
@@ -515,7 +515,7 @@ export function SitesWorkspace({
               onClick={() => selectAppType('smart_app')}
               onKeyDown={handleTabKeyDown}
               className={[
-                'relative flex h-11 items-center gap-1.5 px-0.5 text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus/30 md:h-8',
+                'relative flex h-11 items-center gap-1.5 px-0.5 text-sm font-medium transition-colors focus-visible:outline-none keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-focus/30 md:h-8',
                 smartAppsActive ? 'text-text-primary' : 'text-text-muted hover:text-text-secondary',
               ].join(' ')}
             >
@@ -545,7 +545,7 @@ export function SitesWorkspace({
                 onClick={() => selectAppType(appType)}
                 onKeyDown={handleTabKeyDown}
                 className={[
-                  'relative flex h-11 items-center px-0.5 text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus/30 md:h-8',
+                  'relative flex h-11 items-center px-0.5 text-sm font-medium transition-colors focus-visible:outline-none keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-focus/30 md:h-8',
                   selected ? 'text-text-primary' : 'text-text-muted hover:text-text-secondary',
                 ].join(' ')}
               >
@@ -639,7 +639,7 @@ export function SitesWorkspace({
                     type="button"
                     data-testid="sites-retry-button"
                     onClick={() => void collection.loadFirstPage()}
-                    className="h-11 rounded-lg border border-border px-3 text-sm hover:bg-surface focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus/30 md:h-8"
+                    className="h-11 rounded-lg border border-border px-3 text-sm hover:bg-surface focus-visible:outline-none keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-focus/30 md:h-8"
                   >
                     {t('retry', '重试')}
                   </button>
@@ -692,7 +692,7 @@ export function SitesWorkspace({
                     data-testid="sites-load-more-button"
                     disabled={collection.loadingMore}
                     onClick={() => void collection.loadMore()}
-                    className="flex h-11 items-center gap-2 rounded-lg border border-border px-3 text-sm text-text-primary transition-colors hover:bg-surface focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus/30 disabled:cursor-wait disabled:opacity-60 md:h-8"
+                    className="flex h-11 items-center gap-2 rounded-lg border border-border px-3 text-sm text-text-primary transition-colors hover:bg-surface focus-visible:outline-none keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-focus/30 disabled:cursor-wait disabled:opacity-60 md:h-8"
                   >
                     {collection.loadingMore && (
                       <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden="true" />

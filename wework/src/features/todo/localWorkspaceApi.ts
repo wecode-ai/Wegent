@@ -1,4 +1,8 @@
-import { cloudRunnerModels, resolveRunnerSelection } from '@wegent/collaboration'
+import {
+  cloudRunnerModels,
+  requiresCloudModelCatalog,
+  resolveRunnerSelection,
+} from '@wegent/collaboration'
 import { requestRunnerSelection } from '@/lib/runner-selection'
 import {
   mapAutomationExecutionCatalog,
@@ -33,22 +37,9 @@ import {
   isDefaultLocalAgentName,
 } from '@/features/collaboration/defaultLocalAgent'
 import { sha256Hex } from '@/api/fileHash'
+import { loadWorkspaceCatalog } from './localWorkspaceCatalog'
+import { createProjectChatComments } from '@/features/collaboration/projectChatComments'
 export const LOCAL_WORKSPACE_ID = 'wework-local-workspace'
-
-async function loadWorkspaceCatalog<T>(catalog: string, request: Promise<T>): Promise<T> {
-  try {
-    return await request
-  } catch (error) {
-    console.error(
-      '[Wework] Local workspace catalog failed',
-      JSON.stringify({
-        catalog,
-        reason: error instanceof Error ? error.message : String(error),
-      })
-    )
-    throw error
-  }
-}
 
 function assertValidCollaborationGroup(
   leader: CollaborationGroup['leader'],
@@ -112,6 +103,8 @@ export function createLocalWorkspaceApi(
         device_id: device.id,
         device_key: device.device_id,
         ...(device.app_device_id ? { app_device_id: device.app_device_id } : {}),
+        ...(device.runtime_instance_id ? { runtime_instance_id: device.runtime_instance_id } : {}),
+        ...(device.local_identity_unresolved ? { local_identity_unresolved: true } : {}),
         is_current_device: true,
         name: device.name,
         kind: 'local_device' as const,
@@ -266,11 +259,10 @@ export function createLocalWorkspaceApi(
   }
   const workspace = async (): Promise<CollaborationWorkspace> => {
     const [items, environments, agents, backingProject] = await Promise.all([
-      loadWorkspaceCatalog('projects', projects()),
-      loadWorkspaceCatalog('execution-environments', executionEnvironments()),
-      loadWorkspaceCatalog('agents', localAgentResources()),
-      loadWorkspaceCatalog(
-        'workspace-settings',
+      loadWorkspaceCatalog('projects', projects),
+      loadWorkspaceCatalog('execution-environments', executionEnvironments),
+      loadWorkspaceCatalog('agents-summary', localAgentResources),
+      loadWorkspaceCatalog('workspace-settings', () =>
         delivery.projects.get(DEFAULT_WORK_ITEM_PROJECT_ID)
       ),
     ])
@@ -278,12 +270,12 @@ export function createLocalWorkspaceApi(
     return {
       id: LOCAL_WORKSPACE_ID,
       location: 'local',
-      name: locale === 'zh-CN' ? '本地空间' : 'Local space',
+      name: locale === 'zh-CN' ? '个人分组' : 'Personal group',
       namespace: 'default',
       description:
         locale === 'zh-CN'
-          ? '保存在当前设备上的项目、Issue 与执行资源。'
-          : 'Projects, issues, and execution resources stored on this device.',
+          ? '你的个人项目、Issue 与执行资源。'
+          : 'Your personal projects, issues, and execution resources.',
       access_role: 'Owner',
       member_count: 1,
       agent_count: agents.length,
@@ -298,9 +290,7 @@ export function createLocalWorkspaceApi(
   }
   const unavailable = async (): Promise<never> => {
     throw new Error(
-      locale === 'zh-CN'
-        ? '本地空间不支持此操作'
-        : 'This operation is not available in the local space'
+      locale === 'zh-CN' ? '当前分组不支持此操作' : 'This operation is not available in this group'
     )
   }
   const currentMember = async (): Promise<CollaborationMember[]> => [
@@ -332,31 +322,27 @@ export function createLocalWorkspaceApi(
     options?: { forceRefresh?: boolean }
   ) => {
     const listedAgents = projectAgentApi
-      ? await (
+      ? await loadWorkspaceCatalog('agents', () =>
           options?.forceRefresh
             ? projectAgentApi.list(DEFAULT_WORK_ITEM_PROJECT_ID, { forceRefresh: true })
             : projectAgentApi.list(DEFAULT_WORK_ITEM_PROJECT_ID)
-        ).catch(error => {
-          console.warn('[Wework] Failed to list local Agents', error)
-          return []
-        })
+        ).catch(() => [])
       : []
     const defaultAgent = projectAgentApi
-      ? await ensureDefaultLocalAgent(
-          projectAgentApi,
-          DEFAULT_WORK_ITEM_PROJECT_ID,
-          locale,
-          listedAgents
-        ).catch(error => {
-          console.warn('[Wework] Failed to ensure the default local Agent', error)
-          return null
-        })
+      ? await loadWorkspaceCatalog('default-agent', () =>
+          ensureDefaultLocalAgent(
+            projectAgentApi,
+            DEFAULT_WORK_ITEM_PROJECT_ID,
+            locale,
+            listedAgents
+          )
+        ).catch(() => null)
       : null
     const agents =
       defaultAgent && !listedAgents.some(agent => agent.id === defaultAgent.id)
         ? [...listedAgents, defaultAgent]
         : listedAgents
-    const ownerName = locale === 'zh-CN' ? '本地空间' : 'Local space'
+    const ownerName = locale === 'zh-CN' ? '个人分组' : 'Personal group'
     return agents.map(agent => ({
       id: agent.id,
       agent_id: agent.name,
@@ -365,6 +351,8 @@ export function createLocalWorkspaceApi(
       version: agent.version,
       capability_description: agent.capabilityDescription,
       system_prompt: agent.systemPrompt,
+      systemPrompt: agent.systemPrompt,
+      capabilityDescription: agent.capabilityDescription,
       runtime: agent.runtime,
       owner_type: 'workspace' as const,
       owner_id: LOCAL_WORKSPACE_ID,
@@ -429,7 +417,6 @@ export function createLocalWorkspaceApi(
     const agents = await projectAgentApi.list(projectId, { forceRefresh: true })
     const groups = await projectCollaborationGroups(projectId)
     const environments = await projectAgentApi.listRunnerEnvironments(projectId)
-    const cloudModels = await projectAgentApi.listModels()
     for (const rule of rules) {
       if (!rule.enabled || rule.targetKind === 'human') continue
       const group =
@@ -446,6 +433,13 @@ export function createLocalWorkspaceApi(
         if (!agent) throw new Error(`Automation agent '${id}' is unavailable`)
         return agent
       })
+      const cloudModels = members.some(
+        agent =>
+          agent.executionPolicy &&
+          requiresCloudModelCatalog(agent.modelPolicy, rule.runnerSelection)
+      )
+        ? await projectAgentApi.listModels()
+        : []
       for (const agent of members) {
         if (!agent.executionPolicy || !agent.modelPolicy) continue
         const selection = () => ({
@@ -646,7 +640,7 @@ export function createLocalWorkspaceApi(
         }
       : {}),
     workspaces: {
-      list: async () => [await workspace()],
+      list: () => loadWorkspaceCatalog('navigation-workspaces', async () => [await workspace()]),
       get: workspace,
       create: unavailable,
       async update(_workspaceId, input) {
@@ -665,6 +659,22 @@ export function createLocalWorkspaceApi(
       addMember: unavailable,
       updateMember: unavailable,
       removeMember: unavailable,
+      createTemplateAgent: async (_workspaceId, agent, routing) => {
+        if (!projectAgentApi) return unavailable()
+        return toProjectAgent(
+          await projectAgentApi.create(DEFAULT_WORK_ITEM_PROJECT_ID, {
+            ...routing,
+            name: agent.name,
+            runtime: agent.runtime,
+            systemPrompt: agent.systemPrompt,
+            capabilityDescription: agent.capabilityDescription,
+            capabilityMode: 'follow_device',
+            workspacePolicy: agent.workspacePolicy ?? 'project',
+            executionMode: agent.executionMode,
+            maxConcurrentExecutions: agent.maxConcurrentExecutions,
+          })
+        )
+      },
       listAgents: localAgentResources,
       addAgent: unavailable,
       removeAgent: unavailable,
@@ -718,41 +728,7 @@ export function createLocalWorkspaceApi(
       },
     },
     comments: projectChatClient
-      ? {
-          async list(issueId) {
-            const { snapshot, unsubscribe } = await projectChatClient.subscribe(
-              await issueProjectId(issueId),
-              issueId,
-              0,
-              () => undefined
-            )
-            unsubscribe()
-            return snapshot.messages.map(message => ({
-              id: message.messageId,
-              body: message.content,
-              author: message.sender.name,
-              web_url: null,
-              created_at: message.createdAt,
-              updated_at: message.updatedAt,
-            }))
-          },
-          async create(issueId, body) {
-            const message = await projectChatClient.send({
-              projectId: await issueProjectId(issueId),
-              taskId: issueId,
-              clientMessageId: crypto.randomUUID(),
-              text: body,
-            })
-            return {
-              id: message.messageId,
-              body: message.content,
-              author: message.sender.name,
-              web_url: null,
-              created_at: message.createdAt,
-              updated_at: message.updatedAt,
-            }
-          },
-        }
+      ? createProjectChatComments(projectChatClient, issueProjectId)
       : {
           list: async () => [],
           create: unavailable,
@@ -791,7 +767,7 @@ export function createLocalWorkspaceApi(
         },
     projects: {
       ...delivery.projects,
-      list: projects,
+      list: () => loadWorkspaceCatalog('navigation-projects', projects),
       get: async projectId => decorateProject(await delivery.projects.get(projectId)),
       create: async input => {
         const { includeDefaultAgent = false, ...projectInput } = input

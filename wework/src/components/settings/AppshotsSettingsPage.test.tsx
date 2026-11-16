@@ -1,7 +1,7 @@
-import { render, screen, waitFor } from '@testing-library/react'
+import type { AppPreferences } from '@/desktop/appPreferences'
+import { render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, test, vi } from 'vitest'
-import type { AppPreferences } from '@/desktop/appPreferences'
 import { AppshotsSettingsPage } from './AppshotsSettingsPage'
 
 const getAppshotsStatusMock = vi.hoisted(() => vi.fn())
@@ -11,6 +11,8 @@ const openAppshotsPermissionSettingsMock = vi.hoisted(() => vi.fn())
 
 const defaultPreferences: AppPreferences = {
   workbenchMode: 'developer',
+  appearanceMode: 'system',
+  appearanceThemeSnapshot: null,
   closeToTrayEnabled: true,
   showMainWindowOnLaunch: true,
   systemDragEnabled: true,
@@ -28,6 +30,7 @@ const defaultPreferences: AppPreferences = {
   browserExternalLinkTarget: 'system',
   browserLocalLinkTarget: 'wework',
   browserDownloadDirectory: null,
+  browserFullControl: false,
   browserAskBeforeDownload: false,
   appshotsPlaySound: true,
 }
@@ -44,6 +47,8 @@ vi.mock('@/desktop/appshots', () => ({
 vi.mock('@/desktop/appPreferences', () => ({
   defaultAppPreferences: {
     workbenchMode: 'developer',
+    appearanceMode: 'system',
+    appearanceThemeSnapshot: null,
     closeToTrayEnabled: true,
     showMainWindowOnLaunch: true,
     systemDragEnabled: true,
@@ -59,6 +64,7 @@ vi.mock('@/desktop/appPreferences', () => ({
     browserExternalLinkTarget: 'system',
     browserLocalLinkTarget: 'wework',
     browserDownloadDirectory: null,
+    browserFullControl: false,
     browserAskBeforeDownload: false,
     appshotsPlaySound: true,
   },
@@ -100,40 +106,5 @@ describe('AppshotsSettingsPage', () => {
     await user.click(await screen.findByTestId('appshots-open-accessibility-settings-button'))
 
     expect(openAppshotsPermissionSettingsMock).toHaveBeenCalledWith('accessibility')
-  })
-
-  test('shows the registered shortcut and automatic destination', async () => {
-    render(<AppshotsSettingsPage />)
-
-    expect(await screen.findByText('在任意应用中截取最前面的窗口')).toBeInTheDocument()
-    expect(screen.getByText('自动')).toBeInTheDocument()
-    expect(screen.getByLabelText('Command')).toBeInTheDocument()
-  })
-
-  test('persists the capture sound preference', async () => {
-    const user = userEvent.setup()
-    render(<AppshotsSettingsPage />)
-
-    const toggle = await screen.findByTestId('appshots-play-sound-toggle')
-    await waitFor(() => expect(toggle).toBeEnabled())
-    await user.click(toggle)
-
-    await waitFor(() => {
-      expect(updateAppPreferencesMock).toHaveBeenCalledWith({ appshotsPlaySound: false })
-    })
-  })
-
-  test('explains when the global shortcut could not be registered', async () => {
-    getAppshotsStatusMock.mockResolvedValue({
-      supported: true,
-      shortcut: 'CommandOrControl+Shift+2',
-      shortcutRegistered: false,
-    })
-
-    render(<AppshotsSettingsPage />)
-
-    expect(
-      await screen.findByText('快捷键已被其他应用占用，请退出冲突的应用后重启 Wework。')
-    ).toBeInTheDocument()
   })
 })

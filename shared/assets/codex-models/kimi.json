@@ -1,10 +1,45 @@
 {
   "models": [
     {
+      "slug": "wework-kimi-k3-1-pro",
+      "upstream_model_ids": [
+        "moonshot-kimi-k3.1-pro",
+        "moonshot-kimi-k3.1-pro-highspeed",
+        "kimi-k3.1-pro",
+        "kimi-k3.1-pro-highspeed"
+      ],
+      "upstream_model_id_contains": ["kimi-k3.1"],
+      "display_name": "Kimi K3.1 Pro",
+      "description": "Kimi K3.1 Pro profile for long-horizon coding and reasoning",
+      "apply_patch_tool_type": "freeform",
+      "default_reasoning_level": "low",
+      "supported_reasoning_levels": [
+        {
+          "effort": "low",
+          "description": "Fast responses with lighter reasoning"
+        },
+        {
+          "effort": "high",
+          "description": "Greater reasoning depth for complex work"
+        },
+        {
+          "effort": "max",
+          "description": "Maximum reasoning for long-horizon tasks"
+        }
+      ],
+      "priority": 4,
+      "context_window": 1048576,
+      "max_context_window": 1048576,
+      "auto_compact_token_limit": null,
+      "truncation_policy": {
+        "mode": "tokens",
+        "limit": 10000
+      }
+    },
+    {
       "slug": "wework-kimi-k3",
-      "upstream_model_ids": ["k3", "kimi-k3"],
+      "upstream_model_ids": ["k3", "kimi-k3", "moonshot-kimi-k3"],
       "upstream_model_id_contains": ["kimi-k3"],
-      "upstream_api_formats": ["openai-chat-completions"],
       "display_name": "Kimi K3",
       "description": "Kimi K3 profile for long-horizon coding, multimodal input, and deep reasoning",
       "apply_patch_tool_type": "freeform",
@@ -23,9 +58,10 @@
           "description": "Maximum reasoning for long-horizon tasks"
         }
       ],
+      "priority": 5,
       "context_window": 1048576,
       "max_context_window": 1048576,
-      "auto_compact_token_limit": 786432,
+      "auto_compact_token_limit": null,
       "truncation_policy": {
         "mode": "tokens",
         "limit": 10000
@@ -35,14 +71,10 @@
       "slug": "wework-kimi-k2-7",
       "upstream_model_ids": ["kimi-for-coding", "kimi-for-coding-highspeed"],
       "upstream_model_id_contains": ["kimi-k2.7"],
-      "upstream_api_formats": [
-        "openai-responses",
-        "openai-chat-completions",
-        "anthropic-messages"
-      ],
       "display_name": "Kimi K2.7 Code",
       "description": "Kimi K2.7 Code profile for stable agentic coding",
       "apply_patch_tool_type": "freeform",
+      "priority": 6,
       "context_window": 262144,
       "max_context_window": 262144
     }

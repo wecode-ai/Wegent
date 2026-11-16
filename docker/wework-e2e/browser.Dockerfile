@@ -7,6 +7,8 @@ RUN apt-get update \
   && apt-get install --yes --no-install-recommends \
     curl \
     docker.io \
+    ffmpeg \
+    socat \
     libmagic1 \
     zstd \
   && rm -rf /var/lib/apt/lists/* \

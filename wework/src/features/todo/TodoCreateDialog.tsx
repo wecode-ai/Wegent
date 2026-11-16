@@ -207,7 +207,7 @@ export function TodoCreateDialog({
                 value={goal}
                 onChange={event => setGoal(event.target.value)}
                 placeholder={t('todo.goal_placeholder', '例如：用户登录后 2 秒内稳定进入工作区')}
-                className="h-[38px] w-full rounded-md border border-border bg-background px-3 text-xs text-text-primary outline-none placeholder:text-text-muted focus:border-focus"
+                className="h-[38px] w-full rounded-md border border-border bg-background px-3 text-xs text-text-primary outline-none placeholder:text-text-muted keyboard:focus:border-focus"
               />
             </FormGroup>
 

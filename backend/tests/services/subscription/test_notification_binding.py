@@ -196,7 +196,7 @@ def test_group_message_can_also_complete_private_binding(test_db, test_user, moc
 
 
 def test_update_developer_settings_preserves_group_name(test_db, test_user):
-    """Developer settings persist and reload group metadata and mentions."""
+    """Developer settings persist and reload group metadata."""
     subscription = _create_subscription_kind(
         test_db, owner_user_id=test_user.id, subscription_id=1004
     )
@@ -214,7 +214,6 @@ def test_update_developer_settings_preserves_group_name(test_db, test_user):
                 "bind_group": True,
                 "group_conversation_id": "conversation-123",
                 "group_name": "测试机器人",
-                "group_mention_user_ids": ["user-1", "user-2"],
             }
         ],
     )
@@ -226,7 +225,6 @@ def test_update_developer_settings_preserves_group_name(test_db, test_user):
             "bind_group": True,
             "group_conversation_id": "conversation-123",
             "group_name": "测试机器人",
-            "group_mention_user_ids": ["user-1", "user-2"],
         }
     ]
 
@@ -249,13 +247,12 @@ def test_update_developer_settings_preserves_group_name(test_db, test_user):
             "bind_group": True,
             "group_conversation_id": "conversation-123",
             "group_name": "测试机器人",
-            "group_mention_user_ids": ["user-1", "user-2"],
         }
     ]
 
 
-def test_update_developer_settings_normalizes_group_mentions(test_db, test_user):
-    """Mention IDs are trimmed, deduplicated, and stripped of invalid values."""
+def test_update_developer_settings_drops_legacy_group_mentions(test_db, test_user):
+    """Legacy static mention IDs are ignored and removed from persisted config."""
     subscription = _create_subscription_kind(
         test_db, owner_user_id=test_user.id, subscription_id=1005
     )
@@ -285,16 +282,20 @@ def test_update_developer_settings_normalizes_group_mentions(test_db, test_user)
         ],
     )
 
-    assert updated.channel_binding_configs[0].group_mention_user_ids == [
-        "user-1",
-        "user-2",
-        "user-3",
-        "user-4",
-    ]
+    config = updated.channel_binding_configs[0].model_dump()
+    assert "group_mention_user_ids" not in config
+    persisted = (
+        test_db.query(Kind)
+        .filter(Kind.id == subscription.id, Kind.kind == "Subscription")
+        .first()
+    )
+    assert persisted is not None
+    binding = persisted.json["_internal"]["notification_channel_bindings"]["123"]
+    assert "group_mention_user_ids" not in binding
 
 
-def test_update_developer_settings_clears_mentions_without_group(test_db, test_user):
-    """Mention IDs are removed when the channel no longer delivers to a group."""
+def test_update_developer_settings_disables_group_without_mentions(test_db, test_user):
+    """Disabling group delivery persists only the group binding fields."""
     subscription = _create_subscription_kind(
         test_db, owner_user_id=test_user.id, subscription_id=1006
     )
@@ -332,7 +333,7 @@ def test_update_developer_settings_clears_mentions_without_group(test_db, test_u
         ],
     )
 
-    assert updated.channel_binding_configs[0].group_mention_user_ids == []
+    assert updated.channel_binding_configs[0].bind_group is False
     persisted = (
         test_db.query(Kind)
         .filter(Kind.id == subscription.id, Kind.kind == "Subscription")
@@ -340,11 +341,12 @@ def test_update_developer_settings_clears_mentions_without_group(test_db, test_u
     )
     assert persisted is not None
     binding = persisted.json["_internal"]["notification_channel_bindings"]["123"]
-    assert binding["group_mention_user_ids"] == []
+    assert binding["bind_group"] is False
+    assert "group_mention_user_ids" not in binding
 
 
-def test_update_developer_settings_preserves_omitted_mentions(test_db, test_user):
-    """Older clients that omit mention IDs keep the stored mention list."""
+def test_update_developer_settings_accepts_omitted_group_fields(test_db, test_user):
+    """Clients can update group delivery without static mention fields."""
     subscription = _create_subscription_kind(
         test_db, owner_user_id=test_user.id, subscription_id=1007
     )
@@ -383,13 +385,13 @@ def test_update_developer_settings_preserves_omitted_mentions(test_db, test_user
         ],
     )
 
-    assert updated.channel_binding_configs[0].group_mention_user_ids == ["user-1"]
+    config = updated.channel_binding_configs[0].model_dump()
+    assert config["group_conversation_id"] == "conversation-123"
+    assert "group_mention_user_ids" not in config
 
 
-def test_update_developer_settings_clears_mentions_when_group_changes(
-    test_db, test_user
-):
-    """Changing the bound group must not inherit its predecessor's mentions."""
+def test_update_developer_settings_changes_group_without_mentions(test_db, test_user):
+    """Changing the bound group persists the new conversation ID only."""
     subscription = _create_subscription_kind(
         test_db, owner_user_id=test_user.id, subscription_id=1008
     )
@@ -426,4 +428,6 @@ def test_update_developer_settings_clears_mentions_when_group_changes(
         ],
     )
 
-    assert updated.channel_binding_configs[0].group_mention_user_ids == []
+    config = updated.channel_binding_configs[0].model_dump()
+    assert config["group_conversation_id"] == "conversation-456"
+    assert "group_mention_user_ids" not in config

@@ -1,3 +1,4 @@
+import { showAllCollaborationIssues } from '../modules/collaboration-board-flows.mjs'
 import assert from 'node:assert/strict'
 
 import { createCollaborationBoardIssue as createIssue } from '../modules/collaboration-board-issue.mjs'
@@ -8,6 +9,7 @@ import {
   createLocalCollaborationProject,
   configureFirstProjectExecutionEnvironment,
 } from '../modules/workspace-flows.mjs'
+import { selectCollaborationProjectView } from '../modules/collaboration-project-navigation.mjs'
 
 const CONTENT = '[data-workspace-tab-content][aria-hidden="false"]'
 const PROJECT = `协作任务归档-${process.pid}`
@@ -20,6 +22,7 @@ function scoped(selector) {
 }
 
 async function revealIssueCard(control, issueId, title, timeoutMs) {
+  await showAllCollaborationIssues(control, CONTENT)
   const selector = scoped(`[data-testid="collaboration-issue-${issueId}"]`)
   // Restoring removes the archived row before the board snapshot finishes loading.
   await control.command('waitFor', selector, { text: title, timeoutMs })
@@ -88,7 +91,7 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs }) {
       await control.command('click', '[data-testid="workspace-tab-select-fixed-board"]')
       await createLocalCollaborationProject(control, CONTENT, PROJECT)
       await configureFirstProjectExecutionEnvironment(control, CONTENT, uiTimeoutMs)
-      await control.command('click', scoped('[data-testid="collaboration-tab-board"]'))
+      await selectCollaborationProjectView(control, CONTENT, 'board')
 
       const firstIssueId = await createIssue(control, FIRST_ISSUE, 'completed', uiTimeoutMs)
       const secondIssueId = await createIssue(control, SECOND_ISSUE, 'completed', uiTimeoutMs)

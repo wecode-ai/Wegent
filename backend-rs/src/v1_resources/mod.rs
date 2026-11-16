@@ -16,4 +16,4 @@ pub mod readiness;
 pub mod repository;
 pub mod response;
 pub mod service;
-pub mod shell_resolution;
+pub use wegent_resource_store::shell_resolution;

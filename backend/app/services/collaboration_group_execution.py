@@ -27,6 +27,7 @@ from app.services.loop_item_executions.service import loop_item_execution_servic
 from app.services.notification_target import board_notification_target
 from app.services.project_chat.service import bot_config, compiled_bot_config
 from app.services.wework_notifications import create_notification
+from shared.telemetry.decorators import trace_sync
 
 MANAGER_SYSTEM_INSTRUCTIONS = """You are the manager for one project Issue.
 Coordinate the collaboration group through the project-space management tools.
@@ -83,6 +84,7 @@ def dispatch_collaboration_group_assignment(
     )
 
 
+@trace_sync("collaboration_group.enqueue", tracer_name="backend")
 def _enqueue_ai_leader(
     db: Session,
     *,
@@ -133,6 +135,7 @@ def _enqueue_ai_leader(
         project=project,
         item=item,
         group=group,
+        execution_prompt=str((automation_context or {}).get("execution_prompt") or ""),
     )
     context = {
         **(automation_context or {}),
@@ -147,7 +150,14 @@ def _enqueue_ai_leader(
         "manager_display_name": str(group.get("name") or "Collaboration manager"),
         "collaboration_group": jsonable_encoder(group),
         "execution_prompt": manager_user_message,
-        "system_prompt": MANAGER_SYSTEM_INSTRUCTIONS,
+        "system_prompt": "\n\n".join(
+            part
+            for part in (
+                str(config.get("system_prompt") or "").strip(),
+                MANAGER_SYSTEM_INSTRUCTIONS,
+            )
+            if part
+        ),
     }
     from app.services.runner_routing import resolve_group_routing
 
@@ -159,6 +169,9 @@ def _enqueue_ai_leader(
         user_id=user_id,
         selection=runner_selection,
         automatic=automatic,
+        # The group assignment stores the model selection; it must keep working
+        # after an admin hides that model from new selections.
+        allow_hidden_models=True,
     )
     if routes:
         if leader.id not in routes:
@@ -367,6 +380,7 @@ def _manager_user_message(
     project: CloudProject,
     item: LoopItem,
     group: dict[str, Any],
+    execution_prompt: str = "",
 ) -> str:
     project_metadata = (
         project.metadata_json if isinstance(project.metadata_json, dict) else {}
@@ -391,19 +405,20 @@ def _manager_user_message(
         "group_stages": stages if isinstance(stages, list) else [],
         "project_workflow": workflow if isinstance(workflow, dict) else {},
     }
-    return "\n\n".join(
-        [
-            f"Issue: {item.title}",
-            f"Issue description:\n{item.description or ''}",
-            "Project collaboration rules and workflow:\n"
-            + json.dumps(rules, ensure_ascii=False, indent=2),
-            (
-                "Coordinate this Issue with the configured collaboration group. "
-                "Use the Issue status tool only after you have evaluated the "
-                "member results."
-            ),
-        ]
-    )
+    sections = [
+        f"Issue: {item.title}",
+        f"Issue description:\n{item.description or ''}",
+        "Project collaboration rules and workflow:\n"
+        + json.dumps(rules, ensure_ascii=False, indent=2),
+        (
+            "Coordinate this Issue with the configured collaboration group. "
+            "Use the Issue status tool only after you have evaluated the "
+            "member results."
+        ),
+    ]
+    if execution_prompt.strip():
+        sections.append(f"Automation instructions:\n{execution_prompt.strip()}")
+    return "\n\n".join(sections)
 
 
 def _human_leader_instructions(

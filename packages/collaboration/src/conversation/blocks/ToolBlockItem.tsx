@@ -10,10 +10,12 @@ import { usePersistentProcessingExpansion } from './processingExpansionState'
 import {
   ProcessFileChangesBlockItem,
   type FileEditDurationsByBlock,
-  useToolDuration,
+  ToolDurationText,
 } from './ToolFileChanges'
 import { getBlockLabel } from './toolBlockLabels'
 import { renderBlockDetail, hasBlockDetail, getWorkspaceFilePath } from './ToolBlockDetails'
+import { isRuntimeRateLimitWaitBlock } from '@wegent/chat-core/runtime-conversation-turns'
+import { AutomaticRetryStatus } from '../AutomaticRetryStatus'
 
 const RECONNECTING_DISPLAY_DELAY_MS = 10_000
 
@@ -53,7 +55,7 @@ export function ToolBlockItem({
   onOpenAssistantPlan,
   onExpandedChange,
 }: ToolBlockItemProps) {
-  const { t } = useConversationTranslation()
+  const { t, translate } = useConversationTranslation()
   const interactions = useToolInteractionServices()
   const [userExpanded, setUserExpanded] = usePersistentProcessingExpansion(
     stateKey ??
@@ -69,11 +71,6 @@ export function ToolBlockItem({
   const showReconnectingStatus = useDelayedBlockVisibility(
     reconnectingBlockId,
     RECONNECTING_DISPLAY_DELAY_MS
-  )
-  const duration = useToolDuration(
-    durationStartedAt ?? block.createdAt,
-    durationEndAt ?? block.completedAt,
-    isRunning
   )
   const hasDetail = block.type === 'tool' && hasBlockDetail(block)
   const expanded = hasDetail && (forceExpanded || userExpanded)
@@ -125,7 +122,7 @@ export function ToolBlockItem({
         }}
       >
         <summary
-          className="cursor-pointer rounded focus-visible:outline focus-visible:outline-2"
+          className="cursor-pointer rounded keyboard:focus-visible:outline keyboard:focus-visible:outline-2"
           data-testid="auto-approval-review-details"
           aria-expanded={forceExpanded || userExpanded}
         >
@@ -142,6 +139,27 @@ export function ToolBlockItem({
   }
 
   if (block.toolName === 'runtime_reconnecting') {
+    if (block.toolInput?.retry_reason === 'overload') {
+      if (!isRunning) return null
+      return (
+        <AutomaticRetryStatus
+          reason="overload"
+          retryAt={Number(block.toolInput.retry_at) || null}
+          translate={translate}
+        />
+      )
+    }
+    if (isRuntimeRateLimitWaitBlock(block)) {
+      return (
+        <div
+          className="min-w-0 truncate py-1 text-sm text-text-muted"
+          data-testid="runtime-rate-limit-wait-status"
+          role="status"
+        >
+          {t('tool_activity.rate_limit_wait')}
+        </div>
+      )
+    }
     if (!showReconnectingStatus) return null
     const isChatGPTModel = block.toolInput?.model_kind === 'codex-official'
     if (isChatGPTModel) {
@@ -175,27 +193,7 @@ export function ToolBlockItem({
     )
   }
 
-  const { icon, label } = getBlockLabel(block, {
-    waitRunning: t('tool_activity.wait_running'),
-    waitDone: t('tool_activity.wait_done'),
-    waitError: t('tool_activity.wait_error'),
-    callRunning: name => t('tool_activity.call_running', { name }),
-    callDone: name => t('tool_activity.call_done', { name }),
-    callError: name => t('tool_activity.call_error', { name }),
-    fileCount: count => t('tool_activity.file_count', { count }),
-    fileFallback: t('tool_activity.file_fallback'),
-    searchRunning: t('tool_activity.search_running'),
-    searchDone: t('tool_activity.search_done'),
-    searchError: t('tool_activity.search_error'),
-    imageView: filename => t('tool_activity.image_view', { filename }),
-    imageViewFallback: t('tool_activity.image_view_fallback'),
-    imageGenerationRunning: t('tool_activity.image_generation_running'),
-    imageGenerationDone: t('tool_activity.image_generation_done'),
-    imageGenerationError: t('tool_activity.image_generation_error'),
-    javascriptRunning: t('tool_activity.javascript_running'),
-    javascriptDone: t('tool_activity.javascript_done'),
-    javascriptError: t('tool_activity.javascript_error'),
-  })
+  const { icon, label } = getBlockLabel(block, translate)
   const workspaceFilePath = getWorkspaceFilePath(block)
   const labelContent = (
     <>
@@ -214,7 +212,7 @@ export function ToolBlockItem({
   return (
     <div className="min-w-0 overflow-x-clip text-sm" data-processing-block-id={block.id}>
       <div
-        className={`flex w-full max-w-full items-center gap-1.5 text-text-secondary ${compact ? 'min-h-8' : ''}`}
+        className={`flex w-full max-w-full items-center gap-1.5 text-text-muted ${compact ? 'min-h-8' : ''}`}
       >
         {workspaceFilePath && onOpenWorkspaceFile ? (
           <button
@@ -264,7 +262,11 @@ export function ToolBlockItem({
           className="ml-auto shrink-0 pl-2 font-mono text-xs text-text-muted"
           data-testid="tool-block-duration"
         >
-          {duration}
+          <ToolDurationText
+            startedAt={durationStartedAt ?? block.createdAt}
+            fallbackEndAt={durationEndAt ?? block.completedAt}
+            isRunning={isRunning}
+          />
         </span>
       </div>
       {expanded ? (

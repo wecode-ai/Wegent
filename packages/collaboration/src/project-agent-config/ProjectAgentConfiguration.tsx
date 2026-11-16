@@ -3,13 +3,22 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { X } from "lucide-react";
-import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ReactNode,
+} from "react";
 
 import type { CollaborationTranslate } from "../i18n";
 import type { SharedWorkspaceApi } from "../ports/SharedWorkspaceApi";
 import type { CollaborationOwnedAgent, CollaborationProject } from "../types";
 import {
   createResourceAgentBindingInput,
+  isSelectableAgentResource,
   normalizeProjectAgent,
   type ProjectAgentConfigurationRecord,
 } from "./model";
@@ -77,8 +86,7 @@ export function ProjectAgentConfiguration({
     legacySourceAccess?.workspaceId !== workspaceId;
   const usesLocalAgentCreator =
     project.project_store === "local" && Boolean(host?.renderLocalAgentCreator);
-  const usesLocalAgentEditor =
-    project.project_store === "local" && Boolean(host?.renderLocalAgentEditor);
+  const usesProjectAgentEditor = Boolean(host?.renderProjectAgentEditor);
   const supportsAgentCreation =
     canBrowseSources &&
     Boolean(usesLocalAgentCreator || host?.renderAgentCreator);
@@ -94,6 +102,8 @@ export function ProjectAgentConfiguration({
   >([]);
   const [selectedTeamId, setSelectedTeamId] = useState("");
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [loadRevision, setLoadRevision] = useState(0);
   const [candidateLoading, setCandidateLoading] = useState(true);
   const [candidateError, setCandidateError] = useState<string | null>(null);
   const [candidateRevision, setCandidateRevision] = useState(0);
@@ -106,6 +116,25 @@ export function ProjectAgentConfiguration({
   const translateRef = useRef(translate);
   onErrorRef.current = onError;
   translateRef.current = translate;
+
+  const agentScope = useMemo(
+    () => ({ api, projectId: project.id, canManage, scope }),
+    [api, project.id, canManage, scope],
+  );
+  const activeAgentScope = useRef<typeof agentScope | null>(null);
+  const agentRequest = useRef(0);
+  useLayoutEffect(() => {
+    activeAgentScope.current = agentScope;
+    return () => {
+      activeAgentScope.current = null;
+    };
+  }, [agentScope]);
+  const isCurrentAgentRequest = useCallback(
+    (request: number) =>
+      activeAgentScope.current === agentScope &&
+      agentRequest.current === request,
+    [agentScope],
+  );
 
   useEffect(() => {
     if (
@@ -157,20 +186,25 @@ export function ProjectAgentConfiguration({
 
   useEffect(() => {
     setAgents([]);
+  }, [api, project.id, canManage, scope]);
+
+  useEffect(() => {
     setWorkspaceAgents([]);
     setCandidateError(null);
     setSelectedTeamId("");
     setComposerOpen(false);
     setEditingAgentId(null);
     setError(null);
+    setLoadError(null);
     let active = true;
+    const request = ++agentRequest.current;
     setLoading(true);
     void api.agents
       .list(project.id, {
         includeArchived: canManage && scope === "project",
       })
       .then((nextAgents) => {
-        if (!active) return;
+        if (!active || !isCurrentAgentRequest(request)) return;
         setAgents(
           nextAgents
             .map(normalizeProjectAgent)
@@ -178,8 +212,8 @@ export function ProjectAgentConfiguration({
         );
       })
       .catch((cause) => {
-        if (!active) return;
-        setError(
+        if (!active || !isCurrentAgentRequest(request)) return;
+        setLoadError(
           errorMessage(
             cause,
             translateRef.current(
@@ -191,12 +225,12 @@ export function ProjectAgentConfiguration({
         onErrorRef.current();
       })
       .finally(() => {
-        if (active) setLoading(false);
+        if (active && isCurrentAgentRequest(request)) setLoading(false);
       });
     return () => {
       active = false;
     };
-  }, [api, project.id, canManage, scope]);
+  }, [api, project.id, canManage, scope, loadRevision, isCurrentAgentRequest]);
 
   useEffect(() => {
     if (
@@ -228,7 +262,7 @@ export function ProjectAgentConfiguration({
               : agent.location !== "local";
           if (
             matchesLocation &&
-            agent.status === "available" &&
+            isSelectableAgentResource(agent) &&
             (agent.team_id || agent.project_binding_input)
           )
             selectable.set(String(agent.team_id ?? agent.id), agent);
@@ -373,15 +407,27 @@ export function ProjectAgentConfiguration({
     }
   }
 
-  async function reloadAgents() {
-    const nextAgents = await api.agents.list(project.id, {
-      includeArchived: canManage && scope === "project",
-    });
-    setAgents(
-      nextAgents
-        .map(normalizeProjectAgent)
-        .filter((item) => canManage || item.status !== "archived"),
-    );
+  async function reloadAgents(onFailure?: (cause: unknown) => void) {
+    if (activeAgentScope.current !== agentScope) return;
+    const request = ++agentRequest.current;
+    try {
+      const nextAgents = await api.agents.list(project.id, {
+        includeArchived: canManage && scope === "project",
+      });
+      if (!isCurrentAgentRequest(request)) return;
+      setLoadError(null);
+      setAgents(
+        nextAgents
+          .map(normalizeProjectAgent)
+          .filter((item) => canManage || item.status !== "archived"),
+      );
+    } catch (cause) {
+      if (!isCurrentAgentRequest(request)) return;
+      if (onFailure) onFailure(cause);
+      else throw cause;
+    } finally {
+      if (isCurrentAgentRequest(request)) setLoading(false);
+    }
   }
 
   async function finishLocalAgentCreation() {
@@ -429,6 +475,24 @@ export function ProjectAgentConfiguration({
     }
   }
 
+  async function finishAgentEdit() {
+    if (activeAgentScope.current !== agentScope) return;
+    setEditingAgentId(null);
+    onAgentsChange?.();
+    await reloadAgents((cause) => {
+      setLoadError(
+        errorMessage(
+          cause,
+          translate(
+            "todo.load_project_agents_failed",
+            "加载项目智能体配置失败",
+          ),
+        ),
+      );
+      onError();
+    });
+  }
+
   async function saveEditedAgent(saved: { name: string; teamId: number }) {
     const agent = editingAgent;
     if (!agent) return;
@@ -442,9 +506,7 @@ export function ProjectAgentConfiguration({
           ...(saved.name ? { name: saved.name } : {}),
         });
       }
-      await reloadAgents();
-      setEditingAgentId(null);
-      onAgentsChange?.();
+      await finishAgentEdit();
     } catch (cause) {
       setError(
         errorMessage(
@@ -462,7 +524,7 @@ export function ProjectAgentConfiguration({
     scope === "workspace"
       ? translate(
           "todo.agent_picker_workspace_description",
-          "选择一个智能体，供空间内项目复用。",
+          "选择一个智能体，供分组内项目复用。",
         )
       : translate(
           "todo.agent_picker_description",
@@ -529,10 +591,7 @@ export function ProjectAgentConfiguration({
     name: project.name ?? "",
     namespace: project.namespace ?? "default",
   };
-  const localAgentProjectId = scope === "project" ? project.id : undefined;
-  const canEditAgentResource = Boolean(
-    host?.renderLocalAgentEditor || host?.renderAgentEditor,
-  );
+  const agentProjectId = scope === "project" ? project.id : undefined;
 
   function renderCustomAgentCreator() {
     if (mode !== "create") return null;
@@ -544,7 +603,7 @@ export function ProjectAgentConfiguration({
       return host.renderLocalAgentCreator({
         onClose,
         onCreated: finishLocalAgentCreation,
-        projectId: localAgentProjectId,
+        projectId: agentProjectId,
       });
     }
     return host?.renderAgentCreator?.({
@@ -562,20 +621,25 @@ export function ProjectAgentConfiguration({
     <section className={styles.section} data-testid="project-agent-config">
       <div className={styles.header}>
         <div>
-          <h2 className={styles.title}>
-            {scope === "workspace"
-              ? translate("todo.workspace_agents", "空间智能体")
-              : translate("todo.project_agents", "项目智能体")}
-          </h2>
+          <div className={styles.titleRow}>
+            <h2 className={styles.title}>
+              {scope === "workspace"
+                ? translate("todo.workspace_agents", "分组智能体")
+                : translate("todo.project_agents", "项目智能体")}
+            </h2>
+            {!loading && !loadError ? (
+              <span className={styles.count}>{agents.length}</span>
+            ) : null}
+          </div>
           <p className={styles.description}>
             {scope === "workspace"
               ? translate(
                   "todo.workspace_agents_description",
-                  "管理空间共享智能体，空间内项目可以直接复用。",
+                  "管理分组共享智能体，分组内项目可以直接复用。",
                 )
               : translate(
                   "todo.project_agents_description",
-                  "直接管理这个项目的智能体；既可使用我的智能体，也可复用空间共享的智能体。",
+                  "直接管理这个项目的智能体；既可使用我的智能体，也可复用分组共享的智能体。",
                 )}
           </p>
         </div>
@@ -583,7 +647,7 @@ export function ProjectAgentConfiguration({
           <button
             className={styles.addButton}
             data-testid="project-agent-add"
-            disabled={loading}
+            disabled={loading || loadError !== null}
             onClick={() => {
               setMode(defaultMode);
               setSelectedTeamId("");
@@ -599,20 +663,29 @@ export function ProjectAgentConfiguration({
         ) : null}
       </div>
 
-      {loading ? (
+      {loadError ? (
+        <div
+          role="alert"
+          className={styles.error}
+          data-testid="project-agent-config-error"
+        >
+          {loadError}
+          <button
+            type="button"
+            className={styles.retryButton}
+            data-testid="project-agent-config-retry"
+            onClick={() => setLoadRevision((value) => value + 1)}
+          >
+            {translate("common.retry", "重试")}
+          </button>
+        </div>
+      ) : null}
+      {loading && agents.length === 0 ? (
         <p className={styles.empty} data-testid="project-agent-config-loading">
           {translate("common.loading", "加载中…")}
         </p>
-      ) : (
+      ) : !loadError || agents.length > 0 ? (
         <>
-          <div className={styles.sectionHeading}>
-            <h3>
-              {scope === "workspace"
-                ? translate("todo.configured_workspace_agents", "已添加智能体")
-                : translate("todo.configured_project_agents", "已配置智能体")}
-            </h3>
-            <span>{agents.length}</span>
-          </div>
           {agents.length ? (
             <div className={styles.list} data-testid="project-agent-list">
               {agents.map((agent) => (
@@ -674,7 +747,7 @@ export function ProjectAgentConfiguration({
                       {agent.unavailableReason === "resource_sharing_required"
                         ? translate(
                             "todo.agent_resource_sharing_required",
-                            "需要资源所有者共享到空间",
+                            "需要资源所有者共享到分组",
                           )
                         : agent.unavailableReason ===
                             "private_binding_requires_explicit_share"
@@ -701,7 +774,7 @@ export function ProjectAgentConfiguration({
                                 status: "active",
                                 shareWithWorkspace: true,
                               })
-                              .then(reloadAgents)
+                              .then(() => reloadAgents())
                               .then(() => onAgentsChange?.())
                               .catch((cause) => {
                                 setError(
@@ -724,11 +797,11 @@ export function ProjectAgentConfiguration({
                           )}
                         </button>
                       ) : null}
-                      {canEditAgentResource &&
-                      agent.canEdit &&
+                      {agent.canEdit &&
                       ((agent.definitionSource === "project" &&
-                        usesLocalAgentEditor) ||
+                        usesProjectAgentEditor) ||
                         (agent.definitionSource === "shared_agent" &&
+                          host?.renderAgentEditor &&
                           agent.wegentTeamId !== null)) ? (
                         <button
                           className={styles.archiveButton}
@@ -753,7 +826,7 @@ export function ProjectAgentConfiguration({
                             : scope === "workspace"
                               ? translate(
                                   "todo.remove_workspace_agent",
-                                  "移出空间",
+                                  "移出分组",
                                 )
                               : translate("todo.archive_project_agent", "停用")}
                         </button>
@@ -770,7 +843,7 @@ export function ProjectAgentConfiguration({
                   ? "todo.no_workspace_agents"
                   : "todo.no_project_agents",
                 scope === "workspace"
-                  ? "当前空间还没有智能体。"
+                  ? "当前分组还没有智能体。"
                   : "当前项目还没有智能体。",
               )}
             </p>
@@ -808,17 +881,13 @@ export function ProjectAgentConfiguration({
 
           {editingAgent &&
           editingAgent.definitionSource === "project" &&
-          usesLocalAgentEditor &&
-          host?.renderLocalAgentEditor
-            ? host.renderLocalAgentEditor({
-                projectId: localAgentProjectId,
+          usesProjectAgentEditor &&
+          host?.renderProjectAgentEditor
+            ? host.renderProjectAgentEditor({
+                projectId: agentProjectId,
                 resourceId: editingAgent.id,
                 onClose: () => setEditingAgentId(null),
-                onSaved: async () => {
-                  await reloadAgents();
-                  setEditingAgentId(null);
-                  onAgentsChange?.();
-                },
+                onSaved: finishAgentEdit,
               })
             : editingAgent &&
                 editingAgent.definitionSource === "shared_agent" &&
@@ -835,7 +904,7 @@ export function ProjectAgentConfiguration({
                 })
               : null}
         </>
-      )}
+      ) : null}
       {error && !composerOpen ? (
         <p className={styles.error} data-testid="project-agent-config-error">
           {error}

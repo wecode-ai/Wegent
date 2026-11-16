@@ -5,6 +5,7 @@
 """Authenticated project TODO and delivery endpoints."""
 
 import logging
+from typing import Literal
 
 from fastapi import (
     APIRouter,
@@ -17,10 +18,12 @@ from fastapi import (
     UploadFile,
     status,
 )
+from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import Response
 from sqlalchemy.orm import Session
 
 from app.api.dependencies import get_db
+from app.api.endpoints.adapter.attachments import _build_content_disposition
 from app.core.config import settings
 from app.core.security import (
     get_current_user,
@@ -67,7 +70,6 @@ from app.schemas.delivery import (
 from app.schemas.issue_assignment import (
     IssueAssignmentCreate,
     IssueAssignmentCreateResponse,
-    IssueAssignmentListResponse,
     IssueAssignmentResponse,
 )
 from app.schemas.project_chat import LoopItemAssign
@@ -75,12 +77,12 @@ from app.schemas.project_incoming_hook import (
     ChangeRequestBindingInput,
     ChangeRequestBindingView,
 )
-from app.services.cloud_projects import cloud_project_service
 from app.services.cloud_projects.access import (
     IssueAction,
     require_cloud_project_role,
     require_issue_action,
 )
+from app.services.cloud_projects.service import cloud_project_service
 from app.services.delivery import delivery_service
 from app.services.issue_assignments import issue_assignment_service
 from app.services.loop_item_events import publish_loop_item_changed
@@ -171,6 +173,8 @@ def _delivery_response(db: Session, delivery: Delivery) -> DeliveryResponse:
     return DeliveryResponse.model_validate(
         {
             "id": delivery.id,
+            "title": delivery.title or "",
+            "version": delivery.version,
             "loop_item_id": delivery.loop_item_id,
             "created_by_user_id": delivery.created_by_user_id,
             "source_task_binding_id": delivery.source_task_binding_id,
@@ -187,12 +191,31 @@ def _delivery_response(db: Session, delivery: Delivery) -> DeliveryResponse:
 @router.get("/cloud-work-items/my-work", response_model=MyWorkListResponse)
 def list_my_work(
     limit: int = Query(default=MY_WORK_ITEM_LIMIT, ge=1, le=MY_WORK_ITEM_LIMIT),
+    cursor: str | None = Query(default=None, max_length=2048),
+    scope: Literal["assigned", "created", "participating"] = Query(
+        default="participating"
+    ),
+    include_completed: bool = Query(default=True),
+    order: Literal["recent", "attention", "activity", "assignment", "priority"] = Query(
+        default="recent"
+    ),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ) -> MyWorkListResponse:
-    items = loop_item_service.list_my_work(db, current_user.id, limit=limit)
+    items, next_cursor = loop_item_service.list_my_work_page(
+        db,
+        current_user.id,
+        limit=limit,
+        cursor=cursor,
+        assigned_only=scope == "assigned",
+        created_only=scope == "created",
+        include_completed=include_completed,
+        attention=order == "attention",
+        order=order,
+    )
     return MyWorkListResponse(
-        items=[MyWorkItemResponse.model_validate(item) for item in items]
+        items=[MyWorkItemResponse.model_validate(item) for item in items],
+        next_cursor=next_cursor,
     )
 
 
@@ -406,7 +429,10 @@ async def create_loop_item(
             requested_id=values.automation_rule_id,
         )
 
-    created = loop_item_provider_router.create(db, project, current_user, values)
+    # Lock waits must leave the event loop free to finish other transactions.
+    created = await run_in_threadpool(
+        loop_item_provider_router.create, db, project, current_user, values
+    )
     response = LoopItemResponse.model_validate(created.values)
 
     try:
@@ -502,6 +528,7 @@ def mark_loop_item_read(
         item_id,
         current_user.id,
         activity_sequence=values.activity_sequence if values else None,
+        observed_content_revision=values.content_revision if values else None,
     )
     return _loop_item_response(db, item, current_user)
 
@@ -546,7 +573,7 @@ async def update_loop_item(
     )
     status_changed = requested_status != previous_status
     entered_processing = status_changed and requested_transition.entered_processing
-    if entered_processing:
+    if status_changed:
         event_payload = _loop_item_response(
             db,
             existing,
@@ -600,7 +627,50 @@ async def update_loop_item(
             bound_rule_id="",
         )
 
-    item = loop_item_service.update(db, item_id, current_user.id, values)
+    refresh_execution = bool(
+        existing.assignee_agent_id
+        and (
+            "assignee_agent_id" not in values.model_fields_set
+            or values.assignee_agent_id == existing.assignee_agent_id
+        )
+        and not values.assignee_group_id
+        and ("execution_config" in values.model_fields_set or entered_processing)
+    )
+    status_event = None
+    try:
+        item = loop_item_service.update(
+            db,
+            item_id,
+            current_user.id,
+            values,
+            commit=False,
+            emit_status_event=not status_changed,
+        )
+        if refresh_execution and item.assignee_agent_id:
+            item = loop_item_service.refresh_agent_execution_configuration(
+                db,
+                item=item,
+                user_id=current_user.id,
+                commit=False,
+            )
+        if status_changed:
+            from app.services.project_internal_events import queue_issue_status_changed
+
+            status_event = queue_issue_status_changed(
+                db,
+                item=item,
+                previous_status=previous_status,
+                actor_user_id=current_user.id,
+                automation_id=selected_status_automation_id,
+                payload=_loop_item_response(db, item, current_user).model_dump(
+                    mode="json"
+                ),
+            )
+        db.commit()
+        db.refresh(item)
+    except Exception:
+        db.rollback()
+        raise
     queue_wakeup_scheduled = False
     if (item.assignee_agent_id and "assignee_agent_id" in values.model_fields_set) or (
         "assignee_group_id" in values.model_fields_set
@@ -613,11 +683,6 @@ async def update_loop_item(
     elif item.assignee_agent_id and (
         "execution_config" in values.model_fields_set or entered_processing
     ):
-        item = loop_item_service.refresh_agent_execution_configuration(
-            db,
-            item=item,
-            user_id=current_user.id,
-        )
         from app.tasks.robot_queue_tasks import consume_queues_background
 
         background_tasks.add_task(consume_queues_background)
@@ -626,25 +691,9 @@ async def update_loop_item(
         from app.tasks.robot_queue_tasks import consume_queues_background
 
         background_tasks.add_task(consume_queues_background)
-    if status_changed:
+    if status_event is not None:
         try:
-            await project_incoming_hook_service.ingest_internal(
-                db,
-                ProjectAutomationEvent(
-                    event_type="task.status_changed",
-                    project_id=str(item.cloud_project_id),
-                    subject_id=str(item.id),
-                    source="board",
-                    actor_user_id=current_user.id,
-                    payload={
-                        **_loop_item_response(db, item, current_user).model_dump(
-                            mode="json"
-                        ),
-                        "previous_status": previous_status,
-                    },
-                ),
-                automation_id=selected_status_automation_id,
-            )
+            await project_incoming_hook_service.process_event(db, str(status_event.id))
             db.refresh(item)
         except Exception:
             db.rollback()
@@ -828,39 +877,6 @@ def list_loop_item_comments(
         LoopItemCommentResponse.model_validate(comment)
         for comment in loop_item_service.list_comments(db, item_id, current_user.id)
     ]
-
-
-# MIGRATION-CANDIDATE(api="GET /api/v1/loop-items/*/assignments"): remove after final confirmation.
-# @router.get(
-#     "/loop-items/{item_id}/assignments",
-#     response_model=IssueAssignmentListResponse,
-# )
-def list_issue_assignments(
-    item_id: str,
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user_jwt_apikey_tasktoken),
-) -> IssueAssignmentListResponse:
-    if external_loop_item_provider.is_external_item(db, item_id):
-        external_loop_item_provider.ensure_shadow(db, item_id, current_user.id)
-    project, _ = issue_assignment_service.project_for_issue(
-        db,
-        issue_id=item_id,
-        user_id=current_user.id,
-    )
-    rows = issue_assignment_service.list(
-        db,
-        project_id=int(project.id),
-        issue_id=item_id,
-        user_id=current_user.id,
-    )
-    return IssueAssignmentListResponse(
-        items=[
-            IssueAssignmentResponse.model_validate(
-                issue_assignment_service.response_values(db, row)
-            )
-            for row in rows
-        ]
-    )
 
 
 @router.post(
@@ -1157,7 +1173,7 @@ def read_loop_item_attachment(
     return Response(
         content=content,
         media_type=content_type,
-        headers={"Content-Disposition": f'inline; filename="{filename}"'},
+        headers={"Content-Disposition": _build_content_disposition(filename, "inline")},
     )
 
 
@@ -1170,21 +1186,6 @@ def delete_loop_item_attachment(
     current_user: User = Depends(get_current_user_jwt_apikey_tasktoken),
 ) -> None:
     loop_item_attachment_provider_router.delete(db, attachment_id, current_user.id)
-
-
-# MIGRATION-CANDIDATE(api="GET /api/v1/loop-items/*/tasks"): remove after final confirmation.
-# @router.get(
-#     "/loop-items/{item_id}/tasks",
-#     response_model=list[LoopItemTaskBindingResponse],
-# )
-def list_loop_item_tasks(
-    item_id: str,
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user_jwt_apikey_tasktoken),
-) -> list[LoopItemTaskBindingResponse]:
-    external_loop_item_provider.ensure_shadow(db, item_id, current_user.id)
-    bindings = loop_item_service.list_task_bindings(db, item_id, current_user.id)
-    return [LoopItemTaskBindingResponse.model_validate(binding) for binding in bindings]
 
 
 @router.delete(
@@ -1306,7 +1307,7 @@ def read_delivery_asset(
     return Response(
         content=content,
         media_type=content_type,
-        headers={"Content-Disposition": f'inline; filename="{filename}"'},
+        headers={"Content-Disposition": _build_content_disposition(filename, "inline")},
     )
 
 

@@ -1,3 +1,5 @@
+// @vitest-environment node
+
 import { EventEmitter } from 'node:events'
 import { mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
@@ -19,22 +21,7 @@ import {
   resolveStartupTimeout,
   startupFailureMessage,
   validateStartOptions,
-  takeWindowCommand,
 } from './ai-verify.mjs'
-
-describe('takeWindowCommand', () => {
-  test('keeps commands isolated between main and detached clients', () => {
-    const main = { id: 'main-command', windowLabel: 'main' }
-    const detached = { id: 'detached-command', windowLabel: 'workspace-task' }
-    const queue = [main, detached]
-    expect(takeWindowCommand(queue, undefined)).toBeNull()
-    expect(takeWindowCommand(queue, 'workspace-task')).toBe(detached)
-    expect(queue).toEqual([main])
-    expect(takeWindowCommand(queue, 'workspace-task')).toBeNull()
-    expect(takeWindowCommand(queue, 'main')).toBe(main)
-    expect(queue).toEqual([])
-  })
-})
 
 describe('AI_VERIFY_ACTIONS', () => {
   test('preserves the complete legacy command surface', () => {
@@ -74,11 +61,13 @@ describe('AI_VERIFY_ACTIONS', () => {
       'dismiss-popout': 'dismissPopoutWindow',
       drag: 'drag',
       'drop-file': 'dropFile',
+      'select-file': 'selectFile',
       'drop-paths': 'dropPaths',
       fill: 'fill',
       'get-attribute': 'getAttribute',
       hover: 'hover',
       metrics: 'getElementMetrics',
+      wheel: 'wheel',
       navigate: 'navigate',
       'paste-paths': 'pastePaths',
       'paste-text': 'pasteText',
@@ -94,6 +83,7 @@ describe('AI_VERIFY_ACTIONS', () => {
       'verify-browser-inspector': 'verifyEmbeddedBrowserDetachedInspector',
       'wait-for': 'waitFor',
       'window-focus-snapshot': 'getWindowFocusSnapshot',
+      'window-size': 'setMainWindowSize',
       text: 'getText',
       value: 'getValue',
     })
@@ -322,6 +312,27 @@ describe('validateStartOptions', () => {
       })
     ).not.toThrow()
   })
+
+  test('preserves an explicit existing profile device only with an explicit home', () => {
+    expect(() => validateStartOptions({ 'device-id': 'electron-existing-device' })).toThrow(
+      '--device-id requires --executor-home'
+    )
+    expect(() =>
+      validateStartOptions({
+        'device-id': 'electron-existing-device',
+        'executor-home': '/tmp/home',
+      })
+    ).not.toThrow()
+  })
+
+  test.each(['', ' device', '../device', 'device.with.dots'])(
+    'rejects invalid device ID %s',
+    id => {
+      expect(() => validateStartOptions({ 'device-id': id, 'executor-home': '/tmp/home' })).toThrow(
+        '--device-id must be a valid nonempty device identifier'
+      )
+    }
+  )
 
   test.each(['', '   ', 'relative/executor-home'])('rejects invalid executor home %s', path => {
     expect(() => validateStartOptions({ 'executor-home': path })).toThrow(

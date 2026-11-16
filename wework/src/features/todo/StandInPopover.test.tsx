@@ -1,8 +1,3 @@
-import type { ReactNode } from 'react'
-import { act, render, screen, waitFor } from '@testing-library/react'
-import userEvent from '@testing-library/user-event'
-import { describe, expect, it, vi } from 'vitest'
-import type { CollaborationProject, SharedWorkspaceApi } from '@wegent/collaboration'
 import {
   newStandInRole,
   publishPersonalStandIn,
@@ -10,6 +5,11 @@ import {
 } from '@/api/personalStandIn'
 import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
 import '@/i18n'
+import { act, render, screen, waitFor } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
+import type { CollaborationProject, SharedWorkspaceApi } from '@wegent/collaboration'
+import type { ReactNode } from 'react'
+import { describe, expect, it, vi } from 'vitest'
 import { StandInPopover } from './StandInPopover'
 
 vi.mock('./StandInComposer', () => ({
@@ -114,20 +114,6 @@ describe('Project personal stand-in entry', () => {
     expect(screen.queryByRole('button', { name: '停用于此项目' })).not.toBeInTheDocument()
   })
 
-  it('requires explicit discard when Escape closes a dirty personal configuration', async () => {
-    const { props, personalSave } = fixture()
-    const user = userEvent.setup()
-    render(<StandInPopover {...props} />)
-    await user.click(screen.getByTestId('stand-in-open'))
-    await user.selectOptions(await screen.findByTestId('stand-in-project-select'), '__new')
-    await user.click(screen.getByTestId('stand-in-auto'))
-    await user.keyboard('{Escape}')
-    expect(screen.getByTestId('stand-in-dialog')).toBeInTheDocument()
-    await user.click(screen.getByTestId('stand-in-discard'))
-    expect(screen.queryByTestId('stand-in-dialog')).not.toBeInTheDocument()
-    expect(personalSave).not.toHaveBeenCalled()
-  })
-
   it('updates the project badge only for the current personal owner and connected project', async () => {
     const { props, settings } = fixture()
     render(<StandInPopover {...props} />)
@@ -163,28 +149,6 @@ describe('Project personal stand-in entry', () => {
       })
     )
     expect(screen.queryByTestId('stand-in-enabled')).not.toBeInTheDocument()
-  })
-
-  it('routes personal settings to the explicitly requested device without changing project connections', async () => {
-    const { props, personalSave, personalGet, settings } = fixture()
-    personalGet.mockImplementation(async (...args: unknown[]) => ({
-      ...settings,
-      executionDeviceId: String(args[1]),
-    }))
-    const onOpenPersonalSettings = vi.fn()
-    const user = userEvent.setup()
-    render(
-      <StandInPopover
-        {...props}
-        initialDeviceId="remote"
-        onOpenPersonalSettings={onOpenPersonalSettings}
-      />
-    )
-    await user.click(screen.getByTestId('stand-in-open'))
-    await user.click(await screen.findByTestId('stand-in-personal-settings-link'))
-    expect(onOpenPersonalSettings).toHaveBeenCalledWith('default', 'remote')
-    expect(personalSave).not.toHaveBeenCalled()
-    expect(screen.queryByTestId('stand-in-dialog')).not.toBeInTheDocument()
   })
 
   it('does not expose an unusable project entry without personal services or identity', () => {

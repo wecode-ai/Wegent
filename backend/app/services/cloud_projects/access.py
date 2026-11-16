@@ -50,6 +50,7 @@ ISSUE_CONTENT_FIELDS = frozenset(
         "due_at",
         "parent_id",
         "tags",
+        "milestone_id",
         "workflow",
         "execution_config",
     }

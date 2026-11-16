@@ -50,7 +50,6 @@ def test_cached_public_bot_summary_preserves_model_restrictions() -> None:
         bot=bot,
         user_id=7,
         shells_cache={},
-        public_shells_cache={},
         models_cache={},
         public_models_cache={model.name: model},
     )

@@ -6,7 +6,7 @@ import type {
   PluginMarketplaceListResponse,
 } from '@/types/api'
 import {
-  beginPluginDeviceSync,
+  acquirePluginDeviceSync,
   marketplaceNeedsDeviceSync,
 } from '@/features/plugins/pluginDeviceAutoSync'
 
@@ -42,7 +42,9 @@ interface PluginAutoUpdateDependencies {
 }
 
 interface CurrentDevicePluginAutoUpdateDependencies {
-  listLocalInstalledPlugins: () => Promise<{ deviceId?: string }>
+  localSync?: boolean
+  signal?: AbortSignal
+  listLocalInstalledPlugins: () => Promise<{ deviceId?: string; partial?: boolean }>
   listMarketplacePlugins: (deviceId: string) => Promise<PluginMarketplaceListResponse>
   updateBatch: () => Promise<PluginAutoUpdateBatchResponse>
   syncPlugin: (deviceId: string, installedPluginId: number) => Promise<PluginDeviceSyncResponse>
@@ -148,15 +150,23 @@ async function runPluginAutoUpdatePass({
 
     for (const [index, item] of batch.updated.entries()) {
       processedCount += 1
+      const installedPluginId =
+        Number.isSafeInteger(item?.installedPluginId) && item.installedPluginId > 0
+          ? item.installedPluginId
+          : 0
+      const version = typeof item?.version === 'string' ? item.version : ''
       try {
-        const failure = pluginSyncFailure(item, await syncPlugin(item.installedPluginId))
+        if (!installedPluginId || !version.trim()) {
+          throw new Error('Invalid plugin auto-update item')
+        }
+        const failure = pluginSyncFailure(item, await syncPlugin(installedPluginId))
         if (failure) failures.push(failure)
         else updatedCount += 1
       } catch (error) {
         failures.push({
-          installedPluginId: item.installedPluginId,
-          pluginName: `Plugin ${item.installedPluginId}`,
-          version: item.version,
+          installedPluginId,
+          pluginName: installedPluginId ? `Plugin ${installedPluginId}` : 'Invalid plugin update',
+          version,
           stage: null,
           errorCode: null,
           message: errorMessage(error),
@@ -184,20 +194,29 @@ async function runPluginAutoUpdatePass({
  * sync even after the account installation already advanced.
  */
 export async function runCurrentDevicePluginAutoUpdate({
+  localSync = false,
+  signal,
   listLocalInstalledPlugins,
   listMarketplacePlugins,
   updateBatch,
   syncPlugin,
   syncDevice,
 }: CurrentDevicePluginAutoUpdateDependencies): Promise<CurrentDevicePluginAutoUpdateResult | null> {
-  const local = await listLocalInstalledPlugins()
+  const local: { deviceId?: string; partial?: boolean } = localSync
+    ? {}
+    : await listLocalInstalledPlugins()
   const deviceId = local.deviceId?.trim() ?? ''
-  if (!deviceId) return null
+  if (!localSync && !deviceId) return null
 
-  const finishDeviceSync = beginPluginDeviceSync(deviceId)
-  if (!finishDeviceSync) return null
+  // The Native coordinator serializes account-scoped HTTP execution itself.
+  const finishDeviceSync = localSync
+    ? () => undefined
+    : await acquirePluginDeviceSync(deviceId, signal, 'auto-update')
 
   try {
+    if (local.partial) {
+      throw new Error('Plugin auto-update requires a complete local plugin inventory')
+    }
     const marketplace = await listMarketplacePlugins(deviceId).catch(() => null)
     let deviceSyncPerformed = false
     const updateResult = await runPluginAutoUpdate({

@@ -14,6 +14,7 @@ import {
 import { runtimeProjectToProject, runtimeProjectUiId } from '@/lib/runtime-project'
 import { isAbsoluteWorkspacePath } from '@/lib/workspace-paths'
 import {
+  isAbsoluteWorkspacePath as isAbsoluteFilePath,
   normalizeAbsoluteWorkspacePath,
   splitAbsoluteWorkspaceFilePath,
 } from '@/lib/workspace-file-contract'
@@ -55,9 +56,15 @@ export interface RuntimeTaskSource {
 export function createLocalFileWorkspaceTarget(
   filePath: string,
   devices: DeviceInfo[],
-  options: { workspaceTargets?: WorkspaceTarget[]; isDirectory?: boolean } = {}
+  options: {
+    workspaceTargets?: WorkspaceTarget[]
+    isDirectory?: boolean
+    pathStyleSource?: string
+  } = {}
 ): WorkspaceTarget | null {
-  if (!isAbsoluteWorkspacePath(filePath.trim().replace(/\\/g, '/'))) return null
+  const trimmedPath = filePath.trim()
+  if (!isAbsoluteWorkspacePath(trimmedPath) && !trimmedPath.startsWith('\\\\')) return null
+  if (!isAbsoluteFilePath(trimmedPath, options.pathStyleSource)) return null
   const normalizedPath = normalizeAbsoluteWorkspacePath(
     filePath,
     'Workspace file path must be absolute'

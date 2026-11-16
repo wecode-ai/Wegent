@@ -11,6 +11,7 @@ export interface ComposerCatalogBinding {
   catalogEvents: ComposerCatalogEvents
   listApps?: () => Promise<LocalDeviceApp[]>
   listSkills?: () => Promise<LocalDeviceSkill[]>
+  openMarketplace?: () => void
 }
 
 export const ComposerCatalogContext = createContext<ComposerCatalogBinding>({

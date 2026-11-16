@@ -1,12 +1,14 @@
-import { act, renderHook, waitFor } from '@testing-library/react'
-import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { CloudLoopItem } from '@/api/deliveries'
-import type { RuntimeTaskAddress, RuntimeTaskSummary, RuntimeTranscriptResponse } from '@/types/api'
 import {
+  applyRuntimeConversationAction,
   clearRuntimeConversationCacheForTests,
+  getRuntimeConversationMessages,
   getRuntimeConversationTurns,
   replaceRuntimeConversationSnapshot,
 } from '@/features/workbench/runtimeConversationCache'
+import type { RuntimeTaskAddress, RuntimeTaskSummary, RuntimeTranscriptResponse } from '@/types/api'
+import { act, renderHook, waitFor } from '@testing-library/react'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
   useBoardRuntimeConversations,
   type UseBoardRuntimeConversationsOptions,
@@ -84,58 +86,6 @@ describe('useBoardRuntimeConversations', () => {
     vi.restoreAllMocks()
   })
 
-  it('restores a cold review conversation using its binding context without a sidebar task', async () => {
-    const getRuntimeTranscript = vi.fn().mockResolvedValue(transcript('completed-reply'))
-
-    renderHook(() => useBoardRuntimeConversations(options(getRuntimeTranscript)))
-
-    expect(getRuntimeTranscript).toHaveBeenCalledExactlyOnceWith({
-      ...address,
-      limit: 20,
-      includeFullContent: true,
-    })
-    await waitFor(() =>
-      expect(getRuntimeConversationTurns(address).map(turn => turn.id)).toEqual(['completed-reply'])
-    )
-  })
-
-  it('waits for the board to become active and ignores settled Issues outside review', () => {
-    const getRuntimeTranscript = vi.fn().mockResolvedValue(transcript('completed-reply'))
-    const { rerender } = renderHook(props => useBoardRuntimeConversations(props), {
-      initialProps: options(getRuntimeTranscript, { enabled: false }),
-    })
-    expect(getRuntimeTranscript).not.toHaveBeenCalled()
-
-    rerender(
-      options(getRuntimeTranscript, {
-        item: { ...reviewItem, status: 'completed' },
-      })
-    )
-    expect(getRuntimeTranscript).not.toHaveBeenCalled()
-
-    rerender(options(getRuntimeTranscript))
-    expect(getRuntimeTranscript).toHaveBeenCalledOnce()
-  })
-
-  it('loads an active execution and requests bounded content while it is running', () => {
-    const getRuntimeTranscript = vi.fn().mockResolvedValue(transcript('running-reply', false))
-
-    renderHook(() =>
-      useBoardRuntimeConversations(
-        options(getRuntimeTranscript, {
-          item: { ...reviewItem, status: 'in_progress', execution_state: 'running' },
-          conversations: [{ address, task: { ...task(1), running: true } }],
-        })
-      )
-    )
-
-    expect(getRuntimeTranscript).toHaveBeenCalledExactlyOnceWith({
-      ...address,
-      limit: 20,
-      includeFullContent: false,
-    })
-  })
-
   it('attempts a failed signature once and reloads when task metadata changes', async () => {
     vi.spyOn(console, 'warn').mockImplementation(() => undefined)
     const getRuntimeTranscript = vi.fn().mockRejectedValue(new Error('thread not loaded'))
@@ -150,26 +100,6 @@ describe('useBoardRuntimeConversations', () => {
 
     rerender({ ...props, conversations: [{ address, task: task(2) }] })
     await waitFor(() => expect(getRuntimeTranscript).toHaveBeenCalledTimes(2))
-  })
-
-  it('loads newly available binding context without requiring sidebar metadata', async () => {
-    const getRuntimeTranscript = vi.fn().mockResolvedValue(transcript('completed-reply'))
-    const props = options(getRuntimeTranscript, {
-      conversations: [{ address: { deviceId: address.deviceId, taskId: address.taskId } }],
-    })
-    const { rerender } = renderHook(value => useBoardRuntimeConversations(value), {
-      initialProps: props,
-    })
-    await waitFor(() => expect(getRuntimeTranscript).toHaveBeenCalledOnce())
-
-    rerender(options(getRuntimeTranscript))
-
-    expect(getRuntimeTranscript).toHaveBeenLastCalledWith({
-      ...address,
-      limit: 20,
-      includeFullContent: true,
-    })
-    expect(getRuntimeTranscript).toHaveBeenCalledTimes(2)
   })
 
   it('rejects a stale preload after a newer response has been applied', async () => {
@@ -227,29 +157,66 @@ describe('useBoardRuntimeConversations', () => {
     expect(getRuntimeConversationTurns(address).map(turn => turn.id)).toEqual(['current-reply'])
   })
 
-  it('replaces cached turns with a full idle transcript', async () => {
-    replaceRuntimeConversationSnapshot(address, transcript('obsolete-reply').turns)
-    const getRuntimeTranscript = vi.fn().mockResolvedValue(transcript('current-reply'))
+  it.each(['pending', 'streaming'] as const)(
+    'keeps a %s follow-up when an older full idle board preload returns',
+    async status => {
+      const completed = transcript('completed-reply')
+      completed.turns[0].position = 1
+      replaceRuntimeConversationSnapshot(address, completed.turns)
+      const preload = deferredTranscript()
+      const getRuntimeTranscript = vi.fn().mockReturnValue(preload.promise)
+      renderHook(() => useBoardRuntimeConversations(options(getRuntimeTranscript)))
+      expect(getRuntimeTranscript).toHaveBeenCalledOnce()
 
-    renderHook(() => useBoardRuntimeConversations(options(getRuntimeTranscript)))
-
-    await waitFor(() =>
-      expect(getRuntimeConversationTurns(address).map(turn => turn.id)).toEqual(['current-reply'])
-    )
-  })
-
-  it('preserves older turns when the preload transcript is bounded', async () => {
-    replaceRuntimeConversationSnapshot(address, transcript('older-reply').turns)
-    const getRuntimeTranscript = vi.fn().mockResolvedValue(transcript('newer-reply', false))
-
-    renderHook(() => useBoardRuntimeConversations(options(getRuntimeTranscript)))
-
-    await waitFor(() => {
-      const turns = getRuntimeConversationTurns(address)
-      expect(turns).toHaveLength(2)
-      expect(turns.map(turn => turn.id)).toEqual(
-        expect.arrayContaining(['older-reply', 'newer-reply'])
+      act(() => {
+        applyRuntimeConversationAction(address, {
+          type: 'user_added',
+          message: { id: 'follow-up', role: 'user', content: 'New question', status: 'done' },
+        })
+        if (status === 'pending') return
+        applyRuntimeConversationAction(address, {
+          type: 'assistant_started',
+          subtaskId: 'live-turn',
+          clientUserMessageId: 'follow-up',
+        })
+        applyRuntimeConversationAction(address, {
+          type: 'assistant_chunk',
+          subtaskId: 'live-turn',
+          itemId: 'live-text',
+          content: 'Visible live reply',
+        })
+        if (status === 'done')
+          applyRuntimeConversationAction(address, {
+            type: 'assistant_done',
+            subtaskId: 'live-turn',
+          })
+      })
+      const expectedContent = [
+        'completed-reply',
+        'New question',
+        ...(status === 'pending' ? [] : ['Visible live reply']),
+      ]
+      expect(getRuntimeConversationMessages(address).map(message => message.content)).toEqual(
+        expectedContent
       )
-    })
+
+      await act(async () => preload.resolve(completed))
+
+      expect(getRuntimeConversationMessages(address).map(message => message.content)).toEqual(
+        expectedContent
+      )
+      expect(getRuntimeConversationTurns(address).at(-1)?.status).toBe(status)
+    }
+  )
+
+  it('does not resurrect obsolete turns after another viewer replaces the history', async () => {
+    replaceRuntimeConversationSnapshot(address, transcript('obsolete-reply').turns)
+    const preload = deferredTranscript()
+    renderHook(() => useBoardRuntimeConversations(options(vi.fn(() => preload.promise))))
+    act(() => replaceRuntimeConversationSnapshot(address, transcript('current-reply').turns))
+
+    await act(async () => preload.resolve(transcript('obsolete-reply')))
+
+    expect(getRuntimeConversationTurns(address).map(turn => turn.id)).toEqual(['current-reply'])
   })
 })

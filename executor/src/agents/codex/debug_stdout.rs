@@ -10,7 +10,8 @@ use tokio::{
     process::ChildStdout,
 };
 
-use crate::{logging::log_executor_event, process::debug_stdout};
+use crate::logging::log_executor_event;
+use wegent_runtime_logging::native_stdout as debug_stdout;
 
 use super::diagnostics::{debug_stdout_value, redact_diagnostic_text};
 

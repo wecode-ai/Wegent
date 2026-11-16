@@ -14,7 +14,7 @@ interface SiteAnalyticsDialogProps {
 }
 
 const controlClass =
-  'h-11 rounded-lg border border-border px-3 text-sm text-text-primary hover:bg-surface focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus/30 disabled:opacity-50 md:h-8'
+  'h-11 rounded-lg border border-border px-3 text-sm text-text-primary hover:bg-surface focus-visible:outline-none keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-focus/30 disabled:opacity-50 md:h-8'
 
 function errorKey(error: unknown): string {
   if (error instanceof ApiError) {
@@ -95,7 +95,7 @@ export function SiteAnalyticsDialog({ api, site, onClose }: SiteAnalyticsDialogP
             data-testid="site-analytics-close"
             aria-label={t('analytics_close')}
             onClick={onClose}
-            className="flex h-11 w-11 shrink-0 items-center justify-center rounded-lg hover:bg-surface focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus/30 md:h-8 md:w-8"
+            className="flex h-11 w-11 shrink-0 items-center justify-center rounded-lg hover:bg-surface focus-visible:outline-none keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-focus/30 md:h-8 md:w-8"
           >
             <X className="h-4 w-4" aria-hidden="true" />
           </button>
@@ -134,7 +134,7 @@ export function SiteAnalyticsDialog({ api, site, onClose }: SiteAnalyticsDialogP
                 type="submit"
                 data-testid="site-analytics-query"
                 disabled={!valid || (loading && !changed)}
-                className="h-11 rounded-lg bg-text-primary px-4 text-sm text-background hover:opacity-90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus/30 disabled:opacity-50 md:h-8"
+                className="h-11 rounded-lg bg-text-primary px-4 text-sm text-background hover:opacity-90 focus-visible:outline-none keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-focus/30 disabled:opacity-50 md:h-8"
               >
                 {t('analytics_query')}
               </button>

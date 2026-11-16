@@ -92,7 +92,7 @@ function ArchiveDropdown({
         aria-expanded={open}
         onClick={() => setOpen(current => !current)}
         className={cn(
-          'flex h-8 w-full items-center gap-2 rounded-md border border-border bg-background px-2.5 text-left text-sm text-text-primary outline-none hover:bg-muted focus-visible:border-primary max-md:h-11',
+          'flex h-8 w-full items-center gap-2 rounded-md border border-border bg-background px-2.5 text-left text-sm text-text-primary outline-none hover:bg-muted keyboard:focus-visible:border-primary max-md:h-11',
           triggerClassName
         )}
       >
@@ -190,7 +190,7 @@ export function ArchivedConversationsFilters({
           value={search}
           onChange={event => onSearchChange(event.target.value)}
           placeholder={t('workbench.archived_search_placeholder', '搜索已归档任务')}
-          className="h-8 w-full rounded-md border border-border bg-background pl-9 pr-3 text-sm outline-none focus:border-primary max-md:h-11"
+          className="h-8 w-full rounded-md border border-border bg-background pl-9 pr-3 text-sm outline-none keyboard:focus:border-primary max-md:h-11"
         />
       </label>
 
@@ -363,7 +363,7 @@ export function ArchivedConversationGroups({
                       title={deleteLabel}
                       onClick={() => onDelete(item)}
                       disabled={busyKey !== null}
-                      className="flex h-8 w-8 items-center justify-center rounded-md text-red-500 hover:bg-red-500/10 disabled:cursor-not-allowed disabled:opacity-45 max-md:h-11 max-md:w-11"
+                      className="flex h-8 w-8 items-center justify-center rounded-md text-destructive hover:bg-destructive/10 disabled:cursor-not-allowed disabled:opacity-45 max-md:h-11 max-md:w-11 wework:text-red-500 wework:hover:bg-red-500/10"
                     >
                       {busyKey === `delete:${item.id}` ? (
                         <Loader2 className="h-4 w-4 animate-spin" />

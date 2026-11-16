@@ -66,6 +66,8 @@ export interface WeworkAutomationSharedWorkspaceApi {
 export interface WeworkDeliverySharedWorkspaceApi {
   projects: Pick<SharedWorkspaceApi['projects'], ProjectMethod>
   myWork: NonNullable<SharedWorkspaceApi['myWork']>
+  assignmentReceipts: NonNullable<SharedWorkspaceApi['assignmentReceipts']>
+  milestones: NonNullable<SharedWorkspaceApi['milestones']>
   issues: SharedWorkspaceApi['issues']
   attachments: SharedWorkspaceApi['attachments']
   collaborators: SharedWorkspaceApi['collaborators']
@@ -78,7 +80,9 @@ export interface WeworkDeliverySharedWorkspaceApi {
 
 export const WEWORK_DELIVERY_SHARED_WORKSPACE_METHODS = {
   projects: ['list', 'get', 'create', 'update', 'archive'],
-  myWork: ['list'],
+  myWork: ['list', 'page'],
+  assignmentReceipts: ['list', 'acknowledge'],
+  milestones: ['getCacheScope', 'list', 'create', 'update', 'remove'],
   issues: [
     'list',
     'listPage',
@@ -120,7 +124,7 @@ export const WEWORK_DELIVERY_SHARED_WORKSPACE_METHODS = {
     'accessDeliveryFile',
     'readDeliveryFile',
   ],
-  deliveries: ['list', 'get', 'create', 'addAsset', 'finalize', 'discardDraft'],
+  deliveries: ['list', 'get', 'create', 'addAsset', 'finalize', 'discardDraft', 'update'],
   executions: ['list', 'stop'],
 } as const satisfies {
   [Domain in keyof WeworkDeliverySharedWorkspaceApi]: readonly (keyof WeworkDeliverySharedWorkspaceApi[Domain])[]
@@ -207,6 +211,9 @@ function toMyWorkItem(
   return {
     ...item,
     ...toIssue(item),
+    task_bindings: (item.task_bindings ?? []).map(binding =>
+      mapWorkspaceTaskBindingDto(binding, String(item.cloud_project_id))
+    ),
   }
 }
 
@@ -386,6 +393,11 @@ export function createWeworkDeliverySharedWorkspaceApi(
   deliveryApi: DeliveryApi
 ): WeworkDeliverySharedWorkspaceApi {
   return {
+    assignmentReceipts: {
+      list: issueId => deliveryApi.getIssueAssignmentReceipts(issueId),
+      acknowledge: (issueId, assignmentId, userId) =>
+        deliveryApi.acknowledgeIssueAssignment(issueId, assignmentId, userId),
+    },
     projects: {
       async list() {
         return (await deliveryApi.listCloudProjects()).items.map(toProject)
@@ -433,6 +445,8 @@ export function createWeworkDeliverySharedWorkspaceApi(
                 DeliveryApi['updateCloudProject']
               >[1]['provider_config'],
               board_config: input.boardConfig,
+              board_views: input.boardViews,
+              tag_change: input.tagChange,
               card_display: input.cardDisplay,
               pull_request_automation: input.pullRequestAutomation as Parameters<
                 DeliveryApi['updateCloudProject']
@@ -465,9 +479,32 @@ export function createWeworkDeliverySharedWorkspaceApi(
       },
     },
     myWork: {
-      async list() {
-        return (await deliveryApi.listMyWork()).items.map(toMyWorkItem)
+      async page(input) {
+        const page = await deliveryApi.listMyWork(input)
+        if (page.errors?.length) throw new Error(page.errors.join('\n'))
+        return { items: page.items.map(toMyWorkItem), nextCursor: page.next_cursor ?? null }
       },
+      async list() {
+        const items: WorkspaceMyWorkItem[] = []
+        const cursors = new Set<string>()
+        let cursor: string | undefined
+        do {
+          const page = await deliveryApi.listMyWork(cursor ? { cursor } : undefined)
+          if (page.errors?.length) throw new Error(page.errors.join('\n'))
+          items.push(...page.items.map(toMyWorkItem))
+          cursor = page.next_cursor ?? undefined
+          if (cursor && cursors.has(cursor)) throw new Error('My work pagination did not advance')
+          if (cursor) cursors.add(cursor)
+        } while (cursor)
+        return items
+      },
+    },
+    milestones: {
+      getCacheScope: deliveryApi.getMilestonesCacheScope,
+      list: projectId => deliveryApi.listMilestones(projectId),
+      create: (projectId, input) => deliveryApi.createMilestone(projectId, input),
+      update: (projectId, id, input) => deliveryApi.updateMilestone(projectId, id, input),
+      remove: (projectId, id, version) => deliveryApi.deleteMilestone(projectId, id, version),
     },
     issues: {
       async list(projectId, filters) {
@@ -500,11 +537,13 @@ export function createWeworkDeliverySharedWorkspaceApi(
             projectId,
             withoutUndefined({
               title: input.title,
+              request_id: input.requestId,
               description: input.description,
               status: input.status,
               priority: input.priority,
               start_at: input.startAt,
               due_at: input.dueAt,
+              milestone_id: input.milestoneId,
               parent_id: input.parentId,
               tags: input.tags,
               local_project_id: input.localProjectId,
@@ -513,6 +552,7 @@ export function createWeworkDeliverySharedWorkspaceApi(
               assignee_group_id: input.assigneeGroupId,
               assignee_agent_id: input.assigneeAgentId,
               notify_assignee: input.notifyAssignee,
+              personal_task: input.personalTask,
             }) as Parameters<DeliveryApi['createLoopItem']>[1]
           )
           .then(toIssue)
@@ -527,6 +567,7 @@ export function createWeworkDeliverySharedWorkspaceApi(
               description: input.description,
               status: input.status,
               priority: input.priority,
+              milestone_id: input.milestoneId,
               parent_id: input.parentId,
               assignee_user_id: input.assigneeUserId,
               assignee_group_id: input.assigneeGroupId,
@@ -572,8 +613,10 @@ export function createWeworkDeliverySharedWorkspaceApi(
           })
         ).items.map(toIssue)
       },
-      markRead(issueId, activitySequence) {
-        return deliveryApi.markLoopItemRead(issueId, activitySequence).then(toIssue)
+      markRead(issueId, activitySequence, contentRevision) {
+        return deliveryApi
+          .markLoopItemRead(issueId, activitySequence, contentRevision)
+          .then(toIssue)
       },
     },
     attachments: {
@@ -590,18 +633,18 @@ export function createWeworkDeliverySharedWorkspaceApi(
         const attachments = contextIds.map(id => ({ id }) as Attachment)
         return (await deliveryApi.importLoopItemAttachments(issueId, attachments)).map(toAttachment)
       },
-      async access(attachmentId) {
-        const access = await deliveryApi.accessLoopItemAttachment(attachmentId)
+      async access(attachmentId, context) {
+        const access = await deliveryApi.accessLoopItemAttachment(attachmentId, context)
         return { url: access.url, expiresInSeconds: access.expires_in_seconds }
       },
-      read(attachmentId) {
-        return deliveryApi.readLoopItemAttachment(attachmentId)
+      read(attachmentId, context) {
+        return deliveryApi.readLoopItemAttachment(attachmentId, context)
       },
-      download(attachmentId, filename) {
-        return deliveryApi.downloadLoopItemAttachment(attachmentId, filename)
+      download(attachmentId, filename, context) {
+        return deliveryApi.downloadLoopItemAttachment(attachmentId, filename, context)
       },
-      remove(attachmentId) {
-        return deliveryApi.deleteLoopItemAttachment(attachmentId)
+      remove(attachmentId, context) {
+        return deliveryApi.deleteLoopItemAttachment(attachmentId, context)
       },
     },
     collaborators: {
@@ -699,6 +742,7 @@ export function createWeworkDeliverySharedWorkspaceApi(
       async create(issueId, input) {
         return mapWorkspaceDeliveryDto(
           await deliveryApi.createDelivery(issueId, {
+            title: input.title,
             markdown: input.markdown,
             chat: input.chat,
             source_task: input.sourceTask
@@ -725,6 +769,9 @@ export function createWeworkDeliverySharedWorkspaceApi(
       },
       discardDraft(deliveryId) {
         return deliveryApi.discardDraft(deliveryId)
+      },
+      async update(deliveryId, input) {
+        return mapWorkspaceDeliveryDto(await deliveryApi.updateDelivery(deliveryId, input))
       },
     },
     executions: {

@@ -1,4 +1,6 @@
+import { open } from 'node:fs/promises'
 import { waitForElementWidth, waitForSnapshot } from './conversation-layout.mjs'
+import { runtimeTransportGates } from './runtime-transport-gates.mjs'
 import { waitForTerminalOutput } from './terminal-compatibility-flows.mjs'
 
 import {
@@ -386,7 +388,13 @@ async function verifyPastedWorkspacePaths({ composerSelector, control, workspace
   const filePath = join(workspacePath, PASTED_PATH_FILE_NAME)
   await mkdir(folderPath, { recursive: true })
   await writeFile(join(folderPath, 'nested.txt'), 'nested path context\n')
-  await writeFile(filePath, '# Pasted path context\n')
+  const largeFile = await open(filePath, 'w')
+  try {
+    await largeFile.write('# Pasted path context\n')
+    await largeFile.truncate(100 * 1024 * 1024 + 1)
+  } finally {
+    await largeFile.close()
+  }
 
   await control.command('click', '[data-testid="new-chat-button"]')
   await control.command('waitFor', composerSelector, { timeoutMs: WORKBENCH_READY_TIMEOUT_MS })
@@ -398,6 +406,31 @@ async function verifyPastedWorkspacePaths({ composerSelector, control, workspace
   await control.command('waitFor', '[data-testid="attachment-document-preview-button"]', {
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
+  await control.command('fill', composerSelector, { value: 'test retained attachment draft' })
+  await control.command('pasteFile', composerSelector, {
+    filename: 'test-empty-file.txt',
+    mimeType: 'text/plain',
+    value: '',
+  })
+  await control.command('waitFor', '[data-testid="attachment-error-badge"]', {
+    text: 'test-empty-file.txt',
+  })
+  await control.command('click', '[data-testid="dismiss-attachment-error-button"]')
+  assert.equal(
+    Number(await control.command('getElementCount', '[data-testid="attachment-error-badge"]')),
+    0,
+    'Dismissing a failed attachment retained its error'
+  )
+  assert.equal(
+    await control.command('getValue', composerSelector),
+    'test retained attachment draft'
+  )
+  assert.equal(
+    Number(await control.command('getElementCount', '[data-testid="attachment-badge"]')),
+    1,
+    'Dismissing a failed attachment removed the valid attachment'
+  )
+  await control.command('fill', composerSelector, { value: '' })
   await control.command('click', '[data-testid="attachment-document-preview-button"]')
   await control.command('waitFor', '[data-testid="composer-attachment-preview-panel"]', {
     text: 'test-preview.csv',
@@ -410,7 +443,56 @@ async function verifyPastedWorkspacePaths({ composerSelector, control, workspace
   assert.equal(await control.command('getValue', composerSelector), '')
   await control.command('hover', '[data-testid="attachment-badge"]')
   await control.command('click', '[data-testid="remove-attachment-button"]')
+  const transportGates = runtimeTransportGates(control)
+  const finishGateId = 'attachment-finish-response-drop'
+  await transportGates.arm({
+    id: finishGateId,
+    kind: 'response',
+    name: 'attachment.finish',
+    drop: true,
+  })
+  try {
+    await control.command('pasteFile', composerSelector, {
+      filename: 'test-large-generated.bin',
+      mimeType: 'application/octet-stream',
+      fileSize: 100 * 1024 * 1024 + 1,
+      value: 'YQ==',
+    })
+    await waitForSnapshot(
+      control,
+      snapshot =>
+        snapshot.text.includes('test-large-generated.bin') &&
+        snapshot.testIds.includes('attachment-badge') &&
+        !snapshot.testIds.includes('uploading-attachment-badge') &&
+        !snapshot.testIds.includes('attachment-error-badge'),
+      'A generated local attachment above 100 MiB did not recover after its finish response was dropped',
+      // The host negotiates 2 MiB chunks, so this file stages in 51
+      // renderer-to-host round trips. Four parallel checkpoints can starve the
+      // renderer; the measured worst case is ~26s, so keep a wide margin.
+      120_000,
+      ACTIVE_WORKBENCH_SELECTOR
+    )
+    const droppedFinish = await transportGates.wait(finishGateId)
+    assert.equal(droppedFinish.dropped, true, 'The real attachment finish response was not dropped')
+    assert.equal(
+      droppedFinish.deliveries,
+      0,
+      'The dropped attachment finish response was delivered'
+    )
+    assert.match(
+      droppedFinish.value.result,
+      /test-large-generated\.bin$/,
+      'The dropped response did not contain the completed host attachment path'
+    )
+    await transportGates.save(resultDir, 'attachment-finish-response-recovery.json', [finishGateId])
+  } finally {
+    await transportGates.reset()
+  }
+  await control.command('hover', '[data-testid="attachment-badge"]')
+  await control.command('click', '[data-testid="remove-attachment-button"]')
   await control.command('pastePaths', composerSelector, {
+    // Transferring a real file above the cloud limit reads it through bounded host chunks.
+    timeoutMs: 60_000,
     value: JSON.stringify([
       {
         uri: pathToFileURL(folderPath).href,
@@ -435,6 +517,11 @@ async function verifyPastedWorkspacePaths({ composerSelector, control, workspace
   })
   const snapshot = JSON.parse(await control.command('snapshot', ACTIVE_WORKBENCH_SELECTOR))
   assert.equal(
+    snapshot.testIds.includes('attachment-error-badge'),
+    false,
+    'A large native file was rejected by the cloud upload size limit'
+  )
+  assert.equal(
     snapshot.testIds.includes('composer-path-chip-pasted-context-md'),
     false,
     'A pasted file was incorrectly inserted into the message text'
@@ -444,7 +531,8 @@ async function verifyPastedWorkspacePaths({ composerSelector, control, workspace
     stableMs: COMPOSER_READY_STABILITY_MS,
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
-  await control.awaitScenarioRequestCount('pasted_workspace_paths', 1)
+  // Runtime preparation and model dispatch use the shared model-request deadline.
+  await control.awaitScenarioRequestCount('pasted_workspace_paths', 1, MODEL_REQUEST_TIMEOUT_MS)
   assertSourceAttachmentPath(control, 'pasted_workspace_paths', filePath)
   await control.command('waitFor', '[data-testid="message-assistant"]', {
     text: PASTED_PATH_COMPLETION_TEXT,
@@ -461,7 +549,21 @@ async function verifyPastedWorkspacePaths({ composerSelector, control, workspace
 async function verifyDroppedWorkspacePaths({ composerSelector, control }) {
   const taskPrompt = 'WEWORK_DESKTOP_E2E_WORKSPACE_SELECTION_STREAMING'
   control.setScenario('workspace_selection_streaming')
-  await control.command('click', '[data-testid="new-chat-button"]')
+  await control.command('markElementWithText', '[data-testid^="project-row-"]', {
+    text: 'workspace',
+    value: 'dropped-paths-project',
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  const projectSelector = '[data-e2e-anchor-id="dropped-paths-project"]'
+  await control.command('hover', projectSelector, { visible: true })
+  await control.command(
+    'click',
+    `${projectSelector} [data-testid="project-new-conversation-button"]`
+  )
+  await control.command('waitFor', '[data-testid="project-work-button"]', {
+    text: 'workspace',
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
   await control.command('waitFor', composerSelector, { timeoutMs: WORKBENCH_READY_TIMEOUT_MS })
   await control.command('fill', composerSelector, {
     value: taskPrompt,
@@ -525,11 +627,11 @@ async function verifyDroppedWorkspacePaths({ composerSelector, control }) {
   await control.command('fill', composerSelector, { value: '' })
 
   await control.command('click', `[data-item-path="${SELECTED_TEXT_FILE_NAME}"]`)
-  await control.command('waitFor', '[data-testid="workspace-file-editor"] .cm-content', {
+  await control.command('waitFor', '[data-testid="workspace-file-editor-content"]', {
     text: SELECTED_TEXT_FILE_CONTENT.trim(),
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
-  await control.command('press', '[data-testid="workspace-file-editor"] .cm-content', {
+  await control.command('press', '[data-testid="workspace-file-editor-content"]', {
     key: process.platform === 'darwin' ? 'Meta+a' : 'Control+a',
   })
   await control.command('waitFor', '[data-testid="workspace-selection-actions"]', {
@@ -539,26 +641,23 @@ async function verifyDroppedWorkspacePaths({ composerSelector, control }) {
   assert.equal(
     await control.command('getSystemDragPanelVisibility', 'body'),
     'false',
-    'Selecting CodeMirror workspace text incorrectly opened the system drag panel'
+    'Selecting Pierre workspace text incorrectly opened the system drag panel'
   )
   await control.command('click', '[data-testid="add-workspace-selection-to-conversation-button"]')
   assert.equal(
     await control.command('getValue', composerSelector),
     SELECTED_TEXT_FILE_CONTENT.trim(),
-    'The CodeMirror selection action did not insert text into the composer'
+    'The Pierre selection action did not insert text into the composer'
   )
   await control.command('fill', composerSelector, { value: '' })
-  await control.command('press', '[data-testid="workspace-file-editor"] .cm-content', {
+  await control.command('press', '[data-testid="workspace-file-editor-content"]', {
     key: process.platform === 'darwin' ? 'Meta+a' : 'Control+a',
   })
-  await control.command(
-    'dragDataTransferStart',
-    '[data-testid="workspace-file-editor"] .cm-content'
-  )
+  await control.command('dragDataTransferStart', '[data-testid="workspace-file-editor-content"]')
   await waitForSystemDragPanelVisibility(
     control,
     true,
-    'Dragging CodeMirror workspace text did not show the system drag panel'
+    'Dragging Pierre workspace text did not show the system drag panel'
   )
   await control.command('dragDataTransferEnd', 'body', { target: composerSelector })
   await waitForSystemDragPanelVisibility(
@@ -572,7 +671,7 @@ async function verifyDroppedWorkspacePaths({ composerSelector, control }) {
     'Dragging selected workspace editor text did not insert it into the composer'
   )
   assert.equal(
-    await control.command('getValue', '[data-testid="workspace-file-editor"] .cm-content'),
+    await control.command('getValue', '[data-testid="workspace-file-editor-content"]'),
     SELECTED_TEXT_FILE_CONTENT.trim(),
     'Dragging selected workspace editor text removed it from the source editor'
   )
@@ -707,6 +806,7 @@ async function verifySideChatAttachmentIsolation({
   const rightPanelShellSelector = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="right-workspace-panel-shell"]`
   const mainComposerSelector = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="desktop-floating-composer-card"]`
   const sideComposerSelector = `${sideChatSelector} [data-testid="chat-message-input"]`
+  const sideSendButtonSelector = `${sideChatSelector} [data-testid="send-message-button"]`
 
   await control.command('click', '[data-testid="new-chat-button"]')
   await control.command(
@@ -824,8 +924,10 @@ async function verifySideChatAttachmentIsolation({
     SIDE_CHAT_PROMPT,
     'The side-chat prompt did not reach the isolated composer'
   )
-  await new Promise(resolvePromise => setTimeout(resolvePromise, COMPOSER_READY_STABILITY_MS))
-  await control.command('click', `${sideChatSelector} [data-testid="send-message-button"]`)
+  await control.command('clickWhenEnabled', sideSendButtonSelector, {
+    visible: true,
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
   await control.awaitScenarioRequestCount('side_chat_attachment', 1)
   await control.command('waitFor', `${sideChatSelector} [data-testid="message-assistant"]`, {
     text: SIDE_CHAT_COMPLETION_TEXT,
@@ -850,10 +952,16 @@ async function verifySideChatAttachmentIsolation({
 
   control.setScenario('side_chat_guidance')
   await control.command('fill', sideComposerSelector, { value: SIDE_CHAT_GUIDANCE_INITIAL })
-  await control.command('click', `${sideChatSelector} [data-testid="send-message-button"]`)
+  await control.command('clickWhenEnabled', sideSendButtonSelector, {
+    visible: true,
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
   await control.awaitScenarioRequestCount('side_chat_guidance', 1)
   await control.command('fill', sideComposerSelector, { value: SIDE_CHAT_QUEUE_FOLLOW_UP })
-  await control.command('click', `${sideChatSelector} [data-testid="send-message-button"]`)
+  await control.command('clickWhenEnabled', sideSendButtonSelector, {
+    visible: true,
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
   await control.command('waitFor', `${sideChatSelector} [data-testid="conversation-queue-panel"]`, {
     text: SIDE_CHAT_QUEUE_FOLLOW_UP,
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
@@ -865,6 +973,13 @@ async function verifySideChatAttachmentIsolation({
     'The side chat exposed a runtime busy error instead of queueing the follow-up'
   )
   await captureVerificationScreenshot(control, '04-side-chat-follow-up-queued.png')
+  await control.command('fill', sideComposerSelector, { value: SIDE_CHAT_QUEUE_FOLLOW_UP })
+  await control.command('setSelectionOffset', sideComposerSelector, { value: '0' })
+  assert.equal(
+    Number(await control.command('getSelectionOffset', sideComposerSelector)),
+    0,
+    'The same-value queued draft must start with its caret at the beginning'
+  )
   await control.command('click', `${sideChatSelector} [data-testid^="queue-more-button-"]`)
   await control.command('click', '[data-testid^="queue-edit-button-"]')
   await control.command('waitFor', sideComposerSelector, {
@@ -878,7 +993,17 @@ async function verifySideChatAttachmentIsolation({
     DEFAULT_STEP_TIMEOUT_MS,
     sideChatSelector
   )
-  await control.command('click', `${sideChatSelector} [data-testid="send-message-button"]`)
+  await control.command('nativePress', sideComposerSelector, { key: 'Shift+Enter' })
+  assert.equal(
+    await control.command('getValue', sideComposerSelector),
+    `${SIDE_CHAT_QUEUE_FOLLOW_UP}\n`,
+    'Explicitly restoring the same queued draft must put the next line break after its text'
+  )
+  await control.command('fill', sideComposerSelector, { value: SIDE_CHAT_QUEUE_FOLLOW_UP })
+  await control.command('clickWhenEnabled', sideSendButtonSelector, {
+    visible: true,
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
   await control.command('waitFor', `${sideChatSelector} [data-testid="conversation-queue-panel"]`, {
     text: SIDE_CHAT_QUEUE_FOLLOW_UP,
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
@@ -924,7 +1049,10 @@ async function verifySideChatAttachmentIsolation({
     `${SIDE_CHAT_QUEUE_FOLLOW_UP}_3`,
   ]) {
     await control.command('fill', sideComposerSelector, { value: prompt })
-    await control.command('click', `${sideChatSelector} [data-testid="send-message-button"]`)
+    await control.command('clickWhenEnabled', sideSendButtonSelector, {
+      visible: true,
+      timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+    })
     await control.command(
       'waitFor',
       `${sideChatSelector} [data-testid="conversation-queue-panel"]`,

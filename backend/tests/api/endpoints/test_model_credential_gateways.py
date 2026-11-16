@@ -62,7 +62,7 @@ def call_gateway(client: TestClient, token: str, model: Kind) -> httpx.Response:
         }
     )
     return client.post(
-        "/api/runtime-work/llm-responses-proxy/responses",
+        "/api/runtime-work/llm-responses-proxy/chat/completions",
         headers=headers,
         json={"model": model.name, "input": "Hello"},
     )
@@ -221,12 +221,3 @@ def test_connection_uses_only_the_submitted_literal_key(
     assert response.json()["success"] is True
     resolver.assert_not_awaited()
     assert probe.call_args.kwargs["api_key"] == "submitted-literal-key"
-
-
-@pytest.fixture
-def test_client(test_client):
-    """Exercise retained Python HTTP components in an isolated application."""
-    from tests.retained_python_handlers import component_client
-
-    with component_client(test_client, ("llm_responses",)) as client:
-        yield client

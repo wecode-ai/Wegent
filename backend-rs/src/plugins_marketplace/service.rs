@@ -355,11 +355,13 @@ fn marketplace_item(input: MarketplaceItemInput<'_>) -> MarketplaceItem {
         source_provider: source_provider(plugin).to_owned(),
         source_label: source_label(plugin).to_owned(),
         update_available,
-        current_device_installation: device_row.map(|row| {
-            // Source `_to_marketplace_item` overrides the serialized deviceId
-            // with the request's device id (`device_id or device_row.device_id`).
-            device_installation_item(row, device_id.unwrap_or(&row.device_id))
-        }),
+        current_device_installation: device_row
+            .filter(|_| installed.is_some_and(|installed| installed.is_active))
+            .map(|row| {
+                // Source `_to_marketplace_item` overrides the serialized deviceId
+                // with the request's device id (`device_id or device_row.device_id`).
+                device_installation_item(row, device_id.unwrap_or(&row.device_id))
+            }),
     }
 }
 
@@ -774,6 +776,91 @@ mod tests {
         assert_eq!(interface.display_name.as_deref(), Some("公司邮箱"));
         assert!(interface.website_url.is_none());
         assert!(interface.capabilities.is_empty());
+    }
+
+    fn release() -> PluginReleaseRow {
+        let empty = || brz_mysql::Json(OpaqueJson::from(serde_json::json!({})));
+        PluginReleaseRow {
+            id: 7,
+            plugin_id: 1,
+            version: "1.0.0".into(),
+            manifest_json: empty(),
+            interface_json: empty(),
+            release_notes: String::new(),
+            storage_key: String::new(),
+            sha256: String::new(),
+            size_bytes: 0,
+            status: "ready".into(),
+            scan_status: "passed".into(),
+            scan_report_json: empty(),
+            created_by_user_id: 5,
+            publication_revision_id: 0,
+            source_commit_sha: String::new(),
+            created_at: epoch(),
+            published_at: epoch(),
+        }
+    }
+
+    #[test]
+    fn marketplace_item_hides_device_state_without_an_active_account_install() {
+        for active in [Some(false), None, Some(true)] {
+            for state in [
+                "uninstalling",
+                "pending",
+                "downloading",
+                "installing",
+                "failed",
+                "installed",
+            ] {
+                let plugin = plugin("workspace", 0);
+                let release = release();
+                let installed = active.map(|is_active| InstalledSelection {
+                    kind_id: 2,
+                    is_active,
+                    release_id: Some(7),
+                    enabled: Some(true),
+                });
+                let row = DeviceInstallationRow {
+                    id: 1,
+                    installed_kind_id: 2,
+                    user_id: 5,
+                    device_id: "current-device".into(),
+                    desired_release_id: 7,
+                    actual_release_id: if state == "installed" { 7 } else { 0 },
+                    state: state.into(),
+                    error_code: String::new(),
+                    error_message: String::new(),
+                    attempt_count: 0,
+                    last_sync_at: epoch(),
+                    updated_at: epoch(),
+                };
+                let item = marketplace_item(MarketplaceItemInput {
+                    plugin: &plugin,
+                    release: &release,
+                    user_id: Some(5),
+                    device_id: Some("current-device"),
+                    device_row: Some(&row),
+                    installed: installed.as_ref(),
+                    owner: None,
+                    grants: &[],
+                    external_entity_types: &HashSet::new(),
+                });
+                assert_eq!(item.installed, active == Some(true) && state == "installed");
+                assert_eq!(
+                    item.installed_plugin_id,
+                    active.filter(|active| *active).map(|_| 2)
+                );
+                let json = serde_json::to_value(&item).unwrap();
+                if active == Some(true) {
+                    assert_eq!(json["currentDeviceInstallation"]["state"], state);
+                } else {
+                    assert!(
+                        json["currentDeviceInstallation"].is_null(),
+                        "active={active:?}, state={state}: {json}"
+                    );
+                }
+            }
+        }
     }
 
     #[test]

@@ -7,6 +7,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime
+from hashlib import sha256
 
 from fastapi import HTTPException, status
 from sqlalchemy.orm import Session
@@ -15,9 +16,12 @@ from app.db.timezone import database_datetime_as_utc
 from app.models.delivery import (
     CloudProject,
     LoopItem,
+    LoopItemActiveAssignment,
     LoopItemComment,
+    LoopNode,
     ProjectChatAgent,
     loop_datetime_is_unset,
+    loop_datetime_value_is_unset,
 )
 from app.models.kind import Kind
 from app.models.user import User
@@ -28,6 +32,7 @@ from app.services.cloud_projects.access import (
     require_cloud_project_role,
     require_issue_action,
 )
+from app.services.loop_item_history_actor import automation_history_actor
 from app.services.loop_items.access import can_view_item
 
 ASSIGNMENT_EVENT_TYPE = "assignment"
@@ -102,6 +107,20 @@ class IssueAssignmentService:
         """Return active assignments in activity order without a second data source."""
         return list(self._active_events(db, issue_id).values())
 
+    def active_for_issues(
+        self, db: Session, issue_ids: list[str]
+    ) -> dict[str, list[AssignmentEvent]]:
+        """Read assignment histories together and apply the same event reduction."""
+        grouped: dict[str, list[LoopItemComment]] = {key: [] for key in issue_ids}
+        if issue_ids:
+            comments = self._assignment_comments(db, issue_ids)
+            for comment in comments:
+                grouped[comment.loop_item_id].append(comment)
+        return {
+            key: list(self._reduce_events(comments).values())
+            for key, comments in grouped.items()
+        }
+
     def active(
         self,
         db: Session,
@@ -134,16 +153,22 @@ class IssueAssignmentService:
         comment_id: str | None = None,
         comment_body: str | None = None,
         replace_root_assignments: bool = False,
+        initial_assignment: bool = False,
+        automation_context: dict | None = None,
     ) -> tuple[AssignmentEvent, bool]:
         del workspace_id
+        self._lock_issue(db, issue_id)
         normalized_type = self._member_type(member_type)
         normalized_id = member_id.strip()
-        existing = self.active(
-            db,
-            issue_id=issue_id,
-            member_type=normalized_type,
-            member_id=normalized_id,
-            workflow_step=workflow_step,
+        # A newly inserted Issue cannot have history or index rows. Locking that
+        # absent range would block independent first assignments in InnoDB.
+        current = (
+            {}
+            if initial_assignment
+            else self._active_events(db, issue_id, for_update=True)
+        )
+        existing = current.get(
+            (normalized_type, normalized_id, self._workflow_step(workflow_step))
         )
         if (
             existing is not None
@@ -156,7 +181,7 @@ class IssueAssignmentService:
         if (
             normalized_type == "human" or replace_root_assignments
         ) and not self._workflow_step(workflow_step):
-            for previous in self._active_events(db, issue_id).values():
+            for previous in current.values():
                 if previous.workflow_step:
                     continue
                 db.add(
@@ -189,6 +214,8 @@ class IssueAssignmentService:
             "workflow_step": self._workflow_step(workflow_step),
             "notify": bool(notify),
             "trigger": trigger,
+            "receipt_tracking": True,
+            **automation_history_actor(automation_context),
         }
         comment = db.get(LoopItemComment, comment_id) if comment_id else None
         if comment is None:
@@ -205,7 +232,12 @@ class IssueAssignmentService:
         else:
             comment.metadata_json = metadata
         db.flush()
-        return AssignmentEvent(comment=comment, metadata=metadata), True
+        event = AssignmentEvent(comment=comment, metadata=metadata)
+        if initial_assignment:
+            self._insert_active_index(db, issue_id, [event])
+        else:
+            self._refresh_active_index(db, issue_id)
+        return event, True
 
     def remove(
         self,
@@ -224,10 +256,11 @@ class IssueAssignmentService:
             issue_creator_user_id=item.created_by_user_id,
             user_id=user_id,
         )
+        self._lock_issue(db, issue_id)
         assignment = next(
             (
                 event
-                for event in self._active_events(db, issue_id).values()
+                for event in self._active_events(db, issue_id, for_update=True).values()
                 if event.id == str(assignment_id)
             ),
             None,
@@ -256,7 +289,44 @@ class IssueAssignmentService:
         )
         db.add(comment)
         db.flush()
+        self._refresh_active_index(db, issue_id)
         return assignment
+
+    @staticmethod
+    def _lock_issue(db: Session, issue_id: str) -> None:
+        db.query(LoopItem.id).filter(LoopItem.id == issue_id).with_for_update().one()
+
+    def _refresh_active_index(self, db: Session, issue_id: str) -> None:
+        """Rebuild only on assignment changes, never on receipt reads or writes."""
+        active = self._active_events(db, issue_id, for_update=True)
+        db.query(LoopItemActiveAssignment).filter(
+            LoopItemActiveAssignment.parent_id == issue_id,
+            LoopItemActiveAssignment.resource_type == "assignment_index",
+        ).delete(synchronize_session=False)
+        self._insert_active_index(db, issue_id, list(active.values()))
+
+    @staticmethod
+    def _insert_active_index(
+        db: Session, issue_id: str, active: list[AssignmentEvent]
+    ) -> None:
+        db.add_all(
+            [
+                LoopItemActiveAssignment(
+                    id=sha256(f"assignment-index:{issue_id}".encode()).hexdigest(),
+                    parent_id=issue_id,
+                )
+            ]
+            + [
+                LoopItemActiveAssignment(
+                    id=sha256(f"active-assignment:{event.id}".encode()).hexdigest(),
+                    parent_id=issue_id,
+                    loop_item_id=event.id,
+                    sort_order=position,
+                )
+                for position, event in enumerate(active)
+            ]
+        )
+        db.flush()
 
     def require_canonical_member(
         self,
@@ -319,6 +389,7 @@ class IssueAssignmentService:
             "comment_id": assignment.id,
             "created_by_user_id": assignment.assigned_by_user_id,
             "created_by_user_name": creator.user_name if creator is not None else None,
+            "automation": assignment.metadata.get("automation"),
             "status": "active",
             "created_at": database_datetime_as_utc(db, assignment.created_at),
             "updated_at": database_datetime_as_utc(db, assignment.updated_at),
@@ -357,17 +428,48 @@ class IssueAssignmentService:
         item.version += 1
 
     def _active_events(
-        self, db: Session, issue_id: str
+        self, db: Session, issue_id: str, *, for_update: bool = False
     ) -> dict[tuple[str, str, str], AssignmentEvent]:
-        comments = (
-            db.query(LoopItemComment)
-            .filter(
-                LoopItemComment.loop_item_id == issue_id,
-                loop_datetime_is_unset(LoopItemComment.deleted_at),
+        if for_update:
+            return self._reduce_events(
+                self._assignment_comments(db, [issue_id], for_update=True)
             )
-            .order_by(LoopItemComment.created_at, LoopItemComment.id)
-            .all()
+        return {
+            (event.member_type, event.member_id, event.workflow_step): event
+            for event in self.active_for_issues(db, [issue_id])[issue_id]
+        }
+
+    @staticmethod
+    def _assignment_comments(
+        db: Session, issue_ids: list[str], *, for_update: bool = False
+    ) -> list[LoopItemComment]:
+        model = LoopNode if for_update else LoopItemComment
+        query = (
+            db.query(model)
+            .filter(model.loop_item_id.in_(issue_ids))
+            .order_by(model.created_at, model.id)
         )
+        if for_update:
+            # Lock by Issue identity alone: subtype/deletion indexes can scan
+            # another Issue's uncommitted rows before applying the Issue filter.
+            nodes = query.populate_existing().with_for_update().all()
+            return [
+                node
+                for node in nodes
+                if isinstance(node, LoopItemComment)
+                and loop_datetime_value_is_unset(node.deleted_at)
+                and isinstance(node.metadata_json, dict)
+                and node.metadata_json.get("event_type") == ASSIGNMENT_EVENT_TYPE
+            ]
+        return query.filter(
+            loop_datetime_is_unset(LoopItemComment.deleted_at),
+            LoopItemComment.metadata_json["event_type"].as_string()
+            == ASSIGNMENT_EVENT_TYPE,
+        ).all()
+
+    def _reduce_events(
+        self, comments: list[LoopItemComment]
+    ) -> dict[tuple[str, str, str], AssignmentEvent]:
         cancelled_event_ids = {
             str(metadata.get("assignment_event_id") or "")
             for comment in comments

@@ -1,15 +1,19 @@
 import assert from 'node:assert/strict'
 import { reloadMainWindow } from './workspace-flows.mjs'
+import {
+  selectCollaborationProjectView,
+  waitForProjectIdentity,
+} from './collaboration-project-navigation.mjs'
 
 export async function selectProjectCreateMembers(control, { members, owner }) {
   await control.command('click', '[data-testid="collaboration-project-create-add-collaborator"]')
-  const search = '[data-testid="collaboration-project-create-member-search"]'
+  const search = '[data-testid="collaboration-project-create-people-search"]'
   await control.command('waitFor', search, { visible: true })
   await control.command('fill', search, { value: owner.user_name })
   await control.command(
     'waitFor',
-    '[data-testid="collaboration-project-create-no-matching-members"]',
-    { visible: true, stableMs: 250 }
+    '[data-testid="collaboration-project-create-collaborator-menu"] p',
+    { text: '暂无其他可添加项', visible: true, stableMs: 250 }
   )
   assert.equal(
     Number(
@@ -21,15 +25,14 @@ export async function selectProjectCreateMembers(control, { members, owner }) {
     0,
     'Searching for the creator must not offer a duplicate project membership'
   )
+  await control.command('press', search, { key: 'Escape' })
   for (const member of members) {
+    await control.command('click', '[data-testid="collaboration-project-create-add-collaborator"]')
+    await control.command('waitFor', search, { visible: true })
     await control.command('fill', search, { value: member.user_name })
     const option = `[data-testid="collaboration-project-create-member-${member.id}"]`
     await control.command('waitFor', option, { visible: true })
     await control.command('click', option)
-    await control.command('waitFor', `${option}[aria-pressed="true"]`)
-  }
-  await control.command('press', search, { key: 'Escape' })
-  for (const member of members) {
     await control.command(
       'waitFor',
       `[data-testid="collaboration-project-create-selected-member-${member.id}"]`,
@@ -58,7 +61,7 @@ export async function verifyCollaborationMemberSettings(
   control,
   { scoped, owner, request, project, members }
 ) {
-  await control.command('click', scoped('[data-testid="collaboration-tab-manage"]'))
+  await selectCollaborationProjectView(control, scoped('').trim(), 'manage')
   await control.command('click', scoped('[data-testid="collaboration-project-settings-members"]'))
   const row = scoped(`[data-testid="cloud-project-member-${owner.id}"]`)
   await control.command('waitFor', row)
@@ -113,11 +116,9 @@ export async function verifyCollaborationMemberSettings(
   await assertCreatedMembers(control, { scoped, members, owner, request, project })
   await reloadMainWindow(control, 'The created project members did not reconnect after reload')
   await control.command('click', '[data-testid="workspace-tab-select-fixed-board"]')
-  await control.command('waitFor', scoped('[data-testid="cloud-project-header-title"]'), {
-    text: project.name,
-  })
-  await control.command('click', scoped('[data-testid="collaboration-tab-manage"]'))
+  await waitForProjectIdentity(control, scoped('').trim(), project.name)
+  await selectCollaborationProjectView(control, scoped('').trim(), 'manage')
   await control.command('click', scoped('[data-testid="collaboration-project-settings-members"]'))
   await assertCreatedMembers(control, { scoped, members, owner, request, project })
-  await control.command('click', scoped('[data-testid="collaboration-tab-board"]'))
+  await selectCollaborationProjectView(control, scoped('').trim(), 'board')
 }

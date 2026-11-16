@@ -1,12 +1,22 @@
+import { normalizeModelOptionValue } from "@wegent/chat-core/local-runtime-model";
+export {
+  normalizeModelOptionValue,
+  normalizeModelOptionAliases,
+} from "@wegent/chat-core/local-runtime-model";
 import {
   builtinCodexCatalogModel,
   codexCatalogModelIdForUpstream,
 } from "@wegent/chat-core/codex-catalog";
-import {
-  getCloudModelReasoning,
-  getCloudModelUpstreamApiFormat,
-} from "@wegent/chat-core/model-execution";
+import { getCloudModelReasoning } from "@wegent/chat-core/model-execution";
 import type { ModelOptions, UnifiedModel } from "@wegent/chat-core/models";
+import {
+  MODEL_INTERFACE_REASONING_OPTIONS,
+  OPENAI_REASONING_CONTROL,
+  reasoningOption,
+} from "./model-reasoning";
+
+// Persist UI selection intent with the model so remounts do not change slider semantics.
+export const MODEL_SELECTION_OPTION = "modelSelection";
 
 export interface ModelControlOption {
   value: string;
@@ -87,94 +97,8 @@ const FAMILY_ORDER = [
 
 const HIDDEN_MODEL_FAMILIES = new Set(["gemini"]);
 
-const MODEL_INTERFACE_REASONING_OPTIONS: Record<
-  string,
-  Pick<ModelControlOption, "label" | "labelKey">
-> = {
-  none: {
-    label: "None",
-    labelKey: "workbench.local_model_reasoning_none",
-  },
-  minimal: {
-    label: "Minimal",
-    labelKey: "workbench.local_model_reasoning_minimal",
-  },
-  low: {
-    label: "Low",
-    labelKey: "workbench.local_model_reasoning_low",
-  },
-  medium: {
-    label: "Medium",
-    labelKey: "workbench.local_model_reasoning_medium",
-  },
-  high: {
-    label: "High",
-    labelKey: "workbench.local_model_reasoning_high",
-  },
-  xhigh: {
-    label: "Extra high",
-    labelKey: "workbench.local_model_reasoning_xhigh",
-  },
-  max: {
-    label: "Maximum",
-    labelKey: "workbench.local_model_reasoning_max",
-  },
-  ultra: {
-    label: "Ultra",
-    labelKey: "workbench.local_model_reasoning_ultra",
-  },
-};
-
 const OPENAI_RESPONSES_CONTROLS: ModelControlConfig[] = [
-  {
-    id: "reasoning",
-    label: "Reasoning",
-    labelKey: "workbench.reasoning_level",
-    defaultValue: "high",
-    placement: "aboveModels",
-    scope: "family",
-    includeInLabel: "never",
-    options: [
-      {
-        value: "low",
-        label: "Low",
-        labelKey: "workbench.intelligence_low",
-        order: 10,
-      },
-      {
-        value: "medium",
-        label: "Medium",
-        labelKey: "workbench.intelligence_medium",
-        order: 20,
-      },
-      {
-        value: "high",
-        label: "High",
-        labelKey: "workbench.intelligence_high",
-        order: 30,
-      },
-      {
-        value: "xhigh",
-        label: "Extra High",
-        labelKey: "workbench.intelligence_ultra",
-        order: 40,
-      },
-      {
-        value: "max",
-        label: "Maximum",
-        labelKey: "workbench.intelligence_max",
-        order: 50,
-      },
-      {
-        value: "ultra",
-        label: "Extra High",
-        labelKey: "workbench.intelligence_ultra",
-        description: "Faster, uses more quota",
-        descriptionKey: "workbench.reasoning_ultra_description",
-        order: 60,
-      },
-    ],
-  },
+  OPENAI_REASONING_CONTROL,
   {
     id: "collaborationMode",
     label: "Mode",
@@ -303,18 +227,23 @@ export function isModelInterfaceModel(model: UnifiedModel | null): boolean {
   return kind === "model-interface" || kind.startsWith("model-interface:");
 }
 
+export function modelSelectionKey(model: UnifiedModel): string {
+  return JSON.stringify([
+    model.type,
+    model.name,
+    modelConfigString(model, "codexProviderId") ||
+      (model.type === "runtime" ? (model.runtime?.provider ?? "") : ""),
+    model.namespace ?? "",
+    String(model.resourceUserId ?? ""),
+  ]);
+}
+
 export function isSameModelSelection(
   left: UnifiedModel | null,
   right: UnifiedModel | null,
 ): boolean {
-  if (!left || !right || left.type !== right.type || left.name !== right.name) {
-    return false;
-  }
-  return (
-    modelConfigString(left, "codexProviderId") ===
-      modelConfigString(right, "codexProviderId") &&
-    (left.namespace ?? "") === (right.namespace ?? "") &&
-    String(left.resourceUserId ?? "") === String(right.resourceUserId ?? "")
+  return Boolean(
+    left && right && modelSelectionKey(left) === modelSelectionKey(right),
   );
 }
 
@@ -531,10 +460,7 @@ export function resolveCodexCatalogModelId(model: UnifiedModel): string | null {
   const candidates = upstreamCandidates.some((candidate) => candidate?.trim())
     ? upstreamCandidates
     : [model.name];
-  return codexCatalogModelIdForUpstream(
-    candidates,
-    getCloudModelUpstreamApiFormat(model) ?? "",
-  );
+  return codexCatalogModelIdForUpstream(candidates);
 }
 
 function catalogReasoningLevels(
@@ -781,32 +707,6 @@ function resolveOptionSummaryLabel(
   return option.summaryLabel || resolveOptionLabel(option, resolveLabel);
 }
 
-export function normalizeModelOptionValue(
-  optionId: string,
-  value?: string,
-): string | undefined {
-  if (!value) return value;
-  if (optionId !== "reasoning") return value;
-
-  const normalized = value.trim().toLowerCase().replace(/\s+/g, "_");
-  if (["extra_high", "x_high", "x-high"].includes(normalized)) {
-    return "xhigh";
-  }
-  if (normalized === "maximum") return "max";
-  return value;
-}
-
-export function normalizeModelOptionAliases(
-  options: ModelOptions = {},
-): ModelOptions {
-  return Object.fromEntries(
-    Object.entries(options).map(([optionId, value]) => [
-      optionId,
-      normalizeModelOptionValue(optionId, value) ?? value,
-    ]),
-  );
-}
-
 function selectedControlValue(
   control: ModelControlConfig,
   options: ModelOptions,
@@ -817,6 +717,27 @@ function selectedControlValue(
     : control.defaultValue;
 }
 
+function presetReasoning(options: ModelOptions): string | undefined {
+  const intent = options[MODEL_SELECTION_OPTION];
+  return intent && intent !== "model"
+    ? normalizeModelOptionValue("reasoning", options.reasoning)
+    : undefined;
+}
+
+export function getSelectedReasoningOption(
+  model: UnifiedModel | null,
+  options: ModelOptions,
+): ModelControlOption | undefined {
+  const preset = presetReasoning(options);
+  if (preset) return reasoningOption(preset);
+  const control = getControlsForModel(model).find(
+    (candidate) => candidate.id === "reasoning",
+  );
+  return control?.options.find(
+    (option) => option.value === selectedControlValue(control, options),
+  );
+}
+
 export function getSelectedModelDisplayLabel(
   model: UnifiedModel | null,
   options: ModelOptions = {},
@@ -825,7 +746,9 @@ export function getSelectedModelDisplayLabel(
   if (!model) return "";
 
   const metadata = getModelUiMetadata(model);
-  const controls = getControlsForModel(model);
+  const controls = getControlsForModel(model).filter(
+    (control) => control.id !== "reasoning",
+  );
   const regionLabel = metadata.region
     ? (REGION_LABELS[metadata.region] ?? metadata.region)
     : "";
@@ -833,13 +756,12 @@ export function getSelectedModelDisplayLabel(
     .map((control) => {
       const selected = selectedControlValue(control, options);
       if (
-        control.id !== "reasoning" &&
         control.includeInLabel === "whenNonDefault" &&
         selected === control.defaultValue
       ) {
         return "";
       }
-      if (control.id !== "reasoning" && control.includeInLabel === "never") {
+      if (control.includeInLabel === "never") {
         return "";
       }
       return resolveOptionSummaryLabel(
@@ -851,8 +773,14 @@ export function getSelectedModelDisplayLabel(
 
   return [
     regionLabel ? `${regionLabel}:${metadata.modelLabel}` : metadata.modelLabel,
+    resolveOptionSummaryLabel(
+      getSelectedReasoningOption(model, options),
+      resolveLabel,
+    ),
     ...controlLabels,
-  ].join(" ");
+  ]
+    .filter(Boolean)
+    .join(" ");
 }
 
 export function getDefaultModelOptions(
@@ -886,6 +814,15 @@ export function normalizeModelOptions(
     permissionMode === "full-access"
   ) {
     normalized.permissionMode = permissionMode;
+  }
+  if (options[MODEL_SELECTION_OPTION]) {
+    normalized[MODEL_SELECTION_OPTION] = options[MODEL_SELECTION_OPTION];
+  }
+  const presetEffort = presetReasoning(options);
+  if (presetEffort) normalized.reasoning = presetEffort;
+  // Native task routing is execution identity, not a model-picker control.
+  if (model.type === "runtime" && options.runnerModelProvider) {
+    normalized.runnerModelProvider = options.runnerModelProvider;
   }
   return normalized;
 }

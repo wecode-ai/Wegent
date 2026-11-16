@@ -2,6 +2,7 @@ import {
   createCollaborationTranslator,
   formatIssueTimestamp,
   managerActivityPresentation,
+  executionDisplayStatus,
 } from '@wegent/collaboration'
 import type { ProjectChatMessage } from '@/api/backend/projectChatSocket'
 import type { CloudLoopItem } from '@/api/deliveries'
@@ -25,13 +26,10 @@ export function IssueManagerEvent({
   const { i18n } = useTranslation('common')
   const t = createCollaborationTranslator(i18n.language.startsWith('zh') ? 'zh-CN' : 'en')
   const status = resolveMessageRunStatus(task.ai_state, message)
-  const failed = status === 'failed'
-  const cancelled = status === 'cancelled' || status === 'interrupted'
-  const completed = status === 'completed' || status === 'succeeded'
   const presentation = managerActivityPresentation(
     t,
     message.metadata,
-    failed ? 'failed' : cancelled ? 'cancelled' : completed ? 'completed' : 'running'
+    executionDisplayStatus(status) ?? 'unknown'
   )
   return (
     <div
@@ -49,12 +47,7 @@ export function IssueManagerEvent({
       <div className="min-w-0 flex-1">
         <div className="flex items-start gap-2 text-sm">
           <div className="min-w-0 flex-1">
-            <span className="font-medium">{message.sender.name}</span>{' '}
-            <span className="text-xs text-text-muted">
-              {t('activity.task_activity_manager_role')}
-            </span>
-            {' · '}
-            {presentation.label}
+            <span className="font-medium">{message.sender.name}</span> {presentation.label}
           </div>
           {onOpenExecution || onCancel ? (
             <div className="flex shrink-0 items-center gap-3">
@@ -73,7 +66,7 @@ export function IssueManagerEvent({
                   type="button"
                   data-testid={`cloud-task-manager-cancel-${message.messageId}`}
                   disabled={cancelling}
-                  className="text-xs text-text-muted hover:text-red-600 disabled:cursor-not-allowed disabled:opacity-45"
+                  className="text-xs text-text-muted hover:text-destructive disabled:cursor-not-allowed disabled:opacity-45 wework:hover:text-red-600"
                   onClick={onCancel}
                 >
                   {cancelling

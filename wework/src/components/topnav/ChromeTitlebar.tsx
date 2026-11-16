@@ -21,7 +21,6 @@ interface ChromeTitlebarProps {
   afterTabs?: ReactNode
   className?: string
   showWorkspacePortals?: boolean
-  showFeedback?: boolean
   availableWorkspaceTabKinds?: readonly WorkspaceTabKind[]
 }
 
@@ -30,7 +29,6 @@ export function ChromeTitlebar({
   afterTabs,
   className,
   showWorkspacePortals = true,
-  showFeedback = true,
   availableWorkspaceTabKinds,
 }: ChromeTitlebarProps) {
   const isElectron = isElectronRuntime()
@@ -49,7 +47,7 @@ export function ChromeTitlebar({
     <div
       data-testid="chrome-titlebar"
       className={cn(
-        'z-titlebar flex h-[38px] shrink-0 items-center bg-[rgb(var(--color-titlebar))] pr-2 select-none',
+        'relative z-titlebar flex h-[38px] shrink-0 items-center bg-[rgb(var(--color-titlebar))] pr-2 select-none',
         className
       )}
     >
@@ -136,7 +134,7 @@ export function ChromeTitlebar({
               data-testid="titlebar-feedback"
               className="electron-titlebar-interactive-region pointer-events-auto flex h-full w-7 shrink-0 items-center justify-center"
             >
-              {showFeedback && <GlobalFeedbackButton />}
+              <GlobalFeedbackButton />
             </div>
           )}
         </div>

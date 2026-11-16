@@ -22,12 +22,20 @@ $stderrPath = Join-Path $logDirectory "stderr.log"
 $userSid = $null
 
 try {
+  & powershell.exe -NoProfile -NonInteractive -File (
+    Join-Path $PSScriptRoot "prepare-windows-e2e-display.ps1"
+  )
+  if ($LASTEXITCODE -ne 0) {
+    throw "Failed to prepare the Windows desktop E2E display"
+  }
   $user = New-LocalUser `
     -Name $userName `
     -Password $password `
     -AccountNeverExpires `
     -PasswordNeverExpires
   $userSid = $user.SID.Value
+  @{ name = $userName; sid = $userSid } | ConvertTo-Json |
+    Set-Content -LiteralPath (Join-Path $logDirectory "account-$PID.json")
   Add-LocalGroupMember -Group "Users" -Member $userName
 
   if (
@@ -108,10 +116,5 @@ try {
   }
   exit $process.ExitCode
 } finally {
-  if ($userSid) {
-    Get-CimInstance -ClassName Win32_UserProfile -ErrorAction SilentlyContinue |
-      Where-Object { $_.SID -eq $userSid } |
-      Remove-CimInstance -ErrorAction SilentlyContinue
-  }
-  Remove-LocalUser -Name $userName -ErrorAction SilentlyContinue
+  & (Join-Path $workspace ".github/scripts/stop-windows-standard-user-processes.ps1")
 }

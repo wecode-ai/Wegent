@@ -5,6 +5,8 @@
 use super::*;
 use crate::local::plugin_catalog::list_wegent_store_plugins;
 
+const INSTALLED_CATALOG_TIMEOUT: Duration = Duration::from_secs(8);
+
 impl RuntimeWorkRpcHandler {
     pub(super) async fn read_composer_catalog(&self, payload: Value) -> Result<Value, AppIpcError> {
         let scope = self.composer_catalog_scope(&payload)?;
@@ -29,6 +31,7 @@ impl RuntimeWorkRpcHandler {
                 serde_json::to_value(store)
                     .map_err(|error| AppIpcError::new("serialization_failed", error.to_string()))
             },
+            INSTALLED_CATALOG_TIMEOUT,
         )
         .await;
         log_executor_event(
@@ -126,12 +129,14 @@ fn workspace_catalog_scope(payload: &Value) -> Result<ComposerCatalogScope, AppI
 }
 
 // Keep this read path independent of marketplace reconciliation and installation.
-// A catalog is only published after every required source has succeeded.
+// Local skills and packages are required. Installed Codex membership is optional;
+// the global app directory belongs to explicit discovery and authorization flows.
 async fn read_catalog_snapshot<Request, RequestFuture, StoreFuture>(
     scope: &ComposerCatalogScope,
     force_refresh: bool,
     mut request: Request,
     store: StoreFuture,
+    remote_timeout: Duration,
 ) -> Result<Value, AppIpcError>
 where
     Request: FnMut(&'static str, Value) -> RequestFuture,
@@ -139,41 +144,15 @@ where
     StoreFuture: Future<Output = Result<Value, AppIpcError>>,
 {
     let cwds: Vec<&str> = scope.workspace_path.as_deref().into_iter().collect();
-    let mut apps = Vec::new();
-    let mut cursor = Value::Null;
-    let mut cursors = HashSet::new();
-    loop {
-        let response = request(
-            "app/list",
-            json!({"cursor": cursor, "limit": 100, "forceRefetch": force_refresh}),
-        )
-        .await?;
-        apps.extend(required_array(&response, "data")?.iter().cloned());
-        match response.get("nextCursor") {
-            None | Some(Value::Null) => break,
-            Some(Value::String(next)) if next.is_empty() => break,
-            Some(Value::String(next)) if cursors.insert(next.clone()) => {
-                cursor = Value::String(next.clone());
-            }
-            _ => return Err(invalid_catalog("Invalid or repeated app catalog cursor")),
-        }
-    }
-    let installed = request(
-        "plugin/installed",
-        json!({"cwds": cwds, "installSuggestionPluginNames": null}),
-    )
-    .await?;
-    let marketplaces = required_array(&installed, "marketplaces")?;
-    for marketplace in marketplaces {
-        required_array(marketplace, "plugins")?;
-    }
-    let skills = request(
+    let skills_request = request(
         "skills/list",
         json!({"cwds": cwds, "forceReload": force_refresh}),
-    )
-    .await?;
-    let skill_entries = required_array(&skills, "data")?;
-    for entry in skill_entries {
+    );
+    let (skills, store) = tokio::join!(skills_request, store);
+    let skills = skills?;
+    let store = store?;
+    let skill_entries = required_array(&skills, "data")?.clone();
+    for entry in &skill_entries {
         required_array(entry, "skills")?;
         if entry
             .get("errors")
@@ -186,18 +165,69 @@ where
             ));
         }
     }
-    let store = store.await?;
     required_array(&store, "plugins")?;
+
+    let (marketplaces, unavailable_sources) = match tokio::time::timeout(
+        remote_timeout,
+        read_remote_marketplaces(&mut request, &cwds),
+    )
+    .await
+    {
+        Ok(Ok(marketplaces)) => (marketplaces, Vec::new()),
+        Ok(Err(error)) => {
+            record_unavailable_source("codex-marketplaces", &error);
+            (Vec::new(), vec!["codex-marketplaces"])
+        }
+        Err(_) => {
+            log_executor_event(
+                "composer installed catalog timed out",
+                &[
+                    ("task_id", scope.task_id.clone().unwrap_or_default()),
+                    ("timeout_ms", remote_timeout.as_millis().to_string()),
+                ],
+            );
+            (Vec::new(), vec!["codex-marketplaces"])
+        }
+    };
     Ok(json!({
         "taskId": scope.task_id,
         "scope": if scope.task_id.is_some() { "task" } else { "workspace" },
         "workspacePath": scope.workspace_path.as_deref().unwrap_or_default(),
         "projectPluginIds": scope.project_plugin_ids,
-        "apps": apps,
+        "apps": [],
         "marketplaces": marketplaces,
         "skills": skill_entries,
         "store": store,
+        "partial": !unavailable_sources.is_empty(),
+        "unavailableSources": unavailable_sources,
     }))
+}
+
+async fn read_remote_marketplaces<Request, RequestFuture>(
+    request: &mut Request,
+    cwds: &[&str],
+) -> Result<Vec<Value>, AppIpcError>
+where
+    Request: FnMut(&'static str, Value) -> RequestFuture,
+    RequestFuture: Future<Output = Result<Value, AppIpcError>>,
+{
+    let installed = request(
+        "plugin/installed",
+        json!({"cwds": cwds, "installSuggestionPluginNames": null}),
+    )
+    .await?;
+    let marketplaces = required_array(&installed, "marketplaces")?.clone();
+    for marketplace in &marketplaces {
+        required_array(marketplace, "plugins")?;
+    }
+    Ok(marketplaces)
+}
+
+fn record_unavailable_source(source: &'static str, error: &AppIpcError) {
+    log_executor_event(
+        "composer optional catalog unavailable",
+        &[("source", source.to_owned()), ("code", error.code.clone())],
+    );
 }
 
 fn invalid_catalog(message: &str) -> AppIpcError {

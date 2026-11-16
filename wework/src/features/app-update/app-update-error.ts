@@ -1,5 +1,7 @@
-export type AppUpdateErrorStage = 'check' | 'download' | 'install'
-export type AppUpdateErrorKind = 'network' | 'unsupported' | 'generic'
+import type { WeworkUpdateFailureStage } from '../../../electron/src/host/app-update-progress'
+
+export type AppUpdateErrorStage = WeworkUpdateFailureStage
+export type AppUpdateErrorKind = 'network' | 'unsupported' | 'path-unavailable' | 'generic'
 
 export interface AppUpdateError {
   stage: AppUpdateErrorStage
@@ -7,6 +9,7 @@ export interface AppUpdateError {
   code: string
   occurredAt: number
   detail: string | null
+  retryable?: boolean
 }
 
 const NETWORK_ERROR_PATTERN =
@@ -27,17 +30,55 @@ export function createAppUpdateError(
   const messages = collectErrorMessages(error)
   const combinedMessage = messages.join('\n')
   const kind = classifyAppUpdateError(combinedMessage)
+  const metadata = collectErrorMetadata(error)
+  const failureStage = metadata?.stage ?? stage
 
   return {
-    stage,
+    stage: failureStage,
     kind,
-    code: appUpdateErrorCode(kind, stage),
+    code: metadata?.code ?? appUpdateErrorCode(kind, failureStage),
     occurredAt,
     detail: sanitizeAppUpdateErrorDetail(messages[0] ?? '', kind),
+    ...(metadata?.retryable !== undefined ? { retryable: metadata.retryable } : {}),
   }
 }
 
+function collectErrorMetadata(
+  error: unknown
+): { stage: AppUpdateErrorStage; code?: string; retryable?: boolean } | null {
+  const visited = new Set<unknown>()
+  let current = error
+  while (current instanceof Error && !visited.has(current) && visited.size < 4) {
+    visited.add(current)
+    const value = current as Error & {
+      stage?: unknown
+      code?: unknown
+      retryable?: unknown
+      details?: Record<string, unknown>
+    }
+    const metadata = typeof value.stage === 'string' ? value : value.details
+    if (metadata && isUpdateErrorStage(metadata.stage)) {
+      return {
+        stage: metadata.stage,
+        ...(typeof value.code === 'string' ? { code: value.code } : {}),
+        ...(typeof metadata.retryable === 'boolean' ? { retryable: metadata.retryable } : {}),
+      }
+    }
+    current = current.cause
+  }
+  return null
+}
+
+function isUpdateErrorStage(stage: unknown): stage is AppUpdateErrorStage {
+  return (
+    typeof stage === 'string' &&
+    ['check', 'download', 'extract', 'verify', 'prepare', 'install'].includes(stage)
+  )
+}
+
 function classifyAppUpdateError(message: string): AppUpdateErrorKind {
+  if (/no verified upgrade (?:path|policy)|no verified upgrade policy/i.test(message))
+    return 'path-unavailable'
   if (UNSUPPORTED_ERROR_PATTERN.test(message)) return 'unsupported'
   if (NETWORK_ERROR_PATTERN.test(message)) return 'network'
   return 'generic'
@@ -46,6 +87,7 @@ function classifyAppUpdateError(message: string): AppUpdateErrorKind {
 function appUpdateErrorCode(kind: AppUpdateErrorKind, stage: AppUpdateErrorStage): string {
   if (kind === 'network') return 'APP_UPDATE_NETWORK_UNAVAILABLE'
   if (kind === 'unsupported') return 'APP_UPDATE_UNAVAILABLE'
+  if (kind === 'path-unavailable') return 'APP_UPDATE_PATH_UNAVAILABLE'
   return `APP_UPDATE_${stage.toUpperCase()}_FAILED`
 }
 

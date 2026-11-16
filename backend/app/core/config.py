@@ -5,7 +5,7 @@
 import json
 import os
 from pathlib import Path
-from typing import Any, Mapping, Optional, Tuple, Type
+from typing import Any, Literal, Mapping, Optional, Tuple, Type
 
 from dotenv import dotenv_values
 from pydantic import Field, SecretStr, field_validator
@@ -112,6 +112,7 @@ class Settings(BaseSettings):
 
     # Database auto-migration configuration (only in development)
     DB_AUTO_MIGRATE: bool = True
+    DB_INITIALIZATION_OWNER: Literal["python", "rust"] = "python"
 
     # Database connection pool configuration. Each Backend or Celery process owns
     # its own pool, so deployment capacity must account for every process.
@@ -250,6 +251,26 @@ class Settings(BaseSettings):
     # Cleanup scanning interval seconds
     TASK_EXECUTOR_CLEANUP_INTERVAL_SECONDS: int = 600
 
+    # Stalled RUNNING subtask sweep configuration
+    # A RUNNING subtask untouched for TASK_STALLED_TIMEOUT_SECONDS is inspected;
+    # it fails immediately when its executor Pod is gone. Heartbeat-based
+    # failures are opt-in because not every executor image reports heartbeats;
+    # enable only when every executor type in the deployment sets
+    # HEARTBEAT_ENABLED=true.
+    # The sweep only considers subtasks created within TASK_STALLED_MAX_AGE_HOURS
+    # and uses the created_at index, so each run is a small range scan rather
+    # than a scan over every RUNNING row. One replica runs it per interval under
+    # a distributed lock, which keeps the cost negligible; worst-case detection
+    # is TASK_STALLED_TIMEOUT_SECONDS plus one sweep interval.
+    TASK_STALLED_SWEEP_INTERVAL_SECONDS: int = 10800
+    TASK_STALLED_TIMEOUT_SECONDS: int = 3600
+    # Only look at subtasks created in this window; older rows are left alone
+    # and cannot produce stale completion events.
+    TASK_STALLED_MAX_AGE_HOURS: int = 24
+    TASK_STALLED_HEARTBEAT_TIMEOUT_SECONDS: int = 1800
+    TASK_STALLED_HEARTBEAT_CHECK_ENABLED: bool = False
+    TASK_STALLED_SCAN_LIMIT: int = 50
+
     # Workspace archive configuration
     WORKSPACE_ARCHIVE_MAX_SIZE_MB: int = 2048
     WORKSPACE_ARCHIVE_RETENTION_DAYS: int = 30
@@ -303,6 +324,7 @@ class Settings(BaseSettings):
 
     # Redis configuration
     REDIS_URL: str = "redis://127.0.0.1:6379/0"
+    SOCKETIO_REDIS_CLIENT_NAME: str | None = None
     SOCKETIO_REDIS_SOCKET_TIMEOUT: float = Field(
         default=30.0, gt=0, allow_inf_nan=False
     )
@@ -311,6 +333,9 @@ class Settings(BaseSettings):
     )
     SOCKETIO_REDIS_HEALTH_CHECK_INTERVAL: float = Field(
         default=15.0, gt=0, allow_inf_nan=False
+    )
+    SOCKETIO_REDIS_ACK_PROBE_INTERVAL_SECONDS: float = Field(
+        default=30.0, gt=0, allow_inf_nan=False
     )
     TERMINAL_SESSION_CACHE_MAX_ENTRIES: int = 8192
     TERMINAL_SESSION_CACHE_TTL_SECONDS: float = 5.0
@@ -574,12 +599,6 @@ class Settings(BaseSettings):
     TASK_SHARE_BASE_URL: str = "http://localhost:3000"
     TEAM_SHARE_QUERY_PARAM: str = "teamShare"
 
-    # AES encryption configuration for share tokens
-    SHARE_TOKEN_AES_KEY: str = (
-        "12345678901234567890123456789012"  # 32 bytes for AES-256
-    )
-    SHARE_TOKEN_AES_IV: str = "1234567890123456"  # 16 bytes for AES IV
-
     # Webhook notification configuration
     WEBHOOK_ENABLED: bool = False
     WEBHOOK_ENDPOINT_URL: str = ""
@@ -648,6 +667,7 @@ class Settings(BaseSettings):
     EXTERNAL_WIKI_DOWNLOAD_TIMEOUT_SECONDS: int = Field(default=300, ge=1)
 
     # Plugin marketplace package storage and controlled publishing.
+    PLUGIN_LOCAL_SYNC_ENABLED: bool = False
     PLUGIN_STORAGE_BUCKET: str = "plugins"
     PLUGIN_PACKAGE_URL_EXPIRES_SECONDS: int = 600
     PLUGIN_SUBMISSION_SCAN_TIMEOUT_SECONDS: int = 1200

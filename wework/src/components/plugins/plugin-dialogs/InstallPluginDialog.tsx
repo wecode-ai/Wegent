@@ -1,6 +1,7 @@
-import { useEffect, useRef } from 'react'
+import { useDialogKeyboard } from '@/hooks/useDialogKeyboard'
 import { useTranslation } from '@/hooks/useTranslation'
 import type { PluginDistribution } from '../pluginDistribution'
+import { PluginInstallWarning } from '../PluginInstallWarning'
 import { PluginSourceAvatar } from '../PluginSourceAvatar'
 
 export interface InstallPluginDialogTarget {
@@ -12,28 +13,38 @@ export interface InstallPluginDialogTarget {
   logoContrastPad?: boolean
   useLogoInitial?: boolean
   logoDistribution?: PluginDistribution
+  isOfficial?: boolean
   componentCount: number
   requiredConnectionNames?: string[]
 }
 
 interface InstallPluginDialogProps {
   plugin: InstallPluginDialogTarget
+  confirmDisabled?: boolean
   onCancel: () => void
   onConfirm: () => void
 }
 
-export function InstallPluginDialog({ plugin, onCancel, onConfirm }: InstallPluginDialogProps) {
+export function InstallPluginDialog({
+  plugin,
+  confirmDisabled = false,
+  onCancel,
+  onConfirm,
+}: InstallPluginDialogProps) {
   const { t } = useTranslation('common')
-  const confirmRef = useRef<HTMLButtonElement>(null)
+  const unofficial = !plugin.isOfficial
+  const dialogRef = useDialogKeyboard<HTMLElement>(
+    onCancel,
+    true,
+    unofficial
+      ? '[data-testid="install-plugin-dialog-cancel"]'
+      : '[data-testid="install-plugin-dialog-confirm"]'
+  )
   const logo = plugin.logoUrl?.trim() || ''
   const useInitial = Boolean(plugin.useLogoInitial) || !logo
   const requiredConnectionNames = plugin.requiredConnectionNames ?? []
   const requiredConnectionName =
     requiredConnectionNames.length === 1 ? requiredConnectionNames[0]?.trim() || null : null
-
-  useEffect(() => {
-    confirmRef.current?.focus()
-  }, [])
 
   return (
     <div
@@ -41,6 +52,7 @@ export function InstallPluginDialog({ plugin, onCancel, onConfirm }: InstallPlug
       onClick={onCancel}
     >
       <section
+        ref={dialogRef}
         role="dialog"
         aria-modal="true"
         aria-labelledby="install-plugin-dialog-title"
@@ -69,6 +81,7 @@ export function InstallPluginDialog({ plugin, onCancel, onConfirm }: InstallPlug
           </div>
         </div>
         <div className="space-y-3 px-6 py-5 text-sm leading-5 text-text-secondary">
+          {unofficial && <PluginInstallWarning />}
           <p>
             <strong className="text-text-primary">{plugin.name}</strong>
             {(plugin.publisher || plugin.version) && (
@@ -113,10 +126,10 @@ export function InstallPluginDialog({ plugin, onCancel, onConfirm }: InstallPlug
             {t('workbench.cancel', '取消')}
           </button>
           <button
-            ref={confirmRef}
             type="button"
             data-testid="install-plugin-dialog-confirm"
-            className="flex h-9 items-center gap-2 rounded-lg bg-text-primary px-4 text-sm font-medium text-background hover:bg-text-primary/90"
+            disabled={confirmDisabled}
+            className="flex h-9 items-center gap-2 rounded-lg bg-text-primary px-4 text-sm font-medium text-background hover:bg-text-primary/90 disabled:cursor-not-allowed disabled:opacity-50"
             onClick={onConfirm}
           >
             {requiredConnectionNames.length > 0

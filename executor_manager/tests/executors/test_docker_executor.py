@@ -131,13 +131,11 @@ class TestDockerExecutor:
         with pytest.raises(ValueError, match="Executor image not provided"):
             executor._get_executor_image(task)
 
-    @patch.object(docker_executor_module, "find_available_port")
+    @patch.object(docker_executor_module, "PORT_RANGE_MIN", 12000)
+    @patch.object(docker_executor_module, "PORT_RANGE_MAX", 12100)
     @patch.object(docker_executor_module, "build_callback_url")
-    def test_prepare_docker_command(
-        self, mock_callback, mock_find_port, executor, sample_task
-    ):
+    def test_prepare_docker_command(self, mock_callback, executor, sample_task):
         """Test preparing Docker run command"""
-        mock_find_port.return_value = 8080
         mock_callback.return_value = "http://callback.url"
         sample_task["skill_identity_token"] = "skill-jwt"
 
@@ -160,18 +158,18 @@ class TestDockerExecutor:
         assert "WEGENT_SKILL_USER_NAME=test_user" in cmd
         assert "WEGENT_SKILL_IDENTITY_TOKEN=skill-jwt" in cmd
         assert "EXECUTOR_MODE=docker" in cmd
+        assert "PORT=10001" in cmd
+        assert cmd[cmd.index("-p") + 1] == "12000-12100:10001"
         assert not any(
             isinstance(item, str) and item.startswith("TASK_INFO=") for item in cmd
         )
 
     @patch.dict(os.environ, {"TASK_API_DOMAIN": "http://backend:8000"}, clear=False)
-    @patch.object(docker_executor_module, "find_available_port")
     @patch.object(docker_executor_module, "build_callback_url")
     def test_prepare_docker_command_adds_task_api_domain(
-        self, mock_callback, mock_find_port, executor, sample_task
+        self, mock_callback, executor, sample_task
     ):
         """Docker containers should expose the task API domain."""
-        mock_find_port.return_value = 8080
         mock_callback.return_value = "http://callback.url"
 
         task_info = executor._extract_task_info(sample_task)
@@ -183,12 +181,11 @@ class TestDockerExecutor:
         assert "WEGENT_BACKEND_URL=http://backend:8000" not in cmd
 
     @pytest.mark.parametrize("value", [None, "1", "0"])
-    @patch.object(docker_executor_module, "find_available_port", return_value=8080)
     @patch.object(
         docker_executor_module, "build_callback_url", return_value="http://callback.url"
     )
     def test_prepare_docker_command_forwards_stdout_debug_flag(
-        self, mock_callback, mock_find_port, executor, sample_task, monkeypatch, value
+        self, mock_callback, executor, sample_task, monkeypatch, value
     ):
         name = "WEGENT_DEBUG_CLAUDE_STDOUT"
         if value is None:
@@ -216,10 +213,9 @@ class TestDockerExecutor:
         },
         clear=False,
     )
-    @patch.object(docker_executor_module, "find_available_port")
     @patch.object(docker_executor_module, "build_callback_url")
     def test_prepare_docker_command_passes_git_token_keys(
-        self, mock_callback, mock_find_port, executor, sample_task
+        self, mock_callback, executor, sample_task
     ):
         """The backend hands over the git token as stored, which is encrypted.
 
@@ -227,7 +223,6 @@ class TestDockerExecutor:
         and git falls back to prompting for a username -- surfacing as "could not
         read Username for ..." with nothing pointing at the missing key.
         """
-        mock_find_port.return_value = 8080
         mock_callback.return_value = "http://callback.url"
 
         task_info = executor._extract_task_info(sample_task)
@@ -241,15 +236,13 @@ class TestDockerExecutor:
     @patch.dict(
         os.environ, {"GIT_TOKEN_AES_KEY": "", "GIT_TOKEN_AES_IV": ""}, clear=False
     )
-    @patch.object(docker_executor_module, "find_available_port")
     @patch.object(docker_executor_module, "build_callback_url")
     def test_prepare_docker_command_omits_empty_git_token_keys(
-        self, mock_callback, mock_find_port, executor, sample_task
+        self, mock_callback, executor, sample_task
     ):
         """An empty key would have the executor decrypt with a default, producing a
         wrong token that fails as an authentication error rather than as the
         configuration error it is."""
-        mock_find_port.return_value = 8080
         mock_callback.return_value = "http://callback.url"
 
         task_info = executor._extract_task_info(sample_task)
@@ -259,13 +252,9 @@ class TestDockerExecutor:
 
         assert not [arg for arg in cmd if arg.startswith("GIT_TOKEN_AES_")]
 
-    @patch.object(docker_executor_module, "find_available_port")
     @patch.object(docker_executor_module, "build_callback_url")
-    def test_prepare_docker_command_sandbox_env_vars(
-        self, mock_callback, mock_find_port, executor
-    ):
+    def test_prepare_docker_command_sandbox_env_vars(self, mock_callback, executor):
         """Test sandbox command uses sandbox-specific env vars without TASK_INFO."""
-        mock_find_port.return_value = 8080
         mock_callback.return_value = "http://callback.url"
         sandbox_task = {
             "task_id": 123,
@@ -405,12 +394,10 @@ class TestDockerExecutor:
         assert "has no ports mapped" in result["error_msg"]
 
     @patch("executor_manager.executors.docker.executor.build_callback_url")
-    @patch("executor_manager.executors.docker.executor.find_available_port")
     @patch.object(docker_executor_module, "generate_executor_name")
     def test_submit_executor_docker_error(
         self,
         mock_name,
-        mock_port,
         mock_callback,
         executor,
         sample_task,
@@ -418,7 +405,6 @@ class TestDockerExecutor:
     ):
         """Test submitting executor with Docker error"""
         mock_name.return_value = "new-executor"
-        mock_port.return_value = 8080
         mock_callback.return_value = "http://callback.url"
 
         # Reset mock and simulate error

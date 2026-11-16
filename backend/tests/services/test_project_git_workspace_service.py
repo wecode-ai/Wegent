@@ -89,6 +89,14 @@ async def test_prepare_git_checkout_sets_repo_git_identity_after_clone():
         "git_config",
         "git_config",
     ]
+    assert command_mock.await_args_list[3].kwargs["path"] == "/workspace/projects"
+    assert command_mock.await_args_list[3].kwargs["args"] == [
+        "--branch",
+        "main",
+        "--single-branch",
+        "https://github.com/wecode-ai/Wegent.git",
+        "Wegent",
+    ]
     assert (
         command_mock.await_args_list[4].kwargs["path"] == "/workspace/projects/Wegent"
     )

@@ -152,7 +152,7 @@ export function InstalledPluginRow({
         <button
           type="button"
           aria-label={`${t('workbench.plugins_view_plugin_detail', '查看 {{name}} 详情', { name: plugin.name })}`}
-          className="grid min-h-[75px] grid-cols-[42px_minmax(0,1fr)] items-center gap-3 py-2 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-focus/30"
+          className="grid min-h-[75px] grid-cols-[42px_minmax(0,1fr)] items-center gap-3 py-2 text-left focus-visible:outline-none keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-inset keyboard:focus-visible:ring-focus/30"
           onClick={onOpen}
         >
           {mainContent}
@@ -193,14 +193,15 @@ export function InstalledPluginRow({
             title={toggleLabel}
             data-testid={`installed-plugin-toggle-${plugin.id}`}
             className={[
-              'relative h-[22px] w-[38px] shrink-0 rounded-full transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus/40',
-              plugin.enabled ? 'bg-emerald-600' : 'bg-border',
+              'relative h-[22px] w-[38px] shrink-0 rounded-full transition-colors focus-visible:outline-none keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-focus/40',
+              plugin.enabled ? 'bg-primary wework:bg-emerald-600' : 'bg-border',
             ].join(' ')}
             onClick={onToggle}
           >
             <span
               className={[
-                'absolute left-[3px] top-[3px] h-4 w-4 rounded-full bg-white shadow-sm transition-transform',
+                'absolute left-[3px] top-[3px] h-4 w-4 rounded-full shadow-sm transition-transform wework:bg-white',
+                plugin.enabled ? 'bg-primary-contrast' : 'bg-background',
                 plugin.enabled ? 'translate-x-4' : 'translate-x-0',
               ].join(' ')}
             />
@@ -228,7 +229,7 @@ export function InstalledPluginRow({
               <button
                 type="button"
                 data-testid={`installed-plugin-share-${plugin.id}`}
-                className="flex min-h-9 w-full items-center gap-2.5 rounded-lg px-2.5 text-left text-base text-text-primary hover:bg-surface focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus/20"
+                className="flex min-h-9 w-full items-center gap-2.5 rounded-lg px-2.5 text-left text-base text-text-primary hover:bg-surface focus-visible:outline-none keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-focus/20"
                 onClick={() => {
                   setIsMenuOpen(false)
                   onShare()
@@ -242,7 +243,7 @@ export function InstalledPluginRow({
               <button
                 type="button"
                 data-testid={`installed-plugin-publish-${plugin.id}`}
-                className="flex min-h-9 w-full items-center gap-2.5 rounded-lg px-2.5 text-left text-base text-text-primary hover:bg-surface focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus/20"
+                className="flex min-h-9 w-full items-center gap-2.5 rounded-lg px-2.5 text-left text-base text-text-primary hover:bg-surface focus-visible:outline-none keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-focus/20"
                 onClick={() => {
                   setIsMenuOpen(false)
                   onPublish()
@@ -256,7 +257,7 @@ export function InstalledPluginRow({
               <button
                 type="button"
                 data-testid={`installed-plugin-copy-${plugin.id}`}
-                className="flex min-h-9 w-full items-center gap-2.5 rounded-lg px-2.5 text-left text-base text-text-primary hover:bg-surface focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus/20"
+                className="flex min-h-9 w-full items-center gap-2.5 rounded-lg px-2.5 text-left text-base text-text-primary hover:bg-surface focus-visible:outline-none keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-focus/20"
                 onClick={() => {
                   setIsMenuOpen(false)
                   onCopy()
@@ -270,7 +271,7 @@ export function InstalledPluginRow({
             <button
               type="button"
               data-testid={`installed-plugin-uninstall-${plugin.id}`}
-              className="flex min-h-9 w-full items-center gap-2.5 rounded-lg px-2.5 text-left text-base text-red-600 hover:bg-red-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-red-500/20 dark:hover:bg-red-950/30"
+              className="flex min-h-9 w-full items-center gap-2.5 rounded-lg px-2.5 text-left text-base text-destructive hover:bg-destructive/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-destructive/20 wework:text-red-600 wework:hover:bg-red-50 wework:focus-visible:ring-red-500/20 wework:dark:hover:bg-red-950/30"
               onClick={() => {
                 setIsMenuOpen(false)
                 onUninstall()

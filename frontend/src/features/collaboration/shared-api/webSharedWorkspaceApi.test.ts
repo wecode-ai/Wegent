@@ -16,6 +16,33 @@ function createClient() {
 }
 
 describe('workspace resource configuration adapter', () => {
+  it('forwards the observed content revision with an Issue read receipt', async () => {
+    const client = createClient()
+    client.post.mockResolvedValue({ id: 'issue-1', is_unread: true })
+    const api = createWebSharedWorkspaceApi(client, { getBlob: jest.fn() })
+    await api.issues.markRead('issue-1', 4, 7)
+    expect(client.post).toHaveBeenCalledWith('/v1/loop-items/issue-1/read', {
+      activity_sequence: 4,
+      content_revision: 7,
+    })
+  })
+
+  it('preserves opaque view extensions and lane sort IDs in project updates', async () => {
+    const client = createClient()
+    client.patch.mockResolvedValue({})
+    const api = createWebSharedWorkspaceApi(client, { getBlob: jest.fn() })
+    const boardViews = {
+      schema_version: 1,
+      views: [],
+      futureExtension: { keepCase: true },
+      sorts: { 'Lane-ABC': ['created-asc'] },
+    }
+    await api.projects.update('project/1', { version: 3, boardViews })
+    expect(client.patch).toHaveBeenCalledWith('/v1/cloud-projects/project%2F1', {
+      version: 3,
+      board_views: boardViews,
+    })
+  })
   it('uses canonical member, agent, and execution environment endpoints', async () => {
     const client = createClient()
     client.post

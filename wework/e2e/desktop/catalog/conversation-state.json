@@ -1,0 +1,16 @@
+{
+  "order": 181000,
+  "scenario": "./scenarios/conversation-mention.scenario.mjs",
+  "ci": {
+    "core": {
+      "order": 119000,
+      "shard": 8,
+      "position": 1000
+    },
+    "cloud": {
+      "order": 16000,
+      "shard": 4,
+      "position": 2000
+    }
+  }
+}

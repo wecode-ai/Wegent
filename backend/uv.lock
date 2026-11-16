@@ -842,6 +842,15 @@ wheels = [
 ]
 
 [[package]]
+name = "chinesecalendar"
+version = "1.12.1"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/71/e6/978dff193c59923dc246142f9b9a92ff58dfbfa6d782cf7b22df71dadc8c/chinesecalendar-1.12.1.tar.gz", hash = "sha256:cf36d710c89a183b2050cc7b0cddc28a4c270e5a17ccfdfae626dba6c21fef95", size = 18133, upload-time = "2026-11-05T10:32:34.117Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/78/61/00ae63bc892f56e6c65f04fc29dd1708d71cd8bec9fd1c48618cd7fc5418/chinesecalendar-1.12.1-py3-none-any.whl", hash = "sha256:abad3683598f6de9bcd49f45438b6d88a2a409bb7819bfd9a271d0ff7ae42e1c", size = 12403, upload-time = "2026-11-05T10:32:31.755Z" },
+]
+
+[[package]]
 name = "click"
 version = "8.3.1"
 source = { registry = "https://pypi.org/simple" }
@@ -5604,6 +5613,7 @@ dependencies = [
 
 [package.dev-dependencies]
 dev = [
+    { name = "chinesecalendar" },
     { name = "black" },
     { name = "flake8" },
     { name = "isort" },
@@ -5673,7 +5683,7 @@ requires-dist = [
     { name = "prometheus-client", specifier = ">=0.19.0" },
     { name = "pybreaker", specifier = ">=1.0.0" },
     { name = "pycryptodome", specifier = ">=3.20.0" },
-    { name = "pydantic", specifier = ">=2.5.3" },
+    { name = "pydantic", specifier = ">=2.12.0" },
     { name = "pydantic-settings", specifier = ">=2.1.0" },
     { name = "pyjwt", specifier = ">=2.8.0" },
     { name = "pymysql", specifier = ">=1.1.0" },
@@ -5687,7 +5697,7 @@ requires-dist = [
     { name = "python-magic-bin", marker = "sys_platform == 'win32'", specifier = ">=0.4.14" },
     { name = "python-multipart", specifier = ">=0.0.6" },
     { name = "python-pptx", specifier = ">=0.6.23" },
-    { name = "python-socketio", specifier = ">=5.10.0" },
+    { name = "python-socketio", specifier = "==5.15.1" },
     { name = "python-socks", extras = ["asyncio"], specifier = ">=2.7,<3" },
     { name = "python-telegram-bot", specifier = ">=21.0" },
     { name = "pyyaml", specifier = ">=6.0.1" },
@@ -5709,6 +5719,7 @@ requires-dist = [
 
 [package.metadata.requires-dev]
 dev = [
+    { name = "chinesecalendar", specifier = "==1.12.1" },
     { name = "black", specifier = ">=23.7.0" },
     { name = "flake8", specifier = ">=6.0.0" },
     { name = "isort", specifier = ">=5.12.0" },

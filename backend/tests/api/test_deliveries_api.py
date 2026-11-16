@@ -8,6 +8,7 @@ import asyncio
 import io
 import json
 import uuid
+from copy import deepcopy
 from types import SimpleNamespace
 from typing import Any, BinaryIO
 from unittest.mock import AsyncMock, MagicMock
@@ -22,13 +23,20 @@ from app.models.cloud_project import CloudProject, LoopItemTaskBinding
 from app.models.delivery import (
     Delivery,
     LoopItem,
+    ProjectAutomationRule,
     ProjectAutomationRun,
+    ProjectChatAgent,
     ProjectIncomingEvent,
 )
+from app.models.kind import Kind
+from app.models.loop_item_execution import LoopItemExecution
 from app.models.resource_member import MemberStatus, ResourceMember
 from app.models.share_link import ResourceType
 from app.models.task import TaskResource
 from app.models.user import User
+from app.models.wework_notification import WeworkNotification
+from app.schemas.delivery import LoopItemTaskBindingResponse
+from app.schemas.workspace import CollaborationGroupCreate
 from app.services import runtime_work_service
 from app.services.delivery import delivery_service
 from app.services.delivery.storage import (
@@ -36,8 +44,15 @@ from app.services.delivery.storage import (
     DeliveryStorageUnavailableError,
 )
 from app.services.loop_items.service import loop_item_service
+from app.services.project_automation_execution import project_automation_execution
 from app.services.project_incoming_hooks import project_incoming_hook_service
-from tests.utils.collaboration import authorize_project
+from app.services.workspaces.service import workspace_service
+from tests.service_results import service_result
+from tests.utils.collaboration import (
+    authorize_project,
+    authorize_project_agent,
+    authorize_resource,
+)
 
 
 class FakeDeliveryStorage:
@@ -142,6 +157,103 @@ def test_todo_attachment_flow(
     assert not delivery_storage.objects
 
 
+@pytest.mark.parametrize(
+    ("filename", "encoded_filename"),
+    [
+        (
+            "截屏 2026-10-19 17.53.45.png",
+            "%E6%88%AA%E5%B1%8F%202026-10-19%2017.53.45.png",
+        ),
+        ("café.png", "caf%C3%A9.png"),
+    ],
+)
+def test_todo_attachment_content_supports_non_ascii_filename(
+    test_client: TestClient,
+    test_token: str,
+    delivery_project: CloudProject,
+    delivery_storage: FakeDeliveryStorage,
+    filename: str,
+    encoded_filename: str,
+) -> None:
+    item_id = test_client.post(
+        f"/api/v1/cloud-projects/{delivery_project.id}/loop-items",
+        headers=_auth(test_token),
+        json={"title": "Chinese attachment name"},
+    ).json()["id"]
+    uploaded = test_client.post(
+        f"/api/v1/loop-items/{item_id}/attachments",
+        headers=_auth(test_token),
+        files={"file": (filename, b"image-bytes", "image/png")},
+    )
+    assert uploaded.status_code == 201
+
+    content = test_client.get(
+        f"/api/v1/loop-item-attachments/{uploaded.json()['id']}/content",
+        headers=_auth(test_token),
+    )
+
+    assert content.status_code == 200
+    assert content.content == b"image-bytes"
+    assert content.headers["content-type"].startswith("image/png")
+    assert (
+        content.headers["content-disposition"]
+        == f"inline; filename*=UTF-8''{encoded_filename}"
+    )
+    assert len(delivery_storage.objects) == 1
+
+
+@pytest.mark.parametrize(
+    ("filename", "encoded_filename"),
+    [
+        ("结果.txt", "%E7%BB%93%E6%9E%9C.txt"),
+        ("café.txt", "caf%C3%A9.txt"),
+    ],
+)
+def test_delivery_asset_content_supports_non_ascii_filename(
+    test_client: TestClient,
+    test_token: str,
+    delivery_project: CloudProject,
+    delivery_storage: FakeDeliveryStorage,
+    filename: str,
+    encoded_filename: str,
+) -> None:
+    item = test_client.post(
+        f"/api/v1/cloud-projects/{delivery_project.id}/loop-items",
+        headers=_auth(test_token),
+        json={"title": "Delivery filename"},
+    )
+    assert item.status_code == 201
+    draft = test_client.post(
+        f"/api/v1/loop-items/{item.json()['id']}/deliveries",
+        headers=_auth(test_token),
+        json={"markdown": "# Result"},
+    )
+    assert draft.status_code == 201
+    delivery_id = draft.json()["id"]
+    uploaded = test_client.post(
+        f"/api/v1/deliveries/{delivery_id}/assets",
+        headers=_auth(test_token),
+        data={"relative_path": "result.txt"},
+        files={"file": (filename, b"delivered result", "text/plain")},
+    )
+    assert uploaded.status_code == 201
+    content_url = f"/api/v1/delivery-assets/{uploaded.json()['id']}/content"
+    assert test_client.get(content_url, headers=_auth(test_token)).status_code == 404
+    finalized = test_client.post(
+        f"/api/v1/deliveries/{delivery_id}/finalize", headers=_auth(test_token)
+    )
+    assert finalized.status_code == 200
+
+    content = test_client.get(content_url, headers=_auth(test_token))
+
+    assert content.status_code == 200
+    assert content.content == b"delivered result"
+    assert content.headers["content-type"].startswith("text/plain")
+    assert content.headers["content-disposition"] == (
+        f"inline; filename*=UTF-8''{encoded_filename}"
+    )
+
+
 @pytest.fixture
 def delivery_project(test_db: Session, test_user: User) -> CloudProject:
     public_id = str(uuid.uuid4())
@@ -215,29 +327,39 @@ def test_completed_todo_subtree_can_be_archived_listed_and_restored(
     }
 
 
-def test_incomplete_todo_subtree_cannot_be_archived(
+@pytest.mark.parametrize(
+    "parent_status", ["inbox", "in_progress", "in_review", "completed"]
+)
+def test_editable_todo_subtree_can_be_archived_regardless_of_status(
     test_client: TestClient,
     test_token: str,
     delivery_project: CloudProject,
+    parent_status: str,
 ) -> None:
     parent = test_client.post(
         f"/api/v1/cloud-projects/{delivery_project.id}/loop-items",
         headers=_auth(test_token),
-        json={"title": "Completed parent", "status": "completed"},
+        json={"title": "Editable parent", "status": parent_status},
     ).json()
-    test_client.post(
+    child = test_client.post(
         f"/api/v1/cloud-projects/{delivery_project.id}/loop-items",
         headers=_auth(test_token),
         json={"title": "Incomplete child", "parent_id": parent["id"]},
-    )
+    ).json()
 
     response = test_client.delete(
         f"/api/v1/loop-items/{parent['id']}",
         headers=_auth(test_token),
     )
 
-    assert response.status_code == 409
-    assert response.json()["detail"] == "Only completed TODO subtrees can be archived"
+    assert response.status_code == 204
+    restored = test_client.post(
+        f"/api/v1/loop-items/{parent['id']}/restore",
+        headers=_auth(test_token),
+    )
+    assert restored.status_code == 200
+    statuses = {item["id"]: item["status"] for item in restored.json()["items"]}
+    assert statuses == {parent["id"]: parent_status, child["id"]: child["status"]}
 
 
 def test_external_loop_items_forward_assignee_filters(
@@ -537,6 +659,7 @@ def test_loop_items_support_unbounded_hierarchy_and_reject_cycles(
 
 
 def test_board_snapshot_returns_first_screen_dependencies(
+    test_db,
     test_client: TestClient,
     test_token: str,
     delivery_project: CloudProject,
@@ -568,8 +691,12 @@ def test_board_snapshot_returns_first_screen_dependencies(
         "modelType": "public",
         "options": {"reasoning": "high"},
     }
-    bindings = test_client.get(
-        f"/api/v1/loop-items/{item['id']}/tasks", headers=headers
+    bindings = service_result(
+        loop_item_service.list_task_bindings,
+        test_db,
+        item["id"],
+        test_user.id,
+        response_model=list[LoopItemTaskBindingResponse],
     )
     assert bindings.status_code == 200
     assert bindings.json() == [binding.json()]
@@ -1205,7 +1332,7 @@ def test_updating_assigned_issue_execution_config_wakes_cloud_executor(
     test_db.commit()
     test_db.refresh(item)
 
-    refresh = MagicMock(side_effect=lambda _db, *, item, user_id: item)
+    refresh = MagicMock(side_effect=lambda _db, *, item, user_id, commit: item)
     wake = AsyncMock()
     monkeypatch.setattr(
         deliveries_endpoint.loop_item_service,
@@ -1239,14 +1366,258 @@ def test_updating_assigned_issue_execution_config_wakes_cloud_executor(
     wake.assert_awaited_once_with()
 
 
+@pytest.mark.parametrize("assignee_kind", ["agent", "group"])
+def test_assignment_patch_queues_implicit_status_transition(
+    test_client: TestClient,
+    test_db: Session,
+    test_token: str,
+    test_user: User,
+    delivery_project: CloudProject,
+    assignee_kind: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    created = test_client.post(
+        f"/api/v1/cloud-projects/{delivery_project.id}/loop-items",
+        headers=_auth(test_token),
+        json={"title": "Start from assignment", "status": "pending"},
+    ).json()
+    if assignee_kind == "group":
+        member = {"kind": "human", "id": str(test_user.id)}
+        group = workspace_service.create_project_collaboration_group(
+            test_db,
+            delivery_project.id,
+            test_user.id,
+            CollaborationGroupCreate(
+                name="Human review group", leader=member, members=[member]
+            ),
+        )
+        assignment = {"assignee_group_id": str(group["id"])}
+    else:
+        device = Kind(
+            kind="Device",
+            name="assignment-device",
+            namespace="default",
+            user_id=test_user.id,
+            is_active=True,
+            json={"spec": {"deviceType": "local"}},
+        )
+        test_db.add(device)
+        test_db.flush()
+        authorize_resource(test_db, delivery_project, device)
+        agent = ProjectChatAgent(
+            cloud_project_id=delivery_project.id,
+            title="Assignment Agent",
+            name="Assignment Agent",
+            status="active",
+            created_by_user_id=test_user.id,
+            device_id=device.name,
+            metadata_json={"runtime": "codex", "model": "test-model"},
+        )
+        authorize_project_agent(test_db, agent)
+        test_db.add(agent)
+        test_db.commit()
+        assignment = {"assignee_agent_id": agent.id}
+    rule = ProjectAutomationRule(
+        cloud_project_id=delivery_project.id,
+        title="Started work automation",
+        status="enabled",
+        created_by_user_id=test_user.id,
+        metadata_json={
+            "trigger_type": "event",
+            "event_type": "task.status_changed",
+            "event_config": {
+                "transition": "any",
+                "statuses": ["in_progress"],
+                "execution_target": "existing_issue",
+            },
+        },
+    )
+    test_db.add(rule)
+    test_db.commit()
+    monkeypatch.setattr(
+        "app.tasks.robot_queue_tasks.consume_queues_background", AsyncMock()
+    )
+
+    response = test_client.patch(
+        f"/api/v1/loop-items/{created['id']}",
+        headers=_auth(test_token),
+        json={"version": created["version"], **assignment},
+    )
+
+    assert response.status_code == 200, response.text
+    assert response.json()["status"] == "in_progress"
+    event = (
+        test_db.query(ProjectIncomingEvent).filter_by(title="task.status_changed").one()
+    )
+    assert event.status == "received"
+    assert event.metadata_json["payload"]["previous_status"] == "pending"
+    assert event.metadata_json["payload"]["status"] == "in_progress"
+    dispatch = AsyncMock()
+    monkeypatch.setattr(project_automation_execution, "dispatch", dispatch)
+
+    assert asyncio.run(project_incoming_hook_service.check_pending(test_db)) == 1
+
+    run = test_db.query(ProjectAutomationRun).one()
+    assert run.parent_id == rule.id
+    assert run.task_id == created["id"]
+    dispatch.assert_awaited_once()
+
+
+@pytest.mark.parametrize(
+    "change", ["status", "pending", "execution_config", "same_agent_config"]
+)
+def test_runner_rejection_does_not_commit_issue_changes(
+    test_client: TestClient,
+    test_db: Session,
+    test_token: str,
+    test_user: User,
+    delivery_project: CloudProject,
+    change: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    created = test_client.post(
+        f"/api/v1/cloud-projects/{delivery_project.id}/loop-items",
+        headers=_auth(test_token),
+        json={"title": "Keep rejected changes atomic", "status": "inbox"},
+    ).json()
+    agent = ProjectChatAgent(
+        id=f"B{uuid.uuid4().hex[:10]}",
+        cloud_project_id=delivery_project.id,
+        name="No authorized runner",
+        title="No authorized runner",
+        created_by_user_id=test_user.id,
+        status="active",
+        metadata_json={
+            "runtime": "codex",
+            "execution_policy": {"mode": "project_pool"},
+            "model_policy": {
+                "mode": "fixed",
+                "model": {
+                    "runtime": "codex",
+                    "provider": "openai",
+                    "model_id": "test-model",
+                },
+            },
+        },
+    )
+    authorize_project_agent(test_db, agent)
+    test_db.add(agent)
+    item = test_db.get(LoopItem, created["id"])
+    item.assignee_agent_id = agent.id
+    execution = LoopItemExecution(
+        loop_item_id=item.id,
+        cloud_project_id=delivery_project.id,
+        agent_id=agent.id,
+        assigner_user_id=test_user.id,
+        executor_owner_user_id=test_user.id,
+        status="queued",
+    )
+    test_db.add(execution)
+    if change == "same_agent_config":
+        from app.services.issue_assignments import issue_assignment_service
+
+        issue_assignment_service.record(
+            test_db,
+            project_id=delivery_project.id,
+            issue_id=item.id,
+            member_type="agent",
+            member_id=agent.id,
+            assigned_by_user_id=test_user.id,
+            workflow_step=None,
+            notify=False,
+            trigger="manual",
+        )
+    test_db.commit()
+    execution_id = execution.id
+    before = (item.status, item.version, deepcopy(item.metadata_json or {}))
+    wake = AsyncMock()
+    monkeypatch.setattr("app.tasks.robot_queue_tasks.consume_queues_background", wake)
+    patch = (
+        {"status": "pending" if change == "pending" else "in_progress"}
+        if change in {"status", "pending"}
+        else {
+            "execution_config": {
+                "agent_id": agent.id,
+                "workspace_binding": {"type": "standalone"},
+            }
+        }
+    )
+    if change == "same_agent_config":
+        patch["assignee_agent_id"] = agent.id
+
+    response = test_client.patch(
+        f"/api/v1/loop-items/{item.id}",
+        headers=_auth(test_token),
+        json={"version": item.version, **patch},
+    )
+
+    assert response.status_code == 422, response.text
+    assert response.json()["detail"]["error_code"] == "RUNNER_ENVIRONMENT_UNAVAILABLE"
+    test_db.expire_all()
+    persisted = test_db.get(LoopItem, created["id"])
+    assert (persisted.status, persisted.version, persisted.metadata_json) == before
+    assert test_db.get(LoopItemExecution, execution_id).status == "queued"
+    wake.assert_not_awaited()
+
+    device = Kind(
+        kind="Device",
+        name=f"recovery-{uuid.uuid4().hex[:10]}",
+        namespace="default",
+        user_id=test_user.id,
+        is_active=True,
+        json={
+            "spec": {
+                "runnerCatalog": {
+                    "models": [
+                        {
+                            "runtime": "codex",
+                            "provider": "openai",
+                            "model_id": "test-model",
+                            "local_model_id": "test-model",
+                            "label": "Test model",
+                        }
+                    ]
+                }
+            }
+        },
+    )
+    test_db.add(device)
+    test_db.flush()
+    authorize_resource(test_db, delivery_project, device)
+    test_db.commit()
+
+    retried = test_client.patch(
+        f"/api/v1/loop-items/{created['id']}",
+        headers=_auth(test_token),
+        json={"version": before[1], **patch},
+    )
+
+    assert retried.status_code == 200, retried.text
+    assert retried.json()["version"] == before[1] + 1
+    assert retried.json()["status"] == (
+        patch["status"] if change in {"status", "pending"} else "inbox"
+    )
+    test_db.expire_all()
+    assert test_db.get(LoopItemExecution, execution_id).status == "cancelled"
+    assert (
+        test_db.query(LoopItemExecution)
+        .filter_by(loop_item_id=created["id"], status="queued")
+        .count()
+        == 1
+    )
+    wake.assert_awaited_once_with()
+
+
 def test_non_ai_issue_created_in_inbox_emits_task_created_automation(
     test_client: TestClient,
+    test_db: Session,
     test_token: str,
     delivery_project: CloudProject,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     rule = SimpleNamespace(id="rule-1")
     ingest = AsyncMock(return_value=1)
+    process = AsyncMock(return_value=1)
     monkeypatch.setattr(
         "app.services.project_automations.project_automation_processor.matching_rules",
         MagicMock(return_value=[rule]),
@@ -1255,6 +1626,9 @@ def test_non_ai_issue_created_in_inbox_emits_task_created_automation(
         deliveries_endpoint.project_incoming_hook_service,
         "ingest_internal",
         ingest,
+    )
+    monkeypatch.setattr(
+        deliveries_endpoint.project_incoming_hook_service, "process_event", process
     )
 
     response = test_client.post(
@@ -1280,10 +1654,18 @@ def test_non_ai_issue_created_in_inbox_emits_task_created_automation(
     )
 
     assert updated.status_code == 200
-    assert ingest.await_count == 2
-    status_event = ingest.await_args_list[1].args[1]
-    assert status_event.event_type == "task.status_changed"
-    assert status_event.subject_id == created["id"]
+    ingest.assert_awaited_once()
+    status_event = (
+        test_db.query(ProjectIncomingEvent).filter_by(title="task.status_changed").one()
+    )
+    assert (
+        status_event.metadata_json["normalized_events"][0]["subject"]["id"]
+        == created["id"]
+    )
+    assert status_event.metadata_json["automation_id"] == "rule-1"
+    assert status_event.metadata_json["payload"]["previous_status"] == "inbox"
+    assert status_event.metadata_json["payload"]["status"] == "in_progress"
+    process.assert_awaited_once_with(test_db, str(status_event.id))
 
 
 def test_issue_creation_requires_one_automation_when_multiple_rules_match(
@@ -1327,6 +1709,74 @@ def test_issue_creation_requires_one_automation_when_multiple_rules_match(
         ],
     }
     assert test_db.query(LoopItem).count() == before_count
+
+
+def test_later_status_change_selects_one_automation_before_updating_issue(
+    test_client: TestClient,
+    test_db: Session,
+    test_token: str,
+    delivery_project: CloudProject,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    created_response = test_client.post(
+        f"/api/v1/cloud-projects/{delivery_project.id}/loop-items",
+        headers=_auth(test_token),
+        json={"title": "Select review automation", "status": "in_progress"},
+    )
+    assert created_response.status_code == 201
+    created = created_response.json()
+    rules = [
+        SimpleNamespace(id="review-1", title="Review one", description=""),
+        SimpleNamespace(id="review-2", title="Review two", description=""),
+    ]
+    matching = MagicMock(return_value=rules)
+    monkeypatch.setattr(
+        deliveries_endpoint.project_automation_processor, "matching_rules", matching
+    )
+    process = AsyncMock(return_value=1)
+    monkeypatch.setattr(
+        deliveries_endpoint.project_incoming_hook_service, "process_event", process
+    )
+    patch = {"version": created["version"], "status": "in_review"}
+
+    selection_required = test_client.patch(
+        f"/api/v1/loop-items/{created['id']}", headers=_auth(test_token), json=patch
+    )
+
+    assert selection_required.status_code == 409
+    assert (
+        selection_required.json()["detail"]["code"] == "automation_selection_required"
+    )
+    test_db.expire_all()
+    assert test_db.get(LoopItem, created["id"]).status == "in_progress"
+    process.assert_not_awaited()
+
+    selected = test_client.patch(
+        f"/api/v1/loop-items/{created['id']}",
+        headers=_auth(test_token),
+        json={**patch, "automation_rule_id": "review-2"},
+    )
+
+    assert selected.status_code == 200, selected.text
+    assert selected.json()["status"] == "in_review"
+    event = (
+        test_db.query(ProjectIncomingEvent).filter_by(title="task.status_changed").one()
+    )
+    assert event.status == "received"
+    assert event.metadata_json["payload"]["previous_status"] == "in_progress"
+    assert event.metadata_json["payload"]["status"] == "in_review"
+    assert event.metadata_json["automation_id"] == "review-2"
+    process.assert_awaited_once_with(test_db, str(event.id))
+
+    unchanged = test_client.patch(
+        f"/api/v1/loop-items/{created['id']}",
+        headers=_auth(test_token),
+        json={"version": selected.json()["version"], "status": "in_review"},
+    )
+
+    assert unchanged.status_code == 200
+    assert matching.call_count == 2
+    process.assert_awaited_once_with(test_db, str(event.id))
 
 
 def test_issue_creation_dispatches_only_the_selected_matching_automation(
@@ -1692,6 +2142,66 @@ def test_loop_item_unread_follows_content_revision_and_read_cursor(
     assert refreshed_member_item.status_code == 200
     assert refreshed_member_item.json()["content_revision"] == 2
     assert refreshed_member_item.json()["is_unread"] is True
+    delayed_read = test_client.post(
+        f"/api/v1/loop-items/{item['id']}/read",
+        headers=_auth(member_token),
+        json={"content_revision": marked.json()["content_revision"]},
+    )
+    assert delayed_read.status_code == 200
+    assert delayed_read.json()["is_unread"] is True
+    assert delayed_read.json()["version"] == refreshed_member_item.json()["version"]
+
+
+def test_reading_issue_consumes_only_its_readers_notifications(
+    test_client: TestClient,
+    test_db: Session,
+    test_token: str,
+    delivery_project: CloudProject,
+) -> None:
+    created = test_client.post(
+        f"/api/v1/cloud-projects/{delivery_project.id}/loop-items",
+        headers=_auth(test_token),
+        json={"title": "Notification read synchronization"},
+    )
+    assert created.status_code == 201
+    item = test_db.get(LoopItem, created.json()["id"])
+    user_id = item.created_by_user_id
+    rows = [
+        WeworkNotification(
+            id=str(uuid.uuid4()),
+            user_id=recipient,
+            kind="mention",
+            title="Issue notification",
+            body="Read the Issue",
+            payload=payload,
+            is_read=already_read,
+        )
+        for recipient, payload, already_read in [
+            (user_id, {"itemId": item.id}, False),
+            (user_id, {"issueId": item.id}, False),
+            (user_id, {"itemId": item.id}, True),
+            (user_id, {"itemId": "another-issue"}, False),
+            (user_id + 1, {"itemId": item.id}, False),
+            (user_id, {}, False),
+        ]
+    ]
+    test_db.add_all(rows)
+    test_db.commit()
+    original_read_at = rows[2].read_at
+
+    # Reading the Issue directly must work without clicking an inbox entry.
+    for _ in range(2):
+        response = test_client.post(
+            f"/api/v1/loop-items/{item.id}/read",
+            headers=_auth(test_token),
+            json={"activity_sequence": 0},
+        )
+        assert response.status_code == 200
+        for row in rows:
+            test_db.refresh(row)
+        assert [row.is_read for row in rows] == [True, True, True, False, False, False]
+        assert all(row.read_at is not None for row in rows[:3])
+        assert rows[2].read_at == original_read_at
 
 
 def test_mark_loop_item_read_repairs_legacy_metadata_without_read_revisions(
@@ -2011,12 +2521,3 @@ def test_loop_item_reorder_respects_sibling_scope_across_statuses(
         second["id"]: "completed",
         child["id"]: "completed",
     }
-
-
-@pytest.fixture
-def test_client(test_client):
-    """Exercise retained Python HTTP components in an isolated application."""
-    from tests.retained_python_handlers import component_client
-
-    with component_client(test_client, ("issue_tasks",)) as client:
-        yield client

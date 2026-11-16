@@ -1,0 +1,12 @@
+{
+  "order": 86500,
+  "scenario": "./scenarios/model-sse-parsing.scenario.mjs",
+  "scenarioOnly": true,
+  "paths": [
+    "executor/crates/model-proxy/src/local_model_proxy/sse.rs",
+    "wework/e2e/desktop/modules/sse-regression-response.mjs"
+  ],
+  "ci": {
+    "core": { "order": 125500, "shard": 6, "position": 11500 }
+  }
+}

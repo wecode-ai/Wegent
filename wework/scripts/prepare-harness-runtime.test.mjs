@@ -1,3 +1,5 @@
+// @vitest-environment node
+
 import { execFile } from 'node:child_process'
 import {
   cp,
@@ -31,6 +33,7 @@ test('builds and materializes one archive per DSH source while preserving role a
   await Promise.all([
     mkdir(scripts),
     mkdir(join(source, 'plugins'), { recursive: true }),
+    mkdir(join(source, 'patches'), { recursive: true }),
     mkdir(commands),
     symlink(resolve('node_modules'), join(root, 'node_modules'), 'junction'),
   ])
@@ -43,6 +46,7 @@ test('builds and materializes one archive per DSH source while preserving role a
     cp(resolve('scripts/lib'), join(scripts, 'lib'), { recursive: true }),
     writeFile(join(source, '.npmrc'), ''),
     writeFile(join(source, 'pnpm-workspace.yaml'), ''),
+    writeFile(join(source, 'patches', 'pnpm@11.7.0.patch'), 'runtime patch fixture\n'),
     writeFile(join(source, 'published-runtimes.json'), '{}'),
     writeFile(
       join(commands, 'install.cjs'),
@@ -172,4 +176,18 @@ writeFileSync(join(root, 'lib', 'bin.js'), '')
   expect(JSON.parse(await readFile(join(legacyRoot, 'runtime.json'), 'utf8')).dshVersion).toBe(
     legacy.dshVersion
   )
+
+  await writeFile(join(source, 'patches', 'pnpm@11.7.0.patch'), 'updated runtime patch\n')
+  await prepare()
+  const patchedCatalog = JSON.parse(
+    await readFile(join(root, 'resources', 'bundled-harness-runtime', 'runtimes.json'), 'utf8')
+  )
+  expect(
+    patchedCatalog.runtimes.find(runtime => runtime.dshVersion === core.dshVersion)
+      .sourceFingerprint
+  ).not.toBe(core.sourceFingerprint)
+  expect(patchedCatalog.runtimes.find(runtime => runtime.dshVersion === legacy.dshVersion)).toEqual(
+    legacy
+  )
+  expect((await readFile(log, 'utf8')).trim().split('\n')).toHaveLength(3)
 }, 30_000)

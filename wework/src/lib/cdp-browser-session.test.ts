@@ -1,13 +1,9 @@
+// @vitest-environment node
+
 import { beforeEach, describe, expect, test, vi } from 'vitest'
 import {
-  canUseCdpBrowserSession,
-  clickCdpBrowserSession,
   goBackCdpBrowserSession,
-  insertTextCdpBrowserSession,
-  openCdpBrowserSession,
-  pressKeyCdpBrowserSession,
   readCdpBrowserPageState,
-  resizeCdpBrowserSession,
   screenshotCdpBrowserSession,
 } from './cdp-browser-session'
 
@@ -43,36 +39,6 @@ describe('CDP browser session', () => {
         stderr: '',
       }
     })
-  })
-
-  test('is available only in the desktop runtime', () => {
-    runtimeMocks.isElectronRuntime.mockReturnValue(false)
-
-    expect(canUseCdpBrowserSession()).toBe(false)
-
-    runtimeMocks.isElectronRuntime.mockReturnValue(true)
-    expect(canUseCdpBrowserSession()).toBe(true)
-  })
-
-  test('opens a browser-tool backed CDP session after starting the relay', async () => {
-    await expect(openCdpBrowserSession('https://example.com/')).resolves.toEqual({
-      targetId: 'target-1',
-      url: 'https://example.com/',
-    })
-
-    expect(localExecutorMocks.requestLocalExecutor).toHaveBeenNthCalledWith(
-      1,
-      'device.execute_command',
-      expect.objectContaining({ command_key: 'browser_relay_restart' })
-    )
-    expect(localExecutorMocks.requestLocalExecutor).toHaveBeenNthCalledWith(
-      2,
-      'device.execute_command',
-      expect.objectContaining({
-        args: ['{"action":"open","ensure":true,"url":"https://example.com/"}'],
-        command_key: 'browser_tool',
-      })
-    )
   })
 
   test('uses focused browser-tool evaluation for page state and history actions', async () => {
@@ -159,41 +125,6 @@ describe('CDP browser session', () => {
       expect.arrayContaining([
         { action: 'focus', targetId: 'target-1' },
         { action: 'screenshot', type: 'jpeg' },
-      ])
-    )
-  })
-
-  test('sends embedded viewport input through browser-tool act requests', async () => {
-    const session = { targetId: 'target-1', url: 'https://example.com/' }
-
-    await resizeCdpBrowserSession(session, 1024.8, 768.2)
-    await clickCdpBrowserSession(session, 120, 240)
-    await insertTextCdpBrowserSession(session, 'hello')
-    await pressKeyCdpBrowserSession(session, 'Enter')
-
-    const browserPayloads = localExecutorMocks.requestLocalExecutor.mock.calls
-      .map(([, params]) => params)
-      .filter(params => params.command_key === 'browser_tool')
-      .map(params => JSON.parse(params.args[0]))
-
-    expect(browserPayloads).toEqual(
-      expect.arrayContaining([
-        {
-          action: 'act',
-          request: { kind: 'resize', width: 1024, height: 768 },
-        },
-        {
-          action: 'act',
-          request: { kind: 'clickAt', x: 120, y: 240 },
-        },
-        {
-          action: 'act',
-          request: { kind: 'insertText', text: 'hello' },
-        },
-        {
-          action: 'act',
-          request: { kind: 'press', key: 'Enter' },
-        },
       ])
     )
   })

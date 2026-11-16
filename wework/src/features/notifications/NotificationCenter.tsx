@@ -4,6 +4,8 @@ import { standInOrigin, type StandInNotification } from './standInNotifications'
 import { NotificationFeedRow, type NotificationFeedRowProps } from './NotificationFeedRow'
 import { formatNotificationTime } from './notificationTime'
 import { StandInNotificationProcessing } from './StandInNotificationProcessing'
+import { useRuntimeInteractions } from './RuntimeInteractionsContext'
+import { NotificationImTarget } from './NotificationImTarget'
 import { useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react'
 import {
   ArrowLeft,
@@ -45,6 +47,7 @@ import { weworkIssueScheme, weworkTaskScheme } from './scheme'
 import { openWeworkScheme } from './schemeEvents'
 import {
   cacheNotificationPreferences,
+  mergeNotificationPreferences,
   migrateLegacyTaskSystemNotification,
   OPEN_NOTIFICATION_SETTINGS_EVENT,
   readCachedNotificationPreferences,
@@ -143,6 +146,7 @@ function NotificationSettings({
     title: string
   }> = [
     { id: 'tasks', title: t('notifications.category_tasks') },
+    { id: 'stand_in', title: t('notifications.category_stand_in') },
     { id: 'collaboration', title: t('notifications.category_collaboration') },
     { id: 'general', title: t('notifications.category_general') },
   ]
@@ -238,6 +242,7 @@ function ConnectedNotificationCenter({
 }) {
   const { t } = useTranslation('common')
   const taskSource = useNotificationTaskSource()
+  const interactions = useRuntimeInteractions()
   const api = useMemo(
     () =>
       baseUrl && token
@@ -273,6 +278,7 @@ function ConnectedNotificationCenter({
     readCachedNotificationPreferences(accountKey)
   )
   const [taskImSessionKey, setTaskImSessionKey] = useState<string | null>(null)
+  const [imTargetOpen, setImTargetOpen] = useState(false)
   const [inboxes, setInboxes] = useState<Record<WeworkNotificationCategory, WeworkInbox | null>>({
     collaboration: null,
     general: null,
@@ -323,7 +329,7 @@ function ConnectedNotificationCenter({
     if (taskImSession !== undefined) setTaskImSessionKey(taskImSession)
     setPreferences(current => {
       const merged = {
-        ...next,
+        ...mergeNotificationPreferences({ ...next, stand_in: next.stand_in ?? current.stand_in }),
         tasks: {
           ...next.tasks,
           im: taskIm === undefined ? current.tasks.im : taskIm,
@@ -413,7 +419,11 @@ function ConnectedNotificationCenter({
     [taskSource]
   )
   const cloudUnreadCount = collaboration.unreadCount + (inboxes.general?.unread_count ?? 0)
-  const unreadCount = unreadTasks.length + cloudUnreadCount
+  const taskUnreadCount = unreadTasks.reduce(
+    (total, item) => total + (taskSource?.unreadMessageCounts?.get(item.key) ?? 1),
+    0
+  )
+  const unreadCount = taskUnreadCount + cloudUnreadCount
   useEffect(() => {
     if (getDesktopWindowLabel() !== 'main') return
     syncNotificationUnreadCount(unreadCount)
@@ -579,8 +589,10 @@ function ConnectedNotificationCenter({
     void mutate(async () => {
       preferenceRequestId.current++
       if (preferenceCategory === 'tasks' && channel === 'im') {
-        if (!runtimeApi || (!taskImSessionKey && enabled)) {
-          throw new Error(t('notifications.im_target_required'))
+        if (!runtimeApi) throw new Error(t('notifications.im_target_required'))
+        if (!taskImSessionKey && enabled) {
+          setImTargetOpen(true)
+          return
         }
         const settings = await runtimeApi.updateGlobalImNotification({
           enabled,
@@ -595,10 +607,10 @@ function ConnectedNotificationCenter({
         cacheNotificationPreferences(accountKey, next)
         return
       }
-      if (preferenceCategory === 'tasks' && !api) {
+      if ((preferenceCategory === 'tasks' || preferenceCategory === 'stand_in') && !api) {
         const next = {
           ...preferences,
-          tasks: { ...preferences.tasks, [channel]: enabled },
+          [preferenceCategory]: { ...preferences[preferenceCategory], [channel]: enabled },
         }
         setPreferences(next)
         cacheNotificationPreferences(accountKey, next)
@@ -611,7 +623,10 @@ function ConnectedNotificationCenter({
         enabled,
       })
       const next = {
-        ...updated,
+        ...mergeNotificationPreferences({
+          ...updated,
+          stand_in: updated.stand_in ?? preferences.stand_in,
+        }),
         tasks: { ...updated.tasks, im: preferences.tasks.im },
       }
       setPreferences(next)
@@ -633,7 +648,7 @@ function ConnectedNotificationCenter({
       title: t('notifications.category_tasks'),
       preview: sortedTasks[0]?.task.title,
       timestamp: sortedTasks[0] ? taskTimestamp(sortedTasks[0]) : 0,
-      unread: unreadTasks.length,
+      unread: taskUnreadCount,
       icon: CheckCircle2,
     },
     {
@@ -676,7 +691,9 @@ function ConnectedNotificationCenter({
           aria-label={
             unreadCount > 0
               ? t('notifications.title_with_count', { count: unreadCount })
-              : t('notifications.title')
+              : interactions?.pending.length
+                ? t('interactions.title_with_count', { count: interactions.pending.length })
+                : t('notifications.title')
           }
           aria-haspopup="dialog"
           aria-expanded={Boolean(anchor)}
@@ -689,10 +706,16 @@ function ConnectedNotificationCenter({
           {unreadCount > 0 && (
             <span
               data-testid="wework-notifications-unread"
-              className="absolute -right-1 -top-1 min-w-4 rounded-full bg-text-primary px-1 text-xs text-background"
+              className="absolute right-0 top-0 min-w-4 rounded-full bg-text-primary px-1 text-xs text-background"
             >
               {unreadCount > 99 ? '99+' : unreadCount}
             </span>
+          )}
+          {unreadCount === 0 && Boolean(interactions?.pending.length) && (
+            <span
+              data-testid="wework-notifications-pending-indicator"
+              className="absolute right-0 top-0 h-1.5 w-1.5 rounded-full bg-text-primary"
+            />
           )}
         </button>
       </Tooltip>
@@ -713,7 +736,7 @@ function ConnectedNotificationCenter({
                 <button
                   type="button"
                   data-testid="wework-notifications-back"
-                  className="flex h-11 w-11 shrink-0 items-center justify-center rounded-md hover:bg-muted focus-visible:ring-2 focus-visible:ring-focus md:h-7 md:w-7"
+                  className="flex h-11 w-11 shrink-0 items-center justify-center rounded-md hover:bg-muted keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-focus md:h-7 md:w-7"
                   aria-label={t('notifications.back')}
                   onClick={() => {
                     setCategory(null)
@@ -741,7 +764,7 @@ function ConnectedNotificationCenter({
                 <button
                   type="button"
                   data-testid="wework-notifications-read-all"
-                  className="min-h-11 text-xs text-text-secondary hover:text-text-primary focus-visible:ring-2 focus-visible:ring-focus disabled:opacity-50 md:min-h-0"
+                  className="min-h-11 text-xs text-text-secondary hover:text-text-primary keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-focus disabled:opacity-50 md:min-h-0"
                   disabled={busy || unreadCount === 0}
                   onClick={readAll}
                 >
@@ -753,7 +776,7 @@ function ConnectedNotificationCenter({
                   type="button"
                   data-testid="wework-notifications-refresh"
                   aria-label={t('notifications.refresh')}
-                  className="flex h-11 w-11 shrink-0 items-center justify-center rounded-md border-l border-border text-text-secondary hover:bg-muted hover:text-text-primary focus-visible:ring-2 focus-visible:ring-focus disabled:opacity-50 md:h-7 md:w-7"
+                  className="flex h-11 w-11 shrink-0 items-center justify-center rounded-md border-l border-border text-text-secondary hover:bg-muted hover:text-text-primary keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-focus disabled:opacity-50 md:h-7 md:w-7"
                   disabled={busy || !api}
                   onClick={() => void refresh()}
                 >
@@ -764,7 +787,7 @@ function ConnectedNotificationCenter({
                 <button
                   type="button"
                   data-testid="wework-notifications-settings"
-                  className="flex h-11 w-11 items-center justify-center rounded-md text-text-secondary hover:bg-muted hover:text-text-primary focus-visible:ring-2 focus-visible:ring-focus md:h-7 md:w-7"
+                  className="flex h-11 w-11 items-center justify-center rounded-md text-text-secondary hover:bg-muted hover:text-text-primary keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-focus md:h-7 md:w-7"
                   aria-label={t('notifications.settings')}
                   onClick={openSettings}
                 >
@@ -785,17 +808,57 @@ function ConnectedNotificationCenter({
             </p>
           )}
           {settingsOpen ? (
-            <NotificationSettings
-              preferences={preferences}
-              isDisabled={(preferenceCategory, channel) =>
-                busy || (preferenceCategory === 'tasks' ? channel === 'im' && !runtimeApi : !api)
-              }
-              connected={Boolean(api)}
-              onChange={updatePreference}
-              t={t}
-            />
+            <>
+              <NotificationSettings
+                preferences={preferences}
+                isDisabled={(preferenceCategory, channel) =>
+                  busy ||
+                  (preferenceCategory === 'tasks' || preferenceCategory === 'stand_in'
+                    ? channel === 'im' && !runtimeApi
+                    : !api)
+                }
+                connected={Boolean(api)}
+                onChange={updatePreference}
+                t={t}
+              />
+              {runtimeApi && (
+                <button
+                  type="button"
+                  data-testid="wework-notifications-im-target"
+                  className="mx-5 mb-3 min-h-11 text-sm text-text-secondary hover:text-text-primary md:min-h-7"
+                  onClick={() => setImTargetOpen(true)}
+                >
+                  {t('notifications.im_target')}
+                </button>
+              )}
+            </>
           ) : !category ? (
             <div data-testid="wework-notifications-categories">
+              {interactions && (
+                <button
+                  type="button"
+                  data-testid="wework-notifications-pending"
+                  onClick={() => {
+                    close()
+                    interactions.open()
+                  }}
+                  className="flex min-h-16 w-full items-center gap-3 border-b border-border/60 px-3 py-2 text-left hover:bg-muted"
+                >
+                  <span className="min-w-0 flex-1">
+                    <span className="block text-sm font-medium">{t('interactions.title')}</span>
+                    <span className="mt-0.5 block truncate text-xs text-text-secondary">
+                      {interactions.pending[0]?.question || t('interactions.empty')}
+                    </span>
+                  </span>
+                  <span
+                    data-testid="notification-pending-count"
+                    className="text-sm text-text-secondary"
+                  >
+                    {interactions.pending.length}
+                  </span>
+                  <ChevronRight className="h-4 w-4" />
+                </button>
+              )}
               {categoryRows.map(row => {
                 const Icon = row.icon
                 return (
@@ -803,7 +866,7 @@ function ConnectedNotificationCenter({
                     key={row.id}
                     type="button"
                     data-testid={'wework-notifications-category-' + row.id}
-                    className="flex min-h-16 w-full items-center gap-2 border-b border-border/60 px-3 py-2 text-left last:border-b-0 hover:bg-muted focus-visible:ring-2 focus-visible:ring-focus"
+                    className="flex min-h-16 w-full items-center gap-2 border-b border-border/60 px-3 py-2 text-left last:border-b-0 hover:bg-muted keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-focus"
                     onClick={() => setCategory(row.id)}
                   >
                     <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-muted text-text-primary">
@@ -926,6 +989,27 @@ function ConnectedNotificationCenter({
             </div>
           )}
         </AnchorPopover>
+      )}
+      {imTargetOpen && (
+        <NotificationImTarget
+          services={taskSource?.services}
+          selected={taskImSessionKey}
+          onClose={() => setImTargetOpen(false)}
+          onSave={async sessionKey => {
+            if (!runtimeApi) throw new Error(t('notifications.im_target_required'))
+            const settings = await runtimeApi.updateGlobalImNotification({
+              enabled: true,
+              sessionKey,
+            })
+            const next = {
+              ...preferences,
+              tasks: { ...preferences.tasks, im: settings.global.enabled },
+            }
+            setTaskImSessionKey(settings.global.sessionKey ?? null)
+            setPreferences(next)
+            cacheNotificationPreferences(accountKey, next)
+          }}
+        />
       )}
     </>
   )

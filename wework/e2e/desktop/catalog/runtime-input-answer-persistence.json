@@ -1,0 +1,12 @@
+{
+  "order": 130000,
+  "scenario": "./scenarios/runtime-input-answer-persistence.scenario.mjs",
+  "scenarioOnly": true,
+  "ci": {
+    "core": {
+      "order": 79000,
+      "shard": 10,
+      "position": 2000
+    }
+  }
+}

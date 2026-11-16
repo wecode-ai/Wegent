@@ -1,0 +1,21 @@
+{
+  "revision": "e4a7b9c2d1f0",
+  "parents": [
+    "c2f8d4a6b901"
+  ],
+  "source": "20260903_e4a7b9c2d1f0_add_smart_app_listing_status.py",
+  "upgrade": [
+    {
+      "sql": [
+        "ALTER TABLE smart_apps ADD COLUMN is_listed BOOL NOT NULL COMMENT 'Whether the Smart app is listed in the WeWork marketplace' DEFAULT true"
+      ]
+    }
+  ],
+  "downgrade": [
+    {
+      "sql": [
+        "ALTER TABLE smart_apps DROP COLUMN is_listed"
+      ]
+    }
+  ]
+}

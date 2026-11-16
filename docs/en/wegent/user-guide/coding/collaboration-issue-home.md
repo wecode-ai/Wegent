@@ -40,6 +40,10 @@ The `collaboration-issue-assignment-activity` desktop regression verifies first-
 
 ## Work on an Issue assigned to me
 
+On the project board, choose **Assignee** as the grouping field, then select yourself in the adjacent filter to see your assigned Issues. Clear the filter to show all assignees again. Grouping is a personal preference for the current account and project and persists across reloads. Members and viewers can use it without changing the shared board configuration. Shared status columns and card display settings remain managed by project administrators.
+
+When grouped by tag, an Issue can appear in multiple columns. Dropping within the same column leaves tags unchanged. Moving between columns replaces only the source tag and preserves other tags; moving into the untagged column clears all tags.
+
 Open an assigned native cloud Issue from Inbox or its project board. Wework sends a desktop notification when another member assigns it.
 
 Users with editing permission can start, complete, or restart an Issue directly through the detail status selector or board dragging. Status changes require no additional information or submission form. Communicate progress, results, and feedback through comments, replies, and attachments. Status history records each change.
@@ -50,19 +54,39 @@ For AI assistance, use **New task** in Issue details to create a linked task. Th
 
 A collaboration-group assignment changes the Issue owner to the member taking the work. For an assignment to you, select **Let AI help me → Create task**, or choose **Reply and create a new task** under your assignment activity. The reply is saved as a comment before a new personal task panel opens. Its instructions contain the Issue reference and assignment, without acknowledgement replies such as “Received.” Sending after selecting the device, model, and workspace starts execution. The task retains its assignment binding so Delivery reports back to the round coordinator.
 
-An AI-only handoff retains the worker as owner and does not start a coordinator summary.
+When every member in a round has delivered, ownership returns to the group's coordinator, who checks the results and assigns the next round or submits the Issue for confirmation. Local and cloud projects use the same handoff. The coordinator's new run appears in Issue activity. If it needs business information, open that activity's conversation and answer the question to continue the same coordinator run.
 
-## Archive completed Issues
+## Archive Issues
 
-Project boards and tables can archive Issues whose status is **Completed**. Incomplete Issues do not expose the archive action and cannot be included in a batch archive.
+Every editable Issue can be archived through **More information → Archive issue** in its details, regardless of status. This entry also works on tag-organized boards without a Completed column. Read-only users do not receive an archive action.
 
-- Single archive: open a completed Issue's action menu and select **Archive**.
+- Single archive: open Issue details and select **More information → Archive issue**. Completed Issues retain their existing card and table shortcuts.
 - Batch archive: select **Archive completed issues** in the board's **Completed** column header.
 - Browse and restore: open the project's **Archived Issues** drawer to page through archived records and restore them individually. A restored Issue returns to the active list in its original project.
 
 Archiving a parent Issue also archives its child Issues so the active task tree cannot retain orphaned children. Restoring that parent from the archive restores the full subtree. Restoring a child that was archived independently restores only that Issue. Native cloud projects, local projects, and GitHub/GitLab-backed projects share the same interaction. For external projects, archive and restore close and reopen the external Issue respectively.
 
+Archiving first stops linked active runs in the subtree and cancels executions that have not started. A failure to confirm termination blocks archiving and can be addressed before resubmission. Cancelling the confirmation leaves the tree unchanged. Restoration preserves status, dates, and parent relationships.
+
+Before archiving or restoring a subtree, the server checks edit permission for every affected Issue. Any denial rejects the whole operation without changing Issues or cancelling queued executions. Project administrators retain access to all descendants.
+
+## Gantt task hierarchy
+
+The Gantt chart indents parents, children, and grandchildren and expands them initially. Use the arrow beside a parent title to collapse or expand its subtree. Reopening a parent preserves previously collapsed children. The arrows remain usable when the task column is collapsed.
+
+Scheduled tasks matching the filters and date window retain their readable ancestors. Undated, out-of-window, or filtered ancestors provide context without fabricated bars or dates derived from children. Grouping applies to roots, keeping each subtree together. Unscheduled tasks use an independent drag overlay that remains visible above the bottom scrolling list.
+
 ## Regression verification
+
+The existing `pnpm --filter wework e2e:desktop --segment collaboration-parent-board` checkpoint additionally verifies these user stories with real local persistence:
+
+1. A planner sees three indented generations, collapses subtrees, preserves nested collapse state, and operates arrows with the task column collapsed.
+2. A member filtering by a grandchild's status retains ancestor context without a fabricated parent bar.
+3. A planner drags an undated task above the scrolling list, sees the overlay, drops on a date, and observes a persisted start/end range and Gantt bar.
+4. An editor opens an unfinished parent's archive action from a tag board. Cancel receives initial focus, Tab and Shift+Tab stay inside the dialog, and cancelling returns focus to the more menu without mutation. Confirming then removes the entire subtree from active storage.
+5. A member restores the parent through the archive drawer, verifies original statuses and relationships, and sees the grandchild return to the Gantt chart.
+
+These cases reuse the existing CI checkpoint, build, and services. Fixtures remain inside the isolated Executor home and are cleaned up with the runner. Focused tests cover permission denial, cloud statuses, and external-provider protocol behavior separately.
 
 `pnpm --filter wework e2e:desktop --segment collaboration-shared-core` uses isolated Electron, the real backend, and the local Executor. Only model services are simulated. Added checks cover:
 
@@ -71,10 +95,11 @@ Archiving a parent Issue also archives its child Issues so the active task tree 
 3. Issue-only `#` suggestions, distinct reference icons, and saved references.
 4. Manual ownership changes and clearing without native selects; no task slash menu.
 5. Seeding a local project through the real Tasks project API, reloading twice, and verifying one imported project with a working collaboration entry.
+6. Filtering a member's assigned Issues, combining search, and clearing the filter; retaining personal grouping after reload and isolating preferences between projects. Viewer and administrator grouping changes also leave the shared board configuration and version unchanged.
 
 Cloud fixtures are archived by the checkpoint cleanup. Local fixtures live only in the test Executor home. Failures retain runner logs; tests do not skip or retry to hide failures.
 
-`pnpm --filter wework e2e:desktop --segment collaboration-issue-archive` uses a real local project to verify that incomplete Issues cannot be archived, along with single archive and restore, batch archive, and archive-drawer updates.
+`pnpm --filter wework e2e:desktop --segment collaboration-issue-archive` uses a real local project to verify completed-Issue card shortcuts, single archive and restore, batch archive, and archive-drawer updates.
 
 `pnpm --filter wework e2e:desktop --segment collaboration-human-round-resume` covers concurrent human and AI assignment, Delivery returning to the coordinator, replies to the current human assignment opening a new task without acknowledgement text in its prompt.
 

@@ -1,8 +1,9 @@
 import { useCollaborationPortalTheme } from "../theme";
 import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { Check, ChevronDown, Search } from "lucide-react";
+import { Check, ChevronDown, Columns3, Search } from "lucide-react";
 import { activityClassNames as cn } from "../issue-detail/activityClassNames";
+import { Tooltip } from "../issue-detail/Tooltip";
 
 export function ProjectBoardGroupPicker({
   fields,
@@ -97,21 +98,28 @@ export function ProjectBoardGroupPicker({
 
   return (
     <div ref={rootRef} className="shrink-0">
-      <button
-        ref={triggerRef}
-        type="button"
-        data-testid={`${testIdPrefix}-by`}
-        onClick={openMenu}
-        className="flex h-8 min-w-32 items-center justify-between gap-2 rounded-lg border border-border bg-background px-3 text-xs text-text-secondary hover:bg-muted"
-        aria-expanded={open}
-        aria-haspopup="listbox"
-        data-value={value}
-      >
-        <span className="max-w-32 truncate">
-          {selected?.name ?? chooseLabel}
-        </span>
-        <ChevronDown className="h-3 w-3 shrink-0" />
-      </button>
+      <Tooltip label={selected?.name ?? chooseLabel} side="bottom">
+        <button
+          ref={triggerRef}
+          type="button"
+          data-testid={`${testIdPrefix}-by`}
+          onClick={openMenu}
+          className="project-board-compact-action flex h-8 min-w-32 items-center justify-between gap-2 rounded-lg border border-border bg-background px-3 text-xs text-text-secondary hover:bg-muted"
+          aria-label={selected?.name ?? chooseLabel}
+          aria-expanded={open}
+          aria-haspopup="listbox"
+          data-value={value}
+        >
+          <Columns3
+            className="project-board-action-icon h-4 w-4"
+            aria-hidden="true"
+          />
+          <span className="project-board-action-label max-w-32 truncate">
+            {selected?.name ?? chooseLabel}
+          </span>
+          <ChevronDown className="project-board-action-chevron h-3 w-3 shrink-0" />
+        </button>
+      </Tooltip>
       {open
         ? createPortal(
             <div

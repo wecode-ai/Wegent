@@ -59,9 +59,13 @@ async fn attachment_detail(
             // Method 1: the share-token viewer. `_validate_share_token_access`
             // owns the task/subtask/owner chain; a denied token renders the
             // endpoint's 403 (not the download endpoint's 404).
-            let has_access =
-                super::share_token::validate_share_token_access(state, attachment_id, token)
-                    .await?;
+            let has_access = super::share_token::validate_share_token_access(
+                state,
+                attachment_id,
+                token,
+                user.map(|user| i64::from(user.users_id)),
+            )
+            .await?;
             if !has_access {
                 return Err(error_response(
                     StatusCode::FORBIDDEN,
@@ -284,6 +288,9 @@ async fn create_attachment_download_token(
     .map_err(|_| internal_error())?;
     Ok(Response::owned_bytes(StatusCode::OK, body).content_type("application/json"))
 }
+
+#[cfg(test)]
+mod download_contract_tests;
 
 #[cfg(test)]
 mod tests {

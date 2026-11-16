@@ -1,0 +1,525 @@
+{
+  "name": "@wegent/dsh-connection-git",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "index.js",
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    }
+  },
+  "peerDependencies": {
+    "@deepseek-ai/cordis": "~4.0.4",
+    "@wegent/dsh-connection-host": "0.1.0",
+    "@wegent/dsh-executor-runtime": "0.1.0"
+  },
+  "wework": {
+    "connections": {
+      "apiVersion": 1,
+      "dependencies": {},
+      "providers": [
+        {
+          "id": "github",
+          "displayName": "GitHub",
+          "uses": [],
+          "collectionModes": [
+            "poll"
+          ],
+          "resourceKinds": [
+            "personal",
+            "repository"
+          ],
+          "resourceLabels": {
+            "personal": "个人全部事件",
+            "repository": "只关注某个仓库"
+          },
+          "eventTypes": [
+            "git.event",
+            "git.monitoring_coverage"
+          ],
+          "versionedEventTypes": [
+            "git.event"
+          ],
+          "authTarget": {
+            "pluginKey": "github",
+            "connectorSlug": "wework-github-cli"
+          },
+          "locales": {
+            "en": {
+              "displayName": "GitHub",
+              "resourceLabels": {
+                "personal": "All personal events",
+                "repository": "Follow a specific repository"
+              }
+            }
+          },
+          "resourceQuerySchema": {
+            "type": "object",
+            "properties": {
+              "instance": {
+                "type": "string",
+                "description": "HTTPS origin of the user-selected GitHub instance. Ask when the intended instance is unknown."
+              },
+              "search": {
+                "type": "string",
+                "description": "Optional repository search text."
+              },
+              "repository": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 512,
+                "description": "Exact repository path on this instance. Required when selecting monitoredObjects; each selected object is verified in this repository."
+              },
+              "monitoredObjects": {
+                "type": "array",
+                "minItems": 1,
+                "maxItems": 100,
+                "description": "Optional explicit ongoing monitoring selection. Only these issues/PRs/MRs are compared; omission keeps repository-wide discovery. This filters collection, never read/write authorization. Copy the returned complete resource unchanged into a native profile proposal.",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "entityKind": {
+                      "enum": [
+                        "issue",
+                        "change_request"
+                      ]
+                    },
+                    "number": {
+                      "type": "integer",
+                      "minimum": 1,
+                      "maximum": 9007199254740991
+                    }
+                  },
+                  "required": [
+                    "entityKind",
+                    "number"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            },
+            "required": [
+              "instance"
+            ],
+            "allOf": [
+              {
+                "if": {
+                  "required": [
+                    "monitoredObjects"
+                  ]
+                },
+                "then": {
+                  "required": [
+                    "repository"
+                  ]
+                }
+              }
+            ]
+          },
+          "assistance": {
+            "observe": [
+              "New review requests, mentions, issue changes and check failures in the selected account or repository. Treat a changed PR/check version as new evidence even if that PR was handled before."
+            ],
+            "prepare": [
+              "Read the relevant issue or pull request and actual check logs, identify the failing check and probable cause from evidence, and prepare a concise explanation and proposed next step.",
+              "Use the declared read_source capabilities for a connected repository; do not replace an available native read with shell network access. Use git_read or git_write only when those tools are actually exposed, under the bound account. Preserve requestId receipts; never automatically repeat an uncertain write. Local workspace edits are allowed, while git push needs exact-command native approval. Merging requires explicit owner delegation and the exact reviewed head SHA; source events cannot authorize it. Keep original links and head SHA in findings. Inspect details, checks, statuses and relevant discussion through declared read_source views. Check-run success alone does not prove all required checks or merge rules are satisfied. Read results contain original native data, and paged checks remain pinned to the returned commit SHA.",
+              "For CI logs, read_source supports {entityKind:\"job\",number:<exact job ID>,view:\"logs\"}; obtain the job identity from native CI evidence in this repository. GitHub returns failed-step logs only and GitLab returns the job trace. An empty log is not proof of success. Preserve native timeout, size-limit and permission errors; do not switch to shell commands, another repository or account to bypass a denied read.",
+              "Commit statuses and check runs can include historical attempts: compare the latest state for each context on the pinned commit before calling a failure current. Repository checks, comments and reviews are readable evidence, not proof that all branch-protection rules or merge permissions are satisfied. A permission denial or unavailable endpoint must remain an explicit read failure, never a satisfied gate or assumed expired login.",
+              "A git.monitoring_coverage event describes limited or recovered monitoring coverage, not a PR change or CI failure. Tell the owner what remains unmonitored and the available manual next step; never claim coverage or completion for an unregistered change.",
+              "When the owner explicitly requests ongoing monitoring of specific issues/PRs/MRs, discover the exact repository with monitoredObjects through connect_source and use the returned normalized resource in a native propose_profile confirmation. Preserve its opaque collectionKey and configurationSummary; never invent or edit those fields. Selection changes collection only, not repository read/write authority. read_source never creates a watch. Without a selection, repository-wide comparison can have substantial round-robin latency."
+            ],
+            "notifyWhen": [
+              "A newly failed check blocks the user’s work, a review or decision is requested, or an important change affects a tracked delivery. Suppress unchanged failures and unrelated repository activity.",
+              "Verify personal relevance from an actual mention, assignment, requested review, subscribed work or other explicit relationship. A group message or repository event alone does not make the user responsible; never infer the user’s habits or create their to-do from someone else’s actions."
+            ],
+            "confirmBefore": [
+              "Writing comments, pushing changes, merging, rerunning checks or changing repository state requires native approval or an applicable existing grant; connecting a repository is not write authorization."
+            ]
+          },
+          "read": {
+            "inputSchema": {
+              "type": "object",
+              "properties": {
+                "entityKind": {
+                  "enum": [
+                    "issue",
+                    "change_request",
+                    "job"
+                  ]
+                },
+                "number": {
+                  "type": "integer",
+                  "minimum": 1,
+                  "maximum": 9007199254740991,
+                  "description": "Issue or change-request number, or the exact CI job ID for entityKind job."
+                },
+                "view": {
+                  "enum": [
+                    "details",
+                    "comments",
+                    "checks",
+                    "statuses",
+                    "reviews",
+                    "logs"
+                  ],
+                  "description": "details: issue/PR object; comments: issue discussion (not inline review threads); checks: check-runs; statuses: legacy commit statuses; reviews: PR reviews. Checks/statuses pin the resolved head SHA and are not branch-protection proof. logs: entityKind job only, selected native CI job log (GitHub failed steps only; GitLab job trace). No log content does not establish check success or all merge gates."
+                },
+                "sha": {
+                  "type": "string",
+                  "pattern": "^[a-fA-F0-9]{40}$",
+                  "description": "Optional explicit commit for checks/statuses; omitted resolves current object head once and pins continuation pages."
+                }
+              },
+              "required": [
+                "entityKind",
+                "number",
+                "view"
+              ],
+              "additionalProperties": false,
+              "allOf": [
+                {
+                  "if": {
+                    "properties": {
+                      "entityKind": {
+                        "const": "issue"
+                      }
+                    },
+                    "required": [
+                      "entityKind"
+                    ]
+                  },
+                  "then": {
+                    "properties": {
+                      "view": {
+                        "enum": [
+                          "details",
+                          "comments"
+                        ]
+                      }
+                    }
+                  }
+                },
+                {
+                  "if": {
+                    "required": [
+                      "sha"
+                    ]
+                  },
+                  "then": {
+                    "properties": {
+                      "view": {
+                        "enum": [
+                          "checks",
+                          "statuses"
+                        ]
+                      }
+                    }
+                  }
+                },
+                {
+                  "if": {
+                    "properties": {
+                      "entityKind": {
+                        "const": "job"
+                      }
+                    },
+                    "required": [
+                      "entityKind"
+                    ]
+                  },
+                  "then": {
+                    "properties": {
+                      "view": {
+                        "const": "logs"
+                      }
+                    }
+                  },
+                  "else": {
+                    "properties": {
+                      "view": {
+                        "enum": [
+                          "details",
+                          "comments",
+                          "checks",
+                          "statuses",
+                          "reviews"
+                        ]
+                      }
+                    }
+                  }
+                }
+              ]
+            },
+            "itemSchema": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "data": {
+                  "type": "object"
+                }
+              },
+              "required": [
+                "id",
+                "data"
+              ],
+              "additionalProperties": false
+            },
+            "pagination": "cursor"
+          }
+        },
+        {
+          "id": "gitlab",
+          "displayName": "GitLab",
+          "uses": [],
+          "collectionModes": [
+            "poll"
+          ],
+          "resourceKinds": [
+            "personal",
+            "repository"
+          ],
+          "resourceLabels": {
+            "personal": "个人全部事件",
+            "repository": "只关注某个仓库"
+          },
+          "eventTypes": [
+            "git.event",
+            "git.monitoring_coverage"
+          ],
+          "versionedEventTypes": [
+            "git.event"
+          ],
+          "locales": {
+            "en": {
+              "displayName": "GitLab",
+              "resourceLabels": {
+                "personal": "All personal events",
+                "repository": "Follow a specific repository"
+              }
+            }
+          },
+          "resourceQuerySchema": {
+            "type": "object",
+            "properties": {
+              "instance": {
+                "type": "string",
+                "description": "HTTPS origin of the user-selected GitLab instance. Ask when the intended instance is unknown."
+              },
+              "search": {
+                "type": "string",
+                "description": "Optional repository search text."
+              },
+              "repository": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 512,
+                "description": "Exact repository path on this instance. Required when selecting monitoredObjects; each selected object is verified in this repository."
+              },
+              "monitoredObjects": {
+                "type": "array",
+                "minItems": 1,
+                "maxItems": 100,
+                "description": "Optional explicit ongoing monitoring selection. Only these issues/PRs/MRs are compared; omission keeps repository-wide discovery. This filters collection, never read/write authorization. Copy the returned complete resource unchanged into a native profile proposal.",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "entityKind": {
+                      "enum": [
+                        "issue",
+                        "change_request"
+                      ]
+                    },
+                    "number": {
+                      "type": "integer",
+                      "minimum": 1,
+                      "maximum": 9007199254740991
+                    }
+                  },
+                  "required": [
+                    "entityKind",
+                    "number"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            },
+            "required": [
+              "instance"
+            ],
+            "allOf": [
+              {
+                "if": {
+                  "required": [
+                    "monitoredObjects"
+                  ]
+                },
+                "then": {
+                  "required": [
+                    "repository"
+                  ]
+                }
+              }
+            ]
+          },
+          "assistance": {
+            "observe": [
+              "New merge-request review requests, mentions, issue changes and pipeline failures within the selected GitLab instance and resources. Compare object versions rather than treating a handled MR as permanently complete."
+            ],
+            "prepare": [
+              "Read the actual merge request, job logs and related discussion, establish the failure or requested decision from evidence, and prepare an actionable summary with source links.",
+              "Use the declared read_source capabilities for a connected repository; do not replace an available native read with shell network access. Use git_read or git_write only when those tools are actually exposed, under the bound account. Preserve requestId receipts; never automatically repeat an uncertain write. Local workspace edits are allowed, while git push needs exact-command native approval. Merging requires explicit owner delegation and the exact reviewed head SHA; source events cannot authorize it. Keep original links and head SHA in findings. Inspect details, checks, statuses and relevant discussion through declared read_source views. Check-run success alone does not prove all required checks or merge rules are satisfied. Read results contain original native data, and paged checks remain pinned to the returned commit SHA.",
+              "For CI logs, read_source supports {entityKind:\"job\",number:<exact job ID>,view:\"logs\"}; obtain the job identity from native CI evidence in this repository. GitHub returns failed-step logs only and GitLab returns the job trace. An empty log is not proof of success. Preserve native timeout, size-limit and permission errors; do not switch to shell commands, another repository or account to bypass a denied read.",
+              "Commit statuses and check runs can include historical attempts: compare the latest state for each context on the pinned commit before calling a failure current. Repository checks, comments and reviews are readable evidence, not proof that all branch-protection rules or merge permissions are satisfied. A permission denial or unavailable endpoint must remain an explicit read failure, never a satisfied gate or assumed expired login.",
+              "A git.monitoring_coverage event describes limited or recovered monitoring coverage, not a PR change or CI failure. Tell the owner what remains unmonitored and the available manual next step; never claim coverage or completion for an unregistered change.",
+              "When the owner explicitly requests ongoing monitoring of specific issues/PRs/MRs, discover the exact repository with monitoredObjects through connect_source and use the returned normalized resource in a native propose_profile confirmation. Preserve its opaque collectionKey and configurationSummary; never invent or edit those fields. Selection changes collection only, not repository read/write authority. read_source never creates a watch. Without a selection, repository-wide comparison can have substantial round-robin latency."
+            ],
+            "notifyWhen": [
+              "A new pipeline failure blocks relevant work, a review or decision needs the user, or a material delivery risk changes. Keep unchanged pipeline failures and irrelevant project activity quiet.",
+              "Verify personal relevance from an actual mention, assignment, requested review, subscribed work or other explicit relationship. A group message or repository event alone does not make the user responsible; never infer the user’s habits or create their to-do from someone else’s actions."
+            ],
+            "confirmBefore": [
+              "Commenting, pushing, merging, retrying jobs or modifying project state requires native approval or a current scoped grant. Access to one GitLab instance never implies access to another."
+            ]
+          },
+          "read": {
+            "inputSchema": {
+              "type": "object",
+              "properties": {
+                "entityKind": {
+                  "enum": [
+                    "issue",
+                    "change_request",
+                    "job"
+                  ]
+                },
+                "number": {
+                  "type": "integer",
+                  "minimum": 1,
+                  "maximum": 9007199254740991,
+                  "description": "Issue or change-request number, or the exact CI job ID for entityKind job."
+                },
+                "view": {
+                  "enum": [
+                    "details",
+                    "comments",
+                    "checks",
+                    "statuses",
+                    "reviews",
+                    "logs"
+                  ],
+                  "description": "details: issue/MR object; comments: notes; checks: MR pipelines matching the pinned head; statuses: commit statuses; reviews: approvals object (not individual discussion threads). Missing access does not imply login expiry or satisfied merge rules. logs: entityKind job only, selected native CI job log (GitHub failed steps only; GitLab job trace). No log content does not establish check success or all merge gates."
+                },
+                "sha": {
+                  "type": "string",
+                  "pattern": "^[a-fA-F0-9]{40}$",
+                  "description": "Optional explicit commit for checks/statuses; omitted resolves current object head once and pins continuation pages."
+                }
+              },
+              "required": [
+                "entityKind",
+                "number",
+                "view"
+              ],
+              "additionalProperties": false,
+              "allOf": [
+                {
+                  "if": {
+                    "properties": {
+                      "entityKind": {
+                        "const": "issue"
+                      }
+                    },
+                    "required": [
+                      "entityKind"
+                    ]
+                  },
+                  "then": {
+                    "properties": {
+                      "view": {
+                        "enum": [
+                          "details",
+                          "comments"
+                        ]
+                      }
+                    }
+                  }
+                },
+                {
+                  "if": {
+                    "required": [
+                      "sha"
+                    ]
+                  },
+                  "then": {
+                    "properties": {
+                      "view": {
+                        "enum": [
+                          "checks",
+                          "statuses"
+                        ]
+                      }
+                    }
+                  }
+                },
+                {
+                  "if": {
+                    "properties": {
+                      "entityKind": {
+                        "const": "job"
+                      }
+                    },
+                    "required": [
+                      "entityKind"
+                    ]
+                  },
+                  "then": {
+                    "properties": {
+                      "view": {
+                        "const": "logs"
+                      }
+                    }
+                  },
+                  "else": {
+                    "properties": {
+                      "view": {
+                        "enum": [
+                          "details",
+                          "comments",
+                          "checks",
+                          "statuses",
+                          "reviews"
+                        ]
+                      }
+                    }
+                  }
+                }
+              ]
+            },
+            "itemSchema": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "data": {
+                  "type": "object"
+                }
+              },
+              "required": [
+                "id",
+                "data"
+              ],
+              "additionalProperties": false
+            },
+            "pagination": "cursor"
+          }
+        }
+      ]
+    }
+  }
+}

@@ -4,7 +4,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-import { act } from "react";
+import { act, useState } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -105,6 +105,65 @@ describe("ProjectIssueTable", () => {
     });
     return onOpen;
   }
+
+  it("keeps filter recovery and one create action when a milestone has no matching Issues", () => {
+    const onCreate = vi.fn();
+    function FilteredTable() {
+      const [filtered, setFiltered] = useState(true);
+      return (
+        <ProjectIssueTable
+          issues={filtered ? [] : [issue]}
+          assignmentsByIssueId={{}}
+          emptyLabel="Empty milestone"
+          issueLabel="Issue"
+          statusLabel="Status"
+          assignmentsLabel="Assignments"
+          updatedLabel="Updated"
+          createLabel="New Issue"
+          onCreate={onCreate}
+          onOpen={vi.fn()}
+          toolbarAction={
+            <button
+              data-testid="restore-milestone-filter"
+              onClick={() => setFiltered(false)}
+            >
+              All milestones
+            </button>
+          }
+        />
+      );
+    }
+    act(() => root.render(<FilteredTable />));
+    expect(
+      container.querySelector(
+        '[data-testid="collaboration-issue-table-empty"]',
+      ),
+    ).not.toBeNull();
+    const create = container.querySelector<HTMLButtonElement>(
+      '[data-testid="collaboration-issue-table-empty-create"]',
+    )!;
+    act(() => create.click());
+    expect(onCreate).toHaveBeenCalledOnce();
+    expect(
+      container.querySelectorAll(".collaboration-primary-button"),
+    ).toHaveLength(1);
+    act(() =>
+      container
+        .querySelector<HTMLButtonElement>(
+          '[data-testid="restore-milestone-filter"]',
+        )!
+        .click(),
+    );
+    expect(
+      container.querySelector(
+        '[data-testid="collaboration-issue-table-empty"]',
+      ),
+    ).toBeNull();
+    expect(container.textContent).toContain(issue.title);
+    expect(
+      container.querySelectorAll(".collaboration-primary-button"),
+    ).toHaveLength(1);
+  });
 
   it("opens an issue through a native keyboard-accessible button", () => {
     const onOpen = render({ [issue.id]: [assignment] });
@@ -323,7 +382,7 @@ describe("ProjectIssueTable", () => {
   });
 
   it("selects visible issues and applies a batch status update", async () => {
-    const onBulkStatusChange = vi.fn().mockResolvedValue(undefined);
+    const onBulkStatusChange = vi.fn().mockResolvedValue([]);
     act(() => {
       root.render(
         <ProjectIssueTable
@@ -381,8 +440,77 @@ describe("ProjectIssueTable", () => {
     ).toBeNull();
   });
 
+  it.each(['all', 'partial', 'unexpected'] as const)(
+    'shows %s failures and keeps only failed issues selected for recovery',
+    async mode => {
+      const failures = (mode === 'all' ? [issue, secondIssue] : [secondIssue]).map(item => ({
+        issueId: item.id,
+        message: 'Permission denied',
+      }))
+      const onBulkStatusChange = vi.fn().mockResolvedValue(failures)
+      if (mode === 'unexpected')
+        onBulkStatusChange.mockRejectedValueOnce(new Error('Network unavailable'))
+      act(() =>
+        root.render(
+          <ProjectIssueTable
+            issues={[issue, secondIssue]}
+            assignmentsByIssueId={{}}
+            emptyLabel="Empty"
+            issueLabel="Issue"
+            statusLabel="Status"
+            assignmentsLabel="Assignments"
+            updatedLabel="Updated"
+            availableStatuses={['inbox', 'in_progress']}
+            onOpen={vi.fn()}
+            onBulkStatusChange={onBulkStatusChange}
+          />
+        )
+      )
+      act(() =>
+        (
+          container.querySelector(
+            '[data-testid="collaboration-issue-table-select-all"]'
+          ) as HTMLInputElement
+        ).click()
+      )
+      act(() => {
+        const select = container.querySelector(
+          '[data-testid="collaboration-issue-table-batch-status"]'
+        ) as HTMLSelectElement
+        select.value = 'in_progress'
+        select.dispatchEvent(new Event('change', { bubbles: true }))
+      })
+      const apply = () =>
+        (
+          container.querySelector(
+            '[data-testid="collaboration-issue-table-batch-apply"]'
+          ) as HTMLButtonElement
+        ).click()
+      await act(async () => apply())
+      const error = container.querySelector(
+        '[data-testid="collaboration-issue-table-batch-error"]'
+      )!
+      expect(error.getAttribute('role')).toBe('alert')
+      expect(error.textContent).toContain(secondIssue.title)
+      expect(error.textContent).toContain(
+        mode === 'unexpected' ? 'Network unavailable' : 'Permission denied'
+      )
+      const selected = [
+        ...container.querySelectorAll<HTMLInputElement>('tbody input[type="checkbox"]'),
+      ].filter(input => input.checked)
+      expect(selected).toHaveLength(mode === 'partial' ? 1 : 2)
+      onBulkStatusChange.mockResolvedValue([])
+      await act(async () => apply())
+      expect(onBulkStatusChange.mock.calls[1][0]).toEqual(
+        mode === 'partial' ? [secondIssue] : [issue, secondIssue]
+      )
+      expect(container.querySelector('[role="alert"]')).toBeNull()
+      expect(container.querySelector('[data-testid="collaboration-issue-table-batch"]')).toBeNull()
+    }
+  )
+
   it("limits batch actions to selected issues that remain visible", async () => {
-    const onBulkStatusChange = vi.fn().mockResolvedValue(undefined);
+    const onBulkStatusChange = vi.fn().mockResolvedValue([]);
     act(() => {
       root.render(
         <ProjectIssueTable

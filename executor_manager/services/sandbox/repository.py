@@ -421,6 +421,27 @@ class SandboxRepository(metaclass=SingletonMeta):
             logger.error(f"[SandboxRepository] Failed to remove from active set: {e}")
             return False
 
+    def extend_session_hash_ttl(self, sandbox_id: str, ttl_seconds: int) -> bool:
+        """Extend the session hash TTL for a sandbox kept across GC retries.
+
+        A sandbox whose archive is failing is retained until the force-delete
+        threshold, which is longer than the default session hash TTL. Without
+        this extension the hash expires first and GC loses the container name.
+        """
+        if self.redis_client is None:
+            return False
+
+        try:
+            hash_key = f"{SESSION_HASH_PREFIX}{sandbox_id}"
+            return bool(self.redis_client.expire(hash_key, ttl_seconds))
+        except Exception as e:
+            logger.warning(
+                "[SandboxRepository] Failed to extend session hash TTL for %s: %s",
+                sandbox_id,
+                e,
+            )
+            return False
+
     def update_activity_timestamp(self, sandbox_id: str) -> bool:
         """Update the last activity timestamp for a sandbox.
 

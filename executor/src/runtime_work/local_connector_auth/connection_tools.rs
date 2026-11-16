@@ -4,15 +4,77 @@ use tokio::io::{AsyncRead, AsyncReadExt};
 
 const MAX_TOOL_OUTPUT_BYTES: usize = 8 * 1024 * 1024;
 
-// Replies retain the existing source-bound permission checks in the caller.
-pub(crate) async fn run_plugin_tool(
+pub(crate) fn connection_auth_target(
+    root: &Path,
     plugin_key: &str,
-    connector_slug: &str,
-    args: &[String],
+    declaration: &Value,
 ) -> Result<Value, AppIpcError> {
-    let (root, _) =
-        resolve_request(&json!({"pluginKey":plugin_key,"connectorSlug":connector_slug}))?;
-    run_connection_tool(&root, plugin_key, connector_slug, args).await
+    let manifest = read_plugin_manifest(root)?;
+    if manifest["name"].as_str() != Some(plugin_key) {
+        return Err(AppIpcError::new(
+            "connection_dependency_denied",
+            "Installed plugin manifest identity does not match",
+        ));
+    }
+    let matches: Vec<&Value> = manifest["connectors"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter(|connector| {
+            connector["localAuth"].is_object()
+                && if let Some(tool) = declaration["toolId"].as_str() {
+                    connector["localAuth"]["tool"]["id"].as_str() == Some(tool)
+                } else {
+                    connector["slug"] == declaration["connectorSlug"]
+                }
+        })
+        .collect();
+    if matches.len() != 1 {
+        return Err(AppIpcError::new(
+            "connection_tool_unavailable",
+            "The dependency must declare one matching localAuth tool",
+        ));
+    }
+    let slug = matches[0]["slug"]
+        .as_str()
+        .filter(|s| !s.is_empty())
+        .ok_or_else(|| AppIpcError::new("local_auth_invalid", "Missing connector identity"))?;
+    parse_local_auth_spec(&manifest, Some(slug))?;
+    Ok(json!({"pluginKey":plugin_key,"connectorSlug":slug}))
+}
+
+// Replies retain the existing source-bound permission checks in the caller.
+pub(crate) fn run_declared_plugin_tool<'a>(
+    plugin_key: &'a str,
+    tool_id: &'a str,
+    args: &'a [String],
+) -> futures_util::future::BoxFuture<'a, Result<Value, AppIpcError>> {
+    // Erase the MCP-handler/app-server startup future cycle without changing execution.
+    Box::pin(async move {
+        let client =
+            crate::agents::CodexAppServerClient::new(crate::agents::resolve_codex_binary());
+        let installed = client
+            .request("plugin/installed", json!({"cwds":[]}))
+            .await
+            .map_err(|_| {
+                AppIpcError::new(
+                    "dependency_unavailable",
+                    "Cannot read Codex dependency inventory",
+                )
+            })?;
+        let (plugin, source) =
+            super::super::connection_dependencies::installed_plugin_by_key(&installed, plugin_key)?;
+        let root = super::super::connection_cli::dependency_root(
+            &plugin,
+            &source,
+            &crate::agents::wework_codex_home(),
+        )?;
+        let target = connection_auth_target(&root, plugin_key, &json!({"toolId":tool_id}))?;
+        let connector_slug = target["connectorSlug"]
+            .as_str()
+            .ok_or_else(|| AppIpcError::new("local_auth_invalid", "Missing connector identity"))?;
+        run_connection_tool(&root, plugin_key, connector_slug, args).await
+    })
 }
 
 pub(crate) async fn run_connection_tool(
@@ -47,35 +109,194 @@ async fn run_tool_json(
     plugin_key: &str,
     connector_slug: &str,
 ) -> Result<Value, AppIpcError> {
-    let mut command = Command::new(tool);
+    let requires_python = tool
+        .to_str()
+        .is_some_and(crate::python_runtime::is_python_program);
+    let selected = if requires_python && crate::python_runtime::managed_python_bridge_configured() {
+        Some(
+            crate::python_runtime::prepare_plugin_python(root, true)
+                .await
+                .map_err(|message| AppIpcError::new("python_runtime_unavailable", message))?,
+        )
+    } else {
+        None
+    };
+    let mut command = Command::new(
+        selected
+            .as_ref()
+            .map_or(tool, |python| python.path.as_path()),
+    );
+    if let Some(selected) = &selected {
+        selected
+            .configure(&mut command)
+            .map_err(|message| AppIpcError::new("python_runtime_unavailable", message))?;
+        if tool
+            .extension()
+            .is_some_and(|extension| extension.eq_ignore_ascii_case("py"))
+        {
+            command.arg(tool);
+        }
+    }
     crate::process::hide_windows_console(&mut command);
-    let mut child = command
+    command
         .args(args)
         .current_dir(root)
         .envs(crate::plugin_account_auth::broker::environment())
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
-        .stderr(Stdio::null())
-        .kill_on_drop(true)
-        .spawn()
-        .map_err(|_| {
-            AppIpcError::new(
-                "connection_cli_unavailable",
-                "Plugin tool could not be started",
-            )
-        })?;
+        .stderr(Stdio::piped())
+        .kill_on_drop(true);
+    if requires_python && selected.is_none() {
+        crate::python_runtime::isolate_python_environment(&mut command)
+            .map_err(|message| AppIpcError::new("python_runtime_unavailable", message))?;
+    }
+    let mut child = command.spawn().map_err(|_cause| {
+        #[cfg(test)]
+        eprintln!(
+            "Connection tool spawn failed: kind={:?} os_error={:?}",
+            _cause.kind(),
+            _cause.raw_os_error()
+        );
+        AppIpcError::new(
+            "connection_cli_unavailable",
+            "Plugin tool could not be started",
+        )
+    })?;
     let stdout = child.stdout.take().expect("piped plugin stdout");
+    let stderr = child.stderr.take().expect("piped plugin stderr");
     let output = tokio::time::timeout(Duration::from_secs(40), async {
-        let stdout = read_tool_stdout(stdout, MAX_TOOL_OUTPUT_BYTES).await?;
+        let (stdout, stderr) = tokio::try_join!(
+            read_tool_stdout(stdout, MAX_TOOL_OUTPUT_BYTES),
+            read_tool_stdout(stderr, MAX_TOOL_OUTPUT_BYTES)
+        )?;
         let status = child
             .wait()
             .await
             .map_err(|_| AppIpcError::new("connection_cli_failed", "Plugin tool wait failed"))?;
-        Ok::<_, AppIpcError>((stdout, status))
+        Ok::<_, AppIpcError>(std::process::Output {
+            stdout,
+            stderr,
+            status,
+        })
     })
     .await
     .map_err(|_| AppIpcError::new("connection_cli_timeout", "Plugin tool request timed out"))??;
-    parse_connection_tool_output(&output.0, output.1.success(), plugin_key, connector_slug)
+    let result = parse_connection_tool_streams(
+        &output.stdout,
+        &output.stderr,
+        output.status.success(),
+        plugin_key,
+        connector_slug,
+    );
+    if let Err(error) = &result {
+        log_tool_failure(tool, plugin_key, connector_slug, &output, error);
+    }
+    result
+}
+
+fn log_tool_failure(
+    tool: &Path,
+    plugin_key: &str,
+    connector_slug: &str,
+    output: &std::process::Output,
+    error: &AppIpcError,
+) {
+    let mut diagnostic = output_diagnostic(
+        &output.stdout,
+        output.status.success(),
+        output.status.code(),
+    );
+    let stderr = output_diagnostic(
+        &output.stderr,
+        output.status.success(),
+        output.status.code(),
+    );
+    diagnostic["stderrBytes"] = json!(output.stderr.len());
+    diagnostic["stderrJsonError"] = stderr["jsonError"].clone();
+    diagnostic["stderrFirstKind"] = stderr["firstKind"].clone();
+    diagnostic["category"] = json!(error.code);
+    for bytes in [&output.stdout, &output.stderr] {
+        if let Ok(value) = serde_json::from_slice::<Value>(bytes) {
+            if let Some(code) =
+                tool_error_code(&value).filter(|code| super::diagnostics::identifier(code))
+            {
+                diagnostic["providerCode"] = json!(code);
+                break;
+            }
+        }
+    }
+    crate::logging::log_executor_event(
+        "Connection tool output rejected",
+        &[
+            ("plugin_key", plugin_key.to_owned()),
+            ("connector_slug", connector_slug.to_owned()),
+            (
+                "tool",
+                tool.file_name()
+                    .unwrap_or_default()
+                    .to_string_lossy()
+                    .into_owned(),
+            ),
+            ("diagnostic", diagnostic.to_string()),
+        ],
+    );
+}
+
+fn parse_connection_tool_streams(
+    stdout: &[u8],
+    stderr: &[u8],
+    success: bool,
+    plugin_key: &str,
+    connector_slug: &str,
+) -> Result<Value, AppIpcError> {
+    let stdout_value = serde_json::from_slice::<Value>(stdout).ok();
+    let stderr_value = serde_json::from_slice::<Value>(stderr).ok();
+    let use_stderr = !success
+        && !stdout_value.as_ref().is_some_and(declared_tool_failure)
+        && stderr_value.as_ref().is_some_and(declared_tool_failure);
+    parse_connection_tool_output(
+        if use_stderr { stderr } else { stdout },
+        success,
+        plugin_key,
+        connector_slug,
+    )
+}
+
+fn tool_error_code(value: &Value) -> Option<&str> {
+    value["error"]["code"]
+        .as_str()
+        .or_else(|| value["errorCode"].as_str())
+        .or_else(|| value["code"].as_str())
+}
+
+fn declared_tool_failure(value: &Value) -> bool {
+    value["success"] == false
+        || value["ok"] == false
+        || value["error"].is_object()
+        || tool_error_code(value).is_some()
+}
+
+// Only structural metadata may leave the CLI boundary; never include output or arguments.
+fn output_diagnostic(bytes: &[u8], success: bool, exit_code: Option<i32>) -> Value {
+    let first = bytes.iter().find(|byte| !byte.is_ascii_whitespace());
+    let first_kind = match first {
+        None => "empty",
+        Some(b'{') => "object",
+        Some(b'[') => "array",
+        Some(_) => "other",
+    };
+    let error = serde_json::from_slice::<Value>(bytes).err();
+    json!({
+        "stdoutBytes":bytes.len(),
+        "exitSuccess":success,
+        "exitCode":exit_code,
+        "utf8":std::str::from_utf8(bytes).is_ok(),
+        "bom":bytes.starts_with(&[0xef,0xbb,0xbf]),
+        "firstKind":first_kind,
+        "jsonError":error.as_ref().map(|error|format!("{:?}",error.classify())),
+        "line":error.as_ref().map(serde_json::Error::line),
+        "column":error.as_ref().map(serde_json::Error::column),
+    })
 }
 
 async fn read_tool_stdout(
@@ -116,16 +337,20 @@ fn parse_connection_tool_output(
     }
     let value: Value = serde_json::from_slice(bytes).map_err(|_| {
         AppIpcError::new(
-            "connection_cli_response_invalid",
-            "Plugin tool did not return JSON",
+            if success {
+                "connection_cli_response_invalid"
+            } else {
+                "connection_cli_failed"
+            },
+            if success {
+                "Plugin tool did not return JSON"
+            } else {
+                "Plugin tool exited without a structured outcome"
+            },
         )
     })?;
-    if !success || value["success"] == false || value["ok"] == false {
-        let code = value["error"]["code"]
-            .as_str()
-            .or_else(|| value["errorCode"].as_str())
-            .or_else(|| value["code"].as_str())
-            .unwrap_or("request_failed");
+    if !success || value["success"] == false || value["ok"] == false || value["error"].is_object() {
+        let code = tool_error_code(&value).unwrap_or("request_failed");
         if matches!(
             code,
             "need_login" | "AUTH_REQUIRED" | "connector_auth_required" | "NOT_LOGGED_IN"
@@ -135,17 +360,292 @@ fn parse_connection_tool_output(
                 format!("pluginKey={plugin_key} connectorSlug={connector_slug}"),
             ));
         }
-        return Err(AppIpcError::new(
-            "connection_cli_failed",
-            "Plugin tool request failed",
-        ));
+        let declared_failure = declared_tool_failure(&value);
+        let mut error = AppIpcError::new(
+            if declared_failure && retryable_tool_request(code) {
+                "connection_cli_request_unavailable"
+            } else if declared_failure {
+                "connection_cli_request_failed"
+            } else {
+                "connection_cli_failed"
+            },
+            if super::diagnostics::identifier(code) {
+                format!("Plugin tool request failed ({code})")
+            } else {
+                "Plugin tool request failed".to_owned()
+            },
+        );
+        error.provider_code = super::diagnostics::identifier(code).then(|| code.to_owned());
+        return Err(error);
     }
     Ok(value)
+}
+
+fn retryable_tool_request(code: &str) -> bool {
+    matches!(
+        code,
+        "request_failed"
+            | "NETWORK_ERROR"
+            | "SERVER_ERROR"
+            | "ECONNRESET"
+            | "ECONNREFUSED"
+            | "ETIMEDOUT"
+            | "EHOSTUNREACH"
+            | "ENETUNREACH"
+            | "EAI_AGAIN"
+    )
 }
 
 #[cfg(test)]
 mod connection_tool_tests {
     use super::*;
+
+    #[cfg(unix)]
+    fn tool_fixture(root: &Path, name: &str) -> PathBuf {
+        // A checked-in inode cannot retain a writer inherited by parallel forks.
+        let fixture =
+            Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/connection-tool-outcome.sh");
+        let script = root.join(name);
+        std::os::unix::fs::symlink(fixture, &script).unwrap();
+        script
+    }
+
+    #[cfg(target_os = "linux")]
+    #[tokio::test]
+    async fn writable_tool_inodes_fail_before_structured_output_is_available() {
+        use std::io::Write;
+        let temp = tempfile::tempdir().unwrap();
+        let script = temp.path().join("fresh-tool");
+        let mut writer = fs::File::create(&script).unwrap();
+        writer.write_all(b"#!/bin/sh\nexit 0\n").unwrap();
+        fs::set_permissions(&script, std::os::unix::fs::PermissionsExt::from_mode(0o700)).unwrap();
+        let cause = std::process::Command::new(&script).spawn().unwrap_err();
+        assert_eq!(cause.raw_os_error(), Some(libc::ETXTBSY));
+        let error = run_tool_json(temp.path(), &script, &[], "plugin", "account")
+            .await
+            .unwrap_err();
+        assert_eq!(error.code, "connection_cli_unavailable");
+        drop(writer);
+    }
+
+    #[test]
+    fn generic_and_transport_failures_retain_structured_causes_and_only_reads_get_retry_hints() {
+        for code in [
+            "request_failed",
+            "NETWORK_ERROR",
+            "SERVER_ERROR",
+            "ECONNRESET",
+            "ECONNREFUSED",
+            "ETIMEDOUT",
+            "EHOSTUNREACH",
+            "ENETUNREACH",
+            "EAI_AGAIN",
+        ] {
+            for stderr in [false, true] {
+                let bytes = serde_json::to_vec(
+                    &json!({"success":false,"error":{"code":code,"message":"private-token"}}),
+                )
+                .unwrap();
+                let error = parse_connection_tool_streams(
+                    if stderr { b"" } else { &bytes },
+                    if stderr { &bytes } else { b"" },
+                    false,
+                    "plugin",
+                    "account",
+                )
+                .unwrap_err();
+                assert_eq!(error.code, "connection_cli_request_unavailable");
+                assert_eq!(error.provider_code.as_deref(), Some(code));
+                assert_eq!(
+                    error.retry_after_ms, None,
+                    "An action outcome cannot authorize replay"
+                );
+                assert!(!error.message.contains("private-token"));
+                let read = crate::runtime_work::connection_cli::collection_read_error(error);
+                assert_eq!(read.retry_after_ms, Some(30_000));
+                assert_eq!(read.provider_code.as_deref(), Some(code));
+            }
+        }
+        let bytes = br#"{"success":false,"error":{"message":"private-token"}}"#;
+        let error = parse_connection_tool_output(bytes, false, "plugin", "account").unwrap_err();
+        assert_eq!(error.provider_code.as_deref(), Some("request_failed"));
+        assert_eq!(error.code, "connection_cli_request_unavailable");
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn structured_generic_action_failure_is_never_replayed() {
+        let temp = tempfile::tempdir().unwrap();
+        let script = tool_fixture(temp.path(), "generic-action");
+        let error = run_tool_json(temp.path(), &script, &[], "plugin", "account")
+            .await
+            .unwrap_err();
+        assert_eq!(error.code, "connection_cli_request_unavailable");
+        assert_eq!(error.retry_after_ms, None);
+        assert_eq!(fs::read(temp.path().join("attempts")).unwrap(), b"x");
+    }
+
+    #[test]
+    fn failed_process_output_is_not_classified_as_a_successful_malformed_response() {
+        for stdout in [b"".as_slice(), b"not json".as_slice()] {
+            let error = parse_connection_tool_output(stdout, false, "mail", "account").unwrap_err();
+            assert_eq!(error.code, "connection_cli_failed");
+            assert!(!error.message.contains("not json"));
+        }
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn structured_stderr_errors_preserve_auth_identity_without_exposing_messages() {
+        let temp = tempfile::tempdir().unwrap();
+        let script = tool_fixture(temp.path(), "auth-stderr");
+        let error = run_tool_json(temp.path(), &script, &[], "exact-plugin", "exact-connector")
+            .await
+            .unwrap_err();
+        assert_eq!(error.code, "connector_auth_required");
+        assert_eq!(
+            error.message,
+            "pluginKey=exact-plugin connectorSlug=exact-connector"
+        );
+        assert!(!error.message.contains("private-token"));
+    }
+
+    #[test]
+    fn structured_stderr_rejections_never_become_retryable_reads_or_successes() {
+        for code in [
+            "FORBIDDEN",
+            "403",
+            "PERMISSION_DENIED",
+            "EPERM",
+            "EACCES",
+            "CERTIFICATE_VERIFY_FAILED",
+            "INVALID_ARGUMENT",
+            "unknown_failure",
+        ] {
+            let stderr = serde_json::to_vec(
+                &json!({"success":false,"error":{"code":code,"message":"private-token"}}),
+            )
+            .unwrap();
+            let error = parse_connection_tool_streams(b"", &stderr, false, "plugin", "account")
+                .unwrap_err();
+            assert_eq!(error.code, "connection_cli_request_failed");
+            assert_eq!(error.provider_code.as_deref(), Some(code));
+            assert!(error.message.contains(code));
+            assert!(!error.message.contains("private-token"));
+            assert_eq!(
+                crate::runtime_work::connection_cli::collection_read_error(error).retry_after_ms,
+                None
+            );
+        }
+        assert_eq!(
+            parse_connection_tool_streams(b"", br#"{"success":true}"#, false, "plugin", "account")
+                .unwrap_err()
+                .code,
+            "connection_cli_failed"
+        );
+        assert_eq!(
+            parse_connection_tool_streams(
+                b"bad json",
+                br#"{"success":true}"#,
+                true,
+                "plugin",
+                "account"
+            )
+            .unwrap_err()
+            .code,
+            "connection_cli_response_invalid"
+        );
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn unknown_action_failure_is_executed_once_without_a_retry_hint() {
+        let temp = tempfile::tempdir().unwrap();
+        let script = tool_fixture(temp.path(), "unknown-action");
+        let error = run_tool_json(temp.path(), &script, &[], "plugin", "account")
+            .await
+            .unwrap_err();
+        assert_eq!(error.code, "connection_cli_failed");
+        assert_eq!(error.retry_after_ms, None);
+        assert_eq!(fs::read(temp.path().join("attempts")).unwrap(), b"x");
+        assert!(!error.message.contains("private"));
+    }
+
+    #[test]
+    fn malformed_output_diagnostics_never_contain_response_contents() {
+        let secret = "private-token-and-message";
+        for bytes in [
+            Vec::new(),
+            format!("\u{feff}{secret}").into_bytes(),
+            format!("{{\"token\":\"{secret}\"").into_bytes(),
+            vec![0xff, 0xfe],
+        ] {
+            let diagnostic = output_diagnostic(&bytes, false, Some(2));
+            assert_eq!(diagnostic["stdoutBytes"], bytes.len());
+            assert_eq!(diagnostic["exitSuccess"], false);
+            assert_eq!(diagnostic["exitCode"], 2);
+            assert!(!diagnostic.to_string().contains(secret));
+            assert!(diagnostic["jsonError"].is_string());
+        }
+        let bom = output_diagnostic(b"\xef\xbb\xbf{}", true, Some(0));
+        assert_eq!(bom["bom"], true);
+        assert_eq!(bom["utf8"], true);
+        assert_eq!(bom["firstKind"], "other");
+        let object = output_diagnostic(b"  {", true, Some(0));
+        assert_eq!(object["firstKind"], "object");
+        assert_eq!(object["jsonError"], "Eof");
+        assert_eq!(
+            output_diagnostic(b"\n ", true, Some(0))["firstKind"],
+            "empty"
+        );
+    }
+
+    #[test]
+    fn connection_tool_identity_follows_the_installed_manifest_and_rejects_ambiguity() {
+        let root = tempfile::tempdir().unwrap();
+        fs::create_dir(root.path().join(".codex-plugin")).unwrap();
+        for slug in ["dingtalk", "dingtalk-local"] {
+            let connector = json!({"slug":slug,"localAuth":{"kind":"browser_oauth","health":["health"],"start":["login"],"tool":{"id":"dws","source":"bundled"}}});
+            let path = root.path().join(".codex-plugin/plugin.json");
+            fs::write(
+                &path,
+                json!({"name":"dingtalk","connectors":[connector.clone()]}).to_string(),
+            )
+            .unwrap();
+            assert_eq!(
+                connection_auth_target(root.path(), "dingtalk", &json!({"toolId":"dws"})).unwrap(),
+                json!({"pluginKey":"dingtalk","connectorSlug":slug})
+            );
+            if slug == "dingtalk-local" {
+                assert_eq!(
+                    load_local_auth_spec(root.path(), Some("dingtalk"))
+                        .unwrap_err()
+                        .code,
+                    "local_auth_missing"
+                );
+            }
+            assert!(
+                connection_auth_target(root.path(), "other", &json!({"toolId":"dws"})).is_err()
+            );
+            assert!(connection_auth_target(
+                root.path(),
+                "dingtalk",
+                &json!({"toolId":"unrelated"})
+            )
+            .is_err());
+            fs::write(
+                &path,
+                json!({"name":"dingtalk","connectors":[connector.clone(),connector]}).to_string(),
+            )
+            .unwrap();
+            assert_eq!(
+                connection_auth_target(root.path(), "dingtalk", &json!({"toolId":"dws"}))
+                    .unwrap_err()
+                    .code,
+                "connection_tool_unavailable"
+            );
+        }
+    }
 
     #[tokio::test]
     async fn connection_cli_rejects_oversized_stdout_before_the_process_closes_it() {
@@ -262,13 +762,13 @@ mod connection_tool_tests {
                 "pluginKey=existing-plugin connectorSlug=original-slug"
             );
         }
-        for code in ["NETWORK_ERROR", "FORBIDDEN", "403", "SERVER_ERROR"] {
+        for code in ["FORBIDDEN", "403"] {
             let bytes = serde_json::to_vec(
                 &json!({"success":false,"error":{"code":code,"message":"secret"}}),
             )
             .unwrap();
             let error = parse_connection_tool_output(&bytes, false, "mail", "account").unwrap_err();
-            assert_eq!(error.code, "connection_cli_failed");
+            assert_eq!(error.code, "connection_cli_request_failed");
             assert!(!error.message.contains("secret"));
         }
     }

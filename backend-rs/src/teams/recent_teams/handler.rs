@@ -247,7 +247,7 @@ async fn recent_accessible_teams(
             erp: state.erp.as_ref(),
             redis: state.redis.as_ref(),
         };
-        let resolved = user_group_memberships(&state.mysql, &erp, user_id)
+        let resolved = user_group_memberships(&state.mysql, &erp, &state.entity_resolvers, user_id)
             .await
             .map_err(|error| HttpError::internal(error.to_string()))?;
         // `_build_accessible_teams_query(scope="all")`: namespaces_to_query

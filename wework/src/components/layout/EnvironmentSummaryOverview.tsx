@@ -152,7 +152,7 @@ export function EnvironmentSummaryOverview({
                   }
                   className={cn(
                     'mt-0.5 flex h-3.5 w-3.5 shrink-0 items-center justify-center',
-                    copied ? 'text-green-500' : 'text-text-muted'
+                    copied ? 'text-success wework:text-green-500' : 'text-text-muted'
                   )}
                   aria-hidden="true"
                 >
@@ -185,7 +185,9 @@ export function EnvironmentSummaryOverview({
         </div>
       </section>
       {displayError && (
-        <p className="mt-2 rounded-md bg-red-50 px-3 py-2 text-xs text-red-600">{displayError}</p>
+        <p className="mt-2 rounded-md bg-destructive/10 px-3 py-2 text-xs text-destructive wework:bg-red-50 wework:text-red-600">
+          {displayError}
+        </p>
       )}
     </>
   )

@@ -1,3 +1,4 @@
+import { normalizeWorkspaceSeparators } from '@/lib/workspace-file-contract'
 import { ChevronDown, FileOutput, Folder, Loader2, X } from 'lucide-react'
 import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
 import { ActionMenu, type ActionMenuItem, type MenuPosition } from '@/components/common/ActionMenu'
@@ -12,7 +13,10 @@ import {
   revealLocalFile,
   type LocalWorkspaceOpenerAvailability,
 } from '@/lib/local-terminal'
-import type { LocalWorkspaceOpenerId } from '@/lib/local-workspace-openers'
+import {
+  prioritizeWorkspaceOpener,
+  type LocalWorkspaceOpenerId,
+} from '@/lib/local-workspace-openers'
 import {
   resolveWorkspaceOpener,
   setPreferredWorkspaceOpener,
@@ -71,10 +75,7 @@ export function WorkspaceFileRootSelector({
   )
   if (unique.length < 2) return null
   const label = (value: WorkspaceTarget) =>
-    value.path
-      .replace(/[\\/]+$/, '')
-      .split(/[\\/]/)
-      .at(-1) || value.path
+    normalizeWorkspaceSeparators(value.path).replace(/\/+$/, '').split('/').at(-1) || value.path
   return (
     <ActionMenu
       testId="workspace-file-root-selector"
@@ -126,7 +127,7 @@ export function WorkspaceFileToolbar({
     local && !contextIsDirectory && hostedFileTarget?.path === contextPath
       ? hostedFileTarget.target
       : null
-  const normalizedPath = path.replace(/\\/g, '/')
+  const normalizedPath = normalizeWorkspaceSeparators(path)
   const separator = normalizedPath.lastIndexOf('/')
   const name = normalizedPath.slice(separator + 1) || path
 
@@ -224,7 +225,7 @@ export function WorkspaceFileToolbar({
   }, [isDirectory, local, path])
 
   const applicationItems = (filePath: string): ActionMenuItem[] =>
-    (openers ?? []).map(opener => ({
+    prioritizeWorkspaceOpener(openers ?? [], preferred).map(opener => ({
       testId: `workspace-file-open-file-option-${opener.label ?? opener.id}`,
       label: (
         <>
@@ -419,7 +420,7 @@ export function WorkspaceFileToolbar({
         <div
           role="alert"
           data-testid="workspace-file-action-error"
-          className="flex shrink-0 items-center gap-2 border-b border-border px-3 py-2 text-sm text-red-600"
+          className="flex shrink-0 items-center gap-2 border-b border-border px-3 py-2 text-sm text-destructive wework:text-red-600"
         >
           <span className="min-w-0 flex-1 break-words">{actionError}</span>
           <button

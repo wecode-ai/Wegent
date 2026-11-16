@@ -1,3 +1,5 @@
+// @vitest-environment node
+
 import { spawnSync } from 'node:child_process'
 import { resolve } from 'node:path'
 import { describe, expect, test } from 'vitest'

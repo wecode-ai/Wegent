@@ -10,9 +10,9 @@ import type {
   CollaborationGroupMember,
   CollaborationExecutionEnvironment,
   CollaborationWorkspaceMember,
+  CollaborationUser,
   CollaborationOwnedAgent,
   CollaborationProject,
-  CollaborationUser,
 } from "../types";
 
 export type ProjectCreateLocation = "local" | "cloud";
@@ -26,10 +26,11 @@ export interface ProjectCreateTarget {
 }
 
 export interface ProjectCreateResourceSelection {
+  template?: import("../templates/types").CollaborationTemplate;
   memberUserIds: number[];
   agentResourceIds: string[];
   executionEnvironmentDeviceIds: number[];
-  collaborationGroupDraft: ProjectCreateCollaborationGroupDraft | null;
+  collaborationGroupDrafts: ProjectCreateCollaborationGroupDraft[];
 }
 
 export interface ProjectCreateCollaborationGroupDraft {
@@ -116,11 +117,16 @@ export interface ProjectCreateResourceSetup {
   membersLoading?: boolean;
   membersError?: string | null;
   reloadMembers?(): void;
-  searchMembers?(query: string): Promise<CollaborationUser[]>;
   agents: CollaborationOwnedAgent[];
   defaultAgentResourceIds?: string[];
+  searchUsers?(query: string): Promise<CollaborationUser[]>;
   groups: CollaborationGroup[];
   executionEnvironments?: CollaborationExecutionEnvironment[];
+  requiresTemplateEnvironmentSelection?: boolean;
+  executionEnvironmentLoading?: boolean;
+  executionEnvironmentError?: string;
+  retryExecutionEnvironments?(): void;
+  validate?(selection: ProjectCreateResourceSelection): Promise<void>;
   loadCollaborationGroupGenerationModels?(): Promise<ProjectCreateGenerationModelCatalog>;
   generateCollaborationGroupDraft?(
     input: ProjectCreateCollaborationGroupDraftInput,
@@ -130,7 +136,7 @@ export interface ProjectCreateResourceSetup {
   configure(
     project: CollaborationProject,
     selection: ProjectCreateResourceSelection,
-  ): Promise<void>;
+  ): Promise<CollaborationProject | void>;
 }
 
 export interface DingTalkAITableLink {
@@ -206,15 +212,14 @@ export interface ProjectCreateLabels {
   collaborators: string;
   currentUser: string;
   addCollaborator: string;
+  searchPeople: string;
+  searchingPeople: string;
+  availablePeople: string;
+  peopleSearchFailed: string;
   importGroupDescription: string;
   availableAgents: string;
   availableGroups: string;
   noAvailableCollaborators: string;
-  availableMembers: string;
-  searchMembers: string;
-  searchingMembers: string;
-  noMatchingMembers: string;
-  memberSearchFailed: string;
   membersUnavailable: string;
   retry: string;
   retrySetup: string;
@@ -265,6 +270,8 @@ export interface ProjectCreateLabels {
   create: string;
   creating: string;
   unavailableLocation: string;
+  partialConfiguration: string;
+  openCreated: string;
   repositoryRequired: string;
   repositoryInvalid: string;
   githubRepositoryInvalid: string;
@@ -273,10 +280,18 @@ export interface ProjectCreateLabels {
 }
 
 export interface ProjectCreateDialogProps {
+  importActions?: ReactNode;
+  initialTemplate?: import("../templates/types").CollaborationTemplate | null;
   targets: ProjectCreateTarget[];
   defaultLocation: ProjectCreateLocation;
   allowDingTalkAITable: boolean;
   labels: ProjectCreateLabels;
+  workspaceSelection?: {
+    label: string;
+    value: string;
+    options: Array<{ value: string; label: string }>;
+    onChange(value: string): void;
+  };
   workspaceContext?: {
     name: string;
     owner: string;

@@ -1,3 +1,4 @@
+import { selectedToolCall } from '../modules/model-tool-calls.mjs'
 import assert from 'node:assert/strict'
 
 import { requestExecutor } from '../modules/executor-rpc.mjs'
@@ -22,6 +23,10 @@ import {
   selectCollaborationDomain,
   waitForTestIdByText,
 } from '../modules/workspace-flows.mjs'
+import {
+  collaborationProjectViewSelector,
+  selectCollaborationProjectView,
+} from '../modules/collaboration-project-navigation.mjs'
 
 const CONTENT = '[data-workspace-tab-content][aria-hidden="false"]'
 const MODEL = 'desktop-e2e-cloud-responses'
@@ -219,7 +224,7 @@ async function createWorkspaceAndProject(control, request, uiTimeoutMs) {
     uiTimeoutMs
   )
   assert.equal(project.task_provider, 'local', '端上创建的项目没有使用本地看板数据源')
-  await control.command('waitFor', scoped('[data-testid="collaboration-tab-manage"]'), {
+  await control.command('waitFor', collaborationProjectViewSelector(CONTENT, 'manage'), {
     timeoutMs: uiTimeoutMs,
   })
   return { project }
@@ -295,7 +300,7 @@ async function createGroup(control, request, projectId, ownerId, uiTimeoutMs) {
   await control.command(
     'waitFor',
     scoped(`[data-testid="collaboration-group-detail-${group.id}"]`),
-    { text: GROUP, timeoutMs: uiTimeoutMs }
+    { visible: true, text: GROUP, timeoutMs: uiTimeoutMs }
   )
   await control.command('click', scoped('[data-testid="collaboration-group-detail-tab-rules"]'))
   await control.command('fill', scoped('[data-testid="collaboration-group-detail-instructions"]'), {
@@ -320,7 +325,7 @@ async function createGroup(control, request, projectId, ownerId, uiTimeoutMs) {
 }
 
 async function createAndAssignIssue(control, request, projectId, uiTimeoutMs) {
-  await control.command('click', scoped('[data-testid="collaboration-tab-board"]'))
+  await selectCollaborationProjectView(control, CONTENT, 'board')
   await control.command('clickWhenEnabled', scoped('[data-testid="collaboration-issue-create"]'))
   await control.command('fill', scoped('[data-testid="cloud-todo-title"]'), { value: ISSUE })
   await control.command('fill', scoped('[data-testid="cloud-todo-detail-description"]'), {
@@ -335,7 +340,11 @@ async function createAndAssignIssue(control, request, projectId, uiTimeoutMs) {
     '端上创建根 Issue 未持久化',
     uiTimeoutMs
   )
-  await control.command('click', scoped('[data-testid="cloud-todo-detail-assignee"]'))
+  await control.command('waitFor', scoped('[data-testid="collaboration-issue-detail"]'), {
+    text: ISSUE,
+    timeoutMs: uiTimeoutMs,
+  })
+  await control.command('clickWhenEnabled', scoped('[data-testid="cloud-todo-detail-assignee"]'))
   const groupOption = await waitForTestIdByText(
     control,
     'body',
@@ -344,14 +353,11 @@ async function createAndAssignIssue(control, request, projectId, uiTimeoutMs) {
     uiTimeoutMs
   )
   await control.command('click', `[data-testid="${groupOption}"]`)
-  await control.command('clickWhenEnabled', scoped('[data-testid="cloud-todo-save"]'), {
-    timeoutMs: uiTimeoutMs,
-  })
   return issue
 }
 
 async function authorizeRemoteEnvironment(control, remoteDevice, timeoutMs) {
-  await control.command('click', scoped('[data-testid="collaboration-tab-manage"]'))
+  await selectCollaborationProjectView(control, CONTENT, 'manage')
   await control.command(
     'click',
     scoped('[data-testid="collaboration-project-settings-environments"]')
@@ -468,12 +474,7 @@ export function createDesktopScenario({
             delivery_id: humanDelivery.id,
             fulfillments: [],
           })
-          events = namespacedFunctionCall(
-            CALLS.humanFinalize,
-            tool.namespace,
-            tool.name,
-            tool.arguments
-          )
+          events = selectedToolCall(CALLS.humanFinalize, tool)
         } else if (requestContainsToolOutput(body, CALLS.humanCreate)) {
           humanDelivery = findDeliveryDraft(findToolOutput(body.input ?? [], CALLS.humanCreate))
           assert.ok(humanDelivery, '个人 Runtime Task 没有返回持久化的 Delivery 草稿')
@@ -491,12 +492,7 @@ export function createDesktopScenario({
           const tool = selectMcpTool(body, 'wework_space', 'create_delivery', {
             markdown: `# ${HUMAN_TASK}\n\n${MARKER} 人工证据已核对，结果可供负责人继续评估。`,
           })
-          events = namespacedFunctionCall(
-            CALLS.humanCreate,
-            tool.namespace,
-            tool.name,
-            tool.arguments
-          )
+          events = selectedToolCall(CALLS.humanCreate, tool)
         } else {
           events = mcpToolRequestEvents(body, {
             toolName: 'create_delivery',
@@ -629,7 +625,7 @@ export function createDesktopScenario({
       assert.ok(remoteDevice?.id, 'The real remote Docker Executor device is unavailable')
       await authorizeRemoteEnvironment(control, remoteDevice, modelResponseTimeoutMs)
 
-      await control.command('click', scoped('[data-testid="collaboration-tab-manage"]'))
+      await selectCollaborationProjectView(control, CONTENT, 'manage')
 
       await control.command(
         'click',
@@ -678,14 +674,35 @@ export function createDesktopScenario({
       assert.equal(String(assignedIssue.assignee_user_id), String(owner.id))
       assert.equal(assignedIssue.assignee_group_id, null)
       assert.ok(!assignedIssue.assignee_agent_id)
+      await control.command(
+        'scrollIntoViewAsUser',
+        scoped('[data-testid="cloud-todo-create-task"]')
+      )
+      assert.equal(
+        await control.command(
+          'getElementCount',
+          scoped('[data-testid="cloud-todo-personal-task-action"]')
+        ),
+        '0',
+        'The AI action bar must stay hidden while the associated-task action is visible'
+      )
+      await control.command('waitFor', scoped('[data-testid="cloud-todo-create-task"]'), {
+        visible: true,
+        timeoutMs: uiTimeoutMs,
+      })
+      await control.command(
+        'scrollToRatioAsUser',
+        scoped('[data-testid="cloud-todo-detail-scroll"]'),
+        { value: '1' }
+      )
       await control.command('waitFor', scoped('[data-testid="cloud-todo-personal-task-action"]'), {
         text: '让 AI 帮我处理',
         timeoutMs: uiTimeoutMs,
       })
-      await control.command('waitFor', scoped('[data-testid="cloud-todo-personal-task-start"]'), {
-        visible: true,
-        timeoutMs: uiTimeoutMs,
-      })
+      await control.command(
+        'scrollIntoViewAsUser',
+        scoped('[data-testid="cloud-todo-create-task"]')
+      )
       const loopItems = await request(`/api/v1/cloud-projects/${project.id}/loop-items`)
       assert.equal(
         loopItems.items.some(
@@ -706,7 +723,7 @@ export function createDesktopScenario({
       assert.equal(humanAssignment.payload.assignmentId, HUMAN_ASSIGNMENT_ID)
       assert.ok(humanAssignment.payload.humanAssignmentId)
       await captureScreenshot(control, 'human-round-01-human-and-ai-assigned.png', CONTENT)
-      await control.command('click', scoped('[data-testid="cloud-todo-personal-task-start"]'))
+      await control.command('click', scoped('[data-testid="cloud-todo-create-task"]'))
       const directTaskPanel = scoped('[data-testid="work-item-new-task-chat-panel"]')
       await control.command('waitFor', directTaskPanel, { timeoutMs: uiTimeoutMs })
       assert.ok(
@@ -835,7 +852,7 @@ export function createDesktopScenario({
         visible: false,
         timeoutMs: uiTimeoutMs,
       })
-      await control.command('click', scoped('[data-testid="cloud-todo-personal-task-start"]'))
+      await control.command('click', scoped('[data-testid="cloud-todo-create-task"]'))
       const taskPanel = scoped('[data-testid="work-item-new-task-chat-panel"]')
       const taskComposer = `${taskPanel} [data-testid="chat-message-input"]`
       await control.command('waitFor', taskComposer, { timeoutMs: uiTimeoutMs })

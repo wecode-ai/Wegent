@@ -13,8 +13,9 @@ const COMPOSER = `${FORM} [data-testid="cloud-task-activity-composer"]`
 const SEND = `${FORM} [data-testid="send-message-button"]`
 const BADGE = `${FORM} [data-testid="attachment-badge"]`
 const PENDING = `${FORM} [data-testid="uploading-attachment-badge"], ${FORM} [data-testid="pending-image-attachment"]`
-const ROOT_TEXT = 'Image comment survives upload and reopening'
-const REPLY_TEXT = 'Reply keeps both image attachments'
+const ROOT_TEXT =
+  'Image comment survives upload and reopening\nThe second line stays on its own line'
+const REPLY_TEXT = 'Reply keeps both image attachments\nThe reply also preserves its line break'
 const RECOVERY_TEXT = 'Keep this image draft when its staged file is unavailable'
 const PNG = Buffer.from(IMAGE_ARTIFACT_BASE64, 'base64')
 const IMAGE_NAMES = ['comment-root.png', 'comment-reply-one.png', 'comment-reply-two.png']
@@ -23,9 +24,10 @@ const RECOVERY_IMAGE = 'comment-recovery.png'
 /**
  * Real cloud project + desktop staging + upload + Issue persistence regression.
  * Send one image with a root comment and two with a reply, then reload and read
- * each stored image back. Delete only a test-owned staged file to exercise the
- * upload failure: the draft must remain, no comment may be written, and restoring
- * the file must allow exactly one successful submission. A second Issue stays empty.
+ * each stored image back, preserving root and reply line breaks. Delete only a
+ * test-owned staged file to exercise the upload failure: the draft must remain,
+ * no comment may be written, and restoring the file must allow exactly one
+ * successful submission. A second Issue stays empty.
  */
 export function createDesktopScenario({ executorHome, uiTimeoutMs, workbenchReadyTimeoutMs }) {
   let backendUrl
@@ -114,7 +116,17 @@ export function createDesktopScenario({ executorHome, uiTimeoutMs, workbenchRead
       `Comment was not persisted within ${uiTimeoutMs}ms: ${text}; comments=${JSON.stringify(comments)}`
     )
     const selector = `${CONTENT} [data-testid="cloud-task-activity-message-${comment.id}"]`
-    await control.command('waitFor', selector, { text })
+    const lines = text.split('\n')
+    await control.command('waitFor', selector, { text: lines[0] })
+    const renderedText = await control.command('getText', selector)
+    for (const line of lines) assert.ok(renderedText.includes(line), `Comment lost text: ${line}`)
+    const breaks = `${selector} .assistant-markdown p br`
+    const expectedBreaks = lines.length - 1
+    assert.equal(
+      Number(await control.command('getElementCount', breaks)),
+      expectedBreaks,
+      'Persisted comment line breaks must remain visible before and after reopening'
+    )
     const stored = await json(attachmentsPath())
     for (const filename of filenames) {
       const files = stored.filter(attachment => attachment.display_name === filename)
@@ -208,7 +220,7 @@ export function createDesktopScenario({ executorHome, uiTimeoutMs, workbenchRead
         'waitFor',
         `${CONTENT} [data-testid="cloud-task-activity-replies-${root.id}"]`,
         {
-          text: REPLY_TEXT,
+          text: REPLY_TEXT.split('\n')[0],
         }
       )
       await assertComposerCleared(control)
@@ -253,7 +265,7 @@ export function createDesktopScenario({ executorHome, uiTimeoutMs, workbenchRead
       await control.command(
         'waitFor',
         `${CONTENT} [data-testid="cloud-task-activity-replies-${root.id}"] [data-testid="cloud-task-activity-message-${reply.id}"]`,
-        { text: REPLY_TEXT }
+        { text: REPLY_TEXT.split('\n')[0] }
       )
       await persistedComment(control, RECOVERY_TEXT, [RECOVERY_IMAGE])
       assert.equal((await json(commentsPath())).length, 3)
@@ -261,7 +273,13 @@ export function createDesktopScenario({ executorHome, uiTimeoutMs, workbenchRead
       await openIssue(control, otherIssue)
       const activity = `${CONTENT} [data-testid="cloud-task-activity-${otherIssue.id}"]`
       const activityText = await control.command('getText', activity)
-      for (const text of [ROOT_TEXT, REPLY_TEXT, RECOVERY_TEXT, ...IMAGE_NAMES, RECOVERY_IMAGE]) {
+      for (const text of [
+        ROOT_TEXT,
+        REPLY_TEXT,
+        RECOVERY_TEXT,
+        ...IMAGE_NAMES,
+        RECOVERY_IMAGE,
+      ].flatMap(text => text.split('\n'))) {
         assert.equal(activityText.includes(text), false, `Other Issue leaked ${text}`)
       }
       for (const comment of [root, reply, recovered]) {

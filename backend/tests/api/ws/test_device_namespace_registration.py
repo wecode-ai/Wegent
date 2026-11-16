@@ -15,6 +15,15 @@ from app.schemas.device import DeviceRegisterPayload, DeviceType
 from app.services.device.identity import resolve_owned_device_alias
 
 
+@pytest.fixture(autouse=True)
+def isolated_registration_lock(monkeypatch):
+    @asynccontextmanager
+    async def lock(_user_id):
+        yield
+
+    monkeypatch.setattr(device_namespace, "device_identity_lock", lock)
+
+
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     "original_app_device_id", ["electron-original", "electron-other"]
@@ -31,7 +40,7 @@ async def test_new_app_identity_registers_with_independent_record_route(
     async def identity_lock(user_id):
         yield
 
-    monkeypatch.setattr(device_namespace, "app_identity_lock", identity_lock)
+    monkeypatch.setattr(device_namespace, "device_identity_lock", identity_lock)
 
     original = device_service.upsert_device_crd(
         test_db,
@@ -92,7 +101,11 @@ async def test_new_app_identity_registers_with_independent_record_route(
     replacement = next(device for device in persisted if device.id != original.id)
     replacement_route = f"app-record-{replacement.id}"
 
-    assert result == {"success": True, "device_id": "app-route"}
+    assert result == {
+        "success": True,
+        "device_id": "app-route",
+        "device_route_id": replacement_route,
+    }
     assert len(persisted) == 2
     assert original.json["spec"]["runtimeInstanceId"] == "runtime-original"
     assert replacement.json["spec"]["runtimeInstanceId"] == "runtime-other"

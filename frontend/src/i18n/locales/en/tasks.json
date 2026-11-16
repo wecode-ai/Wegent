@@ -8,6 +8,12 @@
   "remote_workspace": {
     "button": "View the task files",
     "unavailable": "Remote session unavailable",
+    "artifact": {
+      "device_file": "Device task file",
+      "download": "Download artifact",
+      "download_failed": "Artifact download failed",
+      "unavailable": "The execution device may be offline, or the file was moved or deleted"
+    },
     "reason_loading": "Checking remote workspace status...",
     "reason_status_check_failed": "Failed to check remote workspace status",
     "reason_not_connected": "Remote session is not connected yet",
@@ -169,7 +175,11 @@
     "loading_diff_message": "Loading diff...",
     "no_changes_between_branches": "No changes found between branches",
     "execution_timeline": "Execution Timeline",
-    "no_repository": "This task is not associated with a code repository"
+    "no_repository": "This task is not associated with a code repository",
+    "task_file_changes": "Cumulative task file changes",
+    "file_changes_unavailable": "This task has no saved file change data.",
+    "snapshot_failed": "Task file changes could not be captured.",
+    "diff_truncated": "Cumulative task file changes. The diff is large, so only part of it is shown."
   },
   "thinking": {
     "execution_completed": "Execution Completed",

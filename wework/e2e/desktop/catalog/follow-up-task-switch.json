@@ -1,0 +1,12 @@
+{
+  "order": 177000,
+  "scenario": "./scenarios/follow-up-task-switch.scenario.mjs",
+  "scenarioOnly": true,
+  "ci": {
+    "core": {
+      "order": 93000,
+      "shard": 1,
+      "position": 8000
+    }
+  }
+}

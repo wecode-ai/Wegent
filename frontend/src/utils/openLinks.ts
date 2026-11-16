@@ -22,7 +22,7 @@ export function calculateOpenLinks(
   const result: OpenLinks = {
     session_id: sessionId || null,
     vscode_link: null,
-    git_link: null,
+    git_link: taskDetail.git_url || null,
     git_url: taskDetail.git_url || '',
     target_branch: null,
   }

@@ -50,7 +50,7 @@ jest.mock('@/contexts/SocketContext', () => ({
 const api = projectApis as jest.Mocked<typeof projectApis>
 const taskApi = taskApis as jest.Mocked<typeof taskApis>
 
-function project(id: number, count: number): ProjectWithTasks {
+function project(id: number, count: number | null): ProjectWithTasks {
   return {
     id,
     user_id: 7,
@@ -77,7 +77,7 @@ function task(id: number, projectId = 1): ProjectTask {
 }
 
 function taskPage(
-  total: number,
+  total: number | null,
   items: ProjectTask[],
   nextCursor: string | null = null
 ): ProjectTaskListResponse {
@@ -99,6 +99,7 @@ function Probe() {
     projects,
     projectTaskPages,
     loadProjectTasks,
+    loadAllProjectTasks,
     refreshProjects,
     addTaskToProject,
     removeTaskFromProject,
@@ -121,6 +122,7 @@ function Probe() {
       <button onClick={() => setProjectSectionCollapsed(true)}>collapse section</button>
       <button onClick={() => void loadProjectTasks(1)}>load first</button>
       <button onClick={() => void loadProjectTasks(1, true)}>load more</button>
+      <button onClick={() => void loadAllProjectTasks(1)}>load all</button>
       <button onClick={() => void loadProjectTasks(2)}>load other group</button>
       <button onClick={() => void refreshProjects()}>refresh</button>
       <button onClick={() => void addTaskToProject(2, 201)}>move</button>
@@ -170,7 +172,7 @@ describe('ProjectContext task pagination', () => {
       .mockResolvedValueOnce(taskPage(120, [task(50), task(51)], 'after-second'))
     renderProvider()
     await waitFor(() => expect(currentProjects()).toHaveLength(2))
-    expect(api.getProjects).toHaveBeenCalledWith(false)
+    expect(api.getProjects).toHaveBeenCalledWith(false, { includeTaskCount: false })
     expect(api.getProjectTasks).not.toHaveBeenCalled()
     expect(currentProjects()[0].task_count).toBe(120)
 
@@ -179,11 +181,30 @@ describe('ProjectContext task pagination', () => {
     fireEvent.click(screen.getByText('load more'))
     await waitFor(() => expect(currentProjects()[0].tasks).toHaveLength(51))
     expect(api.getProjectTasks.mock.calls).toEqual([
-      [1, 50, undefined],
-      [1, 50, 'after-first'],
+      [1, 50, undefined, { includeTotal: false }],
+      [1, 50, 'after-first', { includeTotal: false }],
     ])
     expect(currentProjects()[0].task_count).toBe(120)
     expect(currentPage()).toMatchObject({ hasMore: true, nextCursor: 'after-second' })
+  })
+
+  test('opens a project and follows its cursor without an exact task count', async () => {
+    api.getProjects.mockResolvedValue({ total: 1, items: [project(1, null)] })
+    api.getProjectTasks
+      .mockResolvedValueOnce(taskPage(null, [task(1)], 'next'))
+      .mockResolvedValueOnce(taskPage(null, [task(2)]))
+
+    renderProvider()
+    await waitFor(() => expect(currentProjects()).toHaveLength(1))
+    expect(api.getProjectTasks).not.toHaveBeenCalled()
+    fireEvent.click(screen.getByText('load first'))
+    await waitFor(() => expect(currentPage()).toMatchObject({ hasMore: true, nextCursor: 'next' }))
+    fireEvent.click(screen.getByText('load more'))
+    await waitFor(() => expect(currentProjects()[0].tasks).toEqual([task(1), task(2)]))
+
+    expect(currentProjects()[0].task_count).toBeNull()
+    expect(currentPage()).toMatchObject({ loaded: true, hasMore: false, nextCursor: null })
+    expect(api.getProjectTasks).toHaveBeenLastCalledWith(1, 50, 'next', { includeTotal: false })
   })
 
   test('retries a failed first page without a cursor', async () => {
@@ -200,8 +221,8 @@ describe('ProjectContext task pagination', () => {
     fireEvent.click(screen.getByText('load first'))
     await waitFor(() => expect(currentProjects()[0].tasks).toEqual([task(1)]))
     expect(api.getProjectTasks.mock.calls).toEqual([
-      [1, 50, undefined],
-      [1, 50, undefined],
+      [1, 50, undefined, { includeTotal: false }],
+      [1, 50, undefined, { includeTotal: false }],
     ])
     expect(currentPage()).toEqual({
       loaded: true,
@@ -237,7 +258,9 @@ describe('ProjectContext task pagination', () => {
     if (total === 100) {
       fireEvent.click(screen.getByText('load more'))
       await waitFor(() => expect(currentProjects()[0].tasks).toHaveLength(100))
-      expect(api.getProjectTasks).toHaveBeenLastCalledWith(1, 50, 'after-50')
+      expect(api.getProjectTasks).toHaveBeenLastCalledWith(1, 50, 'after-50', {
+        includeTotal: false,
+      })
     }
     expect(currentPage()).toMatchObject({ hasMore: false, nextCursor: null })
     fireEvent.click(screen.getByText('load more'))
@@ -283,6 +306,60 @@ describe('ProjectContext task pagination', () => {
     expect(api.getProjectTasks).toHaveBeenCalledTimes(2)
   })
 
+  test('loads every project task page for mention candidates', async () => {
+    const firstPageTasks = Array.from({ length: 50 }, (_, index) => task(index + 1))
+    const secondPageTasks = Array.from({ length: 50 }, (_, index) => task(index + 51))
+    const finalPageTasks = [task(101)]
+    api.getProjectTasks
+      .mockResolvedValueOnce(taskPage(101, firstPageTasks, 'after-first'))
+      .mockResolvedValueOnce(taskPage(101, secondPageTasks, 'after-second'))
+      .mockResolvedValueOnce(taskPage(101, finalPageTasks))
+    renderProvider()
+    await waitFor(() => expect(currentProjects()).toHaveLength(2))
+
+    fireEvent.click(screen.getByText('load all'))
+    await waitFor(() => expect(currentProjects()[0].tasks).toHaveLength(101))
+    expect(api.getProjectTasks.mock.calls).toEqual([
+      [1, 50, undefined, { includeTotal: false }],
+      [1, 50, 'after-first', { includeTotal: false }],
+      [1, 50, 'after-second', { includeTotal: false }],
+    ])
+    expect(currentPage()).toMatchObject({
+      loaded: true,
+      loading: false,
+      hasMore: false,
+      nextCursor: null,
+    })
+  })
+
+  test('retries a failed all-pages load only when invoked again', async () => {
+    api.getProjectTasks
+      .mockResolvedValueOnce(taskPage(101, [task(1)], 'after-first'))
+      .mockRejectedValueOnce(new Error('second page failed'))
+    renderProvider()
+    await waitFor(() => expect(currentProjects()).toHaveLength(2))
+
+    fireEvent.click(screen.getByText('load all'))
+    await waitFor(() => expect(currentPage().error).toBe('second page failed'))
+    expect(api.getProjectTasks).toHaveBeenCalledTimes(2)
+    expect(currentProjects()[0].tasks).toEqual([task(1)])
+
+    api.getProjectTasks.mockResolvedValueOnce(taskPage(101, [task(51)]))
+    fireEvent.click(screen.getByText('load all'))
+    await waitFor(() => expect(currentProjects()[0].tasks).toEqual([task(1), task(51)]))
+    expect(api.getProjectTasks.mock.calls).toEqual([
+      [1, 50, undefined, { includeTotal: false }],
+      [1, 50, 'after-first', { includeTotal: false }],
+      [1, 50, 'after-first', { includeTotal: false }],
+    ])
+    expect(currentPage()).toMatchObject({
+      loaded: true,
+      loading: false,
+      hasMore: false,
+      nextCursor: null,
+    })
+  })
+
   test('blocks overlapping requests and retries the same cursor without discarding its first page', async () => {
     const pending = deferred<ProjectTaskListResponse>()
     api.getProjectTasks.mockReturnValueOnce(pending.promise)
@@ -301,9 +378,9 @@ describe('ProjectContext task pagination', () => {
     fireEvent.click(screen.getByText('load more'))
     await waitFor(() => expect(currentProjects()[0].tasks).toHaveLength(2))
     expect(api.getProjectTasks.mock.calls).toEqual([
-      [1, 50, undefined],
-      [1, 50, 'after-first'],
-      [1, 50, 'after-first'],
+      [1, 50, undefined, { includeTotal: false }],
+      [1, 50, 'after-first', { includeTotal: false }],
+      [1, 50, 'after-first', { includeTotal: false }],
     ])
     expect(currentPage()).toMatchObject({ nextCursor: 'after-second', hasMore: true })
   })

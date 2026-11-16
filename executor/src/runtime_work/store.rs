@@ -17,6 +17,7 @@ use std::{
 
 use serde::{Deserialize, Deserializer, Serialize};
 use serde_json::Value;
+use wegent_filesystem::atomic_file::replace_file;
 
 use super::local_execution::PersistedLocalExecution;
 use super::response::{RuntimeTaskLink, RuntimeWorkspaceLink};
@@ -25,6 +26,7 @@ const INDEX_VERSION: u64 = 1;
 const DELETED_ARCHIVED_TASK_ID_TTL_MS: i64 = 30 * 24 * 60 * 60 * 1_000;
 const DELETED_ARCHIVED_TASK_ID_MAX_COUNT: usize = 2_000;
 const PERSISTED_RUNTIME_HANDLE_KEYS: &[&str] = &[
+    "mcpAppContexts",
     "cloudProjectId",
     "cloud_project_id",
     "cloudCollaborationRound",
@@ -39,25 +41,37 @@ const PERSISTED_RUNTIME_HANDLE_KEYS: &[&str] = &[
     "modelSelection",
     "model_selection",
     "origin",
+    "standInOwnerRequest",
+    "standInResult",
+    "standInResultReceipt",
+    "standInIssueWakeups",
+    "standInPublicTurn",
+    "standInIssueReplies",
     "overloadRecoveryTurnIds",
+    "quotaWait",
     "runtime",
     "supersededTranscriptTurnIds",
     "threadPath",
     "wegentTeam",
     "turnIdsBySubtask",
     "userMessagePresentations",
+    "changeRequests",
+    "conversationSessions",
 ];
 static TEMP_FILE_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
 #[derive(Clone)]
 pub(crate) struct RuntimeWorkStore {
     index_path: PathBuf,
+    telemetry_path: Arc<Mutex<Option<PathBuf>>>,
     index: Arc<Mutex<RuntimeWorkIndex>>,
     index_signature: Arc<Mutex<Option<IndexFileSignature>>>,
     write_lock: Arc<Mutex<()>>,
     last_written_payload: Arc<Mutex<Option<Vec<u8>>>>,
     #[cfg(test)]
     write_attempts: Arc<AtomicU64>,
+    #[cfg(test)]
+    full_task_reads: Arc<AtomicU64>,
 }
 
 #[derive(Clone, Default, Deserialize, Serialize)]
@@ -66,6 +80,8 @@ struct RuntimeWorkIndex {
     version: u64,
     tasks: HashMap<String, RuntimeTaskLink>,
     workspaces: HashMap<String, RuntimeWorkspaceLink>,
+    issue_conversations: HashMap<String, String>,
+    deleted_issue_wakeups: HashMap<String, Vec<String>>,
     #[serde(default, deserialize_with = "deserialize_deleted_archived_task_ids")]
     deleted_archived_task_ids: HashMap<String, i64>,
 }
@@ -76,6 +92,8 @@ struct PersistedRuntimeWorkIndex {
     version: u64,
     tasks: HashMap<String, PersistedRuntimeTask>,
     workspaces: HashMap<String, RuntimeWorkspaceLink>,
+    issue_conversations: HashMap<String, String>,
+    deleted_issue_wakeups: HashMap<String, Vec<String>>,
     #[serde(default, deserialize_with = "deserialize_deleted_archived_task_ids")]
     deleted_archived_task_ids: HashMap<String, i64>,
 }
@@ -230,6 +248,7 @@ impl PersistedRuntimeTask {
             recency_at,
             completed_at: None,
             runtime_handle: persisted_runtime_handle(&self.runtime_handle, &self.runtime),
+            execution_state: None,
             parent: self.parent,
             ephemeral: self.ephemeral,
             runtime_project_key: self.runtime_project_key,
@@ -323,12 +342,13 @@ fn merge_persisted_runtime_handle(current: &Value, persisted: Value, runtime: &s
         .cloned()
         .unwrap_or_default();
     let current = current.as_object();
-    // Member profiles contain materialized credentials and remain memory-only.
+    // Materialized profiles and coordinator identities remain memory-only.
     for key in [
         "queuePosition",
         "lastError",
         "lastErrorCode",
         "collaborationMemberRuntimeProfiles",
+        "collaborationCoordinatorIdentity",
     ] {
         if let Some(value) = current.and_then(|runtime_handle| runtime_handle.get(key)) {
             merged.insert(key.to_owned(), value.clone());
@@ -369,6 +389,7 @@ impl RuntimeWorkStore {
             .then(|| serialize_index(&index).ok())
             .flatten();
         let store = Self {
+            telemetry_path: Arc::new(Mutex::new(None)),
             index_path,
             index: Arc::new(Mutex::new(index)),
             index_signature: Arc::new(Mutex::new(index_signature)),
@@ -376,6 +397,8 @@ impl RuntimeWorkStore {
             last_written_payload: Arc::new(Mutex::new(last_written_payload)),
             #[cfg(test)]
             write_attempts: Arc::new(AtomicU64::new(0)),
+            #[cfg(test)]
+            full_task_reads: Arc::new(AtomicU64::new(0)),
         };
         if migration_required {
             store.persist_current_index();
@@ -384,7 +407,23 @@ impl RuntimeWorkStore {
     }
 
     pub fn from_env() -> Self {
-        Self::new(default_index_path())
+        let store = Self::new(default_index_path());
+        store.set_telemetry_path(crate::task_runtime::LocalTaskStore::default_path());
+        store
+    }
+
+    pub fn set_telemetry_path(&self, path: PathBuf) {
+        if let Ok(mut target) = self.telemetry_path.lock() {
+            *target = Some(path);
+        }
+    }
+
+    fn observe_stand_in(&self, task: &RuntimeTaskLink) {
+        if let Ok(path) = self.telemetry_path.lock() {
+            if let Some(path) = path.as_ref() {
+                super::stand_in_telemetry::observe(path, task);
+            }
+        }
     }
 
     pub fn list_task_summaries(&self, include_archived: bool) -> Vec<RuntimeTaskLink> {
@@ -403,18 +442,37 @@ impl RuntimeWorkStore {
     }
 
     pub fn get_task(&self, local_task_id: &str) -> Option<RuntimeTaskLink> {
-        self.refresh_index_from_disk_if_changed();
-        self.index.lock().ok()?.tasks.get(local_task_id).cloned()
+        #[cfg(test)]
+        self.full_task_reads.fetch_add(1, Ordering::Relaxed);
+        self.read_task(local_task_id, Clone::clone)
+    }
+
+    #[cfg(test)]
+    pub fn full_task_read_count(&self) -> u64 {
+        self.full_task_reads.load(Ordering::Relaxed)
     }
 
     pub fn get_task_summary(&self, local_task_id: &str) -> Option<RuntimeTaskLink> {
+        self.read_task(local_task_id, RuntimeTaskLink::list_summary)
+    }
+
+    /// Read task metadata without copying its buffered transcript.
+    pub fn read_task<T>(
+        &self,
+        local_task_id: &str,
+        read: impl FnOnce(&RuntimeTaskLink) -> T,
+    ) -> Option<T> {
         self.refresh_index_from_disk_if_changed();
-        self.index
-            .lock()
-            .ok()?
-            .tasks
-            .get(local_task_id)
-            .map(RuntimeTaskLink::list_summary)
+        self.read_loaded_task(local_task_id, read)
+    }
+
+    /// Read the live index after an explicit refresh outside another subsystem's lock.
+    pub(super) fn read_loaded_task<T>(
+        &self,
+        local_task_id: &str,
+        read: impl FnOnce(&RuntimeTaskLink) -> T,
+    ) -> Option<T> {
+        self.index.lock().ok()?.tasks.get(local_task_id).map(read)
     }
 
     pub fn find_summary_by_thread_id(&self, thread_id: &str) -> Option<RuntimeTaskLink> {
@@ -444,20 +502,21 @@ impl RuntimeWorkStore {
         deleted
     }
 
-    pub fn mark_deleted_archived_task_ids(&self, task_ids: impl IntoIterator<Item = String>) {
-        self.refresh_index_from_disk_if_changed();
-        let Some(mut index) = self.index.lock().ok() else {
-            return;
-        };
+    pub fn mark_deleted_archived_task_ids(
+        &self,
+        task_ids: impl IntoIterator<Item = String>,
+    ) -> io::Result<()> {
         let now_ms = current_time_ms();
-        for task_id in task_ids {
-            if !task_id.trim().is_empty() {
-                index.deleted_archived_task_ids.insert(task_id, now_ms);
+        self.change_issue_index(|index| {
+            for task_id in task_ids {
+                if !task_id.trim().is_empty() {
+                    snapshot_deleted_issue_wakeups(index, &task_id);
+                    index.deleted_archived_task_ids.insert(task_id, now_ms);
+                }
             }
-        }
-        prune_deleted_archived_task_ids(&mut index.deleted_archived_task_ids, now_ms);
-        drop(index);
-        self.persist_current_index();
+            prune_deleted_archived_task_ids(&mut index.deleted_archived_task_ids, now_ms);
+            Ok(true)
+        })
     }
 
     pub fn unmark_deleted_archived_task_ids(&self, task_ids: &[String]) {
@@ -477,6 +536,7 @@ impl RuntimeWorkStore {
         let Some(mut index) = self.index.lock().ok() else {
             return;
         };
+        self.observe_stand_in(&link);
         index.tasks.insert(link.local_task_id.clone(), link);
         drop(index);
         self.persist_current_index();
@@ -487,7 +547,41 @@ impl RuntimeWorkStore {
         local_task_id: &str,
         updater: impl FnOnce(&mut RuntimeTaskLink),
     ) -> Option<RuntimeTaskLink> {
-        self.update_task_with_persistence(local_task_id, updater, true)
+        self.update_task_with_persistence(local_task_id, updater, true, Clone::clone)
+    }
+
+    /// Mutate metadata without copying the task's in-memory transcript into a discarded result.
+    pub fn update_task_without_snapshot(
+        &self,
+        local_task_id: &str,
+        updater: impl FnOnce(&mut RuntimeTaskLink),
+    ) -> Option<()> {
+        self.update_task_with_persistence(local_task_id, updater, true, |_| ())
+    }
+
+    /// Commit durable application metadata before making the update visible in memory.
+    pub fn try_update_task(
+        &self,
+        local_task_id: &str,
+        updater: impl FnOnce(&mut RuntimeTaskLink),
+    ) -> io::Result<Option<RuntimeTaskLink>> {
+        self.refresh_index_from_disk_if_changed();
+        let poisoned = || io::Error::other("Runtime index lock is poisoned");
+        let _write_guard = self.write_lock.lock().map_err(|_| poisoned())?;
+        let mut index = self.index.lock().map_err(|_| poisoned())?;
+        let mut next = index.clone();
+        let Some(task) = next.tasks.get_mut(local_task_id) else {
+            return Ok(None);
+        };
+        updater(task);
+        let updated = task.clone();
+        let payload = serialize_index(&next)?;
+        atomic_write_file(&self.index_path, &payload)?;
+        *index = next;
+        drop(index);
+        *self.last_written_payload.lock().map_err(|_| poisoned())? = Some(payload);
+        self.update_index_signature();
+        Ok(Some(updated))
     }
 
     pub fn rekey_task(
@@ -511,19 +605,58 @@ impl RuntimeWorkStore {
         Some(updated)
     }
 
-    fn update_task_with_persistence(
+    fn update_task_with_persistence<T>(
         &self,
         local_task_id: &str,
         updater: impl FnOnce(&mut RuntimeTaskLink),
         persist: bool,
-    ) -> Option<RuntimeTaskLink> {
+        snapshot: impl FnOnce(&RuntimeTaskLink) -> T,
+    ) -> Option<T> {
         self.refresh_index_from_disk_if_changed();
         let mut index = self.index.lock().ok()?;
         let task = index.tasks.get_mut(local_task_id)?;
         let before = persisted_task_fingerprint(task);
+        let revision_before = task
+            .execution_state
+            .as_ref()
+            .map(|state| state.revision.clone());
+        let updated_at_before = task.updated_at;
+        let lifecycle_before = (
+            task.running,
+            task.status.clone(),
+            task.thread_status.clone(),
+            task.turn_status.clone(),
+            task.interaction_status.clone(),
+            task.completed_at,
+            task.runtime_handle["lastTurnId"].clone(),
+            task.runtime_handle["origin"].clone(),
+        );
         updater(task);
-        let updated = task.clone();
-        let should_persist = persist && before != persisted_task_fingerprint(task);
+        let lifecycle_changed = lifecycle_before
+            != (
+                task.running,
+                task.status.clone(),
+                task.thread_status.clone(),
+                task.turn_status.clone(),
+                task.interaction_status.clone(),
+                task.completed_at,
+                task.runtime_handle["lastTurnId"].clone(),
+                task.runtime_handle["origin"].clone(),
+            );
+        let metadata_changed = before != persisted_task_fingerprint(task);
+        if lifecycle_changed || metadata_changed || task.updated_at != updated_at_before {
+            if let Some(state) = task.execution_state.as_mut() {
+                // The revision versions the whole snapshot, not only native turn progress.
+                if Some(&state.revision) == revision_before.as_ref() {
+                    state.revision = super::events::next_runtime_event_sequence().to_string();
+                }
+            }
+        }
+        if lifecycle_changed {
+            self.observe_stand_in(task);
+        }
+        let updated = snapshot(task);
+        let should_persist = persist && metadata_changed;
         drop(index);
         if should_persist {
             self.persist_current_index();
@@ -583,7 +716,7 @@ impl RuntimeWorkStore {
         self.update_index_signature();
     }
 
-    fn refresh_index_from_disk_if_changed(&self) {
+    pub(super) fn refresh_index_from_disk_if_changed(&self) {
         let Ok(_write_guard) = self.write_lock.lock() else {
             return;
         };
@@ -639,6 +772,8 @@ fn persisted_index_into_runtime(persisted: PersistedRuntimeWorkIndex) -> Runtime
             .map(|(task_id, task)| (task_id, task.into_runtime()))
             .collect(),
         workspaces: persisted.workspaces,
+        issue_conversations: persisted.issue_conversations,
+        deleted_issue_wakeups: persisted.deleted_issue_wakeups,
         deleted_archived_task_ids: persisted.deleted_archived_task_ids,
     }
 }
@@ -656,6 +791,8 @@ fn merge_persisted_index(current: &mut RuntimeWorkIndex, persisted: PersistedRun
     }
     current.version = persisted.version;
     current.workspaces = persisted.workspaces;
+    current.issue_conversations = persisted.issue_conversations;
+    current.deleted_issue_wakeups = persisted.deleted_issue_wakeups;
     current.deleted_archived_task_ids = persisted.deleted_archived_task_ids;
 }
 
@@ -670,6 +807,8 @@ fn serialize_index(index: &RuntimeWorkIndex) -> Result<Vec<u8>, serde_json::Erro
             .map(|(task_id, task)| (task_id.clone(), PersistedRuntimeTask::from_runtime(task)))
             .collect(),
         workspaces: index.workspaces.clone(),
+        issue_conversations: index.issue_conversations.clone(),
+        deleted_issue_wakeups: index.deleted_issue_wakeups.clone(),
         deleted_archived_task_ids,
     })
 }
@@ -754,7 +893,7 @@ fn temporary_index_path(index_path: &Path) -> PathBuf {
     ))
 }
 
-pub(super) fn atomic_write_file(index_path: &Path, payload: &[u8]) -> io::Result<()> {
+pub(crate) fn atomic_write_file(index_path: &Path, payload: &[u8]) -> io::Result<()> {
     let parent = index_parent(index_path);
     fs::create_dir_all(parent)
         .map_err(|error| io_error_with_context("create index parent directory", parent, error))?;
@@ -810,63 +949,6 @@ fn index_parent(index_path: &Path) -> &Path {
         .unwrap_or_else(|| Path::new("."))
 }
 
-#[cfg(not(windows))]
-fn replace_file(source: &Path, destination: &Path) -> io::Result<()> {
-    fs::rename(source, destination)
-}
-
-#[cfg(windows)]
-fn replace_file(source: &Path, destination: &Path) -> io::Result<()> {
-    use std::os::windows::{ffi::OsStrExt, fs::OpenOptionsExt, io::AsRawHandle};
-    use windows_sys::Win32::Storage::FileSystem::{
-        FileRenameInfoEx, SetFileInformationByHandle, DELETE, FILE_RENAME_INFO,
-    };
-    use windows_sys::Win32::System::WindowsProgramming::{
-        FILE_RENAME_FLAG_POSIX_SEMANTICS, FILE_RENAME_FLAG_REPLACE_IF_EXISTS,
-    };
-
-    let source = OpenOptions::new().access_mode(DELETE).open(source)?;
-    // Rust's filesystem layer expands long paths, but this direct Win32 call
-    // needs the canonical parent's verbatim prefix even for a new index.
-    let destination =
-        fs::canonicalize(index_parent(destination))?.join(destination.file_name().ok_or_else(
-            || io::Error::new(io::ErrorKind::InvalidInput, "index path has no file name"),
-        )?);
-    let name = destination
-        .as_os_str()
-        .encode_wide()
-        .chain(std::iter::once(0))
-        .collect::<Vec<_>>();
-    let buffer_size = std::mem::size_of::<FILE_RENAME_INFO>() + name.len() * 2;
-    // Word storage aligns the variable-length FILE_RENAME_INFO and owns its tail.
-    let mut buffer = vec![0usize; buffer_size.div_ceil(std::mem::size_of::<usize>())];
-    let information = buffer.as_mut_ptr().cast::<FILE_RENAME_INFO>();
-    // POSIX replacement keeps existing readers on the old file while new opens
-    // see the new index. MoveFileExW rejects an open destination even when its
-    // handles share DELETE access.
-    let result = unsafe {
-        (*information).Anonymous.Flags =
-            FILE_RENAME_FLAG_REPLACE_IF_EXISTS | FILE_RENAME_FLAG_POSIX_SEMANTICS;
-        (*information).FileNameLength = ((name.len() - 1) * 2) as u32;
-        std::ptr::copy_nonoverlapping(
-            name.as_ptr(),
-            std::ptr::addr_of_mut!((*information).FileName).cast::<u16>(),
-            name.len(),
-        );
-        SetFileInformationByHandle(
-            source.as_raw_handle(),
-            FileRenameInfoEx,
-            information.cast(),
-            buffer_size as u32,
-        )
-    };
-    if result == 0 {
-        Err(io::Error::last_os_error())
-    } else {
-        Ok(())
-    }
-}
-
 #[cfg(unix)]
 fn sync_parent_directory(parent: &Path) -> io::Result<()> {
     fs::File::open(parent)?.sync_all()
@@ -912,3 +994,7 @@ fn executor_home() -> PathBuf {
 
 #[cfg(test)]
 mod tests;
+
+mod issue_conversations;
+mod task_materialization;
+use issue_conversations::snapshot_deleted_issue_wakeups;

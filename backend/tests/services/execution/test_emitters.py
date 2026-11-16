@@ -123,9 +123,16 @@ class TestWebSocketResultEmitter:
         """Test emitting done event."""
         from app.services.execution.emitters import WebSocketResultEmitter
 
-        with patch(
-            "app.services.chat.webpage_ws_chat_emitter.get_webpage_ws_emitter"
-        ) as mock_get:
+        with (
+            patch(
+                "app.services.chat.webpage_ws_chat_emitter.get_webpage_ws_emitter"
+            ) as mock_get,
+            patch("app.db.session.SessionLocal"),
+            patch(
+                "app.services.context.context_service.context_service.get_briefs_by_subtask",
+                return_value=[],
+            ),
+        ):
             mock_ws = AsyncMock()
             mock_get.return_value = mock_ws
 
@@ -915,6 +922,33 @@ class TestDirectSSEEmitter:
 
 class TestQueueBasedEmitter:
     """Tests for QueueBasedEmitter base class."""
+
+    @pytest.mark.asyncio
+    async def test_stream_keeps_terminal_event_queued_at_close(self) -> None:
+        from app.services.execution.emitters import SSEResultEmitter
+
+        emitter = SSEResultEmitter(task_id=1, subtask_id=2)
+
+        class QueueWithClosingProducer(asyncio.Queue[ExecutionEvent | None]):
+            async def get(self) -> ExecutionEvent | None:
+                try:
+                    return await super().get()
+                except asyncio.CancelledError:
+                    # The producer finishes after the read deadline but before
+                    # the consumer handles the timeout.
+                    await emitter.emit_done(task_id=1, subtask_id=2)
+                    await emitter.close()
+                    raise
+
+        emitter._queue = QueueWithClosingProducer()
+        await emitter.emit_start(task_id=1, subtask_id=2)
+        await emitter.emit_chunk(
+            task_id=1, subtask_id=2, content="Image pending", offset=0
+        )
+
+        events = [event.type async for event in emitter.stream()]
+
+        assert events == [EventType.START, EventType.CHUNK, EventType.DONE]
 
     @pytest.mark.asyncio
     async def test_closed_emitter_drops_events(self):

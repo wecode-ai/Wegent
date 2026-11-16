@@ -64,7 +64,7 @@ export function ProjectPluginSettingsPanel({
           '安装到此项目的插件只会在该项目的新对话中加载。插件包缓存可复用，但不会自动出现在其他项目。'
         )}
       </p>
-      <label className="mt-4 flex h-10 items-center rounded-xl border border-border bg-background focus-within:border-primary focus-within:ring-2 focus-within:ring-primary/10">
+      <label className="mt-4 flex h-10 items-center rounded-xl border border-border bg-background keyboard:focus-within:border-primary keyboard:focus-within:ring-2 keyboard:focus-within:ring-primary/10">
         <Search className="mx-3 h-4 w-4 shrink-0 text-text-secondary" />
         <input
           data-testid="local-project-plugin-search"

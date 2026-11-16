@@ -73,7 +73,7 @@ fn request_url(request: &AnonymousRequest<'_>) -> String {
 /// `_build_content_disposition`: a latin-1-encodable filename gets a quoted
 /// `filename="..."` (backslash and quote escaped); any other filename uses
 /// RFC 5987 `filename*=UTF-8''<percent-encoded>`.
-fn build_content_disposition(disposition: &str, filename: &str) -> String {
+pub(crate) fn build_content_disposition(disposition: &str, filename: &str) -> String {
     if is_latin1(filename) {
         let escaped = filename.replace('\\', "\\\\").replace('"', "\\\"");
         return format!("{disposition}; filename=\"{escaped}\"");
@@ -230,9 +230,13 @@ pub(super) async fn download_attachment(
         // context directly (`get_context_optional`, no `_ensure_attachment_access`).
         None => match share_token.filter(|token| !token.is_empty()) {
             Some(token) => {
-                let has_access =
-                    super::share_token::validate_share_token_access(state, attachment_id, token)
-                        .await?;
+                let has_access = super::share_token::validate_share_token_access(
+                    state,
+                    attachment_id,
+                    token,
+                    user.map(|user| i64::from(user.users_id)),
+                )
+                .await?;
                 if !has_access {
                     return Err(attachment_not_found());
                 }

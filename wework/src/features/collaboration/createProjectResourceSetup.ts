@@ -1,5 +1,6 @@
 import {
   configureProjectMembers,
+  ProjectCreateMembersError,
   type ProjectCreateResourceSetup,
 } from '@wegent/collaboration/project-create'
 import type { CollaborationMember, SharedWorkspaceApi } from '@wegent/collaboration'
@@ -20,7 +21,7 @@ export function createProjectResourceSetup(
     members: [],
     agents: [],
     groups: [],
-    searchMembers: query => api.members.searchUsers(query),
+    searchUsers: query => api.members.searchUsers(query),
     configure: async (project, selection) => {
       const members = await configureProjectMembers({
         api,
@@ -29,13 +30,21 @@ export function createProjectResourceSetup(
         memberUserIds: selection.memberUserIds,
         verificationFailureMessage,
       })
-      await onConfigured(
-        project.id,
-        members.filter(
-          member =>
-            member.user_id !== currentUser.id && selection.memberUserIds.includes(member.user_id)
+      try {
+        await onConfigured(
+          project.id,
+          members.filter(
+            member =>
+              member.user_id !== currentUser.id && selection.memberUserIds.includes(member.user_id)
+          )
         )
-      )
+      } catch (cause) {
+        throw new ProjectCreateMembersError(
+          [],
+          members,
+          cause instanceof Error ? cause.message : String(cause)
+        )
+      }
     },
   }
 }

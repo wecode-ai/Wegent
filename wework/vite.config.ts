@@ -5,8 +5,13 @@ import { pathToFileURL } from 'node:url'
 import { createLogger, defineConfig, type Plugin } from 'vite'
 import react from '@vitejs/plugin-react'
 import { fileViewerRenderers } from '@file-viewer/vite-plugin'
-import { configDefaults } from 'vitest/config'
 import { excalidrawAssets } from './vite/excalidrawAssets'
+import { lucideIconChunks } from './vite/lucideIconChunks'
+import { verificationSourceMaps } from './vite/verificationSourceMaps'
+import {
+  parseTelemetryIdentity,
+  parseTelemetryContextFields,
+} from './src/telemetry/collectionPolicy'
 
 function normalizeBackendUrl(value: string): string {
   const url = new URL(value)
@@ -116,8 +121,17 @@ export default defineConfig({
   base: appBasePath,
   customLogger: logger,
   plugins: [
+    ...(process.env.VITE_WEWORK_E2E === 'true' ? [verificationSourceMaps()] : []),
+    {
+      name: 'telemetry-collection-policy',
+      configResolved(config) {
+        parseTelemetryIdentity(config.env.VITE_WEWORK_TELEMETRY_IDENTITY ?? '')
+        parseTelemetryContextFields(config.env.VITE_WEWORK_TELEMETRY_CONTEXT_FIELDS ?? '')
+      },
+    },
     react(),
     excalidrawAssets(),
+    lucideIconChunks(),
     ...internalVitePlugins,
     preserveDshUiEntryExports(),
     fileViewerRenderers({
@@ -140,6 +154,7 @@ export default defineConfig({
     include: ['mermaid', 'plantuml-encoder'],
   },
   build: {
+    sourcemap: process.env.VITE_WEWORK_E2E === 'true',
     // File-viewer renderers are split into dedicated chunks; the desktop shell
     // intentionally remains a single entry bundle.
     chunkSizeWarningLimit: 5_000,
@@ -243,33 +258,6 @@ export default defineConfig({
       '@': path.resolve(__dirname, './src'),
       '@wecode': path.resolve(__dirname, './wecode'),
       '@extensions': extensionsDir,
-    },
-  },
-  test: {
-    environment: 'jsdom',
-    setupFiles: './src/test/setup.ts',
-    globals: true,
-    server: {
-      deps: {
-        inline: [/@file-viewer/, /@panzoom/, /mermaid/],
-      },
-    },
-    // Keep local and pre-push runs below the resource-contention point where
-    // jsdom-heavy files begin timing out nondeterministically.
-    maxWorkers: 2,
-    exclude: [
-      ...configDefaults.exclude,
-      'dsh/**/*.test.mjs',
-      'e2e/**',
-      'electron/**',
-      'scripts/electron-e2e-launch-arguments.test.mjs',
-      'scripts/harness-runtime-metadata.test.mjs',
-      'test-results/**',
-    ],
-    coverage: {
-      provider: 'istanbul',
-      reporter: ['text', 'json', 'lcov'],
-      reportsDirectory: './coverage',
     },
   },
 })

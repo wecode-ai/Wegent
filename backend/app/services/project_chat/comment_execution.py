@@ -173,6 +173,11 @@ def _response(
         runtime_device_id=execution.runtime_device_id or "",
         runtime_task_id=execution.runtime_task_id or "",
         metadata_json={
+            **(
+                {"human_request_id": request.human_request_id}
+                if request.human_request_id
+                else {}
+            ),
             "execution_id": execution.id,
             "executor_type": execution.executor_type,
             "run_status": "queued",
@@ -322,10 +327,11 @@ async def _continue_runtime(
     response.runtime_activity_key = project_chat_service._runtime_activity_key(
         execution.runtime_device_id, execution.runtime_task_id, trigger.message_id
     )
-    db.commit()
+    project_chat_service._commit(db)
     push_project_chat_message(
         project_chat_service.to_view(response, db=db).model_dump(by_alias=True)
     )
+    rejected = False
     try:
         payload = {
             "taskId": execution.runtime_task_id,
@@ -350,10 +356,29 @@ async def _continue_runtime(
             or result.get("accepted") is False
             or result.get("error")
         ):
+            rejected = True
             raise HTTPException(
                 502, str(result.get("error") or "Runtime rejected the reply")
             )
+        if request.human_request_id and not (
+            result.get("success") is True or result.get("accepted") is True
+        ):
+            from app.services.device.runtime_rpc_service import RuntimeRpcError
+
+            raise RuntimeRpcError(
+                "Runtime reply acceptance is missing",
+                code="runtime_rpc_invalid_response",
+            )
         queued = result.get("status") == "queued"
+        if request.human_request_id and not queued:
+            from app.services.project_chat.human_requests import settle_reply
+
+            settle_reply(
+                db,
+                issue_id=request.task_id,
+                request_id=request.human_request_id,
+                message_id=trigger.message_id,
+            )
         response.status = "pending" if queued else "streaming"
         response.metadata_json = {
             **response.metadata_json,
@@ -364,12 +389,50 @@ async def _continue_runtime(
                 else {}
             ),
         }
-        db.commit()
+        project_chat_service._commit(db)
         push_project_chat_message(
             project_chat_service.to_view(response, db=db).model_dump(by_alias=True)
         )
     except Exception as exc:
         error = str(exc.detail) if isinstance(exc, HTTPException) else str(exc)
+        if request.human_request_id:
+            from app.services.device.runtime_rpc_service import RuntimeRpcError
+            from app.services.project_chat.human_requests import record_delivery_failure
+
+            rejected = rejected or (
+                isinstance(exc, RuntimeRpcError)
+                and exc.code
+                in {
+                    "device_not_found",
+                    "device_offline",
+                    "runtime_route_missing",
+                    "remote_control_disabled",
+                    "runtime_proxy_config_failed",
+                    "bad_request",
+                }
+            )
+            record_delivery_failure(
+                db,
+                issue_id=request.task_id,
+                request_id=request.human_request_id,
+                message_id=trigger.message_id,
+                rejected=rejected,
+            )
+            if not rejected:
+                # Keep the original observer alive for late native acknowledgments.
+                response.metadata_json = {
+                    **response.metadata_json,
+                    "delivery_error": "uncertain",
+                }
+                project_chat_service._commit(db)
+                push_project_chat_message(
+                    project_chat_service.to_view(response, db=db).model_dump(
+                        by_alias=True
+                    )
+                )
+                raise HTTPException(
+                    502, "Runtime reply delivery is not confirmed"
+                ) from exc
         failed = project_chat_service.fail_agent_response(
             db,
             user_id=int(trigger.sender_id),
@@ -394,6 +457,8 @@ def _queue_reply(
     target: ProjectChatMessage,
     original: LoopItemExecution | BoundCommentSession,
     attachments: list[dict[str, Any]],
+    *,
+    assigner_user_id: int,
 ) -> ProjectChatMessage:
     """Persist continuation intent; the queue consumer prepares the session."""
     agent = project_chat_service._agent_row(
@@ -418,12 +483,15 @@ def _queue_reply(
         "comment_attachment_ids": request.attachment_ids,
         "comment_user_id": user_id,
     }
+    context.pop("human_request_id", None)
+    if request.human_request_id:
+        context["human_request_id"] = request.human_request_id
     execution = loop_item_execution_service.enqueue_for_assignment(
         db,
         loop_item_id=request.task_id,
         cloud_project_id=request.project_id,
         agent=agent,
-        assigner_user_id=user_id,
+        assigner_user_id=assigner_user_id,
         environment=getattr(original, "execution_environment", None)
         or bot_config(agent)["execution_environment"],
         execution_device_id=original.runtime_device_id or None,
@@ -440,7 +508,7 @@ def _queue_reply(
     )
     response = _response(db, request, trigger, agent.id, target.sender_name, execution)
     response.metadata_json = {**response.metadata_json, "run_status": execution.status}
-    db.commit()
+    project_chat_service._commit(db)
     return response
 
 
@@ -470,6 +538,24 @@ async def execute_comment(
     if (trigger.metadata_json or {}).get("execution_dispatch") == "comment_only":
         return []
     target = _thread_agent(db, request, trigger)
+    human_request = None
+    if request.human_request_id:
+        from app.services.project_chat.human_requests import claim_reply
+
+        human_request = claim_reply(
+            db,
+            project_id=request.project_id,
+            issue_id=request.task_id,
+            request_id=request.human_request_id,
+            user_id=user_id,
+            trigger=trigger,
+        )
+    if human_request and (
+        target is None
+        or target.runtime_task_id != human_request["runtime_task_id"]
+        or target.runtime_device_id != human_request["runtime_device_id"]
+    ):
+        raise HTTPException(409, "Question execution binding changed")
     existing = (
         _messages(db, request)
         .filter(
@@ -495,6 +581,13 @@ async def execute_comment(
         response = _new_execution(db, user_id, request, trigger, attachments)
         return [project_chat_service.to_view(response, db=db)] if response else []
     execution = _execution(db, request, target)
+    authority_user_id = user_id
+    if human_request:
+        # An exact answer continues the original grant, never grants the
+        # recipient use of the source's private Agent or Runtime.
+        authority_user_id = execution.assigner_user_id
+        if not authority_user_id:
+            raise HTTPException(409, "The original execution authority is unavailable")
     from app.services.collaboration_revocation import execution_authorized
 
     current_agent = (
@@ -513,7 +606,7 @@ async def execute_comment(
     authority = LoopItemExecution(
         cloud_project_id=request.project_id,
         loop_item_id=request.task_id,
-        assigner_user_id=user_id,
+        assigner_user_id=authority_user_id,
         executor_owner_user_id=execution.executor_owner_user_id,
         agent_id=execution.agent_id,
         team_id=None,
@@ -529,7 +622,14 @@ async def execute_comment(
         raise HTTPException(403, "Comment execution authorization is revoked")
     if queued_reply:
         response = _queue_reply(
-            db, user_id, request, trigger, target, execution, attachments
+            db,
+            user_id,
+            request,
+            trigger,
+            target,
+            execution,
+            attachments,
+            assigner_user_id=authority_user_id,
         )
     else:
         response = await _continue_runtime(

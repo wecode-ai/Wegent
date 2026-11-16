@@ -202,6 +202,38 @@ describe('NotificationSection private binding dialog', () => {
     expect(await screen.findByText('绑定成功')).toBeInTheDocument()
   })
 
+  test('stops waiting and allows retry when starting the binding fails', async () => {
+    const user = userEvent.setup()
+    const onStartBinding = jest.fn().mockRejectedValue(new Error('binding start failed'))
+    const onCancelBinding = jest.fn().mockResolvedValue(undefined)
+
+    jest.spyOn(console, 'error').mockImplementation(() => undefined)
+
+    render(
+      <NotificationSectionHarness
+        availableChannels={[
+          {
+            id: 410,
+            name: '钉钉',
+            channel_type: 'dingtalk',
+            is_bound: false,
+          },
+        ]}
+        onStartBinding={onStartBinding}
+        onCancelBinding={onCancelBinding}
+      />
+    )
+
+    await user.click(screen.getByRole('switch', { name: '未启用私聊' }))
+    await user.click(screen.getByTestId('private-binding-start-button'))
+
+    await waitFor(() => {
+      expect(onStartBinding).toHaveBeenCalledWith(410, true, false)
+    })
+    expect(screen.queryByText('正在等待绑定...')).not.toBeInTheDocument()
+    expect(screen.getByTestId('private-binding-start-button')).toBeEnabled()
+  })
+
   test('reuses existing group binding without opening the group binding dialog', async () => {
     const user = userEvent.setup()
     const onStartBinding = jest.fn().mockResolvedValue(undefined)
@@ -311,9 +343,7 @@ describe('NotificationSection private binding dialog', () => {
     expect(screen.getByTestId('group-delivery-title-410')).toHaveTextContent('未启用群聊')
   })
 
-  test('preserves a trailing separator while editing mention user IDs', async () => {
-    const user = userEvent.setup()
-
+  test('shows group control instructions without a static mention list', () => {
     render(
       <NotificationSectionHarness
         availableChannels={[
@@ -333,30 +363,21 @@ describe('NotificationSection private binding dialog', () => {
             bind_group: true,
             group_conversation_id: 'group-123',
             group_name: '测试机器人',
-            group_mention_user_ids: [],
           },
         ]}
       />
     )
 
-    const input = screen.getByTestId('group-mention-users-410')
-    expect(input).toHaveClass('h-11')
-    expect(screen.getByText('示例：41068；群卡片会自动显示姓名并发送提醒')).toBe(
-      input.previousElementSibling
-    )
-
-    await user.type(input, 'user-1，')
-    expect(input).toHaveValue('user-1，')
-
-    await user.type(input, 'user-2, user-3，user-1,41068:陈波')
-    expect(input).toHaveValue('user-1，user-2, user-3，user-1,41068:陈波')
-
-    await user.tab()
-    const configs = JSON.parse(screen.getByTestId('binding-configs').textContent || '[]')
-    expect(configs[0].group_mention_user_ids).toEqual(['user-1', 'user-2', 'user-3', '41068:陈波'])
+    const help = screen.getByTestId('group-control-help-410')
+    expect(help).toHaveTextContent('群聊通知控制')
+    expect(help).toHaveTextContent('【静默】')
+    expect(help).toHaveTextContent('@指定用户')
+    expect(help).toHaveTextContent('【@列表:1234,1235】')
+    expect(help).toHaveTextContent('发送前会自动清理')
+    expect(screen.queryByTestId('group-mention-users-410')).not.toBeInTheDocument()
   })
 
-  test('clears mention user IDs when group delivery is disabled', async () => {
+  test('clears group binding when group delivery is disabled', async () => {
     const user = userEvent.setup()
     const onCancelBinding = jest.fn().mockResolvedValue(undefined)
 
@@ -379,7 +400,6 @@ describe('NotificationSection private binding dialog', () => {
             bind_group: true,
             group_conversation_id: 'group-123',
             group_name: '测试机器人',
-            group_mention_user_ids: ['user-1'],
           },
         ]}
       />
@@ -391,9 +411,8 @@ describe('NotificationSection private binding dialog', () => {
     })
 
     const configs = JSON.parse(screen.getByTestId('binding-configs').textContent || '[]')
-    expect(configs[0]).toMatchObject({
-      bind_group: false,
-      group_mention_user_ids: [],
-    })
+    expect(configs[0]).toMatchObject({ bind_group: false })
+    expect(configs[0].group_conversation_id).toBeUndefined()
+    expect(configs[0]).not.toHaveProperty('group_mention_user_ids')
   })
 })

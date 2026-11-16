@@ -78,6 +78,9 @@ pub(super) struct ResponseState {
     next_output_index: usize,
     reasoning_segments: Vec<ReasoningSegment>,
     current_reasoning: Option<usize>,
+    /// `streaming.py:204-213`'s tool output indexes, keyed by protocol + id:
+    /// a producer-side classification change at TOOL_RESULT (the exec-name
+    /// fallback) legitimately allocates the new protocol's index.
     tool_output_indexes: HashMap<String, usize>,
     completed_output_items: BTreeMap<usize, Value>,
     response_blocks: Map<String, Value>,
@@ -543,6 +546,25 @@ impl ResponseState {
                 self.block_updated(queue, block_id, updates);
             } else {
                 self.block_created(queue, block.clone());
+            }
+        }
+    }
+
+    pub(super) fn use_committed_result(
+        &mut self,
+        queue: &mut VecDeque<Bytes>,
+        result: Option<&Value>,
+    ) {
+        self.response_blocks.clear();
+        self.result_blocks(queue, result);
+        if let Some(text) = result
+            .and_then(|result| result.get("value"))
+            .and_then(Value::as_str)
+        {
+            if !text.is_empty() && !self.message_started {
+                self.handle_chunk(queue, Chunk::Text(text.to_owned()));
+            } else {
+                self.accumulated_text = text.to_owned();
             }
         }
     }

@@ -82,6 +82,9 @@ export interface CollaborationProject {
   task_provider: string;
   provider_config: Record<string, unknown>;
   execution_environment?: CollaborationExecutionEnvironmentConfig;
+  board_views?:
+    | import("./project-board/projectBoardViews").ProjectBoardViews
+    | null;
   board_config?: {
     group_by: "status" | "priority" | "assignee" | "tag";
     processing_start_status_id: string | null;
@@ -121,6 +124,13 @@ export type BackendCollaborationProject = CollaborationProject & {
 };
 
 export interface CollaborationIssue {
+  resource_participants?: Array<{
+    kind: "agent" | "group";
+    id: number;
+    name: string;
+  }>;
+  human_requests?: import("./issueParticipation").IssueHumanRequest[];
+  milestone_id?: string | null;
   id: string;
   cloud_project_id: CollaborationProjectId;
   sequence_number: number;
@@ -137,6 +147,7 @@ export interface CollaborationIssue {
   assignee_team_name?: string | null;
   execution_id?: number | null;
   execution_state?: string | null;
+  processing_actor?: { kind: "agent" | "stand_in"; name: string } | null;
   execution_note?: string | null;
   can_approve?: boolean;
   human_task_binding?: {
@@ -146,6 +157,7 @@ export interface CollaborationIssue {
     assignmentId: string;
   } | null;
   ai_state?: {
+    agent_name?: string | null;
     status?: string | null;
     last_error?: string | null;
     started_at?: string | null;
@@ -182,7 +194,21 @@ export interface CollaborationIssue {
 
 export type CollaborationAssignmentTargetType = "human" | "agent";
 
+export interface CollaborationAssignmentReceipt {
+  id: string;
+  target_type: string;
+  target_id: string;
+  target_name: string | null;
+  receipt_tracking: boolean;
+  human_read_at: string | null;
+  stand_in_received_at: string | null;
+}
+
 export interface CollaborationAssignment {
+  automation?: IssueHistoryAutomation | null;
+  receipt_tracking?: boolean;
+  human_read_at?: string | null;
+  stand_in_received_at?: string | null;
   id: string;
   issue_id: string;
   target_type: CollaborationAssignmentTargetType;
@@ -198,6 +224,7 @@ export interface CollaborationAssignment {
 }
 
 export interface CollaborationWorkspace {
+  is_system_default?: boolean;
   owner_user_id?: number;
   id: string;
   location: "local" | "cloud";
@@ -261,7 +288,12 @@ export interface CollaborationExecutionEnvironment {
   device_id?: number;
   device_key?: string;
   app_device_id?: string;
+  runtime_instance_id?: string;
   is_current_device?: boolean;
+  is_current_device_candidate?: boolean;
+  local_identity_unresolved?: boolean;
+  last_seen_at?: string | null;
+  workspace_ids?: string[];
   name: string;
   kind: "local_device" | "cloud_host";
   coding_tools: string[];
@@ -279,7 +311,8 @@ export interface CollaborationOwnedAgent extends CollaborationAgent {
   owner_type: "user" | "workspace";
   owner_id: string;
   owner_name: string;
-  status: "available" | "unavailable";
+  /** Catalog reads do not promise execution readiness; launch revalidates it. */
+  status: "available" | "unavailable" | "unchecked";
   execution_environment_ids: string[];
   project_binding_input?: Record<string, unknown>;
 }
@@ -333,7 +366,14 @@ export type BackendCollaborationIssue = CollaborationIssue & {
   can_edit: boolean;
 };
 
+export interface IssueHistoryAutomation {
+  rule_id: string;
+  rule_name: string;
+  run_id: string;
+}
+
 export interface SharedIssueAssignmentHistoryEntry {
+  automation?: IssueHistoryAutomation;
   by_user_id: number;
   to_type: "user" | "agent" | "team" | "group" | null;
   to_id: string | null;
@@ -343,6 +383,7 @@ export interface SharedIssueAssignmentHistoryEntry {
 }
 
 export interface SharedIssueStatusHistoryEntry {
+  automation?: IssueHistoryAutomation;
   from_status: string;
   from_status_name?: string | null;
   to_status: string;
@@ -489,6 +530,7 @@ export interface CollaborationDefaultAssistant {
 }
 
 export type CollaborationView =
+  | "milestones"
   | "board"
   | "calendar"
   | "gantt"
@@ -497,6 +539,7 @@ export type CollaborationView =
   | "manage";
 export type CollaborationRootView = "home" | "my-work";
 export type ProjectSettingsSectionId =
+  | "configuration-sharing"
   | "project"
   | "agents"
   | "members"

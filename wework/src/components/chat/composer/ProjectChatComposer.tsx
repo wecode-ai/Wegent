@@ -49,6 +49,7 @@ interface ProjectChatComposerProps {
   onCompositionEnd?: () => void
   onSubmit: (submittedValue?: string, options?: ComposerSubmitOptions) => void
   disabled: boolean
+  showPluginPicker?: boolean
   pluginPickerIconOnly?: boolean
   submitDisabled?: boolean
   requireText?: boolean
@@ -59,6 +60,8 @@ interface ProjectChatComposerProps {
   nativeEmptyCaret?: boolean
   submitButtonTestId?: string
   submitLabel?: string
+  showSubmitButton?: boolean
+  showAttachmentActions?: boolean
   models: UnifiedModel[]
   selectedModel: UnifiedModel | null
   activeModel?: UnifiedModel | null
@@ -70,6 +73,7 @@ interface ProjectChatComposerProps {
   codeComments?: CodeCommentContext[]
   uploadingFiles: Map<string, { file: File; progress: number }>
   attachmentErrors: Map<string, string>
+  onDismissAttachmentError?: (filename: string) => void
   contextUsage?: RuntimeContextUsage
   onSelectModel: (model: UnifiedModel | null) => boolean | void
   onSelectModelAndOptions?: (model: UnifiedModel, options: ModelOptions) => void
@@ -113,6 +117,7 @@ interface ProjectChatComposerProps {
   collapseWhenIdle?: boolean
   alwaysShowComposerToolbar?: boolean
   inputLeadingContext?: ReactNode
+  contextHeader?: ReactNode
   /** Called when Backspace is pressed on an empty composer (e.g. dismiss Plugin Creator). */
   onDismissInputLeadingContext?: () => void
   toolbarLeadingContext?: ReactNode
@@ -136,6 +141,7 @@ export const ProjectChatComposer = forwardRef<ComposerTextareaHandle, ProjectCha
       onCompositionEnd,
       onSubmit,
       disabled,
+      showPluginPicker = true,
       pluginPickerIconOnly = false,
       submitDisabled = false,
       requireText = false,
@@ -146,6 +152,8 @@ export const ProjectChatComposer = forwardRef<ComposerTextareaHandle, ProjectCha
       nativeEmptyCaret,
       submitButtonTestId,
       submitLabel,
+      showSubmitButton,
+      showAttachmentActions,
       models,
       selectedModel,
       activeModel,
@@ -157,6 +165,7 @@ export const ProjectChatComposer = forwardRef<ComposerTextareaHandle, ProjectCha
       codeComments = [],
       uploadingFiles,
       attachmentErrors,
+      onDismissAttachmentError,
       contextUsage,
       onSelectModel,
       onSelectModelAndOptions,
@@ -199,6 +208,7 @@ export const ProjectChatComposer = forwardRef<ComposerTextareaHandle, ProjectCha
       collapseWhenIdle = false,
       alwaysShowComposerToolbar = false,
       inputLeadingContext,
+      contextHeader,
       onDismissInputLeadingContext,
       toolbarLeadingContext,
       projectWorkBarMiddleContext,
@@ -295,6 +305,7 @@ export const ProjectChatComposer = forwardRef<ComposerTextareaHandle, ProjectCha
           supervisorPending={supervisorPending}
           onConfigureSupervisor={onConfigureSupervisor}
           inputLeadingContext={inputLeadingContext}
+          contextHeader={contextHeader}
           onDismissInputLeadingContext={onDismissInputLeadingContext}
           hasToolbarLeadingContext={Boolean(toolbarLeadingContext)}
           planModeActive={planModeActive}
@@ -332,7 +343,7 @@ export const ProjectChatComposer = forwardRef<ComposerTextareaHandle, ProjectCha
                 middleContext={projectWorkBarMiddleContext}
                 trailingContext={projectWorkBarTrailingContext}
                 endContext={projectWorkBarEndContext}
-                className="min-h-10 rounded-t-[26px] bg-background px-4"
+                className="-mb-2 min-h-10 rounded-t-[20px] bg-muted/45 px-3 pb-2"
                 buttonClassName="text-sm leading-[18px] text-text-secondary hover:bg-background/70 hover:text-text-primary"
               />
             ))
@@ -343,6 +354,7 @@ export const ProjectChatComposer = forwardRef<ComposerTextareaHandle, ProjectCha
               attachments={attachments}
               uploadingFiles={uploadingFiles}
               errors={attachmentErrors}
+              onDismissAttachmentError={onDismissAttachmentError}
               codeComments={codeComments}
               onRemoveAttachment={onRemoveAttachment}
               onShowTextAttachment={onShowTextAttachment}
@@ -397,9 +409,10 @@ export const ProjectChatComposer = forwardRef<ComposerTextareaHandle, ProjectCha
               canSend={toolbarProps.canSend}
               sendButtonTestId={submitButtonTestId}
               sendButtonLabel={submitLabel}
-              showSubmitButton={presentation !== 'configuration'}
-              showAttachmentActions={presentation !== 'configuration'}
+              showSubmitButton={showSubmitButton ?? presentation !== 'configuration'}
+              showAttachmentActions={showAttachmentActions ?? presentation !== 'configuration'}
               disabled={disabled}
+              showPluginPicker={showPluginPicker}
               pluginPickerIconOnly={pluginPickerIconOnly}
               showExecutionTools={showExecutionTools}
               showModelSelector={showModelSelector}

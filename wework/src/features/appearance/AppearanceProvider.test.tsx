@@ -2,18 +2,23 @@ import { act, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, test, vi } from 'vitest'
 import { AppearanceProvider } from './AppearanceProvider'
-import { darkPalette, lightPalette } from './presets'
 import { useAppearance } from './useAppearance'
-import { WEWORK_RESET_FONT_SIZE_EVENT, WEWORK_STEP_FONT_SIZE_EVENT } from '@/lib/keybindings'
+import { defaultAppearance } from './presets'
+import { mergeAppearance, writeStoredAppearance } from './storage'
 
-const updateAppPreferencesMock = vi.hoisted(() => vi.fn())
+const { getAppPreferencesMock, updateAppPreferencesMock } = vi.hoisted(() => ({
+  getAppPreferencesMock: vi.fn(),
+  updateAppPreferencesMock: vi.fn(),
+}))
 
 vi.mock('@/desktop/appPreferences', () => ({
   updateAppPreferences: updateAppPreferencesMock,
+  getAppPreferences: getAppPreferencesMock,
+  APP_PREFERENCES_CHANGED_EVENT: 'wework:app-preferences-changed',
 }))
 
 let mediaQueryMatches = false
-let mediaQueryListener: ((event: MediaQueryListEvent) => void) | null = null
+let mediaQueryListener: (() => void) | undefined
 
 function installMatchMedia() {
   Object.defineProperty(window, 'matchMedia', {
@@ -22,7 +27,7 @@ function installMatchMedia() {
       matches: mediaQueryMatches,
       media: '(prefers-color-scheme: dark)',
       onchange: null,
-      addEventListener: vi.fn((_event: string, listener: (event: MediaQueryListEvent) => void) => {
+      addEventListener: vi.fn((_event: string, listener: () => void) => {
         mediaQueryListener = listener
       }),
       removeEventListener: vi.fn(),
@@ -41,6 +46,8 @@ function Harness() {
       <span data-testid="resolved-mode">{resolvedMode}</span>
       <span data-testid="appearance-mode">{appearance.mode}</span>
       <span data-testid="accent-color">{appearance.accentColor}</span>
+      <span data-testid="dark-theme">{appearance.darkThemeId}</span>
+      <span data-testid="light-theme">{appearance.lightThemeId}</span>
       <span data-testid="ui-font-size">{appearance.uiFontSize}</span>
       <span data-testid="code-font-size">{appearance.codeFontSize}</span>
       <span data-testid="background-path">{appearance.backgroundImagePath ?? 'none'}</span>
@@ -55,6 +62,20 @@ function Harness() {
       <span data-testid="background-in-main">{String(appearance.backgroundInMain)}</span>
       <button type="button" data-testid="set-dark" onClick={() => setAppearance({ mode: 'dark' })}>
         dark
+      </button>
+      <button
+        type="button"
+        data-testid="set-tokyo"
+        onClick={() => setAppearance({ darkThemeId: 'tokyo-night' })}
+      >
+        Tokyo Night
+      </button>
+      <button
+        type="button"
+        data-testid="set-proof"
+        onClick={() => setAppearance({ lightThemeId: 'proof' })}
+      >
+        Proof
       </button>
       <button
         type="button"
@@ -87,15 +108,22 @@ function Harness() {
 describe('AppearanceProvider', () => {
   beforeEach(() => {
     localStorage.clear()
+    window.__WEWORK_RUNTIME_CONFIG__ = {
+      ...window.__WEWORK_RUNTIME_CONFIG__,
+      desktopHost: 'electron',
+    }
     mediaQueryMatches = false
-    mediaQueryListener = null
+    mediaQueryListener = undefined
     document.documentElement.removeAttribute('data-theme')
     document.documentElement.removeAttribute('data-appearance-mode')
+    document.documentElement.removeAttribute('data-appearance-theme')
     document.documentElement.className = ''
     document.documentElement.removeAttribute('style')
     installMatchMedia()
     updateAppPreferencesMock.mockReset()
     updateAppPreferencesMock.mockResolvedValue(undefined)
+    getAppPreferencesMock.mockReset()
+    getAppPreferencesMock.mockImplementation(() => new Promise(() => {}))
   })
 
   test('applies and persists selected dark mode', async () => {
@@ -116,221 +144,195 @@ describe('AppearanceProvider', () => {
     expect(document.documentElement.classList.contains('dark')).toBe(true)
     expect(localStorage.getItem('wework.appearance')).toContain('"mode":"dark"')
     await waitFor(() => {
-      expect(updateAppPreferencesMock).toHaveBeenLastCalledWith({ appearanceMode: 'dark' })
-    })
-  })
-
-  test('follows appearance changes written by another window', async () => {
-    render(
-      <AppearanceProvider>
-        <Harness />
-      </AppearanceProvider>
-    )
-
-    const stored = JSON.stringify({ mode: 'dark' })
-    act(() => {
-      localStorage.setItem('wework.appearance', stored)
-      window.dispatchEvent(
-        new StorageEvent('storage', { key: 'wework.appearance', newValue: stored })
+      expect(updateAppPreferencesMock).toHaveBeenLastCalledWith(
+        expect.objectContaining({
+          appearanceMode: 'dark',
+          appearanceThemeSnapshot: expect.objectContaining({
+            light: expect.objectContaining({ themeId: 'wework' }),
+            dark: expect.objectContaining({ themeId: 'wework' }),
+          }),
+        })
       )
     })
-
-    await waitFor(() => {
-      expect(screen.getByTestId('resolved-mode')).toHaveTextContent('dark')
-    })
-    expect(document.documentElement.dataset.theme).toBe('dark')
   })
 
-  test('updates system mode when system preference changes', async () => {
+  test('follows the system using independently selected light and dark themes', async () => {
     render(
       <AppearanceProvider>
         <Harness />
       </AppearanceProvider>
     )
-
-    expect(screen.getByTestId('resolved-mode')).toHaveTextContent('light')
-
+    await userEvent.click(screen.getByTestId('set-tokyo'))
+    await userEvent.click(screen.getByTestId('set-proof'))
+    expect(document.documentElement.dataset.appearanceTheme).toBe('proof')
     act(() => {
       mediaQueryMatches = true
-      mediaQueryListener?.({ matches: true } as MediaQueryListEvent)
+      mediaQueryListener?.()
     })
-
+    expect(screen.getByTestId('resolved-mode')).toHaveTextContent('dark')
+    expect(document.documentElement.dataset.appearanceTheme).toBe('tokyo-night')
+    expect(document.documentElement.style.getPropertyValue('--color-bg-base')).toBe('26 27 38')
+    expect(screen.getByTestId('accent-color')).toHaveTextContent('#7aa2f7')
     await waitFor(() => {
-      expect(screen.getByTestId('resolved-mode')).toHaveTextContent('dark')
+      expect(updateAppPreferencesMock).toHaveBeenLastCalledWith(
+        expect.objectContaining({
+          appearanceThemeSnapshot: expect.objectContaining({
+            light: expect.objectContaining({ themeId: 'proof' }),
+            dark: expect.objectContaining({ themeId: 'tokyo-night' }),
+          }),
+        })
+      )
     })
   })
 
-  test('updates accent color and resets to defaults', async () => {
+  test('applies another window’s saved theme immediately without retaining stale configuration', () => {
+    render(
+      <AppearanceProvider persist={false}>
+        <Harness />
+      </AppearanceProvider>
+    )
+    const incoming = mergeAppearance({
+      ...defaultAppearance,
+      mode: 'dark',
+      darkThemeId: 'tokyo-night',
+    })
+    act(() => {
+      writeStoredAppearance(incoming)
+      window.dispatchEvent(new StorageEvent('storage', { key: 'wework.appearance' }))
+    })
+    expect(screen.getByTestId('dark-theme')).toHaveTextContent('tokyo-night')
+    expect(document.documentElement.dataset.appearanceTheme).toBe('tokyo-night')
+    expect(document.documentElement.style.getPropertyValue('--color-syntax-string')).toBe(
+      '158 206 106'
+    )
+    expect(updateAppPreferencesMock).not.toHaveBeenCalled()
+  })
+
+  test('keeps custom accents scoped to their mode and resets theme selection', async () => {
     render(
       <AppearanceProvider>
         <Harness />
       </AppearanceProvider>
     )
-
+    await userEvent.click(screen.getByTestId('set-tokyo'))
+    await userEvent.click(screen.getByTestId('set-dark'))
     await userEvent.click(screen.getByTestId('set-accent'))
-    expect(screen.getByTestId('accent-color')).toHaveTextContent('#0169cc')
     expect(document.documentElement.style.getPropertyValue('--color-primary')).toBe('1 105 204')
-
+    expect(
+      JSON.parse(localStorage.getItem('wework.appearance')!).themeOverrides.dark.accentColor
+    ).toBe('#0169cc')
     await userEvent.click(screen.getByTestId('reset'))
-    expect(screen.getByTestId('accent-color')).toHaveTextContent('#2563eb')
+    expect(screen.getByTestId('dark-theme')).toHaveTextContent('wework')
+    expect(screen.getByTestId('light-theme')).toHaveTextContent('wework')
+    expect(document.documentElement.dataset.appearanceTheme).toBe('wework')
+    expect(document.documentElement.style.getPropertyValue('--color-bg-base')).toBe('255 255 255')
+    expect(document.documentElement.style.getPropertyValue('--color-primary')).toBe('37 99 235')
   })
 
-  test('applies and persists Codex typography variables', async () => {
-    render(
-      <AppearanceProvider>
-        <Harness />
-      </AppearanceProvider>
-    )
+  test.each([true, false])(
+    'retains the named theme during another window’s storage bootstrap (persist=%s)',
+    async persist => {
+      writeStoredAppearance(mergeAppearance({ mode: 'dark', darkThemeId: 'tokyo-night' }))
+      render(
+        <AppearanceProvider persist={persist}>
+          <Harness />
+        </AppearanceProvider>
+      )
+      await waitFor(() => {
+        expect(document.documentElement.dataset.appearanceTheme).toBe('tokyo-night')
+      })
+      const stored = localStorage.getItem('wework.appearance')!
+      updateAppPreferencesMock.mockClear()
 
-    expect(document.documentElement.style.getPropertyValue('--text-base')).toBe('14px')
-    expect(document.documentElement.style.getPropertyValue('--text-code')).toBe('12px')
+      act(() => {
+        localStorage.clear()
+        window.dispatchEvent(new StorageEvent('storage', { key: null }))
+      })
+      expect(document.documentElement.dataset.appearanceTheme).toBe('tokyo-night')
+      expect(screen.getByTestId('resolved-mode')).toHaveTextContent('dark')
+      expect(updateAppPreferencesMock).not.toHaveBeenCalled()
 
-    await userEvent.click(screen.getByTestId('set-font-sizes'))
+      act(() => {
+        localStorage.setItem('wework.appearance', stored)
+        window.dispatchEvent(new StorageEvent('storage', { key: 'wework.appearance' }))
+      })
+      expect(document.documentElement.dataset.appearanceTheme).toBe('tokyo-night')
+      expect(screen.getByTestId('dark-theme')).toHaveTextContent('tokyo-night')
+    }
+  )
 
-    expect(screen.getByTestId('ui-font-size')).toHaveTextContent('16')
-    expect(screen.getByTestId('code-font-size')).toHaveTextContent('15')
-    expect(document.documentElement.style.getPropertyValue('--text-base')).toBe('16px')
-    expect(document.documentElement.style.getPropertyValue('--text-sm')).toBe('15px')
-    expect(document.documentElement.style.getPropertyValue('--text-code')).toBe('15px')
-    expect(localStorage.getItem('wework.appearance')).toContain('"uiFontSize":16')
-    expect(localStorage.getItem('wework.appearance')).toContain('"codeFontSize":15')
-  })
-
-  test('steps UI and code font sizes together within their own bounds', async () => {
-    render(
-      <AppearanceProvider>
-        <Harness />
-      </AppearanceProvider>
-    )
-
-    act(() => {
-      window.dispatchEvent(new CustomEvent(WEWORK_STEP_FONT_SIZE_EVENT, { detail: { delta: 1 } }))
-    })
-
-    expect(screen.getByTestId('ui-font-size')).toHaveTextContent('15')
-    expect(screen.getByTestId('code-font-size')).toHaveTextContent('13')
-    expect(document.documentElement.style.getPropertyValue('--text-base')).toBe('15px')
-
-    act(() => {
-      window.dispatchEvent(new CustomEvent(WEWORK_STEP_FONT_SIZE_EVENT, { detail: { delta: -1 } }))
-    })
-
-    expect(screen.getByTestId('ui-font-size')).toHaveTextContent('14')
-    expect(screen.getByTestId('code-font-size')).toHaveTextContent('12')
-  })
-
-  test('resets UI and code font sizes without changing other appearance settings', async () => {
-    render(
-      <AppearanceProvider>
-        <Harness />
-      </AppearanceProvider>
-    )
-
-    await userEvent.click(screen.getByTestId('set-font-sizes'))
-    act(() => {
-      window.dispatchEvent(new CustomEvent(WEWORK_RESET_FONT_SIZE_EVENT))
-    })
-
-    expect(screen.getByTestId('ui-font-size')).toHaveTextContent('14')
-    expect(screen.getByTestId('code-font-size')).toHaveTextContent('12')
-    expect(document.documentElement.style.getPropertyValue('--text-base')).toBe('14px')
-    expect(document.documentElement.style.getPropertyValue('--text-code')).toBe('12px')
-  })
-
-  test('keeps mobile drawer backgrounds opaque enough to hide page content', () => {
-    expect(lightPalette.mobileDrawer).not.toContain('/')
-    expect(darkPalette.mobileDrawer).not.toContain('/')
-  })
-
-  test('migrates old translucent mobile drawer values from storage', () => {
-    localStorage.setItem(
-      'wework.appearance',
-      JSON.stringify({
-        mode: 'dark',
-        dark: {
-          mobileDrawer: '29 45 66 / 0.94',
-        },
+  test('honors native preference changes while retaining selected light and dark themes', () => {
+    writeStoredAppearance(
+      mergeAppearance({
+        ...defaultAppearance,
+        mode: 'light',
+        lightThemeId: 'proof',
+        darkThemeId: 'tokyo-night',
       })
     )
-
     render(
-      <AppearanceProvider>
+      <AppearanceProvider persist={false}>
         <Harness />
       </AppearanceProvider>
     )
-
-    expect(document.documentElement.style.getPropertyValue('--color-mobile-drawer')).toBe(
-      darkPalette.mobileDrawer
-    )
-    expect(localStorage.getItem('wework.appearance')).toContain(
-      `"mobileDrawer":"${darkPalette.mobileDrawer}"`
-    )
+    act(() => {
+      window.dispatchEvent(
+        new CustomEvent('wework:app-preferences-changed', {
+          detail: { appearanceMode: 'dark' },
+        })
+      )
+    })
+    expect(screen.getByTestId('resolved-mode')).toHaveTextContent('dark')
+    expect(document.documentElement.dataset.appearanceTheme).toBe('tokyo-night')
+    act(() => {
+      window.dispatchEvent(
+        new CustomEvent('wework:app-preferences-changed', {
+          detail: { appearanceMode: 'light' },
+        })
+      )
+    })
+    expect(document.documentElement.dataset.appearanceTheme).toBe('proof')
+    expect(screen.getByTestId('dark-theme')).toHaveTextContent('tokyo-night')
+    expect(updateAppPreferencesMock).not.toHaveBeenCalled()
   })
 
-  test('migrates the old default dark palette to the neutral palette', () => {
-    localStorage.setItem(
-      'wework.appearance',
-      JSON.stringify({
-        light: {
-          sidebar: '229 229 231 / 0.72',
-        },
-        dark: {
-          bgBase: '17 19 22',
-          bgSurface: '28 31 36',
-          bgMuted: '38 42 48',
-          bgHover: '96 165 250 / 0.12',
-          sidebar: '40 40 40 / 0.92',
-          sidebarActive: '52 58 66',
-          sidebarHover: '255 255 255 / 0.08',
-          sidebarTextPrimary: '232 238 246',
-          sidebarTextSecondary: '181 191 205',
-          sidebarTextMuted: '126 138 153',
-          mobileDrawer: '24 39 58',
-          border: '55 61 70',
-          textPrimary: '241 245 249',
-          textSecondary: '203 213 225',
-          textMuted: '148 163 184',
-          primary: '96 165 250',
-          primaryContrast: '11 18 20',
-          popover: '28 31 36',
-          codeBg: '15 23 42',
-        },
+  test('initializes auxiliary windows from the native mode selected before opening them', async () => {
+    writeStoredAppearance(
+      mergeAppearance({
+        ...defaultAppearance,
+        mode: 'light',
+        lightThemeId: 'proof',
+        darkThemeId: 'tokyo-night',
       })
     )
-
+    getAppPreferencesMock.mockResolvedValue({ appearanceMode: 'dark' })
     render(
-      <AppearanceProvider>
+      <AppearanceProvider persist={false}>
         <Harness />
       </AppearanceProvider>
     )
-
-    expect(localStorage.getItem('wework.appearance')).toContain(
-      `"sidebar":"${lightPalette.sidebar}"`
-    )
-    expect(JSON.parse(localStorage.getItem('wework.appearance') ?? '{}').dark).toEqual(darkPalette)
+    await waitFor(() => {
+      expect(document.documentElement.dataset.appearanceTheme).toBe('tokyo-night')
+    })
+    expect(updateAppPreferencesMock).not.toHaveBeenCalled()
   })
 
-  test('normalizes stored background settings and preserves old configuration defaults', () => {
-    localStorage.setItem(
-      'wework.appearance',
-      JSON.stringify({
-        backgroundImagePath: '/tmp/background.png',
-        backgroundVisibility: 140,
-        backgroundBlur: 99,
-      })
-    )
-
+  test('keeps the owning window on its selected mode when native preferences echo an older mode', async () => {
     render(
       <AppearanceProvider>
         <Harness />
       </AppearanceProvider>
     )
-
-    expect(screen.getByTestId('background-path')).toHaveTextContent('/tmp/background.png')
-    expect(screen.getByTestId('light-background-path')).toHaveTextContent('none')
-    expect(screen.getByTestId('dark-background-path')).toHaveTextContent('none')
-    expect(screen.getByTestId('background-visibility')).toHaveTextContent('100')
-    expect(screen.getByTestId('background-blur')).toHaveTextContent('20')
-    expect(screen.getByTestId('background-in-main')).toHaveTextContent('true')
+    await userEvent.click(screen.getByTestId('set-dark'))
+    const persistedCalls = updateAppPreferencesMock.mock.calls.length
+    act(() => {
+      window.dispatchEvent(
+        new CustomEvent('wework:app-preferences-changed', {
+          detail: { appearanceMode: 'light' },
+        })
+      )
+    })
+    expect(screen.getByTestId('resolved-mode')).toHaveTextContent('dark')
+    expect(updateAppPreferencesMock).toHaveBeenCalledTimes(persistedCalls)
   })
 })
