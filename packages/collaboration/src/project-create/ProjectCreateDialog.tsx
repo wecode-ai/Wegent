@@ -17,6 +17,7 @@ import type { CollaborationWorkspaceMember } from "../types";
 import {
   appendCollaborationGroupResponsibility,
   changeCollaborationGroupLeader,
+  IncompleteCollaborationGroupGenerationError,
 } from "./collaborationGroupDraft";
 import type {
   ProjectCreateCollaborationGroupDraft,
@@ -512,10 +513,21 @@ export function ProjectCreateDialog(props: ProjectCreateDialogProps) {
     } catch (cause) {
       if (groupGenerationRunRef.current !== runId) return;
       setGroupGenerationError(
-        host?.formatError?.(cause) ??
-          (cause instanceof Error && cause.message
-            ? cause.message
-            : labels.createFailed),
+        cause instanceof IncompleteCollaborationGroupGenerationError
+          ? labels.generationIncomplete.replace(
+              "{sections}",
+              cause.missingSections
+                .map((section) =>
+                  section === "principles"
+                    ? labels.allocationPrinciples
+                    : labels.generatedWorkflow,
+                )
+                .join(labels.locale === "zh-CN" ? "、" : ", "),
+            )
+          : (host?.formatError?.(cause) ??
+              (cause instanceof Error && cause.message
+                ? cause.message
+                : labels.createFailed)),
       );
     } finally {
       if (groupGenerationRunRef.current === runId) {
@@ -626,7 +638,7 @@ export function ProjectCreateDialog(props: ProjectCreateDialogProps) {
               draftParticipant?.id === groupEditorDraft.leader.id
             : groupGenerationLeader?.kind === "agent" &&
               groupGenerationLeader.id === agent.id,
-          className: `is-assigned${groupEditorDraft ? "" : " is-excited"}`,
+          className: `is-assigned${groupGenerating ? " is-excited" : ""}`,
           draftParticipant,
         };
       }),

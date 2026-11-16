@@ -71,3 +71,27 @@ export function appendCollaborationGroupResponsibility(
 ): string {
   return current ? `${current}\n${text}` : text;
 }
+
+export type GeneratedCollaborationGroupMissingSection = "principles" | "stages";
+
+/** This contract applies only to completed AI generation, not editable drafts. */
+export function missingGeneratedCollaborationGroupSections(
+  draft: ProjectCreateCollaborationGroupDraft,
+): GeneratedCollaborationGroupMissingSection[] {
+  const missing: GeneratedCollaborationGroupMissingSection[] = [];
+  if (!draft.instructions.trim()) missing.push("principles");
+  if (draft.stages.length === 0) missing.push("stages");
+  return missing;
+}
+
+export class IncompleteCollaborationGroupGenerationError extends Error {
+  readonly missingSections: readonly GeneratedCollaborationGroupMissingSection[];
+
+  constructor(
+    missingSections: readonly GeneratedCollaborationGroupMissingSection[],
+  ) {
+    super("Generated collaboration group is incomplete");
+    this.name = "IncompleteCollaborationGroupGenerationError";
+    this.missingSections = [...missingSections];
+  }
+}

@@ -8,6 +8,7 @@ import {
 } from './response-protocol.mjs'
 
 export const GROUP_DRAFT_REQUEST = 'PROJECT_CREATE_GROUP_DRAFT_E2E'
+export const INCOMPLETE_GROUP_DRAFT_REQUEST = `${GROUP_DRAFT_REQUEST}_INCOMPLETE`
 export const GENERATED_GROUP_NAME = '真实分工验收小组'
 
 /** Only the upstream model is scripted; prompt construction and draft parsing remain real. */
@@ -61,13 +62,14 @@ export async function handleProjectCreateGroupModel(request, response, url) {
         text,
       })
   }
-  events.push(
-    { type: 'principle', text: '负责人拆解任务并统一验收，成员独立执行并提交证据。' },
-    { type: 'principle', text: '阻塞先反馈影响和需要的决策，未确认前保留已有工作。' },
-    { type: 'stage', id: 'requirements', name: '需求确认' },
-    { type: 'stage', id: 'implementation', name: '实现与验证' },
-    { type: 'stage', id: 'acceptance', name: '验收交付' }
-  )
+  if (!prompt.includes(INCOMPLETE_GROUP_DRAFT_REQUEST))
+    events.push(
+      { type: 'principle', text: '负责人拆解任务并统一验收，成员独立执行并提交证据。' },
+      { type: 'principle', text: '阻塞先反馈影响和需要的决策，未确认前保留已有工作。' },
+      { type: 'stage', id: 'requirements', name: '需求确认' },
+      { type: 'stage', id: 'implementation', name: '实现与验证' },
+      { type: 'stage', id: 'acceptance', name: '验收交付' }
+    )
   const id = `project-create-group-${Date.now()}`
   response.writeHead(200, { 'content-type': 'text/event-stream; charset=utf-8' })
   response.end(

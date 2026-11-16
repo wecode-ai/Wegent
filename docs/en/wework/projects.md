@@ -35,6 +35,8 @@ If the model list fails to load while configuring Team responsibilities, select 
 
 Generated responsibilities appear as separate entries on individual lines. Streaming previews, editable results and the saved project draft preserve the same entry boundaries for review and editing.
 
+If generation omits allocation principles or an execution workflow, the interface identifies the missing sections and keeps the incomplete preview, requirements and participants. It cannot be saved as a completed result. Generate again manually, or return to the project and continue with direct collaboration.
+
 Use Tab to move between controls in the model picker and arrow keys to select a model. Escape closes the picker and restores the previous focus. Responsibility generation announces preparation, progress and completion. In the English interface, built-in template names, roles and default project content appear in English; personal and third-party templates retain their authors' original content.
 
 Closing, canceling or pressing Escape on a creation form with unsaved content first offers **Keep editing** or **Discard draft**. An empty form closes directly. Returning from unsaved generated responsibilities also requires an explicit discard decision. This confirmation appears within the same creation window.

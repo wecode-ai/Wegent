@@ -241,6 +241,7 @@ function responsibilityResponse(items: string[]) {
         id: ' 7 ',
         text,
       })),
+      { type: 'principle', text: 'Assign work and review evidence' },
       { type: 'stage', id: ' review ', name: ' Review ' },
     ],
   })
@@ -310,3 +311,32 @@ it.each(['', ' \n\t ', null, 42])('rejects an empty or invalid responsibility it
   })
   expect(() => parseCollaborationGroupDraft(response, input)).toThrow('缺少职责条目')
 })
+
+it.each([
+  { omitted: ['principle'], missingSections: ['principles'] },
+  { omitted: ['stage'], missingSections: ['stages'] },
+  { omitted: ['principle', 'stage'], missingSections: ['principles', 'stages'] },
+])(
+  'rejects final generation missing $missingSections while preserving streamed responsibilities',
+  async ({ omitted, missingSections }) => {
+    const content = generationResponse(
+      generatedEvents.filter(event => !omitted.includes(event.type))
+    )
+    const onEvent = vi.fn()
+    const generateText = vi.fn(async options => {
+      options.onDelta?.(content)
+      return content
+    })
+    await expect(
+      generateCollaborationGroupDraft({ input, textGenerationApi: { generateText }, onEvent })
+    ).rejects.toMatchObject({
+      name: 'IncompleteCollaborationGroupGenerationError',
+      missingSections,
+    })
+    expect(onEvent).toHaveBeenCalledWith(
+      expect.objectContaining({ type: 'participant_responsibility', kind: 'human', id: '7' })
+    )
+    expect(generateText).toHaveBeenCalledTimes(1)
+    expect(() => parseCollaborationGroupDraft(content, input)).not.toThrow()
+  }
+)

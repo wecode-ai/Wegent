@@ -132,6 +132,7 @@ export interface ComposerProseMirrorEditorProps {
   onReady?: () => void;
   disabled?: boolean;
   placeholder: string;
+  ariaLabel?: string;
   prediction?: ComposerPrediction | null;
   testId: string;
   rows: number;
@@ -790,6 +791,7 @@ export const ComposerProseMirrorEditor = forwardRef<
     props.className,
     props.disabled,
     props.placeholder,
+    props.ariaLabel,
     props.rows,
     props.testId,
   ]);
@@ -843,6 +845,7 @@ function editorAttributes(
     "data-testid": props.testId,
     role: "textbox",
     "aria-multiline": "true",
+    ...(props.ariaLabel ? { "aria-label": props.ariaLabel } : {}),
     spellcheck: "true",
     rows: String(props.rows),
     placeholder: props.placeholder,

@@ -481,7 +481,7 @@
   border: 0;
   border-radius: 6px;
   padding: 0;
-  color: rgb(var(--color-text-muted));
+  color: rgb(var(--color-text-secondary));
   background: transparent;
   cursor: pointer;
 }

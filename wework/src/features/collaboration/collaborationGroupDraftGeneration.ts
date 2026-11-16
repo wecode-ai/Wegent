@@ -1,4 +1,8 @@
-import { appendCollaborationGroupResponsibility } from '@wegent/collaboration'
+import {
+  appendCollaborationGroupResponsibility,
+  IncompleteCollaborationGroupGenerationError,
+  missingGeneratedCollaborationGroupSections,
+} from '@wegent/collaboration'
 
 import type {
   ProjectCreateCollaborationGroupDraft,
@@ -480,5 +484,8 @@ export async function generateCollaborationGroupDraft(options: {
   const events = parseGenerationResponse(content, input)
   eventParser.finish(events)
   const draft = parseCollaborationGroupDraft(content, input)
+  const missingSections = missingGeneratedCollaborationGroupSections(draft)
+  if (missingSections.length > 0)
+    throw new IncompleteCollaborationGroupGenerationError(missingSections)
   return draft
 }

@@ -127,6 +127,9 @@ export const projectCreateLabels: Record<
     generatingResponsibilities: "AI 正在分析项目并生成分工",
     generationElapsed: "已等待 {{seconds}} 秒",
     generationCompleted: "分工已生成，可编辑并保存。",
+    generationIncomplete:
+      "生成结果缺少{sections}。请重新生成，已有要求和参与者会保留。",
+    partialGenerationPreview: "未完成的分工预览",
     waitingForAssignment: "AI 正在自动安排",
     automaticAssignmentHint: "AI 正在逐个生成职责，完成后会加入下方小组。",
     formingGroup: "协作小组",
@@ -277,6 +280,9 @@ export const projectCreateLabels: Record<
       "AI is analyzing the project and generating responsibilities",
     generationElapsed: "Waiting for {{seconds}} seconds",
     generationCompleted: "Responsibilities generated. Review and save them.",
+    generationIncomplete:
+      "The result is missing {sections}. Generate again; your requirements and participants are preserved.",
+    partialGenerationPreview: "Incomplete responsibility preview",
     waitingForAssignment: "AI is arranging the group",
     automaticAssignmentHint:
       "AI is generating responsibilities one by one. Agents join the group after their responsibilities are ready.",

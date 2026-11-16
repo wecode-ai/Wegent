@@ -265,6 +265,8 @@ export interface ProjectCreateLabels {
   generatingResponsibilities: string;
   generationElapsed: string;
   generationCompleted: string;
+  generationIncomplete: string;
+  partialGenerationPreview: string;
   waitingForAssignment: string;
   automaticAssignmentHint: string;
   formingGroup: string;

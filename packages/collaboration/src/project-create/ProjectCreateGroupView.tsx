@@ -110,6 +110,12 @@ export function ProjectCreateGroupView({
   groupGenerationPrinciples,
   groupGenerationStages,
 }: ProjectCreateGroupViewProps) {
+  const hasPartialPreview = Boolean(
+    groupGenerationError &&
+    (visibleGroupParticipants.some(participant => participant.responsibility) ||
+      groupGenerationPrinciples.length > 0 ||
+      groupGenerationStages.length > 0)
+  )
   return (
     <ProjectCreateConfigurationView
       onBack={requestGroupClose}
@@ -240,7 +246,9 @@ export function ProjectCreateGroupView({
                 ))}
               </div>
             )}
-            renderEditor={editorProps => <ComposerTextInput {...editorProps} />}
+            renderEditor={editorProps => (
+              <ComposerTextInput {...editorProps} ariaLabel={labels.generationRequest} />
+            )}
             renderToolbar={toolbarProps => (
               <div
                 className={`${toolbarProps.className} collaboration-project-create-generation-toolbar flex items-center justify-end gap-1.5`}
@@ -326,7 +334,7 @@ export function ProjectCreateGroupView({
             )}
           />
         ) : null}
-        {groupGenerating || groupEditorDraft ? (
+        {groupGenerating || groupEditorDraft || hasPartialPreview ? (
           <div
             className={`collaboration-project-create-generation-progress${groupEditorDraft ? ' is-complete' : ''}`}
             data-testid={
@@ -336,10 +344,10 @@ export function ProjectCreateGroupView({
             }
           >
             <header>
-              {groupEditorDraft ? (
-                <Sparkles aria-hidden="true" />
-              ) : (
+              {groupGenerating ? (
                 <LoaderCircle aria-hidden="true" className="collaboration-spin" />
+              ) : (
+                <Sparkles aria-hidden="true" />
               )}
               <span>
                 {groupEditorDraft ? (
@@ -361,19 +369,23 @@ export function ProjectCreateGroupView({
                   </>
                 ) : (
                   <>
-                    <strong>{generationPhaseLabel}</strong>
-                    <small>
-                      {labels.generationElapsed.replace(
-                        '{{seconds}}',
-                        String(groupGenerationElapsedSeconds)
-                      )}
-                    </small>
+                    <strong>
+                      {groupGenerating ? generationPhaseLabel : labels.partialGenerationPreview}
+                    </strong>
+                    {groupGenerating && (
+                      <small>
+                        {labels.generationElapsed.replace(
+                          '{{seconds}}',
+                          String(groupGenerationElapsedSeconds)
+                        )}
+                      </small>
+                    )}
                   </>
                 )}
               </span>
             </header>
             <div className="collaboration-project-create-squad-formation">
-              {!groupEditorDraft ? (
+              {!groupEditorDraft && groupGenerating ? (
                 <>
                   <div
                     className="collaboration-project-create-assignment-queue"
@@ -480,24 +492,28 @@ export function ProjectCreateGroupView({
               </div>
             ) : (
               <div className="collaboration-project-create-live-output">
-                <section>
-                  <small>{labels.allocationPrinciples}</small>
-                  {groupGenerationPrinciples.length > 0 ? (
-                    <ul>
-                      {groupGenerationPrinciples.map((principle, index) => (
-                        <li key={`${index}:${principle}`}>{principle}</li>
-                      ))}
-                    </ul>
-                  ) : (
-                    <span>{labels.generatingResponsibilities}</span>
-                  )}
-                </section>
-                <CollaborationGroupWorkflow
-                  label={labels.generatedWorkflow}
-                  pendingLabel={labels.generatingWorkflow}
-                  stages={groupGenerationStages}
-                  generating
-                />
+                {(groupGenerating || groupGenerationPrinciples.length > 0) && (
+                  <section>
+                    <small>{labels.allocationPrinciples}</small>
+                    {groupGenerationPrinciples.length > 0 ? (
+                      <ul>
+                        {groupGenerationPrinciples.map((principle, index) => (
+                          <li key={`${index}:${principle}`}>{principle}</li>
+                        ))}
+                      </ul>
+                    ) : (
+                      <span>{labels.generatingResponsibilities}</span>
+                    )}
+                  </section>
+                )}
+                {(groupGenerating || groupGenerationStages.length > 0) && (
+                  <CollaborationGroupWorkflow
+                    label={labels.generatedWorkflow}
+                    pendingLabel={labels.generatingWorkflow}
+                    stages={groupGenerationStages}
+                    generating={groupGenerating}
+                  />
+                )}
               </div>
             )}
           </div>

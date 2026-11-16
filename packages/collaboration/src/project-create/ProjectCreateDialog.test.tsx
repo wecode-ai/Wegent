@@ -6,12 +6,21 @@ import { ProjectCreateDialog } from './ProjectCreateDialog'
 import { projectCreateLabels } from './labels'
 import type { CollaborationProject } from '../types'
 import type { ProjectCreateResourceSetup } from './types'
+import { IncompleteCollaborationGroupGenerationError } from './collaborationGroupDraft'
 
 let root: Root
 let container: HTMLDivElement
 
 beforeEach(() => {
   globalThis.IS_REACT_ACT_ENVIRONMENT = true
+  vi.stubGlobal(
+    'ResizeObserver',
+    class {
+      observe() {}
+      unobserve() {}
+      disconnect() {}
+    }
+  )
   // jsdom omits text-range layout APIs used by the focused ProseMirror editor.
   Object.defineProperties(Range.prototype, {
     getClientRects: { configurable: true, value: () => [] },
@@ -41,6 +50,85 @@ const changeInput = async (id: string, value: string) => {
   })
 }
 const changeName = (value: string) => changeInput('cloud-project-name', value)
+
+it.each(['zh-CN', 'en'] as const)(
+  'keeps an incomplete generation as a localized, stopped preview (%s)',
+  async locale => {
+    const labels = projectCreateLabels[locale]
+    const generate: NonNullable<ProjectCreateResourceSetup['generateCollaborationGroupDraft']> =
+      vi.fn(async (_input, _progress, onEvent) => {
+        onEvent?.({
+          type: 'participant_responsibility',
+          kind: 'human',
+          id: '7',
+          text: 'Partial responsibility',
+        })
+        throw new IncompleteCollaborationGroupGenerationError(['principles', 'stages'])
+      })
+    await act(async () =>
+      root.render(
+        <ProjectCreateDialog
+          targets={[{ location: 'cloud', create: vi.fn() }]}
+          defaultLocation="cloud"
+          labels={labels}
+          allowDingTalkAITable={false}
+          onClose={vi.fn()}
+          onCreated={vi.fn()}
+          host={{ formatError: () => 'Generic host error' }}
+          resourceSetup={{
+            location: 'cloud',
+            currentUser: { id: 7, name: 'Me' },
+            members: [],
+            agents: ['one', 'two'].map(id => ({
+              id,
+              name: id,
+              owner_type: 'user',
+              owner_id: '7',
+              owner_name: 'Me',
+              status: 'available',
+            })),
+            groups: [],
+            configure: vi.fn(),
+            loadCollaborationGroupGenerationModels: async () => ({
+              models: [{ modelName: 'unit-model', modelType: 'public' }],
+            }),
+            generateCollaborationGroupDraft: generate,
+          }}
+        />
+      )
+    )
+    for (const id of ['one', 'two']) {
+      await click('collaboration-project-create-add-collaborator')
+      await click('collaboration-project-create-collaborator-tab-agents')
+      await click(`collaboration-project-create-agent-${id}`)
+    }
+    await click('collaboration-project-create-organize-group')
+    const editor = get('collaboration-project-create-generation-instructions')
+    const instructions = editor.textContent
+    expect(editor.getAttribute('aria-label')).toBe(labels.generationRequest)
+    await click('collaboration-project-create-generate-group')
+    const configuration = get('collaboration-project-create-model-picker')
+    expect(configuration.querySelector('[role="alert"]')?.textContent).toBe(
+      labels.generationIncomplete.replace(
+        '{sections}',
+        [labels.allocationPrinciples, labels.generatedWorkflow].join(
+          locale === 'zh-CN' ? '、' : ', '
+        )
+      )
+    )
+    expect(configuration.textContent).toContain(labels.partialGenerationPreview)
+    expect(configuration.textContent).toContain('Partial responsibility')
+    expect(configuration.querySelector('.collaboration-spin')).toBeNull()
+    expect(
+      document.querySelector('[data-testid="collaboration-project-create-apply-group"]')
+    ).toBeNull()
+    expect(get('collaboration-project-create-generation-status').textContent).toBe('')
+    expect(editor.textContent).toBe(instructions)
+    expect(get<HTMLButtonElement>('collaboration-project-create-generate-group').disabled).toBe(
+      false
+    )
+  }
+)
 
 it('locates an invalid repository even when advanced settings were collapsed', async () => {
   const create = vi.fn()
@@ -211,14 +299,6 @@ it('explains an incomplete task source while advanced settings are collapsed', a
 it.each([false, true])(
   'returns from group configuration with model menu open=%s without losing participants',
   async modelMenuOpen => {
-    vi.stubGlobal(
-      'ResizeObserver',
-      class {
-        observe() {}
-        unobserve() {}
-        disconnect() {}
-      }
-    )
     const onClose = vi.fn()
     const agents: ProjectCreateResourceSetup['agents'] = ['one', 'two'].map(id => ({
       id,
@@ -262,6 +342,9 @@ it.each([false, true])(
       true
     )
     expect(document.activeElement).toBe(get('collaboration-project-create-generation-instructions'))
+    expect(document.activeElement?.getAttribute('aria-label')).toBe(
+      projectCreateLabels['zh-CN'].generationRequest
+    )
     await act(async () => document.dispatchEvent(new Event('selectionchange')))
     expect(document.querySelectorAll('[role="dialog"][aria-modal="true"]')).toHaveLength(1)
     expect(get('cloud-project-name').closest('form')?.hidden).toBe(true)
