@@ -1,14 +1,12 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
+import { assertReadableSurface } from '../e2e/desktop/modules/ui-contrast.mjs'
 import { loadDesktopCheckpointCatalog } from '../e2e/desktop/checkpoint-catalog.mjs'
-import {
-  assertVoicePreparationLayout,
-  assertReadableVoiceSurface,
-} from '../e2e/desktop/modules/voice-preparation-layout.mjs'
+import { assertVoicePreparationLayout } from '../e2e/desktop/modules/voice-preparation-layout.mjs'
 
 test('theme acceptance rejects the observed white text on white dialog', async () => {
   await assert.rejects(
-    assertReadableVoiceSurface(
+    assertReadableSurface(
       {
         async command() {
           return 'rgb(255, 255, 255)'
@@ -21,7 +19,7 @@ test('theme acceptance rejects the observed white text on white dialog', async (
 })
 
 test('theme acceptance checks the actual opaque surface and accepts readable dark text', async () => {
-  await assertReadableVoiceSurface(
+  await assertReadableSurface(
     {
       async command(_action, _selector, { value }) {
         return value === 'color' ? 'rgb(255, 255, 255)' : 'rgb(24, 24, 24)'
@@ -30,7 +28,7 @@ test('theme acceptance checks the actual opaque surface and accepts readable dar
     'dialog'
   )
   await assert.rejects(
-    assertReadableVoiceSurface(
+    assertReadableSurface(
       {
         async command(_action, _selector, { value }) {
           return value === 'color' ? 'rgb(255, 255, 255)' : 'rgba(0, 0, 0, 0)'
@@ -63,6 +61,7 @@ test('voice layout retains the existing CI checkpoint and original scenario depe
   for (const path of [
     'wework/e2e/desktop/scenarios/voice-input.scenario.mjs',
     'wework/e2e/desktop/modules/voice-preparation-layout.mjs',
+    'wework/e2e/desktop/modules/ui-contrast.mjs',
   ])
     assert.deepEqual(catalog.PATH_TARGETS.get(path), ['core:voice-input'])
 })
