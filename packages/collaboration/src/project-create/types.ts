@@ -92,10 +92,10 @@ export type ProjectCreateCollaborationGroupGenerationEvent =
       leader: boolean;
     }
   | {
-      type: "participant_delta";
+      type: "participant_responsibility";
       kind: "human" | "agent";
       id: string;
-      delta: string;
+      text: string;
     }
   | {
       type: "principle";

@@ -63,3 +63,11 @@ export function normalizeCollaborationGroupDraftForPersistence(
     })),
   };
 }
+
+/** Each generated responsibility event contributes one independent task item. */
+export function appendCollaborationGroupResponsibility(
+  current: string | undefined,
+  text: string,
+): string {
+  return current ? `${current}\n${text}` : text;
+}

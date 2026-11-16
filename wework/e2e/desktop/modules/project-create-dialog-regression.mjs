@@ -495,6 +495,11 @@ async function verifyGeneratedGroupDraft(control, scoped, configuration, agents,
       'getText',
       `${responsibility} .collaboration-project-create-hover-editable > span`
     )
+    assert.equal(
+      originalResponsibility.split('\n').length,
+      2,
+      'Independent responsibility entries must retain their explicit line boundary'
+    )
     await control.command('scrollIntoView', editResponsibility, { visible: true })
     await control.command('click', editResponsibility)
     const responsibilityInput = `${responsibility} textarea`
@@ -546,6 +551,14 @@ async function verifyGeneratedGroupDraft(control, scoped, configuration, agents,
       draftName
     )
     for (const agent of agents) await control.command('waitFor', summary, { text: agent.name })
+    assert.equal(
+      await control.command(
+        'getText',
+        `${summary} .collaboration-project-create-group-members > span:nth-child(2) small`
+      ),
+      originalResponsibility,
+      'Saving responsibilities must preserve every entry and its line boundary'
+    )
     await resizeWindow(control, 375, 812)
     await waitForProjectCreateViewport(control, 375, 812)
     const discover = scoped(testId('project-create-choose-template'))
@@ -953,7 +966,19 @@ export async function verifyPrivateProjectCreation({
       await request(`/api/v1/cloud-projects/${created.id}?version=${latest.version}`, {
         method: 'DELETE',
       })
+      // API cleanup must also remove the fixture from the renderer's project catalog.
+      await reloadMainWindow(control, 'The project fixture cleanup did not reconnect after reload')
     }
   }
   await openProjectBoard(control, scoped, project)
+  assert.equal(
+    Number(
+      await control.command(
+        'getElementCount',
+        scoped(testId(`collaboration-workspace-project-${created.id}`))
+      )
+    ),
+    0,
+    'The deleted private project fixture must not remain in the sidebar catalog'
+  )
 }

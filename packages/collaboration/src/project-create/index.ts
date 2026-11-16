@@ -1,5 +1,6 @@
 export { ProjectCreateDialog } from "./ProjectCreateDialog";
 export {
+  appendCollaborationGroupResponsibility,
   changeCollaborationGroupLeader,
   normalizeCollaborationGroupDraftForPersistence,
 } from "./collaborationGroupDraft";

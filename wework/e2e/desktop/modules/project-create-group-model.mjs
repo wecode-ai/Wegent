@@ -46,7 +46,7 @@ export async function handleProjectCreateGroupModel(request, response, url) {
       id: String(participant.id),
       leader: index === 0,
     })
-    for (const delta of [
+    for (const text of [
       `${participant.name}负责根据真实需求梳理实施边界、逐项核对验收条件，并把发现的问题和依赖及时反馈给负责人。`.repeat(
         5
       ),
@@ -55,10 +55,10 @@ export async function handleProjectCreateGroupModel(request, response, url) {
       ),
     ])
       events.push({
-        type: 'participant_delta',
+        type: 'participant_responsibility',
         kind: participant.kind,
         id: String(participant.id),
-        delta,
+        text,
       })
   }
   events.push(

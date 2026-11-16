@@ -3021,10 +3021,10 @@ describe("CollaborationPlatformApp real component flow", () => {
         });
         await new Promise((resolve) => window.setTimeout(resolve, 100));
         onEvent?.({
-          type: "participant_delta",
+          type: "participant_responsibility",
           kind: "agent",
           id: input.agents[0]!.id,
-          delta: "拆解任务并综合验收",
+          text: "拆解任务并综合验收",
         });
         await new Promise((resolve) => window.setTimeout(resolve, 200));
         onEvent?.({
@@ -3034,11 +3034,19 @@ describe("CollaborationPlatformApp real component flow", () => {
           leader: false,
         });
         onEvent?.({
-          type: "participant_delta",
+          type: "participant_responsibility",
           kind: "agent",
           id: input.agents[1]!.id,
-          delta: "负责交互设计",
+          text: "负责交互设计",
         });
+        for (const text of ["确认目标与验收条件", "处理阻塞并反馈决策"]) {
+          onEvent?.({
+            type: "participant_responsibility",
+            kind: "human",
+            id: String(input.currentUser.id),
+            text,
+          });
+        }
         onEvent?.({
           type: "principle",
           text: "负责人拆解、分派、验收并汇总",
@@ -3062,7 +3070,7 @@ describe("CollaborationPlatformApp real component flow", () => {
             {
               kind: "human" as const,
               id: String(input.currentUser.id),
-              responsibility: "确认目标并验收",
+              responsibility: "确认目标与验收条件\n处理阻塞并反馈决策",
             },
             ...input.agents.slice(1).map((candidate) => ({
               kind: "agent" as const,
@@ -3216,6 +3224,11 @@ describe("CollaborationPlatformApp real component flow", () => {
     expect(
       document.body.querySelector(".is-excited")?.textContent,
     ).not.toContain("拆解任务并综合验收");
+    expect(
+      document.body.querySelector(
+        ".is-human-standing .collaboration-project-create-responsibility",
+      )?.textContent,
+    ).toBe("确认目标与验收条件\n处理阻塞并反馈决策");
     await waitForUi(300);
     expect(
       portalByTestId("collaboration-project-create-group-editor").textContent,
@@ -3301,6 +3314,13 @@ describe("CollaborationPlatformApp real component flow", () => {
     expect(
       byTestId("collaboration-project-create-group-summary").textContent,
     ).toContain("负责人 · 仅协调");
+    expect(
+      Array.from(
+        byTestId("collaboration-project-create-group-summary").querySelectorAll(
+          "small",
+        ),
+      ).map((element) => element.textContent),
+    ).toContain("确认目标与验收条件\n处理阻塞并反馈决策");
     await click(portalByTestId("collaboration-project-create-edit-group"));
     await click(
       portalByTestId(

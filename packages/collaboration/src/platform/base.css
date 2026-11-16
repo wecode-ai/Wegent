@@ -847,6 +847,7 @@
 .collaboration-project-create-group-members small {
   color: rgb(var(--color-text-secondary));
   font-size: 12px;
+  white-space: pre-wrap;
 }
 
 .collaboration-project-create-group-remove {
@@ -1196,6 +1197,7 @@
   min-width: 0;
   color: rgb(var(--color-text-secondary));
   overflow-wrap: anywhere;
+  white-space: pre-wrap;
 }
 
 .collaboration-project-create-hover-editable {

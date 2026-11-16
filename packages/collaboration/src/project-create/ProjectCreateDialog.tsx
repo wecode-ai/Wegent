@@ -14,7 +14,10 @@ import { ProjectCreateDiscardView } from "./ProjectCreateDiscardView";
 import { type ComposerInputHandle } from "../composer";
 import { createCollaborationTranslator } from "../i18n";
 import type { CollaborationWorkspaceMember } from "../types";
-import { changeCollaborationGroupLeader } from "./collaborationGroupDraft";
+import {
+  appendCollaborationGroupResponsibility,
+  changeCollaborationGroupLeader,
+} from "./collaborationGroupDraft";
 import type {
   ProjectCreateCollaborationGroupDraft,
   ProjectCreateCollaborationGroupGenerationEvent,
@@ -363,12 +366,15 @@ export function ProjectCreateDialog(props: ProjectCreateDialogProps) {
       }
       return;
     }
-    if (event.type === "participant_delta") {
+    if (event.type === "participant_responsibility") {
       const responsibilityKey =
         event.kind === "human" ? `human:${event.id}` : event.id;
       setGroupGenerationResponsibilities((current) => ({
         ...current,
-        [responsibilityKey]: `${current[responsibilityKey] ?? ""}${event.delta}`,
+        [responsibilityKey]: appendCollaborationGroupResponsibility(
+          current[responsibilityKey],
+          event.text,
+        ),
       }));
       if (event.kind === "agent") enqueueGenerationAgent(event.id);
       return;
