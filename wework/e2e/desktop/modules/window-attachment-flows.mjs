@@ -16,7 +16,8 @@ import {
 
 import { waitForBlankConversation } from './memory-tool-flows.mjs'
 import { logDesktopE2eSignal } from '../process-lifecycle.mjs'
-import { requestExecutor } from './executor-rpc.mjs'
+import { requestExecutor, writeCodexModelConfig } from './executor-rpc.mjs'
+import { restartCodexWhenIdle } from './executor-restart-readiness.mjs'
 
 import {
   ACTIVE_SWITCH_MODEL_RETRY_SELECTOR,
@@ -32,6 +33,7 @@ import {
   PROVIDER_SWITCH_LUNA_LABELS,
   PROVIDER_SWITCH_LUNA_OPTION_IDS,
   PROVIDER_SWITCH_OFFICIAL_LABEL,
+  PROVIDER_SWITCH_OFFICIAL_MODEL_ID,
   PROVIDER_SWITCH_OFFICIAL_OPTION_ID,
   PROVIDER_SWITCH_PROMPT,
   PROVIDER_SWITCH_REASONING_COMPLETION,
@@ -155,6 +157,24 @@ async function openBrowserForModelSwitchWarning(control) {
 }
 
 async function verifyCrossProviderSwitchRetry(control, composerSelector) {
+  // Native discovery labels the configured provider. The preceding protocol
+  // matrix uses a custom default; this phase needs the real subscription catalog.
+  await writeCodexModelConfig(
+    control,
+    { provider: 'openai', model: PROVIDER_SWITCH_OFFICIAL_MODEL_ID },
+    DEFAULT_STEP_TIMEOUT_MS
+  )
+  await restartCodexWhenIdle(
+    () =>
+      requestExecutor(
+        control,
+        'runtime.codex.app_server.restart',
+        { ifIdle: true },
+        DEFAULT_STEP_TIMEOUT_MS
+      ),
+    DEFAULT_STEP_TIMEOUT_MS
+  )
+  await control.command('dispatchLocalModelSettingsChanged', '')
   control.setScenario('provider_switch_retry')
   await control.command('click', '[data-testid="new-chat-button"]')
   await control.command('waitFor', composerSelector, {
