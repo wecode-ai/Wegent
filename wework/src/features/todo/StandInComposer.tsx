@@ -158,8 +158,12 @@ export function StandInComposer({
         className="grid grid-cols-[5rem_minmax(0,1fr)] items-center gap-x-3 gap-y-1 text-sm"
         data-testid="stand-in-workspace-bar"
       >
-        <span className="text-text-secondary">{t('standIn.device_label')}</span>
-        <div className="min-w-0">{deviceControl}</div>
+        {deviceControl && (
+          <>
+            <span className="text-text-secondary">{t('standIn.device_label')}</span>
+            <div className="min-w-0">{deviceControl}</div>
+          </>
+        )}
         <span className="text-text-secondary">{t('standIn.local_project')}</span>
         <div className="min-w-0" inert={disabled || !draft.executionDeviceId}>
           <ProjectWorkBar

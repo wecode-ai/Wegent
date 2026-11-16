@@ -23,6 +23,7 @@ import {
   newStandInRole,
   standInRoleName,
   roleIncludesProject,
+  roleSelectsProject,
   disconnectStandInProject,
   type PersonalStandInSettings,
   type StandInRole,
@@ -354,7 +355,7 @@ function StandInSettingsEditor({
   )
   const included = role
     ? availableProjects.filter(project =>
-        roleIncludesProject(role, {
+        roleSelectsProject(role, {
           id: project.id,
           store: project.project_store === 'local' ? 'local' : 'cloud',
         })

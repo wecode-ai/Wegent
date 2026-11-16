@@ -392,6 +392,18 @@ it('lists existing stand-ins without execution history and keeps project names s
   expect(await screen.findByTestId('identity-conversation')).toHaveTextContent('primary')
 })
 
+it('retains project names and configured counts in a paused role tab', async () => {
+  const role = newStandInRole('device', 'default')
+  role.collaboration.enabled = false
+  const { props } = fixture([role])
+  render(<StandInOverviewPage {...props} />)
+  await openRoles()
+  const row = await screen.findByTestId('stand-in-overview-role-default')
+  expect(row).toHaveTextContent('Example project')
+  expect(row).toHaveTextContent('已连接 1 个项目')
+  expect(row).toHaveTextContent('未开启')
+})
+
 it('opens settings for the selected stand-in and reflects its renamed identity', async () => {
   const first = { ...newStandInRole('device', 'first'), name: 'Coding' }
   const second: StandInRole = {

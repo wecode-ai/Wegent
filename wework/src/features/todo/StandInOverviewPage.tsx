@@ -17,7 +17,7 @@ import { StandInSettingsEntry } from './StandInSettingsLayout'
 import { createPortal } from 'react-dom'
 import { StandInIcon } from '@wegent/collaboration'
 import {
-  roleIncludesProject,
+  roleSelectsProject,
   standInRoleName,
   subscribePersonalStandIn,
   standInConversationTaskId,
@@ -431,7 +431,7 @@ export function StandInOverviewPage({
               </button>
               {roles.map((value, index) => {
                 const projects = props.projects.filter(project =>
-                  roleIncludesProject(value, {
+                  roleSelectsProject(value, {
                     id: project.id,
                     store: project.project_store === 'local' ? 'local' : 'cloud',
                   })

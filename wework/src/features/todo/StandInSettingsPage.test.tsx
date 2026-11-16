@@ -79,6 +79,7 @@ describe('Personal stand-in settings', () => {
     render(<StandInSettingsPage {...props} />)
     const summary = await screen.findByTestId('stand-in-source-summary')
     expect(summary).toHaveTextContent('未开启接收')
+    expect(summary).toHaveTextContent('已连接 2 个项目')
     expect(screen.queryByTestId('stand-in-sources-empty')).not.toBeInTheDocument()
     expect(personalSave).not.toHaveBeenCalled()
   })

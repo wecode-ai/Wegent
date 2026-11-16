@@ -56,6 +56,7 @@ function Fixture({
   initialModelOptions,
   services,
   showPrompt = true,
+  showDevice = true,
 }: {
   save: ReturnType<typeof vi.fn>
   initial?: WorkspaceStandInSettings['workspace']
@@ -63,6 +64,7 @@ function Fixture({
   initialModelOptions?: WorkspaceStandInSettings['modelOptions']
   services?: WorkbenchServices
   showPrompt?: boolean
+  showDevice?: boolean
 }) {
   const [draft, setDraft] = useState<WorkspaceStandInSettings>({
     enabled: false,
@@ -84,7 +86,7 @@ function Fixture({
         onValidityChange={setValid}
         disabled={false}
         submitDisabled={false}
-        deviceControl={<button data-testid="stand-in-device">Mac</button>}
+        deviceControl={showDevice ? <button data-testid="stand-in-device">Mac</button> : null}
         runtimeWork={work}
         services={services}
         devices={[{ id: 1, device_id: 'mac', name: 'Mac', status: 'online' }]}
@@ -97,6 +99,13 @@ function Fixture({
 }
 
 describe('Stand-in configuration composer', () => {
+  it('omits the device row when its parent already owns device selection', () => {
+    render(<Fixture save={vi.fn()} showPrompt={false} showDevice={false} />)
+    const bar = screen.getByTestId('stand-in-workspace-bar')
+    expect(within(bar).queryByText('设备', { exact: true })).not.toBeInTheDocument()
+    expect(within(bar).getByTestId('project-work-button')).toBeInTheDocument()
+  })
+
   beforeEach(async () => {
     await installDshUiTestContributions(
       {
