@@ -478,7 +478,14 @@ def _matches_issue_device_affinity(
     """Keep every execution of one Issue on its latest claimed device."""
 
     from app.services.device.identity import resolve_owned_device_alias
+    from app.services.runner_recovery import original_session, session_matches
     from app.services.runner_routing import issue_binding
+
+    if original_session(execution):
+        runner = resolve_owned_device_alias(
+            db, user_id=owner_user_id, device_id=submitted_device_id
+        )
+        return runner is not None and session_matches(db, execution, runner.id)
 
     try:
         bound = issue_binding(db, execution.loop_item_id)
@@ -1458,9 +1465,13 @@ class LoopItemExecutionService:
         ):
             return None
 
-        from app.services.device.identity import resolve_owned_device_alias
+        from app.services.device.identity import (
+            lock_device_owner,
+            resolve_owned_device_alias,
+        )
         from app.services.runner_routing import claim_routing
 
+        lock_device_owner(db, owner_user_id)
         runner = resolve_owned_device_alias(
             db, user_id=owner_user_id, device_id=execution_device_id
         )
@@ -1574,9 +1585,13 @@ class LoopItemExecutionService:
         )
         if candidate is None:
             return None
-        from app.services.device.identity import resolve_owned_device_alias
+        from app.services.device.identity import (
+            lock_device_owner,
+            resolve_owned_device_alias,
+        )
         from app.services.runner_routing import claim_routing
 
+        lock_device_owner(db, owner_user_id)
         runner = resolve_owned_device_alias(
             db, user_id=owner_user_id, device_id=execution_device_id
         )

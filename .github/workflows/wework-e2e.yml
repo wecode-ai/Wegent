@@ -798,6 +798,11 @@ jobs:
             if ($LASTEXITCODE -ne 0) { throw "Failed to compile the DingTalk recovery protocol fixture" }
             "WEWORK_E2E_DWS_RECOVERY_FIXTURE_BIN=$recoveryBinary" |
               Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+            $ownerBinary = Join-Path $directory "source-owner-task-dws.exe"
+            rustc wework/e2e/desktop/fixtures/source-owner-task-dingtalk-cli.rs --edition 2021 -o $ownerBinary
+            if ($LASTEXITCODE -ne 0) { throw "Failed to compile the owner task protocol fixture" }
+            "WEWORK_E2E_DWS_OWNER_TASK_FIXTURE_BIN=$ownerBinary" |
+              Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
           }
 
       - name: Run Windows Wework desktop Core shard E2E
@@ -1293,7 +1298,7 @@ jobs:
           test -x "$WEWORK_E2E_APP_BIN"
           test -x "$WEWORK_E2E_EXECUTOR_BIN"
           test -x "$WEWORK_E2E_BACKEND_RS_BIN"
-          segments=browser-toolbar-actions,tray-lifecycle,browser-annotation-design,clipboard-history-image
+          segments=browser-toolbar-actions,tray-lifecycle,clipboard-history-image
           if [[ "$COMPONENT_UPDATE_E2E" == "true" ]]; then
             segments+=,component-update
           fi

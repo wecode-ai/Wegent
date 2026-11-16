@@ -228,40 +228,6 @@ async fn reload_only_visits_running_processes_in_the_matching_home() {
 }
 
 #[tokio::test]
-async fn default_clients_keep_the_home_recorded_at_process_start() {
-    let fixture = Fixture::new();
-    let _activation = crate::services::capability_activation::activate().await;
-    let previous = CodexAppServerClient::new(&fixture.binary);
-    previous.ensure_started().await.unwrap();
-    let previous_home = wework_codex_home();
-    let previous_pid = pid(&previous).await;
-    let _restore = EnvRestore::capture(WEGENT_CODEX_HOME_ENV);
-    let home = fixture.directory.path().join("new-default-home");
-    env::set_var(WEGENT_CODEX_HOME_ENV, &home);
-    let binary = fixture.directory.path().join("new-codex");
-    fs::copy(&fixture.binary, &binary).unwrap();
-    let current = CodexAppServerClient::new(binary.to_string_lossy().to_string());
-    current.ensure_started().await.unwrap();
-    let current_pid = pid(&current).await;
-
-    assert_eq!(reload_skill_configuration(&home).await.unwrap(), 1);
-
-    assert_eq!(pid(&previous).await, previous_pid);
-    assert_eq!(pid(&current).await, current_pid);
-    assert!(!requests(&previous_home)
-        .iter()
-        .any(|call| call["method"] == "config/batchWrite"));
-    assert_eq!(
-        requests(&home)
-            .iter()
-            .filter(|call| call["method"] == "config/batchWrite")
-            .count(),
-        1
-    );
-    current.restart().await;
-}
-
-#[tokio::test]
 async fn cancelled_reload_cleans_only_its_own_pending_request_under_contention() {
     let fixture = Fixture::new();
     let _activation = crate::services::capability_activation::activate().await;

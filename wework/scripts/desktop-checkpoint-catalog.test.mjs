@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { execFileSync } from 'node:child_process'
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import test from 'node:test'
@@ -61,6 +61,35 @@ test('Connector account isolation is selectable and runs inside the existing clo
     'wework/e2e/desktop/modules/connector-oauth-provider.mjs',
   ]) {
     assert.ok(catalog.PATH_TARGETS.get(path)?.includes('cloud:connector-oauth'), path)
+  }
+})
+
+test('literal CI targets and segment lists resolve to retained checkpoints or groups', () => {
+  const catalog = loadDesktopCheckpointCatalog()
+  const known = new Set([
+    'all',
+    ...catalog.DESKTOP_CHECKPOINTS,
+    ...catalog.PLUGIN_SEGMENTS,
+    ...catalog.DESKTOP_CHECKPOINT_GROUPS.keys(),
+  ])
+  const directory = new URL('.github/scripts/desktop-ci/', root)
+  const scripts = [
+    new URL('.github/scripts/classify-wework-desktop-e2e.sh', root),
+    ...readdirSync(directory)
+      .filter(name => name.endsWith('.sh'))
+      .map(name => new URL(name, directory)),
+  ]
+  for (const script of scripts) {
+    const source = readFileSync(script, 'utf8')
+    for (const match of source.matchAll(/select_target "(?:core|cloud|plugins):([a-z0-9-]+)"/g)) {
+      assert.ok(known.has(match[1]), `${script.pathname}: ${match[1]}`)
+    }
+  }
+  const workflow = readFileSync(new URL('.github/workflows/wework-e2e.yml', root), 'utf8')
+  for (const match of workflow.matchAll(/^\s*segments\+?=,?([a-z][a-z0-9,-]*)$/gm)) {
+    for (const checkpoint of match[1].split(',')) {
+      assert.ok(known.has(checkpoint), `Wework E2E workflow: ${checkpoint}`)
+    }
   }
 })
 
@@ -256,18 +285,15 @@ test('plugin cache changes retain the recovery scenario in its existing cloud sh
   }
 })
 
-test('theme changes select the gallery and real content and auxiliary window regressions', () => {
+test('theme changes retain real content and auxiliary window regressions', () => {
   const result = classified('wework/src/features/appearance/ThemeSelector.tsx')
   const checkpoints = JSON.parse(result.wework_desktop_core_e2e_matrix).include.flatMap(shard =>
     shard.segments.split(',')
   )
   for (const id of [
-    'appearance-themes',
     'application-menu',
     'background-terminals',
     'collaboration-first-use',
-    'local-file-preview',
-    'office-file-preview',
     'streaming-content',
   ]) {
     assert.ok(checkpoints.includes(id), `Theme changes omit the ${id} CI checkpoint`)

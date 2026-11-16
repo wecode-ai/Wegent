@@ -86,7 +86,8 @@ vi.mock('./assistant', async importOriginal => {
     },
   }
 })
-vi.mock('@wegent/collaboration/markdown', () => ({
+vi.mock('@wegent/collaboration/markdown', async importOriginal => ({
+  ...(await importOriginal<typeof import('@wegent/collaboration/markdown')>()),
   MarkdownServicesProvider: ({ children }: { children: ReactNode }) => children,
 }))
 vi.mock('@wegent/collaboration', async importOriginal => {

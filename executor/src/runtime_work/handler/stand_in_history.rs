@@ -207,6 +207,16 @@ impl RuntimeWorkRpcHandler {
             let parent = self
                 .local_task_link(origin["sourceTaskId"].as_str().ok_or_else(denied)?)
                 .ok_or_else(denied)?;
+            if delegation["sourceMessageId"].is_string() {
+                self.source_task_parent(&actor)?;
+                return Ok(ReadScope {
+                    source: None,
+                    role: role.clone(),
+                    coordinator_tasks: Some(HashSet::from([identity.task_id.clone()])),
+                    can_orchestrate: false,
+                    window: None,
+                });
+            }
             let parent_origin = &parent.runtime_handle["origin"];
             if !history_owned(&parent, identity.user)
                 || self.archived_link_is_deleted(&parent)
@@ -359,6 +369,13 @@ impl RuntimeWorkRpcHandler {
             return true;
         };
         let origin = &link.runtime_handle["origin"];
+        if origin["type"] == "stand_in_task"
+            && origin["sourceTaskId"] == identity.task_id
+            && link.runtime_handle["executionRequest"]["standInDelegation"]["sourceMessageId"]
+                .is_string()
+        {
+            return self.source_task_parent(link).is_ok();
+        }
         if !matches!(
             origin["type"].as_str(),
             Some("connection_work" | "dingtalk_work")

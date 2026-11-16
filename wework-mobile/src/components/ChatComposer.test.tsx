@@ -1,13 +1,17 @@
+import { getDocumentAsync } from 'expo-document-picker'
 import React from 'react'
 import { act, create, type ReactTestRenderer } from 'react-test-renderer'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import { ChatComposer } from './ChatComposer'
+import type { MobileFilePreviewActions } from './files/FilePreviewContext'
 
 ;(globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true
+const preview = vi.hoisted(() => ({ current: null as MobileFilePreviewActions | null }))
+vi.mock('./files/FilePreviewContext', () => ({ useMobileFilePreview: () => preview.current }))
 
 vi.mock('@expo/vector-icons/Ionicons', () => ({ default: 'Icon' }))
-vi.mock('expo-document-picker', () => ({}))
+vi.mock('expo-document-picker', () => ({ getDocumentAsync: vi.fn() }))
 vi.mock('expo-image-picker', () => ({}))
 vi.mock('react-native', () => ({
   Alert: { alert: vi.fn() },
@@ -16,6 +20,7 @@ vi.mock('react-native', () => ({
   Pressable: 'Pressable',
   ScrollView: 'ScrollView',
   StyleSheet: { create: (styles: unknown) => styles },
+  TextInput: 'TextInput',
   View: 'View',
 }))
 vi.mock('react-native-paper', () => ({
@@ -32,7 +37,6 @@ vi.mock('react-native-paper', () => ({
     },
   }),
 }))
-vi.mock('./KeyboardSafeInput', () => ({ KeyboardSafeTextInput: 'TextInput' }))
 vi.mock('./LiquidGlass', () => ({
   LiquidGlassGroup: 'LiquidGlassGroup',
   LiquidGlassSurface: 'LiquidGlassSurface',
@@ -42,9 +46,13 @@ vi.mock('./ComposerContextMenu', () => ({ ComposerContextMenu: 'ComposerContextM
 describe('ChatComposer', () => {
   let renderer: ReactTestRenderer
   const focus = vi.fn()
+  const blur = vi.fn()
   afterEach(async () => {
     if (renderer) await act(() => renderer.unmount())
     focus.mockClear()
+    blur.mockClear()
+    vi.mocked(getDocumentAsync).mockReset()
+    preview.current = null
   })
 
   const element = (testID: string) =>
@@ -52,7 +60,9 @@ describe('ChatComposer', () => {
 
   async function render(overrides: Partial<React.ComponentProps<typeof ChatComposer>> = {}) {
     const props = {
+      active: true,
       disabled: false,
+      onFocusRequestHandled: vi.fn(),
       modelLabel: 'GPT-6 High',
       onLoadApps: vi.fn().mockResolvedValue([]),
       onClearPlanMode: vi.fn(),
@@ -68,7 +78,7 @@ describe('ChatComposer', () => {
     }
     await act(() => {
       renderer = create(<ChatComposer {...props} />, {
-        createNodeMock: element => (element.type === 'TextInput' ? { focus } : null),
+        createNodeMock: element => (element.type === 'TextInput' ? { focus, blur } : null),
       })
     })
     return props
@@ -99,6 +109,48 @@ describe('ChatComposer', () => {
     expect(props.onSelectModel).toHaveBeenCalledOnce()
   })
 
+  it('allows attachment removal through its horizontal scroller while editing the draft', async () => {
+    vi.mocked(getDocumentAsync).mockResolvedValueOnce({
+      canceled: false,
+      assets: [
+        {
+          name: 'notes.txt',
+          uri: 'file:///notes.txt',
+          mimeType: 'text/plain',
+          size: 12,
+          lastModified: 1,
+        },
+      ],
+    })
+    const props = await render({
+      onUploadAttachment: vi.fn().mockResolvedValue({
+        id: 7,
+        filename: 'notes.txt',
+        fileSize: 12,
+        mimeType: 'text/plain',
+      }),
+    })
+    await act(async () => {
+      renderer.root.findByType('ComposerContextMenu' as never).props.onPickDocument()
+    })
+    await act(() => {
+      element('chat-input').props.onFocus()
+      element('chat-input').props.onChangeText('Keep this draft')
+    })
+    const strip = renderer.root.findByType('ScrollView' as never)
+    expect(strip.props.horizontal).toBe(true)
+    expect(strip.props.keyboardShouldPersistTaps).toBe('handled')
+    await act(() => strip.findByProps({ testID: 'composer-attachment-remove-7' }).props.onPress())
+    expect(renderer.root.findAllByProps({ testID: 'composer-attachment-remove-7' })).toHaveLength(0)
+    expect(element('chat-input').props.value).toBe('Keep this draft')
+    await act(() => element('chat-send').props.onPress())
+    expect(props.onSend).toHaveBeenCalledWith('Keep this draft', {
+      attachmentIds: [],
+      attachments: [],
+      pursueGoal: false,
+    })
+  })
+
   it.each([true, false])('clears the draft only after an accepted send (%s)', async accepted => {
     const onSend = vi.fn().mockResolvedValue(accepted)
     await render({ onSend })
@@ -106,10 +158,89 @@ describe('ChatComposer', () => {
     await act(() => element('chat-send').props.onPress())
     expect(onSend).toHaveBeenCalledWith('Review this project', {
       attachmentIds: [],
+      attachments: [],
       pursueGoal: false,
     })
     expect(element('chat-input').props.value).toBe(accepted ? '' : 'Review this project')
   })
+
+  it.each([true, false])(
+    'previews every uploaded attachment and preserves it after rejected sends (context=%s)',
+    async enabled => {
+      const openAttachment = vi.fn()
+      if (enabled)
+        preview.current = { target: null, openAttachment } as unknown as MobileFilePreviewActions
+      vi.mocked(getDocumentAsync).mockResolvedValueOnce({
+        canceled: false,
+        assets: [
+          {
+            name: 'notes.txt',
+            uri: 'file:///notes.txt',
+            mimeType: 'text/plain',
+            size: 12,
+            lastModified: 1,
+          },
+          {
+            name: 'image.png',
+            uri: 'file:///image.png',
+            mimeType: 'image/png',
+            size: 30,
+            lastModified: 1,
+          },
+        ],
+      })
+      const props = await render({
+        onSend: vi.fn().mockResolvedValue(false),
+        onUploadAttachment: vi.fn().mockImplementation(async asset => ({
+          id: asset.name === 'notes.txt' ? 7 : 8,
+          filename: asset.name,
+          fileSize: asset.size,
+          mimeType: asset.mimeType,
+        })),
+      })
+      await act(() =>
+        renderer.root.findByType('ComposerContextMenu' as never).props.onPickDocument()
+      )
+      for (const id of [7, 8]) {
+        expect(element(`composer-attachment-preview-${id}`).props.disabled).toBe(!enabled)
+        if (enabled) await act(() => element(`composer-attachment-preview-${id}`).props.onPress())
+      }
+      if (enabled)
+        expect(openAttachment.mock.calls.map(([attachment]) => attachment.filename)).toEqual([
+          'notes.txt',
+          'image.png',
+        ])
+      await act(() => element('chat-input').props.onChangeText('Review both'))
+      await act(() => element('chat-send').props.onPress())
+      expect(props.onSend).toHaveBeenCalledWith(
+        'Review both',
+        expect.objectContaining({
+          attachmentIds: [7, 8],
+          attachments: [
+            expect.objectContaining({
+              id: 7,
+              filename: 'notes.txt',
+              file_size: 12,
+              mime_type: 'text/plain',
+              status: 'ready',
+            }),
+            expect.objectContaining({
+              id: 8,
+              filename: 'image.png',
+              file_size: 30,
+              mime_type: 'image/png',
+              local_preview_url: 'file:///image.png',
+            }),
+          ],
+        })
+      )
+      expect(element('composer-attachment-preview-7')).toBeDefined()
+      expect(element('composer-attachment-preview-8')).toBeDefined()
+      expect(vi.mocked(props.onSend).mock.calls[0]?.[1].attachments[0]).not.toHaveProperty(
+        'local_path'
+      )
+    }
+  )
 
   it('keeps stopping in the existing action slot and disables repeated cancellation', async () => {
     const props = await render({ running: true })
@@ -126,21 +257,63 @@ describe('ChatComposer', () => {
     expect(focus).not.toHaveBeenCalled()
     await act(() => renderer.update(<ChatComposer {...props} focusRequest={1} />))
     expect(focus).toHaveBeenCalledOnce()
+    expect(props.onFocusRequestHandled).toHaveBeenCalledExactlyOnceWith(1)
     await act(() => element('chat-input').props.onChangeText('Keep this draft'))
     await act(() =>
       renderer.update(<ChatComposer {...props} focusRequest={1} modelLabel="Other" />)
     )
     expect(focus).toHaveBeenCalledOnce()
+    expect(props.onFocusRequestHandled).toHaveBeenCalledOnce()
     expect(element('chat-input').props.value).toBe('Keep this draft')
     await act(() => renderer.update(<ChatComposer {...props} focusRequest={2} />))
     expect(focus).toHaveBeenCalledTimes(2)
+    expect(props.onFocusRequestHandled).toHaveBeenLastCalledWith(2)
   })
 
-  it('defers requested focus until the input can become editable', async () => {
+  it('expires delivered focus requests when disabled instead of reopening the keyboard later', async () => {
     const props = await render({ disabled: true, focusRequest: 1 })
     expect(focus).not.toHaveBeenCalled()
+    expect(props.onFocusRequestHandled).toHaveBeenCalledExactlyOnceWith(1)
     await act(() => renderer.update(<ChatComposer {...props} disabled={false} />))
+    expect(focus).not.toHaveBeenCalled()
+    await act(() => renderer.update(<ChatComposer {...props} disabled={false} focusRequest={2} />))
     expect(focus).toHaveBeenCalledOnce()
+  })
+
+  it('expires requests on an inactive screen and releases only its own input', async () => {
+    const props = await render({ focusRequest: 1 })
+    await act(() => {
+      element('chat-input').props.onChangeText('Keep this draft')
+      element('chat-input').props.onFocus()
+    })
+    expect(blur).not.toHaveBeenCalled()
+    await act(() => renderer.update(<ChatComposer {...props} active={false} focusRequest={2} />))
+    expect(blur).toHaveBeenCalledOnce()
+    expect(props.onFocusRequestHandled).toHaveBeenLastCalledWith(2)
+    expect(focus).toHaveBeenCalledOnce()
+    expect(element('chat-input').props.value).toBe('Keep this draft')
+    await act(() => renderer.update(<ChatComposer {...props} focusRequest={2} />))
+    expect(focus).toHaveBeenCalledOnce()
+    expect(blur).toHaveBeenCalledOnce()
+    // Native blur can arrive after the outgoing screen has already detached.
+    expect(element('chat-input').props.scrollEnabled).toBe(false)
+    await act(() => element('chat-input').props.onFocus())
+    expect(element('chat-input').props.scrollEnabled).toBe(true)
+    await act(() => renderer.update(<ChatComposer {...props} focusRequest={3} />))
+    expect(focus).toHaveBeenCalledTimes(2)
+  })
+
+  it.each([
+    { active: true, disabled: false, focuses: true },
+    { active: false, disabled: false, focuses: false },
+    { active: true, disabled: true, focuses: false },
+  ])('focuses a goal selection synchronously only for an available composer (%j)', async state => {
+    const props = await render(state)
+    await act(() => renderer.root.findByType('ComposerContextMenu' as never).props.onSetGoal())
+    expect(focus).toHaveBeenCalledTimes(state.focuses ? 1 : 0)
+    expect(element('chat-input').props.placeholder).toBe('Wework 应该往哪个方向努力？')
+    await act(() => renderer.update(<ChatComposer {...props} active disabled={false} />))
+    expect(focus).toHaveBeenCalledTimes(state.focuses ? 1 : 0)
   })
 
   it('shows the speed shortcut only when the selected model supplies a real action', async () => {

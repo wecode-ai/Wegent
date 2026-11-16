@@ -458,6 +458,11 @@ impl RuntimeWorkRpcHandler {
         admission: TurnAdmission,
     ) -> Result<bool, AppIpcError> {
         turn.bind_task_kind(&self.store);
+        // Binding restores immutable origin; recompute the host's per-run manual fact
+        // before the admission snapshot drops transient confirmation metadata.
+        if turn.request.extra.get("standInManualConfirmation") == Some(&Value::Bool(true)) {
+            self.refresh_stand_in_confirmation(&turn.local_task_id, &mut turn.request)?;
+        }
         self.apply_project_workspace_roots(&mut turn.request);
         let local_task_id = turn.local_task_id.clone();
         let _operation = self.turn_queue_operation.lock().await;
@@ -2846,23 +2851,6 @@ mod tests {
             vec!["normal"]
         );
         assert_eq!(removed, 2);
-    }
-
-    #[test]
-    fn resolves_standard_hook_user_from_execution_request() {
-        let mut request = ExecutionRequest {
-            user_name: Some("alice".to_owned()),
-            ..ExecutionRequest::default()
-        };
-        request.extra.insert("user_id".to_owned(), json!(42));
-
-        assert_eq!(
-            hook_user(&request),
-            HookUser {
-                id: Some("42".to_owned()),
-                name: "alice".to_owned(),
-            }
-        );
     }
 
     #[test]

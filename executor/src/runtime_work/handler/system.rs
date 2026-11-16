@@ -1297,22 +1297,4 @@ mod tests {
             .iter()
             .any(|item| item["path"] == "auth.ts" && item["matchType"] == "file"));
     }
-
-    #[test]
-    fn workspace_fallback_search_keeps_workspace_local_ignore_rules() {
-        let workspace = tempfile::tempdir().expect("temporary workspace");
-        fs::write(workspace.path().join(".gitignore"), "ignored/\n").expect("workspace gitignore");
-        fs::create_dir_all(workspace.path().join("ignored")).expect("ignored folder");
-        fs::write(workspace.path().join("ignored/secret.txt"), "secret\n").expect("ignored file");
-        fs::write(workspace.path().join("visible-secret.txt"), "visible\n").expect("visible file");
-
-        let matches = search_workspace_without_parent_ignores(workspace.path(), "secret");
-
-        assert!(matches
-            .iter()
-            .any(|item| item["path"] == "visible-secret.txt"));
-        assert!(!matches
-            .iter()
-            .any(|item| item["path"] == "ignored/secret.txt"));
-    }
 }

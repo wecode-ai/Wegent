@@ -30,7 +30,7 @@ from app.schemas.workspace import CollaborationGroupCreate
 from app.services.project_automation_domain import ProjectAutomationEvent, utcnow
 from app.services.project_automation_execution import project_automation_execution
 from app.services.project_incoming_hooks import project_incoming_hook_service
-from app.services.workspaces import workspace_service
+from app.services.workspaces.service import workspace_service
 from tests.utils.collaboration import (
     authorize_project,
     authorize_project_agent,

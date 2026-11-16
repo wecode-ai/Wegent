@@ -1,5 +1,7 @@
 export type DeviceStatus = 'online' | 'offline' | 'busy'
 import type { ModelType, ModelOptions, UnifiedModel } from '../../../packages/chat-core/src/models'
+import type { Attachment, TurnFileChangesSummary } from '../../../packages/chat-core/src/runtime'
+export type { Attachment }
 export type { ModelType, ModelOptions, UnifiedModel }
 export type { RunnerModel } from '../../../packages/collaboration/src/agent-form/runnerRouting'
 export type {
@@ -45,18 +47,41 @@ export interface DeviceInfo {
 
 export interface DeviceListResponse {
   items: DeviceInfo[]
+  error?: string
 }
 
-export interface RuntimeTaskAddress {
+export type RuntimeTaskAddress =
+  import('../../../packages/chat-core/src/runtime').RuntimeTaskAddress
+
+export interface RuntimeTaskPinRequest {
   deviceId: string
+  threadId: string
+  pinned: boolean
+  beforeThreadId?: string | null
+}
+
+export interface RuntimeSidebarMutationResponse {
+  accepted: boolean
+  deviceId: string
+  error?: string | null
+}
+
+export interface RuntimeTaskRenameRequest {
+  address: RuntimeTaskAddress
+  title: string
+}
+
+export interface RuntimeTaskArchiveResponse {
+  accepted: boolean
   taskId: string
-  runtime?: string
   workspacePath?: string | null
-  workspaceKind?: string | null
+  error?: string | null
 }
 
 export interface RuntimeTaskSummary {
   taskId: string
+  runtimeHandle?: Record<string, unknown> | null
+  optimistic?: boolean
   threadId?: string | null
   title: string
   runtime: string
@@ -113,6 +138,7 @@ export interface RuntimeTranscriptMessage {
   id: string
   role: 'user' | 'assistant' | 'system' | 'tool' | string
   content: string
+  attachments?: Attachment[]
   clientUserMessageId?: string | null
   client_user_message_id?: string | null
   subtaskId?: string | number | null
@@ -137,6 +163,7 @@ export interface RuntimeTranscriptMessage {
 
 export interface RuntimeTranscriptResponse {
   taskId: string
+  threadId?: string | null
   workspacePath: string
   runtime: string
   title?: string | null
@@ -177,6 +204,8 @@ export interface RuntimeAttachment {
   filename: string
   fileSize: number
   mimeType: string
+  localPath?: string
+  workspaceFile?: Attachment['workspace_file']
 }
 
 export interface RuntimeUploadAsset {
@@ -293,6 +322,7 @@ export interface ChatMessage {
   turnId?: string
   role: 'user' | 'assistant' | 'system'
   content: string
+  attachments?: Attachment[]
   textItems?: ChatTextItem[]
   blocks?: ChatProcessingBlock[]
   fileChanges?: ChatFileChangesSummary
@@ -315,6 +345,7 @@ export type ChatBlockStatus = 'generating_arguments' | 'pending' | 'streaming' |
 interface ChatProcessingBlockBase {
   id: string
   subtaskId: string
+  parentToolUseId?: string
   status: ChatBlockStatus
   createdAt: number
   completedAt?: number
@@ -339,7 +370,11 @@ export interface ChatFileChangesBlock extends ChatProcessingBlockBase {
   fileChanges: ChatFileChangesSummary
 }
 
-export type ChatProcessingBlock = ChatToolBlock | ChatNarrativeBlock | ChatFileChangesBlock
+export type ChatSubagentBlock =
+  import('../../../packages/chat-core/src/runtime-conversation').SubagentBlock
+
+export type ChatProcessingBlock =
+  ChatToolBlock | ChatNarrativeBlock | ChatFileChangesBlock | ChatSubagentBlock
 
 export interface ChatFileChangeItem {
   path: string
@@ -351,13 +386,14 @@ export interface ChatFileChangeItem {
 }
 
 export interface ChatFileChangesSummary {
+  source?: TurnFileChangesSummary
   fileCount: number
   additions: number
   deletions: number
   files: ChatFileChangeItem[]
 }
 
-export interface RuntimeFileChangesSummary {
+export interface RuntimeFileChangesSummary extends Partial<Omit<TurnFileChangesSummary, 'files'>> {
   file_count?: number
   fileCount?: number
   additions?: number

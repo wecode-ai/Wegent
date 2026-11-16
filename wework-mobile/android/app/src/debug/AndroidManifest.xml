@@ -3,5 +3,7 @@
 
     <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW"/>
 
-    <application android:usesCleartextTraffic="true" tools:targetApi="28" tools:ignore="GoogleAppIndexingWarning" tools:replace="android:usesCleartextTraffic" />
+    <!-- A network security config overrides usesCleartextTraffic on API 24+.
+         Remove the release policy so Metro remains reachable on emulator and LAN hosts. -->
+    <application android:usesCleartextTraffic="true" android:networkSecurityConfig="@null" tools:targetApi="28" tools:ignore="GoogleAppIndexingWarning" tools:replace="android:usesCleartextTraffic,android:networkSecurityConfig" />
 </manifest>

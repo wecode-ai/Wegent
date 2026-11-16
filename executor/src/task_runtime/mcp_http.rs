@@ -585,6 +585,7 @@ mod control_tests;
 
 #[cfg(test)]
 mod tests {
+
     use super::*;
     use axum::http::header::AUTHORIZATION;
     use base64::{engine::general_purpose::STANDARD, Engine as _};
@@ -879,7 +880,6 @@ mod tests {
             .iter()
             .any(|tool| tool["name"] == "get_current_context"));
     }
-
     #[tokio::test]
     async fn notifications_endpoint_exposes_only_send_notification() {
         let endpoint = ensure_space_mcp_http_endpoint().await.unwrap();

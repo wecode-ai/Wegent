@@ -1,6 +1,7 @@
 import { writeCodexConfig, setMatrixUpstreamProtocol } from './desktop-build-flows.mjs'
 import { remoteDeviceE2EExtension } from '../remote-device-extension.mjs'
 import { createPreparationObserver } from './preparation-progress.mjs'
+import { waitForBoardValue } from './collaboration-board-flows.mjs'
 
 import { randomBytes } from 'node:crypto'
 import { LocalPluginObjectStorage } from './local-plugin-object-storage.mjs'
@@ -1489,6 +1490,26 @@ class RealCloudEnvironment {
     return historical
   }
 
+  async waitForRunnerCatalog(deviceRecordId) {
+    // Registration precedes model discovery; preserve a real catalog before disconnecting.
+    await waitForBoardValue(
+      async () => {
+        const environments = await fetchJson(
+          `${this.backendUrl}/api/v1/resources/execution-environments`,
+          {
+            headers: { Authorization: `Bearer ${this.authToken}` },
+            signal: AbortSignal.timeout(DEFAULT_STEP_TIMEOUT_MS),
+          }
+        )
+        const catalog = environments.find(device => device.id === String(deviceRecordId))
+        return catalog?.models.some(model => model.runtime === 'codex' && model.is_default) === true
+      },
+      true,
+      `Executor ${deviceRecordId} must publish its default Codex model before disconnecting`,
+      WORKBENCH_READY_TIMEOUT_MS
+    )
+  }
+
   async seedCloudProtocolModels() {
     const items = [
       ...CLOUD_MODEL_CASES.map(model => ({
@@ -1710,6 +1731,24 @@ class RealCloudEnvironment {
       'offline',
       this.remoteDockerExecutorLogPath
     )
+  }
+
+  async resumeRemoteDockerExecutor() {
+    assert.equal(this.remoteDockerExecutor, null, 'The remote executor must be offline')
+    const previous = await this.device(REMOTE_DOCKER_DEVICE_ID)
+    assert.ok(previous?.runtime_instance_id, 'The remote executor must retain its installation')
+    this.remoteDockerExecutor = await this.spawnExecutor(
+      this.remoteDockerExecutorEnv,
+      this.remoteDockerExecutorLogPath
+    )
+    const current = await this.waitForDeviceStatus(
+      REMOTE_DOCKER_DEVICE_ID,
+      'online',
+      this.remoteDockerExecutorLogPath
+    )
+    assert.equal(current.runtime_instance_id, previous.runtime_instance_id)
+    assert.equal(current.id, previous.id)
+    return current
   }
 
   async waitForWorkspaceRemoved(workspacePath) {

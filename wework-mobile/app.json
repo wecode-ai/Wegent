@@ -11,7 +11,7 @@
       "supportsTablet": true,
       "icon": "./assets/icon.png",
       "bundleIdentifier": "io.wecode.wework",
-      "buildNumber": "2",
+      "buildNumber": "13",
       "appleTeamId": "27XH7KRW54",
       "config": {
         "usesNonExemptEncryption": false
@@ -26,7 +26,12 @@
       "predictiveBackGestureEnabled": true
     },
     "plugins": [
-      "expo-secure-store",
+      [
+        "expo-secure-store",
+        {
+          "faceIDPermission": false
+        }
+      ],
       "expo-web-browser",
       "expo-document-picker",
       [
@@ -36,7 +41,9 @@
           "cameraPermission": "允许 WeWork 拍摄照片并作为会话附件发送。",
           "microphonePermission": false
         }
-      ]
+      ],
+      "expo-sharing",
+      "expo-asset"
     ]
   }
 }

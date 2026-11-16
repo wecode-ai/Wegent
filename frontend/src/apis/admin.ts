@@ -787,7 +787,7 @@ export interface IMChannelStatus {
 
 // Device Monitor Types
 export type DeviceStatus = 'online' | 'offline' | 'busy'
-export type DeviceType = 'local' | 'cloud'
+export type DeviceType = 'local' | 'app' | 'cloud' | 'remote'
 export type BindShell = 'claudecode' | 'openclaw'
 export type VersionFilterOperator = 'gt' | 'gte' | 'eq' | 'lt' | 'lte'
 
@@ -1661,8 +1661,14 @@ export const adminApis = {
   /**
    * Get device statistics (admin only)
    */
-  async getDeviceStats(): Promise<AdminDeviceStats> {
-    return apiClient.get('/admin/device-monitor/stats')
+  async getDeviceStats(refresh = false): Promise<AdminDeviceStats> {
+    return apiClient.get(
+      refresh ? '/admin/device-monitor/stats?refresh=true' : '/admin/device-monitor/stats'
+    )
+  },
+
+  async deleteDeviceRecord(recordId: number): Promise<{ message: string }> {
+    return apiClient.delete(`/admin/device-monitor/devices/records/${recordId}`)
   },
 
   /**

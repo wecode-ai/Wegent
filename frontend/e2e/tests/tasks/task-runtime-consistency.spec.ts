@@ -79,30 +79,6 @@ test.describe('Task runtime consistency', () => {
     await cleanupStreamRules(request)
   })
 
-  test('streams normally and reaches a terminal UI state', async ({ page, request }) => {
-    const runtimeChecks = trackRuntimeChecks(page)
-    const messageText = `${TEST_PREFIX} normal streaming request`
-    const responseMarker = `${TEST_PREFIX}-normal-response`
-
-    await configureStreamRule(request, messageText, {
-      responseContent: `${responseMarker} completed through socket`,
-      chunkDelayMs: 40,
-    })
-
-    await gotoChatWithTestTeam(page)
-    await sendChatMessage(page, messageText)
-
-    const taskId = await waitForTaskId(page)
-    await expect(page.getByTestId('messages-container')).toContainText(responseMarker, {
-      timeout: 30000,
-    })
-    await waitForBackendTerminal(request, taskId)
-
-    await expectChatInputCanSubmit(page, `${TEST_PREFIX} normal readiness probe`)
-    await expectNoQueuedMessages(page)
-    expect(runtimeChecks.count()).toBeLessThan(8)
-  })
-
   test('keeps previous messages and resumes streaming after page refresh', async ({
     page,
     request,

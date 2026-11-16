@@ -56,21 +56,23 @@ describe('desktop theme catalogue', () => {
     ).toHaveLength(16)
   })
 
-  test.each(['light', 'dark'] as const)('defaults to the original Wework %s palette', mode => {
-    const theme = getUiTheme('wework', mode).variant
-    expect(defaultAppearance[`${mode}ThemeId`]).toBe('wework')
-    expect(theme.palette).toEqual(defaultThemeAppearance[mode])
-    expect(theme.accentColor).toBe('#2563eb')
-    const variables = resolveAppearanceThemeVariables(defaultAppearance, mode)
-    expect(variables['--color-bg-base']).toBe(mode === 'light' ? '255 255 255' : '24 24 24')
-    expect(variables['--color-bg-surface']).toBe(mode === 'light' ? '247 247 248' : '33 33 33')
-    expect(variables['--color-sidebar']).toBe(
-      mode === 'light' ? '246 246 246 / 0.88' : '33 33 33 / 0.92'
-    )
-    expect(variables['--color-border']).toBe(mode === 'light' ? '224 224 224' : '43 43 43')
-    expect(variables['--color-primary']).toBe('37 99 235')
-    expect(variables['--color-primary-contrast']).toBe('255 255 255')
-  })
+  test.each(['light', 'dark'] as const)(
+    'defaults to a shared chrome surface in Wework %s',
+    mode => {
+      const theme = getUiTheme('wework', mode).variant
+      expect(defaultAppearance[`${mode}ThemeId`]).toBe('wework')
+      expect(theme.palette).toEqual(defaultThemeAppearance[mode])
+      expect(theme.accentColor).toBe('#2563eb')
+      const variables = resolveAppearanceThemeVariables(defaultAppearance, mode)
+      expect(variables['--color-bg-base']).toBe(mode === 'light' ? '255 255 255' : '24 24 24')
+      expect(variables['--color-bg-surface']).toBe(mode === 'light' ? '244 244 244' : '33 33 33')
+      expect(variables['--color-sidebar']).toBe(`${variables['--color-bg-surface']} / 0.92`)
+      expect(variables['--color-titlebar']).toBe(variables['--color-bg-surface'])
+      expect(variables['--color-border']).toBe(mode === 'light' ? '224 224 224' : '43 43 43')
+      expect(variables['--color-primary']).toBe('37 99 235')
+      expect(variables['--color-primary-contrast']).toBe('255 255 255')
+    }
+  )
 
   test.each(['light', 'dark'] as const)(
     'preserves the original xterm ANSI palette in the Wework %s theme',

@@ -122,7 +122,7 @@ fn assert_log_timestamp(line: &str) {
     assert_eq!(timestamp.as_bytes()[16], b':');
 }
 
-#[tokio::test]
+#[tokio::test(start_paused = true)]
 async fn runner_reconnects_after_two_consecutive_heartbeat_failures_to_preserve_online_ttl() {
     let transport = ScriptedTransport::with_call_results(vec![
         Ok(json!({"success": true})),
@@ -248,7 +248,7 @@ struct RecordedCall {
 #[derive(Clone, Debug)]
 struct RecordedEmit {
     event: String,
-    recorded_at: Instant,
+    recorded_at: tokio::time::Instant,
     failed: bool,
 }
 
@@ -381,7 +381,7 @@ impl LocalBackendTransport for ScriptedTransport {
             }
             self.emits.lock().unwrap().push(RecordedEmit {
                 event: event.to_owned(),
-                recorded_at: Instant::now(),
+                recorded_at: tokio::time::Instant::now(),
                 failed,
             });
             self.notify.notify_waiters();

@@ -57,6 +57,10 @@ mod runner_dispatch;
 mod runner_routing_tests;
 
 #[cfg(test)]
+#[path = "runner_recovery_tests.rs"]
+mod runner_recovery_tests;
+
+#[cfg(test)]
 #[path = "local_automation_tests.rs"]
 mod local_automation_tests;
 
@@ -335,6 +339,7 @@ mod comment_records;
 mod execution_transitions;
 
 mod execution_claims;
+mod runner_recovery;
 
 mod execution_completion;
 

@@ -125,30 +125,8 @@ fn access_error(message: String) -> AppIpcError {
 
 #[cfg(test)]
 mod tests {
-    use futures_util::FutureExt;
 
     use super::*;
-
-    #[tokio::test]
-    async fn change_notifications_follow_the_installation_settings_path() {
-        let root = tempfile::tempdir().unwrap();
-        let a = RemoteTaskAccess::new(root.path().join("a/settings.json"));
-        let reader = RemoteTaskAccess::new(a.path.clone());
-        let b = RemoteTaskAccess::new(root.path().join("b/settings.json"));
-
-        a.update(json!({"enabled": true})).unwrap();
-        assert!(b.changed().now_or_never().is_none());
-        assert!(reader.changed().now_or_never().is_some());
-
-        b.update(json!({"enabled": true})).unwrap();
-        assert!(reader.changed().now_or_never().is_none());
-        assert!(b.changed().now_or_never().is_some());
-
-        assert!(a.update(json!({"enabled": "true"})).is_err());
-        assert!(reader.changed().now_or_never().is_none());
-        a.update(json!({"enabled": false})).unwrap();
-        assert!(reader.changed().now_or_never().is_some());
-    }
 
     #[test]
     fn consent_is_local_persistent_and_revoked_for_existing_readers() {

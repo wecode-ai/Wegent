@@ -16,6 +16,7 @@ from app.services.loop_item_executions.runtime_identity import (
 from app.services.loop_items.task_bindings import active_task_binding_query
 from app.services.project_chat.runtime_binding import (
     collaboration_dispatch_for_activity,
+    collaboration_manager_task_id,
     collaboration_member_assignment,
 )
 from app.services.project_chat.service import project_chat_service
@@ -49,7 +50,9 @@ def _session_executions(
     ]
 
 
-def _member_session_owners(db: Session, request: RuntimeSessionReadRequest) -> set[int]:
+def _collaboration_session_owners(
+    db: Session, request: RuntimeSessionReadRequest
+) -> set[int]:
     scope = request.project_session
     assert scope is not None
     activities = (
@@ -64,7 +67,11 @@ def _member_session_owners(db: Session, request: RuntimeSessionReadRequest) -> s
     )
     owners = set()
     for activity in activities:
-        if (activity.metadata_json or {}).get("activity_type") != "member_execution":
+        metadata = activity.metadata_json or {}
+        if activity.sender_type != "agent" or metadata.get("activity_type") not in {
+            "member_execution",
+            "manager_execution",
+        }:
             continue
         context = ProjectChatCommentExecution(
             project_id=scope.project_id,
@@ -81,9 +88,19 @@ def _member_session_owners(db: Session, request: RuntimeSessionReadRequest) -> s
             right_device_id=request.device_id,
         ):
             continue
-        collaboration_member_assignment(
-            db, context, activity, require_current_assignment=False
-        )
+        if metadata["activity_type"] == "member_execution":
+            collaboration_member_assignment(
+                db, context, activity, require_current_assignment=False
+            )
+        elif (
+            metadata.get("dispatch_role") != "manager"
+            or activity.agent_id
+            != dispatch.runtime_origin_context.get("manager_agent_id")
+            or activity.sender_id != activity.agent_id
+            or collaboration_manager_task_id(db, dispatch, activity)
+            != request.local_task_id
+        ):
+            continue
         owners.add(dispatch.executor_owner_user_id)
     return owners
 
@@ -113,13 +130,21 @@ def resolve_project_transcript(
     owners = {row.executor_owner_user_id for row in executions} | {
         row.task_user_id for row in bindings
     }
+    collaboration_owners = set()
+    if not executions and (not owners or user_id not in owners):
+        collaboration_owners = _collaboration_session_owners(db, request)
     if not owners:
-        owners = _member_session_owners(db, request)
+        owners = collaboration_owners
     if not owners or 0 in owners or None in owners:
         raise HTTPException(404, "Project session binding not found")
     if len(owners) != 1:
         raise HTTPException(409, "Project session has conflicting execution owners")
-    if bindings and not executions and user_id not in owners:
+    if (
+        bindings
+        and not executions
+        and user_id not in owners
+        and collaboration_owners != owners
+    ):
         raise HTTPException(404, "Project session binding not found")
     task_ids = {execution_conversation_task_id(row) for row in executions}
     if len(task_ids) > 1:

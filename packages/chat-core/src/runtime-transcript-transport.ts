@@ -2,14 +2,16 @@
  * original transcript; old clients never receive a transfer envelope. */
 export async function readRuntimeTranscript<T>(
   params: Record<string, unknown>,
-  request: (params: Record<string, unknown>) => Promise<unknown>
+  request: (params: Record<string, unknown>) => Promise<unknown>,
+  decodeGzip: (chunks: Uint8Array<ArrayBuffer>[]) => Promise<string> = decodeBrowserGzip
 ): Promise<T> {
   const query = { ...params, transcriptProtocolVersion: 2 }
   let response = await request(query)
   checkFailure(response)
   if (!isRecord(response)) throw invalidTransfer()
   if (response.transcriptProtocolVersion === undefined) return response as T
-  if (response.transcriptProtocolVersion !== 2) throw new Error('Unsupported transcript protocol')
+  if (response.transcriptProtocolVersion !== 2)
+    throw new Error('Unsupported transcript protocol')
 
   const chunks: Uint8Array<ArrayBuffer>[] = []
   let offset = 0
@@ -35,7 +37,7 @@ export async function readRuntimeTranscript<T>(
     if (transfer.snapshotId !== snapshotId || transfer.totalBytes !== totalBytes)
       throw invalidTransfer()
     const binary = atob(transfer.payload)
-    const bytes = Uint8Array.from(binary, char => char.charCodeAt(0))
+    const bytes = Uint8Array.from(binary, (char) => char.charCodeAt(0))
     if (!bytes.length || bytes.length > 360 * 1024) throw invalidTransfer()
     offset += bytes.length
     if (offset > totalBytes) throw invalidTransfer()
@@ -45,17 +47,24 @@ export async function readRuntimeTranscript<T>(
       break
     }
     if (transfer.nextOffset !== offset || offset >= totalBytes) throw invalidTransfer()
-    response = await request({ ...query, transcriptTransfer: { snapshotId, offset } })
+    response = await request({
+      ...query,
+      transcriptTransfer: { snapshotId, offset },
+    })
   }
-  // Gzip verifies the checksum before the complete page is exposed to callers.
+  // The platform decoder must verify gzip integrity before exposing the complete page.
+  const packed: unknown = JSON.parse(await decodeGzip(chunks))
+  return unpackTranscript(packed) as T
+}
+
+async function decodeBrowserGzip(chunks: Uint8Array<ArrayBuffer>[]): Promise<string> {
   const stream = new ReadableStream<BufferSource>({
     start(controller) {
-      chunks.forEach(chunk => controller.enqueue(chunk))
+      chunks.forEach((chunk) => controller.enqueue(chunk))
       controller.close()
     },
   }).pipeThrough(new DecompressionStream('gzip'))
-  const packed: unknown = JSON.parse(await new Response(stream).text())
-  return unpackTranscript(packed) as T
+  return new Response(stream).text()
 }
 
 function unpackTranscript(packed: unknown): unknown {
@@ -63,7 +72,7 @@ function unpackTranscript(packed: unknown): unknown {
     !isRecord(packed) ||
     !isRecord(packed.transcript) ||
     !Array.isArray(packed.strings) ||
-    !packed.strings.every(value => typeof value === 'string') ||
+    !packed.strings.every((value) => typeof value === 'string') ||
     !Array.isArray(packed.references)
   )
     throw invalidTransfer()

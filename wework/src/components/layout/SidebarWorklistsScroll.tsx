@@ -42,7 +42,7 @@ export function SidebarWorklistsScroll({
         orientation="vertical"
         testId="sidebar-worklists-scrollbar"
         thumbTestId="sidebar-worklists-scrollbar-thumb"
-        className="sidebar-worklists-scrollbar -translate-x-[3px]"
+        className="sidebar-worklists-scrollbar -translate-x-[3px] px-0.5 opacity-0 transition-opacity duration-150 group-hover/sidebar:opacity-100 group-has-[:focus-visible]/sidebar:opacity-100 active:opacity-100 motion-reduce:transition-none"
         thumbClassName="sidebar-worklists-scrollbar-thumb"
       />
     </ScrollArea.Root>

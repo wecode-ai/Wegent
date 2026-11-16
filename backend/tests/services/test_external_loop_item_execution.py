@@ -806,7 +806,7 @@ def test_create_gitlab_item_with_collaboration_group_preserves_group_owner(
         "created_at": datetime.now(),
     }
     monkeypatch.setattr(
-        "app.services.workspaces.workspace_service.list_project_collaboration_groups",
+        "app.services.workspaces.service.workspace_service.list_project_collaboration_groups",
         lambda _db, _project_id, _user_id: [group],
     )
 
@@ -900,7 +900,7 @@ def test_reassigning_same_external_collaboration_group_dispatches_once(
     )
     test_db.commit()
     monkeypatch.setattr(
-        "app.services.workspaces.workspace_service.list_project_collaboration_groups",
+        "app.services.workspaces.service.workspace_service.list_project_collaboration_groups",
         lambda _db, _project_id, _user_id: [group],
     )
     assignment = LoopItemAssign(
