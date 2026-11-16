@@ -1,5 +1,15 @@
 {
   "device_actions": "Device actions",
+  "ide": {
+    "open": "Open IDE",
+    "opening": "Opening IDE…",
+    "device_offline": "Device is offline",
+    "device_restarting": "Device is upgrading or restarting",
+    "disabled_on_device": "IDE sessions are disabled on this device",
+    "popup_blocked": "The browser blocked the IDE tab. Allow pop-ups and try again.",
+    "invalid_url": "The device did not return a valid IDE URL. Try again.",
+    "start_failed": "Could not open the device IDE. Try again."
+  },
   "delete_confirm_title": "Remove offline device?",
   "delete_confirm_description": "Remove {{name}} from this list? Conversation history and local files will be kept. The device will appear again if it reconnects.",
   "delete_cancel": "Cancel",

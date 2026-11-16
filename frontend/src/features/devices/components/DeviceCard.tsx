@@ -24,6 +24,8 @@ import { DeviceUpgradeState } from '@/contexts/DeviceContext'
 import { SlotIndicator } from './SlotIndicator'
 import { RunningTasksList } from './RunningTasksList'
 import { VersionBadge } from './VersionBadge'
+import { DeviceIdeMenuItem } from './DeviceIdeMenuItem'
+import { useDeviceIde } from '../hooks/useDeviceIde'
 import { getStatusColor, isOpenClawDevice } from '../utils/device-status'
 import { useTranslation } from '@/hooks/useTranslation'
 import { useState } from 'react'
@@ -98,6 +100,7 @@ export function DeviceCard({
       setRestarting(false)
     }
   }
+  const ide = useDeviceIde(device, isUpgrading || restarting)
   const upgradeHint =
     device.device_type === 'app'
       ? t('version.upgradeInWework')
@@ -254,6 +257,7 @@ export function DeviceCard({
               </Button>
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end">
+              <DeviceIdeMenuItem ide={ide} deviceId={device.device_id} />
               {onRestart && (
                 <DropdownMenuItem
                   onClick={openRestart}

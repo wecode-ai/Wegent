@@ -9,6 +9,7 @@
  * Online status is managed via Redis with heartbeat mechanism.
  */
 
+import type { DeviceInfo as SharedDeviceInfo } from '@wegent/chat-core/execution-project'
 import { apiClient } from './client'
 
 export type DeviceStatus = 'online' | 'offline' | 'busy'
@@ -42,7 +43,7 @@ export interface RemoteDeviceConfig {
   username?: string
 }
 
-export interface DeviceInfo {
+export interface DeviceInfo extends Pick<SharedDeviceInfo, 'runtime_routes' | 'runtime_features'> {
   id: number
   device_id: string
   execution_target_id?: string | null
@@ -131,6 +132,10 @@ export const deviceApis = {
    */
   async getOnlineDevices(): Promise<DeviceListResponse> {
     return apiClient.get('/devices/online')
+  },
+
+  async startCodeServer(deviceId: string): Promise<{ url: string }> {
+    return apiClient.post(`/devices/${encodeURIComponent(deviceId)}/code-server`)
   },
 
   /**
