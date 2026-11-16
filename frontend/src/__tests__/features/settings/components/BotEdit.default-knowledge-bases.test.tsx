@@ -303,7 +303,15 @@ describe('BotEdit default knowledge bases', () => {
       { name: 'Dify', type: 'public', shellType: 'Dify' },
     ])
     mockedGetUnifiedModels.mockResolvedValue({
-      data: [{ name: 'gpt-4.1', type: 'public', namespace: 'default' }],
+      data: [
+        {
+          id: 77,
+          name: 'gpt-4.1',
+          type: 'public',
+          namespace: 'default',
+          modelCategoryType: 'llm',
+        },
+      ],
     })
     mockedGetPublicModels.mockResolvedValue([{ name: 'gpt-4.1', type: 'public' }])
     mockedFetchUnifiedSkillsList.mockResolvedValue([])
@@ -936,6 +944,7 @@ describe('BotEdit default knowledge bases', () => {
         groupName: 'engineering',
         teamId: 77,
         targetGroupNames: ['engineering'],
+        modelCategoryType: 'llm',
       }
     )
 
@@ -947,6 +956,89 @@ describe('BotEdit default knowledge bases', () => {
         expect.objectContaining({
           team_id: 77,
           target_group_names: ['engineering'],
+        })
+      )
+    })
+  })
+
+  test('sends explicit model selection IDs when saving from the Bot drawer', async () => {
+    await renderBotEdit(
+      {},
+      {
+        scope: 'group',
+        groupName: 'engineering',
+        teamId: 77,
+        targetGroupNames: ['engineering'],
+      }
+    )
+
+    fireEvent.click(screen.getByTestId('save-button'))
+
+    await waitFor(() => {
+      expect(mockedUpdateBot).toHaveBeenCalledWith(
+        7,
+        expect.objectContaining({
+          team_id: 77,
+          model_id: 77,
+          secondary_model_id: null,
+        })
+      )
+    })
+  })
+
+  test('sends the selected secondary model ID from the Bot drawer', async () => {
+    mockedGetUnifiedModels.mockResolvedValue({
+      data: [
+        {
+          id: 78,
+          name: 'seedance-video',
+          type: 'public',
+          namespace: 'default',
+          modelCategoryType: 'video',
+        },
+        {
+          id: 79,
+          name: 'planning-llm',
+          type: 'public',
+          namespace: 'default',
+          modelCategoryType: 'llm',
+        },
+      ],
+    })
+
+    await renderBotEdit(
+      {
+        shell_name: 'Chat',
+        shell_type: 'Chat',
+        agent_config: {
+          bind_model: 'seedance-video',
+          bind_model_type: 'public',
+          bind_model_namespace: 'default',
+        },
+      },
+      {
+        scope: 'group',
+        groupName: 'engineering',
+        teamId: 77,
+        targetGroupNames: ['engineering'],
+        modelCategoryType: 'video',
+      }
+    )
+
+    const secondarySelect = await screen.findByTestId('bot-secondary-model-select')
+    expect(secondarySelect).toBeEnabled()
+    fireEvent.click(secondarySelect)
+    fireEvent.click(await screen.findByTestId('model-option-planning-llm'))
+
+    fireEvent.click(screen.getByTestId('save-button'))
+
+    await waitFor(() => {
+      expect(mockedUpdateBot).toHaveBeenCalledWith(
+        7,
+        expect.objectContaining({
+          team_id: 77,
+          model_id: 78,
+          secondary_model_id: 79,
         })
       )
     })
