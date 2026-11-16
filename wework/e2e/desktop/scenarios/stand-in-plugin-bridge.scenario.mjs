@@ -213,7 +213,8 @@ export function createDesktopScenario(options) {
       )
       await host(control, 'runtime.setCoreDshPluginEnabled', { name: PACKAGE, enabled: false })
       const readyCount = control.readyCount
-      await host(control, 'runtime.restartCoreDsh', {})
+      // Acknowledge the control command before replacing its renderer.
+      await control.command('restartCoreDsh', 'body')
       await withTimeout(
         control.awaitReadyAfter(readyCount),
         workbenchReadyTimeoutMs,
@@ -238,7 +239,7 @@ export function createDesktopScenario(options) {
       })
       await host(control, 'runtime.setCoreDshPluginEnabled', { name: PACKAGE, enabled: true })
       const storyReadyCount = control.readyCount
-      await host(control, 'runtime.restartCoreDsh', {})
+      await control.command('restartCoreDsh', 'body')
       await withTimeout(
         control.awaitReadyAfter(storyReadyCount),
         workbenchReadyTimeoutMs,
@@ -264,7 +265,7 @@ export function createDesktopScenario(options) {
         try {
           await host(control, 'runtime.setCoreDshPluginEnabled', { name: PACKAGE, enabled: false })
           const cleanupReadyCount = control.readyCount
-          await host(control, 'runtime.restartCoreDsh', {})
+          await control.command('restartCoreDsh', 'body')
           await withTimeout(
             control.awaitReadyAfter(cleanupReadyCount),
             workbenchReadyTimeoutMs,
