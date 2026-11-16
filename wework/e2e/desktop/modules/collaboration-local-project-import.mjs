@@ -136,11 +136,19 @@ export async function verifyCollaborationLocalProjectImport(
         0,
         'An archived Task project must remain absent before explicit import'
       )
-      await control.command('click', localWorkspace)
-      await control.command('click', '[data-testid="collaboration-workspace-nav-create-project"]')
       await control.command(
         'click',
-        '[data-testid="collaboration-workspace-nav-import-existing-project"]'
+        inCollaborationSidebar(
+          `[data-testid="collaboration-workspace-tree-${LOCAL_COLLABORATION_WORKSPACE_ID}"] .collaboration-workspace-identity`
+        )
+      )
+      await control.command(
+        'clickWhenEnabled',
+        scoped('[data-testid="collaboration-workspace-project-create"]')
+      )
+      await control.command(
+        'click',
+        '[data-testid="collaboration-workspace-project-open-existing"]'
       )
       await control.command('waitFor', '[data-testid="existing-local-project-import-dialog"]')
       await control.command(
