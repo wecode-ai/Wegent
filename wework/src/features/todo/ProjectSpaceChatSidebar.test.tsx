@@ -466,6 +466,33 @@ describe('ProjectSpaceChatSidebar', () => {
     await waitFor(() => expect(mocks.createProjectRuntimeTask).toHaveBeenCalledOnce())
     const publishPending = mocks.draftChange!
     act(() => publishPending('published before task binding'))
+    mocks.state.runtimeWork = {
+      ...mocks.state.runtimeWork,
+      chats: [
+        {
+          deviceId: 'device-1',
+          available: true,
+          workspacePath: '/chat',
+          tasks: [
+            {
+              taskId: 'created-task',
+              workspacePath: '/chat/created',
+              title: 'Created',
+              runtime: 'codex',
+              runtimeHandle: { cloudProjectId: '11' },
+            },
+          ],
+        },
+      ],
+    }
+    view.rerender(
+      <ProjectSpaceChatSidebar project={project} localProjects={[]} onClose={vi.fn()} />
+    )
+    expect(screen.getByTestId('mock-chat-panel')).toHaveAttribute('data-instance-id', frameId)
+    expect(screen.getByTestId('mock-chat-panel')).toHaveAttribute(
+      'data-draft-value',
+      'published before task binding'
+    )
     await act(async () => finishCreation())
     const canonical = 'pane:project-space:backend:11:device-1:created-task'
     expect(screen.getByTestId('mock-chat-panel')).toHaveAttribute('data-instance-id', frameId)
@@ -482,6 +509,83 @@ describe('ProjectSpaceChatSidebar', () => {
     expect(screen.getByTestId('mock-chat-panel')).toHaveAttribute(
       'data-draft-value',
       'late buffered follow-up'
+    )
+  })
+
+  it('keeps drafts separate when a refresh changes the fallback conversation', () => {
+    mocks.drafts['pane:project-space:backend:11:device-1:older-task'] = 'older draft'
+    const view = render(
+      <ProjectSpaceChatSidebar project={project} localProjects={[]} onClose={vi.fn()} />
+    )
+    act(() => mocks.draftChange!('latest draft'))
+    mocks.state.runtimeWork = {
+      ...mocks.state.runtimeWork,
+      chats: mocks.state.runtimeWork.chats.map(workspace => ({
+        ...workspace,
+        tasks: workspace.tasks.map(task =>
+          task.taskId === 'older-task' ? { ...task, updatedAt: '2099-01-01T00:00:00Z' } : task
+        ),
+      })),
+    }
+    view.rerender(
+      <ProjectSpaceChatSidebar project={project} localProjects={[]} onClose={vi.fn()} />
+    )
+    expect(screen.getByTestId('mock-chat-panel')).toHaveAttribute('data-task-id', 'older-task')
+    expect(screen.getByTestId('mock-chat-panel')).toHaveAttribute('data-draft-value', 'older draft')
+    expect(mocks.drafts['pane:project-space:backend:11:device-1:latest-task']).toBe('latest draft')
+  })
+
+  it('uses the displayed fallback draft when the stored selection no longer exists', () => {
+    window.localStorage.setItem('wework-project-space-chat:backend:11', 'device-1:deleted-task')
+    mocks.drafts['pane:project-space:backend:11:device-1:deleted-task'] = 'deleted draft'
+    mocks.drafts['pane:project-space:backend:11:device-1:latest-task'] = 'latest draft'
+    render(<ProjectSpaceChatSidebar project={project} localProjects={[]} onClose={vi.fn()} />)
+    expect(screen.getByTestId('mock-chat-panel')).toHaveAttribute('data-task-id', 'latest-task')
+    expect(screen.getByTestId('mock-chat-panel')).toHaveAttribute(
+      'data-draft-value',
+      'latest draft'
+    )
+  })
+
+  it('ignores a previous frame creation callback after selecting another conversation', async () => {
+    const user = userEvent.setup()
+    let complete!: () => void
+    mocks.createProjectRuntimeTask.mockImplementation(
+      (_message, options) =>
+        new Promise(resolve => {
+          complete = () => {
+            const address = {
+              deviceId: 'device-1',
+              taskId: 'late-task',
+              workspacePath: '/chat/late',
+            }
+            options.onRuntimeTaskOptimisticOpen(address)
+            resolve(address)
+          }
+        })
+    )
+    render(<ProjectSpaceChatSidebar project={project} localProjects={[]} onClose={vi.fn()} />)
+    act(() => mocks.draftChange!('latest draft'))
+    await user.click(screen.getByTestId('project-space-chat-new'))
+    act(() => mocks.draftChange!('new draft'))
+    await user.click(screen.getByTestId('mock-chat-send'))
+    await waitFor(() => expect(mocks.createProjectRuntimeTask).toHaveBeenCalledOnce())
+    await user.click(screen.getByTestId('project-space-chat-menu'))
+    await user.click(
+      screen
+        .getAllByTestId('project-space-chat-menu-item')
+        .find(item => item.textContent?.includes('最近会话'))!
+    )
+    await act(async () => complete())
+    expect(screen.getByTestId('mock-chat-panel')).toHaveAttribute('data-task-id', 'latest-task')
+    expect(screen.getByTestId('mock-chat-panel')).toHaveAttribute(
+      'data-draft-value',
+      'latest draft'
+    )
+    act(() => mocks.draftChange!('still latest draft'))
+    expect(mocks.writeDraft).toHaveBeenLastCalledWith(
+      'pane:project-space:backend:11:device-1:latest-task',
+      'still latest draft'
     )
   })
 })
