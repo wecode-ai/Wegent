@@ -33,6 +33,7 @@ export function createRuntimeImQuestions({ workspacePath, uiTimeoutMs, modelResp
   let standInSnapshot
   let nativeControl
   let standInTaskId
+  let finishBusyResponse
   const delivered = []
   const requested = new Set()
   const fixture = async payload => {
@@ -67,12 +68,28 @@ export function createRuntimeImQuestions({ workspacePath, uiTimeoutMs, modelResp
         response.end(createSse([responseCreated(id), ...interpreted, responseCompleted(id)]))
         return true
       }
-      const mode = ['inferred-sync', 'inferred-async', 'sync', 'async', 'im'].find(value =>
-        JSON.stringify(body).includes(`${PREFIX}${value}`)
+      const mode = ['inferred-sync', 'inferred-async', 'busy-async', 'sync', 'async', 'im'].find(
+        value => JSON.stringify(body).includes(`${PREFIX}${value}`)
       )
       if (!mode) return false
       const callId = `${PREFIX}${mode}_call`
       const answered = JSON.stringify(body.input).includes(`${PREFIX}${mode}_answer`)
+      if (mode === 'busy-async' && !answered && toolOutputText(body, callId) !== null) {
+        assert.equal(
+          finishBusyResponse,
+          undefined,
+          'The active model request must not be duplicated'
+        )
+        response.writeHead(200, { 'content-type': 'text/event-stream' })
+        response.write(createSse([responseCreated(callId)]))
+        let finished = false
+        finishBusyResponse = () => {
+          if (finished) return
+          finished = true
+          response.end(createSse([assistantMessage('独立工作已完成。'), responseCompleted(callId)]))
+        }
+        return true
+      }
       const output = answered
         ? [assistantMessage(`${PREFIX}${mode}_complete`)]
         : toolOutputText(body, callId) !== null
@@ -210,7 +227,14 @@ export function createRuntimeImQuestions({ workspacePath, uiTimeoutMs, modelResp
             body: JSON.stringify({ deviceId: standInSnapshot.executionDeviceId, roleId }),
           }
         )
-        for (const mode of ['sync', 'async', 'inferred-sync', 'inferred-async', 'im']) {
+        for (const mode of [
+          'sync',
+          'async',
+          'busy-async',
+          'inferred-sync',
+          'inferred-async',
+          'im',
+        ]) {
           const synchronous = mode === 'sync' || mode === 'inferred-sync'
 
           if (mode === 'im') await fixture({ operation: 'disable' })
@@ -264,7 +288,14 @@ export function createRuntimeImQuestions({ workspacePath, uiTimeoutMs, modelResp
             `The ${mode} question was not delivered to IM`,
             modelResponseTimeoutMs
           )
-          if (!synchronous)
+          if (mode === 'busy-async')
+            await until(
+              () => Boolean(finishBusyResponse),
+              Boolean,
+              'The async task must continue into an active model request before the IM answer',
+              modelResponseTimeoutMs
+            )
+          else if (!synchronous)
             await waitForCompletedRuntimeTaskThread(control, taskId, modelResponseTimeoutMs)
           if (mode.startsWith('inferred-')) {
             await fixture({
@@ -323,6 +354,7 @@ export function createRuntimeImQuestions({ workspacePath, uiTimeoutMs, modelResp
             })
             assert.equal(sent.accepted, true)
             assert.ok(sent.replies.includes('已将回答提交给原任务。'), JSON.stringify(sent))
+            if (mode === 'busy-async') finishBusyResponse()
           }
           await until(
             async () =>
@@ -361,6 +393,7 @@ export function createRuntimeImQuestions({ workspacePath, uiTimeoutMs, modelResp
       }
     },
     async cleanup() {
+      finishBusyResponse?.()
       active = false
       try {
         if (seeded) {
