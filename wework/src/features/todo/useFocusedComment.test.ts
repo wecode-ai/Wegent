@@ -250,3 +250,18 @@ it('keeps context anchored while the user edits inside a late-mounted composer',
   await resize(composer)
   expect(comment.getBoundingClientRect().bottom).toBeLessThanOrEqual(220)
 })
+
+it('finishes initial positioning when the sticky composer appears after cancellation', async () => {
+  const resize = observeResizes()
+  const { viewport, geometry, comment, result } = setup()
+  viewport.dispatchEvent(new WheelEvent('wheel'))
+  const composer = document.createElement('div')
+  composer.className = 'task-detail-comment-bar'
+  composer.getBoundingClientRect = () => new DOMRect(0, 220, 600, 280)
+  viewport.append(composer)
+  geometry.offset += 200
+  await resize(composer)
+  expect(comment.getBoundingClientRect().top).toBeGreaterThanOrEqual(100)
+  expect(comment.getBoundingClientRect().bottom).toBeLessThanOrEqual(220)
+  expect(result.current).toBe('comment-1')
+})
