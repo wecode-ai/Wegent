@@ -29,6 +29,7 @@ interface SimpleTeamDraft {
   simpleCustomShellName: string
   simpleBotName: string
   simpleModelName: string
+  simpleModelId: number | null
   simpleModelType: ModelTypeEnum | undefined
   simpleModelNamespace: string | undefined
   simplePrompt: string
@@ -49,6 +50,7 @@ function buildDraft(bot: Bot | undefined, bindMode: TaskType[]): SimpleTeamDraft
     simpleCustomShellName: executor.customShellName,
     simpleBotName: bot?.name || '',
     simpleModelName: bot?.agent_config ? getModelFromConfig(bot.agent_config) : '',
+    simpleModelId: null,
     simpleModelType: bot?.agent_config ? getModelTypeFromConfig(bot.agent_config) : undefined,
     simpleModelNamespace: bot?.agent_config
       ? getModelNamespaceFromConfig(bot.agent_config)

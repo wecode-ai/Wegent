@@ -225,7 +225,7 @@ Reading a notification, dismissing a reminder, or marking it read does not resol
 
 Use **Stop stand-in** at the bottom left of settings and confirm to stop. Source and startup failures remain visible for retry after fixing authentication, model selection, or connection settings. Message cursors, deduplication records, and associations persist across executor restarts.
 
-Executor read timeouts during source collection retry automatically with backoff, without saving the connection again. Sources previously stopped by this timeout also resume from their original cursor. Automatic recovery applies only to reads, never replaying sends or other actions. Expired authentication, permission denials, and invalid responses still require correction before retrying.
+Source collection failures never permanently stop intake or require saving the connection again. The Executor retains the error and original cursor, then tries again on the next polling cycle; timeouts or transport failures with an explicit backoff resume after that delay. Sources previously stopped by database locks, configuration changes, invalid responses, or other collection errors also resume. Every attempt still checks the current account and permissions: unresolved authentication, permission, or response errors remain visible and never grant unauthorized reads. Success clears the error and advances the cursor, while existing message records prevent duplicates. Automatic recovery applies only to collection, never replaying sends or other actions.
 
 ## Issue human handoffs
 

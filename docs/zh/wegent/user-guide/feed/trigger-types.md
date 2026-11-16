@@ -60,7 +60,7 @@ sidebar_position: 3
 
 要在每个法定工作日执行，选择 **每天** 并设置时间，再勾选该选项。此选项筛选原计划，不会改变每周、每月或自定义表达式中的限制；例如 `1-5` 仍不会包含周末补班。勾选后，下次执行时间在保存后由服务端计算，配置中的普通 Cron 预览不再显示。服务在休息日恢复时不会补发积压的工作日定时任务；手动执行不受该选项限制。
 
-日历使用 [chinesecalendar](https://pypi.org/project/chinesecalendar/) 的已发布安排。维护者需要在国务院公布下一年度安排后更新依赖；超出日历覆盖年份时会报告错误，不会猜测工作日或按周一至周五继续派发。
+日历使用从 [chinesecalendar](https://pypi.org/project/chinesecalendar/) 生成的离线数据，与 Wework 个人定时及项目自动化共用。维护者需要在国务院公布下一年度安排后更新 backend 的开发依赖版本，并在仓库根目录执行 `uv run --project backend scripts/update-china-workdays.py`，提交更新后的日历数据和锁文件。超出日历覆盖年份时会报告错误，不会猜测工作日或按周一至周五继续派发。
 
 #### 每周配置
 

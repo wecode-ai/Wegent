@@ -60,7 +60,7 @@ When creating, editing, or renting a subscription, open **Subscription Options â
 
 To run on every statutory workday, select **Daily**, choose a time, and enable this option. It filters the existing schedule without changing its weekly, monthly, or custom restrictions; a `1-5` expression still excludes weekend makeup days. When enabled, the server calculates the next execution after saving, and the unfiltered Cron preview is hidden. Restarting the service on a non-working day does not dispatch overdue workday schedules. Manual execution remains available.
 
-Calendar data comes from published [chinesecalendar](https://pypi.org/project/chinesecalendar/) releases. Maintainers must update the dependency after the State Council announces the next year's schedule. Dates outside the calendar's coverage produce an error instead of guessing or falling back to Monday through Friday.
+Calendar data is generated from [chinesecalendar](https://pypi.org/project/chinesecalendar/) and bundled offline, shared with Wework personal schedules and project automations. After the State Council announces the next year's schedule, maintainers must update the backend development dependency and run `uv run --project backend scripts/update-china-workdays.py` from the repository root, then commit the calendar data and lockfile. Dates outside the calendar's coverage produce an error instead of guessing or falling back to Monday through Friday.
 
 #### Weekly Configuration
 

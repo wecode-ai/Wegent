@@ -53,6 +53,7 @@ from app.services.project_automation_domain import (
     ProjectAutomationEvent,
     integer,
     metadata,
+    permits_scheduled_run,
     project_agent,
     runnable_wegent_team,
     runtime_config,
@@ -109,6 +110,20 @@ class ProjectAutomationExecution:
         if run.status not in {"pending", "queued"}:
             return
         try:
+            if not permits_scheduled_run(
+                metadata(run), str(metadata(run).get("trigger") or run.source), utcnow()
+            ):
+                run.status = "skipped"
+                run.description = (
+                    "Scheduled execution skipped: not a China statutory workday"
+                )
+                run.completed_at = utcnow()
+                run.version += 1
+                self.finish_activity(
+                    db, run=run, status_value="skipped", content=run.description
+                )
+                self._commit_and_push_activity(db, run)
+                return
             owner = db.get(User, rule.created_by_user_id)
             project = db.get(CloudProject, rule.cloud_project_id)
             if owner is None or project is None:

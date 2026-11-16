@@ -935,7 +935,7 @@ def _dispatch_due_subscription(
 
         cron = subscription_crd.spec.trigger.cron if trigger_type == "cron" else None
         if trigger_type == "cron" and cron and cron.workday_only:
-            from app.services.subscription.workday import is_china_workday
+            from shared.utils.workday import is_china_workday
 
             if not is_china_workday(datetime.now(timezone.utc)):
                 _advance_due_subscription(
@@ -1563,7 +1563,7 @@ def _cancel_non_workday_execution(
 
     from app.schemas.subscription import BackgroundExecutionStatus
     from app.services.subscription import subscription_service
-    from app.services.subscription.workday import is_china_workday
+    from shared.utils.workday import is_china_workday
 
     if is_china_workday(datetime.now(timezone.utc)):
         return False

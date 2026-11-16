@@ -80,16 +80,16 @@ def test_cleanup_loads_before_query_and_delete(
         operations.append("query")
         if not loaded:
             raise MilvusException(101, "collection not loaded")
-        assert "doc_ref == 'doc_123'" in kwargs["filter"]
-        assert "knowledge_id == 'kb_1'" in kwargs["filter"]
+        assert 'doc_ref == "doc_123"' in kwargs["filter"]
+        assert 'knowledge_id == "kb_1"' in kwargs["filter"]
         return list(rows)
 
     def delete(**kwargs: Any) -> dict[str, int]:
         operations.append("delete")
         if not loaded:
             raise MilvusException(101, "collection not loaded")
-        assert "doc_ref == 'doc_123'" in kwargs["filter"]
-        assert "knowledge_id == 'kb_1'" in kwargs["filter"]
+        assert 'doc_ref == "doc_123"' in kwargs["filter"]
+        assert 'knowledge_id == "kb_1"' in kwargs["filter"]
         rows.clear()
         return {"delete_count": 1}
 
