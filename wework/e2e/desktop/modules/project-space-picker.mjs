@@ -66,6 +66,8 @@ export function createProjectSpacePickerRegression({
       address.taskId,
       'The project picker task did not finish restoring after navigation'
     )
+    const state = JSON.parse(await control.command('getWorkbenchDebugSnapshot', 'body'))
+    assert.equal(state.workbench?.currentRuntimeTask?.taskId, address.taskId)
     // Restoring a task re-resolves its cloud binding asynchronously: the
     // composer drops its Issue binding, and with it the change-board control,
     // until the lookup returns. Wait for the post-restore control instead of
@@ -74,8 +76,6 @@ export function createProjectSpacePickerRegression({
       visible: true,
       timeoutMs: workbenchReadyTimeoutMs,
     })
-    const state = JSON.parse(await control.command('getWorkbenchDebugSnapshot', 'body'))
-    assert.equal(state.workbench?.currentRuntimeTask?.taskId, address.taskId)
   }
 
   return {
@@ -214,8 +214,7 @@ export function createProjectSpacePickerRegression({
       await reloadMainWindow(control, 'The picker regression could not reconnect after reload')
       await openTask(control, address)
       await control.command('waitFor', boundContext, { timeoutMs: uiTimeoutMs })
-      const boundChange = `${boundContext} [data-testid="work-item-change-board"]`
-      await control.command('clickWhenEnabled', boundChange, {
+      await control.command('clickWhenEnabled', CHANGE, {
         visible: true,
         timeoutMs: uiTimeoutMs,
       })

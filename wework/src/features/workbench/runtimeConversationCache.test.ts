@@ -1653,6 +1653,84 @@ describe('runtimeConversationCache', () => {
     ])
   })
 
+  test.each([
+    {
+      type: 'assistant_done' as const,
+      itemId: 'old-answer',
+      content: 'Stale completion',
+    },
+    {
+      type: 'assistant_error' as const,
+      error: 'stale failure',
+      errorType: 'runtime_error',
+    },
+  ])('ignores a late $type from another turn during cancellation', terminalAction => {
+    applyRuntimeConversationAction(address, {
+      type: 'assistant_started',
+      taskId: address.taskId,
+      subtaskId: 'turn-old',
+    })
+    applyRuntimeConversationAction(address, {
+      type: 'user_added',
+      message: {
+        id: 'client-user-current',
+        role: 'user',
+        content: 'Stop this prompt',
+        status: 'done',
+      },
+    })
+
+    const interruption = optimisticallyInterruptRuntimeConversation(address)
+    applyRuntimeConversationAction(address, {
+      type: 'assistant_started',
+      taskId: address.taskId,
+      subtaskId: 'turn-current',
+      clientUserMessageId: 'client-user-current',
+    })
+    applyRuntimeConversationAction(address, {
+      ...terminalAction,
+      subtaskId: 'turn-old',
+    })
+
+    expect(interruption).toMatchObject({ terminalObserved: false })
+    expect(getRuntimeConversationTurns(address).at(-1)).toMatchObject({
+      id: 'turn-current',
+      status: 'cancelled',
+      stoppedNotice: true,
+    })
+  })
+
+  test('ignores a late cancellation from another turn when cancellation is rejected', () => {
+    applyRuntimeConversationAction(address, {
+      type: 'assistant_started',
+      taskId: address.taskId,
+      subtaskId: 'turn-old',
+    })
+    applyRuntimeConversationAction(address, {
+      type: 'user_added',
+      message: {
+        id: 'client-user-current-cancel',
+        role: 'user',
+        content: 'Keep this prompt after rejection',
+        status: 'done',
+      },
+    })
+
+    const interruption = optimisticallyInterruptRuntimeConversation(address)
+    applyRuntimeConversationAction(address, {
+      type: 'assistant_cancelled',
+      subtaskId: 'turn-old',
+    })
+
+    expect(interruption).toMatchObject({ terminalObserved: false })
+    restoreOptimisticallyInterruptedRuntimeConversation(address, interruption!)
+    expect(getRuntimeConversationTurns(address).at(-1)).toMatchObject({
+      id: null,
+      clientUserMessageId: 'client-user-current-cancel',
+      status: 'pending',
+    })
+  })
+
   test('keeps a cancelled turn stopped when a late assistant error arrives', () => {
     applyRuntimeConversationAction(address, {
       type: 'assistant_started',

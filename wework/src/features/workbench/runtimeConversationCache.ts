@@ -409,7 +409,7 @@ export function applyRuntimeConversationAction(
     (action.type === 'assistant_done' ||
       action.type === 'assistant_error' ||
       action.type === 'assistant_cancelled') &&
-    currentTurns.some(turn => runtimeTurnMatchesInterruptionIdentity(turn, interruption))
+    runtimeTerminalActionTargetsInterruption(currentTurns, interruption, action.subtaskId)
   ) {
     // updateTurn intentionally ignores late terminal events after a real cancellation.
     // Allow them through only while an optimistic interruption is awaiting its ack so
@@ -780,6 +780,19 @@ function runtimeTurnMatchesInterruptionIdentity(
     ? turn.id === interruption.turnId
     : Boolean(interruption.clientUserMessageId) &&
         turn.clientUserMessageId === interruption.clientUserMessageId
+}
+
+function runtimeTerminalActionTargetsInterruption(
+  turns: RuntimeConversationTurn[],
+  interruption: OptimisticRuntimeTurnInterruption,
+  subtaskId: string | undefined
+): boolean {
+  return (
+    Boolean(subtaskId) &&
+    turns.some(
+      turn => turn.id === subtaskId && runtimeTurnMatchesInterruptionIdentity(turn, interruption)
+    )
+  )
 }
 
 export function markRuntimeConversationGuidanceInterrupted(
