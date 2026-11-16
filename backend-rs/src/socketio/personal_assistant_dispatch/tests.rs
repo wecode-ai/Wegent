@@ -359,6 +359,56 @@ async fn an_unowned_or_unregistered_device_cannot_persist_consent() {
 }
 
 #[tokio::test]
+async fn endpoint_authority_uses_current_locked_consent_instead_of_snapshot_grants() {
+    use crate::sql_test_support::mysql_rows::{MysqlRows, Value as SqlValue};
+
+    for current_grant in [false, true] {
+        let fixture = MysqlRows::start(move |sql| {
+            assert!(sql.contains("FROM kinds"), "{sql}");
+            let mut role = advertised_role(7);
+            // The initial alias lookup models an established repeatable-read
+            // snapshot; only the locking read observes the current consent.
+            role["enabled"] = json!(!sql.ends_with("FOR UPDATE") || current_grant);
+            let document = json!({"spec":{"deviceType":"local",
+                "personalAssistantDispatch":{"version":1,"roles":[role]}}});
+            vec![
+                ("kinds_id", SqlValue::I64(9)),
+                ("kinds_name", SqlValue::Text("owned-device".into())),
+                ("kinds_json", SqlValue::Text(document.to_string())),
+            ]
+        })
+        .await;
+
+        let permitted = fixture
+            .mysql
+            .with_transaction(async |tx| {
+                endpoint_permitted_on(&mut &mut *tx, 7, "owned-device", "1001", &json!([]))
+                    .await
+                    .map_err(dependency_error)
+            })
+            .await
+            .unwrap();
+
+        assert_eq!(permitted, current_grant);
+        let queries = fixture.queries();
+        assert_eq!(queries.len(), 2, "{queries:?}");
+        assert!(!queries[0].ends_with("FOR UPDATE"));
+        let current = &queries[1];
+        for filter in [
+            "kinds.user_id = ?",
+            "kinds.kind = 'Device'",
+            "kinds.namespace = 'default'",
+            "kinds.is_active = true",
+            "kinds.id=?",
+            "kinds.name=?",
+        ] {
+            assert!(current.contains(filter), "{current}");
+        }
+        assert!(current.ends_with("FOR UPDATE"), "{current}");
+    }
+}
+
+#[tokio::test]
 async fn personal_authority_rejects_stale_owners_and_inactive_users() {
     let mut tx = RecordingTransaction::default();
     let mut row = execution("running");

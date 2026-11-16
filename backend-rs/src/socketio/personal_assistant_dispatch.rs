@@ -346,7 +346,17 @@ pub(crate) async fn endpoint_permitted_on(
     project_id: &str,
     tags: &Value,
 ) -> anyhow::Result<bool> {
-    let device = resolve_owned_device_alias_on(query, owner, route).await?;
+    let Some(resolved) = resolve_owned_device_alias_on(query, owner, route).await? else {
+        return Ok(false);
+    };
+    // Alias discovery may read an earlier repeatable-read snapshot. Consent
+    // must come from the current row and stay locked through publication.
+    let device: Option<DeviceKindRow> = query
+        .fetch_optional(
+            format!("{KINDS_DEVICE_QUERY} AND kinds.id=? AND kinds.name=? FOR UPDATE"),
+            (owner, resolved.id, resolved.name.as_str()),
+        )
+        .await?;
     Ok(device.is_some_and(|device| {
         if authority::truthy(&device.json["spec"]["workspaceOwnerId"]) {
             return false;

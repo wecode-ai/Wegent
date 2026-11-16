@@ -4,7 +4,7 @@ sidebar_position: 1
 
 # W-0061 复现与实现证据
 
-本次实现已适配主线 `c2fdb7266`。保留主线的 Rust Socket.IO 主路径、
+本次实现已适配主线 `3926d36a8`。保留主线的 Rust Socket.IO 主路径、
 拆分后的 Task 存储、稳定 Issue 会话、assignment receipt 和 admission reservation。
 
 ## 可检验的触发条件
@@ -21,6 +21,8 @@ sidebar_position: 1
 - Device 转为工作区设备后，个人端点声明仍可能被 REST admission 使用。
   五个所有权用例先得到 3 failed / 2 passed；加入与 Rust 一致的所有权检查后，
   包含声明、接单和会话权限的 47 项回归全部通过。
+- Rust 端点授权使用当前锁定的 Device 行，避免沿用事务早先读取的授权快照。
+  SDK 行 fixture 的旧授权 / 新撤权回归先稳定失败，修复后整个声明模块 12 项通过。
 
 ## 实现边界
 
@@ -42,7 +44,7 @@ sidebar_position: 1
 | 检查                                                                       | 结果                                     |
 | -------------------------------------------------------------------------- | ---------------------------------------- |
 | Python：17 文件，权限、assignment、execution、绑定、取消、时间线和列表投影 | 424 passed                               |
-| Rust Backend 全库单元测试                                                  | 3677 passed，0 failed，39 项原有 ignored |
+| Rust Backend 全库单元测试                                                  | 3678 passed，0 failed，39 项原有 ignored |
 | Executor：默认助理、既有 stand-in、端点声明                                | 351 个独立用例通过（10 + 338 + 3）       |
 | 共享 UI 状态、时间线、卡片和 Runtime 链接                                  | 86 passed                                |
 | 桌面活动、API、编辑器和执行投影                                            | 152 passed                               |
