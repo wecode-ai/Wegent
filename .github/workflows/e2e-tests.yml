@@ -882,6 +882,23 @@ jobs:
         if: matrix.dingtalkOAuth
         run: bash .github/scripts/setup-dingtalk-oauth-e2e.sh
 
+      # Terminal handoff faults revoke default-user commands. Keep consumers on
+      # equivalent independent permissions so a fault cannot terminate Celery.
+      - name: Isolate consumers from Backend Redis fault injection
+        if: matrix.shardIndex == 1
+        working-directory: ./backend
+        run: |
+          uv run --no-sync python - <<'PY'
+          import os
+          from redis import Redis
+
+          with Redis.from_url(os.environ['REDIS_URL']) as redis:
+              redis.execute_command(
+                  'ACL', 'SETUSER', 'e2e-services', 'reset', 'on', 'nopass',
+                  '+@all', '~*', '&*',
+              )
+          PY
+
       - name: Start backend server
         env:
           PYTHONPATH: ${{ matrix.shardIndex == 4 && format('{0}/backend/tests/e2e/event_probe:..:.:tests/e2e', github.workspace) || '..:.:tests/e2e' }}
@@ -931,7 +948,9 @@ jobs:
         working-directory: ./backend
         env:
           DATABASE_URL: mysql+pymysql://root:test123@mysql:3306/wegent_test
-          REDIS_URL: redis://redis:6379/0
+          CELERY_BROKER_URL: ${{ matrix.shardIndex == 1 && 'redis://e2e-services:@redis:6379/0' || 'redis://redis:6379/0' }}
+          CELERY_RESULT_BACKEND: ${{ matrix.shardIndex == 1 && 'redis://e2e-services:@redis:6379/0' || 'redis://redis:6379/0' }}
+          REDIS_URL: ${{ matrix.shardIndex == 1 && 'redis://e2e-services:@redis:6379/0' || 'redis://redis:6379/0' }}
           SECRET_KEY: test-secret-key-for-ci-testing
           ENVIRONMENT: development
           DB_AUTO_MIGRATE: "false"
@@ -978,6 +997,7 @@ jobs:
       - name: Start Chat Shell server
         working-directory: ./backend
         env:
+          REDIS_URL: ${{ matrix.shardIndex == 1 && 'redis://e2e-services:@redis:6379/0' || 'redis://redis:6379/0' }}
           CHAT_SHELL_MODE: http
           CHAT_SHELL_STORAGE_TYPE: remote
           CHAT_SHELL_REMOTE_STORAGE_URL: http://localhost:8000/api/internal
@@ -1008,9 +1028,9 @@ jobs:
           WEGENT_E2E_EVENT_PROBE_DIR: ${{ matrix.shardIndex == 4 && format('{0}/.ci-artifacts/knowledge-event-probe', github.workspace) || '' }}
           BACKEND_BASE_URL: http://localhost:8000
           BACKEND_INTERNAL_TOKEN: ${{ env.INTERNAL_SERVICE_TOKEN }}
-          CELERY_BROKER_URL: redis://redis:6379/0
-          CELERY_RESULT_BACKEND: redis://redis:6379/1
-          REDIS_URL: redis://redis:6379/0
+          CELERY_BROKER_URL: ${{ matrix.shardIndex == 1 && 'redis://e2e-services:@redis:6379/0' || 'redis://redis:6379/0' }}
+          CELERY_RESULT_BACKEND: ${{ matrix.shardIndex == 1 && 'redis://e2e-services:@redis:6379/1' || 'redis://redis:6379/1' }}
+          REDIS_URL: ${{ matrix.shardIndex == 1 && 'redis://e2e-services:@redis:6379/0' || 'redis://redis:6379/0' }}
           MINERU_API_BASE_URL: http://localhost:9999/mineru
           MINERU_POLL_INTERVAL_SECONDS: "1"
           KNOWLEDGE_CONVERSION_QUEUE: knowledge_conversion
@@ -1072,7 +1092,7 @@ jobs:
       - name: Start remote workspace Executor Manager
         working-directory: ./executor_manager
         env:
-          REDIS_URL: redis://redis:6379/0
+          REDIS_URL: ${{ matrix.shardIndex == 1 && 'redis://e2e-services:@redis:6379/0' || 'redis://redis:6379/0' }}
           DOCKER_HOST_ADDR: host.docker.internal
           SERVICE_POOL: e2e-workspace
           EXECUTOR_READY_MAX_RETRIES: "30"

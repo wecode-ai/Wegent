@@ -44,6 +44,11 @@ admission reservation、失败启动恢复和项目配置入口。
   授权角色丢失。App 声明现在精确读取安装身份，缺失时返回空声明，不借用注册身份；
   非 App 继续使用自己的设备身份。相关 21 项回归通过，读取不迁移或改写授权。
   本地保存不是服务端声明确认；声明仍通过现有注册和心跳发布。
+- 同轮 Platform shard 1 的订阅执行全部停在 PENDING。日志确认前置故障注入撤销
+  共享 Redis default 用户的 ZADD 后，Celery 在 QoS 写入时不可恢复退出。
+  CI 现在让独立消费者使用同一 Redis/DB 的等权专用用户，Backend 仍使用原故障目标；
+  原故障、恢复及业务断言均保留。任务专用 Redis 的实际 Kombu 协议验证先复现拒绝，
+  隔离后通过，并确认 Backend 的 ZADD/PUBLISH/SUBSCRIBE 故障仍被拒绝且可恢复。
 
 ## 实现边界
 
