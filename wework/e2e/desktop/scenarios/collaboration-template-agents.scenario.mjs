@@ -479,6 +479,57 @@ export function createDesktopScenario({
         reducedGroup.stages.map(stage => stage.name),
         definitions.groups[0].stages.filter(stage => !stage.ownerRole).map(stage => stage.name)
       )
+      // User story: dependency errors preserve the Agent; both removals require confirmation.
+      const removedAgent = reducedAgents[0]
+      await selectCollaborationProjectView(control, CONTENT, 'manage', uiTimeoutMs)
+      await control.command('click', selector('collaboration-project-settings-agents'))
+      await control.command('clickWhenEnabled', selector(`project-agent-delete-${removedAgent.id}`))
+      await control.command('clickWhenEnabled', selector('project-agent-delete-confirm'))
+      await control.command(
+        'waitFor',
+        `${selector('project-agent-delete-dialog')} [role="alert"]`,
+        { text: '替换或移除' }
+      )
+      assert.ok(
+        (await cloudRequest(`/api/v1/cloud-projects/${reduced.id}/chat-agents`, 'GET')).some(
+          agent => agent.id === removedAgent.id
+        )
+      )
+      await control.command('click', selector('project-agent-delete-cancel'))
+      await control.command('click', selector('collaboration-project-settings-groups'))
+      await control.command('click', selector(`collaboration-group-remove-${reducedGroup.id}`))
+      await control.command('waitFor', selector('collaboration-group-delete-dialog'))
+      await control.command('click', selector('collaboration-group-delete-cancel'))
+      assert.equal(
+        (await cloudRequest(`/api/v1/cloud-projects/${reduced.id}/collaboration-groups`, 'GET'))
+          .items.length,
+        1
+      )
+      await control.command('click', selector(`collaboration-group-remove-${reducedGroup.id}`))
+      await control.command('clickWhenEnabled', selector('collaboration-group-delete-confirm'))
+      await control.command('waitFor', selector('collaboration-group-delete-dialog'), {
+        visible: false,
+      })
+      assert.equal(
+        (await cloudRequest(`/api/v1/cloud-projects/${reduced.id}/collaboration-groups`, 'GET'))
+          .items.length,
+        0
+      )
+      await control.command('click', selector('collaboration-project-settings-agents'))
+      await control.command('clickWhenEnabled', selector(`project-agent-delete-${removedAgent.id}`))
+      await control.command('clickWhenEnabled', selector('project-agent-delete-confirm'))
+      await control.command('waitFor', selector(`project-agent-delete-${removedAgent.id}`), {
+        visible: false,
+      })
+      assert.ok(
+        !(await cloudRequest(`/api/v1/cloud-projects/${reduced.id}/chat-agents`, 'GET')).some(
+          agent => agent.id === removedAgent.id
+        )
+      )
+      assert.ok(
+        (await cloudRequest(`/api/v1/cloud-projects/${copied.id}/chat-agents`, 'GET')).length > 0,
+        'Deleting a project definition must preserve other projects'
+      )
     },
   }
 }

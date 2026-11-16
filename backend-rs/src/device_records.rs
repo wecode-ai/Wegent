@@ -44,6 +44,8 @@ use crate::devices::{internal_error, online_key};
 use crate::http_compat::FastApiError;
 use crate::state::AppState;
 
+pub(crate) mod retention;
+
 /// `DeviceType.CLOUD.value` (`app.schemas.device`).
 const CLOUD_DEVICE_TYPE: &str = "cloud";
 

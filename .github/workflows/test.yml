@@ -336,6 +336,8 @@ jobs:
           set -o pipefail
           cargo test --locked --lib cloud_projects::members::roster_mysql_tests -- --ignored \
             2>&1 | tee ../.ci-artifacts/backend-rs-tests/project-roster-mysql.log
+          cargo test --locked --lib cloud_projects::agent_deletion_mysql_tests -- --ignored \
+            2>&1 | tee ../.ci-artifacts/backend-rs-tests/project-agent-deletion-mysql.log
 
       - name: Verify project coordination binding ownership and revocation with MySQL
         working-directory: backend-rs

@@ -443,6 +443,8 @@ export interface SharedWorkspaceAutomationExecutionCatalogApi {
 export interface WorkspaceProjectAgent extends CollaborationAgent {
   status?: string;
   systemPrompt?: string;
+  executionPolicy?: import("../agent-form/runnerRouting").AgentExecutionPolicy | null;
+  modelPolicy?: import("../agent-form/runnerRouting").AgentModelPolicy | null;
   [key: string]: unknown;
 }
 
@@ -926,6 +928,7 @@ export interface SharedWorkspaceRuntimeProfilesApi {
 }
 
 export interface SharedWorkspaceAgentsApi {
+  remove(projectId: string, agentId: string, version: number): Promise<void>;
   list(
     projectId: string,
     options?: { includeArchived?: boolean; forceRefresh?: boolean },

@@ -817,6 +817,14 @@ const sharedMessages: Record<
       "本地项目仅支持使用 Codex 或 Claude Code 执行器的智能体",
     "todo.project_owned_agent": "项目智能体",
     "todo.edit_project_agent": "编辑",
+    "todo.delete_project_agent": "删除",
+    "todo.delete_project_agent_title": "删除项目智能体？",
+    "todo.delete_project_agent_hint":
+      "删除后，已有任务和执行历史会保留，共享智能体不受影响。",
+    "todo.delete_project_agent_failed": "删除失败，请重试",
+    "todo.project_agent_in_use":
+      "此智能体仍在协作小组中。请先替换或移除小组成员，再删除。",
+    "todo.project_agent_managed": "当前设备智能体由系统管理，无法删除。",
     "todo.update_project_agent_failed": "更新项目智能体失败",
     "todo.codex_runtime_selection_hint":
       "运行环境在启动任务时选择，不与智能体绑定。",
@@ -1413,6 +1421,15 @@ const sharedMessages: Record<
       "Local projects support only Agents that use the Codex or Claude Code runtime.",
     "todo.project_owned_agent": "Project agent",
     "todo.edit_project_agent": "Edit",
+    "todo.delete_project_agent": "Delete",
+    "todo.delete_project_agent_title": "Delete project Agent?",
+    "todo.delete_project_agent_hint":
+      "Existing tasks, execution history and the shared Agent will be kept.",
+    "todo.delete_project_agent_failed": "Deletion failed. Please try again.",
+    "todo.project_agent_in_use":
+      "This Agent is still in a collaboration group. Replace or remove it from the group first.",
+    "todo.project_agent_managed":
+      "The current-device Agent is managed by the system and cannot be deleted.",
     "todo.update_project_agent_failed": "Failed to update the project agent",
     "todo.codex_runtime_selection_hint":
       "Choose an execution environment when starting a run; it is not bound to the agent.",

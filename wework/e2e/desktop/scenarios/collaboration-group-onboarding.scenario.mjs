@@ -202,6 +202,10 @@ export function createDesktopScenario({ uiTimeoutMs, workbenchReadyTimeoutMs }) 
         0,
         'Project creation still exposed manual default collaboration-group creation'
       )
+      await control.command(
+        'click',
+        '[data-testid="collaboration-project-create-collaborator-tab-agents"]'
+      )
       const defaultAgentOptionTestId = await waitForTestId(
         control,
         'collaboration-project-create-agent-',

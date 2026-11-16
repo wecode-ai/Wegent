@@ -86,6 +86,10 @@
     "working": "正在处理…"
   },
   "issue_creation": {
+    "configure_devices": "选择或添加设备",
+    "runtime_label": "运行环境（可选）",
+    "runtime_optional_hint": "可先创建事项，运行智能体时再配置。",
+
     "add_participants": "添加参与者",
     "participant_type": "参与者类型",
     "participant_human": "人员",
@@ -4341,6 +4345,7 @@
     "runner_personal_devices": "个人设备",
     "runner_shared_devices": "共享设备",
     "runner_environment_unavailable": "环境不可用",
+    "runner_environment_setup_hint": "尚未配置运行环境。请到项目设置 → 执行环境添加设备，再重试。",
     "runner_environment_unavailable_hint": "原执行环境已不可用或无权访问，请重新选择环境。",
     "runner_model_requires_environment": "选择执行环境后可配置模型。",
     "runner_account_unknown": "未报告账号来源",

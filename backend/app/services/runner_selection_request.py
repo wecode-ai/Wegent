@@ -84,7 +84,7 @@ def attach_runner_selection(db: Session, error: HTTPException, **kwargs: Any) ->
             "model_policy": config["model_policy"],
             "environments": environments,
             "cloud_models": cloud_model_catalog(db, kwargs["user_id"]),
-            "cloud_only": config["execution_policy"]["mode"] != "fixed",
+            "cloud_only": config["execution_policy"]["mode"] == "project_pool",
             "automatic": bool(kwargs.get("automatic")),
             **({"recovery_from_environment_id": bound} if recovery else {}),
         }

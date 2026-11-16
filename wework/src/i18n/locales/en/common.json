@@ -86,6 +86,10 @@
     "working": "Working…"
   },
   "issue_creation": {
+    "configure_devices": "Choose or add a device",
+    "runtime_label": "Runtime (optional)",
+    "runtime_optional_hint": "You can create the Issue now and configure a runtime when starting an Agent.",
+
     "add_participants": "Add participants",
     "participant_type": "Participant type",
     "participant_human": "People",
@@ -4346,6 +4350,7 @@
     "runner_personal_devices": "Personal devices",
     "runner_shared_devices": "Shared devices",
     "runner_environment_unavailable": "Environment unavailable",
+    "runner_environment_setup_hint": "No runtime configured. Add a device in Project settings → Execution environments, then try again.",
     "runner_environment_unavailable_hint": "The previous environment is unavailable or no longer authorized. Choose another environment.",
     "runner_model_requires_environment": "Choose an execution environment to configure models.",
     "runner_account_unknown": "Account source not reported",

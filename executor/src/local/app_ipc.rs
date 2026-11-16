@@ -2743,16 +2743,19 @@ async fn handle_task_runtime_request(method: &str, params: Value) -> Result<Valu
                     .map_err(task_runtime_error)?,
             )
         }
-        "chat_agents.archive" => {
+        "chat_agents.archive" | "chat_agents.delete" => {
             let project_id = required_task_string(&params, "project_id")?;
             let agent_id = required_task_string(&params, "agent_id")?;
             let version = params
                 .get("version")
                 .and_then(Value::as_i64)
                 .ok_or_else(|| AppIpcError::new("bad_request", "version is required"))?;
-            runtime
-                .archive_chat_agent(project_id, agent_id, version)
-                .map_err(task_runtime_error)?;
+            if method == "chat_agents.delete" {
+                runtime.delete_chat_agent(project_id, agent_id, version)
+            } else {
+                runtime.archive_chat_agent(project_id, agent_id, version)
+            }
+            .map_err(task_runtime_error)?;
             Ok(json!({}))
         }
         "executions.approve" | "executions.reject" => {
@@ -3525,12 +3528,12 @@ pub fn normalize_device_id(device_id: impl Into<String>) -> String {
 fn local_app_command(command_key: &str) -> Option<LocalAppCommandDefinition> {
     match command_key {
         "pwd" => Some(command_definition("pwd", &["pwd"], None)),
-        "home_dir" => Some(command_definition("printenv HOME", &["printenv", "HOME"], None)),
-        "project_workspace_root" => Some(command_definition(
-            "project_workspace_root",
-            &[],
+        "home_dir" => Some(command_definition(
+            "printenv HOME",
+            &["printenv", "HOME"],
             None,
         )),
+        "project_workspace_root" => Some(command_definition("project_workspace_root", &[], None)),
         "ls_dirs" => Some(command_definition(
             "ls -a -p",
             &["ls", "-a", "-p"],
@@ -3553,7 +3556,11 @@ fn local_app_command(command_key: &str) -> Option<LocalAppCommandDefinition> {
             super::command::GIT_BRANCH_LIST_ARGV,
             None,
         )),
-        "git_checkout" => Some(command_definition("git checkout", &["git", "checkout"], None)),
+        "git_checkout" => Some(command_definition(
+            "git checkout",
+            &["git", "checkout"],
+            None,
+        )),
         "git_checkout_new" => Some(command_definition(
             "git checkout -b",
             &["git", "checkout", "-b"],
@@ -3591,7 +3598,13 @@ fn local_app_command(command_key: &str) -> Option<LocalAppCommandDefinition> {
         )),
         "git_github_pull_request_view" => Some(command_definition(
             "gh pr view --json <status-fields> <url>",
-            &["gh", "pr", "view", "--json", "number,url,title,state,isDraft,statusCheckRollup,mergeable,mergeStateStatus,mergedAt,updatedAt"],
+            &[
+                "gh",
+                "pr",
+                "view",
+                "--json",
+                "number,url,title,state,isDraft,statusCheckRollup,mergeable,mergeStateStatus,mergedAt,updatedAt",
+            ],
             Some(PostProcessor::Json),
         )),
         "git_gitlab_merge_request_view" => Some(command_definition(
@@ -3698,7 +3711,11 @@ fn local_app_command(command_key: &str) -> Option<LocalAppCommandDefinition> {
             ],
             None,
         )),
-        "git_add_all" => Some(command_definition("git add --all", &["git", "add", "--all"], None)),
+        "git_add_all" => Some(command_definition(
+            "git add --all",
+            &["git", "add", "--all"],
+            None,
+        )),
         "git_apply_patch" => Some(command_definition(
             "git apply <validated patch>",
             &["git", "apply"],

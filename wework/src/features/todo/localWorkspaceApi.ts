@@ -735,6 +735,8 @@ export function createLocalWorkspaceApi(
         },
     agents: projectAgentApi
       ? {
+          remove: (projectId, agentId, version) =>
+            projectAgentApi.remove(projectId, agentId, version),
           list: listProjectAgents,
           create: async (projectId, input) =>
             toProjectAgent(await projectAgentApi.create(projectId, toLocalAgentCreateInput(input))),
@@ -764,6 +766,7 @@ export function createLocalWorkspaceApi(
           list: async () => [],
           create: unavailable,
           update: unavailable,
+          remove: unavailable,
         },
     projects: {
       ...delivery.projects,

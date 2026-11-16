@@ -76,3 +76,11 @@ The startup command writes the backend address into the device's environment (`W
 When running a self-hosted backend, set `WEGENT_BACKEND_PUBLIC_URL` (and `WEGENT_SOCKET_URL` when it differs) to an address reachable from devices so newly generated commands carry the correct address.
 
 Use **Copy to another device** in the task menu to continue work elsewhere. A running response is stopped before the copy is created.
+
+<a id="collaboration-device-defaults"></a>
+
+## Collaboration defaults and offline registrations
+
+Open **Collaboration → Collaboration management → Execution devices** and choose an online device under **Personal default execution environment**. Changes save immediately. New Issues reuse this user preference; **Runtime (optional)** can change it. For project Issues, **Choose or add a device** reuses the project grant flow in a popover without losing the draft. Project permissions and fixed Agent policies are still checked at execution.
+
+The directory and selectors show online devices only. Concurrent application installations on one computer may have separate entries; local and registered views of the same Runtime are joined. Offline registrations older than seven days are automatically deactivated only when they have no queued or running work. Tasks and execution history are retained. Failed status reads never permit cleanup; legacy records without a known last-online time begin their retention period when first observed offline.

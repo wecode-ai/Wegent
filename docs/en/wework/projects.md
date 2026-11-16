@@ -41,15 +41,11 @@ Global catalogs, group settings, and project settings remain separate levels. Co
 | Group agents/teams                | Group settings → Collaboration members → Agents / Teams; add/create and configure lead, members, rules and execution requirements, then save | Removing a shared association differs from deleting a project-owned group; inspect impact                                   |
 | Group execution environment       | Group settings → Execution environment → add/share                                                                                           | Separate from project repository initialization; depends on storage type and capabilities                                   |
 
-### Clean up offline device registrations
+### Offline registration retention
 
 <a id="offline-device-cleanup"></a>
 
-Open **Top + → Collaboration → Devices**. Use the device ID and last online time to find the historical registration. Select **Delete offline device** on its row, review the registration number and affected groups, then confirm.
-
-You can remove a registration you own when it is offline and has no running tasks. The current device is protected, as are records that could belong to it while its local identity is unavailable. Removing the registration takes it out of the device selectors in those groups and preserves device files and execution history. See [Offline Device Handling](../wegent/user-guide/ai-devices/local-device-support.md#offline-device-cleanup) for last online display and reconnection behavior.
-
-<a id="register-a-space-runner"></a>
+**Collaboration → Collaboration management → Execution devices** shows online devices only. Registrations offline for more than seven days, with no queued or running work, are automatically deactivated while preserving tasks and execution history. Unavailable online state prevents cleanup. Legacy records with no known last-online time start the retention period when first observed offline.
 
 ### Register a group Runner
 
@@ -61,7 +57,7 @@ Credentials are shown only this time. Do not put their values in chat, documents
 
 <a id="collaboration-template-models"></a>
 
-When applying a template with Agents to an existing project or workspace, choose their model in **Confirm collaboration setup**, then click **Apply template**. Each Agent runtime has its own model field; new Agents of the same runtime use that selection. An existing default is preselected and can be changed without changing device defaults. Applying is blocked until a model is selected. If no models are available, add one in Settings and **Refresh** the list in the dialog. Failed loads can be refreshed without losing team names or member choices.
+In **Confirm collaboration setup**, choose **Apply template** directly or expand **Runtime (optional)** to select an environment and models. Agents of the same runtime share the selected model, without changing device defaults. Incomplete options are requested when execution starts. Template automation remains disabled until its execution policies are configured; enable it in project settings afterwards. Failed catalog loads can be refreshed without losing names or member choices.
 
 <a id="template-controls"></a>
 
@@ -127,7 +123,7 @@ Open **Milestones** in the project. The Issue-detail selector only associates ex
 | Discuss, assign or move            | Issue details → discussion composer → Assign to or Move to → select target → Send and update                                | Selection only stages changes; without text, select Update issue; use × to cancel a selection                      |
 | Close and reopen                   | Issue details → arrow beside Send inside the composer, bottom right → Close issue or Reopen issue                           | With a draft, the action is Comment and close; details stay open and closure uses the existing Completed state     |
 | Manual work                        | Update progress/completion using the status selector; communicate explanations and results through comments and attachments | Ordinary properties autosave; discussion assignment submits with Send, not an extra acceptance form                |
-| Archive Issue                      | Details → Actions → Archive issue → Confirm archive                                                                | Archival, not permanent deletion; check subtasks/linked runs and do not assume success if stopping execution fails |
+| Archive Issue                      | Details → Actions → Archive issue → Confirm archive                                                                         | Archival, not permanent deletion; check subtasks/linked runs and do not assume success if stopping execution fails |
 | Restore Issue                      | Project board → Archived → Restore; Load more for further entries                                                           | Different from archived runtime conversations in global settings; project visibility still applies                 |
 
 Assignee and destination chips in the discussion composer stage changes for the next submission. Selecting them neither posts a comment nor updates the issue. **Send and update** saves the comment first, then applies assignment and lane changes. With no comment, **Update issue** applies changes alone. With no staged changes, sending retains ordinary comment behavior. Cancel a staged change with its × control, **Keep current** in the assignee menu, or **Cancel lane change** in the destination menu. A comment accompanying changes records discussion without starting an extra AI execution for the previous assignee; assignment automation keeps its existing behavior.
@@ -237,11 +233,11 @@ The storage location cannot be changed after the project is created. The task so
 
 ### Create a cloud collaboration project from a template
 
-Choose a template through **Discover templates** when creating a project. Bundled Agents use the current device and its default model. The device must be online and accessible to the signed-in account; importing into an existing project also requires a device grant for that project. Historical offline records for the same desktop neither block creation nor become execution targets.
+Choose a template through **Discover templates** in project creation. **Add collaborator** stays available: People, Agents and Teams share one search query, and changing template roles preserves manually added collaborators.
 
-If the current execution device is unavailable, check its cloud connection and use permissions. If multiple online records match the same desktop, resolve the execution-device ambiguity before continuing.
+**Runtime (optional)** starts collapsed below collaborators. It lists online, usable devices; selecting one shares it with the parent group and grants it to the project. Creating a project or importing a template does not require a device or model. You may retry a failed inventory load or configure it later.
 
-After selecting a template, creation waits for the execution-device list to finish loading. If loading fails, the execution environment section shows the error and a **Retry** action; creation becomes available after a successful refresh.
+When importing into an existing project, choose **Apply template** directly or expand **Runtime (optional)** to choose an authorized device and a model. Unspecified options are selected when work runs. Starting an Agent still checks device authorization and model availability. Missing configuration prompts for setup while preserving the Issue and draft.
 
 ### Configure local project collaborators
 
@@ -601,3 +597,5 @@ Independent Issue details show invited Agents and Teams. Before **Ask AI to help
 In the Issue comment composer toolbar, use the **Assignment mode** branch icon and select **Create child Issue**, write a comment, choose an assignee, and select **Send and create child Issue**. The original comment is saved before the child is created. The selected assignee owns the child; the parent assignment remains unchanged. A failed creation or assignment keeps an actionable error, and retry reuses a child already created. Creation uses a stable operation identifier, so concurrent requests or a lost response do not create duplicate children.
 
 Use **Create child Issue** beside any existing visible comment, including comments with or without mentions. Confirming the assignee also adds a discussion reply linking to the new child. Current Issue edit and comment permissions apply; mentions grant no additional access. Children retain the stricter of parent visibility and the project default so copied comments do not become project-public.
+
+Project maintainers can choose **Project settings → AI team → Agents → Delete** and confirm removal. Existing tasks, execution history and shared source resources remain intact. Replace or remove all leader, member and stage references in collaboration groups first. System-managed current-device Agents cannot be deleted. Removing a collaboration group also requires confirmation; Cancel leaves it unchanged.

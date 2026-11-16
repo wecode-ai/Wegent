@@ -123,6 +123,7 @@ export interface CollaborationPlatformHostAdapter {
     resourceId?: string,
     source?: "local" | "cloud",
   ): void;
+  renderExecutionEnvironmentPreferences?(): ReactNode;
   renderDeviceCreator?(input: {
     source: "local" | "cloud";
     workspaceId?: string;
