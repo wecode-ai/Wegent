@@ -5,6 +5,9 @@ import { Header, create } from 'tar'
 import { afterEach, expect, test } from 'vitest'
 import { extractPhysicalRelease } from './physical-release-files.js'
 
+// Electron's patched fs must not treat the fixture's physical app.asar as an archive.
+process.noAsar = true
+
 const roots: string[] = []
 afterEach(async () => {
   await Promise.all(roots.splice(0).map(root => rm(root, { recursive: true, force: true })))
