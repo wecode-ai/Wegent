@@ -1,6 +1,6 @@
 import '@/i18n'
 
-import { render, screen, waitFor } from '@testing-library/react'
+import { act, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { useRef } from 'react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
@@ -41,6 +41,7 @@ vi.mock('@/features/workbench/useWorkbench', () => ({
 }))
 
 interface MockChatPanelProps {
+  instanceId: string
   initialInput?: string
   initialAddress?: RuntimeTaskAddress | null
   emptyStateText?: string
@@ -65,6 +66,7 @@ interface MockChatPanelProps {
 
 vi.mock('@/components/layout/workspace-panels/TemporaryChatPanel', () => ({
   TemporaryChatPanel: ({
+    instanceId,
     initialAddress,
     initialInput,
     emptyStateText,
@@ -77,6 +79,7 @@ vi.mock('@/components/layout/workspace-panels/TemporaryChatPanel', () => ({
     return (
       <div
         data-testid="mock-chat-panel"
+        data-instance-id={instanceId}
         data-task-id={initialAddress?.taskId ?? ''}
         data-initial-input={initialInput ?? ''}
         data-mount-id={mountId}
@@ -300,7 +303,9 @@ describe('ProjectSpaceChatSidebar', () => {
       taskId: 'new-task',
       workspacePath: '/workspace/project',
     }
+    let lateAddress: ((address: RuntimeTaskAddress) => void) | undefined
     mocks.createProjectRuntimeTask.mockImplementation(async (_message, options) => {
+      lateAddress = options.onRuntimeTaskOptimisticOpen
       options.onRuntimeTaskOptimisticOpen?.(address)
       return address
     })
@@ -351,6 +356,10 @@ describe('ProjectSpaceChatSidebar', () => {
     expect(window.localStorage.getItem('wework-project-space-chat:backend:11')).toBe(
       'device-1:new-task'
     )
+    expect(screen.getByTestId('mock-chat-panel')).toHaveAttribute(
+      'data-instance-id',
+      'project-space:backend:11:device-1:new-task'
+    )
 
     mocks.state.runtimeWork.chats = [
       ...mocks.state.runtimeWork.chats,
@@ -381,6 +390,49 @@ describe('ProjectSpaceChatSidebar', () => {
     expect(screen.getByTestId('mock-chat-panel')).toHaveAttribute(
       'data-mount-id',
       createdChatMountId
+    )
+    expect(screen.getByTestId('mock-chat-panel')).toHaveAttribute(
+      'data-instance-id',
+      'project-space:backend:11:device-1:new-task'
+    )
+    // Summary hydration must not switch the live composer's draft scope.
+    const hydratedChats = mocks.state.runtimeWork.chats
+    mocks.state.runtimeWork.chats = []
+    rerender(<ProjectSpaceChatSidebar project={project} localProjects={[]} onClose={vi.fn()} />)
+    expect(screen.getByTestId('mock-chat-panel')).toHaveAttribute(
+      'data-instance-id',
+      'project-space:backend:11:device-1:new-task'
+    )
+    mocks.state.runtimeWork.chats = hydratedChats
+    rerender(
+      <ProjectSpaceChatSidebar
+        project={{ ...project, id: 12 }}
+        localProjects={[]}
+        onClose={vi.fn()}
+      />
+    )
+    expect(screen.getByTestId('mock-chat-panel')).toHaveAttribute(
+      'data-instance-id',
+      'project-space:backend:12:device-1:other-project-task'
+    )
+    rerender(<ProjectSpaceChatSidebar project={project} localProjects={[]} onClose={vi.fn()} />)
+    await userEvent.click(screen.getByTestId('project-space-chat-menu'))
+    await userEvent.click(
+      within(screen.getByTestId('project-space-chat-menu-list')).getByText('最近会话')
+    )
+    expect(screen.getByTestId('mock-chat-panel')).toHaveAttribute(
+      'data-instance-id',
+      'project-space:backend:11:device-1:latest-task'
+    )
+    act(() => lateAddress?.(address))
+    expect(screen.getByTestId('mock-chat-panel')).toHaveAttribute(
+      'data-instance-id',
+      'project-space:backend:11:device-1:latest-task'
+    )
+    await userEvent.click(screen.getByTestId('project-space-chat-new'))
+    expect(screen.getByTestId('mock-chat-panel')).toHaveAttribute(
+      'data-instance-id',
+      'project-space:backend:11:new'
     )
   })
 })

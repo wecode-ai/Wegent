@@ -2,6 +2,7 @@ import { Check, ChevronDown, MessageSquare, Plus, Undo2, X } from 'lucide-react'
 import {
   useCallback,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -130,8 +131,21 @@ export function ProjectSpaceChatSidebar({
   const [selectedConversationKey, setSelectedConversationKey] = useState<string | null>(() =>
     window.localStorage.getItem(lastConversationStorageKey(project))
   )
+  const [boundConversation, setBoundConversation] = useState<{
+    projectKey: string
+    key: string
+  } | null>(null)
+  const projectKey = `${project.project_store}:${project.id}`
   const [creatingNew, setCreatingNew] = useState(startNew)
   const [chatInstance, setChatInstance] = useState(0)
+  const chatOwner = useMemo(() => ({ projectKey, chatInstance }), [projectKey, chatInstance])
+  const chatOwnerRef = useRef<typeof chatOwner | null>(chatOwner)
+  useLayoutEffect(() => {
+    chatOwnerRef.current = chatOwner
+    return () => {
+      chatOwnerRef.current = null
+    }
+  }, [chatOwner])
   const [width, setWidth] = useState(storedProjectChatWidth)
   const [resizing, setResizing] = useState(false)
   const [conversationMenuOpen, setConversationMenuOpen] = useState(false)
@@ -165,6 +179,12 @@ export function ProjectSpaceChatSidebar({
     : (conversations.find(conversation => conversation.key === selectedConversationKey) ??
       conversations[0] ??
       null)
+  // The accepted address owns the live composer, even before its summary arrives.
+  const draftConversationKey = creatingNew
+    ? 'new'
+    : boundConversation?.projectKey === projectKey
+      ? boundConversation.key
+      : (selectedConversation?.key ?? 'new')
   const effectiveLocalProjectId = selectedConversation?.localProjectId ?? localProjectId
   const selectedLocalProject =
     localProjects.find(candidate => candidate.id === effectiveLocalProjectId) ?? null
@@ -172,6 +192,7 @@ export function ProjectSpaceChatSidebar({
 
   const selectConversation = useCallback(
     (key: string) => {
+      setBoundConversation(null)
       setCreatingNew(false)
       setSelectedConversationKey(key)
       setChatInstance(current => current + 1)
@@ -181,6 +202,7 @@ export function ProjectSpaceChatSidebar({
   )
 
   const startNewConversation = useCallback(() => {
+    setBoundConversation(null)
     setCreatingNew(current => {
       if (current) return false
       setSelectedConversationKey(null)
@@ -191,13 +213,15 @@ export function ProjectSpaceChatSidebar({
 
   const rememberAddress = useCallback(
     (address: RuntimeTaskAddress | null) => {
-      if (!address) return
+      // A creation callback must not retarget a composer the user has left.
+      if (!address || chatOwnerRef.current !== chatOwner) return
       const key = `${address.deviceId}:${address.taskId}`
+      setBoundConversation({ projectKey, key })
       setCreatingNew(false)
       setSelectedConversationKey(key)
       window.localStorage.setItem(lastConversationStorageKey(project), key)
     },
-    [project]
+    [project, projectKey, chatOwner]
   )
 
   const runtimeContext = useMemo<
@@ -455,7 +479,7 @@ export function ProjectSpaceChatSidebar({
         key={`${project.project_store}:${project.id}:${chatInstance}`}
         currentProject={selectedLocalProject}
         source={null}
-        instanceId={`project-space:${project.project_store}:${project.id}:${selectedConversation?.key ?? 'new'}`}
+        instanceId={`project-space:${projectKey}:${draftConversationKey}`}
         testId="project-space-chat-panel"
         initialAddress={selectedConversation?.address ?? null}
         createTask={createConversation}
