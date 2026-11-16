@@ -41,7 +41,7 @@ body:has(#wework-debug-panel [role='dialog']) .electron-titlebar-drag-region {
 }
 
 /* Chromium can omit promoted sidebar overlays from a backdrop filter. */
-body:has([data-sidebar-backdrop-blur='true']) [data-testid='desktop-sidebar'] svg {
+body:has([data-testid='cloud-todo-create-panel']) [data-testid='desktop-sidebar'] {
   filter: blur(2px);
 }
 
