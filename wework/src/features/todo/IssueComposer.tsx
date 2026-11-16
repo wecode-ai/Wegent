@@ -726,6 +726,7 @@ export function IssueComposer({
   return (
     <div
       data-testid="workspace-issue-composer"
+      data-sidebar-backdrop-blur={presentation === 'popup' && !fullScreen ? 'true' : undefined}
       onClick={event => {
         if (presentation === 'popup' && !fullScreen && event.target === event.currentTarget) {
           onCancel()

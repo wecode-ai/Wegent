@@ -40,6 +40,11 @@ body:has(#wework-debug-panel [role='dialog']) .electron-titlebar-drag-region {
   -webkit-app-region: no-drag;
 }
 
+/* Chromium can omit promoted sidebar overlays from a backdrop filter. */
+body:has([data-sidebar-backdrop-blur='true']) [data-testid='desktop-sidebar'] svg {
+  filter: blur(2px);
+}
+
 /* While a panel resize drag is active, embedded browser surfaces (<webview>
    guest content or the iframe fallback) must not intercept pointer events,
    otherwise document-level drag handlers stop receiving pointermove/pointerup
