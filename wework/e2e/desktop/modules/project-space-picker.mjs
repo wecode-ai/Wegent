@@ -1,6 +1,10 @@
 import assert from 'node:assert/strict'
 import { randomUUID } from 'node:crypto'
-import { reloadMainWindow, waitForWorkbenchTask } from './workspace-flows.mjs'
+import {
+  reloadMainWindow,
+  waitForLocalExecutorReady,
+  waitForWorkbenchTask,
+} from './workspace-flows.mjs'
 
 const MENU = '[data-testid="work-item-context-menu"]'
 const OPTIONS = `${MENU} [role="option"]`
@@ -54,6 +58,7 @@ export function createProjectSpacePickerRegression({
   }
 
   async function openTask(control, address) {
+    await waitForLocalExecutorReady(control, workbenchReadyTimeoutMs)
     await control.command('waitFor', '[data-testid="workspace-tab-select-fixed-task"]', {
       visible: true,
       timeoutMs: uiTimeoutMs,

@@ -686,10 +686,26 @@ async function waitForWorkbenchTask(control, taskId, message) {
   const startedAt = Date.now()
   while (Date.now() - startedAt < DEFAULT_STEP_TIMEOUT_MS) {
     const snapshot = JSON.parse(await control.command('getWorkbenchDebugSnapshot', 'body'))
-    if (snapshot.workbench?.currentRuntimeTask?.taskId === taskId) return
+    if (
+      snapshot.workbench?.currentRuntimeTask?.taskId === taskId &&
+      !snapshot.workbench?.error &&
+      snapshot.pane?.status?.taskExecution?.known === true
+    )
+      return
     await new Promise(resolvePromise => setTimeout(resolvePromise, 100))
   }
   throw new Error(message)
+}
+
+async function waitForLocalExecutorReady(control, timeoutMs = DEFAULT_STEP_TIMEOUT_MS) {
+  const startedAt = Date.now()
+  let lastStatus = null
+  while (Date.now() - startedAt < timeoutMs) {
+    lastStatus = JSON.parse(await control.command('getLocalExecutorStatus', 'body'))
+    if (lastStatus.ready === true) return
+    await new Promise(resolvePromise => setTimeout(resolvePromise, 100))
+  }
+  throw new Error(`The local Executor did not become ready: ${JSON.stringify(lastStatus)}`)
 }
 
 function currentRuntimeTaskFromDebugSnapshot(snapshot) {
@@ -1717,6 +1733,7 @@ export {
   waitForControlSelectionOffset,
   waitForPersistedComposerInput,
   waitForWorkbenchTask,
+  waitForLocalExecutorReady,
   currentRuntimeTaskFromDebugSnapshot,
   waitForWorkbenchDebugState,
   captureVerificationScreenshot,
