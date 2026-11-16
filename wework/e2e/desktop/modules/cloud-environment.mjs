@@ -897,6 +897,9 @@ class RealCloudEnvironment {
       codexHome: this.remoteDockerCodexHome,
       logFile: 'remote-docker-executor-runtime.log',
     })
+    if (this.cloudLifecycle) {
+      await this.provisionLifecycleSandbox()
+    }
     this.remoteExecutor = await this.spawnExecutor(
       this.remoteExecutorEnv,
       this.remoteExecutorLogPath
@@ -909,8 +912,38 @@ class RealCloudEnvironment {
       this.waitForDevice(CLOUD_DEVICE_ID, this.remoteExecutorLogPath),
       this.waitForDevice(REMOTE_DOCKER_DEVICE_ID, this.remoteDockerExecutorLogPath),
     ])
-    if (this.managedCloudIdentity) {
+    if (this.managedCloudIdentity && !this.cloudLifecycle) {
       await this.configureManagedCloudIdentity()
+    }
+  }
+
+  async provisionLifecycleSandbox() {
+    const owner = await fetchJson(`${this.backendUrl}/api/users/me`, {
+      headers: { Authorization: `Bearer ${this.authToken}` },
+    })
+    // Provision both routes before connecting; legacy unconfigured cloud records are
+    // matched before the registration upsert and can bind the wrong installation.
+    for (const env of [this.remoteExecutorEnv, this.remoteDockerExecutorEnv]) {
+      const deviceId = env.DEVICE_ID
+      const record = {
+        apiVersion: 'agent.wecode.io/v1',
+        kind: 'Device',
+        metadata: { name: deviceId, namespace: 'default' },
+        spec: {
+          deviceId,
+          deviceType: 'cloud',
+          displayName: env.DEVICE_NAME,
+          isDefault: false,
+          bindShell: env.BIND_SHELL,
+          cloudConfig: { deviceId, sandboxId: MANAGED_CLOUD_SANDBOX_ID },
+        },
+      }
+      const result = await this.executeDatabase(
+        `INSERT INTO kinds (user_id, kind, namespace, name, json, is_active, created_at, updated_at)
+         VALUES (%s, 'Device', 'default', %s, %s, 1, NOW(), NOW())`,
+        [owner.id, deviceId, JSON.stringify(record)]
+      )
+      assert.equal(result.affected, 1, `Cloud sandbox did not provision ${deviceId}`)
     }
   }
 
@@ -918,7 +951,6 @@ class RealCloudEnvironment {
     const owner = await fetchJson(`${this.backendUrl}/api/users/me`, {
       headers: { Authorization: `Bearer ${this.authToken}` },
     })
-    const siblingId = this.cloudLifecycle ? REMOTE_DOCKER_DEVICE_ID : CLOUD_DEVICE_ID
     await this.executeDatabase(
       `UPDATE kinds
        SET json = JSON_SET(
@@ -926,8 +958,8 @@ class RealCloudEnvironment {
          '$.spec.cloudConfig', JSON_OBJECT('sandboxId', %s, 'deviceId', name)
        )
        WHERE kind = 'Device' AND namespace = 'default' AND user_id = %s
-         AND name IN (%s, %s)`,
-      [MANAGED_CLOUD_SANDBOX_ID, owner.id, CLOUD_DEVICE_ID, siblingId]
+         AND name = %s`,
+      [MANAGED_CLOUD_SANDBOX_ID, owner.id, CLOUD_DEVICE_ID]
     )
 
     const configured = await this.device(CLOUD_DEVICE_ID)
