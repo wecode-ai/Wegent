@@ -5,6 +5,7 @@ import { join } from 'node:path'
 import { inspectBeforeStart } from './inspect-before-start.mjs'
 import { resolveElectronLaunchArguments } from './electron-launch-arguments.mjs'
 import { captureStartupNativeStack } from './startup-native-stack.mjs'
+import { spawnStartupGdbProbe, verifyStartupGdbContract } from './startup-gdb-probe.mjs'
 import { stopProcessGroup } from '../process-lifecycle.mjs'
 
 export async function seedInstalledRelease({ data, appBinary, version, id = 'installed-fixture' }) {
@@ -31,6 +32,7 @@ export async function seedInstalledRelease({ data, appBinary, version, id = 'ins
 
 /** Exercise the delivered bootstrap, real IPC/preload, and recovery window. */
 export async function verifyStartupFaultIsolation(input) {
+  if (process.platform === 'linux') await verifyStartupGdbContract({ resultDir: input.resultDir })
   // Temporary Linux stress diagnosis: stop on the first failing native shutdown.
   const iterations = process.platform === 'linux' ? 10 : 1
   const ptraceScope =
@@ -77,27 +79,37 @@ async function verifyStartupFault({
   await writeFile(descriptorPath, original)
   const evidencePath = join(resultDir, `startup-fault-${name}.json`)
   const startedAt = Date.now()
-  const child = spawn(
-    appBinary,
-    resolveElectronLaunchArguments({
-      extraArguments: ['--inspect-brk=127.0.0.1:0'],
-    }),
-    {
-      env: {
-        ...environment,
-        WEWORK_USER_DATA_DIR: data,
-        WEWORK_RELEASE_ROOT: releases,
-        WEWORK_RELEASE_SUPERVISED: descriptor.id,
-        WEWORK_RELEASE_RECOVERY: '',
-        WEWORK_E2E_RELEASE_FAILURE_VERSION: '',
-        WEWORK_E2E_CONTROL_URL: '',
-        WEWORK_E2E_BACKGROUND_WINDOW: '0',
-      },
-      detached: process.platform !== 'win32',
-      stdio: ['ignore', 'pipe', 'pipe'],
-    }
-  )
-  const identity = { fault, iteration, iterations, pid: child.pid, startedAt, ptraceScope }
+  const launchArguments = resolveElectronLaunchArguments({
+    extraArguments: ['--inspect-brk=127.0.0.1:0'],
+  })
+  const launchOptions = {
+    env: {
+      ...environment,
+      WEWORK_USER_DATA_DIR: data,
+      WEWORK_RELEASE_ROOT: releases,
+      WEWORK_RELEASE_SUPERVISED: descriptor.id,
+      WEWORK_RELEASE_RECOVERY: '',
+      WEWORK_E2E_RELEASE_FAILURE_VERSION: '',
+      WEWORK_E2E_CONTROL_URL: '',
+      WEWORK_E2E_BACKGROUND_WINDOW: '0',
+    },
+    detached: process.platform !== 'win32',
+    stdio: ['ignore', 'pipe', 'pipe'],
+  }
+  const debuggerProbe =
+    process.platform === 'linux'
+      ? spawnStartupGdbProbe(appBinary, launchArguments, launchOptions)
+      : null
+  const child = debuggerProbe?.child ?? spawn(appBinary, launchArguments, launchOptions)
+  const identity = {
+    fault,
+    iteration,
+    iterations,
+    pid: child.pid,
+    debugger: Boolean(debuggerProbe),
+    startedAt,
+    ptraceScope,
+  }
   let output = `[recovery-probe] case-start ${JSON.stringify(identity)}\n`
   child.stdout.on('data', chunk => {
     output += chunk
@@ -113,6 +125,7 @@ async function verifyStartupFault({
       accept({ code, signal })
     })
   })
+  let primaryError
   try {
     console.info('[recovery-probe] case-start', JSON.stringify(identity))
     await inspectBeforeStart(child, recoveryWindowAssertion(evidencePath))
@@ -132,7 +145,12 @@ async function verifyStartupFault({
       }),
     ])
     assert.deepEqual(exit, { code: 0, signal: null }, output)
+    if (debuggerProbe) await debuggerProbe.assertNormalExit(exit)
     const result = JSON.parse(await readFile(evidencePath, 'utf8'))
+    console.info(
+      '[recovery-probe] runtime-paths',
+      JSON.stringify({ fault, iteration, ...result.profilePaths })
+    )
     assert.equal(result.error, undefined, result.error)
     assert.equal(result.visible, true)
     assert.equal(result.retryEnabled, true)
@@ -146,12 +164,21 @@ async function verifyStartupFault({
       JSON.stringify({ ...identity, elapsedMs: Date.now() - startedAt })
     )
   } catch (error) {
+    primaryError = error
     console.error('[recovery-probe] case-failed', JSON.stringify(identity))
-    await captureStartupNativeStack(child)
+    if (debuggerProbe) await debuggerProbe.captureFailure()
+    else await captureStartupNativeStack(child)
     throw error
   } finally {
-    await stopProcessGroup(child)
-    await writeFile(join(resultDir, `startup-fault-${name}.log`), output)
+    try {
+      if (debuggerProbe) await debuggerProbe.cleanup()
+      else await stopProcessGroup(child)
+    } catch (error) {
+      if (!primaryError) throw error
+      console.error('[recovery-probe] cleanup also failed', error)
+    } finally {
+      await writeFile(join(resultDir, `startup-fault-${name}.log`), output)
+    }
   }
 }
 
@@ -161,6 +188,11 @@ function recoveryWindowAssertion(evidencePath) {
     const { app, BrowserWindow } = require('electron')
     const fs = require('node:fs')
     const output = ${JSON.stringify(evidencePath)}
+    if (process.platform === 'linux') {
+      const stat = fs.readFileSync('/proc/self/stat', 'utf8')
+      const pgid = Number(stat.slice(stat.lastIndexOf(')') + 1).trim().split(/\\s+/)[2])
+      console.info('[startup-gdb-inferior]', JSON.stringify({pid:process.pid,ppid:process.ppid,pgid}))
+    }
     const record = (event, details = {}) => console.info('[recovery-probe]', JSON.stringify({event,...details,at:Date.now()}))
     for (const event of ['before-quit','will-quit','quit','window-all-closed']) {
       app.on(event, () => record(event, {windows:BrowserWindow.getAllWindows().length}))
@@ -174,6 +206,7 @@ function recoveryWindowAssertion(evidencePath) {
     app.on('child-process-gone', (_event, details) => record('child-process-gone', details))
     const deadline = Date.now() + 10_000
     let pathsRecorded = false
+    let profilePaths
     let checking = false
     let reopenRequested = false
     let companion = null
@@ -190,14 +223,16 @@ function recoveryWindowAssertion(evidencePath) {
         if (!pathsRecorded) {
           pathsRecorded = true
           try {
-            record('profile-paths', {
+            profilePaths = {
+              nativePid:process.pid,parentPid:process.ppid,
               userData:app.getPath('userData'),sessionData:app.getPath('sessionData'),
               configuredUserData:process.env.WEWORK_USER_DATA_DIR ?? null,
               userDataArgument:app.commandLine.getSwitchValue('user-data-dir') || null,
               home:process.env.HOME ?? null,
               xdgConfigHome:process.env.XDG_CONFIG_HOME ?? null,
               xdgCacheHome:process.env.XDG_CACHE_HOME ?? null
-            })
+            }
+            record('profile-paths', profilePaths)
           } catch (error) { record('profile-paths-unavailable', {error:error.name}) }
         }
         const state = await window.webContents.executeJavaScript('window.weworkElectron.getRuntimeState()')
@@ -218,7 +253,7 @@ function recoveryWindowAssertion(evidencePath) {
           return
         }
         clearInterval(timer)
-        fs.writeFileSync(output, JSON.stringify({visible:window.isVisible(),retryEnabled,reopened:true,state}))
+        fs.writeFileSync(output, JSON.stringify({visible:window.isVisible(),retryEnabled,reopened:true,state,profilePaths}))
         record('quit-requested', {windows:BrowserWindow.getAllWindows().length})
         app.quit()
       } catch (error) {
