@@ -9,7 +9,7 @@ import { projectCreateLabels } from './labels'
 let container: HTMLDivElement
 let root: Root
 
-function Harness() {
+function Harness({ generation = false }: { generation?: boolean }) {
   const [open, setOpen] = useState(false)
   return (
     <>
@@ -38,7 +38,9 @@ function Harness() {
             location: 'local',
             currentUser: { id: 1, name: 'Me' },
             members: [],
-            agents: [],
+            agents: generation ? [{ id: 'agent', name: 'Reviewer' } as never] : [],
+            defaultAgentResourceIds: generation ? ['agent'] : [],
+            ...(generation ? { generateCollaborationGroupDraft: vi.fn() } : {}),
             groups: [],
             configure: vi.fn(),
           }}
@@ -62,6 +64,14 @@ async function key(target: HTMLElement, value: string, shiftKey = false) {
 }
 
 beforeEach(async () => {
+  vi.stubGlobal(
+    'ResizeObserver',
+    class {
+      observe() {}
+      unobserve() {}
+      disconnect() {}
+    }
+  )
   globalThis.IS_REACT_ACT_ENVIRONMENT = true
   container = document.createElement('div')
   document.body.append(container)
@@ -73,6 +83,31 @@ beforeEach(async () => {
 afterEach(async () => {
   await act(async () => root.unmount())
   container.remove()
+  vi.unstubAllGlobals()
+})
+
+it('closes the group-model dialog with Escape while preserving the project draft', async () => {
+  await act(async () => root.render(<Harness key="generation" generation />))
+  await click('create-project')
+  await click('create-project-blank')
+  const name = get('cloud-project-name') as HTMLInputElement
+  const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!
+  await act(async () => {
+    setter.call(name, 'Keep this project')
+    name.dispatchEvent(new Event('input', { bubbles: true }))
+  })
+  await click('collaboration-project-create-add-collaborator')
+  await click('collaboration-project-create-collaborator-tab-agents')
+  await click('collaboration-project-create-agent-agent')
+  await click('collaboration-project-create-add-collaborator')
+  await click('collaboration-project-create-collaborator-tab-groups')
+  await click('collaboration-project-create-new-group')
+  const dialog = get('collaboration-project-create-model-picker')
+  expect(dialog).not.toBeNull()
+  await key(dialog.querySelector('button')!, 'Escape')
+  expect(get('collaboration-project-create-model-picker')).toBeNull()
+  expect(get('collaboration-project-create-dialog')).not.toBeNull()
+  expect((get('cloud-project-name') as HTMLInputElement).value).toBe('Keep this project')
 })
 
 it('names the project dialog, contains Tab, and restores its stable menu opener after Escape', async () => {

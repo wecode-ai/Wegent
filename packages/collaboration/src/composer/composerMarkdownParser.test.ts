@@ -10,6 +10,9 @@ it.each([
   ['Investigate timeout\nOnly Windows clients are affected.', 'Investigate timeout'],
   ['```text\nC:\\logs\\executor\n```', 'C:\\logs\\executor'],
   ['- **Review** [feedback](https://example.com)\n- Follow up', 'Review feedback'],
+  ['First<br>Second', 'First'],
+  ['First<br />Second', 'First'],
+  ['`First<br>Second`', 'First<br>Second'],
 ])('derives a title from the first semantic Markdown line: %s', (content, title) => {
   expect(composerMarkdownText(content, { firstLine: true })).toBe(title)
 })
@@ -17,5 +20,11 @@ it.each([
 it('keeps complete plain-text context when flattening Markdown for a summary', () => {
   expect(composerMarkdownText('# Review\n\nCheck **filters** and `C:\\logs\\executor`.')).toBe(
     'Review Check filters and C:\\logs\\executor.'
+  )
+})
+
+it('preserves HTML hard breaks as summary whitespace while keeping code literal', () => {
+  expect(composerMarkdownText('First<br>Second and `literal<br>code`')).toBe(
+    'First Second and literal<br>code'
   )
 })

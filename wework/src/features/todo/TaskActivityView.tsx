@@ -439,10 +439,21 @@ export function TaskActivityView({
     () => messages.filter(message => message.taskId === task.id),
     [messages, task]
   )
+  const commentCards = useMemo<IssueActivityThreadModel<ProjectChatMessage>[]>(
+    () =>
+      issueTimeline
+        ? groupIssueTimelineThreads(threadMessages)
+        : groupIssueActivityThreads(threadMessages),
+    [issueTimeline, threadMessages]
+  )
   const requestedTaskBindingAddresses = useRef(new Set<string>())
   const [chatCurrentUserId, setChatCurrentUserId] = useState<string | null>(null)
   const [newCommentDraft, setNewCommentDraft] = useState('')
-  const [replyTarget, setReplyTarget] = useState<TaskReplyCard | null>(null)
+  const [replyRootId, setReplyRootId] = useState<string | null>(null)
+  const replyTarget = commentCards.find(card => card.root.messageId === replyRootId) ?? null
+  const setReplyTarget = useCallback((card: TaskReplyCard | null) => {
+    setReplyRootId(card?.root.messageId ?? null)
+  }, [])
   const skipReplyFocus = useRef(false)
   const replyComposerRef = useRef<HTMLDivElement>(null)
   const focusReplyComposer = useCallback(() => {
@@ -451,13 +462,13 @@ export function TaskActivityView({
       ?.focus()
   }, [])
   useEffect(() => {
-    if (!replyTarget) return
+    if (!replyRootId) return
     if (skipReplyFocus.current) {
       skipReplyFocus.current = false
       return
     }
     focusReplyComposer()
-  }, [focusReplyComposer, replyTarget])
+  }, [focusReplyComposer, replyRootId])
   const beginReply = (card: TaskReplyCard) => {
     if (card === replyTarget) focusReplyComposer()
     else setReplyTarget(card)
@@ -759,13 +770,6 @@ export function TaskActivityView({
       requestedTaskBindingAddresses.current.delete(key)
     })
   }, [messages, onRefreshExecutionArtifacts, taskBindings])
-  const commentCards = useMemo<IssueActivityThreadModel<ProjectChatMessage>[]>(
-    () =>
-      issueTimeline
-        ? groupIssueTimelineThreads(threadMessages)
-        : groupIssueActivityThreads(threadMessages),
-    [issueTimeline, threadMessages]
-  )
   const notificationReply = useNotificationCommentReply({
     projectId: project.id,
     issueId: task.id,

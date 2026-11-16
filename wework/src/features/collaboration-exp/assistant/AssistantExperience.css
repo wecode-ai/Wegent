@@ -806,6 +806,8 @@
 @media (max-width: 767px) {
   [data-testid='collaboration-exp-app'] .assistant-activity-button {
     min-height: 44px;
+    min-width: 0;
+    white-space: normal;
     gap: 4px;
     padding: 8px 6px;
     font-size: var(--experience-text-label);

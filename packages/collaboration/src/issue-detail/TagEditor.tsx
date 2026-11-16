@@ -127,9 +127,7 @@ export function TagEditor({
           data-testid={`${testIdPrefix}-tag-${tag}`}
           className="inline-flex min-w-0 max-w-full items-center gap-1 rounded-full bg-muted px-2 py-0.5 text-xs text-text-secondary"
         >
-          <span className="min-w-0 truncate" title={tag}>
-            {tag}
-          </span>
+          <span className="min-w-0 break-words whitespace-normal">{tag}</span>
           {!disabled && (
             <button
               type="button"

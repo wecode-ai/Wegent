@@ -774,6 +774,7 @@ function IssueHomeLauncher({
 }) {
   const [localContent, setLocalContent] = useState("");
   const content = draft?.value ?? localContent;
+  const contentRevision = draft?.getRevision();
   const setContent = draft?.onChange ?? setLocalContent;
   const [members, setMembers] = useState<CollaborationMember[]>([]);
   const [agents, setAgents] = useState<WorkspaceProjectAgent[]>([]);
@@ -878,6 +879,7 @@ function IssueHomeLauncher({
       ref={composerRef}
       value={content}
       onChange={(value) => {
+        if (!value && draft && draft.getRevision() !== contentRevision) return;
         setContent(value);
         if (!value.includes("#")) setIssueReferenceError(null);
       }}

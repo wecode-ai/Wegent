@@ -14,6 +14,7 @@ export function composerMarkdownText(
 ): string {
   const read = (node: Nodes): string => {
     if (node.type === "break") return "\n";
+    if (node.type === "html" && /^<br\s*\/?>$/i.test(node.value)) return "\n";
     if (node.type === "image" || node.type === "imageReference")
       return node.alt ?? "";
     if ("value" in node) return node.value;

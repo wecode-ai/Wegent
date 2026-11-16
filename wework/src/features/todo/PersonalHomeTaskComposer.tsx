@@ -394,7 +394,7 @@ function ProjectTaskComposer({
             type="button"
             disabled={submitting}
             data-testid="personal-home-new-task-draft"
-            className="min-h-11 shrink-0 rounded-md px-2 hover:bg-muted hover:text-text-primary keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-focus/30 md:min-h-8"
+            className="min-h-11 shrink-0 rounded-md px-2 hover:bg-muted hover:text-text-primary keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-text-primary md:min-h-8"
             onClick={() => {
               if (projectKey) drafts.delete(projectKey)
               refreshDraft(value => value + 1)

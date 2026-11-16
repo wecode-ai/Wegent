@@ -327,7 +327,7 @@ export interface WeworkCollaborationPlatformProps {
   workspaceActive?: boolean
   homeDraft: Pick<
     WorkbenchContextValue['projectChat'],
-    'inputByScope' | 'setInputForScope' | 'personalHomeTaskDraftStore'
+    'inputByScope' | 'setInputForScope' | 'getInputRevisionForScope' | 'personalHomeTaskDraftStore'
   >
   activeProjectRef?: RuntimeProjectSpaceRef | null
   defaultProjectRequested?: boolean
@@ -2131,6 +2131,8 @@ function WeworkCollaborationPlatformContent(props: WeworkCollaborationPlatformPr
             },
             accountScope: templateScope,
             issueHomeDraft: {
+              getRevision: () =>
+                props.homeDraft.getInputRevisionForScope(`collaboration-home:${templateScope}`),
               projectId:
                 props.homeDraft.inputByScope[`collaboration-home-project:${templateScope}`] ?? null,
               onSelectProject: projectId =>

@@ -69,6 +69,7 @@ export interface CollaborationPlatformHostAdapter {
   templateNavigation?: boolean;
   issueHomeDraft?: {
     value: string;
+    getRevision(): number;
     projectId: string | null;
     onSelectProject(projectId: string): void;
     onChange(value: string): void;

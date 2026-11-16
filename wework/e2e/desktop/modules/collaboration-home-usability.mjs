@@ -499,6 +499,15 @@ export async function verifyCollaborationHomeUsability(
     await verifyDiscussionReply(control, home)
     await control.command('click', `${home} [data-testid="personal-home-back-to-issues"]`)
     await control.command('fill', record, { value: savedRecord })
+    await control.command('click', record)
+    for (const width of [1100, 390]) {
+      await resizeHome(control, home, width, 900, timeoutMs)
+      assert.equal(
+        await control.command('getActiveElementTestId', 'body'),
+        'collaboration-home-issue-content',
+        'A completed return request must not steal composer focus after resizing'
+      )
+    }
 
     assert.equal(
       await control.command('getValue', input),

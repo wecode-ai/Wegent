@@ -705,3 +705,58 @@ it('keeps narrow workspace keyboard focus in its tablist until an explicit retur
     Object.defineProperty(window, 'innerWidth', { configurable: true, value: originalWidth })
   }
 })
+
+it('consumes a completed return request before resizing across the desktop breakpoint', async () => {
+  const originalWidth = window.innerWidth
+  let resize!: () => void
+  const media = vi.spyOn(window, 'matchMedia').mockImplementation(
+    query =>
+      ({
+        media: query,
+        matches: false,
+        addEventListener: (_type: string, listener: () => void) => {
+          resize = listener
+        },
+        removeEventListener: vi.fn(),
+      }) as unknown as MediaQueryList
+  )
+  Object.defineProperty(window, 'innerWidth', { configurable: true, value: 768 })
+  try {
+    const { props, rerender } = await setup([source(vi.fn().mockResolvedValue([issue('resize')]))])
+    rerender(<WeworkPersonalHome {...props} createIssue={<input aria-label="Composer" />} />)
+    const root = screen.getByTestId('personal-home')
+    root.scrollTop = 112
+    fireEvent.click(await screen.findByTestId('personal-home-issue-resize'))
+    fireEvent.click(screen.getByTestId('personal-home-back-to-issues'))
+    const composer = screen.getByRole('textbox', { name: 'Composer' })
+    composer.focus()
+    root.scrollTop = 25
+    for (const width of [1100, 768]) {
+      Object.defineProperty(window, 'innerWidth', { configurable: true, value: width })
+      act(() => resize())
+    }
+    expect(composer).toHaveFocus()
+    expect(root.scrollTop).toBe(25)
+  } finally {
+    media.mockRestore()
+    Object.defineProperty(window, 'innerWidth', { configurable: true, value: originalWidth })
+  }
+})
+
+it('captures the actual list row on every narrow opening even while a detail remains selected', async () => {
+  const originalWidth = window.innerWidth
+  Object.defineProperty(window, 'innerWidth', { configurable: true, value: 768 })
+  try {
+    await setup([source(vi.fn().mockResolvedValue([issue('first'), issue('second')]))])
+    const root = screen.getByTestId('personal-home')
+    root.scrollTop = 112
+    fireEvent.click(await screen.findByTestId('personal-home-issue-first'))
+    root.scrollTop = 245
+    fireEvent.click(await screen.findByTestId('personal-home-issue-second'))
+    fireEvent.click(screen.getByTestId('personal-home-back-to-issues'))
+    expect(root.scrollTop).toBe(245)
+    expect(screen.getByTestId('personal-home-issue-second')).toHaveFocus()
+  } finally {
+    Object.defineProperty(window, 'innerWidth', { configurable: true, value: originalWidth })
+  }
+})

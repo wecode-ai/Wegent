@@ -4,7 +4,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-import { act, useState, type ReactNode } from "react";
+import { act, useRef, useState, type ReactNode } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -7698,6 +7698,78 @@ describe("Issue permission separation in the real shared editor", () => {
     expect(onCreateTask).toHaveBeenCalledOnce();
     titleScrollHeight.mockRestore();
   });
+  it("preserves a newer host draft when a submission finishes after remount", async () => {
+    const { api } = createApi({ initialProjects: [project] });
+    const pending = deferred<CollaborationIssue>();
+    vi.mocked(api.issues.create).mockReturnValueOnce(pending.promise);
+    function Host() {
+      const [open, setOpen] = useState(true);
+      const [value, setValue] = useState("Original submission");
+      const revision = useRef(0);
+      return (
+        <>
+          <button
+            data-testid="toggle-collaboration"
+            onClick={() => setOpen((current) => !current)}
+          >
+            Settings
+          </button>
+          {open && (
+            <PlatformHarness
+              api={api}
+              issueHomeDraft={{
+                value,
+                projectId: project.id,
+                onSelectProject: vi.fn(),
+                getRevision: () => revision.current,
+                onChange: (next) => {
+                  revision.current += 1;
+                  setValue(next);
+                },
+              }}
+              renderPersonalHome={({ createIssue }) => createIssue}
+              renderIssueComposer={(props) => (
+                <>
+                  <input
+                    data-testid="host-home-draft"
+                    value={props.value}
+                    onChange={(event) => props.onChange(event.target.value)}
+                  />
+                  <button
+                    data-testid="host-home-submit"
+                    onClick={() => void props.onSubmit(props.value)}
+                  >
+                    Record
+                  </button>
+                </>
+              )}
+            />
+          )}
+        </>
+      );
+    }
+    await render(<Host />);
+    await click(byTestId("host-home-submit"));
+    expect(api.issues.create).toHaveBeenCalledOnce();
+    await click(byTestId("toggle-collaboration"));
+    await click(byTestId("toggle-collaboration"));
+    await change(
+      byTestId("host-home-draft") as HTMLInputElement,
+      "New unfinished draft",
+    );
+    await act(async () =>
+      pending.resolve({
+        id: "created",
+        title: "Original submission",
+        status: "inbox",
+        version: 1,
+      } as CollaborationIssue),
+    );
+    expect((byTestId("host-home-draft") as HTMLInputElement).value).toBe(
+      "New unfinished draft",
+    );
+  });
+
   it("restores the host-owned home draft after the collaboration page unmounts", async () => {
     const second = {
       ...project,
@@ -7707,7 +7779,12 @@ describe("Issue permission separation in the real shared editor", () => {
     const { api } = createApi({ initialProjects: [project, second] });
     function Host() {
       const [open, setOpen] = useState(true);
-      const [value, onChange] = useState("");
+      const [value, setValue] = useState("");
+      const revision = useRef(0);
+      const onChange = (next: string) => {
+        revision.current += 1;
+        setValue(next);
+      };
       const [projectId, onSelectProject] = useState<string | null>(null);
       return (
         <>
@@ -7720,7 +7797,13 @@ describe("Issue permission separation in the real shared editor", () => {
           {open ? (
             <PlatformHarness
               api={api}
-              issueHomeDraft={{ value, onChange, projectId, onSelectProject }}
+              issueHomeDraft={{
+                value,
+                onChange,
+                projectId,
+                onSelectProject,
+                getRevision: () => revision.current,
+              }}
               renderPersonalHome={({ createIssue }) => createIssue}
               renderIssueComposer={(props) => (
                 <>

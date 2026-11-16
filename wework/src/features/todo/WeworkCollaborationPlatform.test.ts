@@ -530,6 +530,7 @@ function createHomeDraft() {
   return {
     inputByScope: {},
     setInputForScope: vi.fn(),
+    getInputRevisionForScope: vi.fn(() => 0),
     personalHomeTaskDraftStore: createPersonalHomeTaskDraftStore(),
   }
 }

@@ -130,6 +130,7 @@ export function WeworkPersonalHome({
     target: 'detail' | 'list'
     captureList?: boolean
   } | null>(null)
+  const handledWorkspaceFocus = useRef<typeof workspaceFocus>(null)
   const listPosition = useRef(0)
   const returnFocus = useRef<HTMLElement | null>(null)
   const [detailExpanded, setDetailExpanded] = useState(false)
@@ -141,7 +142,9 @@ export function WeworkPersonalHome({
   useLayoutEffect(() => {
     const root = viewport.current
     const panel = sidebar.current
-    if (isDesktop || !root || !panel || !workspaceFocus) return
+    if (!workspaceFocus || handledWorkspaceFocus.current === workspaceFocus) return
+    handledWorkspaceFocus.current = workspaceFocus
+    if (isDesktop || !root || !panel) return
     if (workspaceFocus.target === 'detail') {
       if (workspaceFocus.captureList) {
         listPosition.current = root.scrollTop
@@ -175,7 +178,8 @@ export function WeworkPersonalHome({
   )
   const openIssue = (
     issue: CollaborationIssue,
-    taskRequest?: PersonalHomeIssueDetailContext['taskRequest']
+    taskRequest?: PersonalHomeIssueDetailContext['taskRequest'],
+    captureList = false
   ) => {
     const project = projects.find(project => project.id === issue.cloud_project_id)
     if (!project) return
@@ -193,7 +197,7 @@ export function WeworkPersonalHome({
     )
     setExpandedTabs(current => (current.has(id) ? current : new Set()))
     setSidebarCollapsed(false)
-    setWorkspaceFocus({ target: 'detail', captureList: activeTab === 'stand-in' })
+    setWorkspaceFocus({ target: 'detail', captureList })
     setActiveTab(id)
   }
   const [handledCreation, setHandledCreation] = useState<string>()
@@ -217,7 +221,7 @@ export function WeworkPersonalHome({
     setRecentCreation(undefined)
   }
   if (createdIssue && createdIssue.key !== handledCreation) {
-    setWorkspaceFocus({ target: 'detail', captureList: activeTab === 'stand-in' })
+    setWorkspaceFocus({ target: 'detail', captureList: true })
     setSidebarCollapsed(false)
     setHandledCreation(createdIssue.key)
     const ownIds =
@@ -291,7 +295,7 @@ export function WeworkPersonalHome({
                 aria-expanded={!sidebarCollapsed}
                 aria-controls={`${panelId}-sidebar`}
                 onClick={() => setSidebarCollapsed(value => !value)}
-                className="hidden h-8 shrink-0 items-center gap-1.5 rounded-md px-2 text-sm text-text-secondary hover:bg-muted keyboard:focus-visible:outline-none keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-focus/30 lg:inline-flex"
+                className="hidden h-8 shrink-0 items-center gap-1.5 rounded-md px-2 text-sm text-text-secondary hover:bg-muted keyboard:focus-visible:outline-none keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-text-primary lg:inline-flex"
               >
                 {sidebarCollapsed ? (
                   <PanelRightOpen aria-hidden="true" className="h-4 w-4" />
@@ -416,11 +420,11 @@ export function WeworkPersonalHome({
               projects={projects}
               showCompleted={showCompleted}
               assignedOnly={assignedOnly}
-              onOpenIssue={openIssue}
+              onOpenIssue={issue => openIssue(issue, undefined, true)}
               selectedIssue={issueTabs.find(tab => tab.id === activeTab)?.issue}
               active={active}
               onOpenTask={(issue, binding) =>
-                openIssue(issue, { key: crypto.randomUUID(), binding })
+                openIssue(issue, { key: crypto.randomUUID(), binding }, true)
               }
             />
             {state.hasMore && (

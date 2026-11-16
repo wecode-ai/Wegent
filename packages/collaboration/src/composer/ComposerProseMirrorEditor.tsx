@@ -207,6 +207,7 @@ export const ComposerProseMirrorEditor = forwardRef<
         }
         pendingFocusRef.current = false;
         view.focus();
+        view.dispatch(view.state.tr.scrollIntoView());
       },
       getSnapshot() {
         return viewRef.current

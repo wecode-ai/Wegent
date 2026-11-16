@@ -190,7 +190,11 @@ function HoverEditableText({
       onKeyDown: (
         event: KeyboardEvent<HTMLInputElement | HTMLTextAreaElement>,
       ) => {
-        if (event.key === "Escape") setEditing(false);
+        if (event.key === "Escape") {
+          event.preventDefault();
+          event.stopPropagation();
+          setEditing(false);
+        }
         if (!multiline && event.key === "Enter") setEditing(false);
       },
     };
@@ -346,6 +350,24 @@ export function ProjectCreateDialog(props: ProjectCreateDialogProps) {
   const groupGenerationAgentSettlingRef = useRef(false);
   const groupGenerationStartedAtRef = useRef(0);
   const groupGenerationRunRef = useRef(0);
+  const closeGroupModelPicker = () => {
+    groupGenerationRunRef.current += 1;
+    if (groupGenerationAgentTimerRef.current !== null) {
+      window.clearTimeout(groupGenerationAgentTimerRef.current);
+      groupGenerationAgentTimerRef.current = null;
+    }
+    groupGenerationAgentQueueRef.current = [];
+    groupGenerationQueuedAgentIdsRef.current.clear();
+    groupGenerationAgentSettlingRef.current = false;
+    setGroupModelPickerOpen(false);
+    setGroupEditorDraft(null);
+    setGroupGenerating(false);
+    setGroupGenerationPhase(null);
+  };
+  const groupDialogRef = useDialogKeyboard<HTMLElement>(
+    closeGroupModelPicker,
+    groupModelPickerOpen,
+  );
   const [groupGenerationError, setGroupGenerationError] = useState<
     string | null
   >(null);
@@ -1388,6 +1410,8 @@ export function ProjectCreateDialog(props: ProjectCreateDialogProps) {
             ? createPortal(
                 <div className="collaboration-project-create-group-dialog-backdrop z-system">
                   <section
+                    ref={groupDialogRef}
+                    tabIndex={-1}
                     className="collaboration-project-create-group-editor is-generator is-dialog"
                     data-testid="collaboration-project-create-model-picker"
                     role="dialog"
@@ -1406,22 +1430,8 @@ export function ProjectCreateDialog(props: ProjectCreateDialogProps) {
                       <button
                         type="button"
                         aria-label={labels.cancel}
-                        onClick={() => {
-                          groupGenerationRunRef.current += 1;
-                          if (groupGenerationAgentTimerRef.current !== null) {
-                            window.clearTimeout(
-                              groupGenerationAgentTimerRef.current,
-                            );
-                            groupGenerationAgentTimerRef.current = null;
-                          }
-                          groupGenerationAgentQueueRef.current = [];
-                          groupGenerationQueuedAgentIdsRef.current.clear();
-                          groupGenerationAgentSettlingRef.current = false;
-                          setGroupModelPickerOpen(false);
-                          setGroupEditorDraft(null);
-                          setGroupGenerating(false);
-                          setGroupGenerationPhase(null);
-                        }}
+                        data-testid="collaboration-project-create-model-picker-close"
+                        onClick={closeGroupModelPicker}
                       >
                         <X aria-hidden="true" />
                       </button>

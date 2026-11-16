@@ -232,7 +232,7 @@ export function PersonalIssueList({
                       : undefined,
                 }}
                 cardClassName="cursor-pointer focus-within:bg-text-primary/[0.025] aria-[current=true]:bg-muted"
-                detailButtonClassName="cursor-pointer keyboard:focus-visible:outline-none keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-focus/30"
+                detailButtonClassName="cursor-pointer keyboard:focus-visible:outline-none keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-text-primary"
                 onOpen={() => onOpenIssue(item)}
                 titleTrailing={
                   <>

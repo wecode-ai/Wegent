@@ -241,6 +241,50 @@ const agentMessage: ProjectChatMessage = {
 }
 
 describe('TaskActivityView', () => {
+  it('updates an open discussion reply when its execution arrives without losing the draft', async () => {
+    const user = userEvent.setup()
+    let emit!: (message: ProjectChatMessage) => void
+    const client = {
+      subscribe: vi.fn(async (_project, _issue, _after, onMessage) => {
+        emit = onMessage
+        return {
+          snapshot: { messages: [userMessage], latestSequence: 1, currentUserId: '1' },
+          unsubscribe: vi.fn(),
+        }
+      }),
+      send: vi.fn(async () => userMessage),
+      dispose: vi.fn(),
+    } satisfies ProjectChatClient
+    render(
+      <TaskActivityView
+        client={client}
+        currentUserId={1}
+        project={{ id: '11', name: 'Local', project_store: 'local' } as never}
+        task={{ id: 'WEG-1', title: 'Discuss', status: 'inbox', version: 1 } as never}
+        issueTimeline
+        linear
+      />
+    )
+    await user.click(await screen.findByTestId('cloud-task-activity-reply-toggle-message-1'))
+    const composer = screen.getByTestId('issue-reply-composer')
+    expect(composer).toHaveTextContent('继续此讨论')
+    const input = within(composer).getByTestId('cloud-task-activity-composer')
+    await user.type(input, 'Keep the unfinished reply')
+    await act(async () =>
+      emit({
+        ...agentMessage,
+        content: 'Execution ready',
+        status: 'completed',
+        runtimeAddress: { deviceId: 'device-1', taskId: 'discussion-session' },
+        rootMessageId: userMessage.messageId,
+        replyToMessageId: userMessage.messageId,
+      })
+    )
+    expect(composer).toHaveTextContent('将继续原执行任务')
+    expect(input).toHaveValue('Keep the unfinished reply')
+    expect(client.send).not.toHaveBeenCalled()
+  })
+
   it('labels a discussion reply without promising an unbound execution', async () => {
     const user = userEvent.setup()
     const comment = { ...userMessage, content: 'A local discussion', metadata: {} }

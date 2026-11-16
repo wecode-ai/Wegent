@@ -42,7 +42,12 @@ export function StandInHomeWorkspace(props: Props) {
   const { t } = useTranslation('common')
   const workbench = useContext(WorkbenchContext)
   const [view, setView] = useState('conversation')
-  const inbox = useStandInInbox(services.standInApi, userId, deviceId, active && view === 'list')
+  const inbox = useStandInInbox(
+    services.standInApi,
+    userId,
+    deviceId,
+    active && (view === 'list' || view === 'conversation')
+  )
   const [opened, setOpened] = useState<
     Array<{ key: string; title: string; address: RuntimeTaskAddress }>
   >([])
@@ -272,7 +277,7 @@ export function StandInHomeWorkspace(props: Props) {
                           key={item.key}
                           data-testid={`personal-home-work-${item.task.taskId}`}
                           onClick={() => openTask(item.address, item.task.title)}
-                          className="group/work flex min-h-11 w-full items-start gap-3 px-4 py-3 text-left transition-colors hover:bg-text-primary/[0.025] keyboard:focus-visible:outline-none keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-focus/30"
+                          className="group/work flex min-h-11 w-full items-start gap-3 px-4 py-3 text-left transition-colors hover:bg-text-primary/[0.025] keyboard:focus-visible:outline-none keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-text-primary"
                         >
                           <Icon
                             aria-hidden="true"

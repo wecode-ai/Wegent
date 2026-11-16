@@ -120,7 +120,7 @@ export function PersonalHomeIssueActivity({
           aria-haspopup={tasks.length > 1 ? 'dialog' : undefined}
           aria-expanded={tasks.length > 1 ? Boolean(taskAnchor) : undefined}
           title={tasks.map(task => `${task.title} · ${statusLabel(task.status)}`).join('\n')}
-          className="mt-1 inline-flex min-h-11 max-w-full items-center gap-2 whitespace-nowrap rounded-md py-1 text-sm text-text-secondary transition-colors hover:text-text-primary keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-focus/30 md:min-h-7"
+          className="mt-1 inline-flex min-h-11 max-w-full items-center gap-2 whitespace-nowrap rounded-md py-1 text-sm text-text-secondary transition-colors hover:text-text-primary keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-text-primary md:min-h-7"
           onClick={event => {
             event.stopPropagation()
             if (tasks.length === 1) onOpenTask?.(tasks[0].binding)
