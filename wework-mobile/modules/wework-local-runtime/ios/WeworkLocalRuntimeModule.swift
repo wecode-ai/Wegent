@@ -18,6 +18,11 @@ public final class WeworkLocalRuntimeModule: Module {
       self.runtime.unsubscribe(subscription)
     }
     AsyncFunction("getStatusAsync") { (promise: Promise) in self.runtime.status(promise) }
+    AsyncFunction("getDiagnosticsEnabledAsync") { RuntimeDiagnostics.shared.isEnabled }
+    AsyncFunction("setDiagnosticsEnabledAsync") { (enabled: Bool) in
+      RuntimeDiagnostics.shared.setEnabled(enabled)
+      ww_runtime_set_diagnostics_enabled(enabled ? 1 : 0)
+    }
     AsyncFunction("listProfilesAsync") { (promise: Promise) in self.runtime.listProfiles(promise) }
     AsyncFunction("startAsync") { (options: [String: Any], promise: Promise) in
       self.runtime.start(options, promise: promise)
