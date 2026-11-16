@@ -83,6 +83,20 @@ function matchesConfiguredSelection(
   )
 }
 
+/** Whether a selection names the configured persisted cloud model. */
+function isPersistedCloudSelection(
+  model: UnifiedModel | null,
+  config?: ModelSelectionConfig | null
+): boolean {
+  return Boolean(
+    model &&
+    config?.modelName === model.name &&
+    config?.modelType === model.type &&
+    PERSISTED_CLOUD_MODEL_TYPES.has(model.type) &&
+    matchesConfiguredCloudIdentity(model, config)
+  )
+}
+
 /** A 404/403 lookup is definitive; network and timeout failures are transient. */
 function isDefinitiveModelLookupError(error: unknown): boolean {
   return error instanceof ApiError && (error.status === 404 || error.status === 403)
@@ -156,6 +170,11 @@ export function useWorkbenchModels({
   const selectedModelRef = useRef<Record<string, UnifiedModel | null>>({})
   const selectedModelOptionsRef = useRef<Record<string, ModelOptions>>({})
   const modelLoadRevisionRef = useRef(0)
+  const validatedSelectionRef = useRef<{
+    scopeKey: string
+    selectionKey: string
+    models: UnifiedModel[]
+  } | null>(null)
   const [hasCompletedModelLoad, setHasCompletedModelLoad] = useState(false)
   const [isLoading, setIsLoading] = useState(false)
   const [error, setError] = useState<Error | null>(null)
@@ -189,11 +208,7 @@ export function useWorkbenchModels({
   )
   const persistedCloudModelSelected = Boolean(
     !fallbackWhenConfiguredModelUnavailable &&
-    selectedModel &&
-    effectiveSelectionConfig?.modelName === selectedModel.name &&
-    effectiveSelectionConfig?.modelType === selectedModel.type &&
-    PERSISTED_CLOUD_MODEL_TYPES.has(selectedModel.type) &&
-    matchesConfiguredCloudIdentity(selectedModel, effectiveSelectionConfig)
+    isPersistedCloudSelection(selectedModel, effectiveSelectionConfig)
   )
   const selectedModelAvailable = Boolean(
     selectedModel &&
@@ -280,6 +295,7 @@ export function useWorkbenchModels({
     ): Promise<boolean> => {
       let model = findModelForSelection(availableModels, nextSelectionConfig)
       let transientFailure = false
+      let validated = Boolean(model)
       if (
         !model &&
         !fallbackWhenConfiguredModelUnavailable &&
@@ -298,6 +314,7 @@ export function useWorkbenchModels({
             'wework',
             'llm'
           )
+          validated = true
           if (
             !model ||
             (nextSelectionConfig.modelType && model.type !== nextSelectionConfig.modelType) ||
@@ -309,6 +326,7 @@ export function useWorkbenchModels({
           if (isCancelled?.()) return false
           if (isDefinitiveModelLookupError(error)) {
             model = null
+            validated = true
           } else {
             // Network errors and timeouts must not push a valid persisted model
             // into the replacement flow. Reuse the previous selection only when
@@ -340,6 +358,15 @@ export function useWorkbenchModels({
           current[scopeKey] ? current : { ...current, [scopeKey]: true }
         )
         return false
+      }
+      if (validated) {
+        // Record the catalog state this selection was verified against. A later
+        // catalog refresh invalidates the record and re-queries the model.
+        validatedSelectionRef.current = {
+          scopeKey,
+          selectionKey: getSelectionKey(nextSelectionConfig),
+          models: availableModels,
+        }
       }
       setTransientLookupFailureByScope(current => {
         if (!current[scopeKey]) return current
@@ -491,10 +518,25 @@ export function useWorkbenchModels({
           effectiveSelectionConfig?.modelName &&
           findModelForSelection(models, effectiveSelectionConfig)
         )
+        const currentSelection = selectedModelRef.current[scopeKey] ?? null
+        const persistedSelectionNeedsValidation = Boolean(
+          currentSelection &&
+          !fallbackWhenConfiguredModelUnavailable &&
+          isPersistedCloudSelection(currentSelection, effectiveSelectionConfig) &&
+          !models.some(model => isSameModelSelection(model, currentSelection))
+        )
+        const lastValidated = validatedSelectionRef.current
+        const selectionValidatedForCatalog = Boolean(
+          lastValidated &&
+          lastValidated.scopeKey === scopeKey &&
+          lastValidated.selectionKey === selectionKey &&
+          lastValidated.models === models
+        )
         if (
           !hasScopeSelection ||
           !scopeSelectionAlreadyRestored ||
-          (configuredModelAvailable && !selectedModelRef.current[scopeKey])
+          (configuredModelAvailable && !selectedModelRef.current[scopeKey]) ||
+          (persistedSelectionNeedsValidation && !selectionValidatedForCatalog)
         ) {
           const restored = await restoreSelection(models, effectiveSelectionConfig, () => cancelled)
           if (cancelled || !restored) return
@@ -512,6 +554,7 @@ export function useWorkbenchModels({
   }, [
     effectiveSelectionConfig,
     enabled,
+    fallbackWhenConfiguredModelUnavailable,
     models,
     restoreSelection,
     restoredSelectionKeyByScope,

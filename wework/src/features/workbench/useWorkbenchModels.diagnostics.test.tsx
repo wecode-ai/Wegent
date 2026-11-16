@@ -146,6 +146,150 @@ test('keeps a hidden cloud task model when the single-model endpoint resolves it
   expect(api.getModel).toHaveBeenCalledWith('hidden-model', 'public', 'wework', 'llm')
 })
 
+test('drops a hidden cloud model when a catalog refresh proves it was removed', async () => {
+  const hiddenTask = selection('hidden-model')
+  const hiddenModel: UnifiedModel = {
+    name: 'hidden-model',
+    type: 'public',
+    namespace: 'default',
+    resourceUserId: 0,
+  }
+  const api = {
+    listModels: vi.fn().mockResolvedValue({ data: [models[1]] }),
+    getModel: vi.fn().mockResolvedValue(hiddenModel),
+  }
+  const hook = renderHook(() =>
+    useWorkbenchModels({
+      api,
+      locked: false,
+      scopeKey: scopeA,
+      selectionConfig: hiddenTask,
+      persistSelection: false,
+      fallbackWhenConfiguredModelUnavailable: false,
+    })
+  )
+  await waitFor(() => expect(hook.result.current.isSelectionReady).toBe(true))
+  const lookupsBeforeRefresh = api.getModel.mock.calls.length
+
+  api.getModel.mockRejectedValue(new ApiError('removed', 404))
+  act(() => hook.result.current.refreshModels())
+
+  await waitFor(() => expect(api.getModel).toHaveBeenCalledTimes(lookupsBeforeRefresh + 1))
+  await waitFor(() => expect(hook.result.current.selectedModel).toBeNull())
+  expect(hook.result.current.selectedModelAvailable).toBe(false)
+  expect(hook.result.current.isSelectionReady).toBe(false)
+  expect(hook.result.current.isConfiguredModelUnavailable).toBe(true)
+})
+
+test('keeps a hidden cloud model selectable when a catalog refresh still resolves it', async () => {
+  const hiddenTask = selection('hidden-model')
+  const hiddenModel: UnifiedModel = {
+    name: 'hidden-model',
+    type: 'public',
+    namespace: 'default',
+    resourceUserId: 0,
+  }
+  const api = {
+    listModels: vi.fn().mockResolvedValue({ data: [models[1]] }),
+    getModel: vi.fn().mockResolvedValue(hiddenModel),
+  }
+  const hook = renderHook(() =>
+    useWorkbenchModels({
+      api,
+      locked: false,
+      scopeKey: scopeA,
+      selectionConfig: hiddenTask,
+      persistSelection: false,
+      fallbackWhenConfiguredModelUnavailable: false,
+    })
+  )
+  await waitFor(() => expect(hook.result.current.isSelectionReady).toBe(true))
+  const lookupsBeforeRefresh = api.getModel.mock.calls.length
+
+  act(() => hook.result.current.refreshModels())
+
+  await waitFor(() => expect(api.getModel).toHaveBeenCalledTimes(lookupsBeforeRefresh + 1))
+  expect(hook.result.current.selectedModel).toEqual(hiddenModel)
+  expect(hook.result.current.selectedModelAvailable).toBe(true)
+  expect(hook.result.current.isSelectionReady).toBe(true)
+})
+
+test('keeps a hidden cloud model through a transient refresh lookup failure', async () => {
+  const hiddenTask = selection('hidden-model')
+  const hiddenModel: UnifiedModel = {
+    name: 'hidden-model',
+    type: 'public',
+    namespace: 'default',
+    resourceUserId: 0,
+  }
+  const api = {
+    listModels: vi.fn().mockResolvedValue({ data: [models[1]] }),
+    getModel: vi.fn().mockResolvedValue(hiddenModel),
+  }
+  const hook = renderHook(() =>
+    useWorkbenchModels({
+      api,
+      locked: false,
+      scopeKey: scopeA,
+      selectionConfig: hiddenTask,
+      persistSelection: false,
+      fallbackWhenConfiguredModelUnavailable: false,
+    })
+  )
+  await waitFor(() => expect(hook.result.current.isSelectionReady).toBe(true))
+  const lookupsBeforeRefresh = api.getModel.mock.calls.length
+
+  api.getModel.mockRejectedValue(new ApiError('offline', 503))
+  act(() => hook.result.current.refreshModels())
+
+  await waitFor(() => expect(api.getModel).toHaveBeenCalledTimes(lookupsBeforeRefresh + 1))
+  expect(hook.result.current.selectedModel).toEqual(hiddenModel)
+  expect(hook.result.current.selectedModelAvailable).toBe(true)
+  expect(hook.result.current.isSelectionReady).toBe(true)
+  expect(hook.result.current.isConfiguredModelUnavailable).toBe(false)
+})
+
+test('drops a hidden group model when a refresh resolves another group identity', async () => {
+  const configuredTask: ModelSelectionConfig = {
+    modelName: 'hidden-group-model',
+    modelType: 'group',
+    options: {
+      weworkCloudModelNamespace: 'team-a',
+      weworkCloudModelResourceUserId: '2',
+    },
+  }
+  const hiddenModel: UnifiedModel = {
+    name: 'hidden-group-model',
+    type: 'group',
+    namespace: 'team-a',
+    resourceUserId: 2,
+  }
+  const api = {
+    listModels: vi.fn().mockResolvedValue({ data: [models[1]] }),
+    getModel: vi.fn().mockResolvedValue(hiddenModel),
+  }
+  const hook = renderHook(() =>
+    useWorkbenchModels({
+      api,
+      locked: false,
+      scopeKey: scopeA,
+      selectionConfig: configuredTask,
+      persistSelection: false,
+      fallbackWhenConfiguredModelUnavailable: false,
+    })
+  )
+  await waitFor(() => expect(hook.result.current.isSelectionReady).toBe(true))
+  const lookupsBeforeRefresh = api.getModel.mock.calls.length
+
+  api.getModel.mockResolvedValue({ ...hiddenModel, namespace: 'team-b' })
+  act(() => hook.result.current.refreshModels())
+
+  await waitFor(() => expect(api.getModel).toHaveBeenCalledTimes(lookupsBeforeRefresh + 1))
+  await waitFor(() => expect(hook.result.current.selectedModel).toBeNull())
+  expect(hook.result.current.isSelectionReady).toBe(false)
+  expect(hook.result.current.isConfiguredModelUnavailable).toBe(true)
+})
+
 test('keeps the replacement flow when the persisted cloud model no longer resolves', async () => {
   const deletedTask = selection('deleted-model')
   const api = {
