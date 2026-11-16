@@ -31,6 +31,41 @@ pub fn replace_config(config_path: &Path, content: String) -> Result<(), String>
     Ok(())
 }
 
+pub fn log_config_state(event: &str, path: &Path, content: &str) {
+    let document = content.parse::<toml_edit::DocumentMut>().ok();
+    crate::logging::log_executor_event(
+        event,
+        &[
+            ("config_path", path.display().to_string()),
+            ("bytes", content.len().to_string()),
+            (
+                "model_present",
+                document
+                    .as_ref()
+                    .is_some_and(|doc| doc.contains_key("model"))
+                    .to_string(),
+            ),
+            (
+                "openai_base_url_present",
+                document
+                    .as_ref()
+                    .is_some_and(|doc| doc.contains_key("openai_base_url"))
+                    .to_string(),
+            ),
+        ],
+    );
+}
+
+#[cfg(unix)]
+fn sync_parent_directory(parent: &Path) -> std::io::Result<()> {
+    fs::File::open(parent)?.sync_all()
+}
+
+#[cfg(not(unix))]
+fn sync_parent_directory(_parent: &Path) -> std::io::Result<()> {
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -72,39 +107,4 @@ mod tests {
             0o640
         );
     }
-}
-
-pub fn log_config_state(event: &str, path: &Path, content: &str) {
-    let document = content.parse::<toml_edit::DocumentMut>().ok();
-    crate::logging::log_executor_event(
-        event,
-        &[
-            ("config_path", path.display().to_string()),
-            ("bytes", content.len().to_string()),
-            (
-                "model_present",
-                document
-                    .as_ref()
-                    .is_some_and(|doc| doc.contains_key("model"))
-                    .to_string(),
-            ),
-            (
-                "openai_base_url_present",
-                document
-                    .as_ref()
-                    .is_some_and(|doc| doc.contains_key("openai_base_url"))
-                    .to_string(),
-            ),
-        ],
-    );
-}
-
-#[cfg(unix)]
-fn sync_parent_directory(parent: &Path) -> std::io::Result<()> {
-    fs::File::open(parent)?.sync_all()
-}
-
-#[cfg(not(unix))]
-fn sync_parent_directory(_parent: &Path) -> std::io::Result<()> {
-    Ok(())
 }
