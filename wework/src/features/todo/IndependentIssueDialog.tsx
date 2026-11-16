@@ -56,20 +56,19 @@ export function IndependentIssueDialog({
   const [deleting, setDeleting] = useState(false)
   const [body, setBody] = useState('')
   const [retry, setRetry] = useState(0)
+  const [dirty, setDirty] = useState(false)
+  const [discarding, setDiscarding] = useState<'close' | 'edit' | null>(null)
+  const requestClose = () => {
+    if (busy) return
+    if (editing && dirty) setDiscarding('close')
+    else onClose()
+  }
   const ref = useDialogKeyboard<HTMLDivElement>(
-    () => {
-      if (!busy) onClose()
-    },
-    presentation === 'dialog' && !deleting,
-    'input, button'
+    requestClose,
+    presentation === 'dialog' && !deleting && !discarding,
+    '[data-testid="independent-issue-title"]'
   )
-  useEscapeKey(
-    () => {
-      if (!busy) onClose()
-    },
-    presentation === 'drawer' && !deleting,
-    ref
-  )
+  useEscapeKey(requestClose, presentation === 'drawer' && !deleting && !discarding, ref)
   useEffect(() => {
     if (!issueId) return
     let active = true
@@ -161,10 +160,14 @@ export function IndependentIssueDialog({
   const content = (
     <>
       <div
+        hidden={Boolean(discarding)}
+        inert={Boolean(discarding)}
         className={
-          presentation === 'drawer'
-            ? `relative flex h-full min-h-0 min-w-0 shrink-0 border-l border-border ${expanded ? 'w-[min(75%,72rem)]' : 'w-[min(44%,32rem)]'}`
-            : 'fixed inset-0 z-modal flex items-center justify-center bg-black/35 p-4'
+          discarding
+            ? 'hidden'
+            : presentation === 'drawer'
+              ? `relative flex h-full min-h-0 min-w-0 shrink-0 border-l border-border ${expanded ? 'w-[min(75%,72rem)]' : 'w-[min(44%,32rem)]'}`
+              : 'fixed inset-0 z-modal flex items-center justify-center bg-black/35 p-4'
         }
       >
         <div
@@ -174,16 +177,21 @@ export function IndependentIssueDialog({
           aria-labelledby="independent-issue-dialog-title"
           inert={deleting}
           data-testid="independent-issue-dialog"
-          className={`flex w-full max-w-3xl flex-col border border-border bg-popover text-text-primary shadow-lg ${presentation === 'drawer' ? 'h-full max-w-none rounded-none border-0 shadow-none' : 'max-h-[calc(100dvh-2rem)] rounded-xl'}`}
+          className={`flex w-full max-w-[680px] flex-col overflow-hidden border border-border bg-popover text-text-primary shadow-lg ${presentation === 'drawer' ? 'h-full max-w-none rounded-none border-0 shadow-none' : 'max-h-[calc(100dvh-2rem)] rounded-[20px]'}`}
         >
-          <header className="flex shrink-0 items-start justify-between gap-4 border-b border-border p-5">
-            <div>
-              <h2 id="independent-issue-dialog-title" className="text-heading-sm font-medium">
+          <header className="flex shrink-0 items-center justify-between gap-4 border-b border-border px-5 py-3">
+            <div className="min-w-0">
+              <h2
+                id="independent-issue-dialog-title"
+                className="truncate text-heading-sm font-medium"
+              >
                 {issue?.title ?? t('independentIssues.create')}
               </h2>
-              <p className="mt-1 text-sm text-text-secondary">
-                {t(!issueId ? 'issue_creation.generic_scope_hint' : 'independentIssues.noProject')}
-              </p>
+              {issueId && (
+                <p className="mt-1 text-sm text-text-secondary">
+                  {t('independentIssues.noProject')}
+                </p>
+              )}
             </div>
             <div className="flex shrink-0 gap-1">
               {presentation === 'drawer' && onExpandedChange && (
@@ -207,18 +215,22 @@ export function IndependentIssueDialog({
                 disabled={busy}
                 data-testid="independent-issue-close"
                 aria-label={t('independentIssues.close')}
-                onClick={onClose}
+                onClick={requestClose}
                 className="flex min-h-11 min-w-11 items-center justify-center rounded-md hover:bg-muted md:min-h-8 md:min-w-8"
               >
                 <X className="h-4 w-4" />
               </button>
             </div>
           </header>
-          <div className="min-h-0 overflow-auto p-5">
+          <div
+            className={
+              editing ? 'flex min-h-0 flex-1 flex-col overflow-hidden' : 'min-h-0 overflow-auto p-5'
+            }
+          >
             {error ? (
               <div
                 role="alert"
-                className="mb-4 flex flex-wrap items-center gap-3 text-sm text-error"
+                className={`mb-4 flex shrink-0 flex-wrap items-center gap-3 text-sm text-error ${editing ? 'mx-5 mt-4' : ''}`}
               >
                 <span>{error}</span>
                 {!editing ? (
@@ -243,8 +255,13 @@ export function IndependentIssueDialog({
                 issue={issue}
                 userId={userId}
                 busy={busy}
+                onDirtyChange={setDirty}
                 onSave={save}
-                onCancel={() => (issue ? setEditing(false) : onClose())}
+                onCancel={() => {
+                  if (dirty) setDiscarding(issue ? 'edit' : 'close')
+                  else if (issue) setEditing(false)
+                  else onClose()
+                }}
               />
             ) : issue ? (
               <>
@@ -426,6 +443,23 @@ export function IndependentIssueDialog({
           </div>
         </div>
       </div>
+      <ConfirmDialog
+        open={Boolean(discarding)}
+        title={t('issue_creation.discard_title')}
+        description={t('issue_creation.discard_hint')}
+        cancelLabel={t('issue_creation.keep_editing')}
+        confirmLabel={t('issue_creation.discard')}
+        confirmTestId="independent-issue-discard-confirm"
+        dialogTestId="independent-issue-discard-dialog"
+        destructive
+        onClose={() => setDiscarding(null)}
+        onConfirm={() => {
+          const action = discarding
+          setDiscarding(null)
+          if (action === 'edit') setEditing(false)
+          else onClose()
+        }}
+      />
       <ConfirmDialog
         open={deleting}
         title={t('independentIssues.delete')}

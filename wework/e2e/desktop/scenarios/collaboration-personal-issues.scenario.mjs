@@ -1,4 +1,5 @@
 import { verifyLocalProjectMigration } from '../modules/local-project-migration.mjs'
+import { verifyIndependentIssueDraft } from '../modules/independent-issue-draft.mjs'
 import assert from 'node:assert/strict'
 import { waitForBoardValue } from '../modules/collaboration-board-flows.mjs'
 import { ensureExperimentalFeaturesEnabled } from '../modules/preferences-automation-flows.mjs'
@@ -155,11 +156,17 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
       const before = await request('/api/v1/cloud-projects')
       await navigate(control, 'collaboration-primary-create-issue')
       await wait(control, '[data-testid="independent-issue-dialog"]')
+      await verifyIndependentIssueDraft(control, {
+        request,
+        reopen: () => navigate(control, 'collaboration-primary-create-issue'),
+        captureScreenshot,
+      })
       await control.command('fill', '[data-testid="independent-issue-title"]', { value: title })
       await control.command('fill', '[data-testid="independent-issue-description"]', {
         value: 'Discuss a company-wide improvement without creating a project.',
       })
       // User story: runtime setup is available without blocking a draft or starting work.
+      await click(control, 'independent-issue-execution-settings')
       await control.command('waitFor', '[data-testid="settings-default-runner"]', { visible: true })
       await captureScreenshot(control, 'new-issue-optional-runtime.png')
       await click(control, 'independent-issue-save')
@@ -396,6 +403,7 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
       await control.command('select', '[data-testid="independent-issue-project"]', {
         value: String(project.id),
       })
+      await click(control, 'independent-issue-execution-settings')
       await click(control, 'issue-environment-picker-trigger')
       await wait(control, '[data-testid="issue-environment-picker"]')
       await wait(control, '[data-testid="collaboration-project-execution-environment-add"]')

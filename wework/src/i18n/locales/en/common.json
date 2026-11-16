@@ -86,6 +86,14 @@
     "working": "Working…"
   },
   "issue_creation": {
+    "save_personal_runner": "Save personal default device",
+    "personal_runner_hint": "Used for tasks you start later. Select or clear a device, then save your personal default to apply it. This does not run the Issue.",
+    "project_device_settings": "Project device access (applies immediately)",
+    "project_device_settings_hint": "Adding a device updates project access immediately. Canceling the Issue does not undo it. You can also configure access after creating the Issue.",
+    "discard_title": "Discard unsaved Issue changes?",
+    "discard_hint": "Your title, description and Issue properties have not been saved. Discarded changes cannot be recovered.",
+    "keep_editing": "Keep editing",
+    "discard": "Discard changes",
     "configure_devices": "Choose or add a device",
     "runtime_label": "Runtime (optional)",
     "runtime_optional_hint": "You can create the Issue now and configure a runtime when starting an Agent.",

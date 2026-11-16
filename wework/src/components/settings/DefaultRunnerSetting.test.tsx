@@ -1,8 +1,61 @@
-import { fireEvent, render, screen, waitFor } from '@testing-library/react'
-import { expect, it, vi } from 'vitest'
+import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { afterEach, expect, it, vi } from 'vitest'
 import { WorkbenchContext } from '@/features/workbench/useWorkbench'
 import type { WorkbenchContextValue } from '@/features/workbench/workbenchContextTypes'
 import { DefaultRunnerSetting } from './DefaultRunnerSetting'
+
+afterEach(cleanup)
+
+it('stages an Issue-form selection, retains failures and applies only through its separate save action', async () => {
+  const updateUserPreferences = vi
+    .fn()
+    .mockRejectedValueOnce(new Error('Offline'))
+    .mockResolvedValue(undefined)
+  const value = {
+    state: {
+      devices: [
+        { device_id: 'mac', name: 'Mac', status: 'online' },
+        { device_id: 'cloud', name: 'Cloud', status: 'online' },
+      ],
+      user: { preferences: { default_execution_target: 'mac' } },
+    },
+    updateUserPreferences,
+  } as unknown as WorkbenchContextValue
+  const { unmount } = render(
+    <WorkbenchContext.Provider value={value}>
+      <DefaultRunnerSetting compact confirmChanges />
+    </WorkbenchContext.Provider>
+  )
+  fireEvent.change(screen.getByTestId('settings-default-runner'), { target: { value: 'cloud' } })
+  expect(updateUserPreferences).not.toHaveBeenCalled()
+  expect(screen.getByTestId('settings-default-runner')).toHaveValue('cloud')
+  fireEvent.click(screen.getByTestId('settings-default-runner-save'))
+  await screen.findByRole('alert')
+  expect(screen.getByTestId('settings-default-runner')).toHaveValue('cloud')
+  fireEvent.click(screen.getByTestId('settings-default-runner-save'))
+  await waitFor(() => expect(updateUserPreferences).toHaveBeenCalledTimes(2))
+  expect(updateUserPreferences).toHaveBeenLastCalledWith({ default_execution_target: 'cloud' })
+  unmount()
+})
+
+it('does not clear an unavailable default until explicitly saved in an Issue form', async () => {
+  const updateUserPreferences = vi.fn().mockResolvedValue(undefined)
+  const value = {
+    state: { devices: [], user: { preferences: { default_execution_target: 'old' } } },
+    updateUserPreferences,
+  } as unknown as WorkbenchContextValue
+  render(
+    <WorkbenchContext.Provider value={value}>
+      <DefaultRunnerSetting compact confirmChanges />
+    </WorkbenchContext.Provider>
+  )
+  fireEvent.click(screen.getByTestId('settings-default-runner-clear'))
+  expect(updateUserPreferences).not.toHaveBeenCalled()
+  fireEvent.click(screen.getByTestId('settings-default-runner-save'))
+  await waitFor(() =>
+    expect(updateUserPreferences).toHaveBeenCalledWith({ default_execution_target: null })
+  )
+})
 
 it('renders a usable default-device control, saves the shared preference and restores it on reopening', async () => {
   const updateUserPreferences = vi.fn(async () => {})

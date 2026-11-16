@@ -1,4 +1,4 @@
-import { useCallback, useState } from 'react'
+import { useCallback, useRef, useState } from 'react'
 import { usePanelData } from '@wegent/collaboration/platform'
 import * as Popover from '@radix-ui/react-popover'
 import { ChevronDown, Monitor } from 'lucide-react'
@@ -8,6 +8,7 @@ import {
   type SharedWorkspaceApi,
 } from '@wegent/collaboration'
 import { useTranslation } from '@/hooks/useTranslation'
+import { useEscapeKey } from '@/hooks/useEscapeKey'
 
 /** Reuse project grants without navigating away from the Issue draft. */
 export function IssueProjectEnvironmentPicker({
@@ -21,12 +22,14 @@ export function IssueProjectEnvironmentPicker({
 }) {
   const { t, i18n } = useTranslation('common')
   const [open, setOpen] = useState(false)
+  const popoverRef = useRef<HTMLDivElement>(null)
+  useEscapeKey(() => setOpen(false), open, popoverRef)
   const load = useCallback(() => api.projects.get(projectId), [api, projectId])
   const { data: project, error: cause, refresh } = usePanelData(load, open)
   const error = cause instanceof Error ? cause.message : cause ? String(cause) : ''
   const translate = createCollaborationTranslator(i18n?.language === 'en' ? 'en' : 'zh-CN')
   return (
-    <Popover.Root open={open} onOpenChange={setOpen}>
+    <Popover.Root modal open={open} onOpenChange={setOpen}>
       <Popover.Trigger asChild>
         <button
           type="button"
@@ -41,6 +44,13 @@ export function IssueProjectEnvironmentPicker({
       </Popover.Trigger>
       <Popover.Portal>
         <Popover.Content
+          ref={popoverRef}
+          aria-label={t('issue_creation.project_device_settings')}
+          onEscapeKeyDown={event => {
+            event.preventDefault()
+            event.stopPropagation()
+            setOpen(false)
+          }}
           align="start"
           sideOffset={6}
           collisionPadding={8}
@@ -67,7 +77,7 @@ export function IssueProjectEnvironmentPicker({
               translate={translate}
             />
           ) : (
-            <p role="status" className="text-sm text-text-muted">
+            <p role="status" className="text-sm text-text-secondary">
               {t('independentIssues.loading')}
             </p>
           )}

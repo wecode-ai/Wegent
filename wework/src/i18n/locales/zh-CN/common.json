@@ -86,6 +86,14 @@
     "working": "正在处理…"
   },
   "issue_creation": {
+    "save_personal_runner": "保存个人默认设备",
+    "personal_runner_hint": "用于之后启动的任务；选择或清除后，点击“保存个人默认设备”才会生效。不会自动执行事项。",
+    "project_device_settings": "项目设备授权（立即生效）",
+    "project_device_settings_hint": "添加设备会立即更新项目授权，取消事项不会撤销。也可以创建事项后再配置。",
+    "discard_title": "放弃未保存的事项修改？",
+    "discard_hint": "已填写的标题、描述和事项属性尚未保存。放弃后无法恢复。",
+    "keep_editing": "继续编辑",
+    "discard": "放弃修改",
     "configure_devices": "选择或添加设备",
     "runtime_label": "运行环境（可选）",
     "runtime_optional_hint": "可先创建事项，运行智能体时再配置。",

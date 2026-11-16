@@ -1,11 +1,38 @@
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, expect, it, vi } from 'vitest'
+import userEvent from '@testing-library/user-event'
 import type { SharedWorkspaceApi } from '@wegent/collaboration'
 import type { PersonalIssuesApi } from '@/api/personalIssues'
 import { IssueParticipantPicker } from './IssueParticipantPicker'
 
 vi.mock('@/hooks/useTranslation', () => ({ useTranslation: () => ({ t: (key: string) => key }) }))
 afterEach(cleanup)
+
+it('supports keyboard tab navigation and restores the trigger when the popover closes', async () => {
+  render(
+    <IssueParticipantPicker
+      api={{} as PersonalIssuesApi}
+      userId={7}
+      selected={[]}
+      onChange={vi.fn()}
+      disabled={false}
+    />
+  )
+  const trigger = screen.getByTestId('issue-participant-add')
+  await userEvent.click(trigger)
+  await waitFor(() => expect(screen.getByTestId('independent-issue-search-people')).toHaveFocus())
+  screen.getByTestId('issue-participant-tab-human').focus()
+  await userEvent.keyboard('{ArrowRight}')
+  expect(screen.getByTestId('issue-participant-tab-agent')).toHaveFocus()
+  expect(screen.getByTestId('issue-participant-tab-agent')).toHaveAttribute('aria-selected', 'true')
+  await userEvent.keyboard('{End}')
+  expect(screen.getByTestId('issue-participant-tab-group')).toHaveFocus()
+  await userEvent.keyboard('{Escape}')
+  await waitFor(() =>
+    expect(screen.queryByTestId('issue-participant-picker')).not.toBeInTheDocument()
+  )
+  expect(trigger).toHaveFocus()
+})
 
 it.each(['account', 'backend'])(
   'hides previous candidates immediately when the %s changes',

@@ -74,7 +74,7 @@ export function PluginPythonRuntimeNotice() {
       data-testid="plugin-python-runtime-notice"
       data-embedded-browser-occlusion
       aria-label={label}
-      className="fixed bottom-4 right-4 z-critical w-80 max-w-[calc(100vw-2rem)] rounded-xl border border-border bg-background p-4 text-text-primary shadow-lg"
+      className="fixed bottom-4 right-4 z-popover w-80 max-w-[calc(100vw-2rem)] rounded-xl border border-border bg-background p-4 text-text-primary shadow-lg"
     >
       <div className="flex items-start gap-2">
         <Download className="mt-0.5 h-4 w-4 shrink-0 text-text-secondary" aria-hidden="true" />

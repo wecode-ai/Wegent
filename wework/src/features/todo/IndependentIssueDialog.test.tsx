@@ -1,10 +1,71 @@
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, expect, it, vi } from 'vitest'
+import userEvent from '@testing-library/user-event'
 import type { PersonalIssuesApi } from '@/api/personalIssues'
 import { IndependentIssueDialog } from './IndependentIssueDialog'
 vi.mock('@/hooks/useTranslation', () => ({ useTranslation: () => ({ t: (key: string) => key }) }))
 vi.mock('./IndependentIssueTaskButton', () => ({ IndependentIssueTaskButton: () => null }))
 afterEach(cleanup)
+
+it.each(['dialog', 'drawer'] as const)(
+  'keeps a %s draft when dismissing the participant picker and canceling discard',
+  async presentation => {
+    const close = vi.fn()
+    const api = {
+      projects: vi.fn().mockResolvedValue({ items: [] }),
+      searchUsers: vi.fn().mockResolvedValue({ users: [] }),
+      create: vi.fn(),
+    } as unknown as PersonalIssuesApi
+    render(
+      <IndependentIssueDialog
+        api={api}
+        userId={7}
+        issueId={null}
+        presentation={presentation}
+        onClose={close}
+        onSaved={vi.fn()}
+      />
+    )
+    const title = screen.getByTestId('independent-issue-title')
+    await waitFor(() => expect(title).toHaveFocus())
+    await userEvent.type(title, 'Keep this draft')
+    fireEvent.change(screen.getByTestId('independent-issue-priority'), {
+      target: { value: 'high' },
+    })
+    await userEvent.click(screen.getByTestId('issue-participant-add'))
+    await waitFor(() => expect(screen.getByTestId('independent-issue-search-people')).toHaveFocus())
+    await userEvent.keyboard('Nobody{Enter}')
+    expect(api.create).not.toHaveBeenCalled()
+    await userEvent.keyboard('{Escape}')
+    await waitFor(() =>
+      expect(screen.queryByTestId('issue-participant-picker')).not.toBeInTheDocument()
+    )
+    expect(close).not.toHaveBeenCalled()
+    expect(title).toHaveValue('Keep this draft')
+    expect(screen.queryByTestId('independent-issue-discard-dialog')).not.toBeInTheDocument()
+    await userEvent.keyboard('{Escape}')
+    expect(screen.getByTestId('independent-issue-discard-dialog')).toBeVisible()
+    expect(screen.getByTestId('independent-issue-dialog')).not.toBeVisible()
+    await userEvent.click(screen.getByTestId('independent-issue-discard-confirm-cancel-button'))
+    expect(title).toHaveValue('Keep this draft')
+    expect(screen.getByTestId('independent-issue-priority')).toHaveValue('high')
+    await userEvent.click(screen.getByTestId('independent-issue-close'))
+    await userEvent.click(screen.getByTestId('independent-issue-discard-confirm'))
+    expect(close).toHaveBeenCalledOnce()
+    expect(api.create).not.toHaveBeenCalled()
+  }
+)
+
+it('closes an unchanged form without a discard decision', async () => {
+  const close = vi.fn()
+  const api = { projects: vi.fn().mockResolvedValue({ items: [] }) } as unknown as PersonalIssuesApi
+  render(
+    <IndependentIssueDialog api={api} userId={7} issueId={null} onClose={close} onSaved={vi.fn()} />
+  )
+  await userEvent.click(screen.getByTestId('independent-issue-editor-cancel'))
+  expect(close).toHaveBeenCalledOnce()
+  expect(screen.queryByTestId('independent-issue-discard-dialog')).not.toBeInTheDocument()
+})
 
 it('retains the saved Issue on association failure so retry cannot create a second Issue', async () => {
   const row = {

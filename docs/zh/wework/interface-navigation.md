@@ -185,4 +185,4 @@ iPhone 和 Android 的主页、搜索、设备筛选与会话入口见 [Wework �
 
 Issue 动态中的图片、Markdown 和文件链接可打开附件预览，失败后可重试并下载原文件。见[附件与文档预览](./projects.md#issue-resource-preview)。
 
-默认执行设备与新建事项设备授权入口见[协作设备设置](./devices.md#collaboration-device-defaults)：**协作 → 协作管理 → 执行设备 → 个人默认执行环境**；新建事项的 **运行环境（可选）** 可选择或添加项目设备。
+默认执行设备与新建事项设备授权入口见[协作设备设置](./devices.md#collaboration-device-defaults)：**协作 → 协作管理 → 执行设备 → 个人默认执行环境**；**协作 → 新建事项 → 运行环境（可选）→ 个人默认执行环境 → 保存个人默认设备** 明确保存个人偏好，关联项目时通过 **项目设备授权（立即生效）→ 选择或添加设备** 管理项目授权。参与者弹层、固定创建操作区和未保存修改保护见[独立事项](./projects.md#independent-issues)。
