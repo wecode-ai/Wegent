@@ -120,6 +120,14 @@ export function ProjectCreateGroupView({
     <ProjectCreateConfigurationView
       onBack={requestGroupClose}
       active={!discardTarget}
+      focusLabel={labels.selectGenerationModel}
+      focusTarget={
+        groupGenerating
+          ? null
+          : groupEditorDraft
+            ? '[data-testid="collaboration-project-create-group-name"]'
+            : '[data-testid="collaboration-project-create-generation-instructions"]'
+      }
       backLabel={labels.backToProject}
       testId="collaboration-project-create-model-picker"
       restoreFocus='[data-testid="collaboration-project-create-edit-group"], [data-testid="collaboration-project-create-add-collaborator"]'

@@ -109,3 +109,65 @@ it.each(['Escape', 'header'])(
     }
   }
 )
+
+it.each(['result', 'failure', 'result-back', 'failure-back', 'result-outside', 'failure-outside'])(
+  'recovers owned focus across an async configuration transition (%s)',
+  async outcome => {
+    globalThis.IS_REACT_ACT_ENVIRONMENT = true
+    const container = document.createElement('div')
+    document.body.append(container)
+    const root = createRoot(container)
+    const renderStage = async (stage: 'input' | 'working' | 'result') => {
+      await act(async () =>
+        root.render(
+          <ProjectCreateConfigurationView
+            onBack={() => {}}
+            backLabel="Back to project"
+            testId="configuration"
+            focusLabel="Organize a collaboration group"
+            focusTarget={stage === 'working' ? null : `[data-testid="${stage}"]`}
+          >
+            {stage === 'input' ? (
+              <input data-testid="input" aria-label="Division requirements" />
+            ) : stage === 'result' ? (
+              <button data-testid="result">Review group</button>
+            ) : (
+              <p role="status">Generating</p>
+            )}
+          </ProjectCreateConfigurationView>
+        )
+      )
+    }
+    const outside = document.createElement('button')
+    outside.textContent = 'Other dialog action'
+    document.body.append(outside)
+    try {
+      await renderStage('input')
+      const input = container.querySelector<HTMLElement>('[data-testid="input"]')!
+      expect(document.activeElement).toBe(input)
+      await renderStage('working')
+      const configuration = container.querySelector<HTMLElement>('[data-testid="configuration"]')!
+      expect(input.isConnected).toBe(false)
+      expect(document.activeElement).toBe(configuration)
+      expect(configuration.getAttribute('aria-label')).toBe('Organize a collaboration group')
+      const back = container.querySelector<HTMLElement>(
+        '[data-testid="collaboration-project-create-configuration-back"]'
+      )!
+      if (outcome.endsWith('-back')) await act(async () => back.focus())
+      if (outcome.endsWith('-outside')) await act(async () => outside.focus())
+      const destination = outcome.startsWith('result') ? 'result' : 'input'
+      await renderStage(destination)
+      expect(document.activeElement).toBe(
+        outcome.endsWith('-back')
+          ? back
+          : outcome.endsWith('-outside')
+            ? outside
+            : container.querySelector(`[data-testid="${destination}"]`)
+      )
+    } finally {
+      await act(async () => root.unmount())
+      container.remove()
+      outside.remove()
+    }
+  }
+)

@@ -176,7 +176,7 @@ export const templateMessages = {
     confirmConfiguration: 'Confirm configuration',
     returnToProject: 'Back to project',
     returnToTemplates: 'Back to templates',
-    selectionSummary: '{groups} groups · {roles} roles',
+    selectionSummary: 'Groups: {groups} · Roles: {roles}',
     selectionIncomplete: 'Some roles need members. Configure them before creating the project.',
     use: 'Use template',
     download: 'Download and use',
@@ -222,7 +222,7 @@ export const templateMessages = {
     syncConflict: 'Template not synced. Resolve the conflict or save a copy.',
     embeddedAgents:
       'Template Agents are created and bound automatically. Models and tools follow the execution environment.',
-    agentsCount: '{count} Agents will be created and bound to roles.',
+    agentsCount: 'Agents to create and bind to roles: {count}.',
     environmentHint: 'Models and tools follow the execution environment.',
     agentModel: 'Model for Agents',
     chooseModel: 'Choose a model',

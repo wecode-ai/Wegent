@@ -278,7 +278,7 @@ export const projectCreateLabels: Record<
     preparingGenerationModel: "Preparing the model",
     generatingResponsibilities:
       "AI is analyzing the project and generating responsibilities",
-    generationElapsed: "Waiting for {{seconds}} seconds",
+    generationElapsed: "Elapsed: {{seconds}} s",
     generationCompleted: "Responsibilities generated. Review and save them.",
     generationIncomplete:
       "The result is missing {sections}. Generate again; your requirements and participants are preserved.",

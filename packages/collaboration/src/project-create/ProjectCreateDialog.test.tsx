@@ -5,7 +5,7 @@ import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import { ProjectCreateDialog } from './ProjectCreateDialog'
 import { projectCreateLabels } from './labels'
 import type { CollaborationProject } from '../types'
-import type { ProjectCreateResourceSetup } from './types'
+import type { ProjectCreateCollaborationGroupDraft, ProjectCreateResourceSetup } from './types'
 import { IncompleteCollaborationGroupGenerationError } from './collaborationGroupDraft'
 
 let root: Root
@@ -34,6 +34,7 @@ beforeEach(() => {
 afterEach(async () => {
   await act(async () => root.unmount())
   container.remove()
+  vi.restoreAllMocks()
   vi.unstubAllGlobals()
 })
 
@@ -50,6 +51,117 @@ const changeInput = async (id: string, value: string) => {
   })
 }
 const changeName = (value: string) => changeInput('cloud-project-name', value)
+
+it.each(['result', 'failure', 'result-back', 'failure-back'])(
+  'preserves generation focus through the real deferred composer lifecycle (%s)',
+  async outcome => {
+    let resolve!: (value: ProjectCreateCollaborationGroupDraft) => void
+    let reject!: (reason: Error) => void
+    const generated = new Promise<ProjectCreateCollaborationGroupDraft>(
+      (resolveValue, rejectValue) => {
+        resolve = resolveValue
+        reject = rejectValue
+      }
+    )
+    const generate = vi.fn(() => generated)
+    await act(async () =>
+      root.render(
+        <ProjectCreateDialog
+          targets={[{ location: 'cloud', create: vi.fn() }]}
+          defaultLocation="cloud"
+          labels={projectCreateLabels.en}
+          allowDingTalkAITable={false}
+          onClose={vi.fn()}
+          onCreated={vi.fn()}
+          resourceSetup={{
+            location: 'cloud',
+            currentUser: { id: 7, name: 'Me' },
+            members: [],
+            agents: [
+              {
+                id: 'one',
+                name: 'Agent one',
+                owner_type: 'user',
+                owner_id: '7',
+                owner_name: 'Me',
+                status: 'available',
+              },
+            ],
+            groups: [],
+            configure: vi.fn(),
+            loadCollaborationGroupGenerationModels: async () => ({
+              models: [{ modelName: 'unit-model', modelType: 'public' }],
+            }),
+            generateCollaborationGroupDraft: generate,
+          }}
+        />
+      )
+    )
+    await click('collaboration-project-create-add-collaborator')
+    await click('collaboration-project-create-collaborator-tab-agents')
+    await click('collaboration-project-create-agent-one')
+    await click('collaboration-project-create-add-collaborator')
+    await click('collaboration-project-create-collaborator-tab-groups')
+    await click('collaboration-project-create-new-group')
+    const editor = get('collaboration-project-create-generation-instructions')
+    expect(document.activeElement).toBe(editor)
+    const intervals = vi.spyOn(window, 'setInterval')
+    const clearInterval = vi.spyOn(window, 'clearInterval')
+    await act(async () =>
+      editor.dispatchEvent(
+        new KeyboardEvent('keydown', {
+          key: 'Enter',
+          keyCode: 13,
+          bubbles: true,
+          cancelable: true,
+        })
+      )
+    )
+    expect(generate).toHaveBeenCalledOnce()
+    expect(editor.isConnected).toBe(false)
+    const configuration = get('collaboration-project-create-model-picker')
+    expect(document.activeElement).toBe(configuration)
+    const back = get('collaboration-project-create-configuration-back')
+    if (outcome.endsWith('-back')) await act(async () => back.focus())
+    await act(async () => {
+      if (outcome.startsWith('failure')) reject(new Error('Generation failed'))
+      else
+        resolve({
+          name: 'Review group',
+          description: '',
+          instructions: 'Review responsibilities',
+          leader: { kind: 'human', id: '7', name: 'Me', responsibility: 'Coordinate work' },
+          members: [
+            {
+              kind: 'agent',
+              id: 'one',
+              name: 'Agent one',
+              responsibility: 'Review the implementation',
+            },
+          ],
+          stages: [{ id: 'review', name: 'Review', description: '', assignee: null }],
+          executionRequirements: { requiredTags: [] },
+        })
+    })
+    await vi.waitFor(async () => {
+      await act(async () => {})
+      const target = get(
+        outcome.startsWith('failure')
+          ? 'collaboration-project-create-generation-instructions'
+          : 'collaboration-project-create-group-name'
+      )
+      expect(target).not.toBeNull()
+      expect(document.activeElement).toBe(outcome.endsWith('-back') ? back : target)
+      expect(target.getAttribute(outcome.startsWith('failure') ? 'aria-label' : 'role')).toBe(
+        outcome.startsWith('failure') ? projectCreateLabels.en.generationRequest : 'button'
+      )
+    })
+    expect(intervals).toHaveBeenCalled()
+    for (const interval of intervals.mock.results) {
+      if (interval.type === 'return') expect(clearInterval).toHaveBeenCalledWith(interval.value)
+    }
+  }
+)
 
 it.each(['zh-CN', 'en'] as const)(
   'keeps an incomplete generation as a localized, stopped preview (%s)',

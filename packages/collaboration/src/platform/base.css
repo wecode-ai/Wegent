@@ -903,6 +903,11 @@
   display: none;
 }
 
+.collaboration-project-create-configuration[aria-label]:focus-visible {
+  outline: 2px solid rgb(var(--color-focus, var(--color-primary)));
+  outline-offset: -2px;
+}
+
 .collaboration-project-create-configuration-body {
   min-height: 0;
   overflow-y: auto;

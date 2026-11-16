@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict'
 import { getSingleElementMetrics } from './conversation-layout.mjs'
-import { CLOUD_PUBLIC_MODEL_NAME } from './shared.mjs'
+import { CLOUD_PUBLIC_MODEL_NAME, DEFAULT_STEP_TIMEOUT_MS } from './shared.mjs'
+import { waitForValue } from './workspace-agent-setup.mjs'
 import {
   GENERATED_GROUP_NAME,
   GROUP_DRAFT_REQUEST,
@@ -9,6 +10,7 @@ import {
 import {
   waitForProjectCreateViewport,
   assertProjectCreateActionHit,
+  withProjectRenderer,
 } from './project-create-test-utils.mjs'
 import { assertMobileInlineTarget } from './project-create-interaction-checks.mjs'
 
@@ -77,6 +79,60 @@ async function assertGeneratedGroupLayout(control, configuration) {
   )
 }
 
+async function readGenerationFocus(configuration) {
+  return withProjectRenderer(async (client, target) => {
+    const result = await client({
+      action: 'command',
+      target,
+      method: 'Runtime.evaluate',
+      params: {
+        returnByValue: true,
+        expression: `(() => {
+          const scope = document.querySelector(${JSON.stringify(configuration)})
+          if (!scope) return null
+          const visible = element => element && !element.closest('[hidden],[inert],[aria-hidden="true"]') && element.getBoundingClientRect().height > 0
+          const instructions = scope.querySelector('[data-testid="collaboration-project-create-generation-instructions"]')
+          const result = scope.querySelector('[data-testid="collaboration-project-create-group-name"]')
+          const save = scope.querySelector('[data-testid="collaboration-project-create-apply-group"]')
+          const alert = Array.from(scope.querySelectorAll('[role="alert"]')).find(visible)
+          const progress = scope.querySelector('[data-testid="collaboration-project-create-generation-progress"]')
+          const active = document.activeElement
+          return {
+            phase: alert ? 'error' : visible(save) && !save.disabled ? 'complete' : visible(progress) ? 'generating' : 'configuration',
+            inside: scope.contains(active) && visible(active),
+            instructionsFocused: active === instructions || Boolean(instructions?.contains(active)),
+            resultFocused: active === result || Boolean(result?.contains(active)),
+            active: { tag: active?.tagName, testId: active?.getAttribute('data-testid'), role: active?.getAttribute('role') }
+          }
+        })()`,
+      },
+    })
+    return result.result?.value
+  })
+}
+
+async function assertGenerationFocus(configuration, expectedPhase) {
+  // Observe the first phase reached after submission without focusing any element through automation.
+  const state = await waitForValue(
+    () => readGenerationFocus(configuration),
+    value =>
+      value && (expectedPhase ? value.phase === expectedPhase : value.phase !== 'configuration'),
+    'The generation focus check did not observe the expected product phase',
+    DEFAULT_STEP_TIMEOUT_MS
+  )
+  assert.ok(state.inside, `Generation focus escaped its configuration: ${JSON.stringify(state)}`)
+  if (state.phase === 'error')
+    assert.ok(
+      state.instructionsFocused,
+      `Failed generation must focus its requirements: ${JSON.stringify(state)}`
+    )
+  if (state.phase === 'complete')
+    assert.ok(
+      state.resultFocused,
+      `Completed generation must focus its editable result: ${JSON.stringify(state)}`
+    )
+}
+
 async function verifyIncompleteGroupRecovery(control, configuration, agents) {
   const instructions = `${configuration} ${testId('collaboration-project-create-generation-instructions')}`
   const attachments = `${configuration} ${testId('collaboration-project-create-generation-agent-attachments')}`
@@ -95,10 +151,12 @@ async function verifyIncompleteGroupRecovery(control, configuration, agents) {
   await control.command('fill', instructions, { value: request })
   for (const agent of agents) await control.command('waitFor', attachments, { text: agent.name })
   await control.command('clickWhenEnabled', generate)
+  await assertGenerationFocus(configuration)
   // The model alone omits required sections; the real ephemeral turn and validator must reject it.
   await control.command('waitFor', error, { visible: true, timeoutMs: 30_000 })
   await control.command('waitFor', instructions, { visible: true })
   await control.command('waitFor', `${generate}:not(:disabled)`, { visible: true })
+  await assertGenerationFocus(configuration, 'error')
   const message = await control.command('getText', error)
   assert.equal(message, '生成结果缺少分配原则、建议流程。请重新生成，已有要求和参与者会保留。')
   assert.doesNotMatch(message, /incomplete_group|structured|JSON/i)
@@ -161,6 +219,7 @@ export async function verifyGeneratedGroupDraft(
       'clickWhenEnabled',
       `${configuration} ${testId('collaboration-project-create-generate-group')}`
     )
+    await assertGenerationFocus(configuration)
     const editor = `${configuration} ${testId('collaboration-project-create-group-editor')}`
     const error = `${configuration} [role="alert"]`
     const ready = `${configuration} ${testId('collaboration-project-create-apply-group')}:not(:disabled)`
@@ -172,6 +231,7 @@ export async function verifyGeneratedGroupDraft(
       `Real group generation failed: ${await control.command('getText', error)}`
     )
     await control.command('waitFor', editor, { text: GENERATED_GROUP_NAME })
+    await assertGenerationFocus(configuration, 'complete')
     await keepDraft(control, editor)
     await assertGeneratedGroupLayout(control, configuration)
     const liveStatus = `${configuration} ${testId('collaboration-project-create-generation-status')}`
