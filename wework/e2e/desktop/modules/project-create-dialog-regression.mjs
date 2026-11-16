@@ -1,7 +1,4 @@
 import assert from 'node:assert/strict'
-import { writeFile } from 'node:fs/promises'
-import { join } from 'node:path'
-import { createDevtoolsClient } from '../../../scripts/ai-verify-devtools.mjs'
 import {
   openDirectProjectCreation,
   reloadMainWindow,
@@ -10,8 +7,22 @@ import {
 import { openProjectBoard } from './collaboration-board-personal-view.mjs'
 import { getSingleElementMetrics } from './conversation-layout.mjs'
 import { waitForValue } from './workspace-agent-setup.mjs'
-import { CLOUD_PUBLIC_MODEL_NAME, DEFAULT_STEP_TIMEOUT_MS, resultDir } from './shared.mjs'
+import { CLOUD_PUBLIC_MODEL_NAME, DEFAULT_STEP_TIMEOUT_MS } from './shared.mjs'
 import { GENERATED_GROUP_NAME, GROUP_DRAFT_REQUEST } from './project-create-group-model.mjs'
+import {
+  waitForProjectCreateViewport,
+  assertProjectCreateActionHit,
+  saveProjectCreateFocusEvidence,
+  withProjectRenderer,
+} from './project-create-test-utils.mjs'
+import {
+  verifyModelDialogKeyboard,
+  assertMobileInlineTarget,
+} from './project-create-interaction-checks.mjs'
+export {
+  waitForProjectCreateViewport,
+  assertProjectCreateActionHit,
+} from './project-create-test-utils.mjs'
 export { handleProjectCreateGroupModel } from './project-create-group-model.mjs'
 
 const testId = value => `[data-testid="${value}"]`
@@ -25,88 +36,6 @@ const BACK = testId('collaboration-project-create-configuration-back')
 const readMetrics = (control, selector) => getSingleElementMetrics(control, selector, selector)
 const resizeWindow = (control, width, height) =>
   control.command('setMainWindowSize', 'body', { value: JSON.stringify({ width, height }) })
-
-export async function waitForProjectCreateViewport(control, width = 1024, height = 768) {
-  return waitForValue(
-    () => readMetrics(control, 'body'),
-    metrics => metrics?.viewportWidth === width && metrics.viewportHeight === height,
-    `Project creation viewport did not resize to ${width}x${height}`,
-    DEFAULT_STEP_TIMEOUT_MS
-  )
-}
-
-export async function assertProjectCreateActionHit(control, selector) {
-  await control.command('waitFor', selector, { visible: true })
-  const metrics = await readMetrics(control, selector)
-  if (!metrics?.hitTestVisible)
-    await saveProjectCreateFocusEvidence('project-create-hit-failure', selector)
-  assert.ok(
-    metrics?.hitTestVisible,
-    `Project creation action is covered: ${selector}; metrics=${JSON.stringify(metrics)}`
-  )
-  assert.ok(metrics.top >= 0 && metrics.bottom <= metrics.viewportHeight)
-  assert.ok(metrics.left >= 0 && metrics.right <= metrics.viewportWidth)
-}
-
-async function saveProjectCreateFocusEvidence(name, selector) {
-  try {
-    await collectProjectCreateFocusEvidence(name, selector)
-  } catch (error) {
-    console.error('Unable to capture project creation failure evidence', error)
-  }
-}
-
-async function collectProjectCreateFocusEvidence(name, selector) {
-  return withProjectRenderer(async (client, target) => {
-    const evidence = await client({
-      action: 'command',
-      target,
-      method: 'Runtime.evaluate',
-      params: {
-        returnByValue: true,
-        expression: `(() => {
-        const describe = element => {
-          if (!(element instanceof HTMLElement)) return null
-          const style = getComputedStyle(element)
-          return { tag: element.tagName, testId: element.dataset.testid, className: element.className,
-            tabIndex: element.tabIndex, tabIndexAttribute: element.getAttribute('tabindex'),
-            contentEditable: element.contentEditable, disabled: element.matches(':disabled'),
-            hidden: Boolean(element.closest('[hidden],[inert],[aria-hidden="true"]')),
-            display: style.display, visibility: style.visibility, position: style.position,
-            zIndex: style.zIndex, transform: style.transform, opacity: style.opacity,
-            isolation: style.isolation, contain: style.contain, filter: style.filter }
-        }
-        const ancestry = element => { const chain = []; while(element) { chain.push(describe(element)); element = element.parentElement } return chain }
-        const scope = document.querySelector(${JSON.stringify(selector)})
-        const rect = scope?.getBoundingClientRect()
-        return { active: ancestry(document.activeElement), scope: ancestry(scope),
-          hit: rect ? ancestry(document.elementFromPoint((rect.left + rect.right) / 2, (rect.top + rect.bottom) / 2)) : null,
-          controls: scope ? Array.from(scope.querySelectorAll('input,button,select,textarea,[contenteditable]')).map(describe) : [] }
-      })()`,
-      },
-    })
-    await writeFile(
-      join(resultDir, `${name}.json`),
-      JSON.stringify(evidence.result?.value, null, 2)
-    )
-  })
-}
-
-async function withProjectRenderer(inspect) {
-  const client = await createDevtoolsClient(resultDir, DEFAULT_STEP_TIMEOUT_MS)
-  const target = (await client({ action: 'targets' })).find(
-    entry =>
-      entry.type === 'window' &&
-      entry.url.includes('/wework/app/') &&
-      !entry.url.includes('startup-splash')
-  )?.id
-  assert.ok(target, 'The isolated renderer must be available for project diagnostics')
-  try {
-    return await inspect(client, target)
-  } finally {
-    await client({ action: 'detach', target })
-  }
-}
 
 async function verifyProjectCreateFocusRestoration(control, scoped) {
   const nameInput = scoped(testId('collaboration-project-name-input'))
@@ -489,7 +418,8 @@ async function verifyGeneratedGroupDraft(control, scoped, configuration, agents,
   const original = JSON.parse(previousSize)
   try {
     await waitForProjectCreateViewport(control, 375, 812)
-    await control.command('clickWhenEnabled', `${configuration} ${testId('model-selector-button')}`)
+    const modelTrigger = `${configuration} ${testId('model-selector-button')}`
+    await control.command('clickWhenEnabled', modelTrigger)
     const menu = testId('model-selector-menu')
     await control.command('waitFor', menu, { visible: true })
     if (Number(await control.command('getElementCount', `${menu}[data-panel="simple"]`)) > 0)
@@ -497,6 +427,11 @@ async function verifyGeneratedGroupDraft(control, scoped, configuration, agents,
     const cloudModel = `${menu} ${testId(`model-option-${CLOUD_PUBLIC_MODEL_NAME}`)}`
     await control.command('scrollIntoView', cloudModel)
     await control.command('clickWhenEnabled', cloudModel)
+    await control.command('waitFor', modelTrigger, {
+      text: CLOUD_PUBLIC_MODEL_NAME,
+    })
+    // Desktop model selection retains the menu for options; dismiss it explicitly.
+    await control.command('nativePress', modelTrigger, { key: 'Escape' })
     await control.command('waitFor', menu, { visible: false })
     await control.command(
       'fill',
@@ -505,6 +440,8 @@ async function verifyGeneratedGroupDraft(control, scoped, configuration, agents,
         value: `${GROUP_DRAFT_REQUEST} 请为当前真实协作者生成完整、可验收的分工。`,
       }
     )
+    const pendingStatus = `${configuration} ${testId('collaboration-project-create-generation-status')}`
+    assert.equal(await control.command('getText', pendingStatus), '')
     await control.command(
       'clickWhenEnabled',
       `${configuration} ${testId('collaboration-project-create-generate-group')}`
@@ -521,6 +458,32 @@ async function verifyGeneratedGroupDraft(control, scoped, configuration, agents,
     await control.command('waitFor', editor, { text: GENERATED_GROUP_NAME })
     await keepDraft(control, editor)
     await assertGeneratedGroupLayout(control, configuration)
+    const liveStatus = `${configuration} ${testId('collaboration-project-create-generation-status')}`
+    assert.equal(await control.command('getAttribute', liveStatus, { value: 'role' }), 'status')
+    assert.equal(
+      await control.command('getAttribute', liveStatus, { value: 'aria-live' }),
+      'polite'
+    )
+    assert.equal(
+      await control.command('getAttribute', liveStatus, { value: 'aria-atomic' }),
+      'true'
+    )
+    await control.command('waitFor', liveStatus, { text: '分工已生成，可编辑并保存。' })
+    // The real parsed roster places the owner first; the fixture supplies two agent duties.
+    const responsibility = `${editor} .collaboration-group-roster-item:nth-child(2) .collaboration-project-create-responsibility`
+    const editResponsibility = `${responsibility} button`
+    const originalResponsibility = await control.command(
+      'getText',
+      `${responsibility} .collaboration-project-create-hover-editable > span`
+    )
+    await control.command('scrollIntoView', editResponsibility, { visible: true })
+    await control.command('click', editResponsibility)
+    const responsibilityInput = `${responsibility} textarea`
+    await control.command('fill', responsibilityInput, { value: '短职责' })
+    await assertMobileInlineTarget(control, responsibilityInput)
+    await control.command('fill', responsibilityInput, { value: originalResponsibility })
+    await control.command('nativePress', responsibilityInput, { key: 'Escape' })
+    await control.command('waitFor', responsibilityInput, { visible: false })
     const name = `${editor} ${testId('collaboration-project-create-group-name')}`
     const nameInput = `${editor} > header input`
     const editButton = `${editor} > header .collaboration-project-create-hover-editable > button`
@@ -529,6 +492,7 @@ async function verifyGeneratedGroupDraft(control, scoped, configuration, agents,
       editedName = `分工草稿 ${key} 已编辑`
       await control.command('nativePress', name, { key: 'Enter' })
       await control.command('fill', nameInput, { value: editedName })
+      await assertMobileInlineTarget(control, nameInput)
       await control.command('nativePress', nameInput, { key })
       await control.command('waitFor', nameInput, { visible: false })
       await control.command('waitFor', name, { text: editedName })
@@ -543,6 +507,12 @@ async function verifyGeneratedGroupDraft(control, scoped, configuration, agents,
         `${configuration} ${testId('collaboration-project-create-apply-group')}`
       )
     }
+    await control.command('setMainWindowSize', 'body', { value: previousSize })
+    await waitForProjectCreateViewport(control, original.width, original.height)
+    await assertProjectCreateActionHit(
+      control,
+      `${configuration} ${testId('collaboration-project-create-apply-group')}`
+    )
     await control.command(
       'clickWhenEnabled',
       `${configuration} ${testId('collaboration-project-create-apply-group')}`
@@ -557,6 +527,8 @@ async function verifyGeneratedGroupDraft(control, scoped, configuration, agents,
       draftName
     )
     for (const agent of agents) await control.command('waitFor', summary, { text: agent.name })
+    await resizeWindow(control, 375, 812)
+    await waitForProjectCreateViewport(control, 375, 812)
     const discover = scoped(testId('project-create-choose-template'))
     await control.command('scrollIntoView', discover)
     const discoverSize = await readMetrics(control, discover)
@@ -593,15 +565,31 @@ async function verifyGroupConfigurationDraft(control, scoped, workspace, agents)
     visible: true,
   })
   await control.command('click', '[data-testid="workspace-tab-select-fixed-board"]')
-  const home = scoped(
-    `${testId(`collaboration-workspace-tree-${workspace.id}`)} .collaboration-workspace-identity`
-  )
+  const home = scoped(testId('collaboration-primary-home'))
   await revealCollaborationSidebarElement(control, home)
   await control.command('click', home)
-  await openDirectProjectCreation(control, scoped('').trim())
+  await control.command('waitFor', scoped(testId('personal-home')), { visible: true })
+  await control.command('click', scoped(testId('personal-home-tab-stand-in')))
+  await control.command('waitFor', scoped(testId('right-workspace-chat-composer-shell')), {
+    visible: true,
+  })
+  const actions = scoped(
+    `${testId(`collaboration-workspace-tree-${workspace.id}`)} .collaboration-workspace-action-trigger`
+  )
+  await revealCollaborationSidebarElement(control, actions)
+  await control.command('click', actions)
+  await control.command('click', testId('collaboration-workspace-nav-create-project'))
+  await control.command('click', testId('collaboration-workspace-nav-create-blank-project'))
+  await control.command('waitFor', DIALOG, { visible: true })
   const nameInput = scoped(testId('collaboration-project-name-input'))
   const draftName = `Group configuration draft ${process.pid}`
   await control.command('fill', nameInput, { value: draftName })
+  await resizeWindow(control, 1024, 768)
+  await waitForProjectCreateViewport(control)
+  await assertProjectCreateActionHit(
+    control,
+    scoped(testId('collaboration-project-create-confirm'))
+  )
   for (const agent of agents) {
     await control.command('click', scoped(testId('collaboration-project-create-add-collaborator')))
     await control.command('click', testId('collaboration-project-create-collaborator-tab-agents'))
@@ -639,6 +627,7 @@ async function verifyGroupConfigurationDraft(control, scoped, workspace, agents)
   )
   await resizeWindow(control, 1024, 768)
   await waitForProjectCreateViewport(control)
+  await verifyModelDialogKeyboard(control, configuration)
   await verifyMobileGroupConfiguration(control, configuration)
   await control.command('nativePress', back, { key: 'Tab' })
   assert.equal(
@@ -837,6 +826,9 @@ async function verifyGitProviderValidation(control, scoped, request, workspace) 
   const projectsPath = `/api/v1/workspaces/${workspace.id}/projects`
   const projectIds = response => response.items.map(project => String(project.id)).sort()
   const before = projectIds(await request(projectsPath))
+  const nameInput = scoped(testId('collaboration-project-name-input'))
+  const draftName = await control.command('getValue', nameInput)
+  const repository = scoped(testId('cloud-project-provider-repository'))
   const advanced = scoped(testId('collaboration-project-create-advanced'))
   await control.command('nativePress', advanced, { key: 'Enter' })
   await control.command('waitFor', `${advanced}[aria-expanded="true"]`, { visible: true })
@@ -846,11 +838,21 @@ async function verifyGitProviderValidation(control, scoped, request, workspace) 
   await control.command('fill', scoped(testId('cloud-project-provider-repository')), {
     value: 'https://github.com/invalid-owner-only',
   })
+  await control.command('nativePress', advanced, { key: 'Enter' })
+  await control.command('waitFor', `${advanced}[aria-expanded="false"]`, { visible: true })
   await control.command('nativePress', scoped(testId('collaboration-project-create-confirm')), {
     key: 'Enter',
   })
   const error = `${DIALOG} .collaboration-project-create-error`
   await control.command('waitFor', error, { text: 'GitHub 仓库地址应包含 owner/repository' })
+  await control.command('waitFor', `${advanced}[aria-expanded="true"]`, { visible: true })
+  await control.command('waitFor', `${repository}:focus[aria-invalid="true"]`, { visible: true })
+  const errorId = await control.command('getAttribute', error, { value: 'id' })
+  const describedBy = await control.command('getAttribute', repository, {
+    value: 'aria-describedby',
+  })
+  assert.ok(errorId && describedBy.split(/\s+/).includes(errorId))
+  assert.equal(await control.command('getValue', nameInput), draftName)
   await control.command('waitFor', DIALOG, { visible: true })
   assert.deepEqual(
     projectIds(await request(projectsPath)),
@@ -874,6 +876,11 @@ async function verifyGitProviderValidation(control, scoped, request, workspace) 
     `The token text overlaps its lock icon: ${JSON.stringify({ inputLeft: input.left, padding, iconRight: icon.right })}`
   )
 
+  await control.command('fill', repository, { value: 'https://github.com/owner/repository' })
+  await control.command('waitFor', `${repository}:not([aria-invalid="true"])`, { visible: true })
+  await control.command('waitFor', error, { visible: false })
+  assert.equal(await control.command('getValue', nameInput), draftName)
+  assert.deepEqual(projectIds(await request(projectsPath)), before)
   await control.command('nativePress', scoped(testId('cloud-project-task-provider-local')), {
     key: 'Enter',
   })
