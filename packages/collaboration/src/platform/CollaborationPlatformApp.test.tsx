@@ -5148,6 +5148,17 @@ describe("CollaborationPlatformApp real component flow", () => {
       )!,
     );
     expect(onHandled).toHaveBeenCalledOnce();
+    const discard = byTestId("collaboration-project-create-discard");
+    expect(discard).toBeTruthy();
+    expect(
+      byTestId<HTMLInputElement>("collaboration-project-name-input").value,
+    ).toBe(document.spec.resources.collaboration.project.name);
+    await click(
+      discard.querySelector<HTMLButtonElement>(
+        '[data-testid="collaboration-project-create-discard-confirm"]',
+      )!,
+    );
+    expect(onHandled).toHaveBeenCalledOnce();
     expect(
       container.querySelector(
         '[data-testid="collaboration-project-name-input"]',
