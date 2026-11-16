@@ -543,6 +543,39 @@ describe('EmbeddedBrowserBridge', () => {
     expect(browser.evaluate).toHaveBeenCalledOnce()
   })
 
+  test('keeps waiting when navigation replaces the condition evaluation target', async () => {
+    const executorHome = await mkdtemp(join(tmpdir(), 'wework-browser-bridge-'))
+    const browser = fakeBrowser()
+    browser.has.mockReturnValue(true)
+    browser.evaluate
+      .mockRejectedValueOnce(new Error('Inspected target navigated or closed'))
+      .mockResolvedValueOnce({ ok: true, kind: 'browser.wait' })
+    const bridge = new EmbeddedBrowserBridge(browser.manager, executorHome)
+    bridges.push(bridge)
+    await bridge.start()
+    const env = bridge.environment()
+
+    const response = await fetch(`${env.WEWORK_EMBEDDED_BROWSER_BRIDGE_URL}/browser`, {
+      method: 'POST',
+      headers: {
+        authorization: `Bearer ${env.WEWORK_EMBEDDED_BROWSER_BRIDGE_TOKEN}`,
+        'content-type': 'application/json',
+      },
+      body: JSON.stringify({
+        action: 'waitFor',
+        text: 'Parent directory',
+        timeoutMs: 1_000,
+        options: { pollMs: 25 },
+      }),
+    })
+
+    await expect(response.json()).resolves.toEqual({
+      ok: true,
+      data: { ok: true, kind: 'browser.wait' },
+    })
+    expect(browser.evaluate).toHaveBeenCalledTimes(2)
+  })
+
   test('routes native clicks through Electron input events', async () => {
     const executorHome = await mkdtemp(join(tmpdir(), 'wework-browser-bridge-'))
     const browser = fakeBrowser()
