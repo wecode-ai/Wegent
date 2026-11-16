@@ -68,6 +68,8 @@ export async function verifyStandInScheduleActivity(control, rpc, schedule, capt
     await control.command('waitFor', dialog, { visible: false })
     await waitForTriggerFocus()
     await control.command('click', row)
+    await control.command('waitFor', dialog)
+    await control.command('waitFor', '[data-testid="automation-name-input"]')
     await control.command('fill', '[data-testid="automation-name-input"]', {
       value: '仅改名，不改频率',
     })
