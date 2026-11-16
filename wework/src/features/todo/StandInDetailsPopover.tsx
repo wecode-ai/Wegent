@@ -421,7 +421,7 @@ export function StandInDetailsPopover({
                   type="button"
                   data-testid="stand-in-details-schedules-retry"
                   onClick={schedules.retry}
-                  className="ml-2 min-h-8 underline"
+                  className="ml-2 min-h-11 min-w-11 underline md:min-h-8"
                 >
                   {t('standIn.reload')}
                 </button>

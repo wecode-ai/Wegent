@@ -117,6 +117,44 @@ describe('stand-in onboarding', () => {
     expect(onSave).not.toHaveBeenCalled()
   })
 
+  it.each([false, true])(
+    'keeps discarded sources out of completion retries (unfinished tag: %s)',
+    async unfinishedTag => {
+      const { api, user, onSave } = setup()
+      api.completeOnboarding.mockRejectedValueOnce(new Error('Completion unavailable'))
+      await user.click(await screen.findByTestId('stand-in-add-projects-connection'))
+      await user.click(screen.getByTestId('stand-in-source-collaboration'))
+      if (unfinishedTag) {
+        await user.click(screen.getByTestId('stand-in-source-tags-toggle'))
+        await user.type(screen.getByTestId('stand-in-connection-tags-input'), 'x'.repeat(33))
+      }
+      await user.click(screen.getByTestId('stand-in-onboarding-skip'))
+      await user.click(
+        screen.getByTestId(
+          unfinishedTag ? 'stand-in-project-tags-discard' : 'stand-in-onboarding-discard'
+        )
+      )
+      expect(await screen.findByRole('alert')).toBeVisible()
+      expect(api.completeOnboarding).toHaveBeenCalledOnce()
+      expect(screen.getByTestId('stand-in-source-collaboration')).not.toBeChecked()
+      expect(onSave).not.toHaveBeenCalled()
+      await continueSetup(user)
+      await user.click(screen.getByTestId('stand-in-onboarding-complete'))
+      await screen.findByText('Stand-in content')
+      expect(onSave).toHaveBeenCalledWith(
+        expect.objectContaining({
+          primary: expect.objectContaining({
+            collaboration: expect.objectContaining({
+              enabled: false,
+              allProjects: false,
+              tags: [],
+            }),
+          }),
+        })
+      )
+    }
+  )
+
   it.each([true, false])(
     'waits for completion state before opening automatic onboarding (%s)',
     async completed => {

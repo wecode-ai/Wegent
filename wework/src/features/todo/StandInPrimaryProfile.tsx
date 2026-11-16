@@ -334,7 +334,7 @@ export function StandInPrimaryProfile({
               <button
                 type="button"
                 data-testid="stand-in-primary-environment-retry"
-                className="min-h-8 underline"
+                className="min-h-11 min-w-11 underline md:min-h-8"
                 onClick={() => setReload(value => value + 1)}
               >
                 {t('standIn.reload')}
@@ -391,7 +391,7 @@ export function StandInPrimaryProfile({
                   data-testid="stand-in-primary-settings-retry"
                   disabled={saving}
                   onClick={onReload}
-                  className="min-h-8 underline"
+                  className="min-h-11 min-w-11 underline md:min-h-8"
                 >
                   {t('standIn.reload')}
                 </button>

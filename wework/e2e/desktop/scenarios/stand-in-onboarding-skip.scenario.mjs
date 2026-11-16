@@ -13,7 +13,18 @@ export function createDesktopScenario({ uiTimeoutMs, captureScreenshot }) {
       await control.command('clickWhenEnabled', selector('personal-stand-in-button'))
       await control.command('waitFor', `${selector('stand-in-onboarding-skip')}:enabled`)
       const before = await rpc('runtime.stand_in.personal.get', { userId: USER_ID })
+      await control.command('clickWhenEnabled', selector('stand-in-add-projects-connection'))
+      await control.command('clickWhenEnabled', selector('stand-in-source-collaboration'))
       await control.command('clickWhenEnabled', selector('stand-in-onboarding-skip'))
+      await control.command('clickWhenEnabled', selector('stand-in-onboarding-keep-editing'))
+      assert.equal(
+        await control.command('getAttribute', selector('stand-in-source-collaboration'), {
+          value: 'aria-checked',
+        }),
+        'true'
+      )
+      await control.command('clickWhenEnabled', selector('stand-in-onboarding-skip'))
+      await control.command('clickWhenEnabled', selector('stand-in-onboarding-discard'))
       await control.command('waitFor', selector('stand-in-onboarding'), { visible: false })
       await control.command('waitFor', selector('stand-in-conversation'), { visible: true })
       assert.equal(

@@ -338,7 +338,7 @@ export function StandInConnectionSettings({
         <button
           type="button"
           data-testid="stand-in-provider-retry"
-          className="min-h-9 text-sm underline"
+          className="min-h-11 min-w-11 text-sm underline md:min-h-9"
           onClick={() => setRefresh(value => value + 1)}
         >
           {t('standIn.workspace.connection_retry')}
@@ -355,7 +355,7 @@ export function StandInConnectionSettings({
               setError(null)
               setRefresh(value => value + 1)
             }}
-            className="min-h-9 text-sm underline"
+            className="min-h-11 min-w-11 text-sm underline md:min-h-9"
           >
             {t('standIn.workspace.connection_retry')}
           </button>
@@ -378,7 +378,7 @@ function ConnectionProviderStatus({
   return (
     <>
       {!['ready', 'auth_required'].includes(provider.availability.status) && (
-        <p className="px-2 text-xs text-text-muted">
+        <p className="px-2 text-xs text-text-secondary">
           {provider.availability.code
             ? getStandInErrorMessage({ code: provider.availability.code })
             : t('standIn.workspace.connection_status_' + provider.availability.status, {
@@ -392,7 +392,7 @@ function ConnectionProviderStatus({
           data-testid={`stand-in-install-dependencies-${provider.id}`}
           disabled={disabled}
           onClick={onInstall}
-          className="min-h-9 px-2 text-sm underline"
+          className="min-h-11 min-w-11 px-2 text-sm underline md:min-h-9"
         >
           {t('standIn.workspace.install_dependencies')}
         </button>

@@ -514,7 +514,7 @@ export function StandInOverviewPage({
           </p>
         </header>
         {state.loading && !state.saved ? (
-          <p role="status" className="p-5 text-text-muted">
+          <p role="status" className="p-5 text-text-secondary">
             {t('standIn.loading')}
           </p>
         ) : state.error && !state.saved ? (
@@ -524,7 +524,7 @@ export function StandInOverviewPage({
               type="button"
               data-testid="stand-in-overview-retry"
               onClick={reload}
-              className="mt-2 underline"
+              className="mt-2 min-h-11 min-w-11 underline md:min-h-8"
             >
               {t('standIn.reload')}
             </button>

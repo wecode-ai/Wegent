@@ -73,7 +73,12 @@ export function StandInOnboardingSetup({
     setDiscard(true)
   )
   const requestLeave = (action: () => void) => {
-    const leave = (discarded?: boolean) => (discarded ? action() : navigation.requestLeave(action))
+    const leave = (discarded?: boolean) => {
+      if (discarded) {
+        setRole(initialRole)
+        action()
+      } else navigation.requestLeave(action)
+    }
     if (connections.current) connections.current.requestLeave(leave)
     else leave()
   }
@@ -211,6 +216,7 @@ export function StandInOnboardingSetup({
               <Button
                 variant="ghost"
                 data-testid="stand-in-onboarding-connections-back"
+                className="min-h-11 md:min-h-10"
                 disabled={busy}
                 onClick={() => connections.current?.back()}
               >
@@ -240,6 +246,7 @@ export function StandInOnboardingSetup({
           {configuration.error && (
             <Button
               data-testid="stand-in-onboarding-settings-retry"
+              className="min-h-11 min-w-11 md:min-h-10"
               disabled={busy || loading}
               onClick={() =>
                 navigation.requestLeave(() => {
@@ -315,6 +322,7 @@ export function StandInOnboardingSetup({
         }}
         onConfirm={() => {
           setDiscard(false)
+          setRole(initialRole)
           navigation.confirmLeave(() => {})
         }}
       />
