@@ -364,6 +364,19 @@ export async function createDesktopScenario({
         !page.testIds.includes('local-connector-auth-dialog'),
         'Install required a second authorization'
       )
+      const snapshot =
+        checkpoint === 'plugin-account-auth-password'
+          ? localSnapshotChecks({
+              control,
+              homePath,
+              slug,
+              sourceDeviceId: local.execution_target_id,
+              connectionFor,
+              waitForValue,
+              timeoutMs: workbenchReadyTimeoutMs,
+              signalAutomaticRetry,
+            })
+          : null
       const checks = new Map([
         [
           'plugin-account-auth-coordination',
@@ -458,6 +471,9 @@ export async function createDesktopScenario({
               workbenchReadyTimeoutMs,
               'Local login did not automatically reach cloud'
             )
+            // Check the current source grant before later steps restart the runtime.
+            assert.ok(snapshot)
+            await snapshot.verifySourceHealth()
             command = `python3 ${quote(join(cloudRoot, 'scripts/cli.py'))} read`
             await rm(sourceAuth)
             await invokeCloud('cloud-account-read')
@@ -862,18 +878,7 @@ export async function createDesktopScenario({
       assert.ok(check, `Unknown account authentication checkpoint: ${checkpoint}`)
       console.log(`[desktop-e2e-account] start ${checkpoint}`)
       await check()
-      if (checkpoint === 'plugin-account-auth-password') {
-        const snapshot = localSnapshotChecks({
-          control,
-          homePath,
-          slug,
-          sourceDeviceId: local.execution_target_id,
-          connectionFor,
-          waitForValue,
-          timeoutMs: workbenchReadyTimeoutMs,
-          signalAutomaticRetry,
-        })
-        await snapshot.verifySourceHealth()
+      if (snapshot) {
         await verifyPluginNativeAuth({
           cloud,
           control,
