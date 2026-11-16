@@ -292,9 +292,20 @@ fn shared_development_startups_admit_current_history_while_existing_writers_keep
         assert_eq!(fs::read(&db_path).unwrap(), database);
         assert!(!invoke(root.path(), true).status.success());
         // Read-only admission neither releases nor replaces any existing lease.
-        let other = fs::File::open(home.join(".execution.lock")).unwrap();
-        assert!(other.try_lock_exclusive().is_err());
-        assert!(writer.try_lock_exclusive().is_ok());
+        for lease in [
+            ".execution.lock".to_owned(),
+            format!("thread-writer-locks/{ID}.lock"),
+        ] {
+            let contender = fs::OpenOptions::new()
+                .read(true)
+                .write(true)
+                .open(home.join(lease))
+                .unwrap();
+            assert_eq!(
+                contender.try_lock_exclusive().unwrap_err().raw_os_error(),
+                fs2::lock_contended_error().raw_os_error()
+            );
+        }
     }
 }
 
@@ -353,6 +364,19 @@ fn development_admission_refuses_index_drift_and_pending_journals_without_touchi
             .unwrap()
             .status
             .success());
+        let recovered: Value = serde_json::from_slice(&fs::read(&journal_path).unwrap()).unwrap();
+        assert_eq!(recovered["complete"], true);
+        let database = Connection::open(home.join("state_5.sqlite")).unwrap();
+        assert_eq!(
+            database
+                .query_row(
+                    "SELECT model_provider FROM threads WHERE id=?1",
+                    [ID],
+                    |row| row.get::<_, String>(0)
+                )
+                .unwrap(),
+            "~"
+        );
     }
 }
 

@@ -513,7 +513,8 @@
   margin-top: 4px;
 }
 
-.task-detail-workspace-description:focus-within {
+:where(html:not([data-input-modality="pointer"]))
+  .task-detail-workspace-description:focus-within {
   border-color: rgb(var(--color-focus) / 70%);
 }
 
