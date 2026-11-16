@@ -834,7 +834,8 @@
       "no_runtime_project": "不关联 Wework 项目",
       "empty_existing": "这个会话还没有消息。",
       "empty_new": "开始一个关于“{{name}}”的新会话。",
-      "placeholder": "告诉 AI 你想在这个项目空间中完成什么"
+      "placeholder": "查一下事项，或描述要创建、更新的 Issue",
+      "capabilities": "当前项目：{{name}}。可查询、创建和更新 Issue。试试“查一下事项”；查询个人任务请说“查个人任务”。"
     },
     "start_from_scratch": "新建空白项目",
     "using_existing_folder": "使用现有目录",

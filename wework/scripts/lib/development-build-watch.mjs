@@ -15,6 +15,11 @@ export function watchDevelopmentDirectory(
     ignoreInitial: true,
     depth: recursive ? undefined : 0,
     ignored,
+    // macOS directory events can stop arriving after atomic editor saves.
+    // Set both options: Chokidar 3 selects FSEvents before reading its polling env override.
+    ...(process.platform === 'darwin'
+      ? { useFsEvents: false, usePolling: true, interval: 1000, binaryInterval: 1000 }
+      : {}),
   })
   watcher.on('all', (event, filename) => notify(event, path.relative(directory, filename)))
   // Node-backed normalized change events are throttled for 50 ms. Preserve

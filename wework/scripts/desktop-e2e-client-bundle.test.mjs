@@ -165,6 +165,72 @@ test('the shared build counts complete model requests without node_modules', asy
   )
 }, 30_000)
 
+test('the shared build imports the mobile scenario and executes production payload builders without node_modules', async () => {
+  const fixture = await isolatedConsumer('mobile-local-payload')
+  const script = `
+    import assert from 'node:assert/strict'
+    import { createRequire } from 'node:module'
+    import { pathToFileURL } from 'node:url'
+    assert.throws(() => createRequire(import.meta.url).resolve('vite'), { code: 'MODULE_NOT_FOUND' })
+    const scene = await import(pathToFileURL(process.argv[1]))
+    assert.equal(typeof scene.createDesktopScenario, 'function')
+    const { loadMobileLocalPayloadBuilders } = await import(pathToFileURL(process.argv[2]))
+    const builders = await loadMobileLocalPayloadBuilders()
+    const provider = builders.modelInterfaceProviderId('mobile-fixture')
+    const modelConfig = builders.modelInterfaceRuntimeConfig({
+      id: 'mobile-fixture', modelId: 'fixture-model', displayName: 'Fixture',
+      baseUrl: 'http://127.0.0.1:9000', apiFormat: 'openai-responses'
+    })
+    assert.equal(modelConfig.model_provider, provider)
+    assert.deepEqual(builders.resolveLocalRuntimeModelConfig({
+      runtime: 'codex', modelName: 'local-model:mobile-fixture',
+      modelOptions: { runnerModelProvider: provider }
+    }), { model_id: 'local-model:mobile-fixture', model_provider: provider })
+    const request = builders.buildLocalRuntimeExecutionRequest({
+      taskId: 'mobile-fixture-task', runtime: 'codex', title: 'Mobile fixture',
+      message: 'Run the real production builder', turnSeed: 1, modelConfig,
+      reasoningConfig: null, localDeviceId: 'fixture-device',
+      workspacePath: '/workspace/mobile-fixture', workspaceSource: 'local_path',
+      newSession: true, user: { id: 1, user_name: 'fixture', email: 'fixture@example.test' }
+    })
+    assert.equal(request.task_id, 'mobile-fixture-task')
+    assert.equal(request.prompt, 'Run the real production builder')
+    assert.deepEqual(request.model_config, modelConfig)
+    assert.equal(request.workspace.project.path, '/workspace/mobile-fixture')
+  `
+  await run(
+    process.execPath,
+    [
+      '--no-experimental-strip-types',
+      '--input-type=module',
+      '-e',
+      script,
+      join(fixture.desktop, 'scenarios/mobile-local-payload.scenario.mjs'),
+      join(fixture.desktop, 'modules/mobile-local-payload-builders.mjs'),
+    ],
+    fixture.options
+  )
+}, 30_000)
+
+test('a configured mobile payload artifact never falls back to source tooling', async () => {
+  const fixture = await isolatedConsumer('mobile-local-payload-incomplete')
+  await rm(join(fixture.client, 'mobile-local-payload.cjs'))
+  await assert.rejects(
+    run(
+      process.execPath,
+      [
+        '--input-type=module',
+        '-e',
+        "import { pathToFileURL } from 'node:url'; const { loadMobileLocalPayloadBuilders } = await import(pathToFileURL(process.argv[1])); await loadMobileLocalPayloadBuilders()",
+        join(fixture.desktop, 'modules/mobile-local-payload-builders.mjs'),
+      ],
+      fixture.options
+    ),
+    error =>
+      error.stderr.includes('MODULE_NOT_FOUND') && error.stderr.includes('mobile-local-payload.cjs')
+  )
+}, 30_000)
+
 test('an explicitly configured incomplete artifact never falls back to workspace dependencies', async () => {
   const fixture = await isolatedConsumer('incomplete')
   await rm(join(fixture.client, 'lz-string.cjs'))

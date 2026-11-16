@@ -1390,6 +1390,16 @@ class ExternalLoopItemProvider:
             raise HTTPException(
                 status.HTTP_422_UNPROCESSABLE_ENTITY, "Unknown assignee type"
             )
+        selection_values = (
+            values.runner_selection.model_dump(exclude_none=True)
+            if values.runner_selection
+            else (automation_context or {}).get("runner_selection")
+        )
+        # An automation stores its model selection; a request body carries a
+        # new selection, which still has to come from the visible catalog.
+        allow_hidden_models = values.runner_selection is None and bool(
+            (automation_context or {}).get("runner_selection")
+        )
         if agent is not None:
             from app.services.project_chat.service import compiled_bot_config
             from app.services.runner_routing import resolve_routing
@@ -1403,12 +1413,9 @@ class ExternalLoopItemProvider:
                     project_id=str(project.id),
                     issue_id=item_id,
                     user_id=user_id,
-                    selection=(
-                        values.runner_selection.model_dump(exclude_none=True)
-                        if values.runner_selection
-                        else (automation_context or {}).get("runner_selection")
-                    ),
+                    selection=selection_values,
                     automatic=bool((automation_context or {}).get("run_id")),
+                    allow_hidden_models=allow_hidden_models,
                 )
         if group is not None:
             from app.services.runner_routing import resolve_group_routing
@@ -1419,12 +1426,9 @@ class ExternalLoopItemProvider:
                 project_id=str(project.id),
                 issue_id=item_id,
                 user_id=user_id,
-                selection=(
-                    values.runner_selection.model_dump(exclude_none=True)
-                    if values.runner_selection
-                    else (automation_context or {}).get("runner_selection")
-                ),
+                selection=selection_values,
                 automatic=bool((automation_context or {}).get("run_id")),
+                allow_hidden_models=allow_hidden_models,
             )
         # Preserve the creator label: provider label writes replace the whole
         # set, and a dropped creator would lose access to their own Issue.

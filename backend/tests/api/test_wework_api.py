@@ -289,6 +289,64 @@ def test_conversation_paging_always_exposes_latest_turn(api):
     assert detail["has_more"] is True
 
 
+def test_hidden_model_continues_an_existing_conversation(api, test_db, monkeypatch):
+    """A model hidden after the first turn keeps serving its conversation."""
+    from app.models.kind import Kind
+
+    model = Kind(
+        user_id=0,
+        kind="Model",
+        name="model-1",
+        namespace="default",
+        is_active=True,
+        json={
+            "apiVersion": "agent.wecode.io/v1",
+            "kind": "Model",
+            "metadata": {"name": "model-1", "namespace": "default"},
+            "spec": {
+                "isVisible": True,
+                "isWeworkAvailable": True,
+                "modelType": "llm",
+                "modelConfig": {
+                    "env": {"model": "openai", "model_id": "model-1-upstream"}
+                },
+            },
+        },
+    )
+    test_db.add(model)
+    test_db.commit()
+
+    first = submit(api).json()
+    finish(api, first["id"])
+    task_id = ResponseIdentity.parse(first["id"]).task_id
+    api.tasks[task_id]["modelSelection"] = {
+        "modelName": "model-1",
+        "modelType": "public",
+        "options": {
+            "weworkCloudModelNamespace": "default",
+            "weworkCloudModelResourceUserId": 0,
+        },
+    }
+
+    model.json["spec"]["isVisible"] = False
+    test_db.add(model)
+    test_db.commit()
+    monkeypatch.setattr(models, "catalog", lambda *_: [])
+
+    second = submit(api, conversation=first["conversation"]["id"], execution=None)
+
+    assert second.status_code == 200, second.text
+    api.create.assert_awaited_once()
+    api.send.assert_awaited_once()
+    selection = api.send.await_args.kwargs["request"].model_selection
+    assert selection.model_name == "model-1"
+    assert selection.model_type == "public"
+    assert selection.options == {
+        "weworkCloudModelNamespace": "default",
+        "weworkCloudModelResourceUserId": 0,
+    }
+
+
 @pytest.mark.parametrize("mode", ["stream", "blocking"])
 def test_subscribe_before_dispatch_preserves_fast_output_and_cleans_up(api, mode):
     create = api.create.side_effect

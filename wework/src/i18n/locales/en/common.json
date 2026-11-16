@@ -835,7 +835,8 @@
       "no_runtime_project": "Don't link a Wework project",
       "empty_existing": "This conversation doesn't have any messages yet.",
       "empty_new": "Start a new conversation about “{{name}}”.",
-      "placeholder": "Tell the AI what you want to get done in this project space"
+      "placeholder": "Find issues, or describe an Issue to create or update",
+      "capabilities": "Current project: {{name}}. Query, create, and update Issues. Try “list issues”; say “list personal tasks” to find personal tasks."
     },
     "start_from_scratch": "New blank project",
     "using_existing_folder": "Using existing folder",

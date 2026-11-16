@@ -326,4 +326,102 @@ describe('on-demand model discovery', () => {
     expect(api.listModels).not.toHaveBeenCalled()
     expect(api.listNativeModels).not.toHaveBeenCalled()
   })
+
+  test('keeps a saved cloud model valid after it leaves the catalog', async () => {
+    const api = catalog()
+    const { result } = renderHook(() => useAgentRouting(api, 'codex', 'project'))
+    const persistedCloudModel = {
+      runtime: 'codex' as const,
+      source: 'cloud' as const,
+      provider: 'openai-responses',
+      model_id: 'hidden-cloud-model',
+      cloud_model: {
+        name: 'hidden-cloud-model',
+        type: 'public' as const,
+        namespace: 'default',
+        resource_user_id: 1,
+      },
+    }
+
+    act(() =>
+      result.current.load({ mode: 'project_pool' }, { mode: 'fixed', model: persistedCloudModel })
+    )
+    await waitFor(() => expect(result.current.loading).toBe(false))
+
+    expect(result.current.modelAvailable).toBe(false)
+    expect(result.current.persistedModelSupported).toBe(true)
+    expect(result.current.valid).toBe(true)
+
+    act(() => result.current.setModel(null))
+    expect(result.current.valid).toBe(false)
+  })
+
+  test('rejects a persisted cloud model when the fixed environment lacks its runtime', async () => {
+    const incompatible = {
+      ...environment('1', []),
+      runtimes: ['claude_code'] as const,
+    }
+    const api = { ...catalog([incompatible]), listModels: vi.fn(async () => []) }
+    const { result } = renderHook(() => useAgentRouting(api, 'codex', 'project'))
+    const persistedCloudModel = {
+      runtime: 'codex' as const,
+      source: 'cloud' as const,
+      provider: 'openai-responses',
+      model_id: 'hidden-cloud-model',
+      cloud_model: {
+        name: 'hidden-cloud-model',
+        type: 'public' as const,
+        namespace: 'default',
+        resource_user_id: 1,
+      },
+    }
+
+    act(() =>
+      result.current.load(
+        { mode: 'fixed', environment_id: '1' },
+        { mode: 'fixed', model: persistedCloudModel }
+      )
+    )
+    await waitFor(() => expect(result.current.loading).toBe(false))
+
+    expect(result.current.modelAvailable).toBe(false)
+    expect(result.current.persistedModelSupported).toBe(false)
+    expect(result.current.valid).toBe(false)
+  })
+
+  test('accepts a saved cloud model whose runtime only the native catalog reports', async () => {
+    const device = { ...environment('1', []), runtimes: [] as RunnerModel['runtime'][] }
+    const api = {
+      ...catalog([device]),
+      listModels: vi.fn(async () => []),
+      listNativeModels: vi.fn(async () => ({
+        models: [{ ...model, source: 'native' as const }],
+        catalog_error: null,
+      })),
+    }
+    const { result } = renderHook(() => useAgentRouting(api, 'codex', 'project'))
+    const persistedCloudModel = {
+      runtime: 'codex' as const,
+      source: 'cloud' as const,
+      provider: 'openai-responses',
+      model_id: 'hidden-cloud-model',
+      cloud_model: {
+        name: 'hidden-cloud-model',
+        type: 'public' as const,
+        namespace: 'default',
+        resource_user_id: 1,
+      },
+    }
+
+    act(() =>
+      result.current.load(
+        { mode: 'fixed', environment_id: '1' },
+        { mode: 'fixed', model: persistedCloudModel }
+      )
+    )
+    await waitFor(() => expect(result.current.persistedModelSupported).toBe(true))
+
+    expect(result.current.modelAvailable).toBe(false)
+    expect(result.current.valid).toBe(true)
+  })
 })
