@@ -214,7 +214,9 @@ export function createDesktopScenario({
             return {
               deviceId: workspace.deviceId,
               taskId: pendingTask.taskId,
-              workspacePath: workspace.workspacePath,
+              ...(pendingTask.runtime !== 'codex' ? { runtime: pendingTask.runtime } : {}),
+              workspacePath: pendingTask.workspacePath || workspace.workspacePath,
+              ...(pendingTask.runtimeHandle ? { runtimeHandle: pendingTask.runtimeHandle } : {}),
             }
           }
         }
