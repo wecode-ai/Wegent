@@ -4,6 +4,8 @@
 
 """Tests for task services API endpoints."""
 
+import pytest
+
 
 class TestTaskServicesAPI:
     """Test cases for task services API endpoints."""
@@ -107,6 +109,15 @@ class TestTaskServicesAPI:
 
 class TestInternalServicesAPI:
     """Test cases for internal services API endpoints."""
+
+    def test_internal_services_router_requires_service_authentication(self):
+        """Internal task-service updates must not be anonymously callable."""
+        from app.api.endpoints.internal.services import router
+        from app.services.auth import verify_internal_service_token
+
+        dependency_calls = [dependency.dependency for dependency in router.dependencies]
+
+        assert verify_internal_service_token in dependency_calls
 
     def test_internal_service_update_request_schema(self):
         """Test ServiceUpdateRequest schema for internal API."""
