@@ -435,3 +435,13 @@ test('new Windows checkpoint measurements leave room for startup and cleanup', (
     )
   )
 })
+
+test('complete real-Backend Windows workloads retain cleanup time within the deadline', () => {
+  assertDeadlineReplay(
+    JSON.parse(
+      readFileSync(
+        new URL('./fixtures/wework-windows-real-backend-deadline-replay.json', import.meta.url)
+      )
+    )
+  )
+})
