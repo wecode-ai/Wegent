@@ -244,6 +244,10 @@ export function createDesktopScenario(options) {
         )
         const nativeTurns = async () => {
           const result = await rpc('runtime.tasks.transcript', { address, refresh: true })
+          await writeFile(
+            join(resultDir, `remote-event-${phase}-transcript.json`),
+            JSON.stringify(result)
+          )
           assert.equal(result.threadId, before.task.threadId)
           assert.ok(Array.isArray(result.turns))
           return result.turns.map(turn => turn.id)
@@ -364,6 +368,7 @@ export function createDesktopScenario(options) {
             workbenchReadyTimeoutMs
           )
           assert.equal(after.task.threadId, before.task.threadId)
+          await docker.captureNativeHistory(before.task.threadId, phase)
           if (originalGoal) {
             const completedGoal = (await rpc('runtime.tasks.goal.get', { address })).goal
             assert.equal(completedGoal.status, 'complete')
@@ -384,6 +389,9 @@ export function createDesktopScenario(options) {
             visible: false,
           })
           await assertRecoveredUi(control)
+          await control.command('waitFor', '[data-testid="connection-event-message"]', {
+            text: `${MARKER}_${phase}`,
+          })
           await captureScreenshot(control, `remote-event-${phase}-continued.png`)
           const completedRequests = modelRequests
           const dedupeDeadline = Date.now() + 17000

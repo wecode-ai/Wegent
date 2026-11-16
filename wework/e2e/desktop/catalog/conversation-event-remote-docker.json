@@ -5,6 +5,7 @@
   "ci": { "cloud": { "order": 43510, "shard": 4, "position": 8100 } },
   "paths": [
     "executor/src/runtime_work/connection_service.rs",
+    "executor/src/runtime_work/codex_rollout_page.rs",
     "executor/src/local/backend/connection_service.rs",
     "executor/src/runtime_work/handler/control/connection_events/**",
     "executor/src/runtime_work/handler/control/connection_events.rs",

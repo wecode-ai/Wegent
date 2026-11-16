@@ -179,6 +179,21 @@ export async function createConversationEventDocker({
   }
   return {
     nodeExecutable: delivery.nodeExecutable,
+    async captureNativeHistory(threadId, phase) {
+      assert.match(threadId, /^[a-f0-9-]+$/)
+      assert.ok(['ordinary', 'goal', 'pause'].includes(phase))
+      const root = `${REMOTE_EXECUTOR_HOME}/codex/sessions`
+      const paths = (
+        await docker('exec', current, 'find', root, '-type', 'f', '-name', `*${threadId}.jsonl`)
+      ).split('\n')
+      assert.equal(paths.length, 1)
+      assert.ok(paths[0].startsWith(`${root}/`))
+      await docker(
+        'cp',
+        `${current}:${paths[0]}`,
+        join(resultDir, `remote-event-${phase}-native-rollout.jsonl`)
+      )
+    },
     async start() {
       const name = `wework-event-${runId}-${containers.length}`
       current = name
