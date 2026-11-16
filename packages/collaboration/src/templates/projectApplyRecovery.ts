@@ -26,15 +26,19 @@ interface ProjectApplyRecovery {
 
 export class TemplateApplyRecoveryError extends TemplateConfigurationError {
   readonly retryBlocked: boolean
+  readonly outcome: TemplateApplyOutcome
+  readonly recheck: () => Promise<TemplateApplyRecoveryError>
 
   constructor(
     message: string,
-    readonly outcome: TemplateApplyOutcome,
-    readonly recheck: () => Promise<TemplateApplyRecoveryError>,
+    outcome: TemplateApplyOutcome,
+    recheck: () => Promise<TemplateApplyRecoveryError>,
     options: ErrorOptions
   ) {
     super(message, options)
     this.retryBlocked = outcome !== 'unchanged'
+    this.outcome = outcome
+    this.recheck = recheck
   }
 }
 
