@@ -211,7 +211,10 @@ export function IssueMainCommentComposer({
               label={translate("todo.comment_assign_action")}
               placeholder={translate("todo.comment_assign_placeholder")}
               value={transfer.target}
-              options={transfer.options}
+              options={[
+                { value: "", label: translate("todo.keep_assignee") },
+                ...transfer.options,
+              ]}
               onChange={transfer.setTarget}
               disabled={
                 blocked ||
@@ -276,7 +279,10 @@ export function IssueMainCommentComposer({
           label={translate("todo.comment_move_to")}
           placeholder={translate("todo.comment_move_placeholder")}
           value={transfer.moveTarget}
-          options={issueActions.moves}
+          options={[
+            { value: "", label: translate("todo.cancel_comment_move") },
+            ...issueActions.moves,
+          ]}
           onChange={transfer.setMove}
           disabled={blocked}
           searchLabel={translate("todo.search_comment_lane")}

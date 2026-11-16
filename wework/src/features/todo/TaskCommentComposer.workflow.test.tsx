@@ -111,6 +111,20 @@ describe('Issue comment staged workflow', () => {
     expect(send).not.toHaveBeenCalled()
   })
 
+  it('can cancel staged changes from the pickers as well as their clear controls', async () => {
+    const { send, assign, move, pick } = setup()
+    await pick('assignee', '2')
+    await pick('move', 'review')
+    await pick('assignee', 'empty')
+    await pick('move', 'empty')
+    expect(screen.getByTestId('task-comment-form-assignee')).toHaveAttribute('data-value', '')
+    expect(screen.getByTestId('task-comment-form-move')).toHaveAttribute('data-value', '')
+    expect(screen.getByTestId('send-message-button')).toHaveTextContent('发送评论')
+    expect(send).not.toHaveBeenCalled()
+    expect(assign).not.toHaveBeenCalled()
+    expect(move).not.toHaveBeenCalled()
+  })
+
   it('retains draft and selections when comment persistence fails', async () => {
     const { send, move, pick } = setup()
     send.mockResolvedValue(false)
