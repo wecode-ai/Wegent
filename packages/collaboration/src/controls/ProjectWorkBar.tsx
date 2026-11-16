@@ -453,7 +453,7 @@ export function ProjectWorkBar({
       <div className="flex shrink-0 items-center justify-between px-5 pb-3 pt-4">
         <div className="min-w-0">
           <h2 className="text-lg font-semibold text-text-primary">{title}</h2>
-          <p className="mt-1 truncate text-xs text-text-muted">{subtitle}</p>
+          <p className="mt-1 truncate text-xs text-text-secondary">{subtitle}</p>
         </div>
         <button
           type="button"
@@ -574,14 +574,14 @@ export function ProjectWorkBar({
                       <div className="text-text-secondary">
                         {t('workbench.no_projects', '暂无项目')}
                       </div>
-                      <div className="mt-1 text-xs leading-4 text-text-muted">
+                      <div className="mt-1 text-xs leading-4 text-text-secondary">
                         {t('workbench.no_projects_action', '请添加本地项目或远程项目后重试。')}
                       </div>
                     </div>
                   ) : filteredProjects.length === 0 ? (
                     <div
                       data-testid="project-search-empty"
-                      className="px-4 py-3 text-sm leading-[18px] text-text-muted"
+                      className="px-4 py-3 text-sm leading-[18px] text-text-secondary"
                     >
                       {t('workbench.project_search_no_results', '没有匹配的项目')}
                     </div>
@@ -780,7 +780,7 @@ export function ProjectWorkBar({
                                           t('workbench.environment_device_unknown', '未知设备')}
                                     </span>
                                     {!localWorkspace && (
-                                      <span className="min-w-0 max-w-[7rem] truncate text-xs text-text-muted">
+                                      <span className="min-w-0 max-w-[7rem] truncate text-xs text-text-secondary">
                                         {workspace.workspacePath}
                                       </span>
                                     )}

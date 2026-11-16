@@ -580,7 +580,15 @@ export function StandInOverviewPage({
               scheduleTrigger.current = trigger
               setSelectedScheduleId(schedule.id)
             }}
-            name={role?.name || t('standIn.title')}
+            name={
+              role
+                ? standInRoleName(
+                    role,
+                    Math.max(0, roles.indexOf(role)),
+                    t('standIn.personal.default_role')
+                  )
+                : t('standIn.title')
+            }
             configuration={role ?? saved?.primary}
             projects={props.projects}
             enabled={role ? role.enabled : saved?.primary?.enabled !== false}

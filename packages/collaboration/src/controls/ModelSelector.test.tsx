@@ -60,6 +60,75 @@ function officialModel(modelId: string, isDefault = false): CodexOfficialModel {
 }
 
 describe("model controls without a desktop host", () => {
+  it("owns radio choices in a keyboard-navigable menu separate from reasoning controls", () => {
+    const models = codexRuntimeModels(
+      [officialModel("gpt-6.1-sol", true), officialModel("gpt-6-astra")],
+      null,
+      true,
+    );
+    act(() =>
+      root.render(
+        <ModelSelector
+          translate={translate}
+          isMobile={false}
+          models={models}
+          selectedModel={models[0]}
+          selectedModelOptions={{ reasoning: "medium" }}
+          disabled={false}
+          onSelectModel={vi.fn()}
+          onSelectModelOption={vi.fn()}
+          onOpenModelSettings={vi.fn()}
+        />,
+      ),
+    );
+    act(() => element("model-selector-button").click());
+    act(() => element("model-advanced-toggle").click());
+    const selected = element("model-option-default");
+    const menu = selected.closest<HTMLElement>('[role="menu"]');
+    expect(menu?.getAttribute("aria-label")).toBe("选择模型");
+    expect(menu?.querySelector('[role="slider"]')).toBeNull();
+    expect(document.activeElement).toBe(selected);
+    const options = [
+      ...menu!.querySelectorAll<HTMLElement>('[role="menuitemradio"]'),
+    ];
+    const press = (key: string, shiftKey = false) => {
+      const event = new KeyboardEvent("keydown", {
+        key,
+        shiftKey,
+        bubbles: true,
+        cancelable: true,
+      });
+      act(() => {
+        document.activeElement?.dispatchEvent(event);
+      });
+      return event;
+    };
+    press("End");
+    expect(document.activeElement).toBe(options.at(-1));
+    press("ArrowDown");
+    expect(document.activeElement).toBe(options[0]);
+    press("ArrowUp");
+    expect(document.activeElement).toBe(options.at(-1));
+    press("Home");
+    expect(document.activeElement).toBe(options[0]);
+    expect(options.filter((option) => option.tabIndex === 0)).toEqual([
+      options[0],
+    ]);
+    for (const shiftKey of [false, true]) {
+      expect(press("Tab", shiftKey).defaultPrevented).toBe(false);
+      expect(
+        document.querySelector('[data-testid="model-selector-menu"]'),
+      ).toBeNull();
+      act(() => element("model-selector-button").click());
+      act(() => element("model-advanced-toggle").click());
+    }
+    press("Escape");
+    expect(
+      document.querySelector('[data-testid="model-selector-menu"]'),
+    ).toBeNull();
+    expect(document.activeElement).toBe(element("model-selector-button"));
+  });
+
   it.each(["model", "preset"])(
     "keeps selection intent when the host rejects an atomic %s selection",
     (kind) => {

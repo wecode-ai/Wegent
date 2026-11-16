@@ -372,6 +372,24 @@ it('selects the primary conversation and inserts the chosen example as an editab
   expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
 })
 
+it.each([0, 1])(
+  'keeps unnamed role %i identity consistent between its tab and details',
+  async index => {
+    const roles = [newStandInRole('device', 'default'), newStandInRole('device', 'second')]
+    roles[0].name = '   '
+    const { props } = fixture(roles)
+    const user = userEvent.setup()
+    render(<StandInOverviewPage {...props} />)
+    await openRoles()
+    const tab = screen.getByTestId(`stand-in-overview-role-${roles[index].id}`)
+    const expectedName = index ? '默认助理 2' : '默认助理'
+    expect(tab).toHaveTextContent(expectedName)
+    await user.click(tab)
+    const identity = await navigationEntry('stand-in-details-identity')
+    expect(within(identity).getByRole('heading', { name: expectedName })).toBeVisible()
+  }
+)
+
 it('lists existing stand-ins without execution history and keeps project names separate', async () => {
   const role = newStandInRole('device', 'default')
   role.collaboration = {

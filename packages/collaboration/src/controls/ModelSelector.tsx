@@ -56,7 +56,7 @@ import {
   selectedControlOption,
 } from "./model-selector-utils";
 import styles from "./ModelSelector.module.css";
-import { useEscapeKey } from "../markdown/useEscapeKey";
+import { useDesktopModelMenu } from "./useDesktopModelMenu";
 
 const MAIN_MENU_WIDTH = 320;
 const SIMPLE_MENU_FALLBACK_HEIGHT = 160;
@@ -303,8 +303,6 @@ export function ModelSelector({
     return () => document.removeEventListener("pointerdown", handlePointerDown);
   }, [closeMenu, isMobile, open]);
 
-  useEscapeKey(closeMenu, open && !isMobile, desktopMenuWrapperRef);
-
   const emptyModelLabel = t("workbench.no_models", "No models available");
   const selectedModelLabel = selectedModel
     ? getSelectedModelDisplayLabel(
@@ -404,6 +402,15 @@ export function ModelSelector({
   const resolvedDesktopMenuView = advancedReasoningAvailable
     ? desktopMenuView
     : "advanced";
+  const modelMenuKeyboard = useDesktopModelMenu({
+    open: open && !isMobile,
+    active: resolvedDesktopMenuView === "advanced",
+    menuRef: advancedPanelRef,
+    simplePanelRef,
+    triggerRef: buttonRef,
+    wrapperRef: desktopMenuWrapperRef,
+    onClose: closeMenu,
+  });
   const selectedButtonLabel =
     open && resolvedDesktopMenuView === "simple"
       ? showExplicitEffortSelection
@@ -520,6 +527,7 @@ export function ModelSelector({
           data-model-provider-id={codexProviderId(model)}
           role="menuitemradio"
           aria-checked={selected}
+          tabIndex={selected ? 0 : -1}
           aria-disabled={modelDisabled}
           title={disabledMessage}
           onClick={() => {
@@ -592,6 +600,7 @@ export function ModelSelector({
             data-model-preset={preset.name}
             role="menuitemradio"
             aria-checked={selected}
+            tabIndex={selected ? 0 : -1}
             onClick={() => selectPowerPreset(preset)}
             className={`${styles.defaultItem} transition-colors hover:bg-muted focus-visible:bg-muted`}
           >
@@ -899,6 +908,9 @@ export function ModelSelector({
                   >
                     <div
                       ref={advancedPanelRef}
+                      role="menu"
+                      aria-label={t("workbench.model_picker_title", "选择模型")}
+                      {...modelMenuKeyboard}
                       data-model-picker-panel="advanced"
                       className={styles.advancedPanel}
                       style={{
