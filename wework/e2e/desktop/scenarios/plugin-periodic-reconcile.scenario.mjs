@@ -12,7 +12,9 @@ import {
 } from '../modules/plugin-regression-fixture.mjs'
 import {
   acknowledgedPluginGeneration,
+  assertRetainedPluginUnchanged,
   latestPluginSyncRequest,
+  observedRetainedPluginSync,
   observePluginSyncTransport,
 } from '../modules/plugin-sync-observer.mjs'
 import { startRealObjectStorage } from '../modules/real-object-storage.mjs'
@@ -252,11 +254,23 @@ export async function createDesktopScenario({
         return { current, request, elapsedMs }
       }
       const unchanged = await materializedPlugin(home, retained.installedId)
-      assert.deepEqual(
-        requests.length === 0 ? unchanged : pluginRuntime(unchanged),
-        requests.length === 0 ? baseline.retained : pluginRuntime(baseline.retained),
-        'The lost change or reconciliation altered an unrelated plugin runtime'
+      const sync = observedRetainedPluginSync(
+        observation,
+        unchanged,
+        baseline.retained,
+        deviceRouteId
       )
+      if (sync && !sync.acknowledgement) {
+        // Manifest publication precedes the real transport ACK. Wait for that
+        // exact ACK instead of rejecting an otherwise valid in-flight snapshot.
+        await until(
+          () =>
+            observedRetainedPluginSync(observation, unchanged, baseline.retained, deviceRouteId),
+          value => Boolean(value?.acknowledgement),
+          'The retained plugin ordering change had no successful complete-sync ACK'
+        )
+      }
+      assertRetainedPluginUnchanged(unchanged, baseline.retained, observation, deviceRouteId)
       if (Date.now() - lastProgressAt >= 30_000) {
         lastProgressAt = Date.now()
         console.log(
@@ -542,6 +556,12 @@ export async function createDesktopScenario({
     assert.deepEqual(
       pluginRuntime(await materializedPlugin(target.home, retained.installedId)),
       pluginRuntime(retainedBefore)
+    )
+    assertRetainedPluginUnchanged(
+      await materializedPlugin(target.home, retained.installedId),
+      retainedBefore,
+      observation,
+      deviceRouteId
     )
     assert.deepEqual(await readFile(target.retainedSkillPath), target.retainedSkill)
     assert.deepEqual(after.skills, target.before.skills)

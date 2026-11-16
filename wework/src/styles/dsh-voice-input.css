@@ -27,7 +27,7 @@
 }
 
 @media (max-width: 767px) {
-  .wework-voice-preparation :is(button, select),
+  .wework-voice-preparation :is(button, select, [role='button']),
   .wework-voice-setup-modal button,
   /* The official guide portals outside the composer. Its autofocus action is
      the stable public marker also used by the shared voice E2E scenario. */

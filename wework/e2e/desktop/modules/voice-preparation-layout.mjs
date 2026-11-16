@@ -109,7 +109,7 @@ export async function verifyVoicePreparationLayout(control) {
     await control.command('click', GUIDE_ACTION)
     await control.command('waitFor', '[data-testid="voice-input-setup"] select')
     await assertVoicePreparationLayout(control)
-    await assertNarrowTargets(control, `${MODAL} button, ${MODAL} select`)
+    await assertNarrowTargets(control, `${MODAL} button, ${MODAL} select, ${MODAL} [role="button"]`)
     await control.command('click', CLOSE)
     await control.command('waitFor', MODAL, { visible: false })
   } finally {

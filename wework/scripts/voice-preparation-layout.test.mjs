@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { loadDesktopCheckpointCatalog } from '../checkpoint-catalog.mjs'
-import { assertVoicePreparationLayout } from './voice-preparation-layout.mjs'
+import { loadDesktopCheckpointCatalog } from '../e2e/desktop/checkpoint-catalog.mjs'
+import { assertVoicePreparationLayout } from '../e2e/desktop/modules/voice-preparation-layout.mjs'
 
 const visible = {
   top: 100,
