@@ -45,7 +45,7 @@ digest = steps.find { |candidate| candidate["id"] == "runtime" }
   .fetch("env").fetch("SOURCE_DIGEST")
 
 recipe = ".github/runtime-images/backend-rs-e2e.Dockerfile"
-%W[backend-rs/crates/** shared/rust/** shared/assets/codex-models/** backend-rs/examples/** backend-rs/migrations/** #{recipe} .github/runtime-images/backend-rs-builder.Dockerfile].each do |input|
+%W[backend-rs/crates/** shared/rust/** shared/assets/codex-models/** shared/assets/calendars/** backend-rs/examples/** backend-rs/migrations/** #{recipe} .github/runtime-images/backend-rs-builder.Dockerfile].each do |input|
   raise "Backend Rust runtime digest omits #{input}" unless digest.include?("'#{input}'")
 end
 
@@ -54,6 +54,16 @@ end
 builder = File.read(File.join(root, ".github/runtime-images/backend-rs-builder.Dockerfile"))
 unless builder.include?("COPY shared/assets/codex-models /workspace/shared/assets/codex-models")
   raise "Backend Rust builder omits the embedded Codex model catalogs"
+end
+{
+  ".github/runtime-images/backend-rs-builder.Dockerfile" => "/workspace",
+  "docker/backend/Dockerfile" => "/app"
+}.each do |path, workspace|
+  content = File.read(File.join(root, path))
+  calendar_copy = "COPY shared/assets/calendars #{workspace}/shared/assets/calendars"
+  unless content.include?(calendar_copy) && content.index(calendar_copy) < content.index("cargo build")
+    raise "#{path} must copy the offline calendar before compiling shared crates"
+  end
 end
 copies = builder.scan(/^COPY (backend-rs\/\S+) (\.\/\S+)$/)
 Dir[File.join(root, "backend-rs/src/migrations/**/*.rs")].each do |source|
@@ -90,7 +100,7 @@ Dir.mktmpdir("backend-rs-runtime-contract") do |directory|
     FileUtils.mkdir_p(File.dirname(File.join(directory, input)))
     FileUtils.cp(File.join(root, input), File.join(directory, input))
   end
-  %w[backend-rs/crates shared/rust].each do |input|
+  %w[backend-rs/crates shared/rust shared/assets/calendars].each do |input|
     FileUtils.mkdir_p(File.dirname(File.join(directory, input)))
     FileUtils.cp_r(File.join(root, input), File.join(directory, input))
   end

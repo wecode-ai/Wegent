@@ -11,6 +11,32 @@ impl RuntimeWorkRpcHandler {
         request: &ExecutionRequest,
         task_id: &str,
     ) -> Result<(), String> {
+        if let Some(info) = request.extra.get("automation_info") {
+            if let (Some(id), Some(run_id)) =
+                (info["automationId"].as_str(), info["runId"].as_str())
+            {
+                if let Some(automation) = self.automation_store.get(id) {
+                    if let Some(run) = self
+                        .automation_store
+                        .list_runs(Some(id))
+                        .into_iter()
+                        .find(|run| run.id == run_id)
+                    {
+                        if !self.automation_store.allow_dispatch(
+                            &automation,
+                            &run,
+                            chrono::Utc::now(),
+                        )? {
+                            self.emit_automation_runs_changed(id, run_id);
+                            return Err(
+                                "Scheduled execution is not allowed by the China workday calendar"
+                                    .into(),
+                            );
+                        }
+                    }
+                }
+            }
+        }
         let Some(schedule) = request.extra.get("standInSchedule") else {
             return Ok(());
         };
@@ -30,6 +56,14 @@ impl RuntimeWorkRpcHandler {
             .automation_store
             .get(id)
             .ok_or("The arrangement was cancelled before starting")?;
+        if schedule["manual"] != true
+            && !wegent_automation::scheduled_dispatch_allowed(
+                &current.schedule,
+                chrono::Utc::now(),
+            )?
+        {
+            return Err("Scheduled execution skipped on a China non-workday".into());
+        }
         if json!(current.version) != schedule["version"]
             || (!current.enabled
                 && schedule["manual"] != true
@@ -91,9 +125,12 @@ impl RuntimeWorkRpcHandler {
     ) {
         let schedule = &request.extra["standInSchedule"];
         if let Some(run) = schedule["runId"].as_str() {
-            let _ = self
-                .automation_store
-                .mark_needs_attention(run, error.clone());
+            let _ = self.automation_store.settle_coordinated_run(
+                run,
+                AutomationRunStatus::NeedsAttention,
+                None,
+                Some(error.clone()),
+            );
         }
         if let (Some(id), Some(run)) = (schedule["id"].as_str(), schedule["runId"].as_str()) {
             self.emit_automation_runs_changed(id, run);
@@ -170,7 +207,16 @@ impl RuntimeWorkRpcHandler {
             }
             json!({"type":"one_time","execute_at":at.to_rfc3339()})
         } else {
-            json!({"type":"cron","expression":required(args,"cron")?})
+            let workday_only = args
+                .get("workdayOnly")
+                .map(|value| {
+                    value.as_bool().ok_or_else(|| {
+                        AppIpcError::new("bad_request", "workdayOnly must be a boolean")
+                    })
+                })
+                .transpose()?
+                .unwrap_or(false);
+            json!({"type":"cron","expression":required(args,"cron")?,"workdayOnly":workday_only})
         };
         if args.get("taskId").is_some() {
             return Err(AppIpcError::new("bad_request", "Calendar events inherit connection settings and cannot select an execution conversation"));
@@ -334,6 +380,36 @@ impl RuntimeWorkRpcHandler {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn chat_schedule_preserves_explicit_workday_filter_and_defaults_old_requests() {
+        let root = tempfile::tempdir().unwrap();
+        let handler = fixture(root.path());
+        let identity = StandInMcpIdentity {
+            task_id: "primary-chat".into(),
+            user: 7,
+            device: "mac".into(),
+            role: Some("@primary".into()),
+            work: None,
+            ask_before_act: true,
+            coordinator_batch: None,
+            project: None,
+            review: false,
+            memory_review: false,
+            readonly_worker: false,
+        };
+        for filtered in [false, true] {
+            let mut args = json!({"requestId":format!("filtered-{filtered}"),"title":"Review","message":"Review outstanding items","cron":"0 9 * * *","timezone":"Asia/Shanghai"});
+            if filtered {
+                args["workdayOnly"] = json!(true);
+            }
+            let saved = handler
+                .create_stand_in_schedule(&identity, &args)
+                .await
+                .unwrap();
+            assert_eq!(saved["automation"]["schedule"]["workdayOnly"], filtered);
+        }
+    }
 
     #[tokio::test]
     async fn memory_review_rejects_a_non_codex_primary_model_before_creating_work() {
