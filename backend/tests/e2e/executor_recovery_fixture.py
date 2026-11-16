@@ -36,12 +36,12 @@ recoveries: dict[int, Recovery] = {}
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # The manager may close idle keep-alive sockets under load. Reusing one in
-    # this gateway can fail a POST before it reaches the manager and turn a real
-    # executor dispatch into a false HTTP 500.
-    limits = httpx.Limits(max_keepalive_connections=0)
+    # The fixture and Executor Manager can expire idle HTTP connections at the
+    # same time. Use a fresh loopback connection for each forwarded request.
     async with httpx.AsyncClient(
-        base_url=MANAGER_URL, timeout=180, limits=limits
+        base_url=MANAGER_URL,
+        timeout=180,
+        limits=httpx.Limits(max_keepalive_connections=0),
     ) as client:
         app.state.manager = client
         yield

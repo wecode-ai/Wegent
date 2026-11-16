@@ -6,12 +6,16 @@ import {
   type GlassColorScheme,
   type GlassEffectStyleConfig,
 } from 'expo-glass-effect'
-import type { ReactNode } from 'react'
+import { useSyncExternalStore, type ReactNode } from 'react'
 import {
+  AccessibilityInfo,
+  Appearance,
   Platform,
   Pressable,
+  processColor,
   StyleSheet,
   View,
+  type ColorValue,
   type LayoutChangeEvent,
   type PressableProps,
   type StyleProp,
@@ -21,8 +25,62 @@ import {
 export const liquidGlassAccentTint = 'rgba(38, 137, 235, 0.68)'
 export const liquidGlassAccentBorder = 'rgba(92, 169, 238, 0.78)'
 
-const nativeLiquidGlassAvailable =
-  Platform.OS === 'ios' && isLiquidGlassAvailable() && isGlassEffectAPIAvailable()
+function nativeLiquidGlassAvailable(): boolean {
+  return Platform.OS === 'ios' && isLiquidGlassAvailable() && isGlassEffectAPIAvailable()
+}
+
+let reducedTransparency = false
+const transparencyListeners = new Set<() => void>()
+let transparencySubscription: ReturnType<typeof AccessibilityInfo.addEventListener> | null = null
+let transparencyRevision = 0
+
+function updateReducedTransparency(value: boolean) {
+  transparencyRevision += 1
+  if (reducedTransparency === value) return
+  reducedTransparency = value
+  transparencyListeners.forEach(listener => listener())
+}
+
+function subscribeToTransparency(listener: () => void) {
+  transparencyListeners.add(listener)
+  if (!transparencySubscription) {
+    transparencySubscription = AccessibilityInfo.addEventListener(
+      'reduceTransparencyChanged',
+      updateReducedTransparency
+    )
+    const revision = transparencyRevision
+    void AccessibilityInfo.isReduceTransparencyEnabled().then(
+      value => {
+        if (revision === transparencyRevision) updateReducedTransparency(value)
+      },
+      error => {
+        console.warn('Unable to read the reduced transparency setting', error)
+        if (revision === transparencyRevision) updateReducedTransparency(true)
+      }
+    )
+  }
+  return () => {
+    transparencyListeners.delete(listener)
+    if (transparencyListeners.size) return
+    transparencySubscription?.remove()
+    transparencySubscription = null
+    transparencyRevision += 1
+  }
+}
+
+const subscribeToNoChanges = () => () => {}
+const getReducedTransparency = () => reducedTransparency
+const getDefaultTransparency = () => false
+
+function useNativeGlass(): boolean {
+  const available = nativeLiquidGlassAvailable()
+  const reduced = useSyncExternalStore(
+    available ? subscribeToTransparency : subscribeToNoChanges,
+    getReducedTransparency,
+    getDefaultTransparency
+  )
+  return available && !reduced
+}
 
 interface LiquidGlassGroupProps {
   children: ReactNode
@@ -39,7 +97,7 @@ export function LiquidGlassGroup({
   style,
   testID,
 }: LiquidGlassGroupProps) {
-  if (nativeLiquidGlassAvailable) {
+  if (nativeLiquidGlassAvailable()) {
     return (
       <GlassContainer onLayout={onLayout} spacing={spacing} style={style} testID={testID}>
         {children}
@@ -77,7 +135,8 @@ export function LiquidGlassSurface({
   testID,
   tintColor,
 }: LiquidGlassSurfaceProps) {
-  if (nativeLiquidGlassAvailable) {
+  const nativeGlass = useNativeGlass()
+  if (nativeGlass) {
     return (
       <GlassView
         colorScheme={colorScheme}
@@ -93,15 +152,34 @@ export function LiquidGlassSurface({
     )
   }
 
+  const dark = (colorScheme === 'auto' ? Appearance.getColorScheme() : colorScheme) === 'dark'
+  const resolvedFallback = StyleSheet.flatten(fallbackStyle)
   return (
     <View
       onLayout={onLayout}
-      style={[style, styles.fallbackSurface, fallbackStyle]}
+      style={[
+        style,
+        styles.fallbackSurface,
+        dark ? styles.darkSurface : styles.lightSurface,
+        resolvedFallback,
+        { backgroundColor: opaqueSurfaceColor(resolvedFallback?.backgroundColor, dark) },
+      ]}
       testID={testID}
     >
       {children}
     </View>
   )
+}
+
+function opaqueSurfaceColor(color: ColorValue | undefined, dark: boolean): ColorValue {
+  const base = dark ? 24 : 255
+  const surface = color ?? (dark ? '#202020' : '#f7f7f7')
+  const processed = processColor(surface)
+  if (typeof processed !== 'number') return surface
+  const alpha = ((processed >>> 24) & 255) / 255
+  const channel = (shift: number) =>
+    Math.round(((processed >>> shift) & 255) * alpha + base * (1 - alpha))
+  return `rgb(${channel(16)}, ${channel(8)}, ${channel(0)})`
 }
 
 interface LiquidGlassButtonProps {
@@ -160,5 +238,7 @@ export function LiquidGlassButton({
 
 const styles = StyleSheet.create({
   fallbackSurface: { borderWidth: StyleSheet.hairlineWidth },
+  lightSurface: { backgroundColor: '#f7f7f7', borderColor: '#e7e7e7' },
+  darkSurface: { backgroundColor: '#202020', borderColor: '#2c2c2e' },
   buttonPressed: { transform: [{ scale: 0.96 }] },
 })

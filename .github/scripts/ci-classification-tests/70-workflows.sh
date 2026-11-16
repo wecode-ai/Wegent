@@ -290,6 +290,7 @@ for (const checkpoint of [
   'plugin-runtime-route-refresh',
   'plugin-background-sync-isolation',
   'plugin-periodic-reconcile',
+  'plugin-package-integrity-recovery',
 ]) {
   assert.ok(minioSetup.includes(`contains(matrix.segments, '${checkpoint}')`), `${checkpoint}: CI must prepare real object storage`)
 }

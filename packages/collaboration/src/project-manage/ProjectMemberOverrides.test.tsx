@@ -213,7 +213,7 @@ describe('Project member overrides', () => {
     input.value = 'unsaved draft'
     api.listMembers.mockResolvedValue([inherited])
     await act(async () => find<HTMLButtonElement>('cloud-project-member-remove-2').click())
-    expect(host.confirm).toHaveBeenCalledWith('移除“member”的项目角色，恢复空间角色？')
+    expect(host.confirm).toHaveBeenCalledWith('移除“member”的项目角色，恢复分组角色？')
     expect(api.removeMember).toHaveBeenCalledWith('project-1', 2)
     expect(api.listMembers).toHaveBeenCalledTimes(2)
     expect(find<HTMLSelectElement>('cloud-project-member-role-2').value).toBe('Developer')

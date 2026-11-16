@@ -395,7 +395,7 @@ class ExternalLoopItemProvider:
             )
             db.commit()
         elif values.assignee_group_id:
-            from app.services.workspaces import workspace_service
+            from app.services.workspaces.service import workspace_service
 
             group = next(
                 entry
@@ -1052,7 +1052,7 @@ class ExternalLoopItemProvider:
                 )
             return self._assignee_label("agent", agent.id, agent.title or agent.name)
         if values.assignee_group_id:
-            from app.services.workspaces import workspace_service
+            from app.services.workspaces.service import workspace_service
 
             group = next(
                 (
@@ -1191,7 +1191,7 @@ class ExternalLoopItemProvider:
                 priority=priority,
             )
         elif values.assignee_group_id:
-            from app.services.workspaces import workspace_service
+            from app.services.workspaces.service import workspace_service
 
             group = next(
                 entry
@@ -1365,7 +1365,7 @@ class ExternalLoopItemProvider:
             assignee_label = self._assignee_label("team", str(team.id), team.name)
             assignee_name = team.name
         elif values.assignee_type == "group":
-            from app.services.workspaces import workspace_service
+            from app.services.workspaces.service import workspace_service
 
             group = next(
                 (
@@ -2046,7 +2046,7 @@ class ExternalLoopItemProvider:
                     assignee_team_name = team.name if team is not None else None
             elif assignee["type"] == "group":
                 assignee_group_id = assignee["id"]
-                from app.services.workspaces import workspace_service
+                from app.services.workspaces.service import workspace_service
 
                 group = next(
                     (

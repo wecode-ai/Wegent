@@ -1,7 +1,8 @@
 {
   "order": 29000,
-  "scenario": "./scenarios/collaboration-local-status-automation.scenario.mjs",
+  "scenario": "./scenarios/collaboration-agent-delegation.scenario.mjs",
   "scenarioOnly": true,
+  "paths": ["wework/e2e/desktop/modules/issue-delegation-model.mjs"],
   "ci": {
     "core": {
       "order": 29000,

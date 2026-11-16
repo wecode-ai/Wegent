@@ -1,0 +1,558 @@
+import { act, cleanup, fireEvent, render, screen, within } from '@testing-library/react'
+import { useState } from 'react'
+import { readFileSync } from 'node:fs'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { ExperienceNavigation } from './ExperienceNavigation'
+import { ExperiencePanes } from './ExperiencePanes'
+import type { ExperiencePane } from './types'
+
+vi.mock('@/hooks/useTranslation', () => ({
+  useTranslation: () => ({ t: (key: string) => key }),
+}))
+
+let availableWidth = 1440
+let styleElement: HTMLStyleElement
+const styles = readFileSync('src/features/collaboration-exp/shell/ExperienceApp.css', 'utf8')
+
+function paneRect(element: HTMLElement): DOMRect {
+  const group = element.closest<HTMLElement>('[data-group]')
+  if (!group || element === group) return new DOMRect(0, 0, availableWidth, 844)
+  const children = Array.from(group.children).filter(
+    (child): child is HTMLElement => child instanceof HTMLElement
+  )
+  const panels = children.filter(child => child.hasAttribute('data-panel'))
+  const contentWidth = availableWidth - (panels.length - 1) * 8
+  const total = panels.reduce((sum, pane) => sum + Number(pane.style.flexGrow || 1), 0)
+  const widthOf = (child: HTMLElement) =>
+    child.hasAttribute('data-panel')
+      ? (Number(child.style.flexGrow || 1) / total) * contentWidth
+      : 8
+  const target = children.find(child => child === element || child.contains(element))
+  let left = 0
+  for (const child of children) {
+    if (child === target) return new DOMRect(left, 0, widthOf(child), 844)
+    left += widthOf(child)
+  }
+  return new DOMRect(0, 0, availableWidth, 844)
+}
+
+function resize(width: number) {
+  availableWidth = width
+  act(() => window.dispatchEvent(new Event('resize')))
+}
+
+function visiblePaneIds() {
+  return Array.from(document.querySelectorAll<HTMLElement>('[data-experience-pane-host]'))
+    .filter(element => !element.closest('[hidden]'))
+    .map(element => element.dataset.experiencePaneHost)
+}
+
+function panelLayout() {
+  return Object.fromEntries(
+    Array.from(document.querySelectorAll<HTMLElement>('[data-panel]')).map(panel => [
+      panel.id,
+      Number(panel.style.flexGrow),
+    ])
+  )
+}
+
+beforeEach(() => {
+  availableWidth = 1440
+  vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(function () {
+    return paneRect(this)
+  })
+  vi.spyOn(HTMLElement.prototype, 'offsetWidth', 'get').mockImplementation(function () {
+    return paneRect(this).width
+  })
+  vi.spyOn(HTMLElement.prototype, 'offsetHeight', 'get').mockReturnValue(844)
+  vi.spyOn(HTMLElement.prototype, 'offsetLeft', 'get').mockImplementation(function () {
+    return paneRect(this).left
+  })
+  vi.spyOn(HTMLElement.prototype, 'offsetTop', 'get').mockReturnValue(0)
+  styleElement = document.createElement('style')
+  styleElement.textContent = styles
+  document.head.append(styleElement)
+})
+
+afterEach(() => {
+  cleanup()
+  styleElement.remove()
+  document.documentElement.classList.remove('dark')
+  vi.restoreAllMocks()
+  vi.unstubAllGlobals()
+})
+
+function Draft() {
+  const [value, setValue] = useState('')
+  return (
+    <input
+      aria-label="Private draft"
+      value={value}
+      onChange={event => setValue(event.target.value)}
+    />
+  )
+}
+
+function LayerFixture() {
+  const [depth, setDepth] = useState(1)
+  const panes: ExperiencePane[] = [
+    {
+      id: 'list',
+      title: 'Tasks',
+      minWidth: 280,
+      defaultWidth: 350,
+      content: (
+        <button data-testid="open-task" onClick={() => setDepth(2)}>
+          Task one
+        </button>
+      ),
+    },
+    {
+      id: 'timeline',
+      title: 'Task timeline',
+      minWidth: 320,
+      content: (
+        <button data-testid="open-discussion" onClick={() => setDepth(3)}>
+          Private discussion
+        </button>
+      ),
+    },
+    {
+      id: 'discussion',
+      title: 'Private discussion',
+      minWidth: 320,
+      content: onBack => (
+        <>
+          <button data-testid="context-back-discussion" onClick={onBack}>
+            Task progress
+          </button>
+          <Draft />
+        </>
+      ),
+    },
+  ]
+  return (
+    <ExperiencePanes
+      navigation={<div>Navigation</div>}
+      panes={panes.slice(0, depth)}
+      onBack={() => setDepth(value => value - 1)}
+    />
+  )
+}
+
+describe('ExperiencePanes', () => {
+  it('keeps the empty task dashboard mounted on desktop while mobile starts at the list', () => {
+    const panes: ExperiencePane[] = [
+      { id: 'tasks', title: 'Tasks', header: null, content: <header>Task toolbar</header> },
+      { id: 'home', title: 'Home', header: null, desktopOnly: true, content: <Draft /> },
+    ]
+    render(<ExperiencePanes panes={panes} mobileNavigation={<nav>Mobile navigation</nav>} />)
+    expect(visiblePaneIds()).toEqual(['tasks', 'home'])
+    expect(screen.queryByTestId('collaboration-exp-pane-header-tasks')).not.toBeInTheDocument()
+    const draft = screen.getByRole('textbox', { name: 'Private draft' })
+    fireEvent.change(draft, { target: { value: 'Keep the home draft' } })
+    resize(390)
+    expect(visiblePaneIds()).toEqual(['tasks'])
+    expect(screen.getByTestId('collaboration-exp-mobile-navigation')).toBeVisible()
+    resize(1440)
+    expect(screen.getByRole('textbox', { name: 'Private draft' })).toBe(draft)
+    expect(draft).toHaveValue('Keep the home draft')
+  })
+  it('shows navigation and all layers when minima fit and progressively hides the oldest layers', () => {
+    render(<LayerFixture />)
+    fireEvent.click(screen.getByTestId('open-task'))
+    fireEvent.click(screen.getByTestId('open-discussion'))
+    expect(visiblePaneIds()).toEqual([
+      'collaboration-exp-navigation',
+      'list',
+      'timeline',
+      'discussion',
+    ])
+    expect(screen.getAllByRole('separator')).toHaveLength(3)
+
+    resize(1103)
+    expect(visiblePaneIds()).toEqual(['collaboration-exp-navigation', 'timeline', 'discussion'])
+    resize(767)
+    expect(visiblePaneIds()).toEqual(['discussion'])
+    expect(screen.queryByRole('separator')).not.toBeInTheDocument()
+    resize(1440)
+    expect(visiblePaneIds()).toEqual([
+      'collaboration-exp-navigation',
+      'list',
+      'timeline',
+      'discussion',
+    ])
+  })
+
+  it('returns one mobile layer at a time and restores the exact triggering control', () => {
+    availableWidth = 390
+    render(<LayerFixture />)
+    const task = screen.getByTestId('open-task')
+    task.focus()
+    fireEvent.click(task)
+    expect(visiblePaneIds()).toEqual(['timeline'])
+    expect(screen.getByTestId('collaboration-exp-pane-timeline')).toHaveFocus()
+    const discussion = screen.getByTestId('open-discussion')
+    discussion.focus()
+    fireEvent.click(discussion)
+    expect(visiblePaneIds()).toEqual(['discussion'])
+    fireEvent.click(screen.getByTestId('collaboration-exp-pane-header-discussion-back'))
+    expect(visiblePaneIds()).toEqual(['timeline'])
+    expect(discussion).toHaveFocus()
+    fireEvent.click(screen.getByTestId('collaboration-exp-pane-header-timeline-back'))
+    expect(visiblePaneIds()).toEqual(['list'])
+    expect(task).toHaveFocus()
+    expect(screen.queryByTestId('collaboration-exp-pane-header-list-back')).not.toBeInTheDocument()
+  })
+
+  it('retains private drafts and mounted controls while panes move between desktop and mobile', () => {
+    render(<LayerFixture />)
+    fireEvent.click(screen.getByTestId('open-task'))
+    fireEvent.click(screen.getByTestId('open-discussion'))
+    const input = screen.getByRole('textbox', { name: 'Private draft' })
+    fireEvent.change(input, { target: { value: 'Keep my unsent text' } })
+    resize(390)
+    resize(1440)
+    expect(screen.getByRole('textbox', { name: 'Private draft' })).toBe(input)
+    expect(input).toHaveValue('Keep my unsent text')
+  })
+
+  it('restores an already focused control after opening a pane through its nested pointer target', () => {
+    function NestedTrigger() {
+      const [opened, setOpened] = useState(false)
+      return (
+        <ExperiencePanes
+          panes={[
+            {
+              id: 'list',
+              title: 'Tasks',
+              content: (
+                <button data-testid="nested-trigger" onClick={() => setOpened(true)}>
+                  <span data-testid="nested-trigger-label">Open task</span>
+                </button>
+              ),
+            },
+            ...(opened ? [{ id: 'timeline', title: 'Timeline', content: null }] : []),
+          ]}
+          onBack={() => setOpened(false)}
+        />
+      )
+    }
+    availableWidth = 390
+    render(<NestedTrigger />)
+    const trigger = screen.getByTestId('nested-trigger')
+    act(() => trigger.focus())
+    expect(trigger).toHaveFocus()
+    const label = screen.getByTestId('nested-trigger-label')
+    fireEvent.pointerDown(label, { button: 0, pointerId: 1 })
+    expect(trigger).toHaveFocus()
+    fireEvent.click(label)
+    expect(screen.getByTestId('collaboration-exp-pane-timeline')).toHaveFocus()
+
+    fireEvent.click(screen.getByTestId('collaboration-exp-pane-header-timeline-back'))
+
+    expect(visiblePaneIds()).toEqual(['list'])
+    expect(screen.getByTestId('nested-trigger')).toBe(trigger)
+    expect(trigger).toHaveFocus()
+  })
+
+  it('restores the source control when mobile content uses the same shell-owned back action', () => {
+    availableWidth = 390
+    render(<LayerFixture />)
+    const task = screen.getByTestId('open-task')
+    task.focus()
+    fireEvent.click(task)
+    const discussion = screen.getByTestId('open-discussion')
+    discussion.focus()
+    fireEvent.click(discussion)
+    const back = screen.getByTestId('context-back-discussion')
+    back.focus()
+    fireEvent.click(back)
+    expect(visiblePaneIds()).toEqual(['timeline'])
+    expect(discussion).toHaveFocus()
+  })
+
+  it('returns to a collapsed project at 800px with the exact mounted plan, scroll and source focus', () => {
+    function ProjectLayers() {
+      const [opened, setOpened] = useState(false)
+      return (
+        <ExperiencePanes
+          navigation={<nav>Navigation</nav>}
+          panes={[
+            { id: 'tasks', title: 'Tasks', minWidth: 240, content: null },
+            {
+              id: 'project',
+              title: 'Project plan',
+              minWidth: 320,
+              content: (
+                <div data-testid="project-plan" data-plan-view="gantt">
+                  <button data-testid="open-project-task" onClick={() => setOpened(true)}>
+                    Open task from plan
+                  </button>
+                  <Draft />
+                </div>
+              ),
+            },
+            ...(opened
+              ? [
+                  {
+                    id: 'timeline',
+                    title: 'Task',
+                    minWidth: 360,
+                    content: null,
+                    backVisibility: 'collapsed-parent' as const,
+                    onBack: () => setOpened(false),
+                  },
+                ]
+              : []),
+          ]}
+        />
+      )
+    }
+    render(<ProjectLayers />)
+    const project = screen.getByTestId('project-plan')
+    const draft = screen.getByRole('textbox', { name: 'Private draft' })
+    fireEvent.change(draft, { target: { value: 'Retain native plan state' } })
+    project.scrollTop = 240
+    const task = screen.getByTestId('open-project-task')
+    task.focus()
+    fireEvent.click(task)
+    expect(
+      screen.queryByTestId('collaboration-exp-pane-header-timeline-back')
+    ).not.toBeInTheDocument()
+    resize(800)
+    expect(visiblePaneIds()).toEqual(['collaboration-exp-navigation', 'timeline'])
+    const back = screen.getByTestId('collaboration-exp-pane-header-timeline-back')
+    back.focus()
+    fireEvent.click(back)
+    expect(visiblePaneIds()).toEqual(['collaboration-exp-navigation', 'tasks', 'project'])
+    expect(screen.getByTestId('project-plan')).toBe(project)
+    expect(project).toHaveAttribute('data-plan-view', 'gantt')
+    expect(project.scrollTop).toBe(240)
+    expect(draft).toHaveValue('Retain native plan state')
+    expect(task).toHaveFocus()
+  })
+
+  it('uses the shared separator keyboard resize, preserves total width and restores defaults on double click', () => {
+    render(
+      <ExperiencePanes
+        panes={[
+          { id: 'list', title: 'Tasks', content: null, minWidth: 280, defaultWidth: 350 },
+          { id: 'timeline', title: 'Timeline', content: null, minWidth: 320 },
+        ]}
+      />
+    )
+    const separator = screen.getByRole('separator')
+    expect(screen.getByTestId('collaboration-exp-resize-list-timeline')).toBe(separator)
+    expect(separator).toHaveAttribute('id', 'collaboration-exp-resize-list-timeline')
+    const original = panelLayout()
+    act(() => separator.focus())
+    fireEvent.keyDown(separator, { key: 'ArrowRight' })
+    const enlarged = panelLayout()
+    expect(enlarged.list).toBeGreaterThan(original.list)
+    expect(enlarged.timeline).toBeLessThan(original.timeline)
+    expect(enlarged.list + enlarged.timeline).toBeCloseTo(100)
+    fireEvent.keyDown(separator, { key: 'ArrowLeft' })
+    expect(panelLayout().list).toBeCloseTo(original.list)
+    fireEvent.keyDown(separator, { key: 'ArrowRight' })
+    fireEvent.doubleClick(separator)
+    expect(panelLayout().list).toBeCloseTo(original.list)
+    expect(panelLayout().timeline).toBeCloseTo(original.timeline)
+  })
+
+  it('resets four retained panes to the current viewport defaults after resizing a saved nondefault layout', () => {
+    const observers = new Set<ResizeObserver>()
+    const notifyResize = new Map<ResizeObserver, () => void>()
+    vi.stubGlobal(
+      'ResizeObserver',
+      class implements ResizeObserver {
+        private targets = new Set<Element>()
+        constructor(callback: ResizeObserverCallback) {
+          observers.add(this)
+          notifyResize.set(this, () => {
+            callback(
+              [...this.targets].map(target => {
+                const contentRect = target.getBoundingClientRect()
+                const size = [{ inlineSize: contentRect.width, blockSize: contentRect.height }]
+                return {
+                  target,
+                  contentRect,
+                  borderBoxSize: size,
+                  contentBoxSize: size,
+                  devicePixelContentBoxSize: size,
+                }
+              }),
+              this
+            )
+          })
+        }
+        observe(target: Element) {
+          this.targets.add(target)
+        }
+        unobserve(target: Element) {
+          this.targets.delete(target)
+        }
+        disconnect() {
+          observers.delete(this)
+          notifyResize.delete(this)
+        }
+      }
+    )
+    availableWidth = 1280
+    render(
+      <ExperiencePanes
+        navigation={<nav>Navigation</nav>}
+        panes={[
+          { id: 'tasks', title: 'Tasks', content: null, minWidth: 240, defaultWidth: 300 },
+          { id: 'timeline', title: 'Timeline', content: null, minWidth: 360, defaultWidth: 620 },
+          {
+            id: 'discussion',
+            title: 'Private discussion',
+            content: <Draft />,
+            minWidth: 320,
+            defaultWidth: 480,
+          },
+        ]}
+      />
+    )
+    const group = document.querySelector('[data-group]')
+    const separator = document.getElementById('collaboration-exp-resize-timeline-discussion')!
+    const draft = screen.getByRole('textbox', { name: 'Private draft' })
+    fireEvent.change(draft, { target: { value: 'Keep the resized discussion draft' } })
+    const initial = panelLayout()
+    fireEvent.keyDown(separator, { key: 'ArrowRight' })
+    const saved = panelLayout()
+    expect(saved.timeline).toBeGreaterThan(initial.timeline)
+    expect(saved.discussion).toBeLessThan(initial.discussion)
+
+    resize(1440)
+    act(() => {
+      for (const observer of [...observers]) notifyResize.get(observer)?.()
+    })
+    const retained = panelLayout()
+    for (const id of Object.keys(saved)) expect(retained[id]).toBeCloseTo(saved[id], 4)
+    expect(document.querySelector('[data-group]')).toBe(group)
+    const pixels = (id: string) => document.getElementById(id)!.getBoundingClientRect().width
+    // Four panes share 1416px after the three 8px separators at this viewport.
+    const defaults = {
+      'collaboration-exp-navigation': 164,
+      tasks: 281.5,
+      timeline: 539 + 5 / 6,
+      discussion: 430 + 2 / 3,
+    }
+    expect(Math.abs(pixels('timeline') - defaults.timeline)).toBeGreaterThan(2)
+    fireEvent.doubleClick(separator)
+    for (const [id, width] of Object.entries(defaults)) expect(pixels(id)).toBeCloseTo(width, 2)
+    expect(Object.keys(defaults).reduce((total, id) => total + pixels(id), 0)).toBeCloseTo(1416, 3)
+    expect(screen.getAllByRole('separator')).toHaveLength(3)
+    expect(screen.getByRole('textbox', { name: 'Private draft' })).toBe(draft)
+    expect(draft).toHaveValue('Keep the resized discussion draft')
+  })
+
+  it('cancels the active pointer resize on Escape without allowing an outer layer-close handler', () => {
+    const close = vi.fn()
+    render(
+      <div
+        onKeyDown={event => {
+          if (event.key === 'Escape') close()
+        }}
+      >
+        <ExperiencePanes
+          panes={[
+            { id: 'list', title: 'Tasks', content: null, minWidth: 280, defaultWidth: 350 },
+            { id: 'timeline', title: 'Timeline', content: null, minWidth: 320 },
+          ]}
+        />
+      </div>
+    )
+    const separator = screen.getByRole('separator')
+    const original = panelLayout()
+    const x = separator.getBoundingClientRect().left + 4
+    fireEvent.pointerDown(separator, {
+      clientX: x,
+      clientY: 100,
+      button: 0,
+      buttons: 1,
+      pointerType: 'mouse',
+      pointerId: 1,
+    })
+    fireEvent.pointerMove(separator, {
+      clientX: x + 100,
+      clientY: 100,
+      buttons: 1,
+      pointerType: 'mouse',
+      pointerId: 1,
+    })
+    expect(panelLayout().list).toBeGreaterThan(original.list)
+    fireEvent.keyDown(separator, { key: 'Escape' })
+    expect(panelLayout().list).toBeCloseTo(original.list)
+    expect(separator).not.toHaveAttribute('data-separator', 'active')
+    expect(close).not.toHaveBeenCalled()
+    fireEvent.pointerMove(separator, {
+      clientX: x + 200,
+      clientY: 100,
+      buttons: 1,
+      pointerType: 'mouse',
+      pointerId: 1,
+    })
+    expect(panelLayout().list).toBeCloseTo(original.list)
+    fireEvent.pointerUp(separator, {
+      clientX: x + 200,
+      clientY: 100,
+      buttons: 0,
+      pointerType: 'mouse',
+      pointerId: 1,
+    })
+  })
+
+  it('keeps the same themed DOM and contains long content inside a scrollable edge-aligned body', () => {
+    availableWidth = 390
+    render(
+      <ExperiencePanes
+        panes={[
+          {
+            id: 'attachments',
+            title: 'Very long title '.repeat(40),
+            content: (
+              <ul>
+                {Array.from({ length: 60 }, (_, index) => (
+                  <li key={index}>{'long-attachment-name'.repeat(20)}</li>
+                ))}
+              </ul>
+            ),
+          },
+        ]}
+      />
+    )
+    const shell = screen.getByTestId('collaboration-exp-panes')
+    const lightDom = shell.innerHTML
+    document.documentElement.classList.add('dark')
+    expect(shell.innerHTML).toBe(lightDom)
+    const body = shell.querySelector<HTMLElement>('.experience-pane-body')!
+    expect(getComputedStyle(body).overflowX).toBe('hidden')
+    expect(getComputedStyle(body).overflowY).toBe('auto')
+    expect(getComputedStyle(body).paddingRight).toBe('')
+    expect(getComputedStyle(shell).overflow).toBe('hidden')
+    expect(within(body).getAllByRole('listitem')).toHaveLength(60)
+  })
+
+  it('uses full rectangular navigation rows and preserves project/footer slots', () => {
+    const change = vi.fn()
+    render(
+      <ExperienceNavigation
+        activeView="tasks"
+        onViewChange={change}
+        projectNavigation={<button>Project A</button>}
+        footer={<button>Private settings</button>}
+      />
+    )
+    expect(screen.getByTestId('collaboration-exp-navigation-tasks')).toHaveAttribute(
+      'aria-current',
+      'page'
+    )
+    fireEvent.click(screen.getByTestId('collaboration-exp-navigation-assistant'))
+    expect(change).toHaveBeenCalledWith('assistant')
+    expect(screen.getByRole('button', { name: 'Project A' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Private settings' })).toBeInTheDocument()
+  })
+})

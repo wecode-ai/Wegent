@@ -30,6 +30,7 @@
 //! the response path re-reads the caller by primary key before its first read.
 mod fields;
 mod metadata;
+pub(crate) use metadata::metadata_board_statuses;
 mod provider;
 mod request;
 mod statements;

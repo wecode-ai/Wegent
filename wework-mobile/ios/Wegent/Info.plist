@@ -33,7 +33,7 @@
 		</dict>
 	</array>
 	<key>CFBundleVersion</key>
-	<string>2</string>
+    <string>13</string>
 	<key>ITSAppUsesNonExemptEncryption</key>
 	<false/>
 	<key>LSMinimumSystemVersion</key>
@@ -49,8 +49,6 @@
 	</dict>
 	<key>NSCameraUsageDescription</key>
 	<string>允许 WeWork 拍摄照片并作为会话附件发送。</string>
-	<key>NSFaceIDUsageDescription</key>
-	<string>Allow $(PRODUCT_NAME) to access your Face ID biometric data.</string>
 	<key>NSPhotoLibraryUsageDescription</key>
 	<string>允许 WeWork 选择照片并作为会话附件发送。</string>
 	<key>RCTMetroPort</key>

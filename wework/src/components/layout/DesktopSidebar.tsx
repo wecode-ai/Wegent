@@ -4027,9 +4027,7 @@ export function DesktopSidebar({
       onPointerEnter={onPointerEnter}
       onPointerLeave={onPointerLeave}
       className={cn(
-        'relative z-popover h-full shrink-0 overflow-visible transition-[width,background-color] duration-[300ms] ease-[cubic-bezier(0.16,1,0.3,1)] motion-reduce:transition-none will-change-[width]',
-        !collapsed &&
-          'border-r border-border/70 wework:border-black/[0.08] wework:dark:border-white/[0.08]',
+        'group/sidebar relative h-full shrink-0 overflow-visible transition-[width,background-color] duration-[300ms] ease-[cubic-bezier(0.16,1,0.3,1)] motion-reduce:transition-none will-change-[width]',
         background.imagePath && background.inSidebar
           ? 'bg-background/25'
           : 'bg-[rgb(var(--color-sidebar))]',

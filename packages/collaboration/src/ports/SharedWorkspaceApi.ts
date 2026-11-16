@@ -148,6 +148,7 @@ export interface WorkspaceBoardSnapshot extends CollaborationBoardSnapshot {
 }
 
 export interface WorkspaceIssueCreateInput {
+  requestId?: string;
   personalTask?: boolean;
   milestoneId?: string | null;
   title: string;
@@ -497,7 +498,7 @@ export interface SharedWorkspaceMyWorkApi {
   page?(input?: {
     cursor?: string;
     limit?: number;
-    scope?: "assigned" | "participating";
+    scope?: "assigned" | "created" | "participating";
     includeCompleted?: boolean;
     order?: "recent" | "attention" | "activity" | "assignment" | "priority";
     viewerIds?: readonly (string | number)[];
@@ -564,7 +565,11 @@ export interface SharedWorkspaceIssuesApi {
 
 export interface SharedWorkspaceCommentsApi {
   list(issueId: string): Promise<CollaborationComment[]>;
-  create(issueId: string, body: string): Promise<CollaborationComment>;
+  create(
+    issueId: string,
+    body: string,
+    options?: { clientMessageId?: string },
+  ): Promise<CollaborationComment>;
 }
 
 export interface SharedWorkspaceAssignmentsApi {

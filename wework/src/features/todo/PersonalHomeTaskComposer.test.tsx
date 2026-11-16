@@ -165,6 +165,20 @@ it.each([false, true])(
   }
 )
 
+it('keeps a local executor delivery in review after task creation', async () => {
+  const { api, issue, draft, createProjectRuntimeTask, address } = setup(true)
+  createProjectRuntimeTask.mockImplementationOnce(async (_message, options) => {
+    await options.prepareRuntimeTask(address)
+    issue.status = 'in_review'
+    issue.version = 2
+    return address
+  })
+  fireEvent.click(screen.getByTestId('submit'))
+  await waitFor(() => expect(draft.onTaskCreated).toHaveBeenCalledOnce())
+  expect(issue.status).toBe('in_review')
+  expect(api.issues.update).not.toHaveBeenCalled()
+})
+
 it('preserves attachment-only work and generates its Issue title without requiring extra text', async () => {
   const { props, rerender, api, draft, attachment, createProjectRuntimeTask } = setup()
   rerender(<PersonalHomeTaskComposer {...props} draft={{ ...props.draft, value: '' }} />)

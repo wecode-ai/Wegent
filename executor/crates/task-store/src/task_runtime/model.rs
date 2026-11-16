@@ -79,6 +79,14 @@ pub struct ProjectTagChange {
     pub target: Option<String>,
 }
 
+#[derive(Debug, Clone, Default)]
+pub struct TaskCreateOptions {
+    pub start_at: Option<String>,
+    pub due_at: Option<String>,
+    pub personal_task: bool,
+    pub request_id: Option<String>,
+}
+
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct TaskCreate {
     pub milestone_id: Option<String>,

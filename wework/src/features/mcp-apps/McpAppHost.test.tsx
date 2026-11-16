@@ -1,3 +1,4 @@
+import { StrictMode } from 'react'
 import { act, fireEvent, render, screen } from '@testing-library/react'
 import type { ToolBlock } from '@wegent/chat-core/runtime-conversation'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -116,6 +117,63 @@ describe('MCP App discovery', () => {
     await act(async () => view.rerender(<McpAppHost block={running} address={address} api={api} />))
     expect(requestMcpApp).toHaveBeenCalledTimes(2)
     expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+  })
+
+  it('discovers after strict mode replays effect setup and cleanup', async () => {
+    const requestMcpApp = vi.fn().mockResolvedValue(null)
+    render(
+      <StrictMode>
+        <McpAppHost block={running} turnId="turn" address={address} api={{ requestMcpApp }} />
+      </StrictMode>
+    )
+    await act(async () => {})
+    expect(requestMcpApp).toHaveBeenLastCalledWith({
+      address,
+      callId: running.id,
+      turnId: 'turn',
+      method: 'discover',
+    })
+    expect(requestMcpApp).toHaveBeenCalledTimes(2)
+  })
+
+  it('does not rediscover an ordinary completed call when history recreates its output', async () => {
+    const requestMcpApp = vi.fn().mockResolvedValue(null)
+    const api = { requestMcpApp }
+    const block: ToolBlock = { ...running, status: 'done', toolOutput: { content: [] } }
+    const view = render(<McpAppHost block={block} address={address} api={api} />)
+    await act(async () => {})
+    for (let update = 0; update < 5; update++) {
+      await act(async () =>
+        view.rerender(
+          <McpAppHost
+            block={{ ...block, toolOutput: { content: [] } }}
+            address={address}
+            api={api}
+          />
+        )
+      )
+    }
+    expect(requestMcpApp).toHaveBeenCalledTimes(1)
+  })
+
+  it('discovers changed output that arrives during a pending probe without a status change', async () => {
+    let resolve!: (value: null) => void
+    const requestMcpApp = vi
+      .fn()
+      .mockImplementationOnce(
+        () =>
+          new Promise<null>(done => {
+            resolve = done
+          })
+      )
+      .mockResolvedValue(null)
+    const api = { requestMcpApp }
+    const view = render(<McpAppHost block={running} address={address} api={api} />)
+    view.rerender(
+      <McpAppHost block={{ ...running, toolOutput: { content: [] } }} address={address} api={api} />
+    )
+    await act(async () => resolve(null))
+    expect(requestMcpApp).toHaveBeenCalledTimes(2)
   })
   it('does not create cards for failed optional discovery and discovers on the next status update', async () => {
     const requestMcpApp = vi.fn().mockRejectedValue(new TypeError('Failed to fetch'))

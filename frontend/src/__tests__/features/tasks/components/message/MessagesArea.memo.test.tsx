@@ -4,6 +4,7 @@
 
 import React from 'react'
 import { act, render, screen } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
 import MessagesArea, {
   deriveSaveToKnowledgeTitle,
 } from '@/features/tasks/components/message/MessagesArea'
@@ -167,7 +168,8 @@ jest.mock('@/features/tasks/components/share/TaskShareModal', () => ({
 
 jest.mock('@/features/tasks/components/share/ExportSelectModal', () => ({
   __esModule: true,
-  default: () => null,
+  default: ({ open }: { open: boolean }) =>
+    open ? <div role="dialog" aria-label="Export messages" /> : null,
 }))
 
 jest.mock('@/features/tasks/components/group-chat', () => ({
@@ -277,6 +279,52 @@ describe('MessagesArea memoization', () => {
     rerender(<MessagesArea {...props} />)
 
     expect(messageBubbleRenderSpy).toHaveBeenCalledTimes(firstRenderCount)
+  })
+
+  it('clears externally rendered actions when the messages area unmounts', () => {
+    mockTaskSession.selectedTaskDetail = { id: 707, title: 'Task 707', status: 'COMPLETED' }
+    const onShareButtonRender = jest.fn()
+    const { unmount } = render(<MessagesArea onShareButtonRender={onShareButtonRender} />)
+    expect(onShareButtonRender.mock.lastCall?.[0]).not.toBeNull()
+
+    unmount()
+
+    expect(onShareButtonRender).toHaveBeenLastCalledWith(null)
+  })
+
+  it.each([403, 404])('removes stale actions on %s and restores working export', async status => {
+    mockTaskSession.selectedTaskDetail = { id: 707, title: 'Task 707', status: 'COMPLETED' }
+    const user = userEvent.setup()
+    function ChatHost({ error }: { error: number | null }) {
+      const [actions, setActions] = React.useState<React.ReactNode>(null)
+      return (
+        <>
+          {actions && <div data-testid="external-chat-actions">{actions}</div>}
+          {error ? (
+            <div role="alert">Task error {error}</div>
+          ) : (
+            <MessagesArea onShareButtonRender={setActions} />
+          )}
+        </>
+      )
+    }
+    const { rerender } = render(<ChatHost error={null} />)
+    await user.click(screen.getByTestId('message-export-menu'))
+    await user.click(screen.getByRole('menuitem', { name: 'chat:export.export_pdf' }))
+    expect(screen.getByRole('dialog', { name: 'Export messages' })).toBeInTheDocument()
+
+    mockTaskSession.selectedTaskDetail = null
+    rerender(<ChatHost error={status} />)
+
+    expect(screen.getByRole('alert')).toHaveTextContent(`Task error ${status}`)
+    expect(screen.queryByTestId('external-chat-actions')).not.toBeInTheDocument()
+    expect(screen.queryByRole('dialog', { name: 'Export messages' })).not.toBeInTheDocument()
+
+    mockTaskSession.selectedTaskDetail = { id: 707, title: 'Task 707', status: 'COMPLETED' }
+    rerender(<ChatHost error={null} />)
+    await user.click(screen.getByTestId('message-export-menu'))
+    await user.click(screen.getByRole('menuitem', { name: 'chat:export.export_pdf' }))
+    expect(screen.getByRole('dialog', { name: 'Export messages' })).toBeInTheDocument()
   })
 
   it('submits an interactive form rendered while the message is streaming', () => {

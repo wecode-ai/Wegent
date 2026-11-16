@@ -67,8 +67,8 @@ from app.schemas.workspace import (
     WorkspaceExecutionEnvironmentResponse,
 )
 from app.services.cloud_files import cloud_file_service
-from app.services.cloud_projects import cloud_project_service
 from app.services.cloud_projects.responses import project_response as _project_response
+from app.services.cloud_projects.service import cloud_project_service
 from app.services.loop_item_events import publish_loop_item_changed
 from app.services.loop_items.external_provider import external_loop_item_provider
 from app.services.loop_items.provider_router import loop_item_provider_router

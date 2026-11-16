@@ -5,6 +5,8 @@ import {
   type CloudTaskContext,
 } from '@/api/deliveries'
 import { canEditCollaborationIssue } from '@wegent/collaboration'
+import { ApiError } from '@/api/http'
+import { DshExecutorTransportError } from '@/api/dsh/executorTransport'
 import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
 import type { RuntimeProjectSpaceRef, RuntimeTaskAddress } from '@/types/api'
 
@@ -86,6 +88,78 @@ export function projectSpaceForRuntimeTask(
   task: RuntimeTaskAddress
 ): RuntimeProjectSpaceRef | undefined {
   return projectSpaceByRuntimeTask.get(runtimeTaskKey(task))
+}
+
+export function projectSpaceTaskContextApisForTask<TApi extends ProjectSpaceTaskContextApi>(
+  task: RuntimeTaskAddress | null,
+  local: TApi | undefined,
+  backend: TApi | undefined
+): TApi[] {
+  const store = task?.projectSession
+    ? 'backend'
+    : task
+      ? projectSpaceForRuntimeTask(task)?.projectStore
+      : undefined
+  const candidates =
+    store === 'local' ? [local] : store === 'backend' ? [backend] : [local, backend]
+  return candidates.filter(
+    (api, index): api is TApi => Boolean(api) && candidates.indexOf(api) === index
+  )
+}
+
+export class ProjectSpaceTaskContextUnavailableError extends Error {
+  constructor(store: RuntimeProjectSpaceRef['projectStore']) {
+    super(`Project-space task context API is unavailable for ${store}`)
+    this.name = 'ProjectSpaceTaskContextUnavailableError'
+  }
+}
+
+function isMissingProjectTaskContext(error: unknown): boolean {
+  if (error instanceof AggregateError)
+    return error.errors.length > 0 && error.errors.every(isMissingProjectTaskContext)
+  return (
+    (error instanceof ApiError && error.status === 404) ||
+    (error instanceof DshExecutorTransportError &&
+      (error.code === 'not_found' || error.code === 'http_404'))
+  )
+}
+
+export async function findProjectSpaceContextForTaskInStores<
+  TApi extends ProjectSpaceTaskContextApi,
+>(
+  task: RuntimeTaskAddress,
+  local: TApi | undefined,
+  backend: TApi | undefined
+): ReturnType<ProjectSpaceTaskContextApi['findCloudContextForTask']> {
+  const expected = task.projectSession ? undefined : projectSpaceForRuntimeTask(task)
+  const store = task.projectSession ? 'backend' : expected?.projectStore
+  const apis = projectSpaceTaskContextApisForTask(task, local, backend)
+  if (store && apis.length === 0) throw new ProjectSpaceTaskContextUnavailableError(store)
+  let context: Awaited<ReturnType<ProjectSpaceTaskContextApi['findCloudContextForTask']>>
+  try {
+    context = await findProjectSpaceContextForTask(apis, task)
+  } catch (error) {
+    if (
+      !expected ||
+      !isMissingProjectTaskContext(error) ||
+      !forgetProjectSpaceTaskBinding(task, expected)
+    )
+      throw error
+    return findProjectSpaceContextForTask(
+      projectSpaceTaskContextApisForTask(null, local, backend),
+      task
+    )
+  }
+  if (
+    !expected ||
+    sameProjectSpace(expected, projectSpaceRef(context.project)) ||
+    !forgetProjectSpaceTaskBinding(task, expected)
+  )
+    return context
+  return findProjectSpaceContextForTask(
+    projectSpaceTaskContextApisForTask(null, local, backend),
+    task
+  )
 }
 
 export function reconcileProjectSpaceTaskBindings(

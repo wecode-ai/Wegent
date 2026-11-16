@@ -77,12 +77,12 @@ from app.schemas.project_incoming_hook import (
     ChangeRequestBindingInput,
     ChangeRequestBindingView,
 )
-from app.services.cloud_projects import cloud_project_service
 from app.services.cloud_projects.access import (
     IssueAction,
     require_cloud_project_role,
     require_issue_action,
 )
+from app.services.cloud_projects.service import cloud_project_service
 from app.services.delivery import delivery_service
 from app.services.issue_assignments import issue_assignment_service
 from app.services.loop_item_events import publish_loop_item_changed
@@ -192,7 +192,9 @@ def _delivery_response(db: Session, delivery: Delivery) -> DeliveryResponse:
 def list_my_work(
     limit: int = Query(default=MY_WORK_ITEM_LIMIT, ge=1, le=MY_WORK_ITEM_LIMIT),
     cursor: str | None = Query(default=None, max_length=2048),
-    scope: Literal["assigned", "participating"] = Query(default="participating"),
+    scope: Literal["assigned", "created", "participating"] = Query(
+        default="participating"
+    ),
     include_completed: bool = Query(default=True),
     order: Literal["recent", "attention", "activity", "assignment", "priority"] = Query(
         default="recent"
@@ -206,6 +208,7 @@ def list_my_work(
         limit=limit,
         cursor=cursor,
         assigned_only=scope == "assigned",
+        created_only=scope == "created",
         include_completed=include_completed,
         attention=order == "attention",
         order=order,

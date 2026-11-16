@@ -30,7 +30,7 @@ where
                         break;
                     }
                     match client
-                        .emit_raw_event(RUNTIME_EVENT_EVENT, event.clone())
+                        .emit_raw_event(RUNTIME_EVENT_EVENT, client.runtime_event(event.clone()))
                         .await
                     {
                         Ok(()) => {
@@ -68,7 +68,10 @@ where
                                 continue;
                             }
                             match client
-                                .emit_raw_event(RUNTIME_EVENT_EVENT, event.clone())
+                                .emit_raw_event(
+                                    RUNTIME_EVENT_EVENT,
+                                    client.runtime_event(event.clone()),
+                                )
                                 .await
                             {
                                 Ok(()) => {

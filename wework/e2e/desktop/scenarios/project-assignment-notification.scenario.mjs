@@ -1,3 +1,4 @@
+import { revealCollaborationSidebarElement } from '../modules/collaboration-sidebar-navigation.mjs'
 import { selectedToolCall } from '../modules/model-tool-calls.mjs'
 import assert from 'node:assert/strict'
 
@@ -153,6 +154,10 @@ async function verifyCanonicalDeviceCatalog(control, request, timeoutMs) {
       ),
     'The desktop Runtime did not register its canonical device resource',
     timeoutMs
+  )
+  await revealCollaborationSidebarElement(
+    control,
+    inCollaborationSidebar('[data-testid="collaboration-primary-devices"]')
   )
   await control.command(
     'click',

@@ -149,6 +149,7 @@ import {
 } from './windows-network-diagnostics.mjs'
 import { collectCodexSqliteDiagnostics } from './codex-sqlite-diagnostics.mjs'
 import { captureFailureFollowup, failedWaitCondition } from './failure-followup.mjs'
+import { startRendererCpuProfile } from './renderer-cpu-profile.mjs'
 import {
   ACTIVE_COMPOSER_SELECTOR,
   ACTIVE_SWITCH_MODEL_RETRY_SELECTOR,
@@ -1255,8 +1256,8 @@ async function main() {
     desktopScenario = await loadDesktopScenario(process.env.WEWORK_E2E_DESKTOP_SCENARIO_MODULE, {
       appIdentifier,
       checkpoint: SELECTED_DESKTOP_SEGMENT,
-      captureScreenshot: (control, name, selector) =>
-        captureVerificationScreenshot(control, name, selector),
+      captureScreenshot: (control, name, selector, options) =>
+        captureVerificationScreenshot(control, name, selector, options),
       codexSqliteHome,
       codexHome,
       executorHome,
@@ -1413,9 +1414,6 @@ async function main() {
       WEWORK_E2E_BACKGROUND_WINDOW: process.env.WEWORK_E2E_BACKGROUND_WINDOW ?? '1',
       WEWORK_E2E_DISABLE_COMPONENT_UPDATES: '1',
       WEWORK_E2E_DISABLE_PYTHON_BOOTSTRAP: '1',
-      ...(DESKTOP_SEGMENT === 'local-file-preview'
-        ? { WEWORK_E2E_LOCAL_FILE_READ_DELAY_MS: '1500' }
-        : {}),
       WEWORK_APP_CONFIG_DIR: join(homePath, 'app-config'),
       WEWORK_E2E_CLOUD_BACKEND_URL: cloudEnvironment?.backendUrl ?? control.url,
       WEWORK_E2E_CLOUD_TOKEN:
@@ -4714,6 +4712,20 @@ source = ${JSON.stringify(staleBundledMarketplacePath)}`
     // Anchor the follow-up measurement to the failure itself; the diagnostic
     // captures below can consume several seconds of wall-clock time.
     const failedAt = Date.now()
+    if (String(error).includes('Timed out delivering UI action')) {
+      // Sample the stalled renderer without retrying or relaxing the failed command.
+      const stopProfile = await startRendererCpuProfile(
+        resultDir,
+        'command-delivery-timeout.cpuprofile',
+        3000,
+        { captureControlDiagnostics: true }
+      )
+      try {
+        await new Promise(resolve => setTimeout(resolve, 1000))
+      } finally {
+        await stopProfile()
+      }
+    }
     const networkDiagnostics = collectWindowsNetworkDiagnostics()
     await writeFile(
       join(resultDir, 'codex-sqlite-diagnostics.json'),

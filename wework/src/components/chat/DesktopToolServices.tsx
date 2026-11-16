@@ -64,7 +64,9 @@ export function DesktopToolServices({
       ...services,
       requestUserInputSource: mcpApp?.address ?? inheritedServices.requestUserInputSource,
       renderMcpApp: mcpApp
-        ? (block: ToolBlock) => <McpAppSlot key={block.id} block={block} />
+        ? (block: ToolBlock, turnId?: string) => (
+            <McpAppSlot key={block.id} block={block} turnId={turnId} />
+          )
         : undefined,
     }
     if (!deviceId || !workspacePath) return base

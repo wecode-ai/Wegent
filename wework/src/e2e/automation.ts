@@ -317,6 +317,7 @@ export interface WeworkAutomationBridge {
   isDesktop: () => boolean
   getRuntimeConfig: () => ReturnType<typeof getRuntimeConfig>
   getRoute: () => string
+  getControlDiagnostics: typeof getDesktopControlDiagnostics
   navigate: (path: string) => string
   waitForTestId: (testId: string, options?: { timeoutMs?: number }) => Promise<boolean>
   queryTestIds: (prefix?: string) => string[]
@@ -561,6 +562,7 @@ function createBridge(): WeworkAutomationBridge {
     isDesktop: isElectronRuntime,
     getRuntimeConfig,
     getRoute: () => stripAppBasePath(window.location.pathname),
+    getControlDiagnostics: getDesktopControlDiagnostics,
     navigate: path => {
       const appPath = normalizeAppPath(path)
       const nextPath = joinAppPath(getRuntimeConfig().appBasePath, appPath)
@@ -2260,7 +2262,10 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
       if (!element) throw new Error(`Unable to find selector "${command.selector}"`)
       const property = command.value?.trim()
       if (!property) throw new Error('getComputedStyleValue requires a CSS property')
-      return getComputedStyle(element).getPropertyValue(property).trim()
+      const pseudo = command.target
+      if (pseudo !== undefined && pseudo !== '::before' && pseudo !== '::after')
+        throw new Error('getComputedStyleValue target must be ::before or ::after')
+      return getComputedStyle(element, pseudo).getPropertyValue(property).trim()
     }
     case 'capture':
       return captureDesktopControlScreenshot(command.selector)

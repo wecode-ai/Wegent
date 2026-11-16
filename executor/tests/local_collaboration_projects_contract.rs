@@ -277,4 +277,30 @@ async fn task_projects_join_local_space_once_without_resurrecting_archived_proje
         .unwrap()
         .iter()
         .any(|project| project["id"] == existing["id"]));
+    verify_comment_child_request_idempotency(&server).await;
+}
+
+async fn verify_comment_child_request_idempotency(server: &AppIpcServer) {
+    let project = server
+        .dispatch("projects.create", json!({"name":"Idempotent children"}))
+        .await
+        .unwrap();
+    let request = json!({"project_id":project["id"],"todo":{"title":"Comment child","request_id":"child-operation"}});
+    let first = server
+        .dispatch("todos.create", request.clone())
+        .await
+        .unwrap();
+    let repeated = server.dispatch("todos.create", request).await.unwrap();
+    assert_eq!(first["id"], repeated["id"]);
+    let next = server
+        .dispatch(
+            "todos.create",
+            json!({"project_id":project["id"],"todo":{"title":"Next"}}),
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        next["sequence_number"].as_i64().unwrap(),
+        first["sequence_number"].as_i64().unwrap() + 1
+    );
 }

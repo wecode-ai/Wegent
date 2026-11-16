@@ -44,7 +44,7 @@ describe('desktop appearance snapshot', () => {
       mode: 'light',
       themeId: 'wework',
       backgroundColor: '#ffffff',
-      variables: { '--color-bg-surface': '247 247 248', '--color-primary': '37 99 235' },
+      variables: { '--color-bg-surface': '244 244 244', '--color-primary': '37 99 235' },
     })
   })
 

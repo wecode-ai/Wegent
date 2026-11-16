@@ -3,7 +3,6 @@ import { normalizeProjectPluginNames } from '@wegent/chat-core/composer-plugin-s
 import { findRuntimeTask, findRuntimeTaskWorkspace } from '@wegent/chat-core/runtime-task-lookup'
 export { findRuntimeTask, findRuntimeTaskWorkspace } from '@wegent/chat-core/runtime-task-lookup'
 import { getPreferredStandaloneDeviceId } from '@/lib/device-selection'
-import { buildConversationWorkspacePath } from '@/lib/runtime-conversation-workspace'
 import {
   normalizeRuntimeWorkspacePath,
   runtimeProjectToProject,
@@ -46,21 +45,6 @@ export function findRuntimeTaskProjectWork(
       )
     ) ?? null
   )
-}
-
-export async function createConversationWorkspace(
-  deviceApi: {
-    createDirectory: (deviceId: string, path: string) => Promise<void>
-    getHomeDirectory: (deviceId: string) => Promise<string>
-  },
-  deviceId: string,
-  message: string,
-  taskId: string
-): Promise<string> {
-  const homeDirectory = await deviceApi.getHomeDirectory(deviceId)
-  const workspacePath = buildConversationWorkspacePath(homeDirectory, message, taskId)
-  await deviceApi.createDirectory(deviceId, workspacePath)
-  return workspacePath
 }
 
 export function getRuntimeTaskRouteKey(route: RuntimeTaskRoute): string {

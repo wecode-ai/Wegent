@@ -63,7 +63,7 @@ from app.services.project_chat.issue_comments import (
     list_issue_comments,
 )
 from app.services.project_chat.service import project_chat_service
-from app.services.workspaces import workspace_service
+from app.services.workspaces.service import workspace_service
 from app.services.workspaces.storage import workspace_id_for_project
 from app.stores.tasks import task_store
 

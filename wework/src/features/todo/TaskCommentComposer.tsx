@@ -37,7 +37,8 @@ export function TaskCommentComposer({
   onChange: (value: string) => void
   onSubmit: (
     body: string,
-    mentions: ProjectChatMention[]
+    mentions: ProjectChatMention[],
+    options?: import('@wegent/collaboration').CommentSubmissionOptions
   ) => void | boolean | Promise<void | boolean>
   disabled: boolean
   sending: boolean

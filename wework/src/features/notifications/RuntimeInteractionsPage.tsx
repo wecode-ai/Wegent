@@ -9,10 +9,12 @@ import { weworkIssueScheme, weworkTaskScheme } from './scheme'
 import { issueWaitingSince, issueNeedsUser, pendingIssueHumanRequests } from '@wegent/collaboration'
 import { IssueWaitingTime } from './IssueWaitingTime'
 import { usePendingProjectIssues } from './usePendingProjectIssues'
+import { projectIssueAssignedAfter, projectIssueNeedsInput } from './pendingProjectWork'
 import {
   issueHumanInteraction,
   issueQuestionIdentity,
   issueQuestionHandoff,
+  hasRecordedIssueResolution,
 } from './issueHumanInteractions'
 import type { RuntimeTaskAddress } from '@/types/api'
 import {
@@ -143,7 +145,32 @@ export function RuntimeInteractionsPage({
       : ''
     return `${projectItemId(row)}:${issueWaitingSince(row.item, row.userId) ?? 'untracked'}${scope}`
   }
-  const projectRows = projectIssues.items.filter(row => {
+  const projectItems = projectIssues.items.map(row => {
+    let handledAt: number | undefined
+    const requests = row.item.human_requests?.filter(request => {
+      if (request.status !== 'pending' && request.status !== 'answering') return true
+      const question = issueHumanInteraction(request, row.store)
+      const resolution = interactions?.history.find(entry =>
+        hasRecordedIssueResolution(question, [entry])
+      )
+      if (!resolution) return true
+      handledAt = Math.max(handledAt ?? 0, resolution.answeredAt)
+      return false
+    })
+    return {
+      ...row,
+      item: requests ? { ...row.item, human_requests: requests } : row.item,
+      handledAt,
+    }
+  })
+  const projectRows = projectItems.filter(row => {
+    if (
+      row.handledAt !== undefined &&
+      !pendingIssueHumanRequests(row.item).length &&
+      (!projectIssueAssignedAfter(row.item, row.userId, row.handledAt) ||
+        !projectIssueNeedsInput(row.item, row.userId))
+    )
+      return false
     if (interactions?.isDismissed?.(projectDismissalId(row))) return false
     const requests = projectRequests(row)
     if (
@@ -267,13 +294,7 @@ export function RuntimeInteractionsPage({
       setDismissing(false)
     }
   }
-  const historical = interactions.history.find(item => item.id === selected)
-  const row: PendingWorkRow | undefined = selected
-    ? (rows.find(item => item.id === selected) ??
-      (historical
-        ? { ...historical, source: interactionSource(historical), timestamp: historical.answeredAt }
-        : undefined))
-    : rows[0]
+  const row = selected ? rows.find(item => item.id === selected) : rows[0]
   const liveQuestion = row ? pending.find(item => item.id === row.id && !item.cached) : undefined
   return (
     <main

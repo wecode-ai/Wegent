@@ -23,13 +23,19 @@ export function createDesktopScenario({ uiTimeoutMs, workbenchReadyTimeoutMs, ca
     return body ? JSON.parse(body) : null
   }
   async function createProject(control, name, workspaceId = '') {
-    await control.command('clickWhenEnabled', sidebar('collaboration-project-create-cloud'), {
-      timeoutMs: uiTimeoutMs,
-    })
+    await control.command(
+      'clickWhenEnabled',
+      sidebar('collaboration-project-tree') +
+        ' > .collaboration-workspace-group:first-child [data-testid^="collaboration-workspace-actions"]'
+    )
+    await control.command(
+      'clickWhenEnabled',
+      '[data-testid="collaboration-workspace-nav-create-project"]'
+    )
     const select = '[data-testid="collaboration-project-workspace-select"]'
     await control.command('waitFor', select, { visible: true, timeoutMs: uiTimeoutMs })
-    assert.ok((await control.command('getText', select)).includes('默认空间'))
-    assert.equal((await control.command('getText', select)).includes('尚未加入空间'), false)
+    assert.ok((await control.command('getText', select)).includes('个人分组'))
+    assert.equal((await control.command('getText', select)).includes('尚未加入分组'), false)
     if (workspaceId) await control.command('select', select, { value: workspaceId })
     await control.command('fill', '[data-testid="collaboration-project-name-input"]', {
       value: name,
@@ -43,7 +49,7 @@ export function createDesktopScenario({ uiTimeoutMs, workbenchReadyTimeoutMs, ca
       visible: false,
       timeoutMs: uiTimeoutMs,
     })
-    await control.command('waitFor', sidebar('collaboration-project-group-cloud'), {
+    await control.command('waitFor', sidebar('collaboration-project-tree'), {
       text: name,
       timeoutMs: uiTimeoutMs,
     })
@@ -92,7 +98,7 @@ export function createDesktopScenario({ uiTimeoutMs, workbenchReadyTimeoutMs, ca
         0
       )
       assert.equal(
-        (await control.command('getText', sidebar('collaboration-project-group-local'))).includes(
+        (await control.command('getText', sidebar('collaboration-project-tree'))).includes(
           '本地空间'
         ),
         false
@@ -104,6 +110,14 @@ export function createDesktopScenario({ uiTimeoutMs, workbenchReadyTimeoutMs, ca
       assert.equal(second.workspace_id, first.workspace_id)
       const defaultSpace = await request(`/api/v1/workspaces/${first.workspace_id}`)
       assert.equal(defaultSpace.name, '默认空间')
+      await control.command(
+        'waitFor',
+        sidebar(`collaboration-workspace-tree-${first.workspace_id}`),
+        {
+          text: '个人分组',
+          timeoutMs: uiTimeoutMs,
+        }
+      )
       const explicit = await createProject(control, `指定空间项目-${process.pid}`, business.id)
       assert.equal(explicit.workspace_id, business.id)
       assert.equal((await request(`/api/v1/workspaces/${business.id}`)).name, business.name)
@@ -136,6 +150,13 @@ export function createDesktopScenario({ uiTimeoutMs, workbenchReadyTimeoutMs, ca
         await control.command('getComputedStyleValue', inCollaborationSidebar('', active).trim(), {
           value: 'overflow-y',
         }),
+        'hidden'
+      )
+      const projectScroll = sidebar('collaboration-projects-scroll')
+      assert.equal(
+        await control.command('getComputedStyleValue', projectScroll, {
+          value: 'overflow-y',
+        }),
         'auto'
       )
       await control.command(
@@ -147,18 +168,23 @@ export function createDesktopScenario({ uiTimeoutMs, workbenchReadyTimeoutMs, ca
         sidebar(`collaboration-workspace-project-${scrollTarget.id}`),
         { visible: true, timeoutMs: uiTimeoutMs }
       )
-      const [metrics] = JSON.parse(
-        await control.command('getElementMetrics', inCollaborationSidebar('', active).trim())
-      )
+      const [metrics] = JSON.parse(await control.command('getElementMetrics', projectScroll))
       assert.ok(
         metrics.scrollHeight > metrics.clientHeight,
-        'The fixture must overflow the sidebar'
+        'The fixture must overflow the project region'
       )
-      assert.ok(metrics.scrollTop > 0, 'The sidebar must scroll to reveal a project below the fold')
+      assert.ok(
+        metrics.scrollTop > 0,
+        'The project region must scroll to reveal a project below the fold'
+      )
       assert.ok(
         metrics.scrollWidth <= metrics.clientWidth + 1,
-        'The sidebar must not overflow horizontally'
+        'The project region must not overflow horizontally'
       )
+      await control.command('waitFor', sidebar('collaboration-management-toggle'), {
+        visible: true,
+        timeoutMs: uiTimeoutMs,
+      })
       await captureScreenshot(control, 'project-spaces-default-and-explicit.png', active)
     },
   }

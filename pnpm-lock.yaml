@@ -548,6 +548,9 @@ importers:
       dompurify:
         specifier: 3.4.13
         version: 3.4.13
+      jszip:
+        specifier: 3.10.1
+        version: 3.10.1
       katex:
         specifier: 0.16.47
         version: 0.16.47

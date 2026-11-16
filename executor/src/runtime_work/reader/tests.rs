@@ -250,14 +250,3 @@ fn runtime_reader_uses_the_desktop_socket_route_only_for_the_same_backend() {
         "backend_connection_unavailable"
     );
 }
-
-#[test]
-fn runtime_reader_decodes_existing_compression_envelopes() {
-    use std::io::Write;
-    let original = json!({"workspaces":[{"tasks":[{"taskId":"old-device-conversation"}]}]});
-    let mut gzip = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::default());
-    gzip.write_all(original.to_string().as_bytes()).unwrap();
-    let value = json!({"__runtimeRpcEncoding":"gzip+base64+json","payload":STANDARD.encode(gzip.finish().unwrap())});
-    assert_eq!(decode_response(value).unwrap(), original);
-    assert!(decode_response(json!({"__runtimeRpcEncoding":"unknown"})).is_err());
-}

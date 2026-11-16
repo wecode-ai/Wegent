@@ -778,9 +778,9 @@ async def test_executor_callback_projects_managed_parent_comment(
         lambda **_kwargs: wrapped_emitter,
     )
     monkeypatch.setattr(
-        internal_callback.session_manager,
-        "publish_callback_event",
-        AsyncMock(return_value=True),
+        internal_callback,
+        "_publish_terminal_callback",
+        AsyncMock(),
     )
     monkeypatch.setattr(
         internal_callback,
