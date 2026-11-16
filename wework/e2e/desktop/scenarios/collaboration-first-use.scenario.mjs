@@ -75,10 +75,15 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
         'The first-use home must start with an Issue rather than require project creation'
       )
       await control.command('click', scoped('[data-testid="collaboration-first-issue-create"]'))
-      await control.command('waitFor', '[data-testid="cloud-connection-dialog"]', {
+      await control.command('waitFor', '[data-testid="independent-issue-dialog"]', {
         timeoutMs: uiTimeoutMs,
       })
-      await control.command('click', '[data-testid="cloud-connection-close-button"]')
+      assert.equal(
+        await control.command('getValue', '[data-testid="independent-issue-project"]'),
+        '',
+        'The first Issue must not require a project selection'
+      )
+      await control.command('click', '[data-testid="independent-issue-close"]')
       await control.command('waitFor', scoped('[data-testid="collaboration-first-issue-create"]'))
       await control.command(
         'click',
