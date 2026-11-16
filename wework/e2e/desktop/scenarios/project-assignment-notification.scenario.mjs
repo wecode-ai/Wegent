@@ -950,6 +950,8 @@ export function createDesktopScenario({
       await directReceipt.verify({
         control,
         request: ownerRequest,
+        backendUrl,
+        authToken: ownerToken,
         projectId: project.id,
         user: owner,
         waitForValue,

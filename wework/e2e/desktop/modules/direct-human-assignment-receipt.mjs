@@ -1,5 +1,7 @@
 import assert from 'node:assert/strict'
 import { requestExecutor } from './executor-rpc.mjs'
+import { readProjectChatMessages } from './project-chat-snapshot.mjs'
+import { DEFAULT_MODEL_ID, MODEL_PROVIDER_ID } from './shared.mjs'
 import {
   assistantMessage,
   createSse,
@@ -29,9 +31,113 @@ async function assertScopedWork(request, issue, receipt, user) {
   return execution
 }
 
+function assignmentSummaries(messages, receipt) {
+  return messages
+    .filter(
+      message =>
+        message.metadata?.activity_type === 'human_assistant_result' &&
+        message.metadata.execution_id === receipt.executionId &&
+        message.metadata.assignment_id === receipt.assignmentId
+    )
+    .map(({ messageId, content, metadata, status }) => ({ messageId, content, metadata, status }))
+}
+
+async function sendOwnerPrivateFollowUp(rpc, task, receipt, user, privateMarker) {
+  const commandId = `${receipt.runtimeTaskId}-owner-private-follow-up`
+  const sent = await rpc('runtime.tasks.send', {
+    taskId: receipt.runtimeTaskId,
+    commandId,
+    message: privateMarker,
+    conversationContext: 'private_discussion',
+    executionRequest: {
+      task_id: receipt.runtimeTaskId,
+      subtask_id: commandId,
+      user_id: user.id,
+      prompt: privateMarker,
+      system_prompt: '',
+      project_workspace_path: task.workspacePath,
+      new_session: false,
+      bot: [{ shell_type: 'Codex', name: 'Owner private follow-up' }],
+      model_config: {
+        model_id: DEFAULT_MODEL_ID,
+        model_provider: MODEL_PROVIDER_ID,
+        runtime_config: { codex: { use_user_config: true, configured: true } },
+      },
+    },
+  })
+  assert.equal(sent.accepted, true, sent.error)
+  assert.equal(sent.taskId, receipt.runtimeTaskId)
+}
+
+async function verifyOwnerPrivateFollowUp({
+  rpc,
+  request,
+  readIssue,
+  projectChat,
+  deviceId,
+  completed,
+  receipt,
+  user,
+  privateMarker,
+  waitForValue,
+  modelResponseTimeoutMs,
+}) {
+  const address = { deviceId, taskId: receipt.runtimeTaskId }
+  const readConversation = async () => {
+    const { task } = await rpc('runtime.tasks.get', { address })
+    const transcript = await rpc('runtime.tasks.transcript', { address, refresh: true })
+    assert.notEqual(task.executionState?.outcome, 'failed', 'The owner follow-up failed')
+    return { task, transcript }
+  }
+  const before = await readConversation()
+  const shared = await waitForValue(
+    () => readProjectChatMessages(projectChat, completed.id, modelResponseTimeoutMs),
+    messages => assignmentSummaries(messages, receipt).length === 1,
+    'Automatic completion did not publish its shared summary',
+    modelResponseTimeoutMs
+  )
+  const originalSummary = assignmentSummaries(shared, receipt)
+  await sendOwnerPrivateFollowUp(rpc, before.task, receipt, user, privateMarker)
+  const followedUp = await waitForValue(
+    readConversation,
+    value =>
+      value.task.running === false &&
+      value.transcript.turns?.at(-1)?.status === 'done' &&
+      value.transcript.turns.at(-1).id !== before.transcript.turns.at(-1).id &&
+      value.transcript.messages?.some(
+        message => message.role === 'assistant' && JSON.stringify(message).includes(privateMarker)
+      ),
+    'The owner could not continue the completed assistant task privately',
+    modelResponseTimeoutMs
+  )
+  assert.equal(followedUp.task.threadId, before.task.threadId)
+  assert.equal(followedUp.transcript.turns.length, before.transcript.turns.length + 1)
+  assert.equal(followedUp.task.runtimeHandle.origin.trigger, 'manual')
+  assert.equal(followedUp.task.runtimeHandle.origin.manual, true)
+  assert.equal(followedUp.task.runtimeHandle.origin.humanAssistantDispatchId, undefined)
+  assert.equal(followedUp.task.runtimeHandle.origin.executionId, undefined)
+  const current = await readIssue()
+  assert.equal(current.assignee_user_id, user.id)
+  assert.equal(current.status, completed.status)
+  assert.equal(current.completed_at, null)
+  assert.deepEqual(
+    current.direct_human_assignment_receipt,
+    completed.direct_human_assignment_receipt
+  )
+  assert.equal((await assertScopedWork(request, current, receipt, user)).status, 'completed')
+  const currentShared = await readProjectChatMessages(
+    projectChat,
+    completed.id,
+    modelResponseTimeoutMs
+  )
+  assert.deepEqual(assignmentSummaries(currentShared, receipt), originalSummary)
+  assert.equal(JSON.stringify(currentShared).includes(privateMarker), false)
+}
+
 /** Exercise the real automatic intake while only the model response is held. */
 export function createDirectHumanAssignmentReceiptVerifier() {
   const marker = `DIRECT_HUMAN_ASSIGNMENT_RECEIPT_${process.pid}`
+  const privateMarker = `${marker}_PRIVATE_FOLLOW_UP`
   const tag = `receipt-${process.pid}`
   let releaseModel
   const modelGate = new Promise(resolve => {
@@ -49,7 +155,9 @@ export function createDirectHumanAssignmentReceiptVerifier() {
       response.end(
         createSse([
           responseCreated(responseId),
-          assistantMessage(`${marker}: completed`),
+          assistantMessage(
+            `${serialized.includes(privateMarker) ? privateMarker : marker}: completed`
+          ),
           responseCompleted(responseId),
         ])
       )
@@ -59,6 +167,8 @@ export function createDirectHumanAssignmentReceiptVerifier() {
     async verify({
       control,
       request,
+      backendUrl,
+      authToken,
       projectId,
       user,
       waitForValue,
@@ -179,6 +289,20 @@ export function createDirectHumanAssignmentReceiptVerifier() {
           'completed'
         )
         assert.equal(modelRequests, 1)
+        await verifyOwnerPrivateFollowUp({
+          rpc,
+          request,
+          readIssue,
+          projectChat: { backendUrl, authToken, projectId },
+          deviceId: device.deviceId,
+          completed,
+          receipt,
+          user,
+          privateMarker,
+          waitForValue,
+          modelResponseTimeoutMs,
+        })
+        assert.equal(modelRequests, 2, 'A private follow-up must start one new native turn')
       } finally {
         releaseModel()
         if (configured) {

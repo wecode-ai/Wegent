@@ -593,6 +593,7 @@ async fn app_runtime_persists_local_task_thread_mapping() {
 #[tokio::test]
 async fn app_runtime_create_standalone_chat_generates_default_workspace() {
     let _lock = env_lock().await;
+    let _standalone_workspace = EnvGuard::set("WEGENT_STANDALONE_WORKSPACE_ROOT", "");
     let home = temp_path("wegent-app-runtime-chat-home", "dir");
     let _home = EnvGuard::set("HOME", &home.display().to_string());
     let _executor_home = EnvGuard::set(
@@ -633,8 +634,12 @@ async fn app_runtime_create_standalone_chat_generates_default_workspace() {
     assert_eq!(created["accepted"], true);
     assert_eq!(created["taskId"], "standalone-chat-1");
     let workspace_path = created["workspacePath"].as_str().unwrap();
-    assert!(workspace_path.contains("/Documents/Codex/"));
-    assert!(workspace_path.ends_with("/standalone-chat-1"));
+    let default_root = dirs::home_dir()
+        .expect("The platform home directory should be available")
+        .join("Documents")
+        .join("Codex");
+    assert!(Path::new(workspace_path).starts_with(default_root));
+    assert!(Path::new(workspace_path).ends_with("standalone-chat-1"));
 }
 
 #[tokio::test]

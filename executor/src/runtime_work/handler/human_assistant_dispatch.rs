@@ -29,6 +29,93 @@ pub(super) fn dispatch<'a>(config: &Value, issue: &'a Value, binding: &Value) ->
 mod tests;
 
 impl RuntimeWorkRpcHandler {
+    pub(super) async fn validate_private_issue_owner_binding(
+        &self,
+        origin: &Value,
+        issue: &Value,
+        task: &str,
+    ) -> Result<(), AppIpcError> {
+        let denied = || {
+            AppIpcError::new(
+                "permission_denied",
+                "Private Issue conversation ownership is unavailable",
+            )
+        };
+        if origin["projectStore"] != "cloud"
+            || issue["cloud_project_id"] != origin["cloudProjectId"]
+            || issue["id"] != origin["loopItemId"]
+            || issue["permissions"]["execute"] != true
+            || origin["runtimeTaskId"] != task
+            || !origin["userId"].is_i64()
+        {
+            return Err(denied());
+        }
+        let device = self.cloud_device_id()?;
+        let rows = self
+            .runtime_http(
+                reqwest::Method::GET,
+                &format!(
+                    "/v1/loop-items/{}/tasks",
+                    issue["id"].as_str().ok_or_else(denied)?
+                ),
+                None,
+            )
+            .await?;
+        if !rows.as_array().into_iter().flatten().any(|row| {
+            row["task_id"] == task
+                && row["task_user_id"] == origin["userId"]
+                && (row["device_id"] == self.device_id || row["device_id"] == device)
+        }) {
+            return Err(denied());
+        }
+        Ok(())
+    }
+
+    pub(super) async fn admit_private_issue_followup(
+        &self,
+        request: &mut ExecutionRequest,
+        link: &RuntimeTaskLink,
+    ) -> Result<(), AppIpcError> {
+        let origin = &link.runtime_handle["origin"];
+        if !origin["humanAssistantDispatchId"].is_string()
+            || !super::super::util::is_private_discussion(request)
+            || (link.status == "failed" && runtime_session_id_from_link(link).is_none())
+        {
+            return Ok(());
+        }
+        let user = origin["userId"]
+            .as_i64()
+            .ok_or_else(|| AppIpcError::new("permission_denied", "Missing Issue owner"))?;
+        let store = LocalTaskStore::open(self.task_store_path.as_ref()).map_err(settings_error)?;
+        let issue = self.read_stand_in_issue(&store, user, origin).await?;
+        let receipt = &issue["direct_human_assignment_receipt"];
+        if receipt["dispatchId"] == origin["humanAssistantDispatchId"]
+            && receipt["executionId"] == origin["executionId"]
+            && matches!(
+                receipt["state"].as_str(),
+                Some("queued" | "waiting_device" | "running" | "waiting_user" | "cancelling")
+            )
+        {
+            return Ok(());
+        }
+        self.validate_private_issue_owner_binding(origin, &issue, &link.local_task_id)
+            .await?;
+        let mut manual = origin.clone();
+        let fields = manual.as_object_mut().unwrap();
+        fields.remove("humanAssistantDispatchId");
+        fields.remove("executionId");
+        manual["manual"] = json!(true);
+        manual["trigger"] = json!("manual");
+        manual["publicConversation"] = json!(true);
+        manual["privateOwnerFollowup"] = json!(true);
+        request.extra.insert("origin".into(), manual.clone());
+        self.store.update_task(&link.local_task_id, |task| {
+            task.runtime_handle["origin"] = manual.clone();
+            task.runtime_handle["executionRequest"]["origin"] = manual;
+        });
+        Ok(())
+    }
+
     pub(super) fn validate_human_assistant_grant(
         &self,
         settings: &Value,

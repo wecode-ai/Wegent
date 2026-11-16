@@ -85,7 +85,7 @@ impl RuntimeWorkRpcHandler {
             if activity {
                 self.send_identity_activity(prepared).await?
             } else {
-                self.send_message(prepared).await?
+                self.send_internal_message(prepared).await?
             }
         } else {
             self.create_task_with_activity(prepared, activity).await?

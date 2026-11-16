@@ -63,6 +63,10 @@ impl RuntimeWorkRpcHandler {
                     settings["userId"] == user && settings["lifecycle"]["status"].is_null()
                 })
                 .ok_or("Default assistant authorization is unavailable")?
+        } else if origin["privateOwnerFollowup"] == true {
+            store
+                .personal_stand_in(user, "")
+                .map_err(|error| error.to_string())?
         } else {
             store
                 .personal_stand_in(user, &self.device_id)
@@ -96,6 +100,11 @@ impl RuntimeWorkRpcHandler {
             .map_err(|error| error.message)?;
         if origin["projectStore"] != "local" && issue["permissions"]["execute"] != true {
             return Err("Issue execution permission is unavailable".into());
+        }
+        if origin["privateOwnerFollowup"] == true {
+            self.validate_private_issue_owner_binding(origin, &issue, task)
+                .await
+                .map_err(|error| error.message)?;
         }
         if origin["humanAssistantDispatchId"].is_string() {
             self.validate_human_assistant_grant(&settings, origin, &issue)?;

@@ -146,7 +146,7 @@ impl RuntimeWorkRpcHandler {
             .prepare_project_coordinator_turn(&payload, &context, &task_id, user, message)
             .await?;
         let result = if self.local_task_link(&task_id).is_some() {
-            self.send_message(prepared).await?
+            self.send_internal_message(prepared).await?
         } else {
             self.create_task(prepared).await?
         };

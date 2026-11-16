@@ -1064,11 +1064,24 @@ impl RuntimeWorkRpcHandler {
     }
 
     pub(super) async fn send_message(&self, payload: Value) -> Result<Value, AppIpcError> {
+        self.send_message_with_source(payload, true).await
+    }
+
+    pub(super) async fn send_internal_message(&self, payload: Value) -> Result<Value, AppIpcError> {
+        self.send_message_with_source(payload, false).await
+    }
+
+    async fn send_message_with_source(
+        &self,
+        payload: Value,
+        owner_input: bool,
+    ) -> Result<Value, AppIpcError> {
         let local_task_id = runtime_task_id(&payload)
             .ok_or_else(|| AppIpcError::new("bad_request", "taskId is required"))?;
         let gate = self.task_send_gate(&local_task_id);
         let _guard = gate.lock().await;
-        self.send_message_after_local_checks(payload).await
+        self.send_message_with_activity_checks(payload, false, owner_input)
+            .await
     }
 
     pub(super) async fn send_coordination_assessment(
@@ -1136,7 +1149,8 @@ impl RuntimeWorkRpcHandler {
     }
 
     async fn send_message_after_local_checks(&self, payload: Value) -> Result<Value, AppIpcError> {
-        self.send_message_with_activity_checks(payload, false).await
+        self.send_message_with_activity_checks(payload, false, true)
+            .await
     }
 
     pub(super) async fn send_identity_activity(
@@ -1147,13 +1161,15 @@ impl RuntimeWorkRpcHandler {
             .ok_or_else(|| AppIpcError::new("bad_request", "taskId is required"))?;
         let gate = self.task_send_gate(&task);
         let _guard = gate.lock().await;
-        self.send_message_with_activity_checks(payload, true).await
+        self.send_message_with_activity_checks(payload, true, false)
+            .await
     }
 
     async fn send_message_with_activity_checks(
         &self,
         mut payload: Value,
         activity: bool,
+        owner_input: bool,
     ) -> Result<Value, AppIpcError> {
         let requested_task_id = runtime_task_id(&payload)
             .ok_or_else(|| AppIpcError::new("bad_request", "taskId is required"))?;
@@ -1286,8 +1302,16 @@ impl RuntimeWorkRpcHandler {
         }
         if let Some(link) = existing_link.as_ref() {
             restore_cloud_project_id(&mut request, &link.runtime_handle);
-            restore_origin(&mut request, &link.runtime_handle);
+            if owner_input {
+                restore_origin(&mut request, &link.runtime_handle);
+            } else {
+                super::super::util::restore_prepared_origin(&mut request, &link.runtime_handle);
+            }
             self.refresh_identity_conversation_origin(&mut request, link)?;
+            if owner_input {
+                self.admit_private_issue_followup(&mut request, link)
+                    .await?;
+            }
             self.refresh_stand_in_confirmation(&local_task_id, &mut request)?;
         }
         request.new_session = start_new_session;

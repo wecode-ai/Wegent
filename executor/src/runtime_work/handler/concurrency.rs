@@ -41,7 +41,10 @@ impl SpawnTurnRequest {
                         });
                     }
                 }
-                restore_origin(&mut self.request, &link.runtime_handle);
+                super::super::util::restore_prepared_origin(
+                    &mut self.request,
+                    &link.runtime_handle,
+                );
                 origin
             });
         self.task_kind = Some(

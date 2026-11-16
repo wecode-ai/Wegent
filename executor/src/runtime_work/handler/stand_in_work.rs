@@ -319,7 +319,7 @@ impl RuntimeWorkRpcHandler {
         let request = self.confirmed_connection_request(&store, user, &work, &task)?;
         let message = CONFIRM_CONNECTION_WORK_ONCE;
         let command = format!("stand-in-confirm-once:{}", uuid::Uuid::new_v4());
-        Box::pin(self.send_message(json!({"taskId":task_id,"message":message,
+        Box::pin(self.send_internal_message(json!({"taskId":task_id,"message":message,
             "executionRequest":request,"commandId":command,"clientUserMessageId":command,
             "queueIfBusy":true,"manualStandInConfirmation":true,
             "userMessagePresentation":{"content":"仅本次确认执行：继续未完成操作，发送前由我确认。"}
@@ -504,7 +504,7 @@ impl RuntimeWorkRpcHandler {
             .update_stand_in_dispatch(user, work_id, &ids, "sending", None)
             .map_err(settings_error)?;
         let result = if self.local_task_link(task_id).is_some() {
-            self.send_message(payload.take()).await
+            self.send_internal_message(payload.take()).await
         } else {
             self.create_task(payload.take()).await
         };

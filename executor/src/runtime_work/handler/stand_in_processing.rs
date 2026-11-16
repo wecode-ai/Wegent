@@ -537,7 +537,7 @@ impl RuntimeWorkRpcHandler {
                             json!(selected)
                         );
                         request["prompt"] = json!(message);
-                        result = self.send_message(json!({"taskId":id,"message":required(args, "message")?,"restoreUserMessageContent":true,"executionRequest":request,"clientUserMessageId":client,"commandId":client,"queueIfBusy":true,"automaticStandIn":true})).await?;
+                        result = self.send_internal_message(json!({"taskId":id,"message":required(args, "message")?,"restoreUserMessageContent":true,"executionRequest":request,"clientUserMessageId":client,"commandId":client,"queueIfBusy":true,"automaticStandIn":true})).await?;
                         if result["pending"] == true {
                             return Ok(None);
                         }

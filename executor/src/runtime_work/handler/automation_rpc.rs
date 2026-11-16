@@ -238,7 +238,7 @@ impl RuntimeWorkRpcHandler {
 
         let result = match automation.conversation_mode {
             ConversationMode::Independent => self.create_task(payload).await,
-            ConversationMode::ContinueThread => self.send_message(payload).await,
+            ConversationMode::ContinueThread => self.send_internal_message(payload).await,
         };
         match result {
             Ok(response)

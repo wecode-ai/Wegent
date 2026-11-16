@@ -174,7 +174,7 @@ impl RuntimeWorkRpcHandler {
                 "runtimeHandle":{"wegentTeam":link.runtime_handle["wegentTeam"]}},
                 "message":message,"clientUserMessageId":operation_id,"modelSelection":payload["modelSelection"],"queueIfBusy":payload["queueIfBusy"]})).await
         } else {
-            self.send_message(payload).await
+            self.send_internal_message(payload).await
         };
         match result {
             Ok(response) => {
