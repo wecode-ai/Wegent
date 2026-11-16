@@ -509,31 +509,47 @@ pub(super) fn git_message_is_echo(
     Ok(false)
 }
 
+// Keep existing intake policy separate from generic subscription initialization receipts.
 pub(super) fn source_accepts_message(source: &Value, message: &Value) -> bool {
     if source_provider(source) == crate::task_runtime::personal_stand_in::EMAIL_PROVIDER
         || (source_provider(source).starts_with(super::super::git_connections::PACKAGE)
             && super::super::git_connections::uses_webhook(source))
     {
-        if !source["boundary"].is_object() {
-            return false;
-        }
+        let boundary = &source["boundary"];
+        let position = &message["position"];
+        return boundary["partition"].is_string()
+            && boundary["partition"] == position["partition"]
+            && boundary["sequence"]
+                .as_u64()
+                .zip(position["sequence"].as_u64())
+                .is_some_and(|(start, received)| received > start);
     }
-    if source["boundary"].is_null()
-        && !source["enabledAfter"]
-            .as_str()
-            .and_then(|time| chrono::DateTime::parse_from_rfc3339(time).ok())
-            .is_some()
-    {
-        return false;
-    }
-    wegent_protocol::connection_events::matches_activation(source, message, |value| {
-        message_time(value).ok()
-    })
+    source["enabledAfter"]
+        .as_str()
+        .and_then(|time| chrono::DateTime::parse_from_rfc3339(time).ok())
+        .is_some_and(|enabled| {
+            message_time(&message["at"])
+                .is_ok_and(|received| received >= enabled.timestamp_millis())
+        })
 }
 
 #[cfg(test)]
 mod ordered_email_tests {
     use super::*;
+
+    #[test]
+    fn dingtalk_intake_keeps_its_time_gate_even_with_a_newer_position() {
+        let source = json!({"providerId":"@wegent/dsh-connection-dingtalk/dingtalk",
+            "enabledAfter":"2026-11-04T00:00:00Z",
+            "boundary":{"partition":"events","sequence":5}});
+        let mut message = json!({"at":"2000-01-01T00:00:00Z",
+            "position":{"partition":"events","sequence":6}});
+        assert!(!source_accepts_message(&source, &message));
+        message["at"] = Value::Null;
+        assert!(!source_accepts_message(&source, &message));
+        message["at"] = json!("2026-11-04T00:00:01Z");
+        assert!(source_accepts_message(&source, &message));
+    }
 
     #[test]
     fn git_cli_repository_intake_uses_activation_time_without_a_cloud_boundary() {
