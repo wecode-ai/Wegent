@@ -32,7 +32,7 @@ import {
 } from '../modules/issue-activity-timeline.mjs'
 import { verifyCollaborationLocalProjectImport } from '../modules/collaboration-local-project-import.mjs'
 import { verifyMultiTagBoardDrag } from '../modules/collaboration-board-tag-drag.mjs'
-import { REMOTE_DOCKER_DEVICE_ID } from '../modules/shared.mjs'
+import { REMOTE_DOCKER_DEVICE_ID, selectE2EModel } from '../modules/shared.mjs'
 import { waitForValue } from '../modules/workspace-agent-setup.mjs'
 import {
   assistantMessage,
@@ -84,8 +84,16 @@ async function createPickerTask(control, uiTimeoutMs) {
   await control.command('click', '[data-testid="new-chat-button"]')
   const composer = '[data-testid="chat-message-input"]'
   await control.command('waitFor', composer, { timeoutMs: uiTimeoutMs })
+  await selectE2EModel(
+    control,
+    'local-model:desktop-e2e-responses',
+    'Desktop E2E Responses',
+    ACTIVE_WORKBENCH_SELECTOR
+  )
   await control.command('fill', composer, { value: PICKER_TASK_PROMPT })
-  await control.command('press', composer, { key: 'Enter' })
+  await control.command('clickWhenEnabled', scoped('[data-testid="send-message-button"]'), {
+    timeoutMs: uiTimeoutMs,
+  })
   return waitForValue(
     async () => {
       const state = JSON.parse(await control.command('getWorkbenchDebugSnapshot', 'body'))
