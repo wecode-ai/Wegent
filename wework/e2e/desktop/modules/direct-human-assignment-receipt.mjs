@@ -145,6 +145,7 @@ export function createDirectHumanAssignmentReceiptVerifier() {
   })
   let modelRequests = 0
   let latestReceipt = null
+  let verificationError = null
 
   return {
     async handleModelRequest(serialized, response, responseId) {
@@ -303,16 +304,39 @@ export function createDirectHumanAssignmentReceiptVerifier() {
           modelResponseTimeoutMs,
         })
         assert.equal(modelRequests, 2, 'A private follow-up must start one new native turn')
+      } catch (error) {
+        verificationError = error
+        throw error
       } finally {
         releaseModel()
         if (configured) {
-          await rpc('runtime.stand_in.personal.save', { userId: user.id, settings: original })
+          try {
+            const current = await rpc('runtime.stand_in.personal.get', { userId: user.id })
+            await rpc('runtime.stand_in.personal.save', {
+              userId: user.id,
+              settings: { ...original, version: current.version },
+            })
+          } catch (error) {
+            if (verificationError) {
+              throw new AggregateError(
+                [verificationError, error],
+                `Assignment verification failed: ${verificationError.message}; profile restoration failed: ${error.message}`
+              )
+            }
+            throw error
+          }
         }
       }
     },
 
     diagnostics() {
-      return { modelRequests, receipt: latestReceipt }
+      return {
+        modelRequests,
+        receipt: latestReceipt,
+        verificationError: verificationError
+          ? String(verificationError.stack ?? verificationError)
+          : null,
+      }
     },
   }
 }
