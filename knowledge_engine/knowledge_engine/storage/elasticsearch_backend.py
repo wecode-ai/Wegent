@@ -752,6 +752,7 @@ class ElasticsearchBackend(BaseStorageBackend):
         knowledge_id: str,
         max_chunks: int = 10000,
         metadata_condition: Optional[Dict[str, Any]] = None,
+        scope: Optional[RetrievalScope] = None,
         **kwargs,
     ) -> List[Dict[str, Any]]:
         """Read and normalize chunks from one knowledge base."""
@@ -760,7 +761,7 @@ class ElasticsearchBackend(BaseStorageBackend):
             user_id = kwargs.get("user_id")
 
             # Query all chunks for this knowledge base
-            search_body = {
+            search_body: Dict[str, Any] = {
                 "size": min(max_chunks, 10000),  # ES limit per request
                 "query": {"term": {"metadata.knowledge_id.keyword": knowledge_id}},
                 "sort": [
@@ -768,6 +769,20 @@ class ElasticsearchBackend(BaseStorageBackend):
                     {"metadata.chunk_index": "asc"},
                 ],
             }
+            if scope is not None and scope.document_ids is not None:
+                doc_refs = [
+                    reference
+                    for document_id in scope.document_ids
+                    for reference in (str(document_id), f"doc_{document_id}")
+                ]
+                search_body["query"] = {
+                    "bool": {
+                        "filter": [
+                            search_body["query"],
+                            {"terms": {"metadata.doc_ref.keyword": doc_refs}},
+                        ]
+                    }
+                }
 
             try:
                 # Check if index exists

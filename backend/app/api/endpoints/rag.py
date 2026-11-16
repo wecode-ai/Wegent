@@ -164,8 +164,7 @@ async def list_index_chunks(
 ):
     """Inspect up to 10000 external candidates and page their visible chunks.
 
-    Qdrant excludes deleted document references before applying the limit.
-    Other engines retain bounded candidate scans and return-time filtering.
+    Storage excludes deleted document references before applying the limit.
     An empty window does not establish that the knowledge base is empty.
     Candidates beyond the window cannot be reached through these page numbers.
     """

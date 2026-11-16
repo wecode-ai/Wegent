@@ -1390,6 +1390,7 @@ class MilvusBackend(BaseStorageBackend):
         knowledge_id: str,
         max_chunks: int = MAX_QUERY_LIMIT,
         metadata_condition: Optional[Dict[str, Any]] = None,
+        scope: Optional[RetrievalScope] = None,
         **kwargs,
     ) -> List[Dict[str, Any]]:
         """
@@ -1419,6 +1420,13 @@ class MilvusBackend(BaseStorageBackend):
             # Sanitize knowledge_id to prevent expression injection
             safe_knowledge_id = self._sanitize_filter_value(knowledge_id)
             filter_expr = f'knowledge_id == "{safe_knowledge_id}"'
+            if scope is not None and scope.document_ids is not None:
+                doc_refs = [
+                    reference
+                    for document_id in scope.document_ids
+                    for reference in (str(document_id), f"doc_{document_id}")
+                ]
+                filter_expr += f" and doc_ref in {json.dumps(doc_refs)}"
 
             # Query all records with matching knowledge_id
             results = client.query(
