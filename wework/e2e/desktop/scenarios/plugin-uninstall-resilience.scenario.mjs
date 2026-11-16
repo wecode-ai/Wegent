@@ -108,7 +108,7 @@ export async function createDesktopScenario({
     // only a committed DELETE whose response was lost is verified, never
     // replayed.
     let attempts = 0
-    let committedDeleteCount = 0
+    let committedDeleteIndex = -1
     while (true) {
       attempts += 1
       const attemptStart = deletes(item).length
@@ -120,10 +120,14 @@ export async function createDesktopScenario({
           requests.some(request => request.status === 503 && request.committedResponseHeld),
         'Real DELETE neither committed nor was rejected'
       )
-      if (settled.some(request => request.status === 204 && request.committedResponseHeld)) {
-        // Record every DELETE observed so far. Any later DELETE is a replay of
-        // a destructive action that the backend already committed.
-        committedDeleteCount = deletes(item).length
+      const committed = settled.find(
+        request => request.status === 204 && request.committedResponseHeld
+      )
+      if (committed) {
+        // Record the committed request's exact position. Any DELETE after it is
+        // a replay of a destructive action the backend already committed, even
+        // when it arrived in the same observation batch.
+        committedDeleteIndex = attemptStart + settled.indexOf(committed)
         break
       }
       const rejected = settled.find(
@@ -175,11 +179,20 @@ export async function createDesktopScenario({
       1,
       'Lost response caused a second committed DELETE'
     )
-    // No DELETE may be replayed after the backend committed the uninstall,
-    // whatever status the replay would receive (404, 503, or another 204).
+    // Each explicit user attempt must send exactly one DELETE: a 404, 503, or
+    // duplicate 204 replay would raise the total above the attempt count.
     assert.equal(
       deletes(item).length,
-      committedDeleteCount,
+      attempts,
+      'Each explicit uninstall attempt must send exactly one DELETE'
+    )
+    // The committed DELETE must be the last request. Checking its exact
+    // position catches a replay that arrived in the same observation batch as
+    // the successful request.
+    assert.ok(committedDeleteIndex >= 0, 'The committed DELETE position was not recorded')
+    assert.equal(
+      deletes(item).length,
+      committedDeleteIndex + 1,
       'The client replayed a DELETE after the backend committed the uninstall'
     )
     assert.ok(
@@ -198,7 +211,7 @@ export async function createDesktopScenario({
       case: 'committed-delete-lost-response',
       attempts,
       deleteCount: deletes(item).length,
-      committedDeleteCount: 1,
+      committedDeleteIndex,
     })
     apiProxy.rule = () => null
   }
